@@ -54,14 +54,14 @@ const dialog = (role: Role | undefined, layout: "dialog" | "page" = "dialog") =>
 const writeControls = [
   'aria-label="Card title"', 'aria-label="Move card"', 'aria-label="Delete card"', ">Add with details<", ">Add relation<",
   'aria-label="Remove the link to Related card"', 'type="checkbox"', 'aria-label="Add subtask"', "Remove from parent",
-  'type="date"', '-assignees"', ">Edit<", ">Attach<", 'aria-label="Remove spec.pdf"',
+  'class="task-due-trigger', '-assignees"', ">Edit<", ">Attach<", 'aria-label="Remove spec.pdf"',
   'aria-label="Edit comment"', 'aria-label="Delete comment"', 'aria-label="Write a comment"', ">Comment<", 'aria-label="Level"', 'aria-label="Sprint"'
 ];
 
 test("members see the card's write controls (the baseline the read-only render removes)", () => {
   const markup = dialog("member");
   for (const control of ['aria-label="Card title"', 'aria-label="Move card"', 'aria-label="Delete card"', ">Add with details<", ">Add relation<",
-    'type="checkbox"', ">Attach<", 'aria-label="Write a comment"', 'aria-label="Edit comment"', 'type="date"', '-assignees"',
+    'type="checkbox"', ">Attach<", 'aria-label="Write a comment"', 'aria-label="Edit comment"', 'class="task-due-trigger', '-assignees"',
     'aria-label="Remove spec.pdf"', 'aria-label="Remove the link to Related card"', 'aria-label="Add subtask"']) expect({ control, found: markup.includes(control) }).toEqual({ control, found: true });
   expect(markup).not.toContain("View only");
 });

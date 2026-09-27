@@ -68,22 +68,19 @@ test("assignee copy: sentences, no assignees, and lost access", () => {
   expect(sameIds(["a", "b"], ["b", "a"])).toBe(false);
 });
 
-test("card fields: a date offers Add time, a time shows the time input and Remove time", () => {
+test("card fields: the due field is a trigger showing the value and the zone note; the editor opens on demand", () => {
   const empty = renderToStaticMarkup(<CardFields card={card} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} />);
   expect(empty).toContain("No due date");
   expect(empty).not.toContain("Add time");
   expect(empty).not.toContain("<select");
-  const dated = renderToStaticMarkup(<CardFields card={{ ...card, due_on: "2999-01-01" }} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} />);
-  expect(dated).toContain(">Add time</button>");
-  expect(dated).not.toContain('type="time"');
+  expect(empty).not.toContain('type="date"');
   const zone = viewerTimeZone();
   const timed = renderToStaticMarkup(<CardFields card={{ ...card, due_on: "2999-01-01", due_time: "17:00", due_tz: zone, due_at: "2999-01-01T17:00:00.000Z" }} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} />);
-  expect(timed).toContain('type="time"');
-  expect(timed).toContain('value="17:00"');
-  expect(timed).toContain(">Remove time</button>");
-  expect(timed).not.toContain("Changing the time uses your zone");
+  expect(timed).toMatch(/class="task-due-trigger"[^>]*>.*<span>[^<]+ at \d\d:\d\d<\/span>/);
+  expect(timed).not.toContain('type="time"');
+  expect(timed).not.toContain("Set as");
   const elsewhere = renderToStaticMarkup(<CardFields card={{ ...card, due_on: "2999-01-01", due_time: "17:00", due_tz: zone === "Asia/Tokyo" ? "Europe/Berlin" : "Asia/Tokyo", due_at: "2999-01-01T08:00:00.000Z" }} userId="u1" idPrefix="t" done={false} saving={false} onSave={async () => true} />);
-  expect(elsewhere).toContain("Changing the time uses your zone");
+  expect(elsewhere).toMatch(/Set as 17:00 (Europe\/Berlin|Asia\/Tokyo) \(/);
 });
 
 test("the assignee picker is a multiple combobox with Remove chips and marks lost access", () => {

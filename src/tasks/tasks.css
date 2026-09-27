@@ -225,6 +225,43 @@
 .task-add-time:hover { background: #1c1c20; }
 .task-add-time:disabled { opacity: .5; cursor: not-allowed; }
 .task-add-time svg { width: 14px; }
+/* The Due field (DuePicker.tsx): a trigger with the value; the editor saves only on Apply. */
+.task-due-picker { display: grid; gap: 6px; min-width: 0; }
+.task-due-trigger { width: 100%; min-width: 0; min-height: 38px; display: flex; align-items: center; gap: 8px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; text-align: left; cursor: pointer; }
+.task-due-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-due-trigger svg { width: 15px; flex: none; color: #a8a8ae; }
+.task-due-trigger.empty { color: #8d8d94; }
+.task-due-trigger:hover { border-color: #45454b; }
+.task-due-trigger[aria-expanded="true"], .task-due-trigger:focus-visible { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
+.task-due-trigger:disabled { opacity: .5; cursor: not-allowed; }
+.task-due-editor { min-width: 290px; display: grid; gap: 12px; padding: 10px; }
+.ui-sheet .task-due-editor { min-width: 0; padding: 4px 8px 8px; }
+.task-due-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-due-quick-pick { min-height: 32px; border: 1px solid #303035; border-radius: 999px; padding: 0 12px; background: transparent; color: #c9c9ce; font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer; }
+.task-due-quick-pick:hover { border-color: #45454b; color: #ededee; }
+.task-due-quick-pick.on { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.task-due-quick-pick:disabled { opacity: .45; cursor: not-allowed; }
+.task-due-quick-pick:focus-visible { outline: 2px solid #6b582f; outline-offset: 1px; }
+.task-due-editor-row { display: grid; gap: 6px; }
+.task-due-editor-row > span, .task-due-editor-row > label { display: inline-flex; align-items: center; gap: 6px; color: #a8a8ae; font-size: .74rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.task-due-editor-row svg { width: 14px; }
+.task-due-editor-control { display: flex; align-items: center; gap: 8px; }
+.task-due-editor input { width: 100%; min-width: 0; min-height: 38px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; color-scheme: dark; }
+.task-due-editor input:focus { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
+.task-due-editor-control input { flex: 1; }
+.task-due-editor-control .secondary-button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.task-due-editor-control .secondary-button svg { width: 13px; }
+.task-due-editor > .task-add-time { margin-left: -8px; }
+.task-due-editor > p { margin: 0; }
+.task-due-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.task-due-actions > button { min-height: 36px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
+.task-due-actions > button:disabled { opacity: .5; cursor: not-allowed; }
+.task-due-sheet-footer .task-due-actions { flex: 1; }
+.task-due-sheet-footer .task-due-actions > button { flex: 1; min-height: 44px; }
+@media (max-width: 760px) {
+  .task-due-trigger, .task-due-editor input { min-height: 44px; font-size: 1rem; }
+  .task-due-quick-pick { min-height: 44px; padding: 0 16px; font-size: .9rem; }
+}
 .task-assignee-picker { display: grid; gap: 6px; min-width: 0; }
 
 /* WIP limits (D108): the header count reads "n / limit"; full is amber, over the limit red. */

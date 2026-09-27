@@ -9,9 +9,9 @@ import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { blockTeamMember, getTeamMember, listTeam, revokeTeamSessions, setTeamRole, unblockTeamMember, type Reauth, type TeamMember, type TeamMemberDetail } from "./teamApi";
+import { blockTeamMember, getTeamMember, listTeam, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { eventLabel, filterTeam, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
-import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleChangeNeedsReauth, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
+import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 
 type TeamNavigate = (route: Route, options?: { replace?: boolean }) => void;
@@ -20,7 +20,6 @@ type TeamAppProps = {
   displayName: string;
   /** The signed-in user's role; the server enforces it regardless. */
   role: Role;
-  totpEnabled: boolean;
   navigate: TeamNavigate;
   flash: (message: string) => void;
   onHome: () => void;
@@ -66,7 +65,7 @@ function roleChangeBody(member: { displayName: string; role: Role; isYou: boolea
   return `${lead}${who} can create, edit, and share notes, files, tasks, collections, and events.`;
 }
 
-export function TeamApp({ displayName, role, totpEnabled, navigate, flash, onHome, onBin, onSettings, onSignOut }: TeamAppProps) {
+export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onSettings, onSignOut }: TeamAppProps) {
   const admin = canManageTeam(role);
   const binCount = useBinCount(Boolean(onBin));
   const [routeUserId, setRouteUserId] = useState<string | null>(currentUserId);
@@ -234,7 +233,6 @@ export function TeamApp({ displayName, role, totpEnabled, navigate, flash, onHom
     {dialog && detail && <TeamDialog
       dialog={dialog}
       member={detail}
-      totpEnabled={totpEnabled}
       onClose={() => setDialog(null)}
       onDone={applied}
       onStale={(message) => {
@@ -333,18 +331,15 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen }
   </article>;
 }
 
-function TeamDialog({ dialog, member, totpEnabled, onClose, onDone, onStale }: {
+function TeamDialog({ dialog, member, onClose, onDone, onStale }: {
   dialog: Dialog;
   member: TeamMemberDetail;
-  totpEnabled: boolean;
   onClose: () => void;
   onDone: (member: TeamMemberDetail, message: string) => void;
   onStale: (message: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [useRecovery, setUseRecovery] = useState(false);
-  const needsReauth = dialog.kind === "role" ? roleChangeNeedsReauth(member.role, dialog.to) : dialog.kind === "block" && member.role === "admin";
   const titleId = "team-dialog-title";
 
   useHistoryDialogGuard(true, onClose);
@@ -367,17 +362,13 @@ function TeamDialog({ dialog, member, totpEnabled, onClose, onDone, onStale }: {
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
-    const reauth: Reauth = needsReauth ? {
-      password: String(form.get("password") ?? ""),
-      ...(totpEnabled ? useRecovery ? { recoveryCode: String(form.get("recoveryCode") ?? "") } : { totpCode: String(form.get("totpCode") ?? "") } : {})
-    } : {};
     try {
       if (dialog.kind === "role") {
-        const result = await setTeamRole(member.id, { role: dialog.to, expectedRole: member.role, ...reauth });
+        const result = await setTeamRole(member.id, { role: dialog.to, expectedRole: member.role });
         onDone(result.member, `${member.displayName} is now ${ROLE_LABELS[result.role] === "Admin" ? "an admin" : `a ${ROLE_LABELS[result.role].toLowerCase()}`}`);
       } else if (dialog.kind === "block") {
         const reason = String(form.get("reason") ?? "").trim();
-        const result = await blockTeamMember(member.id, { ...(reason ? { reason } : {}), ...reauth });
+        const result = await blockTeamMember(member.id, reason ? { reason } : {});
         onDone(result.member, `${member.displayName} is blocked and signed out everywhere`);
       } else if (dialog.kind === "unblock") {
         onDone((await unblockTeamMember(member.id)).member, `${member.displayName} is unblocked`);
@@ -388,7 +379,6 @@ function TeamDialog({ dialog, member, totpEnabled, onClose, onDone, onStale }: {
     } catch (reason) {
       const code = errorCode(reason);
       if (code === "ROLE_CHANGED" || code === "ALREADY_BLOCKED" || code === "NOT_BLOCKED") onStale(`${messageOf(reason, "This account changed")}`);
-      else if (code === "REAUTH_REQUIRED") setError(totpEnabled ? "Your password or code is not right. Codes work once; wait for a new one." : "Your password is not right.");
       else setError(messageOf(reason, "Something went wrong"));
       setBusy(false);
     }
@@ -403,19 +393,11 @@ function TeamDialog({ dialog, member, totpEnabled, onClose, onDone, onStale }: {
       </header>
       <form onSubmit={submit}>
         <p>{copy.body}</p>
-        {dialog.kind === "block" && <label className="team-field">Reason (optional, only admins see it)<textarea name="reason" maxLength={200} rows={2} autoFocus={!needsReauth} /></label>}
-        {needsReauth && <fieldset className="team-reauth">
-          <legend>Confirm it is you</legend>
-          <label className="team-field">Your password<input name="password" type="password" autoComplete="current-password" required autoFocus /></label>
-          {totpEnabled && (useRecovery
-            ? <label className="team-field">Recovery code<input name="recoveryCode" autoComplete="one-time-code" minLength={10} maxLength={32} required /></label>
-            : <label className="team-field">Six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>)}
-          {totpEnabled && <button type="button" className="team-link" onClick={() => setUseRecovery((value) => !value)}>{useRecovery ? "Use your authenticator instead" : "Use a recovery code"}</button>}
-        </fieldset>}
+        {dialog.kind === "block" && <label className="team-field">Reason (optional, only admins see it)<textarea name="reason" maxLength={200} rows={2} autoFocus /></label>}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
-          <button type="submit" className={`team-action primary${dialog.kind === "block" ? " danger" : ""}`} disabled={busy} autoFocus={dialog.kind === "unblock" || dialog.kind === "revoke" || (dialog.kind === "role" && !needsReauth)}>{busy ? "Working…" : copy.confirm}</button>
+          <button type="submit" className={`team-action primary${dialog.kind === "block" ? " danger" : ""}`} disabled={busy} autoFocus={dialog.kind !== "block"}>{busy ? "Working…" : copy.confirm}</button>
         </div>
       </form>
     </div>

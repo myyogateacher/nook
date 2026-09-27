@@ -4,7 +4,7 @@ import * as serverRoles from "../server/team/roles";
 import { AccountActions, TeamNavContext, type TeamNav } from "../src/AppShell";
 import type { TeamEvent, TeamMember } from "../src/team/teamApi";
 import { eventLabel, filterTeam, isNewAccount, lastAdminReason, NEW_ACCOUNT_MS, statusLabel, teamBackAction, teamFilters } from "../src/team/teamFormat";
-import { canManageTeam, canSeeTeam, roleChangeNeedsReauth, roleOptions, ROLE_DESCRIPTIONS, ROLES, SELECTABLE_ROLES } from "../src/team/teamRoles";
+import { canManageTeam, canSeeTeam, roleOptions, ROLE_DESCRIPTIONS, ROLES, SELECTABLE_ROLES } from "../src/team/teamRoles";
 import { TeamApp } from "../src/team/TeamApp";
 import { Select } from "../src/ui/Select";
 
@@ -13,10 +13,9 @@ const member = (overrides: Partial<TeamMember>): TeamMember => ({
 });
 
 describe("Team roles on the client", () => {
-  test("mirror the server's role list, selectable roles, and re-authentication rule", () => {
+  test("mirror the server's role list, and selectable roles", () => {
     expect([...ROLES]).toEqual([...serverRoles.ROLES]);
     expect([...SELECTABLE_ROLES]).toEqual([...serverRoles.SELECTABLE_ROLES]);
-    for (const from of ROLES) for (const to of ROLES) expect(roleChangeNeedsReauth(from, to)).toBe(serverRoles.roleChangeNeedsReauth(from, to));
     for (const role of ROLES) {
       expect(canSeeTeam(role)).toBe(serverRoles.can(role, "team.read"));
       expect(canManageTeam(role)).toBe(serverRoles.can(role, "team.manage"));

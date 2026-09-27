@@ -9,7 +9,7 @@
 import { revokeUserPushSubscriptions } from "../calendar/push";
 import { isEmailAllowed } from "../config";
 import { audit, db, now, type UserRow } from "../db";
-import { can, roleChangeNeedsReauth, type Role } from "./roles";
+import { can, type Role } from "./roles";
 import { userRole } from "./userRole";
 
 export type TeamVia = "web" | "cli" | "mcp";
@@ -23,11 +23,10 @@ export type TeamErrorCode =
   | "LAST_ADMIN"
   | "SELF_ACTION"
   | "ALREADY_BLOCKED"
-  | "NOT_BLOCKED"
-  | "REAUTH_REQUIRED";
+  | "NOT_BLOCKED";
 
 export class TeamError extends Error {
-  constructor(readonly status: 400 | 401 | 403 | 404 | 409, readonly code: TeamErrorCode, message: string, readonly details?: Record<string, unknown>) {
+  constructor(readonly status: 400 | 403 | 404 | 409, readonly code: TeamErrorCode, message: string, readonly details?: Record<string, unknown>) {
     super(message);
     this.name = "TeamError";
   }
@@ -218,10 +217,10 @@ function write<T>(operation: () => T): T {
 const auditMeta = (via: TeamVia, extra: Record<string, unknown>) => ({ ...extra, via });
 
 /**
- * Changes a role with a compare-and-swap on `expectedRole` (T79). Granting or removing admin needs
- * `reauthenticated` (§5.5). An admin may demote themselves only while another active admin exists.
+ * Changes a role with a compare-and-swap on `expectedRole` (T79). No re-authentication (operator
+ * decision 2026-09-27). An admin may demote themselves only while another active admin exists.
  */
-export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia; reauthenticated: boolean }) {
+export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia }) {
   requireManager(actor);
   return write(() => {
     const target = loadTarget(targetId);
@@ -230,9 +229,6 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
       throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: target.role });
     }
     if (target.role === input.role) return { changed: false as const, role: target.role };
-    if (roleChangeNeedsReauth(target.role, input.role) && !options.reauthenticated) {
-      throw new TeamError(401, "REAUTH_REQUIRED", "Confirm with your password to change admin access");
-    }
     if (target.role === "admin" && target.disabled_at === null && otherActiveAdmins(target.id) === 0) throw lastAdmin();
     const result = db.query("UPDATE users SET role = ? WHERE id = ? AND role = ?").run(input.role, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: userRole(target.id) });
@@ -245,9 +241,9 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
 /**
  * Blocks an account (D77): sets the block, deletes every session (an unblock does not revive
  * them), and removes push subscriptions, in one transaction. MCP keys and feed tokens pause and
- * resume on unblock (O9). Blocking an admin needs `reauthenticated`.
+ * resume on unblock (O9).
  */
-export function blockUser(actor: TeamActor, targetId: string, reason: string | null, options: { via: TeamVia; reauthenticated: boolean }) {
+export function blockUser(actor: TeamActor, targetId: string, reason: string | null, options: { via: TeamVia }) {
   requireManager(actor);
   const cleanReason = reason?.trim() ? reason.trim().slice(0, BLOCK_REASON_MAX) : null;
   return write(() => {
@@ -255,7 +251,6 @@ export function blockUser(actor: TeamActor, targetId: string, reason: string | n
     if (!target) throw notFound();
     if (actor && actor.id === target.id) throw new TeamError(409, "SELF_ACTION", "You cannot block your own account");
     if (target.disabled_at !== null) throw new TeamError(409, "ALREADY_BLOCKED", "This account is already blocked");
-    if (target.role === "admin" && !options.reauthenticated) throw new TeamError(401, "REAUTH_REQUIRED", "Confirm with your password to block an admin");
     if (target.role === "admin" && otherActiveAdmins(target.id) === 0) throw lastAdmin();
     const timestamp = now();
     const result = db.query("UPDATE users SET disabled_at = ?, blocked_by = ?, block_reason = ? WHERE id = ? AND disabled_at IS NULL AND role = ?")

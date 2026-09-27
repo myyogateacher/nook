@@ -77,6 +77,13 @@ export function dayHeading(day: string, today: string) {
     .format(new Date(Date.UTC(year, month - 1, date)));
 }
 
+/** "Sun, Sep 27" (with the year when it is not today's): the day in "New event on …". */
+export function eventDayLabel(day: string, today: string) {
+  const [year, month, date] = day.split("-").map(Number) as [number, number, number];
+  return new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC", ...(year !== Number(today.slice(0, 4)) ? { year: "numeric" } : {}) })
+    .format(new Date(Date.UTC(year, month - 1, date)));
+}
+
 export function monthHeading(month: string) {
   const [year, index] = month.split("-").map(Number) as [number, number];
   return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, index - 1, 1)));

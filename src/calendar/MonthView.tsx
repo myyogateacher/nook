@@ -3,7 +3,7 @@ import { Plus, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, monthGridDays } from "../calendarRoute";
 import { MonthGrid } from "../ui/calendarGrid/MonthGrid";
 import { listOccurrences, viewerTimeZone, type Occurrence, type OccurrenceList } from "./calendarApi";
-import { dayHeading, groupByDay, tasksByDay } from "./calendarFormat";
+import { dayHeading, eventDayLabel, groupByDay, tasksByDay } from "./calendarFormat";
 import { OccurrenceRow, TaskRow } from "./AgendaView";
 
 type MonthViewProps = {
@@ -17,6 +17,7 @@ type MonthViewProps = {
   canCreate: boolean;
   onSelectDay: (day: string) => void;
   onOpen: (occurrence: Occurrence) => void;
+  /** New event on a day: from the day list, or (full grid) a click on a cell's empty area or its "+". */
   onCreate: (day: string) => void;
   onShiftMonth: (delta: number) => void;
   onToday: () => void;
@@ -65,6 +66,7 @@ export function MonthView(props: MonthViewProps) {
   return <MonthGrid month={month} today={today} selectedDay={day} compact={compact} busy={stale}
     countFor={(cell) => (byDay.get(cell)?.length ?? 0) + (dueByDay.get(cell)?.length ?? 0)}
     onSelectDay={onSelectDay} onShiftMonth={onShiftMonth} onToday={onToday}
+    onDayCreate={canCreate && !compact ? onCreate : undefined}
     status={error ? <div className="calendar-state" role="alert">
       <TriangleAlert />
       <h2>Could not load this month</h2>
@@ -94,7 +96,7 @@ export function MonthView(props: MonthViewProps) {
     {!error && <section className="calendar-day-list" aria-labelledby="calendar-day-title">
       <header>
         <h3 id="calendar-day-title">{dayHeading(day, today)}</h3>
-        {canCreate && <button className="secondary-button calendar-add-day" onClick={() => onCreate(day)}><Plus />Add event</button>}
+        {canCreate && <button className="secondary-button calendar-add-day" onClick={() => onCreate(day)}><Plus aria-hidden="true" />New event on {eventDayLabel(day, today)}</button>}
       </header>
       {dayTasks.length > 0 && <ul className="calendar-day-tasks">{dayTasks.map((task) => <li key={`task:${task.cardId}`}><TaskRow task={task} /></li>)}</ul>}
       {!stale && !dayItems.length && !dayTasks.length && <p className="calendar-note">No events this day.</p>}

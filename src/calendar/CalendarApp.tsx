@@ -410,6 +410,12 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     writeHint({ month, day, eventId: null, occurrence: null });
   }
 
+  /** New event on a month day: selects it (paging to its month for a leading or trailing day) and opens the sheet. */
+  function createOnDay(day: string) {
+    selectDay(day);
+    startCreate(day);
+  }
+
   let content;
   if (route.eventId) {
     content = <EventView
@@ -440,7 +446,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       canCreate={writableAll.length > 0}
       onSelectDay={selectDay}
       onOpen={openOccurrence}
-      onCreate={startCreate}
+      onCreate={createOnDay}
       onShiftMonth={(delta) => go(monthRoute(shiftMonth(month, delta)), true)}
       onToday={() => go(monthRoute(monthOf(today)), true)}
     />;

@@ -1,7 +1,7 @@
 import { useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { monthGridDays, monthOf, weekdayLabels } from "../../calendarRoute";
-import { dayHeading, monthHeading } from "../../calendar/calendarFormat";
+import { dayHeading, eventDayLabel, monthHeading } from "../../calendar/calendarFormat";
 
 export type MonthGridProps = {
   /** `yyyy-mm`. */
@@ -28,9 +28,20 @@ export type MonthGridProps = {
   titleId?: string;
   /** Drag and drop onto full cells: `accepts` checks the drag's types, `onDropOnDay` gets its data. */
   drop?: { accepts: (types: readonly string[]) => boolean; type: string; onDropOnDay: (day: string, payload: string) => void };
+  /**
+   * Full cells only: a click on a cell's empty area, or its corner "+" (shown on hover or focus),
+   * starts something new on that day. Chips and the day number keep their own actions. Omitted,
+   * cells create nothing (the board calendar).
+   */
+  onDayCreate?: (day: string) => void;
   /** After the grid: the selected day's list. */
   children?: ReactNode;
 };
+
+/** A click inside a full cell creates only on its empty area: chips, links, and the day number keep their own actions. */
+export function clickCreates(target: Pick<Element, "closest"> | null) {
+  return target !== null && !target.closest("button, a");
+}
 
 /**
  * The presentational month grid shared by Calendar and the board calendar view
@@ -38,7 +49,7 @@ export type MonthGridProps = {
  * It fetches nothing; each caller renders its own items into the cells.
  */
 export function MonthGrid(props: MonthGridProps) {
-  const { month, today, selectedDay, compact, countFor, renderDay, renderDots, onSelectDay, onShiftMonth, onToday, status, busy = false, titleId = "calendar-month-title", drop, children } = props;
+  const { month, today, selectedDay, compact, countFor, renderDay, renderDots, onSelectDay, onShiftMonth, onToday, status, busy = false, titleId = "calendar-month-title", drop, onDayCreate, children } = props;
   const [dropDay, setDropDay] = useState<string | null>(null);
   const days = monthGridDays(month);
 
@@ -86,9 +97,12 @@ export function MonthGrid(props: MonthGridProps) {
               <span className="calendar-cell-dots" aria-hidden="true">{renderDots(cell)}</span>
             </button>;
           }
-          return <div key={cell} role="gridcell" className={className} aria-selected={cell === selectedDay} data-day={drop ? cell : undefined} {...dropHandlers(cell)}>
+          const createLabel = `New event on ${eventDayLabel(cell, today)}`;
+          return <div key={cell} role="gridcell" className={`${className}${onDayCreate ? " creatable" : ""}`} aria-selected={cell === selectedDay} data-day={drop ? cell : undefined} {...dropHandlers(cell)}
+            onClick={onDayCreate ? (event) => { if (clickCreates(event.target as Element)) onDayCreate(cell); } : undefined}>
             <button className="calendar-cell-number" onClick={() => onSelectDay(cell)} aria-label={label}>{Number(cell.slice(8))}</button>
             <div className="calendar-cell-chips">{renderDay(cell)}</div>
+            {onDayCreate && <button type="button" className="calendar-cell-add" onClick={() => onDayCreate(cell)} aria-label={createLabel} title={createLabel}><Plus aria-hidden="true" /></button>}
           </div>;
         })}
       </div>)}

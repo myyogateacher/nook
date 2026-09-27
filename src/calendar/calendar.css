@@ -58,6 +58,16 @@
 .calendar-cell-number { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: #d6d6d9; font-size: .82rem; font-weight: 650; cursor: pointer; }
 .calendar-cell.today .calendar-cell-number { background: var(--yellow); color: #281f0b; }
 .calendar-cell-chips { min-width: 0; display: grid; gap: 3px; }
+/* A click on a cell's empty area starts a New event on that day; the corner "+" says so on hover
+   and is the keyboard path (it shows on focus). Touch screens with the full grid see it faintly. */
+.calendar-cell.creatable { position: relative; cursor: pointer; }
+.calendar-cell.creatable:hover { background: #141416; }
+.calendar-cell.creatable.selected:hover { background: #1b1a12; }
+.calendar-cell-add { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; display: grid; place-items: center; margin: 0; border: 0; border-radius: 8px; padding: 0; background: #1f1f23; color: #c9c9ce; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.calendar-cell-add svg { width: 15px; height: 15px; }
+.calendar-cell-add:hover { background: #2b271d; color: #f5cf79; }
+.calendar-cell.creatable:hover .calendar-cell-add, .calendar-cell-add:focus-visible { opacity: 1; }
+@media (hover: none) { .calendar-cell-add { opacity: .7; } }
 .calendar-chip { min-width: 0; min-height: 24px; overflow: hidden; border: 0; border-left: 3px solid var(--cal-color, var(--cal-blue)); border-radius: 6px; padding: 2px 6px; background: #1c1c20; color: #e1e1e3; font-size: .74rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .calendar-chip span { margin-right: 4px; color: #9a9aa1; }
 .calendar-chip:hover { background: #26262b; }

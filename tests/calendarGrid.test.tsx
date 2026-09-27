@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AgendaView } from "../src/calendar/AgendaView";
 import { MonthView } from "../src/calendar/MonthView";
 import { AgendaList } from "../src/ui/calendarGrid/AgendaList";
-import { MonthGrid } from "../src/ui/calendarGrid/MonthGrid";
+import { clickCreates, MonthGrid } from "../src/ui/calendarGrid/MonthGrid";
 
 // WAVE_13_TASK_CARD_UX.md §4.5a: the presentational month grid and agenda list shared by Calendar
 // and the board calendar view. Calendar's own views keep their markup (checked in the browser by a
@@ -60,7 +60,39 @@ test("Calendar's MonthView and AgendaView still render their own shells on the s
   expect(month).toContain('<h2 id="calendar-month-title" aria-live="polite">October 2026</h2>');
   expect(month).toContain('class="calendar-grid loading" role="grid" aria-label="October 2026" aria-busy="true"');
   expect(month).toContain('<section class="calendar-day-list" aria-labelledby="calendar-day-title"><header><h3 id="calendar-day-title">Today</h3>');
-  expect(month).toContain(">Add event</button>");
+  expect(month).toMatch(/class="secondary-button calendar-add-day">.*New event on .*Oct.*7.*<\/button>/);
   // The agenda shows its loading state until the occurrences arrive.
   expect(renderToStaticMarkup(<AgendaView today="2026-10-07" calendarIds={null} showTasks reloadKey={0} onOpen={noop} />)).toBe('<p class="calendar-loading" role="status">Loading your agenda…</p>');
+});
+
+test("MonthGrid creates on a day only when the caller opts in, and never on compact cells", () => {
+  // The board calendar passes no onDayCreate: its cells carry no "+" and no click-to-create.
+  expect(grid()).not.toContain("calendar-cell-add");
+  expect(grid()).not.toContain("creatable");
+  const creating = grid({ onDayCreate: noop });
+  expect(creating.match(/class="calendar-cell-add"/g)).toHaveLength(42);
+  expect(creating).toMatch(/class="calendar-cell today selected creatable"/);
+  expect(creating).toMatch(/aria-label="New event on [^"]*Oct[^"]*7[^"]*" title="New event on /);
+  // A leading day of the previous month gets its own "+" (Calendar pages there, then opens the sheet).
+  expect(creating).toMatch(/aria-label="New event on [^"]*Sep[^"]*28/);
+  expect(grid({ onDayCreate: noop, compact: true })).not.toContain("calendar-cell-add");
+});
+
+test("a click in a full cell creates only on its empty area", () => {
+  const at = (selector: string | null) => ({ closest: (query: string) => selector && query.split(", ").includes(selector) ? {} as Element : null });
+  expect(clickCreates(at(null))).toBe(true);
+  expect(clickCreates(at("button"))).toBe(false);
+  expect(clickCreates(at("a"))).toBe(false);
+  expect(clickCreates(null)).toBe(false);
+});
+
+test("Calendar's month opts in to create on the full grid only; phones keep the day list's action", () => {
+  const month = (compact: boolean, canCreate: boolean) => renderToStaticMarkup(<MonthView month="2026-10" today="2026-10-07" compact={compact} selectedDay="2026-10-12" calendarIds={null} showTasks
+    reloadKey={0} canCreate={canCreate} onSelectDay={noop} onOpen={noop} onCreate={noop} onShiftMonth={noop} onToday={noop} />);
+  expect(month(false, true)).toContain("calendar-cell-add");
+  expect(month(false, false)).not.toContain("calendar-cell-add");
+  expect(month(false, false)).not.toContain("calendar-add-day");
+  const phone = month(true, true);
+  expect(phone).not.toContain("calendar-cell-add");
+  expect(phone).toMatch(/calendar-add-day">.*New event on [^<]*Oct[^<]*12/);
 });

@@ -72,6 +72,26 @@ test("the face shows flags, the excerpt, three tag chips then +N, the counts, an
   expect(markup).toContain('class="task-avatar task-avatar-more">+1</span>');
 });
 
+test("the face is three rows: flags inline in the title, the excerpt, and one footer with the chips left and the avatars right", () => {
+  const markup = renderToStaticMarkup(<CardFace card={full} tags={tags} done={false} today={today} excerptId="ex" rollup={{ done: 1, total: 2 }} />);
+  const rows = [...markup.matchAll(/<(?:span|div)[^>]*class="(task-card-title|task-card-excerpt|task-card-meta|task-card-flags)"/g)].map((match) => match[1]);
+  expect(rows).toEqual(["task-card-title", "task-card-flags", "task-card-excerpt", "task-card-meta"]);
+  expect(markup).toMatch(/<span class="task-card-title"><span class="task-card-flags">.*<\/span>Fix login<\/span>/);
+  // Left cluster in order: due, tags, counts, subtask roll-up; the avatars are the footer's other child.
+  const footer = markup.slice(markup.indexOf('class="task-card-meta"'));
+  const order = ["task-due-chip", "task-card-tags", "Has a description", "2 comments", "task-subtask-chip", "task-card-people"].map((needle) => footer.indexOf(needle));
+  expect(order.filter((at) => at >= 0)).toEqual(order.filter((at) => at >= 0).sort((a, b) => a - b));
+  expect(footer).toMatch(/^class="task-card-meta"><span class="task-card-meta-main">.*<\/span><span class="task-card-people" /);
+  // Avatars only: no empty left cluster.
+  const onlyPeople = renderToStaticMarkup(<CardFace card={{ ...base, assignees: [person("u1", "Asha Rao")] }} tags={tags} done={false} today={today} excerptId="ex" />);
+  expect(onlyPeople).not.toContain("task-card-meta-main");
+  expect(onlyPeople).toContain('<span class="task-card-meta"><span class="task-card-people"');
+  // Chips only: no people cluster.
+  const onlyDue = renderToStaticMarkup(<CardFace card={{ ...base, due_on: "2026-03-06" }} tags={tags} done={false} today={today} excerptId="ex" />);
+  expect(onlyDue).toContain("task-card-meta-main");
+  expect(onlyDue).not.toContain("task-card-people");
+});
+
 test("a bare card shows only its title; a description without an excerpt keeps the icon", () => {
   expect(renderToStaticMarkup(<CardFace card={base} tags={tags} done={false} today={today} excerptId="ex" />))
     .toBe('<div class="task-card-face" aria-hidden="true"><span class="task-card-title">Fix login</span></div>');

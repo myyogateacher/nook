@@ -53,9 +53,11 @@
 .task-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .task-card.dragging { opacity: .4; }
 .task-card-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-/* The meta row wraps only when a narrow column cannot fit it, so no chip is ever hidden. */
-.task-card-meta { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow: hidden; margin-right: -30px; color: #85858c; font-size: .72rem; }
-.task-card-meta > span { flex: none; display: inline-flex; align-items: center; gap: 3px; }
+/* The footer: chips and counts on the left wrap only when a narrow column cannot fit them, so no
+   chip is ever hidden; the avatars stay on the right of its first line. It runs under the ⋯ button. */
+.task-card-meta { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
+.task-card-meta-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 5px; }
+.task-card-meta-main > span { flex: none; min-height: 24px; display: inline-flex; align-items: center; gap: 3px; }
 .task-card-meta svg { width: 13px; height: 13px; }
 .task-card-more { position: absolute; top: 5px; right: 4px; width: 30px; height: 30px; opacity: .55; }
 .task-card:hover .task-card-more, .task-card:focus-within .task-card-more { opacity: 1; }
@@ -96,7 +98,7 @@
   .task-add-column { display: none; }
   .task-column-header { min-height: 52px; }
   .task-column-controls .icon-button { width: 44px; height: 44px; }
-  .task-card { min-height: 52px; padding: 12px 48px 12px 14px; font-size: .92rem; }
+  .task-card { min-height: 52px; padding: 12px 48px 12px 12px; font-size: .92rem; }
   .task-card-more { top: 4px; right: 2px; width: 44px; height: 44px; opacity: 1; }
   .task-add-card { min-height: 44px; }
   .tasks-content { padding: 28px 16px calc(40px + env(safe-area-inset-bottom)); }
@@ -342,16 +344,21 @@
 }
 
 /* Lane card face (Wave 13C, §4.4): flags, title, excerpt, and one meta row. */
-.task-card-face { min-width: 0; display: grid; gap: 5px; }
-.task-card-flags { display: flex; gap: 6px; }
+.task-card-face { min-width: 0; display: grid; gap: 8px; }
+/* Flags sit inline before the title text, centred on its first line. */
+.task-card-title .task-card-flags { display: inline-flex; align-items: center; gap: 3px; margin-right: 6px; vertical-align: -2px; }
+.task-card-flag { display: inline-flex; }
 .task-card-flags svg { width: 14px; height: 14px; }
 .task-card-excerpt { display: -webkit-box; overflow: hidden; color: #8d8d94; font-size: .8rem; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.task-card-meta .task-due-chip { flex: none; white-space: nowrap; }
-.tasks-app .task-card-meta > .task-card-tags { flex: 0 1 auto; min-width: 0; gap: 4px; overflow: hidden; }
+/* Chips on the face: 22 px tall, one pill radius. */
+.task-card-meta .task-due-chip { flex: none; height: 22px; padding: 0 7px; white-space: nowrap; }
+.tasks-app .task-card-meta-main > .task-card-tags { flex: 0 1 auto; min-width: 0; gap: 4px; overflow: hidden; }
+.task-card-meta .task-tag { height: 22px; padding: 0 7px 0 6px; line-height: 20px; }
+.task-card-meta .task-tag[class*="color-"]::before { margin-right: 3px; }
 .task-tag { min-width: 0; max-width: 7.5em; overflow: hidden; border-radius: 999px; padding: 1px 7px; font-size: .68rem; font-weight: 600; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .task-card-more-tags { flex: none; color: #a8a8ae; font-weight: 600; }
 .task-card-blockers { color: #f0c060; }
-.tasks-app .task-card-meta > .task-card-people { margin-left: auto; gap: 0; padding-right: 2px; }
+.tasks-app .task-card-meta > .task-card-people { flex: none; display: inline-flex; align-items: center; margin-left: auto; padding-right: 2px; }
 .task-avatar { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border: 2px solid #1a1a1d; border-radius: 999px; margin-left: -4px; background: #3a3a40; color: #f2f2f3; font-size: .6rem; font-weight: 700; letter-spacing: .02em; }
 .task-avatar:first-child { margin-left: 0; }
 /* Earlier avatars overlap later ones, so every initial stays readable. */
@@ -369,7 +376,6 @@
 @media (max-width: 760px) {
   /* Compact density: at most about 132 px at 390 px wide. */
   .task-card { gap: 4px; padding-top: 10px; padding-bottom: 10px; }
-  .task-card-face { gap: 4px; }
   .task-card-excerpt { -webkit-line-clamp: 1; }
   .task-card-meta { margin-right: -36px; }
 }

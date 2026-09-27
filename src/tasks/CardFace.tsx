@@ -66,9 +66,11 @@ export function cardFaceLabel({ card, tags, done, today, parentTitle, rollup, ch
 }
 
 /**
- * What a lane card shows (WAVE_13_TASK_CARD_UX.md §4.4), top to bottom: flag icons, the title
- * (2 lines), the description excerpt (2 lines, 1 on phones), and one meta row with the due chip,
- * up to 3 tags, the counts, and up to 3 assignee avatars. The card's `aria-label` reads it all
+ * What a lane card shows (WAVE_13_TASK_CARD_UX.md §4.4; operator QA 0.9.1), in three rows: the
+ * title (2 lines) with the flag icons inline before it, the description excerpt (2 lines, 1 on
+ * phones), and one footer: on the left the due chip, up to 3 tags, the counts, and the subtask
+ * roll-up, wrapping under each other when narrow; on the right up to 3 assignee avatars, which stay
+ * on the footer's first line. Empty rows are left out. The card's `aria-label` reads it all
  * (`cardFaceLabel`), so the face itself is hidden from screen readers; `excerptId` lets the card
  * point its description at the excerpt.
  */
@@ -83,25 +85,31 @@ export function CardFace({ card, tags, done, today, excerptId, rollup, childLabe
   const counts = (card.has_description === 1 && !excerpt) || card.comment_count > 0 || card.attachment_count > 0 || Boolean(card.relation_count) || Boolean(card.open_blockers);
   const children = rollup && rollup.total > 0 ? rollup : null;
   const meta = due || tagList.shown.length > 0 || counts || people.length > 0 || children;
+  const subtasks = children && <span className={`task-subtask-chip${children.done === children.total ? " complete" : ""}`} title={`${children.done} of ${children.total} ${childLabel} done`}><ListChecks />{children.done}/{children.total}</span>;
+  const main = due || tagList.shown.length > 0 || counts || children;
 
   return <div className="task-card-face" aria-hidden="true">
-    {flags.length > 0 && <span className="task-card-flags">
-      {flags.map((flag) => <span key={flag} className="task-card-flag" title={FLAG_LABELS[flag]}><FlagIcon flag={flag} /></span>)}
-    </span>}
-    <span className="task-card-title">{card.title}</span>
+    <span className="task-card-title">
+      {flags.length > 0 && <span className="task-card-flags">
+        {flags.map((flag) => <span key={flag} className="task-card-flag" title={FLAG_LABELS[flag]}><FlagIcon flag={flag} /></span>)}
+      </span>}
+      {card.title}
+    </span>
     {excerpt && <span id={excerptId} className="task-card-excerpt">{excerpt}</span>}
     {meta && <span className="task-card-meta">
-      {children && <span className={`task-subtask-chip${children.done === children.total ? " complete" : ""}`} title={`${children.done} of ${children.total} ${childLabel} done`}><ListChecks />{children.done}/{children.total}</span>}
-      {due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays />{due.label}</span>}
-      {tagList.shown.length > 0 && <span className="task-card-tags">
-        {tagList.shown.map((tag) => <span key={tag.id} className={`task-tag color-${tag.color}`} title={tag.name}>{tag.name}</span>)}
-        {tagList.more > 0 && <span className="task-card-more-tags" title={cardTags(card.tag_ids, tags).slice(FACE_TAGS).map((tag) => tag.name).join(", ")}>+{tagList.more}</span>}
+      {main && <span className="task-card-meta-main">
+        {due && <span className={`task-due-chip ${due.tone}`} title={due.description}><CalendarDays />{due.label}</span>}
+        {tagList.shown.length > 0 && <span className="task-card-tags">
+          {tagList.shown.map((tag) => <span key={tag.id} className={`task-tag color-${tag.color}`} title={tag.name}>{tag.name}</span>)}
+          {tagList.more > 0 && <span className="task-card-more-tags" title={cardTags(card.tag_ids, tags).slice(FACE_TAGS).map((tag) => tag.name).join(", ")}>+{tagList.more}</span>}
+        </span>}
+        {card.has_description === 1 && !excerpt && <span className="task-card-count" title="Has a description"><AlignLeft /></span>}
+        {card.comment_count > 0 && <span className="task-card-count" title={commentCountLabel(card.comment_count)}><MessageSquare />{card.comment_count}</span>}
+        {card.attachment_count > 0 && <span className="task-card-count" title={attachmentCountLabel(card.attachment_count)}><Paperclip />{card.attachment_count}</span>}
+        {Boolean(card.relation_count) && <span className="task-card-count" title={relatedLabel(card.relation_count!)}><Link2 />{card.relation_count}</span>}
+        {Boolean(card.open_blockers) && <span className="task-card-count task-card-blockers" title={`B${blockerLabel(card.open_blockers!).slice(1)}`}><OctagonAlert />{card.open_blockers}</span>}
+        {subtasks}
       </span>}
-      {card.has_description === 1 && !excerpt && <span className="task-card-count" title="Has a description"><AlignLeft /></span>}
-      {card.comment_count > 0 && <span className="task-card-count" title={commentCountLabel(card.comment_count)}><MessageSquare />{card.comment_count}</span>}
-      {card.attachment_count > 0 && <span className="task-card-count" title={attachmentCountLabel(card.attachment_count)}><Paperclip />{card.attachment_count}</span>}
-      {Boolean(card.relation_count) && <span className="task-card-count" title={relatedLabel(card.relation_count!)}><Link2 />{card.relation_count}</span>}
-      {Boolean(card.open_blockers) && <span className="task-card-count task-card-blockers" title={`B${blockerLabel(card.open_blockers!).slice(1)}`}><OctagonAlert />{card.open_blockers}</span>}
       {people.length > 0 && <span className="task-card-people" title={assigned}>
         {shownPeople.shown.map((person) => <span key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`}>{initials(person.display_name)}</span>)}
         {shownPeople.more > 0 && <span className="task-avatar task-avatar-more">+{shownPeople.more}</span>}

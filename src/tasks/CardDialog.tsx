@@ -552,6 +552,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
                 <NoteEditor
                   markdown={draft}
                   editable={!saving}
+                  autoFocus
                   onChange={setDraft}
                   onNotice={notify}
                   label="Card description"

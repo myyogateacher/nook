@@ -48,9 +48,11 @@ type Props = {
   /** Accessible name of the editing surface. */
   label?: string;
   placeholder?: string;
+  /** Puts the caret at the end of the content once the editor is created (entering edit mode). */
+  autoFocus?: boolean;
 };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, label = "Note content", placeholder = "Start writing… Type / for commands" }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
   const latest = useRef({ folderId, onNotice, uploadImage });
   latest.current = { folderId, onNotice, uploadImage };
@@ -88,6 +90,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     content: markdown,
     contentType: "markdown",
     editable,
+    autofocus: autoFocus && editable ? "end" : false,
     editorProps: {
       attributes: { class: "note-prose", spellcheck: "true", "aria-label": label }
     },

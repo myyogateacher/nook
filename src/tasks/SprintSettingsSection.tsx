@@ -96,7 +96,7 @@ export function SprintSettingsSection({ boardId, sprints, owner, today, plural, 
         </span>
         {owner && <span className="task-sprint-row-actions">
           {sprint.state === "planned" && !active && <button type="button" className="secondary-button task-small-button" disabled={busy} onClick={() => { void run(() => onStart(sprint)); }}><Play />Start</button>}
-          {sprint.state === "active" && <button type="button" className="secondary-button task-small-button" aria-haspopup="dialog" disabled={busy} onClick={() => onComplete(sprint)}><CircleCheck />Complete…</button>}
+          {sprint.state === "active" && <button type="button" className="secondary-button task-small-button" aria-haspopup="dialog" aria-label={`Complete ${sprint.name}…`} title={`Complete ${sprint.name}…`} disabled={busy} onClick={() => onComplete(sprint)}><CircleCheck />Complete</button>}
           {sprint.state !== "completed" && <button type="button" className="icon-button" disabled={busy} aria-label={`Edit ${sprint.name}`} title="Edit" onClick={() => setEditing(sprint.id)}><Pencil /></button>}
           {sprint.state === "planned" && <button type="button" className="icon-button" disabled={busy || sprint.card_count > 0} aria-label={`Delete ${sprint.name}`}
             title={sprint.card_count > 0 ? `Move its ${plural.toLowerCase()} out first` : "Delete"} onClick={() => { void run(() => onDelete(sprint)); }}><Trash2 /></button>}

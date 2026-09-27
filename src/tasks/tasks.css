@@ -53,9 +53,11 @@
 .task-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .task-card.dragging { opacity: .4; }
 .task-card-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-/* The footer: chips and counts on the left wrap only when a narrow column cannot fit them, so no
-   chip is ever hidden; the avatars stay on the right of its first line. It runs under the ⋯ button. */
-.task-card-meta { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
+/* The footer is one line: chips and counts on the left (the face budgets the tags so whole chips
+   fit, then "+N"), the avatars on the right, centred on the same line. A card whose due chip,
+   counts and avatars alone overflow the lane still wraps rather than hide a count. It runs under
+   the ⋯ button. */
+.task-card-meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
 .task-card-meta-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 5px; }
 .task-card-meta-main > span { flex: none; min-height: 24px; display: inline-flex; align-items: center; gap: 3px; }
 .task-card-meta svg { width: 13px; height: 13px; }
@@ -81,7 +83,9 @@
 
 @media (max-width: 760px) {
   /* One column at a time on an x-mandatory scroll-snap track, synced to a sticky tab strip. */
-  .task-board-header { padding: 8px 8px 4px; gap: 4px; }
+  /* The 16 px gutter; the 44 px Back button reaches into it so its icon stays near the edge (QA 0.9.2). */
+  .task-board-header { padding: 8px 16px 4px; gap: 4px; }
+  .task-board-header .task-back { margin-left: -8px; }
   .task-board-heading h1 { font-size: 1.1rem; }
   .task-board-count { display: none; }
   .task-column-tabs { position: sticky; top: 0; z-index: 2; flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 4px 16px 8px; background: #0d0d0f; scrollbar-width: none; }
@@ -219,7 +223,6 @@
 .task-due-text.today, .task-due-text.soon { color: #d9bf7e; }
 @media (max-width: 760px) {
   .task-card-field-control input { min-height: 44px; font-size: 1rem; }
-  .task-add-time { min-height: 44px; }
 }
 
 /* Due time and assignees (Wave 13B) */
@@ -227,6 +230,11 @@
 .task-add-time:hover { background: #1c1c20; }
 .task-add-time:disabled { opacity: .5; cursor: not-allowed; }
 .task-add-time svg { width: 14px; }
+/* Phone touch targets (QA 0.9.2): "New tag", "Manage tags…", "Add time", "Remove time". Kept after
+   the base rule so it wins the cascade; the text size stays. */
+@media (max-width: 760px) {
+  .task-add-time, .task-due-editor .task-small-button { min-height: 44px; }
+}
 /* The Due field (DuePicker.tsx): a trigger with the value; the editor saves only on Apply. */
 .task-due-picker { display: grid; gap: 6px; min-width: 0; }
 .task-due-trigger { width: 100%; min-width: 0; min-height: 38px; display: flex; align-items: center; gap: 8px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; text-align: left; cursor: pointer; }
@@ -361,10 +369,11 @@
 /* Chips on the face: 22 px tall, one pill radius. */
 .task-card-meta .task-due-chip { flex: none; height: 22px; padding: 0 7px; white-space: nowrap; }
 .tasks-app .task-card-meta-main > .task-card-tags { flex: 0 1 auto; min-width: 0; gap: 4px; overflow: hidden; }
-.task-card-meta .task-tag { height: 22px; padding: 0 7px 0 6px; line-height: 20px; }
+.task-card-meta .task-tag { flex: 0 1 auto; max-width: 100%; height: 22px; padding: 0 7px 0 6px; line-height: 20px; }
+.task-card-meta .task-tag + .task-tag { flex: none; }
 .task-card-meta .task-tag[class*="color-"]::before { margin-right: 3px; }
 .task-tag { min-width: 0; max-width: 7.5em; overflow: hidden; border-radius: 999px; padding: 1px 7px; font-size: .68rem; font-weight: 600; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-.task-card-more-tags { flex: none; color: #a8a8ae; font-weight: 600; }
+.task-card-more-tags { flex: none; height: 22px; display: inline-flex; align-items: center; border-radius: 999px; padding: 0 6px; background: #26262a; color: #b7b7bd; font-size: .68rem; font-weight: 600; }
 .task-card-blockers { color: #f0c060; }
 .tasks-app .task-card-meta > .task-card-people { flex: none; display: inline-flex; align-items: center; margin-left: auto; padding-right: 2px; }
 .task-avatar { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border: 2px solid #1a1a1d; border-radius: 999px; margin-left: -4px; background: #3a3a40; color: #f2f2f3; font-size: .6rem; font-weight: 700; letter-spacing: .02em; }
@@ -429,20 +438,31 @@
   .task-card-page .task-card-side { grid-column: 2; }
   .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
 }
-/* The card dialog uses the width it has (operator QA 0.9.1): wider on tablets and laptops, and at
-   1100 px and up the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
-   in a two-column grid on the left (~40%) beside Description, Attachments, and Comments (~60%).
-   No transform, so the Select and Combobox popups still place against the viewport. */
+/* The card dialog uses the width it has (operator QA 0.9.1, 0.9.2): wider on tablets and laptops;
+   from 1100 px the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
+   on the left beside Description, Attachments, and Comments: 44/56 in min(1080px, 94vw), and from
+   1280 px 46/54 in min(1240px, 94vw). The left column stacks its fields full width and pairs them
+   only once it is 520 px or wider, which is from 1280 px ((1203 - 70) × 46% = 521); Flags keep one
+   row once it is 560 px, from 1370 px. Media queries, not container queries: a query container
+   would contain the fixed Select and Combobox popups. No transform, for the same reason. */
 @media (min-width: 761px) {
   .task-card-modal { width: min(880px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
 }
 @media (min-width: 1100px) {
-  .task-card-modal { width: min(1040px, 92vw); }
-  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); align-items: start; column-gap: 28px; }
-  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 18px; min-width: 0; grid-row: 1; }
+  .task-card-modal { width: min(1080px, 94vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 44fr) minmax(0, 56fr); align-items: start; column-gap: 28px; }
+  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 20px; min-width: 0; grid-row: 1; }
   .task-card-modal .task-card-side { grid-column: 1; }
   .task-card-modal .task-card-main { grid-column: 2; }
+  .task-card-modal .task-card-side .task-card-details { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+}
+@media (min-width: 1280px) {
+  .task-card-modal { width: min(1240px, 94vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); }
   .task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1370px) {
+  .task-card-modal .task-card-side .task-flag-picker { flex-wrap: nowrap; }
 }
 @media (max-width: 760px) {
   .task-card-expand { display: none; }
@@ -629,7 +649,8 @@
 .task-card-title-static { padding: 8px 0; overflow-wrap: anywhere; line-height: 1.3; }
 .task-card-dialog > .read-only-banner { flex: none; }
 @media (max-width: 760px) {
-  .task-sprint-bar { padding: 0 8px 6px; gap: 6px 8px; }
+  /* The phone gutter is 16 px, as on the filter row (QA 0.9.2). */
+  .task-sprint-bar { padding: 0 16px 6px; gap: 6px 8px; }
   .task-sprint-switch { max-width: 60vw; min-height: 44px; }
   .task-sprint-strip { flex-basis: 100%; order: 3; font-size: .78rem; }
   .task-sprint-action { min-height: 44px; }
@@ -639,4 +660,12 @@
   .task-sprint-history summary { min-height: 44px; }
   .task-settings-actions button, .task-settings-input, .task-sprint-manage { min-height: 44px; }
   .task-new-sprint .task-settings-actions { flex-wrap: wrap; }
+}
+
+/* New sprint with a planned sprint and none active (QA 0.9.2): "Sprint 1 is planned — start it instead?" */
+.task-sprint-planned-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.task-link-button { min-height: 32px; border: 0; padding: 0; background: transparent; color: #f5cf79; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.task-link-button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 760px) {
+  .task-link-button { min-height: 44px; }
 }

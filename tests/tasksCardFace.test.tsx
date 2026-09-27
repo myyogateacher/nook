@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { BoardColumnView } from "../src/tasks/BoardColumnView";
-import { avatarTone, CardFace, cardFaceLabel, initials } from "../src/tasks/CardFace";
+import { avatarTone, CardFace, cardFaceLabel, faceTagCount, FACE_FOOTER_PX, initials } from "../src/tasks/CardFace";
 import type { BoardColumn, BoardTag, CardSummary } from "../src/tasks/tasksApi";
 
 const noop = () => undefined;
@@ -50,7 +51,7 @@ test("the accessible name reads flags, due, every tag, every assignee, and the c
   expect(cardFaceLabel({ card: { ...base, due_on: "2026-03-01" }, tags, done: false, today })).toMatch(/^Fix login, overdue, was due /);
 });
 
-test("the face shows flags, the excerpt, three tag chips then +N, the counts, and three avatars then +N", () => {
+test("the face shows flags, the excerpt, the tags that fit then +N, the counts, and three avatars then +N", () => {
   const markup = renderToStaticMarkup(<CardFace card={full} tags={tags} done={false} today={today} excerptId="ex" />);
   expect(markup.startsWith('<div class="task-card-face" aria-hidden="true">')).toBe(true);
   expect(markup).toContain('title="Urgent"><svg');
@@ -59,9 +60,13 @@ test("the face shows flags, the excerpt, three tag chips then +N, the counts, an
   expect(markup).not.toContain("flag-blocked");
   expect(markup).toContain('<span id="ex" class="task-card-excerpt">Users on Safari see a blank page after the redirect.</span>');
   expect(markup).toContain('class="task-due-chip soon" title="Due tomorrow"');
-  const chips = [...markup.matchAll(/class="task-tag color-(\w+)" title="([^"]+)"/g)].map((match) => `${match[2]}:${match[1]}`);
+  // Due, four counts, and four avatars leave no room on the line for a whole tag: only "+5", named in full.
+  expect(markup).not.toContain('class="task-tag ');
+  expect(markup).toContain('title="Bug, Backend, Design, Ops, QA">+5</span>');
+  const tagsOnly = renderToStaticMarkup(<CardFace card={{ ...base, tag_ids: full.tag_ids }} tags={tags} done={false} today={today} excerptId="ex" />);
+  const chips = [...tagsOnly.matchAll(/class="task-tag color-(\w+)" title="([^"]+)"/g)].map((match) => `${match[2]}:${match[1]}`);
   expect(chips).toEqual(["Bug:red", "Backend:blue", "Design:purple"]);
-  expect(markup).toContain('title="Ops, QA">+2</span>');
+  expect(tagsOnly).toContain('title="Ops, QA">+2</span>');
   expect(markup).toContain('title="2 comments"');
   expect(markup).toContain('title="3 related cards"');
   expect(markup).toContain('title="Blocked by 1 open card"');
@@ -90,6 +95,41 @@ test("the face is three rows: flags inline in the title, the excerpt, and one fo
   const onlyDue = renderToStaticMarkup(<CardFace card={{ ...base, due_on: "2026-03-06" }} tags={tags} done={false} today={today} excerptId="ex" />);
   expect(onlyDue).toContain("task-card-meta-main");
   expect(onlyDue).not.toContain("task-card-people");
+});
+
+test("the footer is one line (QA 0.9.2): whole tag chips while they fit beside the due chip, counts, and avatars, then +N", () => {
+  // Measured in Chrome on a 280 px lane (238 px footer): "Tomorrow" 84.5, "qa92ga-backend" 109, "0/2" 32, one avatar 26.
+  expect(FACE_FOOTER_PX).toBe(238);
+  const qa = ["qa92ga-backend", "qa92ga-frontend", "qa92ga-release"];
+  // The QA card: due, three long tags, a subtask count, one avatar. No whole tag fits: "+3", never "qa92ga…".
+  expect(faceTagCount(qa, { due: "Tomorrow", counts: ["0/2"], people: 1 })).toBe(0);
+  // Due "Today" and two long tags: one whole chip and "+1".
+  expect(faceTagCount(qa.slice(0, 2), { due: "Today" })).toBe(1);
+  // Short tags fit; never more than three.
+  expect(faceTagCount(["Bug", "UI", "Ops"], { due: "Tomorrow", people: 1 })).toBe(1);
+  expect(faceTagCount(["Bug", "UI", "Ops", "Design"], {})).toBe(3);
+  expect(faceTagCount(["Bug", "UI"], {})).toBe(2);
+  // A tag alone on the line always shows (the only case that may ellipsise); with anything else it may not fit.
+  expect(faceTagCount(["x".repeat(40)], {})).toBe(1);
+  expect(faceTagCount(["x".repeat(40)], { people: 1 })).toBe(0);
+  expect(faceTagCount([], { due: "Today" })).toBe(0);
+  // A wider footer fits more.
+  expect(faceTagCount(qa, { due: "Tomorrow", counts: ["0/2"], people: 1 }, 480)).toBe(2);
+
+  const qaTags = qa.map((name, index) => tag(`q${index}`, name, "blue"));
+  const card = { ...base, due_on: "2026-03-06", tag_ids: ["q0", "q1", "q2"], assignees: [person("u1", "Qa Tester")] };
+  const markup = renderToStaticMarkup(<CardFace card={card} tags={qaTags} done={false} today={today} excerptId="ex" rollup={{ done: 0, total: 2 }} />);
+  expect(markup).not.toContain('class="task-tag ');
+  expect(markup).toContain('<span class="task-card-more-tags" title="qa92ga-backend, qa92ga-frontend, qa92ga-release">+3</span>');
+  // Every name stays in the accessible label.
+  expect(cardFaceLabel({ card, tags: qaTags, done: false, today })).toContain("tags qa92ga-backend, qa92ga-frontend, and qa92ga-release");
+});
+
+test("the footer CSS keeps whole chips: centred on one line, no fixed tag max-width on the face", () => {
+  const css = readFileSync(new URL("../src/tasks/tasks.css", import.meta.url), "utf8");
+  expect(css).toContain(".task-card-meta { min-width: 0; display: flex; align-items: center;");
+  expect(css).toContain(".task-card-meta .task-tag { flex: 0 1 auto; max-width: 100%;");
+  expect(css).toContain(".task-card-meta .task-tag + .task-tag { flex: none; }");
 });
 
 test("a bare card shows only its title; a description without an excerpt keeps the icon", () => {

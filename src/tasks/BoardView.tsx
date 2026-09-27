@@ -661,7 +661,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         onComplete={(sprint) => openDialog({ kind: "completeSprint", sprintId: sprint.id })} />
     </SprintsSheet>}
     {dialog?.kind === "newSprint" && board && <NewSprintDialog boardName={board.name} sprints={sprints.sprints} today={viewContext.today} defaults={sprints.defaults}
-      canStart={!activeSprint(sprints.sprints)} onCancel={closeDialog}
+      canStart={!activeSprint(sprints.sprints)} onCancel={closeDialog} onStartPlanned={(sprint) => { closeDialog(); void sprints.start(sprint); }}
       onSubmit={async (fields, start) => { const made = await sprints.createAndMaybeStart(fields, start); if (made) closeDialog(); return made; }} />}
     {(() => {
       // From the sprint bar or the Sprints sheet, it is the board's dialog.

@@ -125,7 +125,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
   const [feeds, setFeeds] = useState<CalendarSummary | null>(null);
   const [picker, setPicker] = useState<EventResponse | null>(null);
-  const [reminderPicker, setReminderPicker] = useState<{ eventId: string; allDay: boolean; existing: number[] } | null>(null);
+  const [reminderPicker, setReminderPicker] = useState<{ eventId: string; allDay: boolean; existing: number[]; event: EventResponse["event"] } | null>(null);
   const [showTasks, setShowTasks] = useState(() => readShowTasks(userId));
   const [busy, setBusy] = useState(false);
   const phone = useMediaQuery(PHONE_QUERY);
@@ -430,7 +430,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onSkip={(data, date) => { void skip(data, date); }}
       onDelete={(data) => setConfirm({ kind: "deleteEvent", data })}
       renderReminders={(data) => <EventReminders eventId={data.event.id} allDay={data.event.all_day} reloadKey={reloadKey}
-        onAdd={(existing) => setReminderPicker({ eventId: data.event.id, allDay: data.event.all_day, existing })}
+        onAdd={(existing) => setReminderPicker({ eventId: data.event.id, allDay: data.event.all_day, existing, event: data.event })}
         onRemove={(reminder) => { void dropReminder(reminder, data.event.all_day); }} />}
       renderLinks={(data) => <EventLinks data={data} canEdit={canWrite && data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
     />;
@@ -509,7 +509,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       showTasks={showTasks}
       onToggleTasks={toggleTasks}
     />}
-    {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} onPick={(offset) => addReminder(reminderPicker.eventId, offset)} onClose={() => setReminderPicker(null)} />}
+    {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} event={reminderPicker.event} timeZone={zone} onPick={(offset) => addReminder(reminderPicker.eventId, offset)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}

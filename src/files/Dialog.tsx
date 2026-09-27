@@ -51,11 +51,13 @@ type ModalDialogProps = {
   busy?: boolean;
   /** Id of the element that explains the dialog (the confirm message). */
   describedBy?: string;
+  /** An extra class on the dialog, for a module's own width (the Calendar event sheet). */
+  className?: string;
 };
 
 // In-app modal used by every Files dialog. Escape closes it; it adds no history entry, so browser
 // Back is handled by FilesApp (it closes the dialog and keeps the panel, D18).
-export function ModalDialog({ title, eyebrow, onClose, children, variant = "dialog", busy = false, describedBy }: ModalDialogProps) {
+export function ModalDialog({ title, eyebrow, onClose, children, variant = "dialog", busy = false, describedBy, className }: ModalDialogProps) {
   const titleId = useId();
   const sectionRef = useRef<HTMLElement>(null);
   useDialogFocus(sectionRef);
@@ -73,7 +75,7 @@ export function ModalDialog({ title, eyebrow, onClose, children, variant = "dial
 
   return <>
     <button className="panel-scrim file-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close dialog" tabIndex={-1} />
-    <section ref={sectionRef} tabIndex={-1} className={`file-dialog${variant === "sheet" ? " file-dialog-sheet" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy} aria-busy={busy || undefined} onKeyDown={trapTabKey}>
+    <section ref={sectionRef} tabIndex={-1} className={`file-dialog${variant === "sheet" ? " file-dialog-sheet" : ""}${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy} aria-busy={busy || undefined} onKeyDown={trapTabKey}>
       <header className="file-dialog-header">
         <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2 id={titleId} title={title}>{title}</h2></div>
         <button className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>

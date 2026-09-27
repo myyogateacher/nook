@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
 import { SPRINT_NAME_MAX, sprintEndFor, type SprintDefaults } from "../../shared/sprintPlan";
-import { CUSTOM_DURATION, durationOptions, durationValue, newSprintDefaults, sprintDateRange, sprintLength } from "./sprintModel";
+import { CUSTOM_DURATION, durationOptions, durationValue, newSprintDefaults, plannedSprints, sprintDateRange, sprintLength } from "./sprintModel";
 import type { SprintFields, SprintSummary } from "./tasksApi";
 
 export type NewSprintDraft = { name: string; startOn: string; endOn: string; duration: string };
@@ -23,6 +23,15 @@ export function endForDuration(startOn: string, duration: string, endOn: string)
   return sprintEndFor(startOn, Number(duration));
 }
 
+/**
+ * The dates "Create and start" saves (QA 0.9.2): a sprint that starts now starts today, whatever
+ * start the form suggested, and keeps the chosen length (the Duration, or the Custom range's).
+ */
+export function startTodayDates(draft: NewSprintDraft, today: string) {
+  const days = draft.duration === CUSTOM_DURATION ? sprintLength(draft.startOn, draft.endOn) ?? 14 : Number(draft.duration);
+  return { startOn: today, endOn: sprintEndFor(today, days) };
+}
+
 type NewSprintFormProps = {
   sprints: readonly SprintSummary[];
   today: string;
@@ -35,6 +44,8 @@ type NewSprintFormProps = {
   /** `dialog`: the New sprint dialog's footer; `inline`: in the Sprints sheet. */
   layout?: "dialog" | "inline";
   onBusy?: (busy: boolean) => void;
+  /** With a planned sprint and none active, the form offers "Start <name>" instead (QA 0.9.2). */
+  onStartPlanned?: (sprint: SprintSummary) => void;
 };
 
 /**
@@ -42,7 +53,7 @@ type NewSprintFormProps = {
  * Custom (which shows the end date), prefilled from the board's sprint defaults. The end date
  * follows the start and the duration. Create, or Create and start when no sprint is active.
  */
-export function NewSprintForm({ sprints, today, defaults, canStart, onSubmit, onCancel, layout = "inline", onBusy }: NewSprintFormProps) {
+export function NewSprintForm({ sprints, today, defaults, canStart, onSubmit, onCancel, layout = "inline", onBusy, onStartPlanned }: NewSprintFormProps) {
   const id = useId();
   const [draft, setDraft] = useState(() => initialNewSprintDraft(sprints, today, defaults));
   const [busy, setBusyState] = useState(false);
@@ -51,6 +62,7 @@ export function NewSprintForm({ sprints, today, defaults, canStart, onSubmit, on
   const custom = draft.duration === CUSTOM_DURATION;
   const backwards = Boolean(draft.startOn && draft.endOn && draft.startOn > draft.endOn);
   const ready = Boolean(name) && !backwards && !busy;
+  const planned = canStart && onStartPlanned ? plannedSprints(sprints)[0] ?? null : null;
 
   const change = (next: Partial<NewSprintDraft>) => setDraft((current) => {
     const merged = { ...current, ...next };
@@ -62,7 +74,8 @@ export function NewSprintForm({ sprints, today, defaults, canStart, onSubmit, on
     setBusy(true);
     let made = false;
     try {
-      made = await onSubmit({ name, startOn: draft.startOn || null, endOn: draft.endOn || null }, start);
+      const dates = start ? startTodayDates(draft, today) : { startOn: draft.startOn, endOn: draft.endOn };
+      made = await onSubmit({ name, startOn: dates.startOn || null, endOn: dates.endOn || null }, start);
     } finally {
       // The host unmounts the form once the sprint is made.
       if (!made) setBusy(false);
@@ -70,6 +83,8 @@ export function NewSprintForm({ sprints, today, defaults, canStart, onSubmit, on
   }
 
   const fields = <div className={layout === "dialog" ? "file-dialog-form task-sprint-form" : "task-sprint-form"}>
+    {planned && <p className="task-settings-note task-sprint-planned-hint">{planned.name} is planned — start it instead?{" "}
+      <button type="button" className="task-link-button" disabled={busy} onClick={() => onStartPlanned?.(planned)}>Start {planned.name}</button></p>}
     <label htmlFor={`${id}-name`}>Name</label>
     <input id={`${id}-name`} value={draft.name} maxLength={SPRINT_NAME_MAX} autoFocus disabled={busy} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
     <span className="task-sprint-dates">

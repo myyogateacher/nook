@@ -60,11 +60,16 @@ const taskItem = (row: TaskRow, today: string, now: Date) => {
 /** Within a day, cards with a time come first, by wall time, then date-only ones; approximate across zones, which is accepted (§5.1). */
 const dueOrder = "k.due_on, k.due_time IS NULL, k.due_time";
 
+/**
+ * Due soon ranks the viewer's own cards (assigned to or created by them) first, then by due date
+ * (QA 0.9.2): others' overdue cards on a shared board never push the viewer's card due today out
+ * of the ten.
+ */
 registerTodayProvider("tasksDue", {
   mcpScope: "tasks:read",
   href: "/tasks",
   load: ({ userId, today, now }) => page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon
-      ORDER BY ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
+      ORDER BY (${assignedToCaller} OR k.created_by = $userId) DESC, ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
     .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[]).map((row) => taskItem(row, today, now)))
 });
 

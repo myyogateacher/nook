@@ -305,8 +305,8 @@
 .task-card-field-label svg { width: 15px; }
 .task-tag-picker { display: grid; gap: 6px; min-width: 0; }
 .task-tag-picker .file-dialog-error { margin: 0; font-size: .74rem; }
-.task-tag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
-.task-tag-actions .task-add-time + .task-add-time { margin-left: 0; }
+.task-tag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; margin-left: -8px; }
+.task-tag-actions .task-add-time { margin-left: 0; }
 .task-flag-icon { flex: none; }
 .task-flag-icon.flag-urgent { color: #ff8f80; }
 .task-flag-icon.flag-blocked { color: #f0c060; }
@@ -420,6 +420,21 @@
   .task-card-page .task-card-main { grid-column: 1; }
   .task-card-page .task-card-side { grid-column: 2; }
   .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
+}
+/* The card dialog uses the width it has (operator QA 0.9.1): wider on tablets and laptops, and at
+   1100 px and up the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
+   in a two-column grid on the left (~40%) beside Description, Attachments, and Comments (~60%).
+   No transform, so the Select and Combobox popups still place against the viewport. */
+@media (min-width: 761px) {
+  .task-card-modal { width: min(880px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
+}
+@media (min-width: 1100px) {
+  .task-card-modal { width: min(1040px, 92vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); align-items: start; column-gap: 28px; }
+  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 18px; min-width: 0; grid-row: 1; }
+  .task-card-modal .task-card-side { grid-column: 1; }
+  .task-card-modal .task-card-main { grid-column: 2; }
+  .task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .task-card-expand { display: none; }

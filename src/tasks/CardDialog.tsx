@@ -486,7 +486,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
 
   return <>
     {!page && <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close card" tabIndex={-1} />}
-    <section className={page ? "task-card-dialog task-card-page" : "task-card-dialog"} role={page ? undefined : "dialog"} aria-modal={page ? undefined : true} aria-labelledby={titleId} onKeyDown={page ? undefined : trapTabKey}>
+    <section className={page ? "task-card-dialog task-card-page" : "task-card-dialog task-card-modal"} role={page ? undefined : "dialog"} aria-modal={page ? undefined : true} aria-labelledby={titleId} onKeyDown={page ? undefined : trapTabKey}>
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
           <span className="eyebrow">{[card && hierarchy ? levelEyebrow(hierarchy.structure, levelOf(card)) : null, column ? columnEyebrow(column.name) : "Card"].filter(Boolean).join(" · ")}</span>

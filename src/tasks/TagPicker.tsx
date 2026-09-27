@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
-import { Ban, CirclePause, Eye, Flame, Trash2 } from "lucide-react";
+import { Ban, CirclePause, Eye, Flame, Plus, Trash2 } from "lucide-react";
 import { ApiError } from "../api";
 import { ModalDialog } from "../files/Dialog";
-import { Combobox } from "../ui/Combobox";
+import { Combobox, type ComboboxHandle } from "../ui/Combobox";
 import { Select } from "../ui/Select";
 import type { Option } from "../ui/Listbox";
 import { deleteTagMessage, FLAG_LABELS, MAX_TAGS_PER_CARD, TAG_NAME_MAX, toggleFlag, type TagChange } from "./cardTags";
@@ -98,14 +98,22 @@ type TagPickerProps = {
   onTagsChange: (change: TagChange) => void;
 };
 
+/** The list's hint before anything is typed on a board with no tags, and when nothing matches. */
+export const TAG_HINT_EMPTY = "Type a name to create a tag";
+export const TAG_HINT_NO_MATCH = "No tag matches. Type a new name to create it.";
+
 /**
  * The card's tags (D109): a multiple Combobox over the board's tags with colour swatches and a
- * "Create" row, so any reader adds a tag in passing. The owner gets "Manage tags" to rename,
- * recolour, or delete them; Back closes that dialog (D69).
+ * "Create" row, so any reader adds a tag in passing. The list opens on focus or a click with every
+ * tag (or, on a board with none, the hint to type a name); the Create row leads the list as soon as
+ * a character is typed, and Enter or a click creates and applies it. "+ New tag" opens the same flow
+ * with focus in the field. The owner also gets "Manage tags" to rename, recolour, or delete them;
+ * Back closes that dialog (D69).
  */
 export function TagPicker({ boardId, inputId, tags, tagIds, owner, disabled, onCommit, onTagsChange }: TagPickerProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const manageRef = useRef<HTMLButtonElement>(null);
+  const comboRef = useRef<ComboboxHandle>(null);
   const [error, setError] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
   const byId = new Map(tags.map((tag) => [tag.id, tag]));
@@ -151,7 +159,9 @@ export function TagPicker({ boardId, inputId, tags, tagIds, owner, disabled, onC
       id={inputId}
       label="Tags"
       placeholder="Add tags…"
-      emptyText={tags.length ? "No tag matches. Type a new name to create it." : "No tags yet. Type a name to create one."}
+      emptyText={tags.length ? TAG_HINT_NO_MATCH : TAG_HINT_EMPTY}
+      openOnFocus
+      handleRef={comboRef}
       value={value}
       maxSelected={MAX_TAGS_PER_CARD}
       options={tags.map((tag) => ({ value: tag.id, label: tag.name, swatch: tag.color }))}
@@ -161,7 +171,11 @@ export function TagPicker({ boardId, inputId, tags, tagIds, owner, disabled, onC
     />
     {error && <small className="file-dialog-error" role="alert">{error}</small>}
     {value.length >= MAX_TAGS_PER_CARD && <small className="task-due-text">A card can have up to {MAX_TAGS_PER_CARD} tags.</small>}
-    {owner && <button ref={manageRef} type="button" className="task-add-time" aria-haspopup="dialog" onClick={() => setManaging(true)}>Manage tags…</button>}
+    <span className="task-tag-actions">
+      <button type="button" className="task-add-time" disabled={disabled || value.length >= MAX_TAGS_PER_CARD} aria-controls={inputId}
+        onClick={() => comboRef.current?.open()}><Plus aria-hidden="true" />New tag</button>
+      {owner && <button ref={manageRef} type="button" className="task-add-time" aria-haspopup="dialog" onClick={() => setManaging(true)}>Manage tags…</button>}
+    </span>
     {managing && <ManageTagsDialog tags={tags} onChange={onTagsChange} onClose={closeManage} />}
   </div>;
 }

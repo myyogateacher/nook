@@ -77,6 +77,9 @@ test("the tag picker is a multiple combobox with coloured chips, and only the ow
   expect(reader).not.toContain("<select");
   const owner = renderToStaticMarkup(<TagPicker boardId="b1" inputId="t-tags" tags={tags} tagIds={[]} owner disabled={false} onCommit={async () => undefined} onTagsChange={noop} />);
   expect(owner).toContain('aria-haspopup="dialog">Manage tags…</button>');
+  // "+ New tag" sits beside Manage tags for every reader and opens the same flow in the field.
+  expect(reader).toMatch(/<button type="button" class="task-add-time" aria-controls="t-tags"><svg[^>]*>[\s\S]*?<\/svg>New tag<\/button>/);
+  expect(owner.indexOf("New tag")).toBeLessThan(owner.indexOf("Manage tags"));
   const full = renderToStaticMarkup(<TagPicker boardId="b1" inputId="t-tags" tags={Array.from({ length: 12 }, (_, index) => tag(`x${index}`, `Tag ${index}`))} tagIds={Array.from({ length: 10 }, (_, index) => `x${index}`)} owner={false} disabled={false} onCommit={async () => undefined} onTagsChange={noop} />);
   expect(full).toContain("A card can have up to 10 tags.");
 });

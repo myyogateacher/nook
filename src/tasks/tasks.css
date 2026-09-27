@@ -259,6 +259,8 @@
 .task-card-field-label svg { width: 15px; }
 .task-tag-picker { display: grid; gap: 6px; min-width: 0; }
 .task-tag-picker .file-dialog-error { margin: 0; font-size: .74rem; }
+.task-tag-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; }
+.task-tag-actions .task-add-time + .task-add-time { margin-left: 0; }
 .task-flag-icon { flex: none; }
 .task-flag-icon.flag-urgent { color: #ff8f80; }
 .task-flag-icon.flag-blocked { color: #f0c060; }

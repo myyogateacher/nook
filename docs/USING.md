@@ -40,7 +40,7 @@ Unknown paths open Home. A link to a note or file you cannot read (or that is mi
 
 ## Today
 
-Home shows what needs you today, in sections of up to ten items each. Every item is a link; Back from it returns to Today. **View all** opens the owning app.
+Home shows what needs you today, in sections of up to ten items each, in three groups: **Today** (Due soon, Upcoming, My tasks), **Recent work** (Recent notes, Recent files, Recently edited rows), and **Housekeeping** (drafts, Leaving the Bin soon, Storage). Wide screens show one group per column, medium screens two columns with Housekeeping below, and phones one column. A section with items shows its count ("Due soon · 3"); an empty one folds into a single line, and a group with nothing in it says **All clear**. Every item is a link; Back from it returns to Today. **View all** opens the owning app.
 
 | Section | Shows |
 | --- | --- |
@@ -55,7 +55,7 @@ Home shows what needs you today, in sections of up to ten items each. Every item
 | Upcoming | Events on your calendars over the next seven days |
 | Storage | How much of your storage quota is used, and how much of it is in the Bin |
 
-**Refresh** reloads everything; coming back to the tab after a minute reloads too. If one section fails, it shows **Retry** and the others still load. **Customize** shows or hides sections; the choice is kept in this browser for your account only. On phones Today is a single column.
+**Refresh** reloads everything; coming back to the tab after a minute reloads too. If one section fails, it shows **Retry** and the others still load. **Customize** shows or hides sections; the choice is kept in this browser for your account only.
 
 ## Notes
 

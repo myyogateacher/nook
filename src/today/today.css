@@ -3,35 +3,60 @@
 .today-home { height: 100dvh; overflow-y: auto; overscroll-behavior: contain; }
 .today-home .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .today-content { width: min(1180px, calc(100vw - 40px)); margin: 0 auto; padding: clamp(36px, 7vh, 72px) 0 56px; }
-.today-intro h1 { max-width: 760px; margin: 9px 0 22px; color: #fafafa; font-size: clamp(2rem, 4.4vw, 3.6rem); letter-spacing: -.06em; line-height: 1.04; }
+.today-intro h1 { max-width: 760px; margin: 0 0 24px; color: #fafafa; font-size: clamp(2rem, 4.4vw, 3.6rem); letter-spacing: -.06em; line-height: 1.04; }
+.today-launcher-label { margin: 0 0 8px; color: #85858c; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .today-launcher ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 10px; }
 .today-app { min-height: 48px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid #303035; border-radius: 14px; padding: 6px 18px 6px 7px; background: linear-gradient(145deg, rgb(34 34 38 / 96%), #151517); color: #f2f2f3; font-size: .92rem; font-weight: 650; text-decoration: none; transition: border-color .16s ease, background .16s ease; }
 .today-app:hover { border-color: #6f5928; background: linear-gradient(145deg, #30291c, #181719); }
 .today-app:focus-visible, .today-row:focus-visible, .today-view-all:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 .today-app-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #2d281b; color: #f4ca67; }
 .today-app-icon svg { width: 17px; }
-.today-toolbar { display: flex; align-items: center; gap: 10px; margin: clamp(30px, 5vh, 48px) 0 14px; }
-.today-toolbar-title { flex: 1; min-width: 0; margin: 0; color: #c9c9ce; font-size: .82rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-.today-refresh, .today-retry, .today-customize { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; font-size: .82rem; font-weight: 600; }
+/* A compact toolbar on the groups' top edge: the date, then Refresh and Customize. */
+.today-toolbar { display: flex; align-items: center; gap: 8px; margin: 40px 0 24px; border-bottom: 1px solid #232327; padding-bottom: 8px; }
+.today-toolbar-title { flex: 1; min-width: 0; margin: 0; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.today-refresh, .today-retry, .today-customize { min-height: 32px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; font-size: .82rem; font-weight: 600; }
 .today-refresh svg, .today-retry svg, .today-customize svg { width: 15px; }
 .today-refresh .spinning { animation: today-spin 1s linear infinite; }
 @keyframes today-spin { to { transform: rotate(360deg); } }
-.today-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
-.today-section { min-width: 0; border: 1px solid #28282d; border-radius: 16px; padding: 16px 16px 12px; background: #131315; }
-.today-section-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-.today-section h2 { margin: 0; color: #f2f2f3; font-size: 1rem; letter-spacing: -.02em; }
+/* Groups (mobile first): one column in group order; two from 761 px, three from 1100 px.
+   Each group stacks its own cards, so card heights never fight across a row. */
+.today-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; align-items: start; }
+.today-group { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.today-group-title { margin: 0 0 8px; color: #9b9ba2; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.today-group-cards { display: grid; gap: 16px; align-items: start; }
+.today-section { min-width: 0; border: 1px solid #28282d; border-radius: 16px; padding: 16px; background: #131315; }
+.today-section-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.today-section h3 { min-width: 0; margin: 0; overflow: hidden; color: #f2f2f3; font-size: 1rem; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
+.today-section-count { color: #85858c; font-weight: 600; }
+/* Empty sections fold into one muted line each; a group with nothing says All clear. */
+.today-quiet-list { margin: 0; padding: 0 16px; list-style: none; display: grid; }
+.today-quiet { min-height: 32px; display: flex; align-items: center; color: #85858c; font-size: .84rem; }
+.today-quiet + .today-quiet { border-top: 1px solid #1f1f23; }
+.today-quiet-title { margin-right: 4px; color: #b4b4ba; font-weight: 600; }
+.today-all-clear { margin: 0; border: 1px dashed #28282d; border-radius: 16px; padding: 16px; color: #85858c; font-size: .84rem; }
+.today-all-clear strong { color: #c9c9ce; font-weight: 650; }
+@media (min-width: 761px) {
+  .today-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px 24px; }
+  .today-group-housekeeping { grid-column: 1 / -1; }
+  .today-group-housekeeping .today-group-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1100px) {
+  .today-groups { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .today-group-housekeeping { grid-column: auto; }
+  .today-group-housekeeping .today-group-cards { grid-template-columns: minmax(0, 1fr); }
+}
 .today-view-all { min-height: 32px; display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 0 6px; color: #efc866; font-size: .78rem; font-weight: 700; text-decoration: none; white-space: nowrap; }
 .today-view-all:hover { background: #211d14; }
 .today-view-all svg { width: 14px; }
 .today-list { margin: 0 -8px; padding: 0; list-style: none; display: grid; }
-.today-row { min-height: 40px; display: grid; align-content: center; gap: 1px; border-radius: 9px; padding: 6px 8px; color: #e8e8ea; text-decoration: none; }
+.today-list li + li { border-top: 1px solid #1f1f23; }
+.today-row { min-height: 40px; display: grid; align-content: center; gap: 2px; border-radius: 8px; padding: 8px; color: #e8e8ea; text-decoration: none; }
 .today-row:hover { background: #1c1c1f; }
 .today-row-label { overflow: hidden; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; }
 .today-row-meta { overflow: hidden; color: #85858c; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
 .today-row.overdue .today-row-meta { color: #ffb4a8; }
 .today-row.today .today-row-meta, .today-row.soon .today-row-meta { color: #d9bf7e; }
-.today-empty, .today-more { margin: 4px 0; color: #85858c; font-size: .84rem; }
-.today-more { margin-top: 8px; font-size: .76rem; }
+.today-more { margin: 8px 0 0; color: #85858c; font-size: .76rem; }
 .today-skeleton { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .today-skeleton li { height: 30px; border-radius: 8px; background: linear-gradient(90deg, #1a1a1d, #222226, #1a1a1d); background-size: 200% 100%; animation: today-shimmer 1.4s ease infinite; }
 @keyframes today-shimmer { to { background-position: -200% 0; } }
@@ -58,14 +83,18 @@
 @media (max-width: 760px) {
   .today-content { width: calc(100% - 32px); padding: 26px 0 calc(40px + env(safe-area-inset-bottom)); }
   .today-intro h1 { margin-bottom: 18px; font-size: 2.1rem; }
-  .today-launcher ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+  .today-launcher-label { margin: 0 0 8px; color: #85858c; font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.today-launcher ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
   .today-app { width: 100%; min-height: 52px; padding-right: 10px; }
-  .today-toolbar { flex-wrap: wrap; margin: 26px 0 12px; }
+  .today-toolbar { flex-wrap: wrap; margin: 24px 0 16px; }
   .today-toolbar-title { flex-basis: 100%; }
   .today-refresh, .today-retry, .today-customize, .today-load-error .primary-button { min-height: 44px; }
   .today-customize-extra { display: none; }
-  .today-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .today-section { padding: 14px 12px 10px; }
+  .today-groups { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .today-group-cards { gap: 8px; }
+  .today-section { padding: 16px 12px 8px; }
+  .today-quiet { min-height: 44px; }
+  .today-quiet-list { padding: 0 12px; }
   .today-view-all { min-height: 44px; margin-right: -4px; padding: 0 10px; }
   .today-list { margin: 0 -4px; }
   .today-row { min-height: 44px; padding: 6px; }

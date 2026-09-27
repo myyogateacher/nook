@@ -167,7 +167,8 @@ describe("hierarchy keys (17A): the board's in-memory matcher and the cross-boar
     const story = await add("Story", { parentId: epic });
     await add("Subtask", { parentId: story });
     await add("Loose story", {});
-    await add("Loose subtask", { level: 2 });
+    // A detached subtask (restored while its parent was in the Bin, D130): the API refuses to make one.
+    db.query("UPDATE cards SET parent_card_id = NULL WHERE id = ?").run(await add("Loose subtask", { parentId: story }));
     const board = (await call(user, "GET", `/boards/${treeBoard}`)).body;
     for (const text of ["parent:none", `parent:${epic}`, `parent:${story},none`, "level:work", "level:0,2", "-level:work", "has:subtasks", "-has:subtasks", `level:1 parent:${epic}`]) {
       const parsed = parse(`board:${treeBoard} ${text}`);
@@ -200,7 +201,8 @@ describe("sprint key (17B): the board's in-memory matcher and the cross-board qu
     await add("Next subtask", { parentId: nextTask });
     await add("Later task", { sprintId: later });
     await add("Backlog task", {});
-    await add("Loose subtask", { level: 1 });
+    // A detached subtask (restored while its parent was in the Bin, D130): the API refuses to make one.
+    db.query("UPDATE cards SET parent_card_id = NULL WHERE id = ?").run(await add("Loose subtask", { parentId: nextTask }));
     // A second board with its own active sprint: `current` is per board.
     const other = await call(user, "POST", "/boards", { name: "Parity sprints two", template: "scrum" });
     const otherSprint = (await call(user, "GET", `/boards/${other.body.board.id}`)).body.sprints[0].id as string;

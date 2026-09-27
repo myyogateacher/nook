@@ -101,6 +101,24 @@ export const childName = (structure: BoardStructure, level: number) => structure
 /** Whether a card at `level` can have children on this board. */
 export const canHaveChildren = (structure: BoardStructure, level: number) => level + 1 < structure.levels.length;
 
+/**
+ * A card below the work level (a subtask) needs a parent (operator QA 0.9.1): it is created and
+ * moved only under one. At the work level and above a parent stays optional (an orphan story).
+ * A subtask restored while its parent is in the Bin comes back detached (D130) until someone
+ * chooses a parent or changes its level.
+ */
+export const parentRequired = (structure: BoardStructure, level: number) => level > structure.workLevel && level < structure.levels.length;
+
+/** "a task", "an epic": the level's name with its article, lower case. */
+export function aLevel(structure: BoardStructure, level: number) {
+  const name = levelName(structure, level).toLowerCase();
+  return `${/^[aeiou]/.test(name) ? "an" : "a"} ${name}`;
+}
+
+/** The inline message when a subtask has no parent: "Pick the task this subtask belongs to". */
+export const parentRequiredMessage = (structure: BoardStructure, level: number) =>
+  `Pick the ${levelName(structure, level - 1).toLowerCase()} this ${levelName(structure, level).toLowerCase()} belongs to`;
+
 /** "Epic › Story › Subtask", with "Sprint ›" in front when sprints are on. */
 export function structureLabel(structure: BoardStructure) {
   return [...(structure.sprints ? ["Sprint"] : []), ...structure.levels.map((level) => level.name)].join(" › ");

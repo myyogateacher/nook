@@ -10,7 +10,7 @@ import { insertRelation } from "./cardRelations";
 import { descriptionExcerpt } from "./excerpt";
 import type { RelationType } from "./relations";
 import { boardStructure, liveChildCount, parentRow, rollupFor, rollupsForBoard, type Rollup } from "./hierarchy";
-import { HIERARCHY_LIMITS, levelInUseMessage, parseStructure, TEMPLATES, type BoardStructure, type BoardTemplateId } from "../../shared/boardStructure";
+import { aLevel, HIERARCHY_LIMITS, levelInUseMessage, parentRequired, parentRequiredMessage, parseStructure, TEMPLATES, type BoardStructure, type BoardTemplateId } from "../../shared/boardStructure";
 import { boardSprints, EFFECTIVE_SPRINT_SQL, sprintOfBoard } from "./sprintData";
 import { addSprintDays, SPRINT_DEFAULT_DAYS } from "../../shared/sprintPlan";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
@@ -596,6 +596,10 @@ function resolvePlacement(boardId: string, input: { parentId: string | null; lev
   }
   const level = input.level ?? structure.workLevel;
   if (level >= structure.levels.length) throw levelInvalid(structure);
+  // A subtask needs its parent (operator QA 0.9.1); only a Bin restore brings one back detached (D130).
+  if (parentRequired(structure, level)) {
+    throw new TaskError(400, `${parentRequiredMessage(structure, level)}, or make it ${aLevel(structure, structure.workLevel)}`, "PARENT_REQUIRED", { level });
+  }
   return { structure, parentId: null, level };
 }
 

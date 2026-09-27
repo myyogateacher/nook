@@ -37,7 +37,7 @@ const boardCards = async (session: Session, boardId: string) => (await call(sess
 const lastAudit = (action: string) => db.query("SELECT metadata_json FROM audit_log WHERE event_type = ? ORDER BY rowid DESC LIMIT 1").get(action) as { metadata_json: string } | null;
 
 describe("card parent and level", () => {
-  test("levels default to the parent's plus one, else the work level; orphans are allowed at any level", async () => {
+  test("levels default to the parent's plus one, else the work level; an orphan story is fine, a subtask needs its story", async () => {
     const { member, boardId, columns } = await setup("Levels");
     const todo = columns[0].id;
     const story = await addCard(member, boardId, todo, "Orphan story");
@@ -48,11 +48,39 @@ describe("card parent and level", () => {
     expect(child).toMatchObject({ level: 1, parent_card_id: epic.id });
     const subtask = await addCard(member, boardId, todo, "Subtask", { parentId: child.id, level: 2 });
     expect(subtask).toMatchObject({ level: 2, parent_card_id: child.id });
-    const orphanSubtask = await addCard(member, boardId, todo, "Loose subtask", { level: 2 });
-    expect(orphanSubtask.parent_card_id).toBeNull();
     const audit = JSON.parse(lastAudit("task.card_create")!.metadata_json);
-    expect(audit).toMatchObject({ boardId, level: 2 });
-    expect(audit.parentId).toBeUndefined();
+    expect(audit).toMatchObject({ boardId, level: 2, parentId: child.id });
+    // Below the work level a parent is required (operator QA 0.9.1): nothing is written.
+    const before = (await boardCards(member, boardId)).length;
+    expect(await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo, title: "Loose subtask", level: 2 })).toMatchObject({
+      status: 400, body: { code: "PARENT_REQUIRED", level: 2, error: "Pick the story this subtask belongs to, or make it a story" }
+    });
+    expect((await boardCards(member, boardId)).length).toBe(before);
+  });
+
+  test("a subtask cannot lose its parent or be made without one (PARENT_REQUIRED); a detached one stays editable", async () => {
+    const { member, boardId, columns } = await setup("Parent required", { levels: [{ name: "Task", plural: "Tasks" }, { name: "Subtask", plural: "Subtasks" }], workLevel: 0, sprints: true });
+    const todo = columns[0].id;
+    const task = await addCard(member, boardId, todo, "Task");
+    const other = await addCard(member, boardId, todo, "Other task");
+    const subtask = await addCard(member, boardId, todo, "Subtask", { parentId: task.id });
+    const refused = { status: 400, body: { code: "PARENT_REQUIRED", level: 1, error: "Pick the task this subtask belongs to, or make it a task" } };
+    // Detach, or move a task down a level without a parent: refused, nothing changes.
+    expect(await call(member, "PATCH", `/cards/${subtask.id}`, { parentId: null, revision: subtask.revision })).toMatchObject(refused);
+    expect(await call(member, "PATCH", `/cards/${other.id}`, { level: 1, revision: other.revision })).toMatchObject(refused);
+    expect(await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo, title: "No parent", level: 1 })).toMatchObject(refused);
+    expect((await call(member, "GET", `/cards/${subtask.id}`)).body.card).toMatchObject({ parent_card_id: task.id, revision: subtask.revision });
+    // Another parent is fine, and so is making it a task.
+    const moved = await call(member, "PATCH", `/cards/${subtask.id}`, { parentId: other.id, revision: subtask.revision });
+    expect(moved.body.card).toMatchObject({ parent_card_id: other.id, level: 1 });
+
+    // Detached by a Bin restore (D130): still readable and editable; only a placement change must choose.
+    db.query("UPDATE cards SET parent_card_id = NULL WHERE id = ?").run(subtask.id);
+    const renamed = await call(member, "PATCH", `/cards/${subtask.id}`, { title: "Renamed", revision: moved.body.card.revision });
+    expect(renamed.body.card).toMatchObject({ title: "Renamed", parent_card_id: null, level: 1 });
+    expect((await call(member, "PATCH", `/cards/${subtask.id}`, { level: 1, revision: renamed.body.card.revision })).body.code).toBe("PARENT_REQUIRED");
+    const promoted = await call(member, "PATCH", `/cards/${subtask.id}`, { level: 0, parentId: null, revision: renamed.body.card.revision });
+    expect(promoted.body.card).toMatchObject({ parent_card_id: null, level: 0 });
   });
 
   test("every invalid parent is the same 400 PARENT_INVALID, and nothing is written (T113)", async () => {
@@ -134,7 +162,7 @@ describe("card parent and level", () => {
     for (let index = 0; index < 100; index += 1) insert.run(crypto.randomUUID(), boardId, todo, 10_000 + index, `Child ${index}`, parent.id);
     expect(await call(member, "POST", `/boards/${boardId}/cards`, { columnId: todo, title: "One too many", parentId: parent.id }))
       .toMatchObject({ status: 409, body: { code: "LIMIT_REACHED" } });
-    const loose = await addCard(member, boardId, todo, "Loose", { level: 1 });
+    const loose = await addCard(member, boardId, todo, "Loose", { parentId: (await addCard(member, boardId, todo, "Other parent")).id });
     expect((await call(member, "PATCH", `/cards/${loose.id}`, { parentId: parent.id, revision: loose.revision })).body.code).toBe("LIMIT_REACHED");
   });
 
@@ -379,8 +407,9 @@ describe("parent titles in Today and the calendar overlay (D138, T112)", () => {
     const parsed = parse(`board:${boardId} level:2`);
     if (!parsed.ok) throw new Error(parsed.error.message);
     expect(runQuery(member.userId, parsed.query, { tz: "UTC" }).cards.map((card) => card.parent_title)).toEqual(["Checkout story"]);
-    // Detached, it names no parent.
-    expect((await call(member, "PATCH", `/cards/${subtask.id}`, { parentId: null, revision: subtask.revision })).status).toBe(200);
+    // Detached (a Bin restore while its story is binned, D130), it names no parent. The API itself refuses to detach a subtask.
+    expect((await call(member, "PATCH", `/cards/${subtask.id}`, { parentId: null, revision: subtask.revision })).body.code).toBe("PARENT_REQUIRED");
+    db.query("UPDATE cards SET parent_card_id = NULL WHERE id = ?").run(subtask.id);
     expect((await due())!.parentTitle).toBeNull();
     expect(runQuery(member.userId, parsed.query, { tz: "UTC" }).cards.map((card) => card.parent_title)).toEqual([null]);
   });

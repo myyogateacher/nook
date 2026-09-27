@@ -127,8 +127,12 @@
 .task-small-button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 0 12px; font-size: .8rem; font-weight: 600; }
 .task-small-button svg { width: 14px; }
 .task-description-view, .task-description-editor .editor-surface { border: 1px solid #26262a; border-radius: 12px; padding: 4px 14px; background: #101012; }
-.task-description-view .note-prose, .task-description-editor .note-prose { min-height: 0; padding: 8px 0; font-size: .92rem; }
-.task-description-editor .note-prose { min-height: 160px; }
+/* A card description sizes to its text (about three lines at least): the Notes page's 55vh
+   floor on .editor-surface/.note-prose must not leak into the card dialog, page, or composer.
+   While editing it grows as you type and scrolls inside itself past 60vh. */
+.task-description-view .editor-surface, .task-description-editor .editor-surface { min-height: 0; }
+.task-description-view .note-prose, .task-description-editor .note-prose { min-height: calc(3 * 1.78em + 16px); padding: 8px 0; font-size: .92rem; }
+.task-description-editor .note-prose { max-height: 60vh; overflow-y: auto; }
 .task-description-editor { display: grid; gap: 10px; }
 /* The editor is a focus target like any field: a visible ring while typing in it. */
 .task-description-editor .editor-surface:focus-within { outline: 2px solid var(--yellow); outline-offset: 2px; }
@@ -381,7 +385,6 @@
 .task-composer-hint { color: #85858c; font-size: .74rem; }
 .task-composer-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .task-composer-buttons button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
-.task-composer .task-description-editor .editor-surface { min-height: 0; }
 .task-composer .task-description-editor .note-prose { min-height: 120px; }
 @media (max-width: 760px) {
   .task-composer { width: 100vw; }

@@ -114,7 +114,7 @@
 }
 
 /* Card dialog (a view over the board with its own history entry). Centred with inset and auto
-   margins, not a transform: a transformed ancestor becomes the containing block of the fixed
+   margins (the composer; the card itself is a right-hand drawer from 761 px, below), not a transform: a transformed ancestor becomes the containing block of the fixed
    dropdown popups inside it (WAVE_13_TASK_CARD_UX.md §4.1). */
 .task-card-scrim { z-index: 34; }
 .task-card-dialog { position: fixed; z-index: 35; inset: 0; margin: auto; width: min(720px, calc(100vw - 32px)); height: fit-content; max-height: min(860px, calc(100dvh - 48px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #36363b; border-radius: 16px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
@@ -438,27 +438,43 @@
   .task-card-page .task-card-side { grid-column: 2; }
   .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
 }
-/* The card dialog uses the width it has (operator QA 0.9.1, 0.9.2): wider on tablets and laptops;
-   from 1100 px the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
-   on the left beside Description, Attachments, and Comments: 44/56 in min(1080px, 94vw), and from
-   1280 px 46/54 in min(1240px, 94vw). The left column stacks its fields full width and pairs them
-   only once it is 520 px or wider, which is from 1280 px ((1203 - 70) × 46% = 521); Flags keep one
-   row once it is 560 px, from 1370 px. Media queries, not container queries: a query container
-   would contain the fixed Select and Combobox popups. No transform, for the same reason. */
+/* The card dialog is a drawer on desktop (operator QA 0.9.2): fixed to the right edge, the full
+   viewport height, over a dimmed scrim that closes it. Its header (title and actions) stays at the
+   top; the body scrolls below it, and the comment box sticks to the bottom of the scroll so you can
+   write while the thread scrolls above it. From 1100 px the fields (Due, Assignees, Tags, Flags,
+   the parent, Level, Sprint, Relations) sit on the left and scroll on their own, beside
+   Description, Attachments, and Comments, which scroll the rest of the drawer: 44/56 in
+   min(1080px, 94vw), and from 1280 px 48/52 in min(1240px, 92vw). The left column stacks its fields
+   full width and pairs them only once it is 520 px or wider, from 1280 px
+   (1176 × 48% − 34 = 531); Flags keep one row once it is 560 px, from 1370 px. Media queries, not
+   container queries: a query container would contain the fixed Select and Combobox popups. No
+   transform at rest, for the same reason: the slide-in animates `translate` for 180 ms only, and
+   the property is gone once the animation ends. Closing is instant (Back unmounts the card). */
+@keyframes task-drawer-in { from { translate: 100% 0; } }
+@keyframes task-scrim-in { from { opacity: 0; } }
 @media (min-width: 761px) {
-  .task-card-modal { width: min(880px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
+  .task-card-modal { inset-block: 0; right: 0; left: auto; margin: 0; width: min(880px, 94vw); height: auto; max-height: none; border-width: 0 0 0 1px; border-radius: 0; box-shadow: -24px 0 80px rgb(0 0 0 / 55%); animation: task-drawer-in 180ms cubic-bezier(.2, .7, .3, 1); }
+  .task-card-scrim { animation: task-scrim-in 180ms ease-out; }
+  .task-card-modal .task-card-dialog-body, .task-card-modal .task-card-main { scroll-padding-bottom: 150px; }
+  .task-card-modal .task-card-dialog-body { padding-bottom: 0; }
+  .task-card-modal .task-comment-composer { position: sticky; bottom: 0; z-index: 1; margin-inline: -20px; padding: 10px 20px 16px; border-top: 1px solid #222226; background: #141416; }
+}
+@media (min-width: 761px) and (prefers-reduced-motion: reduce) {
+  .task-card-modal, .task-card-scrim { animation: none; }
 }
 @media (min-width: 1100px) {
   .task-card-modal { width: min(1080px, 94vw); }
-  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 44fr) minmax(0, 56fr); align-items: start; column-gap: 28px; }
-  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 20px; min-width: 0; grid-row: 1; }
-  .task-card-modal .task-card-side { grid-column: 1; }
-  .task-card-modal .task-card-main { grid-column: 2; }
+  .task-card-modal .task-card-dialog-body { overflow: hidden; padding: 0; grid-template-columns: minmax(0, 44fr) minmax(0, 56fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; column-gap: 0; }
+  .task-card-modal .task-card-dialog-body > .bin-state, .task-card-modal .task-card-dialog-body > .bin-loading { grid-column: 1 / -1; margin: 16px 20px; }
+  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 20px; min-width: 0; min-height: 0; grid-row: 1; overflow-y: auto; overscroll-behavior: contain; }
+  .task-card-modal .task-card-side { grid-column: 1; padding: 16px 14px 24px 20px; border-right: 1px solid #222226; }
+  .task-card-modal .task-card-main { grid-column: 2; padding: 16px 20px 0 14px; }
+  .task-card-modal .task-card-main .task-comment-composer { margin-inline: -14px -20px; padding-inline: 14px 20px; }
   .task-card-modal .task-card-side .task-card-details { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 @media (min-width: 1280px) {
-  .task-card-modal { width: min(1240px, 94vw); }
-  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); }
+  .task-card-modal { width: min(1240px, 92vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 48fr) minmax(0, 52fr); }
   .task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (min-width: 1370px) {

@@ -53,9 +53,11 @@
 .task-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .task-card.dragging { opacity: .4; }
 .task-card-title { display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-/* The footer: chips and counts on the left wrap only when a narrow column cannot fit them, so no
-   chip is ever hidden; the avatars stay on the right of its first line. It runs under the ⋯ button. */
-.task-card-meta { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
+/* The footer is one line: chips and counts on the left (the face budgets the tags so whole chips
+   fit, then "+N"), the avatars on the right, centred on the same line. A card whose due chip,
+   counts and avatars alone overflow the lane still wraps rather than hide a count. It runs under
+   the ⋯ button. */
+.task-card-meta { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-right: -30px; color: #85858c; font-size: .72rem; }
 .task-card-meta-main { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 5px; }
 .task-card-meta-main > span { flex: none; min-height: 24px; display: inline-flex; align-items: center; gap: 3px; }
 .task-card-meta svg { width: 13px; height: 13px; }
@@ -361,10 +363,11 @@
 /* Chips on the face: 22 px tall, one pill radius. */
 .task-card-meta .task-due-chip { flex: none; height: 22px; padding: 0 7px; white-space: nowrap; }
 .tasks-app .task-card-meta-main > .task-card-tags { flex: 0 1 auto; min-width: 0; gap: 4px; overflow: hidden; }
-.task-card-meta .task-tag { height: 22px; padding: 0 7px 0 6px; line-height: 20px; }
+.task-card-meta .task-tag { flex: 0 1 auto; max-width: 100%; height: 22px; padding: 0 7px 0 6px; line-height: 20px; }
+.task-card-meta .task-tag + .task-tag { flex: none; }
 .task-card-meta .task-tag[class*="color-"]::before { margin-right: 3px; }
 .task-tag { min-width: 0; max-width: 7.5em; overflow: hidden; border-radius: 999px; padding: 1px 7px; font-size: .68rem; font-weight: 600; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
-.task-card-more-tags { flex: none; color: #a8a8ae; font-weight: 600; }
+.task-card-more-tags { flex: none; height: 22px; display: inline-flex; align-items: center; border-radius: 999px; padding: 0 6px; background: #26262a; color: #b7b7bd; font-size: .68rem; font-weight: 600; }
 .task-card-blockers { color: #f0c060; }
 .tasks-app .task-card-meta > .task-card-people { flex: none; display: inline-flex; align-items: center; margin-left: auto; padding-right: 2px; }
 .task-avatar { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border: 2px solid #1a1a1d; border-radius: 999px; margin-left: -4px; background: #3a3a40; color: #f2f2f3; font-size: .6rem; font-weight: 700; letter-spacing: .02em; }

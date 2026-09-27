@@ -222,6 +222,27 @@ Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 1
 - [x] Replace `docs/images/dashboard-dark.png` with fresh screenshots of the current product (Today dashboard + a task board; dark and light if cheap), taken from an isolated QA instance with seeded placeholder data only — never real user data.
 - [x] Refresh `site/index.html` and `docs/USING.md` for every feature shipped in v0.8–v0.9.
 
+## Research queue (operator, 2026-09-27) — research only, no build yet
+
+### Messages module (Slack-like) — research agent running → `docs/plan/research/2026-09-27-messages-module.md`
+- [ ] Public/private channels; 1:1 and group DMs without a channel name, convertible into a channel; permalink + channel id.
+- [ ] Threaded replies; sent time only (no read/delivery receipts); copy/forward any message or thread to another chat/group/channel; pin messages; archive a channel; add/remove members.
+- [ ] Each channel: Messages tab + Notes tab (notes bound to the channel); @mentions of people in messages and channel notes; #channel mentions.
+- [ ] Rich Markdown message bubbles (bullets, tables, links) for agent output; message search across channels (text, sender, channel…).
+- [ ] Incoming/outgoing webhooks for external agents; incoming messages as reusable component JSON (Block-Kit-like).
+- [ ] Per-person configurable notifications.
+- [ ] Link unfurl when the URL supports it, as a hookable module so per-site unfurlers can be added later.
+- [ ] UI/UX research: how Slack, Discord, Zulip, Mattermost, Element do it; best UX for Nook (mobile-first, history parity).
+
+### Agentic chat module — TODO, research not yet started (pick up later)
+- [ ] Layout: left nav (threads) + right chat pane, 2-column.
+- [ ] Settings: configure MCP tool servers (streamable HTTP or stdio); OpenAI-compatible endpoint + API key + default model (default endpoint = OpenAI, default model `gpt-6-luna`); configurable per-agent model override and max steps.
+- [ ] Create agents in Settings: system prompt + chosen MCP tools; chats run against an agent.
+- [ ] External API key to call an agent from outside; API-key calls do NOT appear in chat threads but in a separate **Audit log** nav: input, number of steps, tool calls + results, output, timings per call.
+- [ ] Chat UI: rich Markdown rendering (bullets, tables, links); private chats; share a chat with a user, all users, or make it public.
+- [ ] FAQ knowledge base via text embeddings over text documents, exposed as an MCP tool selectable in the agent's tool picker.
+- [ ] UI/UX research: how ChatGPT, Claude, Open WebUI, LibreChat, LobeChat, Dify lay out threads/settings/tool config; audit-log UX; best fit for Nook.
+
 ## Backlog — candidate modules and enhancements (for later picking)
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md). Nothing here is scheduled until the operator picks it.

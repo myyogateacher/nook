@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { formatRoute, routeFromLocation } from "../src/router";
 import { boardSprintsRoute, parentTasksRoute } from "../src/tasksRoute";
 import { MANAGE_SPRINTS_OPTION, NEW_SPRINT_OPTION, SprintBar, sprintSwitcherOptions } from "../src/tasks/SprintBar";
-import { endForDuration, initialNewSprintDraft, NewSprintDialog, NewSprintForm } from "../src/tasks/NewSprintForm";
+import { endForDuration, initialNewSprintDraft, NewSprintDialog, NewSprintForm, startTodayDates } from "../src/tasks/NewSprintForm";
 import { SprintDefaultsSection, sprintDefaultsFromDraft, sprintDefaultsSummary } from "../src/tasks/SprintDefaultsSection";
 import { SprintCompleteDialog } from "../src/tasks/SprintCompleteDialog";
 import { CardSprintField } from "../src/tasks/SprintField";
@@ -151,6 +151,31 @@ test("New sprint: the name, start, and Duration come from the board's defaults; 
   expect(form(false)).not.toContain("Create and start");
   const custom = renderToStaticMarkup(<NewSprintForm sprints={[]} today="2026-09-27" defaults={{ days: 10, start: "today" }} canStart onSubmit={async () => true} onCancel={noop} />);
   expect(custom).toContain('value="2026-10-06"');
+});
+
+test("New sprint with a planned sprint and none active (QA 0.9.2): Create and start starts today; the form offers the planned one", () => {
+  const defaults = { days: 14, start: "next" as const, name: "Sprint {n}" };
+  const planned = [sprint(S1, "Sprint 1", "planned", { start_on: "2026-09-27", end_on: "2026-10-10" })];
+  // The form suggests the sprint after Sprint 1 …
+  const draft = initialNewSprintDraft(planned, "2026-09-27", defaults);
+  expect(draft).toMatchObject({ name: "Sprint 2", startOn: "2026-10-11", endOn: "2026-10-24", duration: "14" });
+  // … but a sprint started now starts today and keeps the chosen length.
+  expect(startTodayDates(draft, "2026-09-27")).toEqual({ startOn: "2026-09-27", endOn: "2026-10-10" });
+  expect(startTodayDates({ ...draft, duration: "7" }, "2026-09-27")).toEqual({ startOn: "2026-09-27", endOn: "2026-10-03" });
+  expect(startTodayDates({ ...draft, duration: "custom", startOn: "2026-10-11", endOn: "2026-10-15" }, "2026-09-27")).toEqual({ startOn: "2026-09-27", endOn: "2026-10-01" });
+
+  const dialog = (sprints: SprintSummary[], canStart: boolean) => renderToStaticMarkup(<NewSprintDialog boardName="Web app" sprints={sprints} today="2026-09-27" defaults={defaults}
+    canStart={canStart} onSubmit={async () => true} onCancel={noop} onStartPlanned={noop} />);
+  const hinted = dialog(planned, true);
+  expect(hinted).toContain("Sprint 1 is planned — start it instead?");
+  expect(hinted).toContain('<button type="button" class="task-link-button">Start Sprint 1</button>');
+  expect(hinted).toContain("Create and start");
+  // No planned sprint, or one is active: no hint.
+  expect(dialog([], true)).not.toContain("is planned");
+  expect(dialog(SPRINTS, false)).not.toContain("is planned");
+  // The form's source saves today's dates for Create and start.
+  const source = readFileSync(new URL("../src/tasks/NewSprintForm.tsx", import.meta.url), "utf8");
+  expect(source).toContain("const dates = start ? startTodayDates(draft, today) : { startOn: draft.startOn, endOn: draft.endOn };");
 });
 
 test("Board settings → Sprint defaults: the owner edits duration, start, and pattern; members read them; both reach Manage sprints", () => {

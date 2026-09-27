@@ -647,3 +647,11 @@
   .task-settings-actions button, .task-settings-input, .task-sprint-manage { min-height: 44px; }
   .task-new-sprint .task-settings-actions { flex-wrap: wrap; }
 }
+
+/* New sprint with a planned sprint and none active (QA 0.9.2): "Sprint 1 is planned — start it instead?" */
+.task-sprint-planned-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; }
+.task-link-button { min-height: 32px; border: 0; padding: 0; background: transparent; color: #f5cf79; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.task-link-button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 760px) {
+  .task-link-button { min-height: 44px; }
+}

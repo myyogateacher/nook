@@ -2,14 +2,19 @@
 /* The scroll container holds the rows' visually hidden text (.sr-only is absolute), so it never
    stretches the page itself. */
 .task-home { position: relative; }
-.task-home-segments { display: inline-flex; max-width: 100%; margin: 0 0 18px; border: 1px solid #303035; border-radius: 12px; padding: 3px; background: #131315; }
+.task-home-segments { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px; border: 1px solid #303035; border-radius: 12px; padding: 3px; background: #131315; }
 .task-home-segments button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 9px; padding: 0 14px; background: transparent; color: #b7b7bd; font: inherit; font-size: .84rem; font-weight: 650; white-space: nowrap; cursor: pointer; }
 .task-home-segments button.active { background: #2b271d; color: #f5cf79; }
 .task-home-segments button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .task-home-segments svg { width: 16px; height: 16px; flex: none; }
 .task-home-intro { margin-bottom: 18px; }
+/* One vertical rhythm under the segments on every segment and width: 16 px to whatever comes next
+   (toolbar, section label, or empty state), then 12 px from the toolbar to the content. */
+.task-home-segments + .tasks-section-label { margin-top: 0; }
+.task-views > .task-home-toolbar { margin-bottom: 12px; }
+.task-views > .task-home-toolbar + .tasks-section-label { margin-top: 12px; }
 
-.task-home-pane { display: grid; gap: 10px; min-width: 0; }
+.task-home-pane { display: grid; gap: 12px; min-width: 0; }
 .task-home-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .task-home-actions { display: inline-flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .task-home-action { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; margin: 0; padding: 0 14px; }

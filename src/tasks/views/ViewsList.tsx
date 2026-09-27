@@ -8,6 +8,8 @@ import { onViewsChanged, viewRoleAccess, viewVisibilityLabel } from "./viewActio
 type ViewsListProps = {
   onOpen: (view: TaskView) => void;
   onNew: () => void;
+  /** Lists to show before the first load returns (render tests); the list still loads on mount. */
+  initialLists?: ViewLists | null;
 };
 
 const VisibilityIcon = ({ visibility }: { visibility: TaskView["visibility"] }) => {
@@ -20,9 +22,9 @@ const VisibilityIcon = ({ visibility }: { visibility: TaskView["visibility"] }) 
  * and layout. Selecting one pushes /tasks/views/:id. Views run as the viewer, so a shared view
  * never shows cards from boards the viewer cannot read (T115).
  */
-export function ViewsList({ onOpen, onNew }: ViewsListProps) {
+export function ViewsList({ onOpen, onNew, initialLists = null }: ViewsListProps) {
   const { canCreate } = viewRoleAccess(useRole());
-  const [lists, setLists] = useState<ViewLists | null>(null);
+  const [lists, setLists] = useState<ViewLists | null>(initialLists);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     setError(null);
@@ -52,8 +54,9 @@ export function ViewsList({ onOpen, onNew }: ViewsListProps) {
 
   const empty = lists && !lists.mine.length && !lists.shared.length && !lists.everyone.length;
   return <div className="task-views">
-    {/* Q12: viewers save private views; guests save none (the write gate refuses them). */}
-    {canCreate && <div className="task-home-toolbar">
+    {/* Q12: viewers save private views; guests save none (the write gate refuses them). The empty
+        state carries its own "New view", so the toolbar button shows only beside a list (or an error). */}
+    {canCreate && (error || (lists && !empty)) && <div className="task-home-toolbar">
       <button className="primary-button task-home-action" onClick={onNew}><Plus aria-hidden="true" /><span>New view</span></button>
     </div>}
     {error && <div className="bin-state bin-error" role="alert">

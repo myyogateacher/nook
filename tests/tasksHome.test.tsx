@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { format, parse } from "../shared/taskQuery";
 import { formatRoute, parseRoute, sameRoute } from "../src/router";
 import { parentTasksRoute, tasksBackAction, tasksHomeRoute, tasksRoute } from "../src/tasksRoute";
-import type { QueriedCard } from "../src/tasks/home/homeApi";
+import type { QueriedCard, TaskView } from "../src/tasks/home/homeApi";
 import { homeChipLabel, withHomeTerm } from "../src/tasks/home/HomeFilterBar";
 import { dueBucket, groupResults, refNames, RESTRICTED_BOARD, stateLanes } from "../src/tasks/home/homeResults";
 import { HomeSegments } from "../src/tasks/home/HomeSegments";
@@ -178,7 +178,8 @@ test("the home renders Boards with segments, and the views list starts loading",
   expect(boards).toContain('aria-label="Tasks sections"');
   const views = renderToStaticMarkup(<ViewsList onOpen={noop} onNew={noop} />);
   expect(views).toContain("Loading views…");
-  expect(views).toContain("New view");
+  // The toolbar's New view waits for the list: an empty list offers it in the empty state instead.
+  expect(views).not.toContain("New view");
 });
 
 test("results show Load more with a cursor and the loaded count", () => {
@@ -248,9 +249,18 @@ test("views follow the Team role (Wave 15, Q12): viewers save private views, gue
   expect(ownedViewActions(false, "selected")).toEqual({ edit: false, share: false, withdraw: true });
   expect(ownedViewActions(false, "all_users")).toEqual({ edit: false, share: false, withdraw: true });
 
-  const list = (role: Role) => as(role, <ViewsList onOpen={noop} onNew={noop} />);
-  for (const role of ["admin", "member", "viewer"] as const) expect(list(role)).toContain("New view");
+  const saved = { id: "v1", name: "Urgent", owner_id: me, owner_name: "Me", is_owner: 1, visibility: "private", query: "", display: { layout: "list" },
+    position: 1, revision: 1, created_at: "", updated_at: "" } as unknown as TaskView;
+  const lists = { mine: [saved], shared: [], everyone: [], truncated: false };
+  const newViewButtons = (html: string) => html.split(">New view</").length - 1;
+  const list = (role: Role) => as(role, <ViewsList onOpen={noop} onNew={noop} initialLists={lists} />);
+  for (const role of ["admin", "member", "viewer"] as const) expect(newViewButtons(list(role))).toBe(1);
   expect(list("guest")).not.toContain("New view");
+  // An empty list shows New view once, in the empty state, not again in the toolbar.
+  const empty = (role: Role) => as(role, <ViewsList onOpen={noop} onNew={noop} initialLists={{ mine: [], shared: [], everyone: [], truncated: false }} />);
+  expect(newViewButtons(empty("member"))).toBe(1);
+  expect(empty("member")).not.toContain("task-home-toolbar");
+  expect(empty("guest")).not.toContain("New view");
 
   const newView = (role: Role) => as(role, <ViewPage userId={me} viewId="new" query={undefined} onQuery={noop} directory={{ boards: [], users: [] }} notify={noop}
     onOpenCard={noop} onOpenView={noop} onBack={noop} onMissing={noop} onDeleted={noop} />);
@@ -264,4 +274,13 @@ test("views follow the Team role (Wave 15, Q12): viewers save private views, gue
   const myWork = (role: Role) => as(role, <MyWork userId={me} query={filtered} onQuery={noop} directory={{ boards: [], users: [] }} notify={noop} onOpenCard={noop} onOpenView={noop} />);
   for (const role of ["member", "viewer"] as const) expect(myWork(role)).toContain("Save as view");
   expect(myWork("guest")).not.toContain("Save as view");
+});
+
+test("the Tasks home keeps one vertical rhythm under the segments", () => {
+  const css = readFileSync(new URL("../src/tasks/home/home.css", import.meta.url), "utf8");
+  // Block-level segments, so the 16 px gap is the same above and below 760 px.
+  expect(css).toContain(".task-home-segments { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px;");
+  expect(css).toContain(".task-home-segments + .tasks-section-label { margin-top: 0; }");
+  expect(css).toContain(".task-views > .task-home-toolbar { margin-bottom: 12px; }");
+  expect(css).toContain(".task-home-pane { display: grid; gap: 12px;");
 });

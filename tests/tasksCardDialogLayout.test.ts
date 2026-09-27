@@ -13,12 +13,24 @@ const block = (query: string) => {
 
 test("the card dialog widens on tablets and laptops and splits into fields and content at 1100 px", () => {
   expect(block("min-width: 761px")).toContain(".task-card-modal { width: min(880px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }");
+  // 1100–1279 px: min(1080px, 94vw), fields 44% / content 56%; the fields stack full width.
   const wide = block("min-width: 1100px");
-  expect(wide).toContain(".task-card-modal { width: min(1040px, 92vw); }");
-  expect(wide).toContain("grid-template-columns: minmax(0, 4fr) minmax(0, 6fr)");
+  expect(wide).toContain(".task-card-modal { width: min(1080px, 94vw); }");
+  expect(wide).toContain("grid-template-columns: minmax(0, 44fr) minmax(0, 56fr)");
+  expect(wide).toContain("gap: 20px;");
   expect(wide).toContain(".task-card-modal .task-card-side { grid-column: 1; }");
   expect(wide).toContain(".task-card-modal .task-card-main { grid-column: 2; }");
-  expect(wide).toContain(".task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }");
+  expect(wide).toContain(".task-card-modal .task-card-side .task-card-details { grid-template-columns: minmax(0, 1fr); gap: 16px; }");
+  // From 1280 px: min(1240px, 94vw), 46% / 54% (operator QA 0.9.2: the left column had no room).
+  const wider = block("min-width: 1280px");
+  expect(wider).toContain(".task-card-modal { width: min(1240px, 94vw); }");
+  expect(wider).toContain("grid-template-columns: minmax(0, 46fr) minmax(0, 54fr)");
+  // Due and Assignees pair up only when the left column is 520 px or wider (from 1280 px); Flags keep one row from 560 px (1370 px).
+  expect(wider).toContain(".task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }");
+  expect(css).toContain("@media (min-width: 1370px) {\n  .task-card-modal .task-card-side .task-flag-picker { flex-wrap: nowrap; }\n}");
+  // No container queries: they would contain the fixed popups.
+  expect(css).not.toContain("@container");
+  expect(block("min-width: 761px")).toContain("max-height: min(92vh,");
   // Popups inside place against the viewport: no transform on the dialog.
   expect(/\.task-card-(dialog|modal)[^{]*\{[^}]*transform/.test(css)).toBe(false);
   // Phones keep the full-screen dialog.

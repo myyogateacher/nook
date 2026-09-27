@@ -438,20 +438,31 @@
   .task-card-page .task-card-side { grid-column: 2; }
   .task-card-page .task-card-details { grid-template-columns: minmax(0, 1fr); }
 }
-/* The card dialog uses the width it has (operator QA 0.9.1): wider on tablets and laptops, and at
-   1100 px and up the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
-   in a two-column grid on the left (~40%) beside Description, Attachments, and Comments (~60%).
-   No transform, so the Select and Combobox popups still place against the viewport. */
+/* The card dialog uses the width it has (operator QA 0.9.1, 0.9.2): wider on tablets and laptops;
+   from 1100 px the fields (Due, Assignees, Tags, Flags, the parent, Level, Sprint, Relations) sit
+   on the left beside Description, Attachments, and Comments: 44/56 in min(1080px, 94vw), and from
+   1280 px 46/54 in min(1240px, 94vw). The left column stacks its fields full width and pairs them
+   only once it is 520 px or wider, which is from 1280 px ((1203 - 70) × 46% = 521); Flags keep one
+   row once it is 560 px, from 1370 px. Media queries, not container queries: a query container
+   would contain the fixed Select and Combobox popups. No transform, for the same reason. */
 @media (min-width: 761px) {
   .task-card-modal { width: min(880px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
 }
 @media (min-width: 1100px) {
-  .task-card-modal { width: min(1040px, 92vw); }
-  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); align-items: start; column-gap: 28px; }
-  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 18px; min-width: 0; grid-row: 1; }
+  .task-card-modal { width: min(1080px, 94vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 44fr) minmax(0, 56fr); align-items: start; column-gap: 28px; }
+  .task-card-modal .task-card-side, .task-card-modal .task-card-main { display: grid; align-content: start; gap: 20px; min-width: 0; grid-row: 1; }
   .task-card-modal .task-card-side { grid-column: 1; }
   .task-card-modal .task-card-main { grid-column: 2; }
+  .task-card-modal .task-card-side .task-card-details { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+}
+@media (min-width: 1280px) {
+  .task-card-modal { width: min(1240px, 94vw); }
+  .task-card-modal .task-card-dialog-body { grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); }
   .task-card-modal .task-card-side .task-card-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1370px) {
+  .task-card-modal .task-card-side .task-flag-picker { flex-wrap: nowrap; }
 }
 @media (max-width: 760px) {
   .task-card-expand { display: none; }

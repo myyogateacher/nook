@@ -90,7 +90,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.9.1 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.9.2 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -99,6 +99,15 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.9.2
+
+- **Today** is grouped into **Today**, **Recent work**, and **Housekeeping**, and empty sections fold away.
+- **Tags** get distinct colours, and creating one is easy to find: the list opens on focus, with a **Create** row and **+ New tag**.
+- **Due** is a picker with **Apply** and **Cancel** and quick picks; lane cards are tidier, and the card dialog is wider, with two columns on large screens.
+- **Subtasks always belong to a task**: the parent field offers **Choose a task…**, and **Make it a task** turns a subtask into a task.
+- **Sprint defaults per board** (duration, start rule, name pattern), **New sprint** from the header switcher, a dedicated **Sprints** page, and a prompt when no sprint is active.
+- **Team** role changes and blocking no longer ask for your password; the session, CSRF check, and audit log still apply. Long dropdown lists scroll again. No migration in this release.
 
 ## What's new in v0.9.1
 

@@ -9,8 +9,20 @@ import { dueStatus } from "../tasks/taskActions";
 /** One rendered row: the link text, a short second line, and where it goes. */
 export type TodayRow = { key: string; label: string; meta: string; route: Route; tone?: "overdue" | "today" | "soon" };
 
+/** The fixed groups Today lays its sections out in, in order (one column each on wide screens). */
+export const TODAY_GROUPS = [
+  { id: "today", title: "Today", clear: "nothing due or coming up" },
+  { id: "recent", title: "Recent work", clear: "nothing edited lately" },
+  { id: "housekeeping", title: "Housekeeping", clear: "nothing to tidy up" }
+] as const;
+
+export type TodayGroupId = (typeof TODAY_GROUPS)[number]["id"];
+
 export type TodaySectionDef = {
   title: string;
+  /** The group it shows in; a new section (Team, …) picks one and slots in by registration order. */
+  group: TodayGroupId;
+  /** Short copy for the one-line collapsed state: "Upcoming · nothing in the next 7 days". */
   empty: string;
   /** Turns one server item into a row; `date` is Today's date in the viewer's zone. */
   row?: (item: Record<string, any>, date: string) => TodayRow;
@@ -47,31 +59,27 @@ function taskRow(item: Record<string, any>, date: string): TodayRow {
 const binTypeLabel: Record<string, string> = { note: "Note", document: "File", card: "Card", board: "Board", collection: "Collection", collection_row: "Row", calendar: "Calendar", event: "Event" };
 
 /**
- * Client copy for each Today section, in the default order. A section the
- * server does not return (its module is not installed) is not shown; a
- * section the client has no entry for is skipped. Later modules add theirs.
+ * Client copy for each Today section, grouped and in display order. A section
+ * the server does not return (its module is not installed) is not shown; a
+ * section the client has no entry for is skipped. Later modules add theirs
+ * with a `group`, next to their server `registerTodayProvider` call.
  */
 export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
-  tasksDue: { title: "Due soon", empty: "Nothing is due in the next seven days.", app: "Tasks", row: taskRow },
-  tasksMine: { title: "My tasks", empty: "No other open cards assigned to you or added by you.", app: "Tasks", row: taskRow, viewAll: "/tasks/my" },
+  // Today
+  tasksDue: { title: "Due soon", group: "today", empty: "nothing due in the next 7 days", app: "Tasks", row: taskRow },
+  upcoming: { title: "Upcoming", group: "today", empty: "nothing in the next 7 days", app: "Calendar", row: upcomingRow },
+  tasksMine: { title: "My tasks", group: "today", empty: "no other open cards for you", app: "Tasks", row: taskRow, viewAll: "/tasks/my" },
+  // Recent work
   notesRecent: {
-    title: "Recent notes", empty: "No notes yet.", app: "Notes",
+    title: "Recent notes", group: "recent", empty: "no notes yet", app: "Notes",
     row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: [item.is_owner ? null : item.owner_name, `Updated ${relativeTime(item.updated_at)}`].filter(Boolean).join(" · "), route: noteRoute(item.id) })
   },
-  drafts: {
-    title: "Unpublished drafts", empty: "No unpublished drafts.", app: "Notes",
-    row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `${item.neverPublished ? "Never published" : "Unpublished changes"} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
-  },
-  agentDrafts: {
-    title: "Drafts from agents", empty: "No drafts written by MCP keys.", app: "Notes",
-    row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `Draft by ${item.keyName} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
-  },
   files: {
-    title: "Recent files", empty: "No files yet.", app: "Files",
+    title: "Recent files", group: "recent", empty: "no files yet", app: "Files",
     row: (item) => ({ key: item.id, label: item.name, meta: [formatBytes(item.size_bytes), item.is_owner ? null : item.owner_name, relativeTime(item.updated_at)].filter(Boolean).join(" · "), route: { app: "files", folder: "all", documentId: item.id } })
   },
   collectionsRecent: {
-    title: "Recently edited rows", empty: "No rows edited yet.", app: "Collections",
+    title: "Recently edited rows", group: "recent", empty: "no rows edited yet", app: "Collections",
     row: (item) => ({
       key: item.rowId,
       label: item.title || "Untitled",
@@ -79,15 +87,37 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
       route: collectionsRoute(item.collectionId, { rowId: item.rowId })
     })
   },
+  // Housekeeping
+  drafts: {
+    title: "Unpublished drafts", group: "housekeeping", empty: "none", app: "Notes",
+    row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `${item.neverPublished ? "Never published" : "Unpublished changes"} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
+  },
+  agentDrafts: {
+    title: "Drafts from agents", group: "housekeeping", empty: "none from MCP keys", app: "Notes",
+    row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `Draft by ${item.keyName} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
+  },
   binSoon: {
-    title: "Leaving the Bin soon", empty: "Nothing in your Bin is deleted forever in the next three days.", app: "Bin",
+    title: "Leaving the Bin soon", group: "housekeeping", empty: "nothing in the next 3 days", app: "Bin",
     row: (item) => ({ key: `${item.type}:${item.id}`, label: item.title || "Untitled", meta: `${binTypeLabel[item.type] ?? "Item"} · deleted forever ${relativeTime(item.purge_after)}`, route: { app: "bin" } })
   },
-  upcoming: { title: "Upcoming", empty: "Nothing on your calendars in the next seven days.", app: "Calendar", row: upcomingRow },
-  storage: { title: "Storage", empty: "", app: "Files" }
+  storage: { title: "Storage", group: "housekeeping", empty: "no information", app: "Files" }
 };
 
 export const DEFAULT_SECTION_ORDER = Object.keys(TODAY_SECTIONS);
+
+/** Orders section names by the client registry (which is group order) and splits them into the fixed groups, dropping empty groups and unknown names. */
+export function groupTodaySections(names: readonly string[]) {
+  const wanted = new Set(names);
+  return TODAY_GROUPS
+    .map((group) => ({ ...group, names: DEFAULT_SECTION_ORDER.filter((name) => wanted.has(name) && TODAY_SECTIONS[name]!.group === group.id) }))
+    .filter((group) => group.names.length > 0);
+}
+
+/** The count shown after a section's title ("Due soon · 3"), or null when there is nothing to count. */
+export function sectionCount(items: readonly unknown[], more: boolean | undefined) {
+  if (items.length === 0) return null;
+  return more ? `${items.length}+` : String(items.length);
+}
 
 /** The "View all" route: the section's href, parsed like any other in-app URL. */
 export const viewAllRoute = (href: string): Route => parseRoute(href);

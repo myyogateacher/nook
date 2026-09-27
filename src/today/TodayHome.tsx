@@ -9,7 +9,7 @@ import { CustomizeSections } from "./CustomizeSections";
 import { getToday, type TodayResponse, type TodaySection } from "./todayApi";
 import { enabledTodayApps } from "./todayApps";
 import { readHiddenSections, toggleHidden, writeHiddenSections } from "./todayPreferences";
-import { DEFAULT_SECTION_ORDER, storageText, TODAY_SECTIONS, viewAllRoute, type StorageUsage } from "./todaySections";
+import { DEFAULT_SECTION_ORDER, groupTodaySections, sectionCount, storageText, TODAY_SECTIONS, viewAllRoute, type StorageUsage } from "./todaySections";
 import "./today.css";
 
 /** Data older than this is refetched when the tab becomes visible again. */
@@ -51,12 +51,18 @@ function StorageMeter({ usage }: { usage: StorageUsage }) {
 
 type SectionViewProps = { name: string; section: TodaySection | undefined; date: string; busy: boolean; retrying: boolean; onRetry: () => void; onOpenRoute: (route: Route) => void };
 
+/** A section that has loaded with nothing in it: it folds into one muted line in its group. */
+export function isQuietSection(name: string, section: TodaySection | undefined, busy: boolean, retrying: boolean) {
+  return !busy && !retrying && !!section && !section.error && section.items.length === 0 && !!TODAY_SECTIONS[name];
+}
+
 function SectionView({ name, section, date, busy, retrying, onRetry, onOpenRoute }: SectionViewProps) {
   const def = TODAY_SECTIONS[name]!;
   const headingId = `today-${name}`;
+  const count = !busy && section && !section.error && name !== "storage" ? sectionCount(section.items, section.more) : null;
   return <section className={`today-section today-section-${name}`} aria-labelledby={headingId} aria-busy={busy || retrying || undefined}>
     <header className="today-section-header">
-      <h2 id={headingId}>{def.title}</h2>
+      <h3 id={headingId}>{def.title}{count && <span className="today-section-count"> · {count}</span>}</h3>
       {section && <RouteLink className="today-view-all" route={viewAllRoute(def.viewAll ?? section.href)} onOpenRoute={onOpenRoute} label={`View all ${def.title.toLowerCase()} in ${def.app}`}>View all<ArrowRight aria-hidden="true" /></RouteLink>}
     </header>
     {busy || !section
@@ -67,24 +73,57 @@ function SectionView({ name, section, date, busy, retrying, onRetry, onOpenRoute
           <button className="secondary-button today-retry" onClick={onRetry} disabled={retrying}><RotateCcw />{retrying ? "Retrying…" : "Retry"}</button>
         </div>
         : name === "storage"
-          ? section.items[0] ? <StorageMeter usage={section.items[0] as StorageUsage} /> : <p className="today-empty">No storage information.</p>
-          : section.items.length === 0
-            ? <p className="today-empty">{def.empty}</p>
-            : <>
-              <ul className="today-list">
-                {section.items.map((item) => {
-                  const row = def.row!(item, date);
-                  return <li key={row.key}>
-                    <RouteLink className={`today-row${row.tone ? ` ${row.tone}` : ""}`} route={row.route} onOpenRoute={onOpenRoute}>
-                      <span className="today-row-label">{row.label}</span>
-                      {row.meta && <span className="today-row-meta">{row.meta}</span>}
-                    </RouteLink>
-                  </li>;
-                })}
-              </ul>
-              {section.more && <p className="today-more">Showing the latest ten. View all for more.</p>}
-            </>}
+          ? <StorageMeter usage={section.items[0] as StorageUsage} />
+          : <>
+            <ul className="today-list">
+              {section.items.map((item) => {
+                const row = def.row!(item, date);
+                return <li key={row.key}>
+                  <RouteLink className={`today-row${row.tone ? ` ${row.tone}` : ""}`} route={row.route} onOpenRoute={onOpenRoute}>
+                    <span className="today-row-label">{row.label}</span>
+                    {row.meta && <span className="today-row-meta">{row.meta}</span>}
+                  </RouteLink>
+                </li>;
+              })}
+            </ul>
+            {section.more && <p className="today-more">Showing the latest ten. View all for more.</p>}
+          </>}
   </section>;
+}
+
+type TodayGroupsProps = {
+  names: readonly string[];
+  data: TodayResponse | null;
+  busy: boolean;
+  retrying: ReadonlySet<string>;
+  onRetry: (name: string) => void;
+  onOpenRoute: (route: Route) => void;
+};
+
+/**
+ * The sections in their three fixed groups (Today, Recent work, Housekeeping), one column each
+ * on wide screens. Sections with items are cards; empty ones fold into a muted line under them,
+ * and a group with nothing at all says "All clear".
+ */
+export function TodayGroups({ names, data, busy, retrying, onRetry, onOpenRoute }: TodayGroupsProps) {
+  return <div className="today-groups" aria-busy={busy || undefined}>
+    {groupTodaySections(names).map((group) => {
+      const quiet = group.names.filter((name) => isQuietSection(name, data?.sections[name], busy, retrying.has(name)));
+      const cards = group.names.filter((name) => !quiet.includes(name));
+      const headingId = `today-group-${group.id}`;
+      return <section key={group.id} className={`today-group today-group-${group.id}`} aria-labelledby={headingId}>
+        <h2 id={headingId} className="today-group-title">{group.title}</h2>
+        {cards.length > 0 && <div className="today-group-cards">
+          {cards.map((name) => <SectionView key={name} name={name} section={data?.sections[name]} date={data?.date ?? ""} busy={busy} retrying={retrying.has(name)} onRetry={() => onRetry(name)} onOpenRoute={onOpenRoute} />)}
+        </div>}
+        {cards.length === 0
+          ? <p className="today-all-clear"><strong>All clear</strong> · {group.clear}</p>
+          : quiet.length > 0 && <ul className="today-quiet-list">
+            {quiet.map((name) => <li key={name} className={`today-quiet today-quiet-${name}`}><span className="today-quiet-title">{TODAY_SECTIONS[name]!.title}</span> · {TODAY_SECTIONS[name]!.empty}</li>)}
+          </ul>}
+      </section>;
+    })}
+  </div>;
 }
 
 /**
@@ -194,10 +233,11 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
   }
 
   const initialLoading = data === null && loadError === null;
-  // The sections the server returned, in its order, that this client knows how to show, without
+  // The sections the server returned that this client knows how to show, without
   // those of modules that are turned off (they are not offered in Customize either).
   const moduleHidden = moduleHiddenKey ? moduleHiddenKey.split(",") : [];
-  const available = (data ? Object.keys(data.sections).filter((name) => TODAY_SECTIONS[name]) : DEFAULT_SECTION_ORDER.filter((name) => name !== "agentDrafts"))
+  // Client registry order (group order), whatever order the server answered in.
+  const available = DEFAULT_SECTION_ORDER.filter((name) => data ? data.sections[name] : name !== "agentDrafts")
     .filter((name) => !moduleHidden.includes(name));
   const names = available.filter((name) => !hidden.includes(name));
   const firstName = displayName.split(" ")[0] || displayName;
@@ -209,8 +249,8 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
     </header>
     <div className="today-content">
       <section className="today-intro" aria-labelledby="app-home-title">
-        <span className="eyebrow">Today</span>
         <h1 id="app-home-title">Good to see you, {firstName}.</h1>
+        <p className="today-launcher-label" aria-hidden="true">Apps</p>
         <nav className="today-launcher" aria-label="Apps">
           <ul>
             {enabledTodayApps(disabledModules).map(({ section, label, href, icon: Icon }) => <li key={section}>
@@ -225,7 +265,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
       </section>
 
       <div className="today-toolbar">
-        <h2 className="today-toolbar-title">{data ? new Date(`${data.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "Today"}</h2>
+        <p className="today-toolbar-title">{data ? new Date(`${data.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "Today"}</p>
         <button className="secondary-button today-refresh" onClick={() => { void load(true); }} disabled={refreshing} aria-describedby="today-status"><RotateCw className={refreshing ? "spinning" : undefined} />{refreshing ? "Refreshing…" : "Refresh"}</button>
         <button ref={customizeButtonRef} className="secondary-button today-customize" onClick={() => setCustomizing(true)} aria-haspopup="dialog" disabled={!data}><SlidersHorizontal /><span>Customize<span className="today-customize-extra"> sections</span></span></button>
         <p id="today-status" className="sr-only" role="status" aria-live="polite">{announcement}</p>
@@ -239,9 +279,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
         </div>
         : names.length === 0
           ? <p className="today-all-hidden">{available.length === 0 ? "Every Today section belongs to a module that is turned off. Turn modules on in Settings → Modules." : "Every section is hidden. Use Customize sections to show them again."}</p>
-          : <div className="today-grid" aria-busy={initialLoading || undefined}>
-            {names.map((name) => <SectionView key={name} name={name} section={data?.sections[name]} date={data?.date ?? ""} busy={initialLoading} retrying={retrying.has(name)} onRetry={() => { void retrySection(name); }} onOpenRoute={onOpenRoute} />)}
-          </div>}
+          : <TodayGroups names={names} data={data} busy={initialLoading} retrying={retrying} onRetry={(name) => { void retrySection(name); }} onOpenRoute={onOpenRoute} />}
       {customizing && <CustomizeSections names={available} hidden={hidden} onChange={(name, visible) => changeHidden(toggleHidden(hidden, name, visible))} onShowAll={() => changeHidden([])} onClose={closeCustomize} />}
     </div>
   </main>;

@@ -62,10 +62,10 @@ test("Today keeps the greeting and a launcher row of real links, without the Bin
 
 test("Today starts with busy skeleton sections, each labelled by its heading", () => {
   const markup = home();
-  expect(markup).toContain('<div class="today-grid" aria-busy="true">');
+  expect(markup).toContain('<div class="today-groups" aria-busy="true">');
   const sections = [...markup.matchAll(/<section class="today-section today-section-(\w+)" aria-labelledby="today-(\w+)"/g)];
-  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage"]);
-  for (const [, name] of sections) expect(markup).toContain(`<h2 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h2>`);
+  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "upcoming", "tasksMine", "notesRecent", "files", "collectionsRecent", "drafts", "binSoon", "storage"]);
+  for (const [, name] of sections) expect(markup).toContain(`<h3 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h3>`);
   expect(markup).toContain('class="today-skeleton" aria-hidden="true"');
   expect(markup).toContain('role="status" aria-live="polite"');
   expect(markup).toContain(">Refresh</button>");
@@ -122,10 +122,9 @@ test("hidden Today sections are kept per user and survive bad storage", async ()
 test("Today is one column with 44px rows and targets on phones", async () => {
   const css = await Bun.file(new URL("../src/today/today.css", import.meta.url)).text();
   const phone = css.slice(css.indexOf("@media (max-width: 760px)"));
-  expect(phone).toMatch(/\.today-grid \{ grid-template-columns: minmax\(0, 1fr\);/);
+  expect(phone).toMatch(/\.today-groups \{ grid-template-columns: minmax\(0, 1fr\);/);
   expect(phone).toMatch(/\.today-row \{ min-height: 44px;/);
   expect(phone).toMatch(/\.today-view-all \{ min-height: 44px;/);
   expect(phone).toMatch(/\.today-refresh, \.today-retry, \.today-customize[^{]*\{ min-height: 44px; \}/);
   expect(css).toMatch(/\.today-customize-option \{ min-height: 44px;/);
-  expect(css).toMatch(/\.today-grid \{ display: grid; grid-template-columns: repeat\(auto-fill, minmax\(320px, 1fr\)\);/);
 });

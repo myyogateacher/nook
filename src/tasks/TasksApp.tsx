@@ -45,12 +45,12 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   const binCount = useBinCount(Boolean(onBin));
   // Tasks keeps its own toast so a message can carry an action (Undo after moving to the Bin). One
   // with an action (Undo, Move, Open, View) stays 15 s so there is time to reach it (QA 0.9.0).
-  const [toast, setToast] = useState<{ id: number; message: string; action?: { label: string; run: () => void } } | null>(null);
+  const [toast, setToast] = useState<{ id: number; message: string; action?: { label: string; run: () => void }; selectable?: boolean } | null>(null);
   const toastIdRef = useRef(0);
-  const notify = useCallback<TaskNotify>((message, action) => setToast({ id: ++toastIdRef.current, message, action }), []);
+  const notify = useCallback<TaskNotify>((message, action, options) => setToast({ id: ++toastIdRef.current, message, action, selectable: options?.selectable === true }), []);
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), toast.action ? 15000 : 3200);
+    const timer = window.setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), toast.action || toast.selectable ? 15000 : 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
   const routeRef = useRef(route);
@@ -172,7 +172,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
       : <TasksHome userId={userId} home={route.home} onHome={goHome} onOpenBoard={(board) => go(tasksRoute(board.id))} onOpenBoardId={(boardId) => go(tasksRoute(boardId))}
         onOpenCard={openResultCard} onBack={back} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">
-      <span>{toast.message}</span>
+      <span className={toast.selectable ? "task-toast-selectable" : undefined}>{toast.message}</span>
       {toast.action && <button className="file-toast-action" onClick={() => { const run = toast.action!.run; setToast(null); run(); }}>{toast.action.label}</button>}
     </div>}
   </main>;

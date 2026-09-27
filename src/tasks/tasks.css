@@ -136,6 +136,8 @@
 .task-description-editor { display: grid; gap: 10px; }
 /* The editor is a focus target like any field: a visible ring while typing in it. */
 .task-description-editor .editor-surface:focus-within { outline: 2px solid var(--yellow); outline-offset: 2px; }
+/* A toast carrying a link to copy by hand (Copy link failed): wraps and can be selected. */
+.file-toast .task-toast-selectable { overflow: visible; white-space: normal; overflow-wrap: anywhere; user-select: text; }
 .task-description-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .task-description-actions button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; font-weight: 650; }
 .task-description-empty { min-height: 56px; border: 1px dashed #303035; border-radius: 12px; background: transparent; color: #8d8d94; font-size: .86rem; text-align: left; padding: 0 14px; cursor: pointer; }

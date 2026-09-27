@@ -18,6 +18,7 @@ import { CardDialog } from "./CardDialog";
 import { CardPage } from "./CardPage";
 import { useRole } from "../team/roleAccess";
 import { MoveCardSheet } from "./MoveCardSheet";
+import { copyCardLink } from "./cardLink";
 import { focusBoardCard } from "./cardFocus";
 import { afterCardIdAt, applyLocalMove, applyPositions, byPosition, cardPlace, columnCards, columnIndexFromScroll, columnMoveAnchor, isNoopMove, keyboardMoveTarget, mergeMovedCard, moveChangesBlockers, readCardDragPayload, sheetMoveAnchor, type MoveKey } from "./boardOrder";
 import { isMobileViewport } from "../mobileNavigation";
@@ -710,7 +711,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)} onMove={async (columnId, place) => {
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)}
+      onCopyLink={() => { void copyCardLink(boardId, dialogCard.id, notify); }} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);
       returnFocusRef.current = null;

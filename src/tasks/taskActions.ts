@@ -68,7 +68,8 @@ export const binConfirmMessage = (kind: "card" | "board", name: string, descenda
   : `Move the board “${name}” and all its cards to the Bin? You can restore it for 30 days.`;
 
 /** A toast action, such as Undo after moving something to the Bin. */
-export type TaskNotify = (message: string, action?: { label: string; run: () => void }) => void;
+/** `selectable`: the message holds text to copy by hand (a link); it wraps, and stays 15 s like one with an action. */
+export type TaskNotify = (message: string, action?: { label: string; run: () => void }, options?: { selectable?: boolean }) => void;
 
 /**
  * After CARD_CHANGED on a title save: retrying at the new revision is safe only when the server's

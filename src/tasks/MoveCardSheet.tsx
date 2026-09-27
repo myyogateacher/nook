@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowDownToLine, ArrowUpToLine, Check, ChevronLeft, Columns3, Layers } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, Check, ChevronLeft, Columns3, Layers, Link as LinkIcon } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { canEnterColumn } from "./taskActions";
@@ -22,12 +22,14 @@ type MoveCardSheetProps = {
     options: Array<{ id: string; title: string; disabled?: boolean }>;
     onPick: (parentId: string | null) => Promise<void>;
   };
+  /** The card's ⋯ menu: "Copy link" copies its permalink without opening the card, then closes the sheet. */
+  onCopyLink?: () => void;
 };
 
 // "Move to…": a dialog on desktop, a full-screen sheet on phones. Lists the board's columns and
 // Top or Bottom; the current column is allowed, so a card can jump to the top or bottom of its own.
 // A column at its WIP limit is listed but disabled.
-export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, parentPicker }: MoveCardSheetProps) {
+export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, parentPicker, onCopyLink }: MoveCardSheetProps) {
   const [picking, setPicking] = useState(false);
   // Back on the "Set epic…" list returns to Move to… (as its Back to columns button does), not the board.
   useHistoryDialogGuard(picking, () => setPicking(false));
@@ -76,6 +78,9 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
   }
 
   return <ModalDialog title={`Move “${card.title}”`} eyebrow="Move to" onClose={onCancel} variant="sheet" busy={busy}>
+    {onCopyLink && <div className="move-list task-move-parent">
+      <button className="move-option" onClick={() => { onCopyLink(); onCancel(); }} disabled={busy}><LinkIcon aria-hidden="true" /><span>Copy link<small>A link to this card</small></span></button>
+    </div>}
     {parentPicker && <div className="move-list task-move-parent">
       <button className="move-option" onClick={() => setPicking(true)} disabled={busy}><Layers aria-hidden="true" /><span>{parentPicker.label}<small>{parentPicker.currentParentId ? `Now: ${parentPicker.options.find((option) => option.id === parentPicker.currentParentId)?.title ?? "its parent"}` : "It has none now"}</small></span></button>
     </div>}

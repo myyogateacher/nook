@@ -39,6 +39,8 @@ import {
   type SprintSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
+import { CopyCardLinkButton } from "./cardLink";
+import type { TaskNotify } from "./taskActions";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
 type CardDialogProps = {
@@ -55,7 +57,7 @@ type CardDialogProps = {
   onMove: (card: CardDetail) => void;
   /** Moves the card to the Bin (the dialog confirms first) and closes it. */
   onDelete: (cardId: string) => Promise<void>;
-  notify: (message: string) => void;
+  notify: TaskNotify;
   /** The board's tags for the Tags field, and how the board hears of a tag change (13C). */
   tags?: BoardTag[];
   onTagsChange?: (change: TagChange) => void;
@@ -509,6 +511,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
             : <h2 id={titleId}>Loading…</h2>}
           {titleError && <p className="file-dialog-error" role="alert">{titleError}</p>}
         </div>
+        {card && <CopyCardLinkButton boardId={card.board_id} cardId={card.id} notify={notify} />}
         {card && !readOnly && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
         {card && !readOnly && <button className="icon-button" onClick={() => setConfirmDelete(true)} aria-haspopup="dialog" aria-label="Delete card" title="Move to the Bin"><Trash2 /></button>}
         {!page && onExpand && <button className="icon-button task-card-expand" onClick={onExpand} aria-label="Open as page" title="Open as page"><Maximize2 /></button>}

@@ -333,6 +333,14 @@
 .task-tag-count { color: #85858c; font-size: .74rem; white-space: nowrap; }
 .task-tag-row .icon-button svg { width: 16px; }
 .task-tag-row-note { grid-column: 1 / -1; margin: 0; }
+/* The parent field's notes (operator QA 0.9.1): a subtask needs its parent. */
+.task-parent-note { display: grid; gap: 8px; border: 1px solid #6f5928; border-radius: 10px; padding: 10px 12px; background: #211c12; color: #f0d591; font-size: .8rem; }
+.task-parent-note p { margin: 0; line-height: 1.45; }
+.task-parent-note span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.task-parent-note .task-small-button { min-height: 32px; margin: 0; padding: 0 10px; }
+@media (max-width: 760px) {
+  .task-parent-note .task-small-button { min-height: 44px; }
+}
 .task-tag-confirm { display: grid; gap: 8px; border: 1px solid #6a3039; border-radius: 10px; padding: 10px 12px; background: #1f1416; color: #f3c2c9; font-size: .82rem; }
 .task-tag-confirm p { margin: 0; line-height: 1.45; }
 .task-tag-confirm span { display: flex; justify-content: flex-end; gap: 8px; }

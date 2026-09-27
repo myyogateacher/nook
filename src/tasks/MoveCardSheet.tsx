@@ -17,7 +17,8 @@ type MoveCardSheetProps = {
   /** Hierarchy (17A, D128): "Set parent…", the path to reparent without drag (phones, keyboard). */
   parentPicker?: {
     label: string;
-    noneLabel: string;
+    /** "No epic"; left out when the card needs a parent (a subtask, operator QA 0.9.1). */
+    noneLabel?: string;
     currentParentId: string | null;
     options: Array<{ id: string; title: string; disabled?: boolean }>;
     onPick: (parentId: string | null) => Promise<void>;
@@ -64,7 +65,7 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
     return <ModalDialog title={`${parentPicker.label.replace(/…$/, "")} for “${card.title}”`} eyebrow="Parent" onClose={onCancel} variant="sheet" busy={busy}>
       <div className="move-list" role="radiogroup" aria-label="Parent">
         <button className="move-option" onClick={() => setPicking(false)} disabled={busy}><ChevronLeft aria-hidden="true" /><span>Back to columns</span></button>
-        {[{ id: null as string | null, title: parentPicker.noneLabel, disabled: false }, ...parentPicker.options].map((option, index) => {
+        {[...(parentPicker.noneLabel ? [{ id: null as string | null, title: parentPicker.noneLabel, disabled: false }] : []), ...parentPicker.options].map((option, index) => {
           const current = option.id === parentPicker.currentParentId;
           return <button key={option.id ?? "none"} role="radio" aria-checked={current} className={`move-option${current ? " active" : ""}`} autoFocus={index === 0}
             disabled={busy || option.disabled || current} onClick={() => { void pickParent(option.id); }}>

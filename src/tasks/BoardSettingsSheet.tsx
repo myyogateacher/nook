@@ -31,10 +31,13 @@ type BoardSettingsSheetProps = {
   onDelete: () => void;
   onAddColumn: () => void;
   onStructureSaved: (board: BoardSummary) => void;
-  /** Board settings → Sprints (17B), shown when the saved structure has sprints on. */
+  /** Board settings → Sprint defaults (17B), shown when the saved structure has sprints on. The sprint list is the Sprints sheet. */
   sprintsSection?: ReactNode;
   notify: (message: string) => void;
 };
+
+/** The structure without its sprint defaults: what Save structure compares and sends. */
+const levelsOnly = ({ levels, workLevel, sprints }: BoardStructure): BoardStructure => ({ levels, workLevel, sprints });
 
 /** "Columns show Stories. Subtasks appear inside their story." */
 export function structurePreview(structure: BoardStructure) {
@@ -64,7 +67,8 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
   const panelRef = useRef<HTMLElement>(null);
   useDialogFocus(panelRef);
   const preset = presetOf(draft);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  // Sprint defaults are saved on their own (Sprint defaults below); a structure save leaves them be.
+  const dirty = JSON.stringify(levelsOnly(draft)) !== JSON.stringify(levelsOnly(saved));
   const check = validateStructure(draft);
 
   useEffect(() => {
@@ -99,7 +103,8 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
     }
     setBusy(true);
     try {
-      const { board: next } = await updateBoardStructure(board.id, check.structure);
+      // Without `sprintDefaults` the server keeps the stored ones.
+      const { board: next } = await updateBoardStructure(board.id, levelsOnly(check.structure));
       onStructureSaved(next);
       setDraft(structureOf(next));
       notify(`Structure saved: ${structureLabel(structureOf(next))}`);
@@ -169,7 +174,7 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
             </div>}
             <label className="task-settings-toggle">
               <input type="checkbox" checked={draft.sprints} disabled={busy} onChange={(event) => update({ ...draft, sprints: event.target.checked })} />
-              <span>Plan in sprints<small>“Sprint ›” groups the work in time boxes. After saving, add and start sprints under Sprints below.</small></span>
+              <span>Plan in sprints<small>“Sprint ›” groups the work in time boxes. After saving, set the sprint defaults below; add and start sprints from the header’s sprint switcher.</small></span>
             </label>
             <p className="task-settings-note" aria-live="polite">{check.ok ? structurePreview(check.structure) : check.error}</p>
             {error && <p className="file-dialog-error" role="alert">{error}</p>}

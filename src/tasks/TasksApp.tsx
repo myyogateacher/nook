@@ -6,7 +6,7 @@ import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, locationUrl, routeFromLocation, type Route } from "../router";
-import { cardCloseAction, createTasksEntryLog, fullPageAction, savedViewStep, tasksBackAction, tasksHomeRoute, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
+import { boardSprintsRoute, cardCloseAction, createTasksEntryLog, fullPageAction, savedViewStep, tasksBackAction, tasksHomeRoute, tasksRoute, withFromDialogHint, type TasksRoute } from "../tasksRoute";
 import { TasksHome } from "./home/TasksHome";
 import type { TasksHome as TasksHomeRoute } from "./home/homeUrl";
 import { BoardView } from "./BoardView";
@@ -134,7 +134,23 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
   // entry, and filter, sort, and group edits replace it, so Back steps through views, not chips.
   const changeQuery = useCallback((query: BoardQuery, options: { push?: boolean } = {}) => {
     const current = routeRef.current;
-    if (current.boardId) go(tasksRoute(current.boardId, current.cardId, current.full === true, query), !options.push);
+    if (!current.boardId) return;
+    // A change made from the Sprints sheet (starting a sprint) keeps the sheet open.
+    go(current.sprints ? boardSprintsRoute(current.boardId, query) : tasksRoute(current.boardId, current.cardId, current.full === true, query), !options.push);
+  }, [go]);
+
+  // The Sprints sheet is a route (/tasks/:b/sprints): opening pushes it over the board's view, and
+  // closing steps back to the board, or replaces a deep-linked entry with it.
+  const openSprints = useCallback(() => {
+    const { boardId, query } = routeRef.current;
+    if (boardId) go(boardSprintsRoute(boardId, query));
+  }, [go]);
+  const closeSprints = useCallback(() => {
+    const current = routeRef.current;
+    if (!current.sprints) return;
+    const step = cardCloseAction(current, readHistoryDepth(window.history.state), entryLogRef.current);
+    if (step.kind === "history") window.history.back();
+    else go(step.route, true);
   }, [go]);
 
   // The home segments and views are routes (17C, §9.5): a segment tap, a layout switch, or a
@@ -168,7 +184,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onBin, onSetti
     {route.boardId
       ? <BoardView key={route.boardId} userId={userId} boardId={route.boardId} openCardId={route.cardId} openCardFull={route.full === true} onExpandCard={expandCard} onCollapseCard={collapseCard} onOpenCard={openCard} onCloseCard={closeCard} onBack={back} onMissing={onMissing} notify={notify} onBoardDeleted={() => go(tasksRoute(), true)} onOpenBoard={(boardId) => go(tasksRoute(boardId))}
         onOpenCardRoute={(boardId, cardId) => go(tasksRoute(boardId, cardId, false, boardId === routeRef.current.boardId ? routeRef.current.query : null))}
-        query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} />
+        query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} sprintsOpen={route.sprints === true} onOpenSprints={openSprints} onCloseSprints={closeSprints} />
       : <TasksHome userId={userId} home={route.home} onHome={goHome} onOpenBoard={(board) => go(tasksRoute(board.id))} onOpenBoardId={(boardId) => go(tasksRoute(boardId))}
         onOpenCard={openResultCard} onBack={back} notify={notify} />}
     {toast && <div className="toast file-toast" role="status">

@@ -9,7 +9,8 @@ export type Route =
   // `query` (D112): a board's view, grouping, sort, and filters, carried in the URL query. It is
   // left out when it is the default, and never set without a board. `full` (13D): the card as a page.
   // `home` (17C): without a board, the My work and Views segments of the Tasks home (/tasks is Boards).
-  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true; query?: BoardQuery; home?: TasksHome }
+  // `sprints`: the board's Sprints sheet (/tasks/:boardId/sprints), over the board in its view.
+  | { app: "tasks"; boardId: string | null; cardId: string | null; full?: true; query?: BoardQuery; home?: TasksHome; sprints?: true }
   | { app: "collections"; collectionId: string | null; viewId: string | null; rowId: string | null }
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
@@ -33,8 +34,8 @@ function parseCollection(segments: string[]): { folder: string; itemId: string |
   return { folder: "all", itemId: null };
 }
 
-// /tasks, /tasks/:boardId, /tasks/:boardId/card/:cardId, and /tasks/:boardId/card/:cardId/full (the
-// card as a page, 13D). Anything malformed after a valid board id still opens that board; a
+// /tasks, /tasks/:boardId, /tasks/:boardId/sprints (the Sprints sheet), /tasks/:boardId/card/:cardId,
+// and /tasks/:boardId/card/:cardId/full (the card as a page, 13D). Anything malformed after a valid board id still opens that board; a
 // malformed board id opens the board list. The query (view, filters) belongs to the board: it is
 // kept on its cards' URLs too, so closing a card returns to the same view (D112).
 function parseTasks(segments: string[], search: string): Route {
@@ -46,7 +47,8 @@ function parseTasks(segments: string[], search: string): Route {
   const full = segments.length === 4 && view === "full";
   const cardId = (segments.length === 3 || full) && kind === "card" && card !== undefined && isRouteId(card) ? card.toLowerCase() : null;
   const query = parseBoardSearch(search);
-  const route: Route = cardId && full ? { app: "tasks", boardId, cardId, full: true } : { app: "tasks", boardId, cardId };
+  const sprints = segments.length === 2 && kind === "sprints";
+  const route: Route = cardId && full ? { app: "tasks", boardId, cardId, full: true } : sprints ? { app: "tasks", boardId, cardId: null, sprints: true } : { app: "tasks", boardId, cardId };
   return isDefaultBoardQuery(query) ? route : { ...route, query };
 }
 
@@ -141,7 +143,7 @@ export function formatRoute(route: Route): string {
     if (!route.boardId || !isRouteId(route.boardId)) return "/tasks";
     const board = `/tasks/${route.boardId.toLowerCase()}`;
     const search = route.query ? formatBoardSearch(route.query) : "";
-    if (!route.cardId || !isRouteId(route.cardId)) return `${board}${search}`;
+    if (!route.cardId || !isRouteId(route.cardId)) return `${board}${route.sprints ? "/sprints" : ""}${search}`;
     return `${board}/card/${route.cardId.toLowerCase()}${route.full ? "/full" : ""}${search}`;
   }
   if (route.app === "collections") {

@@ -3,7 +3,8 @@ import { FLAT_STRUCTURE } from "../../shared/boardStructure";
 import { withBoardQuery, type BoardQuery } from "./boardUrl";
 import { orderSprints, resolveSprintSelection, selectionTerm, sprintQueryValue, withSprint, type SprintSelection } from "./sprintModel";
 import type { TaskNotify } from "./taskActions";
-import { completeSprint, createSprint, deleteSprint, taskErrorMessage, updateSprint, type BoardDetail, type SprintCarryTo, type SprintFields, type SprintSummary } from "./tasksApi";
+import type { SprintDefaults } from "../../shared/sprintPlan";
+import { completeSprint, createSprint, deleteSprint, taskErrorMessage, updateBoardStructure, updateSprint, type BoardDetail, type SprintCarryTo, type SprintFields, type SprintSummary } from "./tasksApi";
 
 type Options = {
   detail: BoardDetail | null;
@@ -102,8 +103,34 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     return result;
   }, [load, notify, onQueryChange, query, setSprints]);
 
+  /** Saves the board's sprint defaults into its structure (owner, Board settings → Sprint defaults). */
+  const saveDefaults = useCallback(async (defaults: SprintDefaults) => {
+    if (!detail) return false;
+    try {
+      const { board } = await updateBoardStructure(detail.board.id, { ...structure, sprintDefaults: defaults });
+      setDetail((current) => current ? { ...current, board } : current);
+      notify("Sprint defaults saved");
+      return true;
+    } catch (reason) {
+      notify(taskErrorMessage(reason, "Could not save the sprint defaults"));
+      return false;
+    }
+  }, [detail, notify, setDetail, structure]);
+
+  /** New sprint, then (Create and start) start it. */
+  const createAndMaybeStart = useCallback(async (fields: SprintFields & { name: string }, andStart: boolean) => {
+    const made = await create(fields);
+    if (!made) return false;
+    if (andStart) await start(made);
+    return true;
+  }, [create, start]);
+
   return {
     enabled: structure.sprints,
+    /** The board's sprint defaults (length, start rule, name pattern), when set. */
+    defaults: structure.sprintDefaults ?? null,
+    saveDefaults,
+    createAndMaybeStart,
     sprints,
     selection,
     /** The term the views add to the board's filter, or null (no sprints, or All cards). */

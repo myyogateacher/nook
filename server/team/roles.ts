@@ -81,6 +81,3 @@ export const audienceAllUsersFor = (userExpression: string) =>
  * bound as `$userId` (§5.3). tests/guestAudience.test.ts fails on any bare `all_users` comparison.
  */
 export const AUDIENCE_ALL_USERS = audienceAllUsersFor("$userId");
-
-/** Whether a change from `from` to `to` grants or removes admin, which needs re-authentication (§5.5). */
-export const roleChangeNeedsReauth = (from: Role, to: Role) => from !== to && (from === "admin" || to === "admin");

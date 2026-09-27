@@ -1177,7 +1177,6 @@ type TeamEvent = {
   via: "web" | "cli" | "migration" | "bootstrap" | "mcp"; fromRole: TeamRole | null; toRole: TeamRole | null;
   reason: string | null; createdAt: string; actor: { id: string; displayName: string } | null;
 };
-type Reauth = { password?: string; totpCode?: string; recoveryCode?: string };  // one factor at most
 ```
 
 `lastSeenAt` is the latest `last_seen_at` of the account's live sessions (null once they are gone). `blockedBy` is null for accounts disabled before migration 017 ("Blocked (before Team)"). `emailAllowed` is false when the address is no longer on `ALLOWED_EMAILS`, so the account cannot sign in. `storageBytes` is the quota sum (live and binned documents).
@@ -1190,16 +1189,16 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 | --- | --- | --- | --- |
 | `GET /api/team` | | 200 `{ me: { id, role }, users: TeamMember[] }`, active before blocked, then admin, member, viewer, guest, then name; at most 500 | 404 (guest) |
 | `GET /api/team/:userId` | | 200 `{ member: TeamMember & { events?: TeamEvent[] } }`; `events` (latest 50) for admins only | 404 |
-| `PUT /api/team/:userId/role` | `{ role, expectedRole } & Reauth` | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 401 `REAUTH_REQUIRED`; 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
-| `POST /api/team/:userId/block` | `{ reason?: string ≤ 200 } & Reauth` | 200 `{ blockedAt, sessionsRevoked, mcpKeysPaused, member }` | 401 `REAUTH_REQUIRED`; 409 `SELF_ACTION`, `ALREADY_BLOCKED`, `LAST_ADMIN`, `ROLE_CHANGED` |
+| `PUT /api/team/:userId/role` | `{ role, expectedRole }` (strict: any other field → 400) | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
+| `POST /api/team/:userId/block` | `{ reason?: string ≤ 200 }` (strict: any other field → 400) | 200 `{ blockedAt, sessionsRevoked, mcpKeysPaused, member }` | 409 `SELF_ACTION`, `ALREADY_BLOCKED`, `LAST_ADMIN`, `ROLE_CHANGED` |
 | `POST /api/team/:userId/unblock` | `{}` | 200 `{ ok: true, member }` | 409 `NOT_BLOCKED` |
 | `POST /api/team/:userId/sessions/revoke` | `{}` | 200 `{ sessionsRevoked, member }` | 409 `SELF_ACTION` (use Sign out) |
 
-- **Re-authentication** (§5.5): granting or removing admin (`expectedRole` or `role` is `admin`) and blocking an admin need `password`, plus `totpCode` or `recoveryCode` when the caller has two-factor on, checked with the MCP key creation helpers (`server/reauth.ts`). Missing or wrong → 401 `REAUTH_REQUIRED`; the factor is consumed only after the password verifies, and not at all when the role is unavailable or `expectedRole` is stale. Other Team writes rely on the session and CSRF (T82).
+- **No re-authentication.** Team writes rely on the signed-in session, CSRF (Origin + `X-CSRF-Token`, JSON only), SameSite=Strict cookies, and the admin capability. The password + second-factor re-check was removed by operator decision on 2026-09-27 (it created friction). The residual risk is recorded in THREAT_MODEL T77/T82.
 - **Role change** runs `UPDATE users SET role = ? WHERE id = ? AND role = ?`. It takes effect on the target's next request (the role is read on every request, no cache). An admin may demote themselves while another active admin exists.
 - **Block** runs one transaction: set `disabled_at`, `blocked_by`, `block_reason`; delete every session of the account (an unblock does not revive them); delete its push subscriptions. MCP keys and calendar feed tokens are kept and pause (their existing `disabled_at` checks), then resume on unblock (O9). Content the account owns stays where it is and stays shared (O10). The account drops out of share pickers and assignee lists. An upload that passed `requireAuth` before the block fails at commit with 401 and its staged object is removed; the reminders dispatcher skips blocked accounts (their reminders stay due and fire after an unblock). Upload slots are per request in memory and are released as those requests fail; there are no persistent upload reservations.
 - **Unblock** clears the three columns. The account signs in again with its existing password and second factor; push must be re-enabled per device; the role is unchanged.
-- **Audit and activity** (T83): each write adds one `team_events` row (append-only through triggers) and one `audit_log` row with ids and roles only: `team.role_changed { targetId, fromRole, toRole, via }`, `team.user_blocked { targetId, sessions, via }`, `team.user_unblocked { targetId, via }`, `team.sessions_revoked { targetId, sessions, via }`, `team.bootstrap_admin { targetId }`, and `team.reauth_failed`. The block reason lives only in `users.block_reason` and the `block` event. Blocked sign-in attempts are audited as `auth.login_blocked`.
+- **Audit and activity** (T83): each write adds one `team_events` row (append-only through triggers) and one `audit_log` row with ids and roles only: `team.role_changed { targetId, fromRole, toRole, via }`, `team.user_blocked { targetId, sessions, via }`, `team.user_unblocked { targetId, via }`, `team.sessions_revoked { targetId, sessions, via }`, `team.bootstrap_admin { targetId }`, and . The block reason lives only in `users.block_reason` and the `block` event. Blocked sign-in attempts are audited as `auth.login_blocked`.
 
 ### Host CLI
 

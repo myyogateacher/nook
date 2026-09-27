@@ -25,9 +25,6 @@ export const isRole = (value: unknown): value is Role => typeof value === "strin
 export const canSeeTeam = (role: Role | undefined) => role !== undefined && role !== "guest";
 export const canManageTeam = (role: Role | undefined) => role === "admin";
 
-/** Granting or removing admin needs the password (and a fresh code when two-factor is on). */
-export const roleChangeNeedsReauth = (from: Role, to: Role) => from !== to && (from === "admin" || to === "admin");
-
 /** The Team role picker's options (the shared Select, D91): every role with its one-line description. */
 export const roleOptions = () => ROLES.map((role) => ({
   value: role,

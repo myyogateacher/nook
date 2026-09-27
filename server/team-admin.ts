@@ -59,7 +59,7 @@ if (command === "list") {
   if (user.role === role) {
     console.log(`That account is already ${role}.`);
   } else {
-    run(() => { setRole(null, user.id, { role, expectedRole: user.role as typeof role }, { via: "cli", reauthenticated: true }); }, `Role changed from ${user.role} to ${role}. It applies to the account's next request.`);
+    run(() => { setRole(null, user.id, { role, expectedRole: user.role as typeof role }, { via: "cli" }); }, `Role changed from ${user.role} to ${role}. It applies to the account's next request.`);
   }
 } else if (command === "unblock") {
   if (args.length !== 1) fail(usage, 2);

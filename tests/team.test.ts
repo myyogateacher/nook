@@ -104,7 +104,7 @@ describe("Team API: reading", () => {
     const viewer = await user("Write viewer", "viewer");
     const target = await user("Write target");
     for (const actor of [member, viewer]) {
-      expect((await call(actor, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: actor.password })).body.code).toBe("ADMIN_ONLY");
+      expect((await call(actor, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member" })).body.code).toBe("ADMIN_ONLY");
       expect((await call(actor, "POST", `/${target.userId}/block`, {})).status).toBe(403);
       expect((await call(actor, "POST", `/${target.userId}/unblock`, {})).status).toBe(403);
       expect((await call(actor, "POST", `/${target.userId}/sessions/revoke`, {})).status).toBe(403);
@@ -125,21 +125,20 @@ describe("Team API: reading", () => {
 });
 
 describe("Team API: roles", () => {
-  test("promoting needs re-authentication, runs a CAS, and records one event and one audit row", async () => {
+  test("promoting needs only the admin session and CSRF, runs a CAS, and records one event and one audit row", async () => {
     const admin = await user("Role admin", "admin");
     const target = await user("Role target");
 
-    const missing = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member" });
-    expect(missing).toMatchObject({ status: 401, body: { code: "REAUTH_REQUIRED" } });
-    const wrong = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: "wrong password here" });
-    expect(wrong.body.code).toBe("REAUTH_REQUIRED");
+    // Operator decision 2026-09-27: no password re-check. The body stays strict, so a password field is refused.
+    const withPassword = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password });
+    expect(withPassword.status).toBe(400);
     expect(roleOf(target)).toBe("member");
 
     const stale = await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin" });
     expect(stale.status).toBe(409);
     expect(stale.body).toMatchObject({ code: "ROLE_CHANGED", currentRole: "member" });
 
-    const promoted = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password });
+    const promoted = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member" });
     expect(promoted.status).toBe(200);
     expect(promoted.body).toMatchObject({ changed: true, role: "admin", member: { role: "admin" } });
     expect(eventsFor(target)).toEqual([{ action: "role_change", via: "web", actor_id: admin.userId, from_role: "member", to_role: "admin", reason: null }]);
@@ -151,9 +150,8 @@ describe("Team API: roles", () => {
     // The role applies on the target's next request.
     expect((await (await me(target)).json() as { user: { role: string } }).user.role).toBe("admin");
 
-    // Demoting an admin also needs re-authentication.
-    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin" })).body.code).toBe("REAUTH_REQUIRED");
-    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin", password: admin.password })).status).toBe(200);
+    // Demoting an admin needs only the session too.
+    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin" })).status).toBe(200);
     expect(roleOf(target)).toBe("member");
     // A no-op keeps the log unchanged.
     expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "member" })).body).toMatchObject({ changed: false });
@@ -179,7 +177,7 @@ describe("Team API: roles", () => {
   test("the last active admin cannot step down; with a second admin one may demote themselves", async () => {
     const admin = await user("Last admin", "admin");
     await asOnlyAdmin(admin, async () => {
-      const refused = await call(admin, "PUT", `/${admin.userId}/role`, { role: "member", expectedRole: "admin", password: admin.password });
+      const refused = await call(admin, "PUT", `/${admin.userId}/role`, { role: "member", expectedRole: "admin" });
       expect(refused).toMatchObject({ status: 409, body: { code: "LAST_ADMIN" } });
       expect(roleOf(admin)).toBe("admin");
       // The trigger refuses direct SQL too.
@@ -187,7 +185,7 @@ describe("Team API: roles", () => {
       expect(() => db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), admin.userId)).toThrow("LAST_ADMIN");
 
       const second = await user("Second admin", "admin");
-      const selfDemote = await call(admin, "PUT", `/${admin.userId}/role`, { role: "member", expectedRole: "admin", password: admin.password });
+      const selfDemote = await call(admin, "PUT", `/${admin.userId}/role`, { role: "member", expectedRole: "admin" });
       expect(selfDemote.status).toBe(200);
       expect(roleOf(admin)).toBe("member");
       // The demoted admin lost Team management at once.
@@ -197,22 +195,23 @@ describe("Team API: roles", () => {
     });
   });
 
-  test("re-authentication with TOTP needs a fresh code or a recovery code", async () => {
+  test("an admin with two-factor on manages roles and blocks with only the session and CSRF", async () => {
     const admin = await user("TOTP admin", "admin");
     const target = await user("TOTP target");
     const setup = await (await request("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: admin.password }) }, admin)).json() as { secret: string };
     const enable = await request("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: totpCodeAt(setup.secret, totpCounter() - 1) }) }, admin);
-    const { recoveryCodes } = await enable.json() as { recoveryCodes: string[] };
+    expect(enable.status).toBe(200);
 
-    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password })).body.code).toBe("REAUTH_REQUIRED");
-    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password, totpCode: "000000" })).body.code).toBe("REAUTH_REQUIRED");
-    // The code the enrollment used is spent.
-    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password, totpCode: totpCodeAt(setup.secret, totpCounter() - 1) })).body.code).toBe("REAUTH_REQUIRED");
-    const fresh = await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member", password: admin.password, totpCode: totpCodeAt(setup.secret, totpCounter()) });
-    expect(fresh.status).toBe(200);
-    const withRecovery = await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin", password: admin.password, recoveryCode: recoveryCodes[0] });
-    expect(withRecovery.status).toBe(200);
+    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "admin", expectedRole: "member" })).status).toBe(200);
+    expect((await call(admin, "POST", `/${target.userId}/block`, {})).status).toBe(200);
+    expect((await call(admin, "POST", `/${target.userId}/unblock`, {})).status).toBe(200);
+    expect((await call(admin, "PUT", `/${target.userId}/role`, { role: "member", expectedRole: "admin" })).status).toBe(200);
     expect(roleOf(target)).toBe("member");
+    // No password or code is ever asked for, so nothing can fail re-authentication.
+    expect((db.query("SELECT COUNT(*) AS count FROM audit_log WHERE event_type = 'team.reauth_failed'").get() as { count: number }).count).toBe(0);
+    // Without a session the routes still refuse.
+    const anonymous = await request(`/team/${target.userId}/role`, { method: "PUT", body: JSON.stringify({ role: "admin", expectedRole: "member" }) });
+    expect(anonymous.status).toBe(401);
   });
 });
 
@@ -266,11 +265,11 @@ describe("Team API: blocking", () => {
     expect(eventsFor(target).map((event) => event.action)).toEqual(["block", "unblock"]);
   });
 
-  test("blocking an admin needs re-authentication and never removes the last active admin", async () => {
+  test("blocking an admin needs only the session and never removes the last active admin", async () => {
     const admin = await user("Block-admin actor", "admin");
     const other = await user("Block-admin target", "admin");
-    expect((await call(admin, "POST", `/${other.userId}/block`, {})).body.code).toBe("REAUTH_REQUIRED");
-    expect((await call(admin, "POST", `/${other.userId}/block`, { password: admin.password })).status).toBe(200);
+    expect((await call(admin, "POST", `/${other.userId}/block`, { password: admin.password })).status).toBe(400);
+    expect((await call(admin, "POST", `/${other.userId}/block`, {})).status).toBe(200);
     expect((await call(admin, "POST", `/${other.userId}/unblock`, {})).status).toBe(200);
     setRoleSql(other, "member");
   });

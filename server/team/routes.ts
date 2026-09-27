@@ -1,31 +1,20 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
-import { audit } from "../db";
-import { verifyReauth } from "../reauth";
-import { parseJson, recoveryCode, totpCode, uuid } from "../validation";
-import { can, ROLES, roleChangeNeedsReauth } from "./roles";
-import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser, userRole } from "./service";
+import { parseJson, uuid } from "../validation";
+import { can, ROLES } from "./roles";
+import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
  * `/api/team` (docs/plan/research/2026-09-26-team-module.md §6.4). Session auth, CSRF, Origin, and
  * the TOTP gate come from the global `/api/*` middleware (T82). Guests get 404 on every route
  * (404, never 403, for existence); members and viewers read names and roles and get 403 on writes.
- * Granting or removing admin, and blocking an admin, need the password plus a fresh second factor
- * when TOTP is on (§5.5).
+ * Admin writes need only the signed-in admin session plus CSRF: re-authentication was removed by
+ * operator decision 2026-09-27 (T77, T82).
  */
 
-const reauthFields = {
-  password: z.string().min(1).max(256).optional(),
-  totpCode: totpCode.optional(),
-  recoveryCode: recoveryCode.optional()
-};
-const noBothFactors = (value: { totpCode?: string; recoveryCode?: string }) => !(value.totpCode && value.recoveryCode);
-
-export const roleChangeSchema = z.object({ role: z.enum(ROLES), expectedRole: z.enum(ROLES), ...reauthFields }).strict()
-  .refine(noBothFactors, "Use either an authentication code or a recovery code");
-export const blockSchema = z.object({ reason: z.string().max(BLOCK_REASON_MAX).optional(), ...reauthFields }).strict()
-  .refine(noBothFactors, "Use either an authentication code or a recovery code");
+export const roleChangeSchema = z.object({ role: z.enum(ROLES), expectedRole: z.enum(ROLES) }).strict();
+export const blockSchema = z.object({ reason: z.string().max(BLOCK_REASON_MAX).optional() }).strict();
 const emptySchema = z.object({}).strict();
 
 /** 30 Team writes a minute per admin (§5.5). In memory, like the auth limits. */
@@ -50,7 +39,6 @@ export function resetTeamRateLimits() {
 
 const notFound = (c: Context<AppEnv>) => c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
 const teamError = (c: Context<AppEnv>, error: TeamError) => c.json({ error: error.message, code: error.code, ...error.details }, error.status);
-const reauthRequired = (c: Context<AppEnv>) => c.json({ error: "Confirm with your password and authentication code", code: "REAUTH_REQUIRED" }, 401);
 
 /** The target id from the path, or null when it is not a UUID (answered as 404). */
 const targetId = (c: Context<AppEnv>) => uuid.safeParse(c.req.param("userId")?.toLowerCase()).data ?? null;
@@ -65,13 +53,6 @@ function writeGate(c: Context<AppEnv>) {
   if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage the team", code: "ADMIN_ONLY" }, 403);
   if (writeLimited(user.id)) return c.json({ error: "Too many team changes. Try again soon.", code: "RATE_LIMITED" }, 429);
   return null;
-}
-
-async function reauthenticate(c: Context<AppEnv>, input: { password?: string; totpCode?: string; recoveryCode?: string }) {
-  const user = c.get("user");
-  if (await verifyReauth(user.id, input, "team")) return true;
-  audit(user.id, null, "team.reauth_failed");
-  return false;
 }
 
 async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>) {
@@ -105,18 +86,8 @@ export function registerTeamRoutes(app: Hono<AppEnv>) {
     if (!id) return notFound(c);
     const body = await parseJson(c.req.raw, roleChangeSchema);
     const actor = c.get("user");
-    let reauthenticated = false;
-    if (roleChangeNeedsReauth(body.expectedRole, body.role)) {
-      // Refuse unavailable roles and stale expectations before a second factor is consumed.
-      const current = userRole(id);
-      if (!current) return notFound(c);
-      if (current === body.expectedRole) {
-        if (!await reauthenticate(c, body)) return reauthRequired(c);
-        reauthenticated = true;
-      }
-    }
     return run(c, () => {
-      const result = setRole(actor, id, { role: body.role, expectedRole: body.expectedRole }, { via: "web", reauthenticated });
+      const result = setRole(actor, id, { role: body.role, expectedRole: body.expectedRole }, { via: "web" });
       return { ...result, member: teamMember(actor, id) };
     });
   });
@@ -128,15 +99,8 @@ export function registerTeamRoutes(app: Hono<AppEnv>) {
     if (!id) return notFound(c);
     const body = await parseJson(c.req.raw, blockSchema);
     const actor = c.get("user");
-    let reauthenticated = false;
-    const current = userRole(id);
-    if (!current) return notFound(c);
-    if (current === "admin" && id !== actor.id) {
-      if (!await reauthenticate(c, body)) return reauthRequired(c);
-      reauthenticated = true;
-    }
     return run(c, () => {
-      const result = blockUser(actor, id, body.reason ?? null, { via: "web", reauthenticated });
+      const result = blockUser(actor, id, body.reason ?? null, { via: "web" });
       return { ...result, member: teamMember(actor, id) };
     });
   });

@@ -589,3 +589,4 @@ Accepted as the plan of record with these rulings. Implementers follow this sect
 - **Block also revokes the target's active upload slots and idempotency reservations** if such state exists in `server/documents.ts`, in the same transaction, so a staged upload cannot commit after a block (tightens T80).
 - **CLI name:** `server/team-admin.ts`, documented in `docs/OPERATIONS.md` with the `docker compose exec mynotes …` form (the Compose service is `mynotes`).
 - **Release notes** for Wave 14 must state the oldest-account-becomes-admin rule and the CLI fix, per O8.
+- **(2026-09-27, operator decision.)** The password + second-factor re-check for role changes and blocks (§5.5, T77/T82) is **removed**: a signed-in admin confirms in a dialog and the write relies on session + CSRF + SameSite + admin capability + CAS + audit. Operator wording: "remove the Team password re-check, not required, creates friction in product use."

@@ -71,7 +71,7 @@ export function BoardGroupedList({ board, groups, group, today, onGroup, onOpenC
                     {also.length > 0 && <span className="task-group-also">also in {also.join(", ")}</span>}
                   </span>
                 </button>
-                <button type="button" className="icon-button task-group-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…"><Ellipsis /></button>
+                <button type="button" className="icon-button task-group-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`More actions for “${card.title}”`} title="More actions"><Ellipsis /></button>
               </li>;
             })}
           </ul>

@@ -91,5 +91,5 @@ test("lane cards are named groups described by their excerpt, with the Move butt
   expect(markup).toContain('aria-describedby="task-card-excerpt-k1 task-card-keys"');
   expect(markup).toContain('id="task-card-excerpt-k1"');
   expect(markup).toContain('aria-label="Plain" aria-roledescription="Draggable card" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight" aria-describedby="task-card-keys"');
-  expect(markup).toContain('</div><button class="icon-button task-card-more" aria-haspopup="dialog" aria-label="Move “Fix login”"');
+  expect(markup).toContain('</div><button class="icon-button task-card-more" aria-haspopup="dialog" aria-label="More actions for “Fix login”"');
 });

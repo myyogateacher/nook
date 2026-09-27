@@ -175,7 +175,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
             <ChevronRight aria-hidden="true" /><span>{parent.title}</span>
           </button>}
           <CardFace {...face} excerptId={excerptId} />
-          <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…" draggable={false}><Ellipsis /></button>
+          <button className="icon-button task-card-more" onClick={(event) => props.onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`More actions for “${card.title}”`} title="More actions" draggable={false}><Ellipsis /></button>
         </div>
       </li>;
       })}

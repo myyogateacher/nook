@@ -87,7 +87,7 @@ export function BoardTable({ board, cards, sort, today, onSort, onOpenCard, onCa
                   </button>
                   : <span className="task-tree-spacer" aria-hidden="true" />)}
                 <button type="button" className="task-table-open" onClick={() => onOpenCard(card)} data-open-card={card.id} title={card.description_excerpt || undefined}>{card.title}</button>
-                <button type="button" className="icon-button task-table-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…"><Ellipsis /></button>
+                <button type="button" className="icon-button task-table-more" onClick={(event) => onCardMenu(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`More actions for “${card.title}”`} title="More actions"><Ellipsis /></button>
               </span>
             </th>
             <td>{column?.name ?? ""}</td>

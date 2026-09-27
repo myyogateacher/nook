@@ -84,7 +84,9 @@ test("the Sprints sheet lists sprints for everyone and gives the owner New, Star
   const props = { boardId: "b", sprints: SPRINTS, today: "2026-09-27", plural: "Tasks", onCreate: async () => null, onUpdate: async () => true, onStart: asyncNoop, onDelete: asyncNoop, onComplete: noop };
   const owner = renderToStaticMarkup(<SprintSettingsSection {...props} owner />);
   expect(owner).toContain("New sprint");
-  expect(owner).toContain("Complete…");
+  // "Complete" never truncates on a phone; the full label is its accessible name (QA 0.9.2).
+  expect(owner).toContain('aria-label="Complete Sprint 12…"');
+  expect(owner).toContain("</svg>Complete</button>");
   expect(owner).toContain("Edit Sprint 12");
   expect(owner).toContain("Delete Sprint 13");
   // Sprint 13 cannot start while Sprint 12 is active.

@@ -25,6 +25,11 @@ test("the card dialog widens on tablets and laptops and splits into fields and c
   expect(css).toContain(".task-card-dialog { inset: 0; margin: 0; width: 100vw; max-height: none; height: 100dvh;");
 });
 
+test("phones: the board header and the sprint bar use the 16 px gutter of the filter row (QA 0.9.2)", () => {
+  expect(css).toContain("  .task-board-header { padding: 8px 16px 4px; gap: 4px; }\n  .task-board-header .task-back { margin-left: -8px; }");
+  expect(css).toContain("  .task-sprint-bar { padding: 0 16px 6px; gap: 6px 8px; }");
+});
+
 test("phone touch targets: New tag, Manage tags…, Add time, and Remove time are at least 44 px tall (QA 0.9.2)", () => {
   const base = css.indexOf(".task-add-time { justify-self: start; min-height: 32px;");
   const phone = css.indexOf("@media (max-width: 760px) {\n  .task-add-time, .task-due-editor .task-small-button { min-height: 44px; }\n}");

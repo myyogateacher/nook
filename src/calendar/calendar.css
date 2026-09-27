@@ -102,6 +102,25 @@
 .calendar-event-section h2 svg { width: 16px; color: #c9a85c; }
 
 /* Sheets and dialogs */
+/* The event sheet (EventSheet.tsx, operator QA 0.9.2): one column below 1100 px, where its two
+   groups are display: contents and the calendar picker follows the title; min(720px, 94vw) from
+   761 px; from 1100 px min(880px, 90vw) with the dates on the left and the calendar, Location, and
+   Notes (growing to fill) on the right. Phones keep the full-screen sheet. Never transformed, so
+   the Select popup places against the viewport; the form scrolls inside 92vh. */
+.calendar-event-when, .calendar-event-details { display: contents; }
+.calendar-event-title { order: -2; }
+.calendar-event-calendar { order: -1; }
+@media (min-width: 761px) {
+  .file-dialog.calendar-event-dialog { width: min(720px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
+}
+@media (min-width: 1100px) {
+  .file-dialog.calendar-event-dialog { width: min(880px, 90vw); }
+  .calendar-event-dialog .calendar-event-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; column-gap: 24px; }
+  .calendar-event-when, .calendar-event-details { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .calendar-event-notes { flex: 1; grid-template-rows: auto minmax(0, 1fr); }
+  .calendar-event-notes textarea { min-height: 160px; }
+  .calendar-event-form > .file-dialog-error, .calendar-event-form > .file-dialog-actions { grid-column: 1 / -1; }
+}
 .calendar-form { min-height: 0; overflow-y: auto; display: grid; gap: 12px; padding: 4px 20px 0; }
 .calendar-form .file-dialog-actions { padding: 8px 0 18px; }
 .calendar-field { display: grid; gap: 6px; min-width: 0; }

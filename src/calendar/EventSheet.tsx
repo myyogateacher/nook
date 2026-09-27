@@ -28,23 +28,24 @@ type EventSheetProps = {
 // prompt returns to the form with the draft. Each guard also holds the phone's depth-0 sentinel, which
 // is pushed again when one layer hands over to the next, so the next Back still stays in Calendar.
 
-/** Create or edit an event. A full-screen sheet on phones; it pushes no history entry (D69). */
+/**
+ * Create or edit an event. A full-screen sheet on phones; it pushes no history entry (D69). From
+ * 1100 px it is two columns (operator QA 0.9.2): the title, all day, the dates and times, the zone,
+ * and Repeat on the left; the calendar, Location, and Notes (which grows) on the right. Narrower,
+ * the columns are `display: contents` and the fields keep one column, the calendar after the title.
+ */
 export function EventSheet({ mode, form, calendars, calendarId, busy, error, conflict, onChange, onCalendarChange, onRepeat, onSave, onReload, onClose }: EventSheetProps) {
   // Back closes the sheet, or asks first when it was edited (the caller's onClose decides).
   useHistoryDialogGuard(true, onClose);
   const set = <K extends keyof EventForm>(key: K, value: EventForm[K]) => onChange({ ...form, [key]: value });
   const calendarLabelId = useId();
-  return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy}>
-    <form className="calendar-form" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
-      <label className="calendar-field">
+  return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy} className="calendar-event-dialog">
+    <form className="calendar-form calendar-event-form" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+      <div className="calendar-event-when">
+      <label className="calendar-field calendar-event-title">
         <span>Title</span>
         <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus required />
       </label>
-      {mode === "create" && calendars.length > 1 && <div className="calendar-field">
-        <span id={calendarLabelId}>Calendar</span>
-        <Select value={calendarId} onChange={onCalendarChange} label="Calendar" labelledBy={calendarLabelId}
-          options={calendars.map((calendar) => ({ value: calendar.id, label: calendar.name, swatch: calendar.color, description: calendar.is_owner ? undefined : `Shared by ${calendar.owner_name}` }))} />
-      </div>}
       <label className="calendar-toggle">
         <input type="checkbox" checked={form.allDay} onChange={(event) => set("allDay", event.target.checked)} />
         <span>All day</span>
@@ -68,14 +69,22 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
       <button type="button" className="calendar-repeat-button" onClick={onRepeat}>
         <Repeat /><span><strong>Repeat</strong><small>{repeatSummary(form.repeat, form.startDate)}</small></span>
       </button>
+      </div>
+      <div className="calendar-event-details">
+      {mode === "create" && calendars.length > 1 && <div className="calendar-field calendar-event-calendar">
+        <span id={calendarLabelId}>Calendar</span>
+        <Select value={calendarId} onChange={onCalendarChange} label="Calendar" labelledBy={calendarLabelId}
+          options={calendars.map((calendar) => ({ value: calendar.id, label: calendar.name, swatch: calendar.color, description: calendar.is_owner ? undefined : `Shared by ${calendar.owner_name}` }))} />
+      </div>}
       <label className="calendar-field">
         <span>Location</span>
         <input value={form.location} maxLength={200} onChange={(event) => set("location", event.target.value)} />
       </label>
-      <label className="calendar-field">
+      <label className="calendar-field calendar-event-notes">
         <span>Notes</span>
         <textarea value={form.description} rows={4} onChange={(event) => set("description", event.target.value)} />
       </label>
+      </div>
       {error && <p className="file-dialog-error" role="alert">{error}{conflict && <> <button type="button" className="calendar-link-button" onClick={onReload}>Load their changes</button></>}</p>}
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

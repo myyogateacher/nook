@@ -350,6 +350,30 @@ describe("GET /api/today", () => {
     expect(binned.sections.tasksMine!.items).toEqual([]);
   });
 
+  test("tasks: Due soon ranks the viewer's own cards first, so others' overdue cards never push them out of the ten", async () => {
+    const owner = await createUser("Today ranking owner");
+    const member = await createUser("Today ranking member");
+    const { boardId, todo } = await board(owner, "Ranking board", [member]);
+    const date = dateInZone(new Date(), "UTC");
+    const theirs: string[] = [];
+    for (let index = 0; index < 11; index += 1) theirs.push((await card(owner, boardId, todo, `Overdue ${index}`, addDays(date, -5 + (index % 3)))).id);
+    const mine = await card(member, boardId, todo, "Mine due today", date);
+    const assigned = await card(owner, boardId, todo, "Assigned tomorrow", addDays(date, 1));
+    expect((await tasks(owner, "PATCH", `/cards/${assigned.id}`, { assigneeId: member.userId, revision: assigned.revision })).status).toBe(200);
+
+    const memberDue = (await expectParity(member)).sections.tasksDue!;
+    expect(memberDue.items).toHaveLength(10);
+    expect(memberDue.more).toBe(true);
+    // Own cards first (by due date), then the others' overdue ones by due date.
+    expect(ids(memberDue, "cardId").slice(0, 2)).toEqual([mine.id, assigned.id]);
+    const rest = memberDue.items.slice(2).map((item) => item.dueOn as string);
+    expect(rest).toEqual([...rest].sort());
+    expect(memberDue.items.slice(2).every((item) => theirs.includes(item.cardId))).toBe(true);
+    // The owner made the eleven and the assigned card, so theirs come first for them and the member's card drops out.
+    const ownerDue = (await expectParity(owner)).sections.tasksDue!;
+    expect(ids(ownerDue, "cardId")).not.toContain(mine.id);
+  });
+
   test("tasks: timed cards carry dueAt, sort by time, go overdue at their instant, and My tasks reads card_assignees", async () => {
     const owner = await createUser("Today timed owner");
     const member = await createUser("Today timed member");

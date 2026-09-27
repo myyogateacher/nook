@@ -24,3 +24,11 @@ test("the card dialog widens on tablets and laptops and splits into fields and c
   // Phones keep the full-screen dialog.
   expect(css).toContain(".task-card-dialog { inset: 0; margin: 0; width: 100vw; max-height: none; height: 100dvh;");
 });
+
+test("phone touch targets: New tag, Manage tags…, Add time, and Remove time are at least 44 px tall (QA 0.9.2)", () => {
+  const base = css.indexOf(".task-add-time { justify-self: start; min-height: 32px;");
+  const phone = css.indexOf("@media (max-width: 760px) {\n  .task-add-time, .task-due-editor .task-small-button { min-height: 44px; }\n}");
+  expect(base).toBeGreaterThanOrEqual(0);
+  // After the base rule, so it wins the cascade at the same specificity.
+  expect(phone).toBeGreaterThan(base);
+});

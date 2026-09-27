@@ -221,7 +221,6 @@
 .task-due-text.today, .task-due-text.soon { color: #d9bf7e; }
 @media (max-width: 760px) {
   .task-card-field-control input { min-height: 44px; font-size: 1rem; }
-  .task-add-time { min-height: 44px; }
 }
 
 /* Due time and assignees (Wave 13B) */
@@ -229,6 +228,11 @@
 .task-add-time:hover { background: #1c1c20; }
 .task-add-time:disabled { opacity: .5; cursor: not-allowed; }
 .task-add-time svg { width: 14px; }
+/* Phone touch targets (QA 0.9.2): "New tag", "Manage tags…", "Add time", "Remove time". Kept after
+   the base rule so it wins the cascade; the text size stays. */
+@media (max-width: 760px) {
+  .task-add-time, .task-due-editor .task-small-button { min-height: 44px; }
+}
 /* The Due field (DuePicker.tsx): a trigger with the value; the editor saves only on Apply. */
 .task-due-picker { display: grid; gap: 6px; min-width: 0; }
 .task-due-trigger { width: 100%; min-width: 0; min-height: 38px; display: flex; align-items: center; gap: 8px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; text-align: left; cursor: pointer; }

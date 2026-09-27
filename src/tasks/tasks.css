@@ -252,7 +252,14 @@
 .tasks-app .color-blue { --tag-bg: #1a2640; --tag-fg: #a9c1f5; }
 .tasks-app .color-purple { --tag-bg: #2a1f3d; --tag-fg: #cdb6f7; }
 .tasks-app .color-pink { --tag-bg: #3b1c30; --tag-fg: #f7b0d8; }
-.tasks-app .ui-chip[class*="color-"], .task-tag[class*="color-"] { background: var(--tag-bg); color: var(--tag-fg); }
+/* A tag reads by its colour everywhere (chips in the field, lane cards, table and list, filters):
+   tinted fill, text, and border, and a bullet in the text tone. Text is at least 4.5:1 on the fill
+   (tests/tasksTagColours.test.tsx). */
+.tasks-app .ui-chip[class*="color-"], .task-tag[class*="color-"] { border: 1px solid color-mix(in srgb, var(--tag-fg) 40%, transparent); background: var(--tag-bg); color: var(--tag-fg); }
+.tasks-app .ui-chip[class*="color-"]::before { content: ""; width: 7px; height: 7px; flex: none; border-radius: 999px; background: currentColor; }
+.task-tag[class*="color-"]::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 999px; background: currentColor; vertical-align: 1px; }
+.task-filter-swatches { display: inline-flex; gap: 2px; margin-right: 6px; vertical-align: -1px; }
+.task-filter-swatches .ui-option-swatch { width: 9px; height: 9px; }
 .tasks-app .ui-option-swatch[class*="color-"] { background: var(--tag-fg); }
 .task-card-field-wide { grid-column: 1 / -1; }
 .task-card-field-label { display: inline-flex; align-items: center; gap: 7px; color: #c9c9ce; font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }

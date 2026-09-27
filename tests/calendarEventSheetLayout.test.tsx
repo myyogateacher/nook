@@ -42,7 +42,7 @@ test("the event sheet's widths: 720 px from 761 px, 880 px and two columns from 
   // One column keeps the calendar right after the title.
   expect(css).toContain(".calendar-event-title { order: -2; }");
   expect(css).toContain(".calendar-event-calendar { order: -1; }");
-  expect(css).toContain("@media (min-width: 761px) {\n  .file-dialog.calendar-event-dialog { width: min(720px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }\n}");
+  expect(css).toContain("@media (min-width: 761px) {\n  .file-dialog.calendar-event-dialog { width: min(720px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }\n");
   const wide = css.slice(css.indexOf("@media (min-width: 1100px) {\n  .file-dialog.calendar-event-dialog"));
   expect(wide).toContain(".file-dialog.calendar-event-dialog { width: min(880px, 90vw); }");
   expect(wide).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 1fr)");

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Bell, Check, Plus, X } from "lucide-react";
 import { api } from "../api";
 import { ModalDialog } from "../files/Dialog";
+import { nextOccurrence, type SeriesInput } from "../../shared/calendarRecurrence";
+import type { EventDetail } from "./calendarApi";
 
 export type ReminderSummary = { id: string; eventId: string | null; offsetMinutes: number | null; title: string | null; tz: string; nextFireAt: string | null; lastFiredAt: string | null; createdAt: string };
 
@@ -70,13 +72,54 @@ export function EventReminders({ eventId, allDay, reloadKey, onAdd, onRemove }: 
   </section>;
 }
 
-type ReminderPickerProps = { allDay: boolean; existing: number[]; onPick: (offsetMinutes: number) => Promise<void>; onClose: () => void };
+/** The event's timing as the recurrence helpers read it (the server's `seriesOf`), or null when incomplete. */
+export function eventSeries(event: Pick<EventDetail, "all_day" | "start_date" | "end_date" | "start_local" | "tz" | "duration_minutes" | "repeat" | "exdates">): SeriesInput | null {
+  const rule = event.repeat ?? null;
+  if (event.all_day) return event.start_date && event.end_date ? { allDay: true, startDate: event.start_date, endDate: event.end_date, rule, exdates: event.exdates } : null;
+  return event.start_local && event.tz && event.duration_minutes !== null ? { allDay: false, startLocal: event.start_local, tz: event.tz, durationMinutes: event.duration_minutes, rule, exdates: event.exdates } : null;
+}
 
-/** The reminder picker sheet. Pushes no history entry; Back closes it (D69). */
-export function ReminderPicker({ allDay, existing, onPick, onClose }: ReminderPickerProps) {
+/**
+ * When a reminder `offsetMinutes` before the start would next fire (the server's `nextEventFire`):
+ * at the first occurrence whose fire time is still ahead, so a weekly event's 5-minute reminder
+ * moves to next week once this week's has passed. Null when no occurrence has it ahead.
+ */
+export function nextReminderFire(series: SeriesInput, offsetMinutes: number, tz: string, nowMs: number) {
+  const offsetMs = offsetMinutes * 60_000;
+  const occurrence = nextOccurrence(series, nowMs + offsetMs, tz);
+  return occurrence ? occurrence.startMs - offsetMs : null;
+}
+
+/** The server's refusal when an event has no upcoming time for a reminder (reminders.ts). */
+const NO_UPCOMING_TIME = "This event has no upcoming time for that reminder";
+export const PASSED_MESSAGE = "That reminder time has already passed.";
+export const EVENT_OVER_MESSAGE = "This event has already happened, so there is nothing to remind you about.";
+export const SERIES_OVER_MESSAGE = "This series has ended.";
+
+type ReminderPickerProps = {
+  allDay: boolean; existing: number[]; onPick: (offsetMinutes: number) => Promise<void>; onClose: () => void;
+  /** The event, so options whose time has passed are disabled (QA 0.9.2); without it every option is offered. */
+  event?: Parameters<typeof eventSeries>[0] | null;
+  /** The viewer's zone (all-day events start at their midnight) and the clock, for tests. */
+  timeZone?: string;
+  nowMs?: number;
+};
+
+/**
+ * The reminder picker sheet. Pushes no history entry; Back closes it (D69). Each option is checked
+ * against the event's next occurrence: one whose time has passed is disabled with "Already
+ * passed", and an event with no upcoming occurrence shows a notice and Close instead of the list
+ * (QA 0.9.2). The server's check stays the source of truth; its refusal reads the same way.
+ */
+export function ReminderPicker({ allDay, existing, onPick, onClose, event = null, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone, nowMs }: ReminderPickerProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refused, setRefused] = useState<number[]>([]);
   const options = allDay ? ALL_DAY_OFFSETS : TIMED_OFFSETS;
+  const now = nowMs ?? Date.now();
+  const series = event ? eventSeries(event) : null;
+  const over = series ? nextOccurrence(series, now, timeZone) === null : false;
+  const passed = (offset: number) => refused.includes(offset) || (series ? nextReminderFire(series, offset, timeZone, now) === null : false);
 
   async function pick(offset: number) {
     setBusy(true);
@@ -84,18 +127,32 @@ export function ReminderPicker({ allDay, existing, onPick, onClose }: ReminderPi
     try {
       await onPick(offset);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not add the reminder");
+      const message = reason instanceof Error ? reason.message : "Could not add the reminder";
+      if (message === NO_UPCOMING_TIME) {
+        setRefused((current) => [...current, offset]);
+        setError(PASSED_MESSAGE);
+      } else setError(message);
       setBusy(false);
     }
   }
 
-  return <ModalDialog title="Remind me" eyebrow="Event" onClose={onClose} variant="sheet" busy={busy}>
+  if (over) return <ModalDialog title="Remind me" eyebrow="Event" onClose={onClose} variant="sheet" className="calendar-reminder-dialog">
+    <p className="file-dialog-copy calendar-reminder-over" role="status">{series?.rule ? SERIES_OVER_MESSAGE : EVENT_OVER_MESSAGE}</p>
+    <footer className="file-dialog-actions">
+      <button type="button" className="primary-button" autoFocus onClick={onClose}>Close</button>
+    </footer>
+  </ModalDialog>;
+
+  const available = (offset: number) => !existing.includes(offset) && !passed(offset);
+  return <ModalDialog title="Remind me" eyebrow="Event" onClose={onClose} variant="sheet" busy={busy} className="calendar-reminder-dialog">
     <div className="move-list" role="list" aria-label="When">
-      {options.map((offset, index) => {
+      {options.map((offset) => {
         const taken = existing.includes(offset);
-        return <button key={offset} role="listitem" className="move-option" disabled={taken || busy} autoFocus={index === options.findIndex((item) => !existing.includes(item))} onClick={() => { void pick(offset); }}>
+        const gone = !taken && passed(offset);
+        return <button key={offset} role="listitem" className={`move-option${gone ? " calendar-reminder-passed" : ""}`} disabled={taken || gone || busy}
+          autoFocus={offset === options.find(available)} onClick={() => { void pick(offset); }}>
           <Bell aria-hidden="true" />
-          <span>{reminderLabel(offset, allDay)}{taken && <small>Already set</small>}</span>
+          <span>{reminderLabel(offset, allDay)}{taken ? <small>Already set</small> : gone ? <small>Already passed</small> : null}</span>
           {taken && <Check aria-hidden="true" />}
         </button>;
       })}

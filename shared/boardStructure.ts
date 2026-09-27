@@ -10,13 +10,18 @@
  *   board's columns show (D126).
  * - `sprints` means the sprint is the outer grouping ("Sprint › Task"). A
  *   sprint is a time box, never a card level (D123, D124).
+ * - `sprintDefaults` (optional) is what a new sprint starts with: its length
+ *   in days, where it starts, and a name pattern (shared/sprintPlan.ts).
+ *   Small and bounded: `structure_json` is at most 1024 characters (019).
  */
+
+import { SPRINT_DAYS_MAX, SPRINT_PATTERN_MAX, SPRINT_START_RULES, SCRUM_SPRINT_DEFAULTS, validSprintPattern, type SprintDefaults, type SprintStartRule } from "./sprintPlan";
 
 export const MAX_LEVELS = 3;
 export const LEVEL_NAME_MAX = 24;
 
 export type LevelName = { name: string; plural: string };
-export type BoardStructure = { levels: LevelName[]; workLevel: number; sprints: boolean };
+export type BoardStructure = { levels: LevelName[]; workLevel: number; sprints: boolean; sprintDefaults?: SprintDefaults };
 
 export const FLAT_STRUCTURE: BoardStructure = { levels: [{ name: "Card", plural: "Cards" }], workLevel: 0, sprints: false };
 
@@ -48,7 +53,7 @@ export function validateStructure(input: unknown): StructureCheck {
   const fail = (error: string): StructureCheck => ({ ok: false, error });
   if (!input || typeof input !== "object" || Array.isArray(input)) return fail("The structure must be an object");
   const value = input as Record<string, unknown>;
-  const extra = Object.keys(value).filter((key) => !["levels", "workLevel", "sprints"].includes(key));
+  const extra = Object.keys(value).filter((key) => !["levels", "workLevel", "sprints", "sprintDefaults"].includes(key));
   if (extra.length) return fail(`Unknown structure field ${extra[0]}`);
   if (!Array.isArray(value.levels) || value.levels.length < 1 || value.levels.length > MAX_LEVELS) return fail(`A board has 1 to ${MAX_LEVELS} levels`);
   const levels: LevelName[] = [];
@@ -66,7 +71,29 @@ export function validateStructure(input: unknown): StructureCheck {
     return fail("New cards must be created at one of the board's levels");
   }
   if (typeof value.sprints !== "boolean") return fail("sprints must be true or false");
-  return { ok: true, structure: { levels, workLevel: value.workLevel, sprints: value.sprints } };
+  // `null` (a PATCH that clears them) and absent both mean none.
+  if (value.sprintDefaults === undefined || value.sprintDefaults === null) return { ok: true, structure: { levels, workLevel: value.workLevel, sprints: value.sprints } };
+  const defaults = validateSprintDefaults(value.sprintDefaults);
+  if (!defaults.ok) return defaults;
+  return { ok: true, structure: { levels, workLevel: value.workLevel, sprints: value.sprints, sprintDefaults: defaults.defaults } };
+}
+
+/** Validates a board's sprint defaults: `days` 1–60, a `start` rule, and an optional name pattern with one `{n}`. */
+export function validateSprintDefaults(input: unknown): { ok: true; defaults: SprintDefaults } | { ok: false; error: string } {
+  const fail = (error: string) => ({ ok: false as const, error });
+  if (!input || typeof input !== "object" || Array.isArray(input)) return fail("Sprint defaults must be an object");
+  const value = input as Record<string, unknown>;
+  const extra = Object.keys(value).find((key) => !["days", "start", "name"].includes(key));
+  if (extra) return fail(`Unknown sprint default ${extra}`);
+  if (typeof value.days !== "number" || !Number.isInteger(value.days) || value.days < 1 || value.days > SPRINT_DAYS_MAX) return fail(`A sprint lasts 1 to ${SPRINT_DAYS_MAX} days`);
+  if (typeof value.start !== "string" || !(SPRINT_START_RULES as readonly string[]).includes(value.start)) return fail("Choose when a new sprint starts");
+  const defaults: SprintDefaults = { days: value.days, start: value.start as SprintStartRule };
+  if (value.name !== undefined) {
+    const name = typeof value.name === "string" ? value.name.trim() : "";
+    if (!validSprintPattern(name) || CONTROL.test(name)) return fail(`The name pattern is 1 to ${SPRINT_PATTERN_MAX} characters with one {n}`);
+    defaults.name = name;
+  }
+  return { ok: true, defaults };
 }
 
 /** The stored structure, or Flat when the stored text is missing or invalid (never throws). */
@@ -152,7 +179,7 @@ export const TEMPLATES: Record<BoardTemplateId, BoardTemplate> = {
   scrum: {
     id: "scrum", label: "Scrum sprint board", description: "Backlog to Done, with tasks and subtasks planned in sprints.",
     columns: [col("Backlog", "todo"), col("To do", "todo"), col("In progress", "doing"), col("Review", "doing"), col("Done", "done")],
-    structure: PRESETS.sprint_task_subtask.structure,
+    structure: { ...PRESETS.sprint_task_subtask.structure, sprintDefaults: SCRUM_SPRINT_DEFAULTS },
     firstSprint: "Sprint 1"
   },
   epics: { id: "epics", label: "Epic › Story › Subtask", description: "Stories on the board, grouped under epics.", columns: [col("To do", "todo"), col("In progress", "doing"), col("Done", "done")], structure: PRESETS.epic_story_subtask.structure },

@@ -9,7 +9,8 @@ import { limitReached, ownerOnly, requireReadableBoard, TaskError, withBoardLock
  * migration 015).
  *
  * Tags belong to one board: at most 100, names of 1–40 characters that are
- * unique case-insensitively, coloured from the Collections option palette.
+ * unique case-insensitively, coloured from the Collections option palette (a
+ * tag created without a colour takes the next unused one, `nextTagColor`).
  * Any reader creates a tag (while tagging a card); only the owner renames,
  * recolours, or deletes one. Deleting unlinks it from every card through the
  * `card_tags` cascade, with no Bin, and changes no card's `revision` (the tag
@@ -28,6 +29,24 @@ export const TAG_COLORS = OPTION_COLORS;
 /** The fixed flag set, in display order (D110), shared with the client. The `card_flags` CHECK lists the same values. */
 export const CARD_FLAGS = TASK_FLAGS;
 export type CardFlag = TaskFlag;
+
+/** The colours a new tag gets when none is chosen, in order: the palette without grey. */
+export const TAG_AUTO_COLORS = OPTION_COLORS.filter((color) => color !== "gray");
+
+/**
+ * The colour of a board's next tag when the caller picks none: the first colour of TAG_AUTO_COLORS
+ * no tag of the board has yet, looking from the slot the board's tag count points at (so a board
+ * cycles through the palette), else that slot's colour once every colour is taken. Deterministic.
+ */
+export function nextTagColor(existing: readonly OptionColor[]): OptionColor {
+  const used = new Set(existing);
+  const start = existing.length % TAG_AUTO_COLORS.length;
+  for (let offset = 0; offset < TAG_AUTO_COLORS.length; offset += 1) {
+    const color = TAG_AUTO_COLORS[(start + offset) % TAG_AUTO_COLORS.length]!;
+    if (!used.has(color)) return color;
+  }
+  return TAG_AUTO_COLORS[start]!;
+}
 
 export type BoardTag = { id: string; board_id: string; name: string; color: OptionColor; card_count: number };
 
@@ -74,7 +93,7 @@ export function createTag(userId: string, boardId: string, input: { name: string
     db.transaction(() => {
       const timestamp = now();
       db.query("INSERT INTO board_tags (id, board_id, name, color, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(id, boardId, input.name, input.color ?? "gray", userId, timestamp, timestamp);
+        .run(id, boardId, input.name, input.color ?? nextTagColor(tags.map((tag) => tag.color)), userId, timestamp, timestamp);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, boardId);
       audit(userId, null, "task.tag_create", { boardId, tagId: id });
     })();

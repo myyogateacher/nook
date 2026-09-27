@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import { childName, levelName, type BoardStructure } from "../../shared/boardStructure";
+import { aLevel, childName, levelName, parentRequired, type BoardStructure } from "../../shared/boardStructure";
 import { columnCards } from "./boardOrder";
 import { applyCardDetail } from "./cardTags";
 import { canNest, checklistColumn, childrenOf, hasLevels, hiddenAboveNote, hiddenColumnHint, hiddenLevels, levelOf, newChildColumn, parentCandidates, rollupMap, structureOf, visibleOnBoard, type Rollup } from "./hierarchyModel";
@@ -92,12 +92,13 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
     try {
       const { card } = await updateCard(cardId, { parentId, ...(level === undefined ? {} : { level }), revision: current.revision });
       replaceCard(card);
-      notify(parent ? `Moved “${current.title}” under “${parent.title}”` : `“${current.title}” has no parent now`);
+      notify(parent ? `Moved “${current.title}” under “${parent.title}”`
+        : level !== undefined && level !== levelOf(current) ? `“${current.title}” is ${aLevel(structure, level)} now` : `“${current.title}” has no parent now`);
     } catch (reason) {
       notify(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed that card. Showing the latest board." : taskErrorMessage(reason, "Could not change the parent"));
       void load();
     }
-  }, [detailRef, load, notify, replaceCard]);
+  }, [detailRef, load, notify, replaceCard, structure]);
 
   const bottomOf = (columnId: string, cardId: string) => {
     const others = columnCards(detailRef.current?.cards ?? [], columnId).filter((card) => card.id !== cardId);
@@ -159,7 +160,8 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
       }
     },
     composeChild: (parent) => openComposer({ parentId: parent.id, level: levelOf(parent) + 1 }),
-    detachChild: (child) => reparent(child.id, null)
+    // A subtask cannot lose its parent (PARENT_REQUIRED): it becomes a work-level card instead.
+    detachChild: (child) => reparent(child.id, null, parentRequired(structure, levelOf(child)) ? structure.workLevel : undefined)
   };
 
   /** The Move sheet's "Set parent…" list (the 390 px path, D128). */
@@ -168,7 +170,7 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
     const candidates = parentCandidates(cards, card);
     return {
       label: `Set ${levelName(structure, levelOf(card) - 1).toLowerCase()}…`,
-      noneLabel: `No ${levelName(structure, levelOf(card) - 1).toLowerCase()}`,
+      ...(parentRequired(structure, levelOf(card)) ? {} : { noneLabel: `No ${levelName(structure, levelOf(card) - 1).toLowerCase()}` }),
       currentParentId: card.parent_card_id ?? null,
       options: candidates.map((candidate) => ({ id: candidate.id, title: candidate.title, disabled: (rollups.get(candidate.id)?.total ?? 0) >= 100 && candidate.id !== card.parent_card_id })),
       onPick: (parentId: string | null) => reparent(card.id, parentId)

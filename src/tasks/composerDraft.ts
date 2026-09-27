@@ -2,6 +2,7 @@
 // locally until one POST /boards/:b/cards writes it all. Pure, so it can be unit tested.
 import { canEnterColumn, columnFullMessage, viewerTimeZone, wallTimeInstant } from "./taskActions";
 import type { BoardColumn, CardAssignee, CardCreate, CardDetail, CardSearchResult, RelationType, UploadedAttachment } from "./tasksApi";
+import { parentRequired, parentRequiredMessage, type BoardStructure } from "../../shared/boardStructure";
 
 export type StagedRelation = { key: string; type: RelationType; card: CardSearchResult };
 
@@ -114,7 +115,16 @@ export function createBody(draft: ComposerDraft, title: string): CardCreate {
   return body;
 }
 
-export type ComposerError = { field: "column" | "relations" | "form"; message: string };
+export type ComposerError = { field: "column" | "relations" | "parent" | "form"; message: string };
+
+/**
+ * A subtask needs its parent before Create (operator QA 0.9.1): the inline message under the parent
+ * field, or null when the draft can be created.
+ */
+export function composerParentError(structure: BoardStructure, draft: Pick<ComposerDraft, "level" | "parentId">): ComposerError | null {
+  const level = draft.level ?? structure.workLevel;
+  return parentRequired(structure, level) && !draft.parentId ? { field: "parent", message: `${parentRequiredMessage(structure, level)}.` } : null;
+}
 
 /** Where a refused create is explained, next to the field it concerns (§4.3). */
 export function composerError(reason: { status?: number; code?: unknown; wipLimit?: unknown; message?: string }, column: BoardColumn | undefined, hasRelations = false): ComposerError {
@@ -122,6 +132,7 @@ export function composerError(reason: { status?: number; code?: unknown; wipLimi
   if (code === "COLUMN_FULL") {
     return { field: "column", message: columnFullMessage(column?.name ?? "This column", typeof reason.wipLimit === "number" ? reason.wipLimit : column?.wip_limit) };
   }
+  if (code === "PARENT_REQUIRED") return { field: "parent", message: reason.message || "Pick a parent for it first." };
   if (code === "RELATION_EXISTS") return { field: "relations", message: "Two of the links point to the same card. Keep one." };
   if (code === "LIMIT_REACHED") return { field: "form", message: reason.message || "A limit was reached, so the card was not created." };
   if (code === "ATTACHMENT_LINKED") return { field: "form", message: "One of the files is already on another card. Remove it and attach it again." };

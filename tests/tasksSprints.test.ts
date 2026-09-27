@@ -191,8 +191,9 @@ describe("planning cards in sprints", () => {
     expect(await call(member, "POST", `/boards/${boardId}/cards`, { columnId: columns[0].id, title: "Nope", sprintId: sprint.id })).toMatchObject({ status: 409, body: { code: "SPRINT_COMPLETED" } });
     const open = await addSprint(owner, boardId, "Sprint 2");
     const task = await addCard(member, boardId, columns[0].id, "Task", { sprintId: open.id });
-    // Change level: the card is now a subtask, so it no longer stores a sprint.
-    const releveled = await call(member, "PATCH", `/cards/${task.id}`, { level: 1, revision: task.revision });
+    // Change level: the card is now a subtask (under another task), so it no longer stores a sprint.
+    const host = await addCard(member, boardId, columns[0].id, "Host task");
+    const releveled = await call(member, "PATCH", `/cards/${task.id}`, { level: 1, parentId: host.id, revision: task.revision });
     expect(releveled.status).toBe(200);
     expect(releveled.body.card.sprint_id).toBeNull();
     expect((db.query("SELECT sprint_id FROM cards WHERE id = ?").get(task.id) as { sprint_id: string | null }).sprint_id).toBeNull();

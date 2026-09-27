@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Combobox, createRow, pickFocusTarget } from "../src/ui/Combobox";
+import { Combobox, comboboxRows, createRow, pickFocusTarget } from "../src/ui/Combobox";
 import type { Option } from "../src/ui/Listbox";
 
 const people: Option[] = [
@@ -51,6 +51,26 @@ test("onCreate offers a Create row only when nothing matches the text exactly", 
   const row = createRow("  Bug ", [{ label: "Bugfix" }], true);
   expect(row?.label).toBe("Create “Bug”");
   expect(row?.value).not.toBe("Bug");
+});
+
+test("the Create row leads the list, and Enter's first pick is the first match, else the Create row", () => {
+  const create = createRow("Ba", [], true)!;
+  const none = comboboxRows([], create);
+  expect(none.shown.map((option) => option.label)).toEqual(["Create “Ba”"]);
+  expect(none.firstActive).toBe(0);
+  const some = comboboxRows([{ value: "t1", label: "Backend" }], createRow("Ba", [{ label: "Backend" }], true));
+  expect(some.shown.map((option) => option.label)).toEqual(["Create “Ba”", "Backend"]);
+  expect(some.firstActive).toBe(1);
+  // Only disabled matches (the card is full would drop the row; here a disabled option): the Create row.
+  expect(comboboxRows([{ value: "t1", label: "Backend", disabled: true }], create).firstActive).toBe(0);
+  expect(comboboxRows([], null)).toEqual({ shown: [], firstActive: -1 });
+  expect(comboboxRows(people, null).firstActive).toBe(0);
+});
+
+test("an open list with no options shows the hint row", () => {
+  const markup = renderToStaticMarkup(<Combobox multiple value={[]} onChange={noop} options={[]} onCreate={async (label) => ({ value: label, label })} label="Tags" emptyText="Type a name to create a tag" presentation="popup" defaultOpen openOnFocus />);
+  expect(markup).toContain('aria-expanded="true"');
+  expect(markup).toContain('<div class="ui-listbox-empty" role="presentation">Type a name to create a tag</div>');
 });
 
 test("the phone sheet has a sticky search combobox, 44 px rows, and Done for several", () => {

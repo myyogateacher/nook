@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, Clock, Flag, Tag, UsersRound } from "lucide-react";
+import { CalendarDays, Flag, Tag, UsersRound } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
 import type { Option } from "../ui/Listbox";
 import {
   assigneeLabel,
   assigneeSentence,
   cardAssignees,
-  committableDueDate,
-  committableDueTime,
   dueStatus,
   dueTimeNote,
   localDateString,
@@ -18,6 +16,7 @@ import {
 import { getBoardReaders, type BoardTag, type CardAssignee, type CardChange, type CardDetail } from "./tasksApi";
 import { FLAG_LABELS, type TagChange } from "./cardTags";
 import { FlagPicker, TagPicker } from "./TagPicker";
+import { DuePicker } from "./DuePicker";
 
 export const MAX_ASSIGNEES = 20;
 
@@ -92,77 +91,11 @@ function StaticCardFields({ card, idPrefix, done, tags }: Pick<CardFieldsProps, 
   </div>;
 }
 
+/** The due date and optional time: a trigger with the value that opens the Apply/Cancel editor (DuePicker). */
 function DueField({ card, idPrefix, done, saving, onSave }: Omit<CardFieldsProps, "userId">) {
-  const [dueDraft, setDueDraft] = useState<string | null>(null);
-  const [timeDraft, setTimeDraft] = useState<string | null>(null);
-  const [addingTime, setAddingTime] = useState(false);
-  const zone = viewerTimeZone();
-  const hasTime = Boolean(card.due_time);
-  const due = dueStatus(card.due_on, localDateString(), done, { dueAt: card.due_at });
-  const note = dueTimeNote(card, zone);
-  const otherZone = hasTime && card.due_tz !== zone;
-
-  async function saveTime(value: string) {
-    const time = committableDueTime(value, { time: card.due_time, zone: card.due_tz }, zone);
-    setTimeDraft(null);
-    if (!time) {
-      if (!value) setAddingTime(false);
-      return;
-    }
-    await onSave({ dueTime: time, dueTz: zone }, "Due time saved");
-    setAddingTime(false);
-  }
-
   return <div className="task-card-field">
     <label htmlFor={`${idPrefix}-due-input`}><CalendarDays aria-hidden="true" />Due</label>
-    <span className="task-card-field-control">
-      <input
-        id={`${idPrefix}-due-input`}
-        type="date"
-        value={dueDraft ?? card.due_on ?? ""}
-        min="1900-01-01"
-        max="2999-12-31"
-        disabled={saving}
-        // The date saves when committed (leaving the field or Enter), and only as a complete
-        // real date; typing passes through partial values. Moving the date keeps the time (D115).
-        onChange={(event) => setDueDraft(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }}
-        onBlur={() => {
-          const value = dueDraft === null ? null : committableDueDate(dueDraft, card.due_on);
-          setDueDraft(null);
-          if (value) void onSave({ dueOn: value }, "Due date saved");
-        }}
-        aria-describedby={`${idPrefix}-due`}
-      />
-      {card.due_on && <button type="button" className="secondary-button task-small-button" disabled={saving} onClick={() => { setDueDraft(null); setAddingTime(false); void onSave({ dueOn: null }, "Due date removed"); }}>Clear</button>}
-    </span>
-    {card.due_on && (hasTime || addingTime
-      ? <span className="task-card-field-control">
-        <input
-          id={`${idPrefix}-due-time`}
-          type="time"
-          step={60}
-          value={timeDraft ?? card.due_time ?? ""}
-          disabled={saving}
-          autoFocus={addingTime && !hasTime}
-          aria-label="Due time"
-          aria-describedby={`${idPrefix}-due`}
-          onChange={(event) => setTimeDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
-            if (event.key === "Escape" && timeDraft !== null) { event.preventDefault(); setTimeDraft(null); }
-          }}
-          onBlur={() => { void saveTime(timeDraft ?? card.due_time ?? ""); }}
-        />
-        {hasTime
-          ? <button type="button" className="secondary-button task-small-button" disabled={saving} onClick={() => { setTimeDraft(null); void onSave({ dueTime: null }, "Due time removed"); }}>Remove time</button>
-          : <button type="button" className="secondary-button task-small-button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setTimeDraft(null); setAddingTime(false); }}>Cancel</button>}
-      </span>
-      : <button type="button" className="task-add-time" disabled={saving} onClick={() => setAddingTime(true)}><Clock aria-hidden="true" />Add time</button>)}
-    <small id={`${idPrefix}-due`} className={due ? `task-due-text ${due.tone}` : "task-due-text"}>
-      {due ? due.description : card.due_on ? "In a done column" : "No due date"}
-      {otherZone && note && <><br />{`Set as ${note}. Changing the time uses your zone (${zone}).`}</>}
-    </small>
+    <DuePicker card={card} idPrefix={idPrefix} done={done} disabled={saving} onApply={(change, success) => onSave(change, success)} />
   </div>;
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Columns3, File as FileIcon, Layers, Link2, Paperclip, Plus, X } from "lucide-react";
-import { FLAT_STRUCTURE, levelName, type BoardStructure } from "../../shared/boardStructure";
+import { aLevel, FLAT_STRUCTURE, levelName, parentRequired, type BoardStructure } from "../../shared/boardStructure";
 import { hasLevels, levelOf, parentCandidates } from "./hierarchyModel";
 import { ApiError } from "../api";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
@@ -15,6 +15,7 @@ import {
   applyFieldChange,
   composerDirty,
   composerError,
+  composerParentError,
   createBody,
   defaultColumnId,
   draftCard,
@@ -124,6 +125,13 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
       titleRef.current?.focus();
       return;
     }
+    // A subtask needs its parent first (operator QA 0.9.1).
+    const parentError = composerParentError(structure, current);
+    if (parentError) {
+      setError(parentError);
+      document.getElementById(`${baseId}-parent`)?.focus();
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -227,7 +235,9 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
   const draftLevel = draft.level ?? structure.workLevel;
   const candidates = levels && draftLevel > 0 ? parentCandidates(parentCards, { id: "", title: "", column_id: "", position: 0, level: draftLevel }) : [];
   const parentLabel = draftLevel > 0 ? levelName(structure, draftLevel - 1) : "";
-  const parentOptions = [{ value: "", label: `No ${parentLabel.toLowerCase()}` }, ...candidates.map((card) => ({ value: card.id, label: card.title }))];
+  // A subtask has no "No task" choice: it is created under its parent, or the level changes.
+  const parentOptional = draftLevel > 0 && !parentRequired(structure, draftLevel);
+  const parentOptions = [...(parentOptional ? [{ value: "", label: `No ${parentLabel.toLowerCase()}` }] : []), ...candidates.map((card) => ({ value: card.id, label: card.title }))];
   const fieldError = (field: ComposerError["field"]) => error?.field === field && <p className="file-dialog-error" role="alert">{error.message}</p>;
   const stagedRows = draft.relations.map((relation) => ({ key: relation.key, type: relation.type, restricted: false, card: relation.card }));
 
@@ -282,8 +292,10 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
           </div>}
           {levels && draftLevel > 0 && <div className="task-card-field">
             <label id={`${baseId}-parent-label`}><Layers aria-hidden="true" />{parentLabel}</label>
-            <Select id={`${baseId}-parent`} labelledBy={`${baseId}-parent-label`} label={parentLabel} value={draft.parentId ?? ""} disabled={busy} options={parentOptions}
-              onChange={(parentId) => update((current) => ({ ...current, parentId: parentId || null, level: current.level ?? structure.workLevel }))} />
+            <Select id={`${baseId}-parent`} labelledBy={`${baseId}-parent-label`} label={parentLabel} value={draft.parentId ?? (parentOptional ? "" : null)} disabled={busy} options={parentOptions}
+              placeholder={`Choose ${aLevel(structure, draftLevel - 1)}…`}
+              onChange={(parentId) => { update((current) => ({ ...current, parentId: parentId || null, level: current.level ?? structure.workLevel })); if (error?.field === "parent") setError(null); }} />
+            {fieldError("parent")}
           </div>}
           {structure.sprints && sprints && draftLevel === structure.workLevel && <SprintSelect sprints={sprints} value={draft.sprintId} idPrefix={baseId} disabled={busy}
             onChange={(sprintId) => update((current) => ({ ...current, sprintId }))} />}

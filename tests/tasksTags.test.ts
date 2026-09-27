@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
+import { nextTagColor, TAG_AUTO_COLORS } from "../server/tasks/tags";
+
+test("a tag without a colour takes the next unused palette colour, cycling by the board's tag count", () => {
+  expect(TAG_AUTO_COLORS).not.toContain("gray");
+  expect(nextTagColor([])).toBe("red");
+  expect(nextTagColor(["red"])).toBe("orange");
+  expect(nextTagColor(["gray", "gray"])).toBe("yellow");
+  // The slot's colour is taken: the next free one after it.
+  expect(nextTagColor(["orange", "red"])).toBe("yellow");
+  expect(nextTagColor(["yellow", "green", "red"])).toBe("teal");
+  // Every colour taken: the slot's colour, so the board keeps cycling.
+  expect(nextTagColor([...TAG_AUTO_COLORS])).toBe("red");
+  expect(nextTagColor([...TAG_AUTO_COLORS, "gray"])).toBe("orange");
+});
 
 /** Wave 13C board tags and card flags over the REST API (WAVE_13_TASK_CARD_UX.md D109, D110, T101, §7). */
 
@@ -36,7 +50,9 @@ describe("board tags (D109, T101)", () => {
     expect(created.body.tag).toMatchObject({ board_id: boardId, name: "Backend", color: "blue", card_count: 0 });
     expect(lastAudit(member.userId, "task.tag_create")).toEqual({ boardId, tagId: created.body.tag.id });
     const defaulted = await call(owner, "POST", `/boards/${boardId}/tags`, { name: "api" });
-    expect(defaulted.body.tag.color).toBe("gray");
+    // No colour chosen: the next one the board does not use yet, never grey (blue is taken).
+    expect(defaulted.body.tag.color).toBe("orange");
+    expect((await call(member, "POST", `/boards/${boardId}/tags`, { name: "web" })).body.tag.color).toBe("yellow");
 
     const clash = await call(owner, "POST", `/boards/${boardId}/tags`, { name: "BACKEND", color: "red" });
     expect(clash).toMatchObject({ status: 409, body: { code: "TAG_EXISTS", tag: { id: created.body.tag.id, name: "Backend", color: "blue" } } });
@@ -50,7 +66,7 @@ describe("board tags (D109, T101)", () => {
     expect((await call(stranger, "POST", `/boards/${boardId}/tags`, { name: "Nope" })).status).toBe(404);
 
     const board = (await call(member, "GET", `/boards/${boardId}`)).body;
-    expect(board.tags.map((tag: { name: string }) => tag.name)).toEqual(["api", "Backend", "Äpfel"]);
+    expect(board.tags.map((tag: { name: string }) => tag.name)).toEqual(["api", "Backend", "web", "Äpfel"]);
     expect(board.cards[0]).toMatchObject({ tag_ids: [], flags: [] });
   });
 

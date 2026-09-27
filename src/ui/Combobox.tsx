@@ -1,7 +1,7 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type Ref } from "react";
 import { Plus, X } from "lucide-react";
 import { createOptionLoader } from "./asyncOptions";
-import { comboboxKey, filterOptions, firstEnabled, foldText, removeLastValue, toggleValue } from "./listNavigation";
+import { comboboxKey, filterOptions, foldText, removeLastValue, toggleValue } from "./listNavigation";
 import { DropdownSurface, ListboxOptions, optionDomId, useOutsideClose, useSheet, type Option, type Presentation } from "./Listbox";
 
 export type ComboboxProps<V extends string> = {
@@ -30,7 +30,13 @@ export type ComboboxProps<V extends string> = {
    * return to the field on the page, whose focus would raise the keyboard: the host moves it.
    */
   onSheetClose?: () => void;
+  /** Opens the list when the field takes focus (not only on a click or a key), on desktop. */
+  openOnFocus?: boolean;
+  /** Lets the host open the list and put focus in its text box ("+ New tag"). */
+  handleRef?: Ref<ComboboxHandle>;
 };
+
+export type ComboboxHandle = { open: () => void };
 
 const CREATE_VALUE = "\u0000create";
 
@@ -40,6 +46,19 @@ export function createRow(query: string, options: readonly { label: string }[], 
   if (!canCreate || !label) return null;
   if (options.some((option) => foldText(option.label) === foldText(label))) return null;
   return { value: CREATE_VALUE, label: `Create “${label}”`, icon: <Plus /> };
+}
+
+/**
+ * The rows of the open list: the "Create" row first, as soon as anything is typed, then the matches.
+ * `firstActive` is the row Enter picks straight away: the first enabled match, else the Create row.
+ */
+export function comboboxRows<T extends Option>(matches: readonly T[], create: Option | null): { shown: Option[]; firstActive: number } {
+  const first = matches.findIndex((option) => !option.disabled);
+  const offset = create ? 1 : 0;
+  return {
+    shown: create ? [create, ...matches] : [...matches],
+    firstActive: first >= 0 ? first + offset : create ? 0 : -1
+  };
 }
 
 /**
@@ -57,7 +76,7 @@ export function pickFocusTarget(sheet: boolean, focusInside: boolean): "field" |
  * values (D91). Desktop: a popup under the field. Phones: a bottom sheet with a sticky search box
  * that Back closes (D69).
  */
-export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose }: ComboboxProps<V>) {
+export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose, openOnFocus = false, handleRef }: ComboboxProps<V>) {
   const autoId = useId();
   const inputId = id ?? `${autoId}-input`;
   const listId = `${autoId}-listbox`;
@@ -93,7 +112,21 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
   const matches = (loader ? loaded : filterOptions(options ?? [], query)).map((option) =>
     atMax && !value.includes(option.value) ? { ...option, disabled: true } : option);
   const create = onCreate && !atMax ? createRow(query, matches, true) : null;
-  const shown: Option[] = create ? [...matches, create] : matches;
+  const { shown } = comboboxRows(matches, create);
+  // Focus moved back into the field by close(): not a reason to open again.
+  const refocusing = useRef(false);
+
+  function openList() {
+    if (disabled) return;
+    setOpen(true);
+    setActive(-1);
+  }
+  useImperativeHandle(handleRef, () => ({
+    open: () => {
+      openList();
+      if (!sheet) inputRef.current?.focus({ preventScroll: true });
+    }
+  }));
 
   // Announce the result count once the list settles.
   useEffect(() => {
@@ -120,7 +153,11 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
       onSheetClose();
       return;
     }
-    if (focusInput) inputRef.current?.focus();
+    if (focusInput) {
+      refocusing.current = true;
+      inputRef.current?.focus();
+      refocusing.current = false;
+    }
   }
 
   function labelOf(candidate: string) {
@@ -195,8 +232,19 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
     value={query} placeholder={value.length && !inSheet ? "" : placeholder} disabled={disabled} autoComplete="off" spellCheck={false}
     // On phones the field only opens the sheet, which has its own search box.
     readOnly={sheet && !inSheet} inputMode={sheet && !inSheet ? "none" : undefined}
-    onChange={(event) => { setQuery(event.target.value); setOpen(true); setActive(loader ? -1 : firstEnabled(filterOptions(options ?? [], event.target.value))); }}
-    onClick={() => { if (!open) { setOpen(true); setActive(-1); } }}
+    onChange={(event) => {
+      const text = event.target.value;
+      setQuery(text);
+      setOpen(true);
+      if (loader) {
+        setActive(-1);
+        return;
+      }
+      const typed = filterOptions(options ?? [], text).map((option) => atMax && !value.includes(option.value) ? { ...option, disabled: true } : option);
+      setActive(comboboxRows(typed, onCreate && !atMax ? createRow(text, typed, true) : null).firstActive);
+    }}
+    onClick={() => { if (!open) openList(); }}
+    onFocus={() => { if (openOnFocus && !open && !sheet && !inSheet && !refocusing.current) openList(); }}
     onKeyDown={onKey} />;
 
   return <div ref={rootRef} className={`ui-combobox${disabled ? " disabled" : ""}`}>

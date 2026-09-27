@@ -169,12 +169,18 @@ function DropdownPopup({ anchorRef, search, footer, children }: SurfaceProps) {
       setPlaced(true);
     };
     place();
+    // Scrolling any ancestor (a grid that scrolls both ways) moves the trigger. Scrolling the
+    // popup's own list does not, and re-placing then (which lifts the height cap to measure) reset
+    // its scroll to the top, so a long list could never be scrolled to its last options.
+    const onScroll = (event: Event) => {
+      if (event.target instanceof Node && popupRef.current?.contains(event.target)) return;
+      place();
+    };
     window.addEventListener("resize", place);
-    // Scrolling any ancestor (a grid that scrolls both ways) moves the trigger.
-    window.addEventListener("scroll", place, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [anchorRef]);
   return <div ref={popupRef} className="ui-popup" style={placed ? undefined : { visibility: "hidden" }}>

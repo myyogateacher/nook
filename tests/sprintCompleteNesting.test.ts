@@ -4,9 +4,9 @@ import { popStateClosedDialog, registerHistoryDialogGuard } from "../src/history
 import { createDialogGuard } from "../src/ui/useHistoryDialogGuard";
 
 /**
- * Review L6b: "Complete…" in Board settings opens the Complete sprint dialog over the settings
- * sheet instead of replacing it, with its own history guard, so Back (or Cancel) closes only the
- * dialog and the settings are still there; the next Back closes the settings.
+ * Review L6b: a dialog nested over a sheet has its own history guard, so Back (or Cancel) closes
+ * only the dialog and the sheet is still there; the next Back closes the sheet. Since the sprint
+ * list moved to the Sprints sheet (a route), Complete there is the board's own guarded dialog.
  */
 
 test("Back with Complete sprint open over Board settings closes only the dialog; the next Back closes the settings", () => {
@@ -31,13 +31,13 @@ test("Back with Complete sprint open over Board settings closes only the dialog;
   }
 });
 
-test("BoardView nests Complete sprint over the settings sheet, which leaves Escape to it", () => {
+test("the Sprints sheet (a route) opens Complete as the board's guarded dialog and leaves Escape to it", () => {
   const board = readFileSync(new URL("../src/tasks/BoardView.tsx", import.meta.url), "utf8");
-  // The settings' Complete opens the nested dialog; it does not replace the board's dialog.
-  expect(board).toContain("onComplete={(sprint) => setSettingsCompleteId(sprint.id)}");
-  expect(board).not.toContain('onComplete={(sprint) => setDialog({ kind: "completeSprint"');
-  expect(board).toContain("useHistoryDialogGuard(nestedCompleteId !== null, closeNestedComplete)");
-  expect(board).toContain("suspended={nestedCompleteId !== null}");
-  const sheet = readFileSync(new URL("../src/tasks/BoardSettingsSheet.tsx", import.meta.url), "utf8");
+  // Sprints moved out of Board settings (operator 2026-09-27): the sheet's Complete is the board's dialog.
+  expect(board).toContain('onComplete={(sprint) => openDialog({ kind: "completeSprint", sprintId: sprint.id })}');
+  expect(board).toContain("useHistoryDialogGuard(dialog !== null, closeDialog)");
+  expect(board).toContain("<SprintsSheet boardName={board.name} onClose={onCloseSprints} suspended={dialog !== null}>");
+  expect(board).not.toContain("setSettingsCompleteId");
+  const sheet = readFileSync(new URL("../src/tasks/SprintsSheet.tsx", import.meta.url), "utf8");
   expect(sheet).toMatch(/event\.key !== "Escape" \|\| event\.defaultPrevented \|\| suspended/);
 });

@@ -566,7 +566,7 @@ describe("MCP task tools: sprints (17B, D139, T119)", () => {
     expect(await titles("next")).toEqual(["Checkout", "Form"]);
     expect(await titles(next)).toEqual(["Checkout", "Form"]);
     expect(await titles("none")).toEqual(["Idea"]);
-    expect((await callTool(key, "list_cards", { boardId })).value.board).toMatchObject({ sprints_enabled: true });
+    expect((await callTool(key, "list_cards", { boardId })).value.board).toMatchObject({ sprints_enabled: true, sprint_defaults: { days: 14, start: "next", name_pattern: "Sprint {n}" } });
     expect((await callTool(key, "list_cards", { boardId, sprint: "later" })).isError).toBe(true);
 
     const queried = (await callTool(key, "query_cards", { filter: `board:${boardId} sprint:next` })).value;

@@ -2,7 +2,7 @@
 // progress, and the words for it. Pure, no DOM access, so it is unit tested.
 import type { FilterTerm, TaskState } from "../../shared/taskQuery";
 import type { BoardStructure } from "../../shared/boardStructure";
-import { nextSprintDates, nextSprintName, sprintDatesAfterCompleting, sprintDaysBetween } from "../../shared/sprintPlan";
+import { carryOverPlan, newSprintPlan, sprintDaysBetween, type SprintDefaults, type SprintStartRule } from "../../shared/sprintPlan";
 import type { BoardColumn, CardSummary, SprintSummary } from "./tasksApi";
 
 /** What the switcher shows: one sprint, the backlog (no sprint), or every card. */
@@ -170,16 +170,39 @@ export function progressLabel(progress: SprintProgress, plural: string) {
   return `${progress.done} of ${progress.total} done`;
 }
 
-/** What the New sprint form starts with: the next name and dates after the latest sprint (§7.5). */
-export function newSprintDefaults(sprints: readonly SprintSummary[], today: string) {
-  // Only an open sprint is followed; after sprints completed early the next one starts today (QA 0.9.0).
-  const latest = sprints.filter((sprint) => sprint.state !== "completed").sort((a, b) => (b.end_on ?? "").localeCompare(a.end_on ?? "") || b.position - a.position)[0] ?? null;
-  const byName = [...sprints].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
-  const dates = nextSprintDates(latest && latest.end_on && latest.end_on >= today ? latest : null, today);
-  return { name: nextSprintName(byName?.name ?? null, sprints.map((sprint) => sprint.name)), startOn: dates.startOn, endOn: dates.endOn };
+/**
+ * What the New sprint form starts with: the next name and dates after the latest open sprint
+ * (§7.5), by the board's sprint defaults when it has them (length, start rule, name pattern).
+ */
+export function newSprintDefaults(sprints: readonly SprintSummary[], today: string, defaults?: SprintDefaults | null) {
+  const { name, startOn, endOn } = newSprintPlan(sprints, today, defaults);
+  return { name, startOn, endOn };
 }
 
 /** The close dialog's "New sprint" choice: named (skipping the board's other names) and dated after the sprint being completed, as the server does. */
-export function carryOverSprint(sprint: Pick<SprintSummary, "name" | "start_on" | "end_on">, today: string, taken: readonly string[] = []) {
-  return { name: nextSprintName(sprint.name, taken), ...sprintDatesAfterCompleting(sprint, today) };
+export function carryOverSprint(sprint: Pick<SprintSummary, "name" | "start_on" | "end_on">, today: string, taken: readonly string[] = [], defaults?: SprintDefaults | null) {
+  return carryOverPlan(sprint, today, taken, defaults);
 }
+
+/** The Duration choices (New sprint, Sprint defaults): 1–4 weeks or Custom. */
+export const DURATION_WEEKS = [7, 14, 21, 28] as const;
+export const CUSTOM_DURATION = "custom";
+export const durationOptions = () => [
+  ...DURATION_WEEKS.map((days) => ({ value: String(days), label: days === 7 ? "1 week" : `${days / 7} weeks` })),
+  { value: CUSTOM_DURATION, label: "Custom" }
+];
+/** The Duration select's value for a length in days: a week count, or Custom. */
+export const durationValue = (days: number) => (DURATION_WEEKS as readonly number[]).includes(days) ? String(days) : CUSTOM_DURATION;
+/** "2 weeks", "10 days", "1 day". */
+export const durationLabel = (days: number) => days % 7 === 0 ? (days === 7 ? "1 week" : `${days / 7} weeks`) : days === 1 ? "1 day" : `${days} days`;
+/** A sprint's length in days (start and end included), or null without both dates or backwards. */
+export const sprintLength = (startOn: string, endOn: string) => startOn && endOn && startOn <= endOn ? sprintDaysBetween(startOn, endOn) + 1 : null;
+
+/** Sprint defaults' Start on choices. */
+export const START_RULE_OPTIONS: Array<{ value: SprintStartRule; label: string; description?: string }> = [
+  { value: "next", label: "The day after the previous sprint", description: "Today when none is open" },
+  { value: "today", label: "Today" },
+  ...(["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const).map((value, index) => ({
+    value, label: `A ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][index]}`, description: "On or after the day after the previous sprint"
+  }))
+];

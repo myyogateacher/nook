@@ -12,7 +12,7 @@ import type { RelationType } from "./relations";
 import { boardStructure, liveChildCount, parentRow, rollupFor, rollupsForBoard, type Rollup } from "./hierarchy";
 import { HIERARCHY_LIMITS, levelInUseMessage, parseStructure, TEMPLATES, type BoardStructure, type BoardTemplateId } from "../../shared/boardStructure";
 import { boardSprints, EFFECTIVE_SPRINT_SQL, sprintOfBoard } from "./sprintData";
-import { addSprintDays, SPRINT_DEFAULT_DAYS } from "../../shared/sprintPlan";
+import { SPRINT_DEFAULT_DAYS, sprintEndFor } from "../../shared/sprintPlan";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 import { audienceAllUsersFor } from "../team/roles";
 import { dateInZone, validTimeZone } from "../today/registry";
@@ -235,7 +235,7 @@ export function createBoard(userId: string, name: string, templateId: BoardTempl
       const zone = tz ? validTimeZone(tz) : null;
       const startOn = zone ? dateInZone(new Date(timestamp), zone) : timestamp.slice(0, 10);
       db.query("INSERT INTO board_sprints (id, board_id, name, start_on, end_on, state, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'planned', 1024, ?, ?, ?)")
-        .run(crypto.randomUUID(), id, template.firstSprint, startOn, addSprintDays(startOn, SPRINT_DEFAULT_DAYS - 1), userId, timestamp, timestamp);
+        .run(crypto.randomUUID(), id, template.firstSprint, startOn, sprintEndFor(startOn, template.structure.sprintDefaults?.days ?? SPRINT_DEFAULT_DAYS), userId, timestamp, timestamp);
     }
     audit(userId, null, "task.board_create", { boardId: id, ...(templateId !== "kanban" ? { template: templateId } : {}) });
     return { board: boardSummary(id, userId)!, columns: listColumns(id) };
@@ -289,10 +289,13 @@ function checkStructureChange(boardId: string, structure: BoardStructure) {
  * then written in one transaction under the board lock, so a refused structure never leaves the
  * name changed and a failed write leaves neither.
  */
-export function updateBoard(userId: string, boardId: string, input: { name?: string; structure?: BoardStructure }) {
+export function updateBoard(userId: string, boardId: string, input: { name?: string; structure?: BoardStructure; keepSprintDefaults?: boolean }) {
   return withBoardLock(boardId, () => {
     requireOwnedBoard(boardId, userId);
-    const { name, structure } = input;
+    const { name } = input;
+    // A structure sent without `sprintDefaults` keeps the stored ones; `null` clears them.
+    const kept = input.structure && input.keepSprintDefaults ? boardStructure(boardId).sprintDefaults : undefined;
+    const structure = input.structure && kept ? { ...input.structure, sprintDefaults: kept } : input.structure;
     if (structure) checkStructureChange(boardId, structure);
     db.transaction(() => {
       const timestamp = now();

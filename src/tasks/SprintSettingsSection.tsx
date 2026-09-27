@@ -1,7 +1,8 @@
 import { useId, useState } from "react";
 import { CircleCheck, Pencil, Play, Plus, Timer, Trash2 } from "lucide-react";
-import { SPRINT_NAME_MAX } from "../../shared/sprintPlan";
-import { activeSprint, newSprintDefaults, sprintDateRange, sprintStateLabel } from "./sprintModel";
+import { SPRINT_NAME_MAX, type SprintDefaults } from "../../shared/sprintPlan";
+import { NewSprintForm } from "./NewSprintForm";
+import { activeSprint, sprintDateRange, sprintStateLabel } from "./sprintModel";
 import { listSprints, taskErrorMessage, type SprintFields, type SprintSummary } from "./tasksApi";
 
 type SprintSettingsSectionProps = {
@@ -11,17 +12,19 @@ type SprintSettingsSectionProps = {
   today: string;
   /** "Tasks": what a sprint holds. */
   plural: string;
+  /** The board's sprint defaults (Board settings), for New sprint. */
+  defaults?: SprintDefaults | null;
   onCreate: (fields: SprintFields & { name: string }) => Promise<SprintSummary | null>;
   onUpdate: (sprint: SprintSummary, change: SprintFields) => Promise<boolean>;
   onStart: (sprint: SprintSummary) => Promise<void>;
   onDelete: (sprint: SprintSummary) => Promise<void>;
-  /** Opens the close dialog (it replaces Board settings, like Rename). */
+  /** Opens the close dialog over the Sprints sheet. */
   onComplete: (sprint: SprintSummary) => void;
 };
 
 type Draft = { name: string; startOn: string; endOn: string };
 
-/** Name and dates, inline in the section (a new sprint, or editing one). */
+/** Name and dates, inline in the list (editing a sprint). */
 function SprintForm({ initial, submitLabel, busy, onSubmit, onCancel }: { initial: Draft; submitLabel: string; busy: boolean; onSubmit: (draft: Draft) => void; onCancel: () => void }) {
   const id = useId();
   const [draft, setDraft] = useState(initial);
@@ -44,12 +47,13 @@ function SprintForm({ initial, submitLabel, busy, onSubmit, onCancel }: { initia
 }
 
 /**
- * Board settings → Sprints (research 2026-09-26 §7.1, §7.5, D132): the board's sprints with their
- * state, dates, and card counts. The owner adds one (named and dated after the latest), renames or
- * re-dates it, starts a planned sprint (one active at a time), completes the active one (the close
- * dialog), and deletes an empty planned one. Everyone else sees the list.
+ * The Sprints sheet's body (research 2026-09-26 §7.1, §7.5, D132; moved out of Board settings so a
+ * long list never crowds it): the board's sprints with their state, dates, and card counts. The
+ * owner adds one (New sprint, prefilled from the board's sprint defaults), renames or re-dates it,
+ * starts a planned sprint (one active at a time), completes the active one (the close dialog), and
+ * deletes an empty planned one. Everyone else sees the list.
  */
-export function SprintSettingsSection({ boardId, sprints, owner, today, plural, onCreate, onUpdate, onStart, onDelete, onComplete }: SprintSettingsSectionProps) {
+export function SprintSettingsSection({ boardId, sprints, owner, today, plural, defaults, onCreate, onUpdate, onStart, onDelete, onComplete }: SprintSettingsSectionProps) {
   const titleId = useId();
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,7 +63,6 @@ export function SprintSettingsSection({ boardId, sprints, owner, today, plural, 
   const recent = sprints.filter((sprint) => sprint.state === "completed");
   const completed = [...recent, ...(older?.sprints ?? []).filter((sprint) => !recent.some((item) => item.id === sprint.id))];
   const active = activeSprint(sprints);
-  const defaults = newSprintDefaults(sprints, today);
 
   const run = async (operation: () => Promise<unknown>) => {
     setBusy(true);
@@ -102,13 +105,19 @@ export function SprintSettingsSection({ boardId, sprints, owner, today, plural, 
   </li>;
 
   return <section className="task-settings-section" aria-labelledby={titleId}>
-    <h3 id={titleId}><Timer aria-hidden="true" />Sprints</h3>
+    <h3 id={titleId}><Timer aria-hidden="true" />Planned and active</h3>
     {open.length
       ? <ul className="task-sprint-list" aria-label="Planned and active sprints">{open.map(row)}</ul>
       : <p className="task-settings-note">No planned sprints.{owner ? " Add one to plan the next piece of work." : ""}</p>}
     {owner && (editing === "new"
-      ? <SprintForm initial={defaults} submitLabel="Add sprint" busy={busy} onCancel={() => setEditing(null)}
-        onSubmit={(draft) => { void run(async () => { if (await onCreate({ name: draft.name, startOn: draft.startOn || null, endOn: draft.endOn || null })) setEditing(null); }); }} />
+      ? <NewSprintForm sprints={sprints} today={today} defaults={defaults} canStart={!active} onCancel={() => setEditing(null)}
+        onSubmit={async (fields, start) => {
+          const made = await onCreate(fields);
+          if (!made) return false;
+          if (start) await onStart(made);
+          setEditing(null);
+          return true;
+        }} />
       : <button type="button" className="secondary-button task-small-button" disabled={busy} onClick={() => setEditing("new")}><Plus />New sprint</button>)}
     {!owner && <p className="task-settings-note">Only the owner adds, starts, and completes sprints. Anyone can plan {plural.toLowerCase()} in them from the card.</p>}
     {completed.length > 0 && <details className="task-sprint-history">

@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SprintBar } from "../src/tasks/SprintBar";
+import { readFileSync } from "node:fs";
+import { formatRoute, routeFromLocation } from "../src/router";
+import { boardSprintsRoute, parentTasksRoute } from "../src/tasksRoute";
+import { MANAGE_SPRINTS_OPTION, NEW_SPRINT_OPTION, SprintBar, sprintSwitcherOptions } from "../src/tasks/SprintBar";
+import { endForDuration, initialNewSprintDraft, NewSprintDialog, NewSprintForm } from "../src/tasks/NewSprintForm";
+import { SprintDefaultsSection, sprintDefaultsFromDraft, sprintDefaultsSummary } from "../src/tasks/SprintDefaultsSection";
 import { SprintCompleteDialog } from "../src/tasks/SprintCompleteDialog";
 import { CardSprintField } from "../src/tasks/SprintField";
 import { SprintSettingsSection } from "../src/tasks/SprintSettingsSection";
@@ -75,7 +80,7 @@ test("the card's Sprint field: a select on the work level, read-only below it, h
   expect(renderToStaticMarkup(<CardSprintField card={task} structure={{ ...STRUCTURE, sprints: false }} cards={CARDS} sprints={SPRINTS} idPrefix="x" saving={false} onSave={async () => true} />)).toBe("");
 });
 
-test("Board settings → Sprints lists sprints for everyone and gives the owner New, Start, Complete, Edit, and Delete", () => {
+test("the Sprints sheet lists sprints for everyone and gives the owner New, Start, Complete, Edit, and Delete", () => {
   const props = { boardId: "b", sprints: SPRINTS, today: "2026-09-27", plural: "Tasks", onCreate: async () => null, onUpdate: async () => true, onStart: asyncNoop, onDelete: asyncNoop, onComplete: noop };
   const owner = renderToStaticMarkup(<SprintSettingsSection {...props} owner />);
   expect(owner).toContain("New sprint");
@@ -88,4 +93,107 @@ test("Board settings → Sprints lists sprints for everyone and gives the owner 
   expect(member).toContain("Sprint 12");
   expect(member).not.toContain("New sprint");
   expect(member).toContain("Only the owner adds, starts, and completes sprints");
+});
+
+// ---- New sprint, the switcher's entries, the idle prompt, and Sprint defaults (operator 2026-09-27) ----
+
+const count = () => ({ total: 0, done: 0, doing: 0, todo: 0 });
+
+test("the switcher ends with New sprint… (owner) and Manage sprints…; picking one opens it instead of filtering", () => {
+  const owner = sprintSwitcherOptions({ sprints: SPRINTS, count, owner: true, newSprint: true, manage: true }).map((option) => option.value);
+  expect(owner.slice(-2)).toEqual([NEW_SPRINT_OPTION, MANAGE_SPRINTS_OPTION]);
+  const member = sprintSwitcherOptions({ sprints: SPRINTS, count, owner: false, newSprint: true, manage: true }).map((option) => option.value);
+  expect(member).not.toContain(NEW_SPRINT_OPTION);
+  expect(member[member.length - 1]).toBe(MANAGE_SPRINTS_OPTION);
+  const source = readFileSync(new URL("../src/tasks/SprintBar.tsx", import.meta.url), "utf8");
+  expect(source).toContain("if (value === NEW_SPRINT_OPTION) onNewSprint?.();");
+  expect(source).toContain("else if (value === MANAGE_SPRINTS_OPTION) onManage?.();");
+});
+
+test("with no active sprint the bar says so and offers the owner Start Sprint 1 and New sprint; members see the words only", () => {
+  const planned = [sprint(S1, "Sprint 1", "planned", { start_on: "2026-09-27", end_on: "2026-10-10" })];
+  const props = { sprints: planned, selection: { kind: "backlog" } as const, cards: [], columns, workLevel: 0, name: "Task", plural: "Tasks", today: "2026-09-27", onSelect: noop, onStart: noop, onComplete: noop, onNewSprint: noop, onManage: noop };
+  const owner = renderToStaticMarkup(<SprintBar {...props} owner />);
+  expect(owner).toContain("No active sprint");
+  expect(owner).toContain("Start Sprint 1");
+  expect(owner).toContain("New sprint");
+  expect(owner).not.toContain("not in a sprint");
+  const member = renderToStaticMarkup(<SprintBar {...props} owner={false} />);
+  expect(member).toContain("No active sprint");
+  expect(member).not.toContain("Start Sprint 1");
+  expect(member).not.toContain(">New sprint<");
+});
+
+test("New sprint: the name, start, and Duration come from the board's defaults; Custom shows the end date", () => {
+  const draft = initialNewSprintDraft([], "2026-09-27", { days: 14, start: "next", name: "Sprint {n}" });
+  expect(draft).toEqual({ name: "Sprint 1", startOn: "2026-09-27", endOn: "2026-10-10", duration: "14" });
+  expect(initialNewSprintDraft([], "2026-09-27", { days: 10, start: "today" })).toMatchObject({ duration: "custom", endOn: "2026-10-06" });
+  // No defaults: as long as the latest sprint (two weeks without one).
+  expect(initialNewSprintDraft([], "2026-09-27", null)).toMatchObject({ duration: "14", endOn: "2026-10-10" });
+  // Duration → end date; Custom keeps the typed end.
+  expect(endForDuration("2026-09-28", "7", "")).toBe("2026-10-04");
+  expect(endForDuration("2026-09-28", "28", "")).toBe("2026-10-25");
+  expect(endForDuration("2026-09-28", "custom", "2026-10-02")).toBe("2026-10-02");
+
+  const form = (canStart: boolean) => renderToStaticMarkup(<NewSprintDialog boardName="Web app" sprints={[]} today="2026-09-27" defaults={{ days: 14, start: "next", name: "Sprint {n}" }}
+    canStart={canStart} onSubmit={async () => true} onCancel={noop} />);
+  const html = form(true);
+  expect(html).toContain("New sprint");
+  expect(html).toContain('value="Sprint 1"');
+  expect(html).toContain("Duration");
+  expect(html).toContain("2 weeks");
+  expect(html).toContain("Create and start");
+  expect(html).toContain(">Create<");
+  expect(html).toContain("Cancel");
+  expect(html).not.toContain("<select");
+  // The end date input shows only for Custom.
+  expect(html).not.toContain('value="2026-10-10"');
+  expect(form(false)).not.toContain("Create and start");
+  const custom = renderToStaticMarkup(<NewSprintForm sprints={[]} today="2026-09-27" defaults={{ days: 10, start: "today" }} canStart onSubmit={async () => true} onCancel={noop} />);
+  expect(custom).toContain('value="2026-10-06"');
+});
+
+test("Board settings → Sprint defaults: the owner edits duration, start, and pattern; members read them; both reach Manage sprints", () => {
+  const defaults = { days: 14, start: "next" as const, name: "Sprint {n}" };
+  const owner = renderToStaticMarkup(<SprintDefaultsSection defaults={defaults} owner onSave={async () => true} onManage={noop} />);
+  expect(owner).toContain("Sprint defaults");
+  expect(owner).toContain("Default duration");
+  expect(owner).toContain("2 weeks");
+  expect(owner).toContain("Start on");
+  expect(owner).toContain("The day after the previous sprint");
+  expect(owner).toContain('value="Sprint {n}"');
+  expect(owner).toContain("Save defaults");
+  expect(owner).toContain("Manage sprints");
+  expect(owner).not.toContain("<select");
+  const member = renderToStaticMarkup(<SprintDefaultsSection defaults={defaults} owner={false} onSave={async () => true} onManage={noop} />);
+  expect(member).toContain("New sprints last 2 weeks, start the day after the previous sprint, and are named like Sprint 1.");
+  expect(member).not.toContain("Save defaults");
+  expect(member).toContain("Manage sprints");
+  expect(sprintDefaultsSummary(null)).toContain("as long as the latest one");
+  // Custom days are bounded 1–60; an empty pattern means none.
+  expect(sprintDefaultsFromDraft({ duration: "custom", days: "61", start: "next", name: "" }).ok).toBe(false);
+  expect(sprintDefaultsFromDraft({ duration: "custom", days: "10", start: "fri", name: "" })).toEqual({ ok: true, defaults: { days: 10, start: "fri" } });
+  expect(sprintDefaultsFromDraft({ duration: "21", days: "21", start: "next", name: "Sprint" }).ok).toBe(false);
+});
+
+test("/tasks/:b/sprints parses, formats with the board's query, and its parent is the board", () => {
+  const board = "11111111-1111-4111-8111-111111111111";
+  const route = routeFromLocation({ pathname: `/tasks/${board}/sprints`, search: "?view=table" } as Location);
+  expect(route).toMatchObject({ app: "tasks", boardId: board, cardId: null, sprints: true });
+  expect(formatRoute(route)).toBe(`/tasks/${board}/sprints?view=table`);
+  expect(formatRoute(boardSprintsRoute(board))).toBe(`/tasks/${board}/sprints`);
+  const parent = parentTasksRoute(boardSprintsRoute(board));
+  expect(parent && formatRoute(parent)).toBe(`/tasks/${board}`);
+  const longer = routeFromLocation({ pathname: `/tasks/${board}/sprints/extra`, search: "" } as Location);
+  expect(longer).toMatchObject({ boardId: board, cardId: null });
+  expect((longer as { sprints?: true }).sprints).toBeUndefined();
+});
+
+test("Board settings no longer lists sprints; its Save structure is a padded, right-aligned primary button", () => {
+  const view = readFileSync(new URL("../src/tasks/BoardView.tsx", import.meta.url), "utf8");
+  expect(view).toContain("sprintsSection={<SprintDefaultsSection");
+  expect(view).not.toContain("sprintsSection={<SprintSettingsSection");
+  const css = readFileSync(new URL("../src/tasks/tasks.css", import.meta.url), "utf8");
+  expect(css).toContain(".task-settings-actions button { min-height: 40px; margin: 0; padding: 0 16px;");
+  expect(css).toContain(".task-settings-actions { display: flex; justify-content: flex-end;");
 });

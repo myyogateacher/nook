@@ -14,6 +14,11 @@ export function tasksRoute(boardId: string | null = null, cardId: string | null 
   return boardId && query && !isDefaultBoardQuery(query) ? { ...route, query } : route;
 }
 
+/** The board's Sprints sheet (/tasks/:b/sprints), keeping the board's view and filters under it. */
+export function boardSprintsRoute(boardId: string, query?: BoardQuery | null): TasksRoute {
+  return { ...tasksRoute(boardId, null, false, query), sprints: true };
+}
+
 /** A Tasks home segment (17C): My work, the views list, or one view, with its query. */
 export function tasksHomeRoute(home: TasksHome): TasksRoute {
   return { app: "tasks", boardId: null, cardId: null, home };
@@ -27,7 +32,7 @@ export function tasksHomeRoute(home: TasksHome): TasksRoute {
 export function parentTasksRoute(route: TasksRoute): TasksRoute | null {
   if (!route.boardId && route.home) return route.home.section === "view" ? tasksHomeRoute({ section: "views" }) : tasksRoute();
   if (route.cardId && route.full) return tasksRoute(route.boardId, route.cardId, false, route.query);
-  if (route.cardId) return tasksRoute(route.boardId, null, false, route.query);
+  if (route.cardId || (route.boardId && route.sprints)) return tasksRoute(route.boardId, null, false, route.query);
   if (route.boardId) return tasksRoute();
   return null;
 }

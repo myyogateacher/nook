@@ -249,7 +249,9 @@ export const taskTools: McpToolSpec[] = [
       return {
         board: {
           id: board.id, name: board.name, owner_name: board.owner_name, is_owner: board.is_owner, levels: structure.levels.map((level) => level.name), work_level: structure.workLevel,
-          sprints_enabled: structure.sprints
+          sprints_enabled: structure.sprints,
+          // Read-only here; the owner sets them in Board settings (PATCH /boards/:b {structure}).
+          ...(structure.sprintDefaults ? { sprint_defaults: { days: structure.sprintDefaults.days, start: structure.sprintDefaults.start, name_pattern: structure.sprintDefaults.name ?? null } } : {})
         },
         columns: columns.map((column) => ({ id: column.id, name: column.name, position: column.position, wip_limit: column.wip_limit })),
         tags: boardTags.map((tag) => ({ id: tag.id, name: tag.name, color: tag.color })),

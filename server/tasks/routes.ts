@@ -218,7 +218,9 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     if (structure && !structure.ok) return c.json(invalid(structure.error), 400);
     const userId = c.get("user").id;
     // One lock and one transaction for both (review L5): never a renamed board with a refused structure.
-    return respond(c, () => updateBoard(userId, boardId, { ...(body.name !== undefined ? { name: body.name } : {}), ...(structure?.ok ? { structure: structure.structure } : {}) }));
+    // Sprint defaults are kept unless the structure names them (`null` clears them).
+    const keepSprintDefaults = Boolean(body.structure && typeof body.structure === "object" && !("sprintDefaults" in body.structure));
+    return respond(c, () => updateBoard(userId, boardId, { ...(body.name !== undefined ? { name: body.name } : {}), ...(structure?.ok ? { structure: structure.structure, keepSprintDefaults } : {}) }));
   });
 
   app.delete("/api/tasks/boards/:boardId", (c) => {

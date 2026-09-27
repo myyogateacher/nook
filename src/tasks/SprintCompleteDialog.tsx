@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
+import type { SprintDefaults } from "../../shared/sprintPlan";
 import { carryOverSprint, plannedSprints, sprintDateRange, sprintProgress } from "./sprintModel";
 import { taskErrorMessage, type BoardColumn, type CardSummary, type SprintCarryTo, type SprintFields, type SprintSummary } from "./tasksApi";
 
@@ -15,6 +16,8 @@ type SprintCompleteDialogProps = {
   plural: string;
   childPlural: string | null;
   today: string;
+  /** The board's sprint defaults: the new sprint's length, start weekday, and name pattern. */
+  defaults?: SprintDefaults | null;
   onComplete: (carryTo: SprintCarryTo, next: SprintFields) => Promise<unknown>;
   onCancel: () => void;
 };
@@ -27,7 +30,7 @@ const NEW = "new";
  * named and dated after this one), then one call that does it all. Back and Escape close it (the
  * board's dialog guard); a failure stays in the dialog.
  */
-export function SprintCompleteDialog({ sprint, sprints, cards, columns, workLevel, name, plural, childPlural, today, onComplete, onCancel }: SprintCompleteDialogProps) {
+export function SprintCompleteDialog({ sprint, sprints, cards, columns, workLevel, name, plural, childPlural, today, defaults, onComplete, onCancel }: SprintCompleteDialogProps) {
   const id = useId();
   const planned = plannedSprints(sprints);
   const [target, setTarget] = useState<string>(planned[0]?.id ?? NEW);
@@ -35,7 +38,7 @@ export function SprintCompleteDialog({ sprint, sprints, cards, columns, workLeve
   const [error, setError] = useState<string | null>(null);
   const progress = sprintProgress(cards, columns, sprint.id, workLevel);
   const open = progress.total - progress.done;
-  const next = carryOverSprint(sprint, today, sprints.map((item) => item.name));
+  const next = carryOverSprint(sprint, today, sprints.map((item) => item.name), defaults);
   const nextRange = sprintDateRange({ start_on: next.startOn, end_on: next.endOn });
   const options = [
     ...planned.map((item) => ({ value: item.id, label: item.name, description: ["Planned", sprintDateRange(item)].filter(Boolean).join(" · ") })),

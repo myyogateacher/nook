@@ -6,7 +6,10 @@ import { useBoardSprints } from "./useBoardSprints";
 import { SprintBar } from "./SprintBar";
 import { SprintCompleteDialog } from "./SprintCompleteDialog";
 import { SprintSettingsSection } from "./SprintSettingsSection";
-import { sprintFilterConflict, withLocalCounts } from "./sprintModel";
+import { SprintDefaultsSection } from "./SprintDefaultsSection";
+import { SprintsSheet } from "./SprintsSheet";
+import { NewSprintDialog } from "./NewSprintForm";
+import { activeSprint, sprintFilterConflict, withLocalCounts } from "./sprintModel";
 import { binConfirmMessage, type TaskNotify } from "./taskActions";
 import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
@@ -82,6 +85,10 @@ type BoardViewProps = {
   onOpenBoard: (boardId: string) => void;
   /** Opens a card on any board (a relation link): pushes its route. */
   onOpenCardRoute?: (boardId: string, cardId: string) => void;
+  /** The Sprints sheet (/tasks/:b/sprints) is open over the board; the host opens and closes its route. */
+  sprintsOpen?: boolean;
+  onOpenSprints?: () => void;
+  onCloseSprints?: () => void;
   /** The view, grouping, sort, and filters from the URL query (D112). */
   query: BoardQuery;
   /** `push` for a view switch; filter, sort, and group edits replace the entry (§4.7). */
@@ -92,11 +99,12 @@ type BoardDialog =
   | { kind: "rename" | "share" | "addColumn" | "deleteBoard" | "settings" }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
   | { kind: "moveCard"; cardId: string }
-  | { kind: "completeSprint"; sprintId: string };
+  | { kind: "completeSprint"; sprintId: string }
+  | { kind: "newSprint" };
 
 export const MAX_COLUMNS = 20;
 
-export function BoardView({ userId, boardId, openCardId, openCardFull = false, onExpandCard, onCollapseCard, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute, query, onQueryChange }: BoardViewProps) {
+export function BoardView({ userId, boardId, openCardId, openCardFull = false, onExpandCard, onCollapseCard, onOpenCard, onCloseCard, onBack, onMissing, notify, onBoardDeleted, onOpenBoard, onOpenCardRoute, query, onQueryChange, sprintsOpen = false, onOpenSprints, onCloseSprints }: BoardViewProps) {
   const focusCardId = openCardId;
   const [detail, setDetail] = useState<BoardDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -169,15 +177,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     returnFocusRef.current = null;
     if (target) window.setTimeout(() => { if (target.isConnected) target.focus(); }, 0);
   }, []);
+  // Dialogs over the Sprints sheet (Complete, New sprint) are the board's dialog: Back closes only them.
   useHistoryDialogGuard(dialog !== null, closeDialog);
-  // "Complete…" from Board settings opens over the sheet as a nested dialog with its own guard
-  // (asked first), so Back, Escape, or Cancel close only it and the settings stay (review L6b).
-  const [settingsCompleteId, setSettingsCompleteId] = useState<string | null>(null);
-  const settingsOpen = dialog?.kind === "settings";
-  const nestedCompleteId = settingsOpen ? settingsCompleteId : null;
-  const closeNestedComplete = useCallback(() => setSettingsCompleteId(null), []);
-  useHistoryDialogGuard(nestedCompleteId !== null, closeNestedComplete);
-  useEffect(() => { if (!settingsOpen) setSettingsCompleteId(null); }, [settingsOpen]);
 
   const openDialog = (next: BoardDialog, trigger?: HTMLElement | null) => {
     returnFocusRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -524,7 +525,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     {data && sprints.selection && <SprintBar sprints={sprints.sprints} selection={sprints.selection} cards={data.cards} columns={columns} workLevel={hierarchy.structure.workLevel}
       name={hierarchy.structure.levels[hierarchy.structure.workLevel]?.name ?? "Card"} plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
       today={viewContext.today} owner={owner} onSelect={sprints.select} onStart={(sprint) => { void sprints.start(sprint); }}
-      onComplete={(sprint, trigger) => openDialog({ kind: "completeSprint", sprintId: sprint.id }, trigger)} />}
+      onComplete={(sprint, trigger) => openDialog({ kind: "completeSprint", sprintId: sprint.id }, trigger)}
+      onNewSprint={(trigger) => openDialog({ kind: "newSprint" }, trigger)} onManage={onOpenSprints} />}
     <KeyboardMoveHint id="task-card-keys">Press Alt with an arrow key to move a card up, down, or to the next column.</KeyboardMoveHint>
     <p className="sr-only" aria-live="polite">{announcement}</p>
 
@@ -648,29 +650,30 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       initialSprintId={sprints.composerSprintId}
     />}
     {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
-      onClose={closeDialog} notify={notify} suspended={nestedCompleteId !== null}
+      onClose={closeDialog} notify={notify}
       onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
       onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)}
-      sprintsSection={<SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={owner} today={viewContext.today}
-        plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
+      sprintsSection={<SprintDefaultsSection defaults={sprints.defaults} owner={owner} onSave={sprints.saveDefaults} onManage={() => { closeDialog(); onOpenSprints?.(); }} />} />}
+    {sprintsOpen && sprints.enabled && board && onCloseSprints && <SprintsSheet boardName={board.name} onClose={onCloseSprints} suspended={dialog !== null}>
+      <SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={owner} today={viewContext.today}
+        plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"} defaults={sprints.defaults}
         onCreate={sprints.create} onUpdate={sprints.update} onStart={sprints.start} onDelete={sprints.remove}
-        onComplete={(sprint) => setSettingsCompleteId(sprint.id)} />} />}
+        onComplete={(sprint) => openDialog({ kind: "completeSprint", sprintId: sprint.id })} />
+    </SprintsSheet>}
+    {dialog?.kind === "newSprint" && board && <NewSprintDialog boardName={board.name} sprints={sprints.sprints} today={viewContext.today} defaults={sprints.defaults}
+      canStart={!activeSprint(sprints.sprints)} onCancel={closeDialog}
+      onSubmit={async (fields, start) => { const made = await sprints.createAndMaybeStart(fields, start); if (made) closeDialog(); return made; }} />}
     {(() => {
-      // From the sprint bar it is the board's dialog; from Board settings it is nested over the sheet.
-      const nested = nestedCompleteId !== null;
-      const sprintId = nested ? nestedCompleteId : dialog?.kind === "completeSprint" ? dialog.sprintId : null;
+      // From the sprint bar or the Sprints sheet, it is the board's dialog.
+      const sprintId = dialog?.kind === "completeSprint" ? dialog.sprintId : null;
       const sprint = sprintId && data ? sprints.sprints.find((item) => item.id === sprintId && item.state === "active") : undefined;
       if (!sprint || !data) return null;
       const { structure } = hierarchy;
       return <SprintCompleteDialog sprint={sprint} sprints={sprints.sprints} cards={data.cards} columns={columns} workLevel={structure.workLevel}
         name={structure.levels[structure.workLevel]?.name ?? "Card"} plural={structure.levels[structure.workLevel]?.plural ?? "Cards"}
-        childPlural={structure.levels[structure.workLevel + 1]?.plural ?? null} today={viewContext.today} onCancel={nested ? closeNestedComplete : closeDialog}
+        childPlural={structure.levels[structure.workLevel + 1]?.plural ?? null} today={viewContext.today} defaults={sprints.defaults} onCancel={closeDialog}
         onComplete={async (carryTo, next) => {
           await sprints.complete(sprint, carryTo, next);
-          if (nested) {
-            setSettingsCompleteId(null);
-            return;
-          }
           setDialog(null);
           returnFocusRef.current = null;
         }} />;

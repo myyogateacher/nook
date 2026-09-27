@@ -210,6 +210,8 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 
 ## Team
 
+Changing a role, blocking, unblocking, or signing someone out everywhere asks you to confirm in a dialog; there is no password re-check for signed-in admins.
+
 **Team** lists everyone with an account on this Nook and their **team role**. Open it with the **Team** button next to Bin in the account row (on Today and in the Tasks, Collections, Calendar, and Bin headers), at `/team`, or, for admins, from **Settings → Manage team**. Each person has their own page at `/team/<id>`.
 
 - **Roles.** An **Admin** can do everything a member can, and manages the team. A **Member** creates, edits, and shares notes, files, tasks, collections, and events, as before. The first account created on a new Nook is the admin; when an existing Nook upgrades, the oldest account becomes the admin and everyone else a member (the operator can change it, see [OPERATIONS.md](OPERATIONS.md#team-admins-and-blocking)). A **Viewer** reads everything shared with them or with everyone, but creates, edits, shares, and uploads nothing. A **Guest** reads only what is shared with them by name: items shared with "Everyone here" are not shown to guests. New accounts are guests unless the operator chose otherwise (`SIGNUP_ROLE`). The team role is separate from the "View only" and "Can edit rows" choices when you share a collection or calendar: a viewer or guest always gets View only, even where others can edit.

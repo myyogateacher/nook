@@ -1,5 +1,15 @@
 # Nook implementation tracker
 
+**Current state (2026-09-27):** production runs **v0.9.3** at `45a47e9`. All planned waves 1–17 have shipped (Notes, Files, shared Bin, URL routing, full-text search, Task Boards → views/filters/hierarchy/sprints/Tasks home, MCP scopes across every module, Today, Collections, Calendar with reminders/push/feeds, Team roles admin/member/viewer/guest with blocking, Settings → Modules, custom dropdowns everywhere, feature-led README + docs site). Suite: 1156 tests, Docker verify green.
+
+**Open:**
+- [ ] Wave 16 (Team C): invite links, migration `018` — unscheduled.
+- [ ] MCP write-coverage wave (publish notes, bin/restore cards and events, file upload, tag/sprint management, collection creation) — proposed, awaiting go-ahead.
+- [ ] Real-device checks only the operator can run on the HTTPS origin: push notification to a phone; phone calendar feed subscription (TEST_PLAN manual rows).
+- [ ] Research queue below (Messages, Agentic chat) — research only when picked.
+- [ ] QA instance (`nook-qa`, port 22126) holds throwaway `qa*-`/`rev*-` accounts and data only.
+
+
 ## Workspace apps roadmap (Home, Files, shared Bin)
 
 Implementation plan: [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md) · [API contracts](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md)
@@ -71,7 +81,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Container base image moved to Bun 1.4.2 (`4e040c3`): Bun 1.2.22 buffered an 800 MiB upload to 1.67 GB RSS. In-container check on the production image (2026-09-25): 600 MB upload at 150 MB/s, RSS baseline 64 MB → peak 89 MB, staging empty afterwards, `Range` 206 and the exact content headers confirmed.
 - Accepted low findings: content responses omit HSTS/Permissions-Policy (contract-conformant); streamed 200/206 bodies are chunked without Content-Length (Bun); huge chunked non-file bodies get Bun's bare 413; upload slots are per user only; a few invisible characters beyond the plan's list survive name sanitising.
 
-### Wave 3c — Note editor: inline images, tables, PDF export (operator request 2026-09-25, ships with v0.3.0 or the next release)
+### Wave 3c — Note editor: inline images, tables, PDF export (released v0.3.0)
 
 - [x] `/image` slash command plus paste and drop (`a4100cc`): uploads through `POST /api/files` into the note's folder and embeds `![alt](/api/files/<id>/content?disposition=inline)`; only PNG/JPEG/GIF/WebP, verified again against the server's sniffed kind; a mismatch deletes the upload and toasts. Limitation: image visibility follows the folder share, not the note override; removed images stay in Files.
 - [x] `/table` with Tiptap table extensions pinned at 3.31.3 (`9c399e4`): 3×3 with header row, seven row/column/table actions in a floating toolbar, GFM pipe-table round trip (`tests/noteMarkdown.test.ts`), horizontal scroll on phones
@@ -113,7 +123,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Mobile panels, action sheet, Move sheet, and browser history
 - [x] Home Files card live; desktop/mobile manual QA and accessibility check; released v0.4.0
 
-### Wave 7 — Full-text search (in progress, target v0.5.0)
+### Wave 7 — Full-text search (released v0.5.0)
 
 - [x] Implemented in `2ec8129` (migration 008), `f7fcdb1` (projection + query builder), `2692068` (transactional index + boot reconcile), `b399cf0` (ACL-safe API with 429), `35defa8` (full-text Notes search UI with keyboard, live region, mobile history hint), `601c88b` (docs). FTS5 confirmed in Bun 1.4.2 and the pinned image. 224 tests at the wave's end; Docker verify passes on the merged tree.
 - [x] Deviations: threat rows numbered T29–T32 (T28 was taken); Indic combining marks count as word characters; title kept out of the body index; folder filter matches the masked folder id.
@@ -122,7 +132,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Fixes `0b6e07a` (linear single-pass text extraction; 2 MB pathological inputs in ~7 ms), `bc479fb` (bounded title derivation), `2fe1dc9` (300 ms debounce, no re-search on autosave), `5857d9b` (hint cleared on sign-out). 233 tests.
 - [x] **Released v0.5.0 (2026-09-25)** with the Files views and the Nook rebrand: bump `150134b`; see the Rebrand section.
 
-### Wave 5b — Files views and header polish (operator feedback 2026-09-25, in progress)
+### Wave 5b — Files views and header polish (released v0.5.0)
 
 - [x] List and thumbnail (grid) views in Files with a persisted toggle; image tiles use the inline content URL
 - [x] Files list takes the full width until a file is selected; the preview/details pane opens on selection with a Close control, URL-driven (`/files/:id`)
@@ -130,7 +140,7 @@ Operator direction (2026-09-25): build backend and frontend together so each sta
 - [x] Implemented on branch `files-views` (`59fe67f` list/grid, `e1c6b26` selection-driven preview pane, `011a49c` header), merged in `main`; independent review: releasable, lows only (thumbnails load full images; Close leaves two identical entries in history). Director QA: grid with lazy thumbnails, per-user persistence, pane on select with URL, Close returns the folder route.
 - [x] Released in v0.5.0
 
-### Rebrand — MyNotes → Nook (operator decision 2026-09-25, queued behind the in-flight waves)
+### Rebrand — MyNotes → Nook (released v0.5.0)
 
 The product is a private workspace (Notes, Files, Bin, Tasks next), so "MyNotes" as the product name caused confusion with the Notes app. New name: **Nook**. Scope: display name and repository only. The GitHub repo is already `pankajsoni19/nook` (Pages at `https://pankajsoni19.github.io/nook/`); the local remote is updated. Internal identifiers stay unchanged for compatibility: cookie `mynotes_session`, `mynotes.sqlite`, compose service/container `mynotes`, `/srv/mynotes` default, `mynotes:*` localStorage and `mynotes.*` history keys, the backup archive prefix.
 
@@ -175,7 +185,7 @@ Release SHA `bea1e75`; pushed; Docker verify 796 pass; forced backup taken befor
 
 Bump `80e4892`; release SHA `1cd2eb24753d239828ee5144889c7e44222a63c9`; pushed; forced backup taken; deployed; healthy; `/api/about` reports `0.7.0`; `schema_migrations` = 1–14; `/`, `/collections`, `/calendar`, `/notifications`, `/tasks` serve the SPA; `/sw.js` (`text/javascript`, no-cache) and `/manifest.webmanifest` served; push config gated by auth. Contents: Wave 10 Today (+ review fixes), Wave 11 Collections (+ review fixes, Stage E MCP tools), Wave 12 Calendar A–D (+ review fixes incl. migration 014, feeds, MCP tools, push with bounded DNS), QA polish, undo-link permission fix (`7369476`), bounded feed limiter (`227b43f`), null-prototype MCP rows + hazardous field names rejected (`a336bb7`), dialog sentinel robustness (`1cd2eb2`). 612 tests; Docker verify passes. **Open:** PNG app icons for the manifest (awaiting operator approval of the rendered candidate; `/icons/nook-*.png` 404 until then); real-device push and feed subscription checks on the HTTPS origin (TEST_PLAN manual rows).
 
-## Waves in flight (parallel, 2026-09-25)
+## Waves 8–12 (parallel, 2026-09-25) — all released in v0.6.0 / v0.7.0
 
 | Wave | Where | Status |
 | --- | --- | --- |
@@ -188,43 +198,43 @@ Bump `80e4892`; release SHA `1cd2eb24753d239828ee5144889c7e44222a63c9`; pushed; 
 
 Merged so far: 9, 8, Bin placement, 10 (+ review fixes `27cbad6`…`ddfd30f`), 11, 12 A–C (main `4cf555f`, 559 tests, Docker verify passes). Next: Calendar review + QA → release v0.7.0 (Today + Collections + Calendar core); feeds + MCP calendar/collections tools → v0.7.1. Each gets one independent review; QA is delegated; container verification once per release.
 
-## Queued (operator requests 2026-09-26)
+## Operator requests 2026-09-26 — all shipped (v0.8.0 → v0.9.3)
 
-### Team module — plan of record: `docs/plan/research/2026-09-26-team-module.md` (§11 director review)
-- [ ] Wave 14 (Team A): roles + admin + block/unblock, `/team` UI, `team:read` MCP scope, CLI `server/team-admin.ts`, migration `017`. Runs in parallel with Wave 13.
+### Team module (Waves 14–15 shipped in v0.8.0 / v0.9.0) — plan of record: `docs/plan/research/2026-09-26-team-module.md` (§11 director review)
+- [x] Wave 14 (Team A): roles + admin + block/unblock, `/team` UI, `team:read` MCP scope, CLI `server/team-admin.ts`, migration `017`. Runs in parallel with Wave 13.
   - Implemented on branch `worktree-agent-a29e87677383eea66` (migration 017, `server/team/`, `src/team/`, `src/ui/Select.tsx`, CLI, docs; headless Chrome QA at 390 px and desktop). Pending independent review, merge after Wave 13's 015/016, and the release note for O8 (oldest account becomes admin; CLI fix). Settings → Modules (D92) Team row waits for Wave 13's Modules pane.
-- [ ] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
+- [x] Wave 15 (Team B): viewer and guest enforcement (write gate, `AUDIENCE_ALL_USERS`, MCP role filter, `SIGNUP_ROLE`, role-aware chrome).
 - [ ] Wave 16 (Team C, unscheduled): invites, migration `018`.
 
-### Wave 17 — Task hierarchy, sprints, Tasks home and views — plan of record: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md` (§14 director review)
-- [ ] 17A Hierarchy (migration 019): parent/level (max 3), board structure presets (Flat, Task › Subtask, Sprint › Task, Sprint › Task › Subtask, Epic › Story › Subtask, custom), subtasks section, roll-ups, Bin subtree cascade, templates, MCP fields. After 13A + 13B merge.
-- [ ] 17B Sprints: board_sprints entity, one active per board, close with carry-over, switcher + progress strip, MCP sprint tools. After 17A.
-- [ ] 17C Tasks home and views (migration 020): `/tasks` segments Boards / My work / Views, shared column state todo/doing/done, shared filter grammar (`shared/taskQuery.ts`), paged cross-board query, saved views private/selected/everyone (never widen access), MCP `list_views` / `query_cards`. Server half may start after 13B-server merges.
+### Wave 17 — Task hierarchy, sprints, Tasks home and views (shipped in v0.9.0) — plan of record: `docs/plan/research/2026-09-26-task-hierarchy-workflows.md` (§14 director review)
+- [x] 17A Hierarchy (migration 019): parent/level (max 3), board structure presets (Flat, Task › Subtask, Sprint › Task, Sprint › Task › Subtask, Epic › Story › Subtask, custom), subtasks section, roll-ups, Bin subtree cascade, templates, MCP fields. After 13A + 13B merge.
+- [x] 17B Sprints: board_sprints entity, one active per board, close with carry-over, switcher + progress strip, MCP sprint tools. After 17A.
+- [x] 17C Tasks home and views (migration 020): `/tasks` segments Boards / My work / Views, shared column state todo/doing/done, shared filter grammar (`shared/taskQuery.ts`), paged cross-board query, saved views private/selected/everyone (never widen access), MCP `list_views` / `query_cards`. Server half may start after 13B-server merges.
 
-### Wave 13 — Task card UX, board views, dropdowns, Modules — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review). v0.8.0 shipped 13A, 13B, 13C/13D server, 13F, Wave 14. Merged after: 13C UI `1e34a5d`, 13D UI `ba2a03b`, 17C server `ca53482` (905 tests). 13E merged `ed2b663` (945 tests) — Wave 13 complete on main. Test-reliability hardening `96a3ce2`. v0.8.1 released `598fb1e`. v0.9.0 candidate on main `64b7c5c` (1062 tests, Docker verify pass): Wave 15 `6d75845`, 17C UI `9d4a8c3` + role gating `4ae13ed`, 17A + 17B `0811b17`, payload trim `64b7c5c` (1000-card board 1.15 MB). Independent review + delegated QA in progress; closing docs pass (README features + screenshots) started in parallel.
-- [ ] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
-- [ ] Card tags and flags: cards get tags (free-form, board-scoped, coloured) and flags (fixed set, e.g. blocked, urgent, needs review) in create, edit, list, and MCP tools.
-- [ ] Lane card face shows title, description excerpt, assignees, due date + due time if present, tags, flags.
-- [ ] Board views: column (current swimlanes), table (all fields, sortable columns), grouped list, and **calendar** (cards by due date, reusing the Calendar module's month/agenda components; drag to reschedule) (group by column/assignee/tag/due). Switch via icons in the board header; view is part of the URL.
-- [ ] Linear-style filter bar: compose filters on assignee, tag, flag, due, column, relation; filters live in the URL query so they survive Back/Forward and sharing.
-- [ ] Rule D91: every dropdown is a custom component; migrate all 15 existing native `<select>` usages (7 files under `src/`).
-- [ ] Settings → new left-nav item "Modules": per-user on/off toggle for every module, all on by default (D92). Hidden modules leave the launcher, nav, routes, and Today; data and server authorization untouched.
-- [ ] Add-card flow opens a full-screen dialog so every detail can be entered at once.
-- [ ] Optional due time alongside the due date.
-- [ ] Assignee picker: custom dropdown with type-to-search, multiple assignees per card.
-- [ ] Card dialog gets an expand control that opens the card as a full page (`/tasks/:board/card/:key` full view).
-- [ ] Card relations: link cards with typed relations (related, depends on, needed by, …).
-- [ ] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
+### Wave 13 — Task card UX, board views, dropdowns, Modules (shipped in v0.8.0 / v0.8.1) — plan of record: `docs/plan/WAVE_13_TASK_CARD_UX.md` (§12 director review)
+- [x] Column WIP limit: each board column/lane gets an optional max card count (default: no limit). Shown as `n / limit` in the column header, warns or blocks moves that would exceed it (kanban + agile).
+- [x] Card tags and flags: cards get tags (free-form, board-scoped, coloured) and flags (fixed set, e.g. blocked, urgent, needs review) in create, edit, list, and MCP tools.
+- [x] Lane card face shows title, description excerpt, assignees, due date + due time if present, tags, flags.
+- [x] Board views: column (current swimlanes), table (all fields, sortable columns), grouped list, and **calendar** (cards by due date, reusing the Calendar module's month/agenda components; drag to reschedule) (group by column/assignee/tag/due). Switch via icons in the board header; view is part of the URL.
+- [x] Linear-style filter bar: compose filters on assignee, tag, flag, due, column, relation; filters live in the URL query so they survive Back/Forward and sharing.
+- [x] Rule D91: every dropdown is a custom component; migrate all 15 existing native `<select>` usages (7 files under `src/`).
+- [x] Settings → new left-nav item "Modules": per-user on/off toggle for every module, all on by default (D92). Hidden modules leave the launcher, nav, routes, and Today; data and server authorization untouched.
+- [x] Add-card flow opens a full-screen dialog so every detail can be entered at once.
+- [x] Optional due time alongside the due date.
+- [x] Assignee picker: custom dropdown with type-to-search, multiple assignees per card.
+- [x] Card dialog gets an expand control that opens the card as a full page (`/tasks/:board/card/:key` full view).
+- [x] Card relations: link cards with typed relations (related, depends on, needed by, …).
+- [x] Calendar: the calendars dropdown becomes a custom picker instead of a native `<select>`.
 - [x] `/collections` list: inline rename / share / Move to Bin actions like the board list (merged `fdac35c`, ships in v0.8.0). (observation or change request?).
 
-### Closing docs pass (after Waves 13, 14, 17 ship)
+### Closing docs pass (done in v0.9.0)
 - [x] Rewrite `README.md` to lead with features (Today, Notes, Files, Tasks with views/hierarchy/sprints, Collections, Calendar + reminders, Search, Team, MCP, Modules), concise, details on the docs site.
 - [x] Replace `docs/images/dashboard-dark.png` with fresh screenshots of the current product (Today dashboard + a task board; dark and light if cheap), taken from an isolated QA instance with seeded placeholder data only — never real user data.
 - [x] Refresh `site/index.html` and `docs/USING.md` for every feature shipped in v0.8–v0.9.
 
 ## Research queue (operator, 2026-09-27) — research only, no build yet
 
-### Messages module (Slack-like) — research agent running → `docs/plan/research/2026-09-27-messages-module.md`
+### Messages module (Slack-like) — TODO, research not yet run (target doc `docs/plan/research/2026-09-27-messages-module.md`)
 - [ ] Public/private channels; 1:1 and group DMs without a channel name, convertible into a channel; permalink + channel id.
 - [ ] Threaded replies; sent time only (no read/delivery receipts); copy/forward any message or thread to another chat/group/channel; pin messages; archive a channel; add/remove members.
 - [ ] Each channel: Messages tab + Notes tab (notes bound to the channel); @mentions of people in messages and channel notes; #channel mentions.
@@ -250,13 +260,13 @@ Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09
 **Chosen and planned (Waves 7 → 9 → 8, [docs/plan/WAVES_7-9.md](docs/plan/WAVES_7-9.md), director-reviewed with four required changes):** full-text search in notes (v0.5.0); Task Boards module with sharing, draggable cards, comments, attachments (v0.6.0, four runnable stages); MCP coverage across notes, files, and tasks with per-key scopes and draft-only writes (v0.7.0). Start after Wave 6.
 
 **New standalone modules, ranked by value for effort (operator: "look good, keep for later"):**
-- [ ] Today dashboard (S/M) — **chosen 2026-09-25, planned as Wave 10 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
+- [x] Today dashboard (S/M) — **shipped v0.7.0; chosen 2026-09-25, planned as Wave 10 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — read-only home pulling due tasks, recent notes/files, Bin warnings; natural mobile landing page
 - [ ] Journal (S) — note engine plus date key, mood, prompts, streaks; habits fold in
 - [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve
 - [ ] Bookmarks and read-later (M) — snapshots stored through Files, never rendered as HTML; fetching off by default with strict server-request protections
-- [ ] Calendar and reminders (M, staged) — **chosen 2026-09-25, planned as Wave 12 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — events, Web Push reminders on HTTPS origins, read-only iCalendar feed; CalDAV out of scope
-- [ ] Collections (L) — **chosen 2026-09-25, planned as Wave 11 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — generic typed tables with templates (inventory, recipes, subscriptions, expenses, contacts-lite); see the report for downsides
-- Next in line if wanted: whiteboard/canvas stored as files. Rejected for now: password vault, scanning/OCR, photo gallery, transcription, chat, RSS (reasons in the report).
+- [x] Calendar and reminders (M, staged) — **shipped v0.7.0; chosen 2026-09-25, planned as Wave 12 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — events, Web Push reminders on HTTPS origins, read-only iCalendar feed; CalDAV out of scope
+- [x] Collections (L) — **shipped v0.7.0; chosen 2026-09-25, planned as Wave 11 in [docs/plan/WAVES_10-12.md](docs/plan/WAVES_10-12.md)** — generic typed tables with templates (inventory, recipes, subscriptions, expenses, contacts-lite); see the report for downsides
+- Next in line if wanted: whiteboard/canvas stored as files. Rejected for now: password vault, scanning/OCR, photo gallery, transcription, RSS (reasons in the report). Chat has since been re-opened as the Messages research item above.
 
 **Enhancements to existing modules (not chosen yet):** tags, wikilinks/backlinks, daily notes and templates, cross-note task list, Markdown export and Obsidian/Notion/Joplin import, passkeys, installable offline app with share target, web clipper, document OCR, encrypted vault notes.
 

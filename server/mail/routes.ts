@@ -110,9 +110,11 @@ export function registerPublicMailRoutes(app: Hono<AppEnv>) {
     const body = await parseJson(c.req.raw, tokenSchema);
     const result = consumeVerifyToken(body.token);
     if (result === "verified") return c.json({ ok: true });
+    // With email off there is no new link to send (3a/6): the page says so instead of pointing at Settings.
+    const emailEnabled = mailEnabled();
     return result === "expired"
-      ? c.json({ error: "This link expired. Send a new one from Settings → Notifications.", code: "TOKEN_EXPIRED" }, 410)
-      : c.json({ error: "This link is not valid or was already used.", code: "TOKEN_INVALID" }, 400);
+      ? c.json({ error: emailEnabled ? "This link expired. Send a new one from Settings → Notifications." : "This link expired. Email is off on this Nook.", code: "TOKEN_EXPIRED", emailEnabled }, 410)
+      : c.json({ error: "This link is not valid or was already used.", code: "TOKEN_INVALID", emailEnabled }, 400);
   });
 
   app.get("/api/mail/unsubscribe", (c) => c.json({ error: "Use POST" }, 405));

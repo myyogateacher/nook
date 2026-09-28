@@ -40,7 +40,7 @@ describe("email verification", () => {
     expect(message.subject).toBe("Verify your email for Nook");
     const token = tokenFrom(message);
     expect(message.html).toContain(`/verify-email#token=${token}`);
-    expect((await call(null, "POST", "/mail/verify", { token: "x".repeat(43) })).body.code).toBe("TOKEN_INVALID");
+    expect((await call(null, "POST", "/mail/verify", { token: "x".repeat(43) })).body).toMatchObject({ code: "TOKEN_INVALID", emailEnabled: true });
     expect(await call(null, "POST", "/mail/verify", { token })).toEqual({ status: 200, body: { ok: true } });
     expect(verified(session.userId)).toBe(true);
     // Single use.

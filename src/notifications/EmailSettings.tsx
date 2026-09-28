@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Mail, MailWarning, RotateCcw, Send, ShieldCheck } from "lucide-react";
 import { ApiError } from "../api";
+import { useRole } from "../team/roleAccess";
 import { Select } from "../ui/Select";
 import { deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
 
@@ -32,7 +33,13 @@ function Switch({ checked, disabled, labelledBy, describedBy, onChange }: { chec
   </button>;
 }
 
+/** Email is off on this Nook (3a): admins get the OPERATIONS pointer, everyone else is sent to an admin. */
+export function emailOffText(role: string | null | undefined) {
+  return role === "admin" ? "Email is off on this Nook. Turn it on in the server settings (OPERATIONS → Email)." : "Email is off on this Nook. Ask an admin to turn it on.";
+}
+
 export function EmailSettings() {
+  const { role } = useRole();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -97,7 +104,7 @@ export function EmailSettings() {
 
   if (!settings.configured) return <section className="email-settings" aria-labelledby="email-settings-heading">
     {heading}
-    <p className="email-settings-muted" role="note"><Mail aria-hidden="true" />Email is off on this Nook. Your admin can turn it on (OPERATIONS → Email).</p>
+    <p className="email-settings-muted" role="note"><Mail aria-hidden="true" />{emailOffText(role)}</p>
   </section>;
 
   const { prefs } = settings;

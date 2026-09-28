@@ -1,10 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { formatRoute, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
 import { renderToStaticMarkup } from "react-dom/server";
-import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory } from "../src/auth/mailPages";
+import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory, verifyErrorText } from "../src/auth/mailPages";
+import { emailOffText } from "../src/notifications/EmailSettings";
 import { HALF_HOURS, prefsInput, type EmailPrefs } from "../src/notifications/emailApi";
 
 /** Client pieces of Wave 28: routes, mail link pages, and the email settings request body. */
+
+describe("email off (3a/6)", () => {
+  test("members are sent to an admin; admins get the OPERATIONS pointer", () => {
+    expect(emailOffText("member")).toBe("Email is off on this Nook. Ask an admin to turn it on.");
+    expect(emailOffText("viewer")).toBe("Email is off on this Nook. Ask an admin to turn it on.");
+    expect(emailOffText("admin")).toContain("OPERATIONS → Email");
+  });
+
+  test("a failed verify link offers a new one only while email is on", () => {
+    expect(verifyErrorText("expired", "", true)).toBe("Send a new one from Settings → Notifications.");
+    expect(verifyErrorText("expired", "", false)).toBe("Email is off on this Nook.");
+    expect(verifyErrorText("invalid", "", false)).toBe("It may have been used already or copied incompletely. Email is off on this Nook.");
+    expect(verifyErrorText("invalid", "", false)).not.toContain("Send a new one");
+    expect(verifyErrorText("error", "Boom", false)).toBe("Boom");
+  });
+
+  test("the mail link card's Open Nook text button is a 44 px target", async () => {
+    const css = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
+    expect(css).toContain(".mail-link-card .text-button { min-height: 44px; }");
+  });
+});
 
 describe("routes", () => {
   test("/team/email is the admin Email log; /settings/:section is a Settings entry over Home", () => {

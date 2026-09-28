@@ -89,4 +89,4 @@
 
 /* Mail link pages (/verify-email, /mail/unsubscribe). */
 .mail-link-card .auth-form { display: grid; gap: 10px; }
-.mail-link-card .secondary-button, .mail-link-card .primary-button { min-height: 44px; }
+.mail-link-card .secondary-button, .mail-link-card .primary-button, .mail-link-card .text-button { min-height: 44px; }

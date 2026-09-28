@@ -70,9 +70,17 @@ function Card({ children }: { children: React.ReactNode }) {
 
 type VerifyState = "working" | "verified" | "expired" | "invalid" | "error";
 
+/** The failed verify link's advice; with email off there is no new link to send (3a/6). */
+export function verifyErrorText(state: VerifyState, message: string, emailEnabled: boolean) {
+  if (state === "error") return message;
+  const next = emailEnabled ? "Send a new one from Settings → Notifications." : "Email is off on this Nook.";
+  return state === "expired" ? next : `It may have been used already or copied incompletely. ${next}`;
+}
+
 export function VerifyEmailPage({ token, onContinue, signedIn }: { token: string | null; onContinue: () => void; signedIn: boolean }) {
   const [state, setState] = useState<VerifyState>(token ? "working" : "invalid");
   const [message, setMessage] = useState("");
+  const [emailEnabled, setEmailEnabled] = useState(true);
   const sent = useRef(false);
   useEffect(() => { document.title = "Verify email · Nook"; }, []);
   useEffect(() => {
@@ -80,7 +88,9 @@ export function VerifyEmailPage({ token, onContinue, signedIn }: { token: string
     sent.current = true;
     api<{ ok: true }>("/mail/verify", { method: "POST", body: JSON.stringify({ token }) })
       .then(() => setState("verified"), (reason) => {
-        const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+        const payload = reason instanceof ApiError ? reason.payload as { code?: string; emailEnabled?: boolean } | undefined : undefined;
+        const code = payload?.code;
+        if (payload?.emailEnabled === false) setEmailEnabled(false);
         if (code === "TOKEN_EXPIRED") setState("expired");
         else if (code === "TOKEN_INVALID") setState("invalid");
         else {
@@ -99,7 +109,7 @@ export function VerifyEmailPage({ token, onContinue, signedIn }: { token: string
     {(state === "expired" || state === "invalid" || state === "error") && <div className="auth-heading" role="alert">
       <span className="eyebrow">Email</span>
       <h1><Link2Off aria-hidden="true" className="invite-register-icon" />{state === "expired" ? "This link expired" : state === "invalid" ? "This link is not valid" : "Could not verify your email"}</h1>
-      <p>{state === "error" ? message : state === "expired" ? "Send a new one from Settings → Notifications." : "It may have been used already or copied incompletely. Send a new one from Settings → Notifications."}</p>
+      <p>{verifyErrorText(state, message, emailEnabled)}</p>
     </div>}
     {state !== "working" && <div className="auth-form"><button type="button" className="primary-button" onClick={onContinue}>{signedIn ? "Open Nook" : "Sign in"}</button></div>}
   </Card>;

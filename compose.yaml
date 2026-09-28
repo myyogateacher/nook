@@ -30,6 +30,8 @@ services:
       PUSH_ENABLED: ${PUSH_ENABLED:-auto}
       PUSH_SUBJECT: ${PUSH_SUBJECT:-}
       PUSH_ENDPOINT_HOSTS: ${PUSH_ENDPOINT_HOSTS:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     volumes:
       - ${MYNOTES_DATA_DIR:-/srv/mynotes}:/data
     read_only: true

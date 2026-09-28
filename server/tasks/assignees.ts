@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { audienceAllUsersFor } from "../team/roles";
 import { mailAssigned } from "../mail/triggers";
+import { groupGrantExists } from "../access/groups";
 
 /**
  * Card assignees (WAVE_13_TASK_CARD_UX.md D102, D103; migration 015).
@@ -22,7 +23,8 @@ export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 }
 
 /** Whether `u` can read live board `b` right now: enabled, and the owner, a member, or on an all_users board. */
 const assigneeCanRead = `CASE WHEN u.disabled_at IS NULL AND (b.owner_id = u.id OR (b.visibility = 'all_users' AND ${audienceAllUsersFor("u.id")})
-    OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = u.id)))
+    OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = u.id)
+      OR ${groupGrantExists("board", "b.id", "u.id")})))
   THEN 1 ELSE 0 END`;
 
 const assigneeColumns = `ca.card_id, u.id, u.display_name, ${assigneeCanRead} AS can_read`;

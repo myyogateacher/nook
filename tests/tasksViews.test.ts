@@ -65,7 +65,7 @@ describe("column state (D141, T121)", () => {
 
     expect((await call(owner, "PATCH", `/columns/${target.columns[2].id}`, { isDone: false, state: "done" })).status).toBe(400);
     expect((await call(owner, "PATCH", `/columns/${target.columns[2].id}`, { state: "later" })).status).toBe(400);
-    expect((await call(member, "PATCH", `/columns/${target.columns[2].id}`, { state: "todo" })).body.code).toBe("OWNER_ONLY");
+    expect((await call(member, "PATCH", `/columns/${target.columns[2].id}`, { state: "todo" })).body.code).toBe("MANAGER_REQUIRED");
     expect((await call(stranger, "PATCH", `/columns/${target.columns[2].id}`, { state: "todo" })).status).toBe(404);
     // Reorder, rename, and delete leave the pair consistent.
     await call(owner, "PATCH", `/columns/${target.columns[2].id}`, { afterColumnId: null, name: "Shipped" });

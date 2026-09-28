@@ -1,6 +1,6 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
-import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
+import { LIMITS, limitReached, requireCardAt, TaskError, withBoardLock } from "./service";
 
 /**
  * Card attachments (WAVES_7-9.md D42/D43 as revised by the director's §7 review). An attachment is
@@ -90,9 +90,9 @@ export function binUnlinkedAttachments(documentIds: Iterable<string>, actorId: s
 }
 
 export async function attachToCard(userId: string, cardId: string, input: { documentId: string; commentId?: string | null }) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
+    requireCardAt(cardId, userId, "edit");
     const already = attachment(cardId, input.documentId);
     if (already) {
       // Linking again is idempotent, but only for the document's owner (never a probe for others).
@@ -110,9 +110,9 @@ export async function attachToCard(userId: string, cardId: string, input: { docu
 
 /** Unlinks (the linker or the board owner). A document no card links any more moves to its uploader's Bin. */
 export async function detachFromCard(userId: string, cardId: string, documentId: string) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    const { board: current } = requireReadableCard(cardId, userId);
+    const { board: current } = requireCardAt(cardId, userId, "edit");
     const link = db.query("SELECT linked_by FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, documentId) as { linked_by: string | null } | null;
     if (!link) throw attachmentNotFound();
     if (link.linked_by !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the person who attached this file or the board owner can remove it", "LINKER_ONLY");

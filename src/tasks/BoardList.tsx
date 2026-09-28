@@ -3,7 +3,7 @@ import { KanbanSquare, Pencil, Plus, RotateCcw, Share2, Trash2, TriangleAlert, U
 import { ConfirmDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { NameDialog } from "../files/RenameDialog";
-import { BoardSharePanel } from "./BoardSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { NewBoardDialog } from "./NewBoardDialog";
 import { structureLabel, type BoardTemplateId } from "../../shared/boardStructure";
 import { binConfirmMessage, cardCountLabel, sharingLabel, validateBoardName, viewerTimeZone, type TaskNotify } from "./taskActions";
@@ -135,9 +135,9 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
     {dialog?.kind === "new" && <NewBoardDialog onSubmit={create} onCancel={closeDialog} />}
     {dialog?.kind === "rename" && dialogBoard && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={dialogBoard.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, dialogBoard.name)} onSubmit={(name) => rename(dialogBoard, name)} onCancel={closeDialog} />}
     {dialog?.kind === "delete" && dialogBoard && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", dialogBoard.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogBoard); }} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && dialogBoard && <BoardSharePanel board={dialogBoard} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && dialogBoard && <AccessSheet kind="board" id={dialogBoard.id} title={dialogBoard.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Sharing updated");
+      notify("Access updated");
       void load();
     }} />}
   </section>;

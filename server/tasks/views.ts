@@ -8,6 +8,8 @@ import { applyRenumber, limitReached, TaskError } from "./service";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { groupGrantExists } from "../access/groups";
+import { GUEST_SHARE_DISABLED, guestShareBlocked } from "../access/shares";
 
 /**
  * Saved cross-board task views (research 2026-09-26 §10.2, D140, Q12, Q13;
@@ -65,7 +67,8 @@ const viewSelect = `SELECT v.id, v.owner_id, u.display_name AS owner_name, v.nam
  * owner is enabled, everyone for `all_users` and members for `selected`.
  */
 export const readableViewPredicate = `(v.owner_id = $userId OR (u.disabled_at IS NULL AND ((v.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-  OR (v.visibility = 'selected' AND EXISTS (SELECT 1 FROM task_view_members m WHERE m.view_id = v.id AND m.user_id = $userId)))))`;
+  OR (v.visibility = 'selected' AND (EXISTS (SELECT 1 FROM task_view_members m WHERE m.view_id = v.id AND m.user_id = $userId)
+    OR ${groupGrantExists("task_view", "v.id")})))))`;
 
 function toView(row: ViewRow, userId: string): TaskView {
   const { display_json, ...rest } = row;
@@ -247,6 +250,7 @@ export function putViewSharing(userId: string, viewId: string, visibility: Board
     const found = db.query("SELECT id FROM users WHERE disabled_at IS NULL AND id IN (SELECT value FROM json_each(?))").all(JSON.stringify(uniqueIds));
     if (found.length !== uniqueIds.length) throw new TaskError(400, "One or more users were not found");
   }
+  if (visibility === "selected" && guestShareBlocked(uniqueIds)) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withViewsLock(userId, () => {
     requireOwnedView(viewId, userId);
     db.transaction(() => {

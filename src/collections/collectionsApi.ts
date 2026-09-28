@@ -1,4 +1,5 @@
 import { api, ApiError, getCsrfToken } from "../api";
+import type { ItemLevel } from "../access/accessLevels";
 
 /** docs/plan/API_CONTRACTS.md § Collections. */
 export type FieldType = "text" | "number" | "date" | "checkbox" | "select" | "multi_select" | "url" | "note" | "file";
@@ -24,6 +25,8 @@ export type CollectionSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   role: CollectionRole;
+  /** The caller's level (Wave 32, §D.3): owner, manage, edit, or view; older servers omit it. */
+  level?: ItemLevel;
   visibility: Visibility;
   share_role: "viewer" | "editor";
   row_count: number;

@@ -11,7 +11,7 @@ import { MCP_LIMITS } from "./mcpRateLimit";
 import { recoveryCode, totpCode } from "./validation";
 import { activeModules, blockedKeySql, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, surfaceBlocks, type PolicyBlock, type Policies } from "./team/policies";
 import { can, mcpScopesForRole, type Role } from "./team/roles";
-import { readableBoardPredicate } from "./tasks/access";
+import { editableBoardPredicate, readableBoardPredicate } from "./tasks/access";
 import { editableCollectionPredicate, readableCollectionPredicate } from "./collections/access";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
 
@@ -251,8 +251,8 @@ export function resolveContainer(arg: ToolResourceArg, id: string): { kind: Reso
 export function resourceReachable(userId: string, kind: ResourceKind, id: string, permission: KeyPermission) {
   const write = permission !== "read";
   switch (kind) {
-    // Every board reader edits cards (D38).
-    case "board": return Boolean(db.query(`SELECT 1 FROM boards b WHERE b.id = $id AND ${readableBoardPredicate}`).get({ id, userId }));
+    // Board members edit cards at `edit` and up (D38, D272); `comment` and `view` members read.
+    case "board": return Boolean(db.query(`SELECT 1 FROM boards b WHERE b.id = $id AND ${write ? editableBoardPredicate : readableBoardPredicate}`).get({ id, userId }));
     case "collection": return Boolean(db.query(`SELECT 1 FROM collections c WHERE c.id = $id AND ${write ? editableCollectionPredicate : readableCollectionPredicate}`).get({ id, userId }));
     case "calendar": return Boolean(db.query(`SELECT 1 FROM calendars k WHERE k.id = $id AND ${write ? editableCalendarPredicate : readableCalendarPredicate}`).get({ id, userId }));
     default: return false;

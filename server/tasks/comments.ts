@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { readableBoardPredicate } from "./access";
 import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
-import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
+import { LIMITS, limitReached, requireBoardAt, requireCardAt, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
 import { mailComment } from "../mail/triggers";
 import type { ReactionAggregate } from "../../shared/reactions";
@@ -72,9 +72,9 @@ function readableComment(commentId: string, userId: string) {
 }
 
 export async function createComment(userId: string, cardId: string, input: { body: string; attachmentIds?: string[] }) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "comment");
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
+    requireCardAt(cardId, userId, "comment");
     const count = (db.query("SELECT COUNT(*) AS count FROM card_comments WHERE card_id = ?").get(cardId) as { count: number }).count;
     if (count >= LIMITS.commentsPerCard) throw limitReached(`A card can have up to ${LIMITS.commentsPerCard} comments`);
     const id = crypto.randomUUID();
@@ -103,6 +103,8 @@ export async function updateComment(userId: string, commentId: string, body: str
     const current = readableComment(commentId, userId);
     if (!current) throw commentNotFound();
     if (current.author_id !== userId) throw new TaskError(403, "Only the author can edit this comment", "AUTHOR_ONLY");
+    // An author whose level dropped below comment keeps reading, not writing (D272).
+    requireBoardAt(current.board_id, userId, "comment");
     db.transaction(() => {
       db.query("UPDATE card_comments SET body = ?, edited_at = ? WHERE id = ?").run(body, now(), commentId);
       audit(userId, null, "task.comment_update", { boardId: current.board_id, cardId: current.card_id, commentId });
@@ -118,6 +120,7 @@ export async function deleteComment(userId: string, commentId: string) {
     const current = readableComment(commentId, userId);
     if (!current) throw commentNotFound();
     if (current.author_id !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the author or the board owner can delete this comment", "AUTHOR_ONLY");
+    if (current.owner_id !== userId) requireBoardAt(current.board_id, userId, "comment");
     db.transaction(() => {
       // Links made through the comment go with it; files no card links any more move to the Bin.
       const documentIds = commentAttachmentIds(commentId);

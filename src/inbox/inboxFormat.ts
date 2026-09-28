@@ -12,6 +12,7 @@ const FAILURE_COPY: Record<string, string> = {
   NOT_FOUND: "You can no longer open what this changes",
   READ_ONLY: "You can only read this",
   OWNER_ONLY: "Only the owner can make this change",
+  MANAGER_REQUIRED: "Only the owner or a manager can make this change",
   COLUMN_FULL: "The column is at its limit",
   LIMIT_REACHED: "A limit was reached",
   INVALID: "The change is no longer valid",

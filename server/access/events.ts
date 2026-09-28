@@ -17,7 +17,14 @@ export type AccessAction =
   | "key.revoked"
   | "key.grace_ended"
   | "key.policy_blocked"
-  | "policy.changed";
+  | "policy.changed"
+  // Groups and item access (Wave 32, D267, D270).
+  | "group.created"
+  | "group.updated"
+  | "group.deleted"
+  | "group.member_added"
+  | "group.member_removed"
+  | "item.access_changed";
 
 export type AccessEvent = {
   actorId: string | null;

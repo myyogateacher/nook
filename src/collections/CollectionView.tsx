@@ -28,7 +28,7 @@ import {
 } from "./collectionsApi";
 import { Attachments } from "./Attachments";
 import { CollectionCards, useIsPhone } from "./CollectionCards";
-import { CollectionSharePanel } from "./CollectionSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { CollectionTable } from "./CollectionTable";
 import { useDialogLayer } from "./dialogLayers";
 import { FieldEditor } from "./FieldEditor";
@@ -81,6 +81,8 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
   const { canWrite } = useRole();
   const editable = canWrite && role !== "viewer";
   const isOwner = canWrite && role === "owner";
+  // Managers (Wave 32, D273) also rename, change fields and views, and share up to Can edit; only the owner deletes.
+  const canManage = isOwner || (canWrite && collection?.level === "manage");
 
   const loadCollection = useCallback(async () => {
     setLoadError(null);
@@ -273,11 +275,11 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         {editable && <button className="icon-button" onClick={() => setDialog({ kind: "import" })} aria-haspopup="dialog" aria-label="Import CSV" title="Import CSV"><Upload /></button>}
         <a className="icon-button" href={exportUrl(collectionId, viewId)} download aria-label="Export CSV" title="Export CSV"><Download /></a>
       </span>
-      {isOwner && <span className="collection-header-actions">
+      {canManage && <span className="collection-header-actions">
         <button className="icon-button" onClick={() => setDialog({ kind: "rename" })} aria-haspopup="dialog" aria-label="Rename collection" title="Rename"><Pencil /></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "fields" })} aria-haspopup="dialog" aria-label="Fields"><Columns3 /><span>Fields</span></button>
         <button className="secondary-button collection-action" onClick={() => setDialog({ kind: "share" })} aria-haspopup="dialog" aria-label="Share collection"><Share2 /><span>Share</span></button>
-        <button className="icon-button" onClick={() => setDialog({ kind: "deleteCollection" })} aria-haspopup="dialog" aria-label="Move collection to the Bin" title="Move to Bin"><Trash2 /></button>
+        {isOwner && <button className="icon-button" onClick={() => setDialog({ kind: "deleteCollection" })} aria-haspopup="dialog" aria-label="Move collection to the Bin" title="Move to Bin"><Trash2 /></button>}
       </span>}
     </header>
 
@@ -287,13 +289,13 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
         {views.map((item) => <button key={item.id} className={`collection-chip collection-view-chip${item.id === viewId ? " active" : ""}`} aria-pressed={item.id === viewId} title={item.name}
           onClick={() => { if (item.id !== viewId) go(collectionsRoute(collectionId, { viewId: item.id })); }}><Bookmark />{item.name}</button>)}
       </>}
-      {isOwner && view && <>
+      {canManage && view && <>
         <button className="icon-button" onClick={() => setDialog({ kind: "renameView" })} aria-haspopup="dialog" aria-label={`Rename view ${view.name}`} title="Rename view"><Pencil /></button>
         <button className="icon-button" onClick={() => setDialog({ kind: "deleteView" })} aria-haspopup="dialog" aria-label={`Delete view ${view.name}`} title="Delete view"><Trash2 /></button>
       </>}
       <input className="collection-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find rows" aria-label="Find rows" maxLength={200} />
       <button className={`collection-chip${activeCount ? " active" : ""}`} onClick={() => setDialog({ kind: "sortFilter" })} aria-haspopup="dialog"><SlidersHorizontal />{activeCount ? `Sort & filter · ${activeCount}` : "Sort & filter"}</button>
-      {local && isOwner && view && <button className="collection-chip active" onClick={() => { void updateCurrentView(); }}><Save />Update view</button>}
+      {local && canManage && view && <button className="collection-chip active" onClick={() => { void updateCurrentView(); }}><Save />Update view</button>}
       {local && <button className="collection-chip" onClick={() => setLocal(null)}><X />{view ? `Reset to ${view.name}` : "Clear"}</button>}
     </div>
 
@@ -361,15 +363,15 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       notify(`Imported ${rowCountLabel(count)}`);
       void rows.reload();
     }} />}
-    {dialog?.kind === "share" && <CollectionSharePanel collection={collection} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && <AccessSheet kind="collection" id={collection.id} title={collection.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Sharing updated");
+      notify("Access updated");
       void loadCollection();
     }} />}
     {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {
       setDialog(null);
       setLocal(next);
-    }} onSaveAsView={isOwner ? (next) => setDialog({ kind: "saveView", value: next }) : undefined} />}
+    }} onSaveAsView={canManage ? (next) => setDialog({ kind: "saveView", value: next }) : undefined} />}
     {dialog?.kind === "saveView" && <NameDialog title="Save as view" eyebrow={collection.name} label="View name" initialValue="" submitLabel="Save view" hint="Up to 60 characters. Everyone with access can use it."
       validate={(value) => validateName(value, 60)} onCancel={closeDialog} onSubmit={(name) => saveAsView(name, dialog.value)} />}
     {dialog?.kind === "renameView" && view && <NameDialog title="Rename view" eyebrow={collection.name} label="View name" initialValue={view.name} submitLabel="Rename" hint="Up to 60 characters."

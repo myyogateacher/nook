@@ -3,6 +3,7 @@ import { readableBoardPredicate } from "./tasks/access";
 import type { PreviewKind } from "./mimeSniff";
 import { readableCollectionPredicate } from "./collections/access";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
+import { groupGrantExists } from "./access/groups";
 
 export type Visibility = "private" | "selected" | "all_users";
 
@@ -32,9 +33,9 @@ export const documentSummarySelect = `
   SELECT d.id, d.owner_id, u.display_name AS owner_name,
          CASE WHEN d.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
          CASE WHEN d.owner_id = $userId OR (d.sharing_override = 0 AND (
-           (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (f.visibility = 'selected' AND EXISTS (
+           (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (f.visibility = 'selected' AND (EXISTS (
              SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-           ))
+           ) OR ${groupGrantExists("folder", "f.id")}))
          )) THEN d.folder_id ELSE NULL END AS folder_id,
          d.name, d.mime_type, d.preview_kind, d.size_bytes,
          CASE WHEN d.sharing_override = 0 THEN COALESCE(f.visibility, 'private') ELSE d.visibility END AS visibility,
@@ -60,14 +61,14 @@ export function ownedDocumentSummary(documentId: string, userId: string) {
 const readablePredicate = `
   d.deleted_at IS NULL AND (
     d.owner_id = $userId
-    OR (d.purpose = 'file' AND d.sharing_override = 1 AND ((d.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (d.visibility = 'selected' AND EXISTS (
+    OR (d.purpose = 'file' AND d.sharing_override = 1 AND ((d.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (d.visibility = 'selected' AND (EXISTS (
       SELECT 1 FROM document_shares s WHERE s.document_id = d.id AND s.user_id = $userId
-    ))))
+    ) OR ${groupGrantExists("document", "d.id")}))))
     OR (d.purpose = 'file' AND d.sharing_override = 0 AND EXISTS (
       SELECT 1 FROM folders rf WHERE rf.id = d.folder_id AND (
-        (rf.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (rf.visibility = 'selected' AND EXISTS (
+        (rf.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (rf.visibility = 'selected' AND (EXISTS (
           SELECT 1 FROM folder_shares rfs WHERE rfs.folder_id = rf.id AND rfs.user_id = $userId
-        ))
+        ) OR ${groupGrantExists("folder", "rf.id")}))
       )
     ))
   )

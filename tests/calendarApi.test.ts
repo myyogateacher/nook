@@ -99,7 +99,8 @@ describe("calendars", () => {
       ] as const) {
         const response = await send(session, method, path, body);
         expect(response.status).toBe(403);
-        expect((await json<{ code: string }>(response)).code).toBe("OWNER_ONLY");
+        // Rename and colour are the owner's or a manager's (Wave 32, D273); the rest the owner's.
+        expect((await json<{ code: string }>(response)).code).toBe(method === "PATCH" ? "MANAGER_REQUIRED" : "OWNER_ONLY");
         const strangerResponse = await send(stranger, method, path, body);
         expect(strangerResponse.status).toBe(404);
       }

@@ -37,17 +37,18 @@ describe("collection sharing", () => {
     expect((await call(editor, "POST", `/rows/${editorRow.id}/undo`, { revision: 2 })).status).toBe(200);
     expect((await call(editor, "GET", `/${writable.id}`)).body.role).toBe("editor");
 
-    // The owner alone edits the collection itself, whatever the role.
-    const ownerOnly: Array<[string, string, unknown?]> = [
-      ["PATCH", `/${writable.id}`, { name: "Mine now" }],
+    // Editors never edit the collection itself: the name and fields are the owner's or a manager's
+    // (MANAGER_REQUIRED, Wave 32 D273); deleting and the older sharing route stay the owner's.
+    const ownerOnly: Array<[string, string, unknown?, string?]> = [
+      ["PATCH", `/${writable.id}`, { name: "Mine now" }, "MANAGER_REQUIRED"],
       ["DELETE", `/${writable.id}`],
-      ["PUT", `/${writable.id}/schema`, { fields: [{ name: "A", type: "text" }], schemaVersion: 1 }],
+      ["PUT", `/${writable.id}/schema`, { fields: [{ name: "A", type: "text" }], schemaVersion: 1 }, "MANAGER_REQUIRED"],
       ["GET", `/${writable.id}/sharing`],
       ["PUT", `/${writable.id}/sharing`, { visibility: "all_users", userIds: [], role: "editor" }]
     ];
-    for (const [method, path, body] of ownerOnly) {
+    for (const [method, path, body, code = "OWNER_ONLY"] of ownerOnly) {
       const result = await call(editor, method, path, body);
-      expect([path, result.status, result.body.code]).toEqual([path, 403, "OWNER_ONLY"]);
+      expect([path, result.status, result.body.code]).toEqual([path, 403, code]);
       expect((await call(stranger, method, path, body)).status).toBe(404);
     }
     expect((await call(stranger, "GET", `/rows/${editorRow.id}`)).status).toBe(404);

@@ -78,8 +78,8 @@ describe("sprint lifecycle", () => {
     expect((await call(member, "GET", `/boards/${boardId}/sprints?state=closed`)).status).toBe(400);
 
     // Owner-only writes: members get 403, strangers 404.
-    expect(await call(member, "POST", `/boards/${boardId}/sprints`, { name: "Mine" })).toMatchObject({ status: 403, body: { code: "OWNER_ONLY" } });
-    expect(await call(member, "PATCH", `/sprints/${first.id}`, { name: "Renamed" })).toMatchObject({ status: 403, body: { code: "OWNER_ONLY" } });
+    expect(await call(member, "POST", `/boards/${boardId}/sprints`, { name: "Mine" })).toMatchObject({ status: 403, body: { code: "MANAGER_REQUIRED" } });
+    expect(await call(member, "PATCH", `/sprints/${first.id}`, { name: "Renamed" })).toMatchObject({ status: 403, body: { code: "MANAGER_REQUIRED" } });
     expect((await call(stranger, "PATCH", `/sprints/${first.id}`, { name: "Renamed" })).status).toBe(404);
     expect((await call(stranger, "DELETE", `/sprints/${second.id}`)).status).toBe(404);
 
@@ -268,7 +268,7 @@ describe("completing a sprint", () => {
     const binned = await addCard(member, boardId, columns[0].id, "Binned", { sprintId: sprint.id });
     expect((await call(member, "DELETE", `/cards/${binned.id}`)).status).toBe(200);
     // Members cannot complete it; strangers see 404.
-    expect(await call(member, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })).toMatchObject({ status: 403, body: { code: "OWNER_ONLY" } });
+    expect(await call(member, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })).toMatchObject({ status: 403, body: { code: "MANAGER_REQUIRED" } });
     expect((await call(stranger, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" })).status).toBe(404);
     const completed = await call(owner, "POST", `/sprints/${sprint.id}/complete`, { carryTo: "next" });
     expect(completed.status).toBe(200);

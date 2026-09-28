@@ -152,6 +152,12 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
         </div>)}
       </fieldset>
 
+      <fieldset className="policies-section" disabled={busy}>
+        <legend>Sharing</legend>
+        <p>Off: nobody can share with a guest, directly or through a group that includes one, and guests are left out of the people list. What is already shared stays until its owner changes it.</p>
+        <label className="policies-switch"><span>Allow sharing with guests</span><input type="checkbox" checked={draft.shareWithGuests} onChange={onCheckedChange((checked) => set("shareWithGuests", checked))} /></label>
+      </fieldset>
+
       <p className={`policies-impact${impact && impact.blocked ? " warn" : ""}`} role="status" aria-live="polite">{invalid ?? impactLine(impact, dirty)}</p>
       {formError && <p className="form-error" role="alert">{formError}</p>}
       <div className="policies-actions">

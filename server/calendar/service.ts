@@ -1,6 +1,7 @@
 import { purgeAfterFrom } from "../bin";
 import { audit, db, now } from "../db";
 import {
+  calendarLevel,
   calendarRole,
   readableCalendar,
   readableCalendarPredicate,
@@ -36,6 +37,8 @@ import {
   type SeriesInput
 } from "./recurrence";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { mailEventChanged } from "../mail/calendarMail";
 
 export const MAX_CALENDARS_PER_OWNER = 20;
@@ -62,6 +65,7 @@ export class CalendarError extends Error {
 const calendarNotFound = () => new CalendarError(404, "Calendar not found");
 const eventNotFound = () => new CalendarError(404, "Event not found");
 const ownerOnly = () => new CalendarError(403, "Only the calendar's owner can do that", "OWNER_ONLY");
+const managerRequired = () => new CalendarError(403, "Only the calendar's owner or a manager can do that", "MANAGER_REQUIRED");
 const readOnly = () => new CalendarError(403, "This calendar is shared with you read-only", "READ_ONLY");
 const invalid = (message: string) => new CalendarError(400, message);
 
@@ -84,6 +88,8 @@ export type CalendarSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   role: CalendarRole;
+  /** The caller's level (§D.3, D272): owner, manage, edit, or view. */
+  level: ItemLevel;
   name: string;
   color: CalendarColor;
   visibility: CalendarVisibility;
@@ -95,10 +101,10 @@ export type CalendarSummary = {
 const summarySelect = `SELECT k.id, k.owner_id, u.display_name AS owner_name, CASE WHEN k.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
   k.name, k.color, k.visibility, k.share_role, k.created_at, k.updated_at FROM calendars k JOIN users u ON u.id = k.owner_id`;
 
-const withRole = (row: Omit<CalendarSummary, "role">, userId: string): CalendarSummary => ({ ...row, role: calendarRole(row, userId) });
+const withRole = (row: Omit<CalendarSummary, "role" | "level">, userId: string): CalendarSummary => ({ ...row, role: calendarRole(row, userId), level: calendarLevel(row, userId) });
 
 function calendarSummary(calendarId: string, userId: string) {
-  const row = db.query(`${summarySelect} WHERE k.id = $calendarId AND ${readableCalendarPredicate}`).get({ calendarId, userId }) as Omit<CalendarSummary, "role"> | null;
+  const row = db.query(`${summarySelect} WHERE k.id = $calendarId AND ${readableCalendarPredicate}`).get({ calendarId, userId }) as Omit<CalendarSummary, "role" | "level"> | null;
   return row ? withRole(row, userId) : null;
 }
 
@@ -110,7 +116,7 @@ export function listCalendars(userId: string) {
   // Read-only team roles cannot add events, so they are not given an empty Personal calendar.
   if (canWriteContent(userId)) ensurePersonalCalendar(userId);
   const rows = db.query(`${summarySelect} WHERE ${readableCalendarPredicate} ORDER BY is_owner DESC, k.name COLLATE NOCASE, k.id`)
-    .all({ userId }) as Array<Omit<CalendarSummary, "role">>;
+    .all({ userId }) as Array<Omit<CalendarSummary, "role" | "level">>;
   return { calendars: rows.map((row) => withRole(row, userId)) };
 }
 
@@ -147,10 +153,19 @@ function ownedCalendar(calendarId: string, userId: string) {
   return calendar;
 }
 
+/** A readable calendar the caller owns or manages (D273); 404 for strangers, 403 MANAGER_REQUIRED for other readers. */
+export function managedCalendar(calendarId: string, userId: string) {
+  const calendar = readableCalendar(calendarId, userId);
+  if (!calendar) throw calendarNotFound();
+  if (!atLeast(calendarLevel(calendar, userId), "manage") || !canWriteContent(userId)) throw managerRequired();
+  return calendar;
+}
+
+/** Rename and colour: the owner or a manager (D273). */
 export function patchCalendar(userId: string, calendarId: string, input: { name?: string; color?: CalendarColor }) {
-  ownedCalendar(calendarId, userId);
-  db.query("UPDATE calendars SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
-    .run(input.name ?? null, input.color ?? null, now(), calendarId, userId);
+  managedCalendar(calendarId, userId);
+  db.query("UPDATE calendars SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .run(input.name ?? null, input.color ?? null, now(), calendarId);
   audit(userId, null, "calendar.update", { calendarId });
   return { calendar: calendarSummary(calendarId, userId)! };
 }
@@ -186,12 +201,13 @@ export function putCalendarSharing(userId: string, calendarId: string, input: { 
     const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (valid.length !== uniqueIds.length) throw invalid("One or more users were not found");
   }
+  if (input.visibility === "selected" && guestShareBlocked(uniqueIds)) throw new CalendarError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   db.transaction(() => {
     const before = shareMembers("calendar_members", "calendar_id", calendarId);
-    db.query("DELETE FROM calendar_members WHERE calendar_id = ?").run(calendarId);
+    // The old route's one role applies to everyone it names, as before (D54); managers stay managers
+    // and group grants are left as they are (D272).
+    writeDirectShares("calendar", calendarId, input.visibility === "selected" ? legacyShareLevels("calendar", calendarId, uniqueIds, shareRoleToLevel(input.shareRole), true) : []);
     if (input.visibility === "selected") {
-      const insert = db.query("INSERT INTO calendar_members (calendar_id, user_id, created_at) VALUES (?, ?, ?)");
-      for (const recipientId of uniqueIds) insert.run(calendarId, recipientId, now());
       // "Shared with you" mail (outbound email #23/#25).
       mailShared(userId, "calendar", calendarId, before, uniqueIds);
     }

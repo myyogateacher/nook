@@ -4,8 +4,9 @@ import { listReadableFolders, readableNote } from "../access";
 import { readableDocument } from "../documentAccess";
 import { readableCard, readableBoard } from "../tasks/access";
 import { requireReadableView } from "../tasks/views";
-import { readableCalendar } from "../calendar/access";
-import { readableCollection } from "../collections/access";
+import { calendarLevel, readableCalendar } from "../calendar/access";
+import { collectionLevel, readableCollection } from "../collections/access";
+import { atLeast } from "../access/levels";
 import { parseStoredScopes } from "../mcpScopes";
 import { stripMarkdown } from "./html";
 import { isMuted } from "./mutes";
@@ -89,11 +90,11 @@ export function sharedItem(kind: SharedKind, id: string, userId: string): Shared
     }
     case "calendar": {
       const calendar = readableCalendar(id, userId);
-      return calendar ? { kind, id, title: calendar.name, access: calendar.share_role === "editor" ? "edit" : "read" } : null;
+      return calendar ? { kind, id, title: calendar.name, access: atLeast(calendarLevel(calendar, userId), "edit") ? "edit" : "read" } : null;
     }
     case "collection": {
       const collection = readableCollection(id, userId);
-      return collection ? { kind, id, title: collection.name, access: collection.share_role === "editor" ? "edit" : "read" } : null;
+      return collection ? { kind, id, title: collection.name, access: atLeast(collectionLevel(collection, userId), "edit") ? "edit" : "read" } : null;
     }
     case "view": {
       try {

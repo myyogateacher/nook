@@ -9,6 +9,7 @@ import { sweepProposals } from "./inbox/service";
 import { sweepRuns } from "./inbox/routines";
 import { sweepKeyGraces } from "./apiKeys";
 import { sweepMail } from "./mail/dispatcher";
+import { orphanGrantReport } from "./access/groups";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -101,6 +102,12 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (keys.gracesEnded || keys.usageTrimmed) console.info(`Key sweep: ${keys.gracesEnded} rotation graces ended, ${keys.usageTrimmed} usage rows removed`);
       } catch (error) {
         console.error("Key sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // T206: grants whose item is gone should not exist (purge triggers); report ids only if any do.
+        for (const orphan of orphanGrantReport()) console.error(`Grant self-check: ${orphan.count} ${orphan.source} rows point at missing ${orphan.kind} items (${orphan.sample.join(", ")})`);
+      } catch (error) {
+        console.error("Grant self-check failed", error instanceof Error ? error.name : "Unknown error");
       }
       try {
         // Mail history (outbound email §B.3): delivered rows after 30 days, failures after 90.

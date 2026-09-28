@@ -56,6 +56,10 @@ export function taskErrorToMcp(error: TaskError, key?: McpKeyContext) {
     LIMIT_REACHED: "LIMIT_REACHED",
     CARD_CHANGED: "CARD_CHANGED",
     OWNER_ONLY: "OWNER_ONLY",
+    // Wave 32: structure is the owner's or a manager's (D273); MCP keeps its one code for both.
+    MANAGER_REQUIRED: "OWNER_ONLY",
+    // Wave 32: a board member below edit (D272).
+    READ_ONLY: "READ_ONLY",
     COLUMN_FULL: "COLUMN_FULL",
     RELATION_EXISTS: "RELATION_EXISTS",
     // Wave 19: tags, sprints, and the Bin.

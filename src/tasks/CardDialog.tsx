@@ -44,6 +44,7 @@ import { CopyCardLinkButton } from "./cardLink";
 import { CommentReactions } from "./CommentReactions";
 import type { TaskNotify } from "./taskActions";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
+import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
 
 type CardDialogProps = {
   userId: string;
@@ -78,6 +79,8 @@ type CardDialogProps = {
   onCollapse?: () => void;
   /** Hierarchy (17A, §7.2): the breadcrumb, Parent and Level, and the Subtasks checklist. */
   hierarchy?: CardHierarchyContext;
+  /** The caller's level on the board (Wave 32): below edit the card is read-only; commenters still comment. */
+  boardLevel?: ItemLevel;
   /** The board's sprints (17B), for the Sprint field; only on boards with sprints on. */
   sprints?: SprintSummary[];
   /**
@@ -103,11 +106,14 @@ const payloadCard = (reason: unknown) => reason instanceof ApiError && reason.pa
  * The description is Markdown shown through the notes renderer read-only (D44) and edited with
  * an explicit Save; a revision conflict offers Reload or Copy my text.
  */
-export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange, onOpenRelated, onRelationsChanged, layout = "dialog", onExpand, onCollapse, hierarchy, sprints, initialView }: CardDialogProps) {
+export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boardLevel, onClose, onMissing, onChanged, onMove, onDelete, notify, tags, onTagsChange, onOpenRelated, onRelationsChanged, layout = "dialog", onExpand, onCollapse, hierarchy, sprints, initialView }: CardDialogProps) {
   const page = layout === "page";
   // Viewers and guests read the card: every write control is left out or shown as text, since the
-  // server's write gate refuses those writes (403 ROLE_READ_ONLY), comments included.
-  const { readOnly } = useRole();
+  // server's write gate refuses those writes (403 ROLE_READ_ONLY), comments included. Members below
+  // `edit` on this board read the card too, and commenters still comment and react (D272).
+  const { readOnly: roleReadOnly } = useRole();
+  const readOnly = roleReadOnly || !levelAtLeast(boardLevel, "edit");
+  const commentReadOnly = roleReadOnly || !levelAtLeast(boardLevel, "comment");
   const [card, setCard] = useState<CardDetail | null>(initialView?.card ?? null);
   const [comments, setComments] = useState<CardComment[]>(initialView?.comments ?? []);
   const [hasMore, setHasMore] = useState(initialView?.hasMoreComments ?? false);
@@ -606,11 +612,11 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
                   <time dateTime={comment.created_at}>{relativeTime(comment.created_at)}</time>
                   {comment.edited_at && <span className="task-comment-edited">edited</span>}
                   <span className="task-comment-actions">
-                    {!readOnly && comment.is_author === 1 && editingComment?.id !== comment.id && <button className="icon-button" onClick={() => setEditingComment({ id: comment.id, body: comment.body })} aria-label="Edit comment" title="Edit"><Pencil /></button>}
-                    {!readOnly && (comment.is_author === 1 || boardOwner) && <button className="icon-button" onClick={() => setDeletingComment(comment.id)} aria-haspopup="dialog" aria-label="Delete comment" title="Delete"><Trash2 /></button>}
+                    {!commentReadOnly && comment.is_author === 1 && editingComment?.id !== comment.id && <button className="icon-button" onClick={() => setEditingComment({ id: comment.id, body: comment.body })} aria-label="Edit comment" title="Edit"><Pencil /></button>}
+                    {!commentReadOnly && (comment.is_author === 1 || boardOwner) && <button className="icon-button" onClick={() => setDeletingComment(comment.id)} aria-haspopup="dialog" aria-label="Delete comment" title="Delete"><Trash2 /></button>}
                   </span>
                 </header>
-                {!readOnly && editingComment?.id === comment.id
+                {!commentReadOnly && editingComment?.id === comment.id
                   ? <div className="task-comment-edit">
                     <textarea value={editingComment.body} onChange={(event) => setEditingComment({ id: comment.id, body: event.target.value })} onKeyDown={(event) => {
                       if (event.key === "Escape") { event.preventDefault(); setEditingComment(null); }
@@ -620,12 +626,12 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
                   </div>
                   : <p className="task-comment-body">{comment.body}</p>}
                 {attachmentList(attachmentsFor(attachments, comment.id))}
-                <CommentReactions commentId={comment.id} reactions={comment.reactions ?? []} readOnly={readOnly} onUpdate={updateReactions} notify={notify} />
+                <CommentReactions commentId={comment.id} reactions={comment.reactions ?? []} readOnly={commentReadOnly} onUpdate={updateReactions} notify={notify} />
               </li>)}
               {!comments.length && <li className="task-comment-empty">No comments yet.</li>}
             </ol>
-            {readOnly
-              ? <p className="task-comment-empty" role="note">View only: your Team role can read comments but not post them.</p>
+            {commentReadOnly
+              ? <p className="task-comment-empty" role="note">{roleReadOnly ? "View only: your Team role can read comments but not post them." : "View only: you can read this board's comments but not post them."}</p>
               : <div className="task-comment-composer">
               <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder="Write a comment" aria-label="Write a comment" rows={2} disabled={posting} />
               {pendingFiles.length > 0 && <ul className="task-pending-files" aria-label="Files to attach">

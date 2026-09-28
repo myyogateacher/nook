@@ -8,6 +8,7 @@ import { can, ROLES } from "./roles";
 import { adminRevokeKey, adminRevokeSchema, listInventory } from "../apiKeys";
 import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
 import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPoliciesSchema, writePolicies } from "./policies";
+import { registerGroupRoutes } from "./groups";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
@@ -213,9 +214,19 @@ const inventoryQuerySchema = z.object({
 });
 const bulkRevokeSchema = z.object({ keyIds: z.array(z.string().uuid()).min(1).max(50), reason: adminRevokeSchema.shape.reason }).strict();
 
+/** Team → Groups reads: admins only (guests 404, everyone else 403 ADMIN_ONLY). */
+function groupReadGate(c: Context<AppEnv>) {
+  const user = c.get("user");
+  if (!can(user.role, "team.read")) return notFound(c);
+  if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage groups", code: "ADMIN_ONLY" }, 403);
+  return null;
+}
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerInviteRoutes(app);
   registerAccessRoutes(app);
+  // Groups (Wave 32, access plan D267): before `/api/team/:userId` so "groups" is never a user id.
+  registerGroupRoutes(app, { read: groupReadGate, write: writeGate });
 
   app.get("/api/team", (c) => {
     const user = c.get("user");

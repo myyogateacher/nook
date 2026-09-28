@@ -44,7 +44,7 @@ import { contentUrl, deleteFile, formatBytes, getFile, listFiles, moveFile, rena
 import { FileActionSheet, type FileSheetAction } from "./FileActionSheet";
 import { FilePreview } from "./FilePreview";
 import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type FileView } from "./fileView";
-import { FileSharePanel } from "./FileSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { MoveSheet } from "./MoveSheet";
 import { NameDialog, RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
@@ -767,9 +767,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
     />}
     {dialog?.kind === "rename" && dialogDocument && <RenameDialog document={dialogDocument} onSubmit={(name) => renameDocument(dialogDocument, name)} onCancel={closeDialog} />}
     {dialog?.kind === "move" && dialogDocument && <MoveSheet document={dialogDocument} folders={folders} onMove={async (target) => { await moveDocument(dialogDocument, target); closeDialog(); }} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && dialogDocument && <FileSharePanel document={dialogDocument} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && dialogDocument && <AccessSheet kind="document" id={dialogDocument.id} title={dialogDocument.name} onClose={closeDialog} onSaved={() => {
       closeDialog();
-      notify("Sharing updated");
+      notify("Access updated");
       refreshDocument(dialogDocument.id).catch(() => undefined);
     }} />}
     {dialog?.kind === "delete" && dialogDocument && <ConfirmDialog

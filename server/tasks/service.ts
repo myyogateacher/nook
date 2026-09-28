@@ -1,7 +1,8 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { withResourceLock } from "../storage";
-import { readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
+import { boardLevel, readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardRow, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
+import { atLeast, type ItemLevel } from "../access/levels";
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
@@ -17,15 +18,19 @@ import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCa
 import { audienceAllUsersFor } from "../team/roles";
 import { dateInZone, validTimeZone } from "../today/registry";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { groupGrantExists } from "../access/groups";
 
 /**
  * Task Boards services (WAVES_7-9.md §3). Routes are thin adapters over these
  * functions so Wave 8 MCP tools can reuse them. Every failure is a TaskError.
  *
- * Authorization (D38, D39): readers of a board (owner, members, everyone on an
- * all_users board) work with cards; only the owner renames the board, manages
- * columns and sharing, and deletes. Non-readers get 404, readers calling an
- * owner-only action get 403 OWNER_ONLY.
+ * Authorization (D38, D39, D272): readers of a board (owner, members, groups, everyone on an
+ * all_users board) hold a level. `edit` works with cards (every member before Wave 32, D38),
+ * `comment` only comments and reacts, `view` only reads (403 READ_ONLY). The owner and managers
+ * (D273) rename the board and change its structure, columns, WIP limits, tags, and sprints (403
+ * MANAGER_REQUIRED for everyone else); only the owner deletes it and changes its audience through
+ * the older sharing route (403 OWNER_ONLY). Non-readers get 404.
  */
 export class TaskError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string, readonly code?: string, readonly extra: Record<string, unknown> = {}) {
@@ -42,6 +47,9 @@ const boardNotFound = () => new TaskError(404, "Board not found");
 const columnNotFound = () => new TaskError(404, "Column not found");
 export const ownerOnly = () => new TaskError(403, "Only the board owner can do this", "OWNER_ONLY");
 export const limitReached = (message: string) => new TaskError(409, message, "LIMIT_REACHED");
+export const readOnlyBoard = () => new TaskError(403, "You can view this board but not change it", "READ_ONLY");
+const cannotComment = () => new TaskError(403, "You can view this board but not comment on it", "READ_ONLY");
+export const managerRequired = () => new TaskError(403, "Only the board owner or a manager can do this", "MANAGER_REQUIRED");
 
 /** Serializes every change to one board: ordering, column changes, sharing, and deletion. */
 export const withBoardLock = <T>(boardId: string, operation: () => T | Promise<T>) =>
@@ -54,6 +62,10 @@ export type BoardSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   visibility: BoardVisibility;
+  /** The `all_users` audience level (D272). */
+  share_role: BoardRow["share_role"];
+  /** The caller's level on the board (§D.3): owner, manage, edit, comment, or view. */
+  level: ItemLevel;
   card_count: number;
   /** Level names, work level, and sprints (migration 019, D122). */
   structure: BoardStructure;
@@ -66,23 +78,25 @@ export type ColumnSummary = Pick<ColumnRow, "id" | "board_id" | "name" | "positi
 const boardSummarySelect = `
   SELECT b.id, b.name, b.owner_id, u.display_name AS owner_name,
          CASE WHEN b.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
-         b.visibility,
+         b.visibility, b.share_role,
          (SELECT COUNT(*) FROM cards k WHERE k.board_id = b.id AND k.deleted_at IS NULL) AS card_count,
          b.structure_json, b.created_at, b.updated_at
   FROM boards b JOIN users u ON u.id = b.owner_id
 `;
 
-type BoardSummaryRow = Omit<BoardSummary, "structure"> & { structure_json: string };
-const withStructure = ({ structure_json, ...row }: BoardSummaryRow): BoardSummary => ({ ...row, structure: parseStructure(structure_json) });
+type BoardSummaryRow = Omit<BoardSummary, "structure" | "level"> & { structure_json: string };
+const withStructure = ({ structure_json, ...row }: BoardSummaryRow, userId: string): BoardSummary => ({
+  ...row, level: boardLevel({ ...row, deleted_at: null }, userId), structure: parseStructure(structure_json)
+});
 
 export function boardSummary(boardId: string, userId: string) {
   const row = db.query(`${boardSummarySelect} WHERE b.id = $boardId AND ${readableBoardPredicate}`).get({ boardId, userId }) as BoardSummaryRow | null;
-  return row ? withStructure(row) : null;
+  return row ? withStructure(row, userId) : null;
 }
 
 export function listBoards(userId: string) {
   return (db.query(`${boardSummarySelect} WHERE ${readableBoardPredicate} ORDER BY is_owner DESC, b.name COLLATE NOCASE, b.id LIMIT 500`)
-    .all({ userId }) as BoardSummaryRow[]).map(withStructure);
+    .all({ userId }) as BoardSummaryRow[]).map((row) => withStructure(row, userId));
 }
 
 export function listColumns(boardId: string) {
@@ -206,6 +220,28 @@ export function requireReadableBoard(boardId: string, userId: string) {
   return board;
 }
 
+/**
+ * The board if the caller holds at least `needed` on it (D272): 404 for non-readers, 403
+ * READ_ONLY (edit, comment) or MANAGER_REQUIRED (manage) for readers below it.
+ */
+export function requireBoardAt(boardId: string, userId: string, needed: "comment" | "edit" | "manage") {
+  const board = requireReadableBoard(boardId, userId);
+  requireLevel(board, userId, needed);
+  return board;
+}
+
+function requireLevel(board: BoardRow, userId: string, needed: "comment" | "edit" | "manage") {
+  if (atLeast(boardLevel(board, userId), needed)) return;
+  throw needed === "manage" ? managerRequired() : needed === "comment" ? cannotComment() : readOnlyBoard();
+}
+
+/** A live card on a board where the caller holds at least `needed`; 404 for non-readers. */
+export function requireCardAt(cardId: string, userId: string, needed: "comment" | "edit") {
+  const found = requireReadableCard(cardId, userId);
+  requireLevel(found.board, userId, needed);
+  return found;
+}
+
 /** The board if the caller owns it; 404 for non-readers, 403 OWNER_ONLY for other readers. */
 export function requireOwnedBoard(boardId: string, userId: string) {
   const board = requireReadableBoard(boardId, userId);
@@ -292,7 +328,7 @@ function checkStructureChange(boardId: string, structure: BoardStructure) {
  */
 export function updateBoard(userId: string, boardId: string, input: { name?: string; structure?: BoardStructure; keepSprintDefaults?: boolean }) {
   return withBoardLock(boardId, () => {
-    requireOwnedBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "manage");
     const { name } = input;
     // A structure sent without `sprintDefaults` keeps the stored ones; `null` clears them.
     const kept = input.structure && input.keepSprintDefaults ? boardStructure(boardId).sprintDefaults : undefined;
@@ -349,14 +385,14 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) throw new TaskError(400, "One or more users were not found");
   }
+  if (visibility === "selected" && guestShareBlocked(uniqueIds)) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withBoardLock(boardId, () => {
     requireOwnedBoard(boardId, userId);
     db.transaction(() => {
       const before = shareMembers("board_members", "board_id", boardId);
-      db.query("DELETE FROM board_members WHERE board_id = ?").run(boardId);
+      // People already shared with keep their level; new ones edit cards (D38, D272). Groups are left as they are.
+      writeDirectShares("board", boardId, visibility === "selected" ? legacyShareLevels("board", boardId, uniqueIds, "edit") : []);
       if (visibility === "selected") {
-        const statement = db.query("INSERT INTO board_members (board_id, user_id, created_at) VALUES (?, ?, ?)");
-        for (const recipientId of uniqueIds) statement.run(boardId, recipientId, now());
         // "Shared with you" mail (outbound email #25).
         mailShared(userId, "board", boardId, before, uniqueIds);
       }
@@ -376,7 +412,7 @@ export function applyRenumber(table: "board_columns" | "cards" | "task_views" | 
 
 export function createColumn(userId: string, boardId: string, input: { name: string; afterColumnId?: string | null }) {
   return withBoardLock(boardId, () => {
-    requireOwnedBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "manage");
     const columns = listColumns(boardId);
     if (columns.length >= LIMITS.columnsPerBoard) throw limitReached(`A board can have up to ${LIMITS.columnsPerBoard} columns`);
     const plan = planInsert(columns, input.afterColumnId);
@@ -395,11 +431,11 @@ export function createColumn(userId: string, boardId: string, input: { name: str
   });
 }
 
-/** Resolves a column path id to its board and checks ownership (404 / 403). */
+/** Resolves a column path id to its board and checks the owner or a manager (404 / 403 MANAGER_REQUIRED). */
 function requireOwnedColumn(columnId: string, userId: string) {
   const found = readableColumn(columnId, userId);
   if (!found) throw columnNotFound();
-  if (found.board.owner_id !== userId) throw ownerOnly();
+  requireLevel(found.board, userId, "manage");
   return found;
 }
 
@@ -627,7 +663,7 @@ function resolvePlacement(boardId: string, input: { parentId: string | null; lev
  */
 export function createCard(userId: string, boardId: string, input: CardCreateInput) {
   return withBoardLock(boardId, () => {
-    requireReadableBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "edit");
     const column = requireBoardColumn(boardId, input.columnId);
     requireColumnRoom(column);
     const assignees = input.assigneeIds === undefined ? undefined : uniqueAssignees(input.assigneeIds);
@@ -733,7 +769,8 @@ export function listBoardReaders(userId: string, boardId: string, options: { q?:
   const rows = (board.visibility === "all_users"
     ? db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId OR ${audienceAllUsersFor("u.id")}) AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ ownerId: board.owner_id, q, limit: limit + 1 })
     : db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId
-        OR ($visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)))
+        OR ($visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)
+          OR ${groupGrantExists("board", "$boardId", "u.id")})))
         AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ ownerId: board.owner_id, visibility: board.visibility, boardId, q, limit: limit + 1 })
   ) as Array<{ id: string; display_name: string }>;
   return {
@@ -777,9 +814,9 @@ function requireAssignableUser(boardId: string, assigneeId: string) {
  * stay until someone removes them (T93).
  */
 export async function patchCard(userId: string, cardId: string, input: CardPatchInput) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    const { card } = requireReadableCard(cardId, userId);
+    const { card } = requireCardAt(cardId, userId, "edit");
     if (card.revision !== input.revision) {
       throw new TaskError(409, "Someone else changed this card", "CARD_CHANGED", { card: cardDetail(cardId)! });
     }
@@ -889,9 +926,9 @@ export async function patchCard(userId: string, cardId: string, input: CardPatch
  * the column's current order. Moves do not change `revision`.
  */
 export async function moveCard(userId: string, cardId: string, input: { columnId: string; afterCardId?: string | null }) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    const { card } = requireReadableCard(cardId, userId);
+    const { card } = requireCardAt(cardId, userId, "edit");
     const column = requireBoardColumn(board.id, input.columnId);
     if (card.column_id !== column.id) requireColumnRoom(column);
     if (input.afterCardId === cardId) throw stalePosition(input.columnId);
@@ -917,9 +954,9 @@ export async function moveCard(userId: string, cardId: string, input: { columnId
  * only; the card keeps its column so a later restore can put it back.
  */
 export async function deleteCard(userId: string, cardId: string) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
+    requireCardAt(cardId, userId, "edit");
     const deletedAt = new Date();
     const purgeAfter = purgeAfterFrom(deletedAt);
     const descendantCount = db.transaction(() => {

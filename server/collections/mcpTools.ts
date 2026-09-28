@@ -36,6 +36,8 @@ function errorToMcp(error: CollectionError, schema?: CollectionSchema) {
     ROW_CHANGED: "ROW_CHANGED",
     READ_ONLY: "READ_ONLY",
     OWNER_ONLY: "OWNER_ONLY",
+    // Wave 32: structure is the owner's or a manager's (D273); MCP keeps its one code for both.
+    MANAGER_REQUIRED: "OWNER_ONLY",
     LIMIT_REACHED: "LIMIT_REACHED",
     SCHEMA_CHANGED: "SCHEMA_CHANGED",
     INVALID_VALUES: "INVALID",

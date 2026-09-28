@@ -13,7 +13,7 @@ import { useTasksTitle } from "../home/HomeSegments";
 import { isSelectiveQuery, NEW_VIEW, newViewDefault, sameHomeQuery, serverGroup, viewHomeQuery, type HomeQuery } from "../home/homeUrl";
 import { useRole } from "../../team/roleAccess";
 import { announceViewsChanged, ownedViewActions, validateViewName, viewNameHint, viewRoleAccess, viewUndoBody, viewVisibilityLabel } from "./viewActions";
-import { ViewSharePanel } from "./ViewSharePanel";
+import { AccessSheet } from "../../access/AccessSheet";
 
 type ViewPageProps = {
   userId: string;
@@ -243,9 +243,9 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       hint={viewNameHint(canShare)} validate={(value) => validateViewName(value)} onSubmit={saveAs} onCancel={closeDialog} />}
     {dialog?.kind === "rename" && view && <NameDialog title="Rename view" eyebrow="Views" label="View name" initialValue={view.name} submitLabel="Rename" hint="Up to 80 characters."
       validate={(value) => validateViewName(value, view.name)} onSubmit={rename} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && view && canShare && <ViewSharePanel view={view} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && view && canShare && <AccessSheet kind="task_view" id={view.id} title={view.name} onClose={closeDialog} onSaved={() => {
       closeDialog();
-      notify("Sharing updated");
+      notify("Access updated");
       // Sharing bumps the view's revision.
       void load();
     }} />}

@@ -177,6 +177,31 @@ describe("guests and all_users audiences (T84)", () => {
   }, 30_000);
 });
 
+describe("guests in groups (Wave 32, D.2, T213)", () => {
+  test("a guest reached through a group reads the item, never above view, and still never matches all_users", async () => {
+    const admin = await user("Group guest admin", "admin");
+    const owner = await user("Group guest owner");
+    const guest = await user("Group guest", "guest");
+    const group = (await send(admin, "POST", "/team/groups", { name: `Guests ${crypto.randomUUID().slice(0, 8)}` })).body.group;
+    await send(admin, "PUT", `/team/groups/${group.id}/members`, { userIds: [guest.userId], revision: 1 });
+    const created = (await send(owner, "POST", "/tasks/boards", { name: "Group guest board" })).body;
+    const board = created.board.id as string;
+    const etag = (await send(owner, "GET", `/tasks/boards/${board}/access`)).body.etag as string;
+    const response = await request(`/tasks/boards/${board}/access`, { method: "PUT", headers: { "If-Match": etag }, body: JSON.stringify({ audience: "selected", groups: [{ id: group.id, level: "edit" }] }) }, owner);
+    expect(response.status).toBe(200);
+    const read = await send(guest, "GET", `/tasks/boards/${board}`);
+    expect(read.status).toBe(200);
+    expect(read.body.board.level).toBe("view");
+    expect((await send(guest, "POST", `/tasks/boards/${board}/cards`, { columnId: created.columns[0].id, title: "No" })).status).toBe(403);
+    // The same board shared with everyone instead: the guest drops out, group or not.
+    const next = (await send(owner, "GET", `/tasks/boards/${board}/access`)).body.etag as string;
+    await request(`/tasks/boards/${board}/access`, { method: "PUT", headers: { "If-Match": next }, body: JSON.stringify({ audience: "all_users" }) }, owner);
+    expect((await send(guest, "GET", `/tasks/boards/${board}`)).status).toBe(404);
+    await send(owner, "PUT", `/tasks/boards/${board}/sharing`, { visibility: "private", userIds: [] });
+    await send(admin, "DELETE", `/team/groups/${group.id}`, {});
+  });
+});
+
 describe("AUDIENCE_ALL_USERS guard (T84)", () => {
   const serverRoot = join(import.meta.dir, "..", "server");
   const files: string[] = [];

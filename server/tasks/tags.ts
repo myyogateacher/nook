@@ -2,7 +2,7 @@ import { audit, db, now } from "../db";
 import { OPTION_COLORS, type OptionColor } from "../collections/schema";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import { readableBoardPredicate } from "./access";
-import { limitReached, ownerOnly, requireReadableBoard, TaskError, withBoardLock } from "./service";
+import { limitReached, requireBoardAt, TaskError, withBoardLock } from "./service";
 
 /**
  * Board tags and card flags (WAVE_13_TASK_CARD_UX.md D109, D110, T101;
@@ -82,10 +82,10 @@ function requireFreeName(tags: BoardTag[], name: string, exceptId?: string) {
   if (clash) throw new TaskError(409, "A tag with this name already exists", "TAG_EXISTS", { tag: clash });
 }
 
-/** Any reader. A name that exists (in any case) returns 409 TAG_EXISTS with that tag, so a picker can use it. */
+/** Anyone who edits cards (D272). A name that exists (in any case) returns 409 TAG_EXISTS with that tag, so a picker can use it. */
 export function createTag(userId: string, boardId: string, input: { name: string; color?: OptionColor }) {
   return withBoardLock(boardId, () => {
-    requireReadableBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "edit");
     const tags = listBoardTags(boardId);
     requireFreeName(tags, input.name);
     if (tags.length >= MAX_TAGS_PER_BOARD) throw limitReached(`A board can have up to ${MAX_TAGS_PER_BOARD} tags`);
@@ -101,13 +101,12 @@ export function createTag(userId: string, boardId: string, input: { name: string
   });
 }
 
-/** Owner only: rename and/or recolour. Readers get 403 OWNER_ONLY, non-readers 404. */
+/** The owner or a manager (D273): rename and/or recolour. Other readers get 403 MANAGER_REQUIRED, non-readers 404. */
 export async function updateTag(userId: string, tagId: string, input: { name?: string; color?: OptionColor }) {
   const boardId = readableTagBoard(tagId, userId);
   return withBoardLock(boardId, () => {
     readableTagBoard(tagId, userId);
-    const board = requireReadableBoard(boardId, userId);
-    if (board.owner_id !== userId) throw ownerOnly();
+    requireBoardAt(boardId, userId, "manage");
     if (input.name !== undefined) requireFreeName(listBoardTags(boardId), input.name, tagId);
     db.transaction(() => {
       const timestamp = now();
@@ -120,13 +119,12 @@ export async function updateTag(userId: string, tagId: string, input: { name?: s
   });
 }
 
-/** Owner only: deletes the tag and unlinks it from every card, binned ones included (no Bin). */
+/** The owner or a manager: deletes the tag and unlinks it from every card, binned ones included (no Bin). */
 export async function deleteTag(userId: string, tagId: string) {
   const boardId = readableTagBoard(tagId, userId);
   return withBoardLock(boardId, () => {
     readableTagBoard(tagId, userId);
-    const board = requireReadableBoard(boardId, userId);
-    if (board.owner_id !== userId) throw ownerOnly();
+    requireBoardAt(boardId, userId, "manage");
     const removedFrom = (db.query("SELECT COUNT(*) AS count FROM card_tags WHERE tag_id = ?").get(tagId) as { count: number }).count;
     db.transaction(() => {
       db.query("DELETE FROM board_tags WHERE id = ?").run(tagId);

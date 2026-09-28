@@ -31,6 +31,8 @@ export function calendarErrorToMcp(error: CalendarError | ReminderError) {
     EVENT_CHANGED: "EVENT_CHANGED",
     READ_ONLY: "READ_ONLY",
     OWNER_ONLY: "OWNER_ONLY",
+    // Wave 32: structure is the owner's or a manager's (D273); MCP keeps its one code for both.
+    MANAGER_REQUIRED: "OWNER_ONLY",
     LIMIT_REACHED: "LIMIT_REACHED",
     REMINDER_EXISTS: "REMINDER_EXISTS"
   };

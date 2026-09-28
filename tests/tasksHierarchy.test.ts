@@ -299,7 +299,7 @@ describe("board structure (D122, T120)", () => {
     const saved = await call(owner, "PATCH", `/boards/${boardId}`, { structure: EPICS });
     expect(saved).toMatchObject({ status: 200, body: { board: { structure: EPICS } } });
     expect(JSON.parse(lastAudit("task.board_structure")!.metadata_json)).toEqual({ boardId, levels: 3, workLevel: 1, sprints: false });
-    expect((await call(member, "PATCH", `/boards/${boardId}`, { structure: EPICS })).body.code).toBe("OWNER_ONLY");
+    expect((await call(member, "PATCH", `/boards/${boardId}`, { structure: EPICS })).body.code).toBe("MANAGER_REQUIRED");
     expect((await call(stranger, "PATCH", `/boards/${boardId}`, { structure: EPICS })).status).toBe(404);
     for (const structure of [{ levels: [] }, { ...EPICS, workLevel: 3 }, { ...EPICS, levels: [{ name: "x".repeat(30), plural: "y" }] }, "flat"]) {
       expect((await call(owner, "PATCH", `/boards/${boardId}`, { structure })).status).toBe(400);

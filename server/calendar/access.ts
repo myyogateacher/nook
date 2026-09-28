@@ -1,5 +1,7 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { groupGrantExists } from "../access/groups";
+import { audienceLevel, roleWord, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { canWriteContent } from "../team/userRole";
 
 export type CalendarVisibility = "private" | "selected" | "all_users";
@@ -59,14 +61,24 @@ export type EventRow = {
  * their calendar through this predicate (T61).
  */
 export const calendarAudiencePredicate = `(k.owner_id = $userId OR (k.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-  OR (k.visibility = 'selected' AND EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)))`;
+  OR (k.visibility = 'selected' AND (EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)
+    OR ${groupGrantExists("calendar", "k.id")})))`;
 export const readableCalendarPredicate = `(k.deleted_at IS NULL AND ${calendarAudiencePredicate})`;
 
-/** Readers who may write events (D54): the owner, or everyone shared with when the audience role is `editor`. */
-export const editableCalendarPredicate = `(${readableCalendarPredicate} AND (k.owner_id = $userId OR k.share_role = 'editor'))`;
+/**
+ * Who may write events on `k`, whatever its Bin state (D54, D272): the owner; everyone on an
+ * `all_users` calendar whose audience role is `editor`; or, for `selected`, a member or group at
+ * `edit` or `manage`. The Team role cap is applied in TS (requireEditable*), as before.
+ */
+const calendarEditAudience = `(k.owner_id = $userId OR (k.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS} AND k.share_role = 'editor')
+  OR (k.visibility = 'selected' AND (EXISTS (SELECT 1 FROM calendar_members em WHERE em.calendar_id = k.id AND em.user_id = $userId AND em.level IN ('edit','manage'))
+    OR ${groupGrantExists("calendar", "k.id", "$userId", ["edit", "manage"])})))`;
 
-/** The same audience and role as editableCalendarPredicate, whatever the calendar's Bin state (Bin restore only). */
-export const calendarWriterPredicate = `(${calendarAudiencePredicate} AND (k.owner_id = $userId OR k.share_role = 'editor'))`;
+/** Readers who may write events. */
+export const editableCalendarPredicate = `(${readableCalendarPredicate} AND ${calendarEditAudience})`;
+
+/** The same audience and level as editableCalendarPredicate, whatever the calendar's Bin state (Bin restore only). */
+export const calendarWriterPredicate = `(${calendarAudiencePredicate} AND ${calendarEditAudience})`;
 
 export function readableCalendar(calendarId: string, userId: string) {
   return db.query(`SELECT k.* FROM calendars k WHERE k.id = $calendarId AND ${readableCalendarPredicate}`).get({ calendarId, userId }) as CalendarRow | null;
@@ -76,10 +88,18 @@ export function editableCalendar(calendarId: string, userId: string) {
   return db.query(`SELECT k.* FROM calendars k WHERE k.id = $calendarId AND ${editableCalendarPredicate}`).get({ calendarId, userId }) as CalendarRow | null;
 }
 
-/** min(platform ceiling, item grant) (§2.4): a viewer or guest shared with as `editor` acts as a `viewer`. */
-export function calendarRole(calendar: Pick<CalendarRow, "owner_id" | "share_role">, userId: string): CalendarRole {
-  if (calendar.owner_id === userId) return "owner";
-  return calendar.share_role === "editor" && !canWriteContent(userId) ? "viewer" : calendar.share_role;
+type LevelSource = Pick<CalendarRow, "id" | "owner_id" | "share_role" | "visibility"> & { deleted_at?: string | null };
+
+/** The caller's level on the calendar (§D.3, D272), capped by the Team role; `none` when binned. */
+export function calendarLevel(calendar: LevelSource, userId: string): ItemLevel {
+  if (calendar.deleted_at) return "none";
+  return audienceLevel({ kind: "calendar", id: calendar.id, ownerId: calendar.owner_id, visibility: calendar.visibility, audienceLevel: shareRoleToLevel(calendar.share_role), memberTable: "calendar_members", memberColumn: "calendar_id" }, userId);
+}
+
+/** The role word kept for API compatibility next to `level`: owner, editor (edit or manage), or viewer. */
+export function calendarRole(calendar: LevelSource, userId: string): CalendarRole {
+  const word = roleWord(calendarLevel(calendar, userId));
+  return word === "owner" || canWriteContent(userId) ? word : "viewer";
 }
 
 /** A live event on a calendar the caller can read, with that calendar. */

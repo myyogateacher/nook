@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
+import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
@@ -46,6 +46,8 @@ import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./ma
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { passwordResetAvailable, registerPasswordChangeRoute, registerPasswordResetRoutes } from "./passwordFlows";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
+import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
+import { registerItemAccessRoutes } from "./access/itemAccess";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
 import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
@@ -535,7 +537,9 @@ app.get("/api/users", (c) => {
   const currentUser = c.get("user");
   // The share picker: read-only roles cannot share, so they get no directory either (§2.2).
   if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
-  const users = db.query("SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
+  // With the share_with_guests policy off, guests are left out of the picker (Wave 32, D.2, T213).
+  const guests = readPolicies().shareWithGuests ? "" : " AND role <> 'guest'";
+  const users = db.query(`SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL${guests} ORDER BY display_name LIMIT 100`)
     .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"] }>;
   // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
   return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role })) });
@@ -599,12 +603,12 @@ app.put("/api/folders/:id/sharing", async (c) => {
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
+  if (body.visibility === "selected" && guestShareBlocked(uniqueIds)) return c.json(GUEST_SHARE_DISABLED, 400);
   db.transaction(() => {
     const before = shareMembers("folder_shares", "folder_id", id);
-    db.query("DELETE FROM folder_shares WHERE folder_id = ?").run(id);
+    // Levels are kept for people already shared with (D272); group grants are left as they are.
+    writeDirectShares("folder", id, body.visibility === "selected" ? legacyShareLevels("folder", id, uniqueIds, "view") : []);
     if (body.visibility === "selected") {
-      const statement = db.query("INSERT INTO folder_shares (folder_id, user_id, created_at) VALUES (?, ?, ?)");
-      for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
       // "Shared with you" mail for people newly added by name (outbound email #25, D239).
       mailShared(userId, "folder", id, before, uniqueIds);
     }
@@ -651,9 +655,12 @@ app.get("/api/notes/:id", async (c) => {
   const note = readableNote(id, userId);
   if (!note) return c.json({ error: "Note not found" }, 404);
   const isOwner = note.owner_id === userId;
+  // Editors (Wave 32, D274) open the shared draft, as the owner does, and write and publish it.
+  const level = noteLevel(note, userId);
+  const canEdit = isOwner || editableNote(id, userId) !== null;
   let markdown: string;
   let expectedChecksum: string | null;
-  if (isOwner && note.draft_revision !== null) {
+  if (canEdit && note.draft_revision !== null) {
     markdown = await storage.readDraft(id);
     expectedChecksum = note.draft_checksum;
   } else {
@@ -672,9 +679,13 @@ app.get("/api/notes/:id", async (c) => {
     note: {
       ...visible,
       draftMcpKeyName,
+      // The client shows "Shared by <owner>" to recipients; the row alone has only the owner id.
+      owner_name: (db.query("SELECT display_name FROM users WHERE id = ?").get(note.owner_id) as { display_name: string } | null)?.display_name ?? "",
       isOwner,
+      level,
+      canEdit,
       hasDraft: note.draft_revision !== null,
-      hasDelta: isOwner && note.draft_revision !== null && expectedChecksum !== null
+      hasDelta: canEdit && note.draft_revision !== null && expectedChecksum !== null
         ? hasDraftDelta(note, expectedChecksum)
         : false,
       markdown
@@ -704,7 +715,8 @@ app.put("/api/notes/:id/draft", async (c) => {
   const body = await parseJson(c.req.raw, draftSchema);
   if (Buffer.byteLength(body.markdown, "utf8") > config.maxMarkdownBytes) return c.json({ error: "Note is too large" }, 413);
   return withNoteLock(id, async () => {
-    const note = ownedNote(id, userId);
+    // The owner or an editor (D274); a reader who cannot write gets the same 404 as a stranger.
+    const note = editableNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
     if (body.revision !== note.draft_revision) {
       return c.json({ error: "Draft changed in another session", currentRevision: note.draft_revision }, 409);
@@ -732,7 +744,7 @@ app.post("/api/notes/:id/publish", async (c) => {
   const body = await parseJson(c.req.raw, publishSchema);
   try {
     // The caller publishes the draft revision it last saw (T38), in server/noteDrafts.ts.
-    return c.json(await publishDraft(c.get("user").id, id, body.revision));
+    return c.json(await publishDraft(c.get("user").id, id, body.revision, { allowEditors: true }));
   } catch (error) {
     if (error instanceof DraftActionError) return c.json(error.body, error.status);
     throw error;
@@ -814,16 +826,16 @@ app.put("/api/notes/:id/sharing", async (c) => {
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
+  if (body.visibility === "selected" && guestShareBlocked(uniqueIds)) return c.json(GUEST_SHARE_DISABLED, 400);
   // Ownership and the Bin check run under the note lock, so a note binned or purged
   // meanwhile is refused instead of having its retained shares rewritten.
   return withNoteLock(id, async () => {
     if (!ownedNote(id, userId)) return c.json({ error: "Note not found" }, 404);
     db.transaction(() => {
       const before = shareMembers("note_shares", "note_id", id);
-      db.query("DELETE FROM note_shares WHERE note_id = ?").run(id);
+      // Levels are kept for people already shared with (D272); group grants are left as they are.
+      writeDirectShares("note", id, body.visibility === "selected" ? legacyShareLevels("note", id, uniqueIds, "view") : []);
       if (body.visibility === "selected") {
-        const statement = db.query("INSERT INTO note_shares (note_id, user_id, created_at) VALUES (?, ?, ?)");
-        for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
         mailShared(userId, "note", id, before, uniqueIds);
       }
       const visibility = body.visibility === "inherit" ? "private" : body.visibility;
@@ -860,6 +872,8 @@ registerMailRoutes(app);
 registerMailLogRoutes(app);
 registerTeamRoutes(app);
 registerInboxRoutes(app);
+// The Access sheet's GET/PUT …/access for the seven shareable kinds (Wave 32, access plan §C.5).
+registerItemAccessRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

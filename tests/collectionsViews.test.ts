@@ -89,7 +89,7 @@ describe("saved views", () => {
       ["PATCH", `/views/${views[0]}`, { name: "Mine" }],
       ["DELETE", `/views/${views[0]}`]
     ] as const) {
-      expect((await call(editor, method, path, body)).body.code).toBe("OWNER_ONLY");
+      expect((await call(editor, method, path, body)).body.code).toBe("MANAGER_REQUIRED");
       expect((await call(stranger, method, path, body)).status).toBe(404);
     }
     // Editors can still use the owner's views.

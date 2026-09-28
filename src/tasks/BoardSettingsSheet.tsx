@@ -19,7 +19,10 @@ import { taskErrorMessage, updateBoardStructure, type BoardSummary } from "./tas
 
 type BoardSettingsSheetProps = {
   board: BoardSummary;
+  /** The owner or a manager (Wave 32, D273): rename, structure, columns, sharing. */
   owner: boolean;
+  /** The owner alone: deleting the board. Defaults to `owner`. */
+  isOwner?: boolean;
   /** Per viewer (D126): show epics and nested subtasks as board cards. */
   showAllLevels: boolean;
   onShowAllLevels: (value: boolean) => void;
@@ -58,7 +61,7 @@ export function structurePreview(structure: BoardStructure) {
  * 390 px and a right-hand panel on desktop; the board's dialog guard closes it on Back (D69). Only
  * the owner edits; everyone sees the structure and the per-viewer display option.
  */
-export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevels, onClose, onRename, onShare, onDelete, onAddColumn, onStructureSaved, notify, sprintsSection, suspended = false }: BoardSettingsSheetProps) {
+export function BoardSettingsSheet({ board, owner, isOwner = owner, showAllLevels, onShowAllLevels, onClose, onRename, onShare, onDelete, onAddColumn, onStructureSaved, notify, sprintsSection, suspended = false }: BoardSettingsSheetProps) {
   const saved = structureOf(board);
   const [draft, setDraft] = useState<BoardStructure>(saved);
   const [error, setError] = useState<string | null>(null);
@@ -130,14 +133,14 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
         <section className="task-settings-section" aria-labelledby={`${titleId}-general`}>
           <h3 id={`${titleId}-general`}>General</h3>
           <div className="task-settings-row">
-            <span><strong title={board.name}>{board.name}</strong><small>{owner ? "You own this board" : `${board.owner_name}’s board`}</small></span>
+            <span><strong title={board.name}>{board.name}</strong><small>{isOwner ? "You own this board" : owner ? `${board.owner_name}’s board · you manage it` : `${board.owner_name}’s board`}</small></span>
             {owner && <button className="secondary-button task-small-button" onClick={onRename}><Pencil />Rename</button>}
           </div>
         </section>
 
         <section className="task-settings-section" aria-labelledby={`${titleId}-structure`}>
           <h3 id={`${titleId}-structure`}><Layers aria-hidden="true" />Structure</h3>
-          {!owner && <p className="task-settings-note">{structureLabel(saved)}. {structurePreview(saved)} Only the owner changes the structure.</p>}
+          {!owner && <p className="task-settings-note">{structureLabel(saved)}. {structurePreview(saved)} Only the owner or a manager changes the structure.</p>}
           {owner && <>
             <div className="task-preset-grid" role="radiogroup" aria-label="Structure preset">
               {[...STRUCTURE_PRESETS, "custom" as const].map((id) => {
@@ -212,7 +215,7 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
           <button className="secondary-button task-small-button" onClick={onShare}><Share2 />Share board…</button>
         </section>}
 
-        {owner && <section className="task-settings-section" aria-labelledby={`${titleId}-delete`}>
+        {isOwner && <section className="task-settings-section" aria-labelledby={`${titleId}-delete`}>
           <h3 id={`${titleId}-delete`}>Delete</h3>
           <button className="secondary-button task-small-button danger" onClick={onDelete}><Trash2 />Move board to the Bin</button>
         </section>}

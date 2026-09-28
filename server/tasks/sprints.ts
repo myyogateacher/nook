@@ -3,7 +3,9 @@ import { mailSprint, sprintAssignees } from "../mail/laterMail";
 import { readableBoardPredicate } from "./access";
 import { planInsert } from "./boardOrder";
 import { boardStructure } from "./hierarchy";
-import { applyRenumber, limitReached, ownerOnly, requireReadableBoard, TaskError, withBoardLock } from "./service";
+import { applyRenumber, limitReached, managerRequired, requireBoardAt, requireReadableBoard, TaskError, withBoardLock } from "./service";
+import { boardLevel, type BoardRow } from "./access";
+import { atLeast } from "../access/levels";
 import {
   completedSprintRows,
   openSprintRows,
@@ -38,15 +40,16 @@ export const sprintNotFound = () => new TaskError(404, "Sprint not found");
 function readableSprint(sprintId: string, userId: string) {
   const sprint = sprintById(sprintId.toLowerCase());
   if (!sprint) throw sprintNotFound();
-  const board = db.query(`SELECT b.id, b.owner_id FROM boards b WHERE b.id = $boardId AND ${readableBoardPredicate}`)
-    .get({ boardId: sprint.board_id, userId }) as { id: string; owner_id: string } | null;
+  const board = db.query(`SELECT b.* FROM boards b WHERE b.id = $boardId AND ${readableBoardPredicate}`)
+    .get({ boardId: sprint.board_id, userId }) as BoardRow | null;
   if (!board) throw sprintNotFound();
   return { sprint, board };
 }
 
+/** A sprint on a board the caller owns or manages (D273); 403 MANAGER_REQUIRED for other readers. */
 export function ownedSprint(sprintId: string, userId: string) {
   const found = readableSprint(sprintId, userId);
-  if (found.board.owner_id !== userId) throw ownerOnly();
+  if (!atLeast(boardLevel(found.board, userId), "manage")) throw managerRequired();
   return found;
 }
 
@@ -127,8 +130,7 @@ export function defaultedSprintDates(input: { startOn?: string | null; endOn?: s
  */
 export function createSprint(userId: string, boardId: string, input: SprintInput & { name: string }, options: { defaultDates?: boolean; today?: string } = {}) {
   return withBoardLock(boardId, () => {
-    const board = requireReadableBoard(boardId, userId);
-    if (board.owner_id !== userId) throw ownerOnly();
+    requireBoardAt(boardId, userId, "manage");
     requireSprintsOn(boardId);
     if (openCount(boardId) >= SPRINT_LIMITS.openPerBoard) throw limitReached(`A board can have up to ${SPRINT_LIMITS.openPerBoard} planned or active sprints`);
     if (options.defaultDates) {

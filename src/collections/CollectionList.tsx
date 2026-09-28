@@ -7,7 +7,7 @@ import { deleteCollection, errorMessage, listCollections, renameCollection, sear
 import { readCollectionsSearch, withCollectionsSearch } from "../collectionsRoute";
 import { useDialogLayer } from "./dialogLayers";
 import { CollectionIcon } from "./icons";
-import { CollectionSharePanel } from "./CollectionSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { NewCollectionDialog } from "./NewCollectionDialog";
 import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName } from "./values";
 import { useRole } from "../team/roleAccess";
@@ -195,9 +195,9 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     {dialog?.kind === "rename" && dialogCollection && <NameDialog title="Rename collection" eyebrow="Collections" label="Name" initialValue={dialogCollection.name} submitLabel="Rename" hint="Up to 120 characters."
       validate={(value) => validateCollectionName(value, dialogCollection.name)} onSubmit={(name) => rename(dialogCollection, name)} onCancel={closeDialog} />}
     {dialog?.kind === "delete" && dialogCollection && <ConfirmDialog title="Move to the Bin?" message={collectionBinMessage(dialogCollection)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogCollection); }} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && dialogCollection && <CollectionSharePanel collection={dialogCollection} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && dialogCollection && <AccessSheet kind="collection" id={dialogCollection.id} title={dialogCollection.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Sharing updated");
+      notify("Access updated");
       void load();
     }} />}
   </section>;

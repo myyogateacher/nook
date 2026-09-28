@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions } from "../AppShell";
+import { AccountActions, AppPageName } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
 import { useDialogSentinel } from "../historyDialogs";
 import { relativeTime } from "../files/format";
@@ -202,7 +202,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   return <main className="app-page bin-app">
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Bin</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Bin</strong></span></span><AppPageName name="Bin" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     <ReadOnlyBanner />

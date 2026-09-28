@@ -132,7 +132,7 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
  * mark but visually hides the word "Home", which stays available to assistive tech.
  */
 @media (max-width: 760px) {
-  .app-page-header:has(.app-account-inbox) .app-home-brand { display: none; }
+  .app-page-header:has(.app-account-inbox) .app-home-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .app-home-header:has(.app-account-inbox) .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 
@@ -148,3 +148,16 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
   .inbox-dialog-actions { flex-direction: row; justify-content: flex-end; }
   .inbox-dialog-actions .inbox-action { width: auto; }
 }
+
+/* v0.10.0 QA polish: the stale chip, the phone approve toast, and 44 px phone targets. */
+.inbox-stale { border-radius: 999px; padding: 2px 8px; background: #2b2415; color: #f0c674; font-size: .7rem; font-weight: 650; }
+.inbox-toast { position: fixed; z-index: 60; left: 16px; right: 16px; bottom: calc(24px + env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 4px; border: 1px solid #39393e; border-radius: 12px; padding: 0 4px 0 14px; background: #202024; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); color: #ededee; font-size: .86rem; }
+.inbox-toast > span { flex: 1 1 auto; min-width: 0; }
+.inbox-toast .icon-button { width: 44px; height: 44px; flex: none; }
+/* Above the sticky Approve/Reject bar (10 + 44 + 10 px plus the safe area) while a proposal is open. */
+.inbox-detail-open .inbox-toast { bottom: calc(76px + env(safe-area-inset-bottom)); }
+@media (max-width: 760px) {
+  .inbox-toggle button { min-height: 44px; }
+  .inbox-facts dd .inbox-link-button { min-height: 44px; }
+}
+@media (min-width: 761px) { .inbox-toast { display: none; } }

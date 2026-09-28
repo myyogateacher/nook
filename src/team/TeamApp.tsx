@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, House, Link2, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, useBinCount } from "../AppShell";
+import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
@@ -41,6 +41,9 @@ const currentView = (): TeamView => {
   const route = parseRoute(window.location.pathname);
   return route.app === "team" ? { userId: route.userId, invites: route.invites === true } : { userId: null, invites: false };
 };
+
+/** /team/invites is for admins; anyone else who lands there has the URL replaced with /team (QA note 10). */
+export const replacesInvitesRoute = (view: TeamView, role: Role) => view.invites && !canManageTeam(role);
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
@@ -127,6 +130,12 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
     navigateRef.current({ app: "team", userId: null, invites: true });
   }, []);
 
+  useEffect(() => {
+    if (!replacesInvitesRoute(view, role)) return;
+    setView({ userId: null, invites: false });
+    navigateRef.current({ app: "team", userId: null }, { replace: true });
+  }, [role, view]);
+
   // Back/Forward between the list and a member (a dialog open at the time only closes).
   useEffect(() => {
     const onPopState = (event: PopStateEvent) => {
@@ -182,7 +191,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   return <main className={`app-page team-app${routeUserId || routeInvites ? " team-detail-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span><AppPageName name="Team" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { House, Sparkles } from "lucide-react";
-import { AccountActions, useBinCount } from "../AppShell";
+import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
@@ -102,7 +102,7 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
   return <main className={`app-page collections-app${route.collectionId ? " collections-open" : ""}${route.rowId ? " collections-row-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Collections</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Collections</strong></span></span><AppPageName name="Collections" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     <ReadOnlyBanner />

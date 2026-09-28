@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCheck, House, RotateCcw, Sparkles } from "lucide-react";
-import { AccountActions } from "../AppShell";
+import { AccountActions, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { announceNotificationsChanged, NotificationList } from "./NotificationBell";
 import { listNotifications, markAllRead, markRead, safeNotificationPath, type NotificationItem } from "./notificationsApi";
@@ -53,7 +53,7 @@ export function NotificationsApp({ displayName, onHome, onSettings, onSignOut, o
   return <main className="app-page notifications-app">
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Notifications</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Notifications</strong></span></span><AppPageName name="Notifications" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
     </header>
     <section className="notifications-content" aria-labelledby="notifications-title">

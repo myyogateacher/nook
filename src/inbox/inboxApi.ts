@@ -29,6 +29,8 @@ export type ProposalSummary = {
   ref: ProposalRef | null;
   /** A pending note_draft only: what rejecting it would do to the draft now. */
   rejectEffect?: RejectEffect;
+  /** Pending and the target changed since the agent read it, so approving would fail (older servers omit it). */
+  stale?: boolean;
 };
 
 export type RejectEffect = "restore" | "discard" | "keep";

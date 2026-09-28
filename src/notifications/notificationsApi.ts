@@ -38,6 +38,9 @@ export function notificationAge(createdAt: string, nowMs = Date.now()) {
   return days === 1 ? "Yesterday" : `${days} days ago`;
 }
 
+/** Fired after each bell refresh (its poll, focus, or a change), so other account-row badges follow it. */
+export const NOTIFICATIONS_POLLED = "mynotes:notifications-polled";
+
 export const badgeLabel = (count: number) => count > 99 ? "99+" : String(count);
 
 /** What the app shell gives the bell: how to open the full list and a notification's target. */

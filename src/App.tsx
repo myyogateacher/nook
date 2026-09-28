@@ -46,6 +46,7 @@ import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
+import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
@@ -69,6 +70,7 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 import { canCreateMcpKeys, DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
 import { McpKeyScopeChips } from "./McpKeyScopes";
+import { onCheckedChange } from "./ui/checkedChange";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, routeFromLocation, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -117,6 +119,14 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
+  const signUpPrompt = registrationPrompt(registration);
+
+  useEffect(() => {
+    let live = true;
+    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => undefined);
+    return () => { live = false; };
+  }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -187,9 +197,9 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
-          {registering ? "Already have an account? Sign in" : "Setting up Nook? Create the first account"}
-        </button>
+        {(registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
+          {registering ? "Already have an account? Sign in" : signUpPrompt}
+        </button>}
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
     </main>
@@ -278,7 +288,7 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
       {role === "viewer" && !newToken && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
       {!newToken && canCreateMcpKeys(role) && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
         const isLocked = locked.includes(permission.scope);
-        return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
+        return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={onCheckedChange((checked) => setScopes((current) => toggleScope(current, permission.scope, checked)))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small></span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
       {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
       <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} /></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>

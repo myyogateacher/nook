@@ -6,6 +6,7 @@ import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 import { NotificationBell } from "../notifications/NotificationBell";
+import { HeaderInboxButton } from "../AppShell";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
 import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, resolveFilesRoute, type FilesRoute } from "../filesRoute";
 import { isMobileViewport } from "../mobileNavigation";
@@ -669,8 +670,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
               {fileSortOptions.map((option) => <button key={option.value} className={sort === option.value ? "active" : ""} onClick={() => chooseSort(option.value)} role="menuitemradio" aria-checked={sort === option.value}><span>{option.label}</span>{sort === option.value && <Check />}</button>)}
             </div>}
           </div>
+          <HeaderInboxButton />
           <NotificationBell />
-          {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload />Upload</button>}
+          {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload /><span className="files-upload-label">Upload</span></button>}
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
         <ReadOnlyBanner />

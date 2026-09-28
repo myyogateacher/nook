@@ -3,6 +3,7 @@ import { ArrowRightLeft, Copy, Download, File as FileIcon, Maximize2, MessageSqu
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { contentUrl, formatBytes } from "../files/filesApi";
 import { ApiError } from "../api";
+import { CardTitleField } from "./CardTitleField";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
@@ -500,11 +501,11 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
           {card && readOnly
             ? <h2 id={titleId} className="task-card-title-static">{card.title}</h2>
             : card
-            ? <input
+            ? <CardTitleField
               id={titleId}
-              className="task-card-title-input"
+              className="task-card-title-input task-card-title-field"
               value={title}
-              onChange={(event) => { setTitle(event.target.value); setTitleError(null); }}
+              onValueChange={(value) => { setTitle(value); setTitleError(null); }}
               onBlur={() => { void saveTitle(); }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }

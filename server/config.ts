@@ -103,7 +103,26 @@ export function isInstanceName(value: string) {
   return value.length >= 1 && value.length <= 40 && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>]/.test(value);
 }
 
-const isLocalHost = (host: string) => host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "[::1]";
+/**
+ * A URL hostname that only reaches this machine: localhost and *.localhost, the whole 127.0.0.0/8
+ * loopback block, 0.0.0.0, and the IPv6 loopback, unspecified, and IPv4-mapped loopback forms
+ * (WHATWG URL writes [::ffff:127.0.0.1] as [::ffff:7f00:1]).
+ */
+export function isLocalHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  const loopbackV4 = (value: string) => /^127(?:\.\d{1,3}){3}$/.test(value) || value === "0.0.0.0";
+  if (loopbackV4(host)) return true;
+  const v6 = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (v6 === "::1" || v6 === "::") return true;
+  const mapped = /^(?:0{0,4}:){0,5}:?ffff:(.+)$/.exec(v6)?.[1];
+  if (!mapped) return false;
+  if (loopbackV4(mapped)) return true;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(mapped);
+  if (!hex) return false;
+  const high = Number.parseInt(hex[1]!, 16);
+  return high >> 8 === 127 || (high === 0 && Number.parseInt(hex[2]!, 16) === 0);
+}
 /**
  * Why links in mail could not work for a recipient (§D.7), or null when they can: an https
  * APP_ORIGIN, or an http one the operator allowed with MAIL_ALLOW_HTTP_LINKS (a LAN or Tailscale

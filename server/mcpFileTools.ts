@@ -55,7 +55,8 @@ export function expireUploadTicketForTests(id: string) {
   if (ticket) ticket.expiresAt = Date.now() - 1;
 }
 
-// The per-user upload byte budget (in memory, charged at commit).
+// The per-user upload byte budget (in memory, charged at commit). An open ticket reserves its
+// sizeBytes until it commits, fails, or expires, so open tickets cannot overshoot the budget (L3).
 const dailyBytes = new Map<string, { bytes: number; resetAt: number }>();
 function budget(userId: string, time = Date.now()) {
   let entry = dailyBytes.get(userId);
@@ -66,7 +67,25 @@ function budget(userId: string, time = Date.now()) {
   return entry;
 }
 export const chargeUploadBytes = (userId: string, bytes: number) => { budget(userId).bytes += bytes; };
-const budgetLeft = (userId: string) => DAILY_UPLOAD_BYTES_PER_USER - budget(userId).bytes;
+/** Bytes held by the user's open (pending or receiving, unexpired) tickets, except `exceptId`. */
+function reservedBytes(userId: string, exceptId?: string, time = Date.now()) {
+  let bytes = 0;
+  for (const ticket of tickets.values()) {
+    if (ticket.userId !== userId || ticket.id === exceptId) continue;
+    if ((ticket.state === "pending" || ticket.state === "receiving") && !ticketExpired(ticket, time)) bytes += ticket.sizeBytes;
+  }
+  return bytes;
+}
+const budgetLeft = (userId: string, exceptTicketId?: string) => DAILY_UPLOAD_BYTES_PER_USER - budget(userId).bytes - reservedBytes(userId, exceptTicketId);
+const budgetError = () => new McpToolError("RATE_LIMITED", "The daily upload volume for this account is used up. Try again tomorrow.");
+
+/**
+ * The commit-time re-check for a ticket: its bytes must still fit the budget next to what was
+ * charged and what the user's other open tickets hold. Null when it fits.
+ */
+export function ticketBudgetError(ticket: UploadTicket) {
+  return ticket.sizeBytes > budgetLeft(ticket.userId, ticket.id) ? budgetError() : null;
+}
 
 /** Folder for a new upload: an owned folder, or Default for Files; none for an attachment. */
 function uploadFolder(userId: string, purpose: Purpose, folderId: string | undefined) {
@@ -88,7 +107,7 @@ function uploadName(name: string) {
 function quotaCheck(userId: string, bytes: number) {
   const quota = config.userStorageQuotaBytes;
   if (quota > 0 && storedBytes(userId) + bytes > quota) throw new McpToolError("QUOTA_EXCEEDED", "Storage quota exceeded");
-  if (bytes > budgetLeft(userId)) throw new McpToolError("RATE_LIMITED", "The daily upload volume for this account is used up. Try again tomorrow.");
+  if (bytes > budgetLeft(userId)) throw budgetError();
 }
 
 /** A web upload status and body as an MCP error. */
@@ -175,7 +194,8 @@ export const fileWriteTools: McpToolSpec[] = [
       const cleanName = uploadName(name);
       const kind = purpose ?? "file";
       const folder = uploadFolder(key.userId, kind, folderId);
-      // Advisory here; checked again at commit.
+      // The storage quota is advisory here; the byte budget counts other open tickets, and the new
+      // ticket then reserves sizeBytes. Both are checked again at commit.
       quotaCheck(key.userId, sizeBytes);
       const id = crypto.randomUUID();
       const expiresAt = Date.now() + UPLOAD_TICKET_TTL_MS;

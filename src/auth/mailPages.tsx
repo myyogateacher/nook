@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Link2Off, MailX, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
+import { settingsPath } from "../router";
 
 /**
  * The two pages mail links open (Wave 28, outbound email §E.4, §E.6). Both carry their token in the
@@ -104,6 +105,19 @@ export function VerifyEmailPage({ token, onContinue, signedIn }: { token: string
   </Card>;
 }
 
+/**
+ * After "Turn off". The server answers 200 for any token (no oracle for a guessed or stale link),
+ * so the page cannot know the switch changed and says so neutrally, with the way to check (L5).
+ */
+export function UnsubscribeDone({ label, onManage }: { label: string; onManage: () => void }) {
+  return <div className="auth-heading" role="status">
+    <span className="eyebrow">Email</span>
+    <h1><CheckCircle2 aria-hidden="true" className="invite-register-icon" />Request received</h1>
+    <p>If this link is current, “{label}” emails are now off. Check <a href={settingsPath("notifications")} onClick={(event) => { event.preventDefault(); onManage(); }}>Settings → Notifications → Email</a> to be sure.</p>
+    <p>You'll still see these in Nook. Security emails keep coming.</p>
+  </div>;
+}
+
 export function UnsubscribePage({ token, onContinue, onManage }: { token: string | null; onContinue: () => void; onManage: () => void }) {
   const category = token ? unsubscribeCategory(token) : null;
   const label = category ? CATEGORY_LABELS[category] : null;
@@ -131,11 +145,7 @@ export function UnsubscribePage({ token, onContinue, onManage }: { token: string
     </div>
   </Card>;
   return <Card>
-    {state === "done" ? <div className="auth-heading" role="status">
-      <span className="eyebrow">Email</span>
-      <h1><CheckCircle2 aria-hidden="true" className="invite-register-icon" />“{label}” emails are off</h1>
-      <p>You'll still see these in Nook. Security emails keep coming. Turn it back on any time in Settings → Notifications.</p>
-    </div> : <div className="auth-heading">
+    {state === "done" ? <UnsubscribeDone label={label} onManage={onManage} /> : <div className="auth-heading">
       <span className="eyebrow">Email</span>
       <h1><MailX aria-hidden="true" className="invite-register-icon" />Turn off “{label}” emails?</h1>
       <p>You'll still see these in Nook. Security emails keep coming.</p>

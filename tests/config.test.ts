@@ -99,3 +99,38 @@ describe("sign-up role configuration (D80)", () => {
     }
   });
 });
+
+describe("mail link host check (L4)", () => {
+  const hostOf = (origin: string) => new URL(origin).hostname;
+
+  test("loopback, unspecified, and IPv4-mapped loopback hosts count as local", async () => {
+    const { isLocalHost } = await import("../server/config");
+    for (const origin of [
+      "http://localhost:2026", "http://LOCALHOST.", "http://nook.localhost", "http://127.0.0.1", "http://127.0.0.2:2026", "http://127.255.255.254",
+      "http://127.1", "http://0.0.0.0:2026", "http://[::1]", "http://[0:0:0:0:0:0:0:1]", "http://[::]", "http://[::ffff:127.0.0.1]", "http://[::ffff:127.9.9.9]", "http://[::ffff:0.0.0.0]"
+    ]) expect({ origin, local: isLocalHost(hostOf(origin)) }).toEqual({ origin, local: true });
+    for (const origin of [
+      "http://nook.lan", "http://128.0.0.1", "http://10.0.0.5", "http://192.168.1.10", "http://100.64.0.1", "http://[::2]", "http://[::ffff:10.0.0.1]",
+      "http://[2001:db8::1]", "http://localhost.example.com", "http://127.0.0.1.example.com"
+    ]) expect({ origin, local: isLocalHost(hostOf(origin)) }).toEqual({ origin, local: false });
+  });
+
+  test("mail through Resend stays off for a 127.0.0.0/8, 0.0.0.0, or mapped loopback origin even with http links allowed", () => {
+    const enabled = (appOrigin: string) => {
+      const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled }));`], {
+        cwd: tmpdir(),
+        env: {
+          PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), APP_ORIGIN: appOrigin,
+          RESEND_API_KEY: "re_placeholder_not_a_real_key", MAIL_FROM: "nook@example.com", MAIL_ALLOW_HTTP_LINKS: "true"
+        },
+        stdout: "pipe",
+        stderr: "pipe"
+      });
+      return (JSON.parse(result.stdout.toString().trim().split("\n").at(-1)!) as { enabled: boolean }).enabled;
+    };
+    expect(enabled("http://127.0.0.2:2026")).toBe(false);
+    expect(enabled("http://0.0.0.0:2026")).toBe(false);
+    expect(enabled("http://[::ffff:127.0.0.1]:2026")).toBe(false);
+    expect(enabled("http://nook.lan:2026")).toBe(true);
+  }, 30_000);
+});

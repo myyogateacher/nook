@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { formatRoute, parseRoute, parseSettingsPath, settingsPath } from "../src/router";
-import { takeMailLinkFromLocation, unsubscribeCategory } from "../src/auth/mailPages";
+import { formatRoute, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
+import { renderToStaticMarkup } from "react-dom/server";
+import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory } from "../src/auth/mailPages";
 import { HALF_HOURS, prefsInput, type EmailPrefs } from "../src/notifications/emailApi";
 
 /** Client pieces of Wave 28: routes, mail link pages, and the email settings request body. */
@@ -43,6 +44,26 @@ describe("mail link pages", () => {
     expect(h.calls).toEqual(["/mail/unsubscribe"]);
     expect(unsubscribeCategory(token)).toBe("sharing");
     expect(unsubscribeCategory(`${Buffer.from("1|x|security|0").toString("base64url")}.${"b".repeat(22)}`)).toBeNull();
+  });
+
+  test("Settings names its section in the document title and restores the title on close", () => {
+    expect(settingsDocumentTitle("notifications")).toBe("Settings · Notifications · Nook");
+    expect(settingsDocumentTitle("mcp")).toBe("Settings · MCP server · Nook");
+    const doc = { title: "Home · Nook" };
+    const scope = settingsTitleScope(doc);
+    scope.show("notifications");
+    expect(doc.title).toBe("Settings · Notifications · Nook");
+    scope.show("security");
+    expect(doc.title).toBe("Settings · Security · Nook");
+    scope.restore();
+    expect(doc.title).toBe("Home · Nook");
+  });
+
+  test("the done state is neutral, since the server answers 200 for any token (L5)", () => {
+    const markup = renderToStaticMarkup(<UnsubscribeDone label="Shared with you" onManage={() => undefined} />);
+    expect(markup).toContain("If this link is current, “Shared with you” emails are now off. Check <a href=\"/settings/notifications\">Settings → Notifications → Email</a> to be sure.");
+    expect(markup).toContain('role="status"');
+    expect(markup).not.toContain("emails are off<");
   });
 });
 

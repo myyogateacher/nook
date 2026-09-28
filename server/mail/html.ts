@@ -62,15 +62,36 @@ export const join = (parts: readonly HtmlPart[]) => make(render(parts));
 // disguise a title, and CR/LF could split a header, T228).
 const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]+/g;
 
+const ZWSP = "\u200b";
+// A dotted host-like run ("evil.example", "www.evil.example") and a scheme ("https://").
+const HOST_LIKE = /[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+const SCHEME = /([a-z][a-z0-9+.-]*:\/\/)/gi;
+// The marks defangUrls itself inserts, removed before cleaning so that cleaning is idempotent.
+const DEFANG_MARKS = /\u200b(?=\.)|(?<=:\/\/)\u200b/g;
+
+/**
+ * Defangs URL-like runs in user text so mail clients do not autolink them: a zero-width space goes
+ * after each `://` and before each `.` of a dotted run whose last label has a letter. The text looks
+ * the same, but "https://evil.example/reset" in a title is no longer a link (L2).
+ */
+export function defangUrls(value: string) {
+  return value
+    .replace(HOST_LIKE, (run) => /\p{L}/u.test(run.slice(run.lastIndexOf(".") + 1)) ? run.replaceAll(".", `${ZWSP}.`) : run)
+    .replace(SCHEME, `$1${ZWSP}`);
+}
+
 /**
  * One line of user text for a subject, header, or body: control and bidi characters become a
- * space, whitespace collapses, and the result is cut to `max` characters with an ellipsis.
+ * space, whitespace collapses, the result is cut to `max` characters with an ellipsis, and URL-like
+ * runs are defanged (the same helper serves the subject, the HTML, and the text part). Only the
+ * operator's own instance name passes `defang = false`.
  */
-export function cleanLine(value: string | null | undefined, max = 120, fallback = "") {
-  const line = (value ?? "").replace(UNSAFE_CHARS, " ").replace(/\s+/g, " ").trim();
+export function cleanLine(value: string | null | undefined, max = 120, fallback = "", defang = true) {
+  const line = (value ?? "").replace(DEFANG_MARKS, "").replace(UNSAFE_CHARS, " ").replace(/\s+/g, " ").trim();
   if (!line) return fallback;
   const chars = [...line];
-  return chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}\u2026` : line;
+  const cut = chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}\u2026` : line;
+  return defang ? defangUrls(cut) : cut;
 }
 
 /** Plain text from Markdown for a comment excerpt: syntax removed, one line, at most `max` characters. */

@@ -74,7 +74,7 @@ import { McpKeyScopeChips } from "./McpKeyScopes";
 import { onCheckedChange } from "./ui/checkedChange";
 import { binnedTodayLine, McpBinnedReview } from "./McpBinnedReview";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, type Route, type SettingsSection } from "./router";
+import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -324,6 +324,15 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }
   // The app asks before Back leaves Settings while a new key is still on screen.
   useEffect(() => { if (pendingRef) pendingRef.current = mcpKeyPending; }, [mcpKeyPending, pendingRef]);
+
+  // "Settings · Notifications · Nook" while open; the title from before comes back on close.
+  const titleScope = useRef<ReturnType<typeof settingsTitleScope> | null>(null);
+  useEffect(() => {
+    const scope = settingsTitleScope(document);
+    titleScope.current = scope;
+    return () => { titleScope.current = null; scope.restore(); };
+  }, []);
+  useEffect(() => { titleScope.current?.show(section); }, [section]);
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
@@ -836,10 +845,12 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
+    // The Settings dialog owns the title while it is open, and restores it on close.
+    if (settingsOpen) return;
     const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
-  }, [activeApp, note, selectedNoteId, session]);
+  }, [activeApp, note, selectedNoteId, session, settingsOpen]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));

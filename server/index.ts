@@ -671,6 +671,8 @@ app.get("/api/notes/:id", async (c) => {
     note: {
       ...visible,
       draftMcpKeyName,
+      // The client shows "Shared by <owner>" to recipients; the row alone has only the owner id.
+      owner_name: (db.query("SELECT display_name FROM users WHERE id = ?").get(note.owner_id) as { display_name: string } | null)?.display_name ?? "",
       isOwner,
       level,
       canEdit,

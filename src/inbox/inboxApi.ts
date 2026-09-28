@@ -27,6 +27,8 @@ export type ProposalSummary = {
   resultCode: string | null;
   rejectReason: string | null;
   ref: ProposalRef | null;
+  /** Pending and the target changed since the agent read it, so approving would fail (older servers omit it). */
+  stale?: boolean;
 };
 
 export type PreviewField = { name: string; before: string | null; after: string | null };

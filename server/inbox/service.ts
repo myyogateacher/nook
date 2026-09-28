@@ -8,6 +8,7 @@ import { discardDraft, DraftActionError } from "../noteDrafts";
 import { isProposalKind, PROPOSAL_KIND_DEFS, type ProposalKind, type ProposalPreview, type ProposalRef, type StoredProposal } from "./kinds";
 import { PROPOSAL_EXPIRE_MS, type NoteDraftPayload } from "./noteDraftProposals";
 import { cleanLine, cleanText } from "./text";
+import { proposalIsStale } from "./stale";
 
 /**
  * The proposal primitive (docs/plan/research/2026-09-28-agent-inbox-routines.md §4, D146–D159).
@@ -199,6 +200,8 @@ export type ProposalSummary = {
   id: string; kind: ProposalKind; kindLabel: string; title: string; rationale: string | null; status: ProposalStatus;
   targetLabel: string; restricted: boolean; targetHref: string | null; digest: string; keyName: string;
   createdAt: string; expiresAt: string; resolvedAt: string | null; resultCode: string | null; rejectReason: string | null; ref: ProposalRef | null;
+  /** Pending and the target changed since the agent read it (advisory; approve re-checks). */
+  stale: boolean;
 };
 
 function summary(row: ProposalRow, viewerId: string): ProposalSummary {
@@ -210,7 +213,8 @@ function summary(row: ProposalRow, viewerId: string): ProposalSummary {
     id: row.id, kind: row.kind, kindLabel: kind.label, title: row.title, rationale: row.rationale, status: row.status,
     targetLabel: label ?? "restricted", restricted: label === null, targetHref: label === null ? null : kind.targetHref(proposal), digest: kind.digest(proposal.payload), keyName: row.key_name,
     createdAt: row.created_at, expiresAt: row.expires_at, resolvedAt: row.resolved_at, resultCode: row.result_code, rejectReason: row.reject_reason,
-    ref: parseRef(row.result_ref)
+    ref: parseRef(row.result_ref),
+    stale: row.status === "pending" && label !== null && proposalIsStale(proposal)
   };
 }
 

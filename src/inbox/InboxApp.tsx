@@ -76,6 +76,10 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [banner, setBanner] = useState<Banner | null>(null);
+  // Phones: the list (and its banner) hides behind the next proposal, so approving says so in a toast above the sticky bar.
+  const [phoneToast, setPhoneToast] = useState<{ text: string; ref: ProposalRef | null } | null>(null);
+  // J/K move keyboard focus to the newly selected row once it renders.
+  const focusSelected = useRef(false);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const routeRef = useRef(route);
@@ -170,6 +174,21 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
 
   const items = useMemo(() => (groups ?? []).flatMap((group) => group.items), [groups]);
 
+  useEffect(() => {
+    if (!phoneToast) return;
+    const timer = window.setTimeout(() => setPhoneToast(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [phoneToast]);
+
+  useEffect(() => {
+    if (!focusSelected.current || !route.proposalId) return;
+    const row = document.querySelector<HTMLElement>(`[data-proposal-id="${CSS.escape(route.proposalId)}"] .inbox-card-open`);
+    if (!row) return;
+    focusSelected.current = false;
+    row.focus({ preventScroll: true });
+    row.scrollIntoView?.({ block: "nearest" });
+  }, [route.proposalId, groups]);
+
   /** After an action: refresh, tell the badge, and on a phone detail page move on without leaving a resolved entry behind. */
   async function settled(changedId: string | null, nextId: string | null | undefined) {
     announceInboxChanged();
@@ -192,8 +211,9 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
     try {
       const result = await approveProposal(proposal.id);
       setBanner({ text: `Approved: ${proposal.title}`, ref: result.ref, tone: "ok" });
-      // On a phone the list (and its banner) is hidden behind the proposal, so say it in a toast too.
-      if (routeRef.current.proposalId && window.matchMedia?.("(max-width: 760px)").matches) flash("Approved");
+      // On a phone the list (and its banner) is hidden behind the next proposal, so say it in a toast
+      // that sits above the sticky Approve bar and offers the same Open link as the banner.
+      if (routeRef.current.proposalId && nextId && window.matchMedia?.("(max-width: 760px)").matches) setPhoneToast({ text: "Approved", ref: result.ref });
       await settled(proposal.id, nextId);
     } catch (reason) {
       const code = codeOf(reason);
@@ -229,7 +249,8 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
     try {
       const { results } = await bulkProposals("approve", group.map((item) => item.id));
       const applied = results.filter((result) => result.status === "applied");
-      setBanner({ text: bulkSummary(results), ref: applied.length === 1 ? applied[0]!.ref : null, tone: results.every((result) => result.status === "applied") ? "ok" : "warn" });
+      const titles = new Map(group.map((item) => [item.id.toLowerCase(), item.title]));
+      setBanner({ text: bulkSummary(results, (id) => titles.get(id.toLowerCase())), ref: applied.length === 1 ? applied[0]!.ref : null, tone: results.every((result) => result.status === "applied") ? "ok" : "warn" });
       announceInboxChanged();
       await loadList();
       if (routeRef.current.proposalId && group.some((item) => item.id === routeRef.current.proposalId)) go({ view: "pending", proposalId: null }, true);
@@ -257,7 +278,10 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       const index = pending.findIndex((item) => item.id === routeRef.current.proposalId);
       if (key === "j" || key === "k") {
         const next = pending[index < 0 ? 0 : Math.min(pending.length - 1, Math.max(0, index + (key === "j" ? 1 : -1)))];
-        if (next && next.id !== routeRef.current.proposalId) go({ view: routeRef.current.view, proposalId: next.id }, index >= 0);
+        if (next && next.id !== routeRef.current.proposalId) {
+          focusSelected.current = true;
+          go({ view: routeRef.current.view, proposalId: next.id }, index >= 0);
+        }
         return;
       }
       if (!detail || detail.status !== "pending" || busy) return;
@@ -351,6 +375,12 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       </section>
     </div>
 
+    {phoneToast && <div className="inbox-toast" role="status">
+      <span>{phoneToast.text}</span>
+      {phoneToast.ref && <button type="button" className="inbox-link-button" onClick={() => { const ref = phoneToast.ref!; setPhoneToast(null); onOpenPath(ref.href); }}>{refLabel[phoneToast.ref.type]}<ExternalLink aria-hidden="true" /></button>}
+      <button type="button" className="icon-button" onClick={() => setPhoneToast(null)} aria-label="Dismiss"><X /></button>
+    </div>}
+
     {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} onClose={() => setDialog(null)} onReject={(reason) => reject(dialog.ids, reason)} />}
     {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={() => setDialog(null)} onConfirm={() => { void approveAll(dialog.items); }} />}
   </main>;
@@ -360,16 +390,22 @@ function KindChip({ kind, label }: { kind: string; label: string }) {
   return <span className={`inbox-kind inbox-kind-${kind.split("_")[0]}`}>{label}</span>;
 }
 
+/** Flags a pending proposal whose target changed since the agent read it: approving would fail. */
+export function StaleChip() {
+  return <span className="inbox-stale" title="Approving will fail. Ask the agent to read it again, or reject.">Changed since the agent read it</span>;
+}
+
 export function ProposalCard({ item, selected, busy, canApprove, onOpen, onApprove, onReject }: {
   item: ProposalSummary; selected: boolean; busy: boolean; canApprove: boolean;
   onOpen: () => void; onApprove: () => void; onReject: () => void;
 }) {
   const pending = item.status === "pending";
-  return <article className={`inbox-card${selected ? " selected" : ""}${pending ? "" : ` resolved ${item.status}`}`} aria-label={`${item.kindLabel}: ${item.title}`}>
+  return <article className={`inbox-card${selected ? " selected" : ""}${pending ? "" : ` resolved ${item.status}`}`} aria-label={`${item.kindLabel}: ${item.title}`} data-proposal-id={item.id}>
     <button type="button" className="inbox-card-open" onClick={onOpen} aria-current={selected ? "page" : undefined}>
       <span className="inbox-card-top">
         <KindChip kind={item.kind} label={item.kindLabel} />
         {!pending && <span className={`inbox-status ${item.status}`}>{statusLabel(item.status, item.resultCode)}</span>}
+        {pending && item.stale && <StaleChip />}
       </span>
       <strong className="inbox-card-title">{item.title}</strong>
       {item.digest && <span className="inbox-card-digest">{item.digest}</span>}
@@ -398,7 +434,7 @@ export function ProposalView({ proposal, busy, canApprove, onBack, onOpenPath, o
       {proposal.position && proposal.position.of > 1 && <span className="inbox-position">Proposal {proposal.position.index} of {proposal.position.of}</span>}
     </div>
     <header className="inbox-detail-header">
-      <p className="inbox-detail-kind"><KindChip kind={proposal.kind} label={proposal.kindLabel} /><span>Key “{proposal.keyName}”</span></p>
+      <p className="inbox-detail-kind"><KindChip kind={proposal.kind} label={proposal.kindLabel} /><span>Key “{proposal.keyName}”</span>{pending && proposal.stale && <StaleChip />}</p>
       <h2 id="inbox-detail-title">{proposal.title}</h2>
       {!pending && <p className={`inbox-status ${proposal.status}`}>{statusLabel(proposal.status, proposal.resultCode)}{proposal.resolvedAt ? ` · ${relativeTime(proposal.resolvedAt)}` : ""}</p>}
     </header>

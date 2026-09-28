@@ -218,6 +218,39 @@ describe("routine runs over MCP", () => {
     expect(sweepRuns(Date.now() + 181 * 86_400_000).purged).toBeGreaterThanOrEqual(1);
   });
 
+  test("a run's proposals queue one \"Proposals awaiting you\" mail on finish and on abandon", async () => {
+    const mail = await import("../server/mail");
+    mail.setMailTransportForTests(async () => ({ id: "msg_test" }));
+    try {
+      await runMailCases();
+    } finally {
+      mail.setMailTransportForTests(null);
+    }
+  });
+  async function runMailCases() {
+    const proposalMail = (userId: string) => db.query("SELECT id FROM mail_outbox WHERE user_id = ? AND template = 'inbox.proposals'").all(userId);
+    const finisher = await createUser("Run mail finish");
+    const target = await board(finisher);
+    const key = makeKey(finisher, ["inbox:write", "tasks:read"]);
+    const routine = await createRoutine(finisher);
+    const runId = (await call(key, "start_run", { routineId: routine.id })).value.runId;
+    await call(key, "submit_proposals", { runId, proposals: [card(target, "First"), card(target, "Second")] });
+    // While the run is open nothing is queued; the finish queues exactly one.
+    expect(proposalMail(finisher.userId)).toHaveLength(0);
+    expect((await call(key, "finish_run", { runId, status: "succeeded" })).isError).toBe(false);
+    expect(proposalMail(finisher.userId)).toHaveLength(1);
+
+    const abandoner = await createUser("Run mail abandon");
+    const abandonTarget = await board(abandoner);
+    const abandonKey = makeKey(abandoner, ["inbox:write", "tasks:read"]);
+    const abandonRoutine = await createRoutine(abandoner);
+    const abandonRunId = (await call(abandonKey, "start_run", { routineId: abandonRoutine.id })).value.runId;
+    await call(abandonKey, "submit_proposals", { runId: abandonRunId, proposals: [card(abandonTarget, "Left behind")] });
+    expect(proposalMail(abandoner.userId)).toHaveLength(0);
+    await runSweep({ nowMs: Date.now() + LEASE_MS + 1000 });
+    expect(proposalMail(abandoner.userId)).toHaveLength(1);
+  }
+
   test("tool calls count only for the key holding the run (T134)", async () => {
     const owner = await createUser("Run counter");
     const runner = makeKey(owner, ["inbox:write", "tasks:read"], "runner");

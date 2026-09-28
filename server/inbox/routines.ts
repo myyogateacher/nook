@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { audit, db, now } from "../db";
 import { emitNotifications } from "../calendar/reminders";
+import { mailProposalsAwaiting } from "../mail/triggers";
 import { readableCalendar } from "../calendar/access";
 import { readableCollection } from "../collections/access";
 import { McpToolError, type McpKeyContext } from "../mcpToolKit";
@@ -555,6 +556,8 @@ export function finishRun(key: McpKeyContext, input: { runId: string; status: "s
     notificationId = notifyRun(finished, finishedAt);
     audit(key.userId, null, "routine.run_finished", { routineId: routine.id, runId: open.run.id, status: input.status, proposals: finished.proposals_count, toolCalls: finished.tool_calls });
   })();
+  // The run's proposals also queue the coalesced "Proposals awaiting you" mail (Wave 28 hook).
+  if (notificationId) mailProposalsAwaiting(key.userId);
   if (notificationId && proposalPush(key.userId)) emitNotifications([{ id: notificationId, userId: key.userId }]);
   const run = finished! as RunRow;
   return {
@@ -576,16 +579,19 @@ export function abandonExpiredRuns(nowMs = Date.now(), ownerId?: string) {
     .all({ now: timestamp, ownerId: ownerId ?? null }) as RunRow[];
   if (!expired.length) return 0;
   const notices: Array<{ id: string; userId: string }> = [];
+  const mailOwners = new Set<string>();
   db.transaction(() => {
     for (const run of expired) {
       const changed = db.query("UPDATE routine_runs SET status = 'abandoned', finished_at = lease_expires_at WHERE id = ? AND status = 'running'").run(run.id).changes;
       if (!changed) continue;
       db.query("UPDATE routines SET last_run_at = ?, last_run_status = 'abandoned' WHERE id = ?").run(run.lease_expires_at, run.routine_id);
       const notificationId = notifyRun(run, timestamp);
+      if (notificationId) mailOwners.add(run.owner_id);
       if (notificationId && proposalPush(run.owner_id)) notices.push({ id: notificationId, userId: run.owner_id });
       audit(run.owner_id, null, "routine.run_abandoned", { routineId: run.routine_id, runId: run.id, proposals: run.proposals_count, toolCalls: run.tool_calls });
     }
   })();
+  for (const ownerId of mailOwners) mailProposalsAwaiting(ownerId);
   if (notices.length) emitNotifications(notices);
   return expired.length;
 }

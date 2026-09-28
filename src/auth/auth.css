@@ -21,5 +21,5 @@
 @media (max-width: 760px) {
   .password-change-summary .secondary-button { width: 100%; }
   .password-change-form { max-width: none; }
-  .password-change-actions > * { flex: 1 1 140px; }
+  .password-change-actions > * { flex: 1 1 100%; }
 }

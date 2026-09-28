@@ -53,6 +53,13 @@ describe("reset page", () => {
     expect(markup).toContain("Ask for a new link");
   });
 
+  test("signed in on this browser, a dead link offers Open Nook instead of the forgot page", () => {
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} signedIn onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(markup).toContain("Open Nook");
+    expect(markup).not.toContain("Ask for a new link");
+    expect(markup).not.toContain("Back to sign in");
+  });
+
   test("with a token it checks first, before any form", () => {
     const markup = renderToStaticMarkup(<ResetPasswordPage token={"t".repeat(43)} onSignIn={() => undefined} onForgot={() => undefined} />);
     expect(markup).toContain("Checking your link");
@@ -91,6 +98,14 @@ describe("wiring", () => {
     expect(source).toContain("<ChangePasswordCard totpEnabled={state.enabled} />");
     expect(source).toContain('window.history.pushState({ nookPasswordPage: "forgot" }, "", FORGOT_PATH)');
     expect(source).toMatch(/if \(session\) return;\n\s+const onPopState = \(\) => \{\n\s+const link = takePasswordLinkFromLocation\(\);/);
+    // Signed in, a Back onto an old /forgot-password entry shows the app, not the signed-out page (QA).
+    expect(source).toContain('if (passwordLink?.kind === "forgot" && !session) return <ForgotPasswordPage');
+  });
+
+  test("the pages put the previous tab title back when they close (QA)", async () => {
+    const source = await Bun.file(new URL("../src/auth/passwordPages.tsx", import.meta.url)).text();
+    expect(source).toContain('useEffect(() => pageTitle("Forgot password · Nook"), []);');
+    expect(source).toContain('useEffect(() => pageTitle("Reset password · Nook"), []);');
   });
 
   test("links and switches on the password pages are 44 px targets", async () => {

@@ -1689,8 +1689,9 @@ export function App() {
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
-  if (passwordLink?.kind === "forgot") return <ForgotPasswordPage onBack={leaveForgotPassword} />;
-  if (passwordLink?.kind === "reset") return <ResetPasswordPage token={passwordLink.token} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
+  // Signed in, /forgot-password (a Back onto an old entry) is just Home; a reset link still opens.
+  if (passwordLink?.kind === "forgot" && !session) return <ForgotPasswordPage onBack={leaveForgotPassword} />;
+  if (passwordLink?.kind === "reset") return <ResetPasswordPage token={passwordLink.token} signedIn={Boolean(session)} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;

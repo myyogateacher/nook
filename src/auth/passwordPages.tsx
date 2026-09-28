@@ -43,6 +43,13 @@ export const FORGOT_SENT_TEXT = "If that address has a verified account, we sent
 /** With email off there is no link to send (members ask an admin). */
 export const FORGOT_OFF_TEXT = "Email is off on this Nook, so it cannot send a reset link. Ask an admin of this Nook to help you back in.";
 
+/** Sets the tab title while a page is on screen and puts the previous one back (Back to sign in). */
+function pageTitle(title: string) {
+  const previous = document.title;
+  document.title = title;
+  return () => { document.title = previous; };
+}
+
 function Card({ children }: { children: React.ReactNode }) {
   return <main className="auth-page">
     <section className="auth-card password-card">
@@ -86,7 +93,7 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [state, setState] = useState<"form" | "working" | "sent">("form");
   const [error, setError] = useState("");
-  useEffect(() => { document.title = "Forgot password · Nook"; }, []);
+  useEffect(() => pageTitle("Forgot password · Nook"), []);
   useEffect(() => {
     let live = true;
     api<{ passwordReset?: boolean }>("/about").then((info) => { if (live) setAvailable(info.passwordReset === true); }, () => { if (live) setAvailable(true); });
@@ -149,14 +156,15 @@ function deadFrom(reason: unknown): ResetState {
   return { kind: "dead", reason: "error", message: reason instanceof Error ? reason.message : "Something went wrong" };
 }
 
-export function ResetPasswordPage({ token, onSignIn, onForgot }: { token: string | null; onSignIn: () => void; onForgot: () => void }) {
+/** `signedIn`: someone is signed in on this browser (the link still works; it signs them out too). */
+export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false }: { token: string | null; onSignIn: () => void; onForgot: () => void; signedIn?: boolean }) {
   const [state, setState] = useState<ResetState>(token ? { kind: "checking" } : { kind: "dead", reason: "invalid" });
   const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const checked = useRef(false);
   const hintId = useId();
-  useEffect(() => { document.title = "Reset password · Nook"; }, []);
+  useEffect(() => pageTitle("Reset password · Nook"), []);
   useEffect(() => {
     if (!token || checked.current) return;
     checked.current = true;
@@ -199,7 +207,9 @@ export function ResetPasswordPage({ token, onSignIn, onForgot }: { token: string
         <h1><Link2Off aria-hidden="true" className="invite-register-icon" />{DEAD_COPY[state.reason].title}</h1>
         <p>{state.reason === "error" ? state.message : DEAD_COPY[state.reason].body}</p>
       </div>
-      <div className="auth-form"><button type="button" className="primary-button" onClick={onForgot}>Ask for a new link</button></div>
+      <div className="auth-form">{signedIn
+        ? <button type="button" className="primary-button" onClick={onSignIn}>Open Nook</button>
+        : <button type="button" className="primary-button" onClick={onForgot}>Ask for a new link</button>}</div>
     </>}
     {state.kind === "done" && <>
       <div className="auth-heading" role="status">
@@ -223,6 +233,6 @@ export function ResetPasswordPage({ token, onSignIn, onForgot }: { token: string
         <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Change password"}</button>
       </form>
     </>}
-    {state.kind !== "done" && <button type="button" className="text-button" onClick={onSignIn}>Back to sign in</button>}
+    {state.kind !== "done" && !(signedIn && state.kind === "dead") && <button type="button" className="text-button" onClick={onSignIn}>{signedIn ? "Open Nook" : "Back to sign in"}</button>}
   </Card>;
 }

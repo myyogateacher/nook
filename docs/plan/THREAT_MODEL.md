@@ -297,6 +297,32 @@ Plan of record: [WAVES_18-20_SMALL.md](WAVES_18-20_SMALL.md) §2 (D170–D181; `
 | T148 | **Restoring or binning another person's items** | The existing predicates: notes by their owner only; cards, events, and rows by the owner or whoever binned them while they can still write. Missing, forbidden, and binned by someone else all look the same (`NOT_FOUND`). Tests cover owners, members, strangers, viewers, and a reader who did not bin. | Done (Wave 19) |
 | T149 | **Irreversible sprint completion by an agent** | Removed: there is no `complete_sprint` tool (director review). `create_sprint` and `start_sprint` are owner-only, capped at 20 a day, and audited. | Done (Wave 19) |
 
+### Access management and keys (Waves 31–34)
+
+Plan of record: [research/2026-09-28-access-management-api-keys.md](research/2026-09-28-access-management-api-keys.md) §F (D261–D288). Wave 31 (Access A: Nook keys, policies, inventory) is built; the other rows are planned for Waves 32–34 and say so.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T200 | **Grant escalation through groups** (an admin adds themselves to a group to read content) | Wave 32: owners opt in per item by sharing with a group; membership changes go to `access_events`; self-adds flagged; group shares only under `selected`. Wave 31 creates the tables only; nothing reads `group_grants` yet. | Planned (Wave 32) |
+| T201 | **A key broader than its owner** | Built: effective = grants ∩ the owner's current role scopes ∩ policy modules, on every request and tool call (`resolveKeyActor`); creation checks every chosen item is reachable at the granted level; the module services still check the owner's live access; `GET /api/keys` marks each grant `inactive: role \| policy \| no-access`. Tests: `tests/keyRights.test.ts`, `tests/apiKeys.test.ts`. | Done (Wave 31) |
+| T202 | **Stale access after demotion, unshare, or group removal** | Built for demotion and unshare: nothing is cached across calls; a board unshared from the key's owner is `NOT_FOUND` and gone from `list_boards` on the next call (test). Group removal arrives with groups. | Done (Wave 31; groups in 32) |
+| T203 | **Resource-selector bypass through cross-module paths** | Built fail-closed: a chosen-items grant reaches only tools that declare their one resource (`McpToolSpec.resource`) or filter a container list (`listFilter`); each call must name an item inside a chosen container (missing, unreadable, and outside all return `NOT_FOUND`); every other tool is hidden, and handlers see only whole-module scopes, so Today, search, inbox proposals, relations, and attachments never widen a chosen-items grant. An enumeration test proves no undeclared tool is offered. Per-tool filters for the hidden paths: Wave 34. | Done (Wave 31, narrow); Planned (Wave 34, full) |
+| T204 | **Enumeration or leakage via `/access` and the admin aggregation** | Built for Team → Keys: resource names are always `null` in the inventory; only ids and module/permission. `/access` and the member access page arrive in Waves 32–33 with D269 redaction. | Done (Wave 31, inventory); Planned (32–33) |
+| T205 | **Existence probing through key creation** | Built: a missing or unreachable chosen item is the same 404 `RESOURCE_NOT_FOUND`, checked before the password; creations and rotations are limited to 20 an hour per user. | Done (Wave 31) |
+| T206 | **Orphaned polymorphic grants** | Built: AFTER DELETE triggers on notes, folders, documents, boards, task views, collections, calendars, and routines delete their `api_key_grants` and `group_grants` rows (purge only; the Bin keeps them); UUIDs are never reused. Sweeper self-check of orphans: Wave 32. | Done (Wave 31) |
+| T207 | **Manager escalation** | Wave 32 (levels and managers). | Planned (Wave 32) |
+| T208 | **Rotation grace abuse** | Built: grace is 0, 1 h, 24 h, or 7 days, shown on the key row ("Old key: stops in …") with Revoke now; the inventory filters "In rotation grace"; `revoke_after` is checked on every call and the sweeper records the end (`key.grace_ended`). | Done (Wave 31) |
+| T209 | **Policy bypass by pre-policy keys or a race at creation** | Built: policies are read on every call (no cache), not only at creation; `KEY_POLICY` blocks without revoking; the preview counts what a change blocks; the count is re-checked after the password. | Done (Wave 31) |
+| T210 | **REST confusion** (cookies, CORS, HTML) | Wave 34 (`/api/v1`). Wave 31 stores `surfaces` and refuses a REST-only key on `/mcp`. | Planned (Wave 34) |
+| T211 | **IP allowlist spoofing** | Wave 34, only with `TRUSTED_PROXY_HOPS`; the column exists and is unused. | Planned (Wave 34) |
+| T212 | **Service-account keys held by an admin** | Wave 34b; `users.kind` exists and is always `person`. | Planned (Wave 34) |
+| T213 | **Group shares reaching guests** | Wave 32 (`share_with_guests` is stored now). | Planned (Wave 32) |
+| T214 | **Admin revokes used to sabotage** | Built for keys: admin revoke needs a reason, is audited (`team.key_revoked`, `access_events` with the reason's length only), and the owner sees who revoked it and why in Settings → API keys; the owner can create a new key. Reductions on items: Wave 33. | Accepted |
+| T215 | **Key material in inventories or logs** | Built: only the 16-character prefix is ever returned; hashes never leave the server; the token appears once in the create or rotate response; `access_events` and audit rows carry ids, counts, and setting names only. Tests assert no token or hash in `/api/keys` and `/api/team/keys`. | Done (Wave 31) |
+| T216 | **Per-key limits used to raise quotas** | Built: `limits_json` values at or above the global limits are ignored; narrowing refuses raising or clearing a limit; per-user buckets are unchanged (test). | Done (Wave 31) |
+| T217 | **Kind confusion** (a general key gains vault grants, or a vault key sees other tools) | Built in the schema: triggers refuse vault grants on general keys and other grants on vault keys, tie the `vault` kind to the `nkv_` prefix, and freeze kind and prefix (tests). The vault module and its tools: Waves 25–27. | Done (Wave 31, schema) |
+| T218 | **DoS through aggregation** | Built for the inventory: admin only, 200 keys a page with a cursor, indexed filters; bulk revoke is capped at 50 and uses the Team write limit. | Done (Wave 31) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

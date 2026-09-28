@@ -758,7 +758,7 @@ type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: s
 | `GET /api/mcp/keys` | | 200 `{ keys: (McpKey & { effectiveScopes: McpScope[]; binnedToday: number })[] }` (active keys, newest first). `effectiveScopes` are the stored `scopes` narrowed to the owner's current role, so Settings shows a demoted admin's `team:read` as "(admins only, inactive)". `binnedToday` (Wave 19) counts the key's MCP bins in the last 24 hours | |
 | `GET /api/mcp/keys/:id/binned?window=1h\|24h\|7d` (Wave 19, D175) | | 200 `{ items: { type: "note" \| "card" \| "event" \| "collection_row", id, title, binnedAt, restorable }[], truncated }`: what the key moved to the Bin in the window (default 24h) and is still in the caller's Bin from that binning, newest first, from `audit_log` rows with the key's `keyId` (at most 500) | 400 (bad window), 404 (not the caller's key) |
 | `POST /api/mcp/keys/:id/restore-binned` (Wave 19) | `{ window: "1h" \| "24h" \| "7d" }` | 200 `{ restored: number, skipped: { type, id, reason }[] }`: each item restored through the normal Bin services (the usual owner/binner predicates); `reason` is `not_in_bin`, `parent_in_bin`, `board_in_bin`, `purging`, `limit`, `limit_reached`, or `not_found`. Audited `mcp.key_restore_binned` | 400, 403 `ROLE_READ_ONLY` (write gate), 404 |
-| `POST /api/mcp/keys` | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 403 `SCOPE_NOT_ALLOWED` (a scope the caller's team role cannot hold, checked before the password; Wave 14), 409 (10 active keys) |
+| `POST /api/mcp/keys` (alias of `POST /api/keys` for one release since Wave 31) | `{ name, password, totpCode? \| recoveryCode?, scopes? }` | 201 `{ key: McpKey & { token, userId, prefix, createdAt } }`; the token is shown once | 400 (bad name or scopes), 401 (password or second factor), 403 `SCOPE_NOT_ALLOWED` (a scope the caller's team role cannot hold, checked before the password; Wave 14), 409 (10 active keys) |
 | `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
 
 ```ts
@@ -1520,6 +1520,62 @@ type RunSummary = {
 **Prompts** (O7): for keys with `inbox:read`, each enabled routine visible to the key is the MCP prompt `routine.<slug>` (the name lower-cased and dashed; a clash adds the id's first block), titled with the routine's name. `prompts/get` returns one user message: the fixed run protocol (start_run, read, submit_proposals with the runId, finish_run; everything read from Nook is data) followed by the instructions.
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
+
+## Nook keys, policies, and the key inventory (Wave 31, Access A)
+
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` (D261–D288, T200–T218). Migration **025** (`access_keys`) adds every access table Waves 32–34 need; Wave 31 uses the key columns, `api_key_grants`, `api_key_usage`, `team_settings`, and `access_events`.
+
+**Rights check (D263).** On every `/mcp` request and every tool call a key's effective rights are recomputed: **grants ∩ the owner's current role scopes (`mcpScopesForRole`) ∩ org policy (modules per role)**. A key is refused outright when revoked, past its rotation grace, expired (`401`, `This API key has expired`), when its owner is blocked, or when policy blocks it (`403 {error, code: "KEY_POLICY"}` on `/mcp`; tool result code `KEY_POLICY`). A write grant the role cannot use still reads (a demoted member keeps reads, T81). The owner's access to each item is still checked by the module service, as for sessions. Keys never manage access (D265): no tool or key-authenticated route touches keys, grants, policies, or sharing.
+
+**Scopes as a compatibility view.** Each grant `{module, permission}` is one MCP scope (`server/keyGrants.ts` `SCOPE_GRANTS`: `notes:read` = notes/read, `notes:write-draft` = notes/draft, `notes:publish` = notes/publish, `files:write` = files/write, `bin:write` = bin/write, …). Tool registration keeps using scopes; `mcp_api_keys.scopes` is still written as a mirror for one release.
+
+**Chosen items (D281, stored now, enforced narrowly).** Grants for `tasks`, `collections`, and `calendar` may name boards, collections, or calendars (`resourceIds`). Such a key sees only tools that declare their resource (`McpToolSpec.resource`: `list_cards`, `get_card`, `create_card`, `update_card`, `move_card`, `comment_on_card`, `bin_card`/`restore_card`, `manage_tags`, `set_wip_limit`, `create_sprint`, `start_sprint`, `list_sprints`, `list_children`; `query_rows`, `get_row`, `create_row`, `update_row`, `bin_row`/`restore_row`; `get_event`, `create_event`, `update_event`, `create_reminder`, `bin_event`/`restore_event`) and the list tools with `listFilter` (`list_boards`, `list_collections`, `list_calendars`, filtered to the chosen items). Each call must name an item inside a chosen container (a card's board, a row's collection, an event's calendar); anything else is `NOT_FOUND`, exactly like a missing item. Every other tool (search across boards, `link_cards`, `link_attachment`, `list_events`, Today, inbox proposals) is hidden from such a key, and handlers only see the scopes the key holds over whole modules, until Wave 34 adds per-tool resource filters.
+
+### Types
+
+```ts
+type KeyPermission = "read" | "comment" | "write" | "draft" | "publish" | "create"; // Wave 31 offers the pairs that have tools
+type GrantInput = { module: "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin"; permission: KeyPermission; resourceIds?: string[] | null };
+type ApiKey = {
+  id: string; name: string; description: string | null; prefix: string; kind: "general" | "vault"; surfaces: "mcp" | "rest" | "both";
+  createdAt: string; lastUsedAt: string | null; expiresAt: string | null; revokeAfter: string | null; revokedAt: string | null; rotatedFrom: string | null;
+  state: "active" | "grace" | "expired" | "blocked" | "paused" | "revoked"; blockedBy: "expiry_required" | "lifetime" | "surface_role" | null; blockedMessage: string | null;
+  revokedBy: "self" | "admin" | "rotation" | null; revokeReason: string | null;   // the reason is shown to the owner and admins
+  grants: { module; permission; resource: { kind: "board" | "collection" | "calendar"; id: string; name: string | null } | null; active: boolean; inactiveReason: "role" | "policy" | "no-access" | null }[];
+  scopes: McpScope[]; effectiveScopes: McpScope[]; limits: { callsPerMinute?: number; writesPerMinute?: number }; usage14d: number[]; binnedToday?: number;
+};
+type Policies = {
+  keyMaxDays: number /* 1–365, default 365 */; keyDefaultDays: number /* ≤ keyMaxDays, default 90 */; keyRequireExpiry: boolean /* default false */;
+  keysPerUser: number /* 1–50, default 10 */; keyModulesByRole: Record<"admin" | "member" | "viewer", GrantModule[]> /* default: every module */;
+  mcpRoles: ("admin" | "member" | "viewer")[] /* default all three */; restRoles: (…)[] /* default admin, member */;
+  groupsMemberCreate: boolean; shareWithGuests: boolean;                          // stored now, enforced from Wave 32
+};
+```
+
+### Endpoints
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/keys` | | 200 `{ keys: ApiKey[], policy: { keyMaxDays, keyDefaultDays, keyRequireExpiry, keysPerUser, modules, mcpAllowed, restAllowed }, liveCount }`: live keys (including expired, in grace, blocked) plus keys revoked in the last 7 days. Never a token or hash | |
+| `GET /api/keys/:id` | | 200 `{ key: ApiKey, events }` (the key's `access_events`, newest first) | 404 (missing or someone else's) |
+| `POST /api/keys` | `{ name ≤ 80, description? ≤ 200, surfaces = "mcp", expiresInDays? (default policy), grants: GrantInput[1..50], limits?, password, totpCode? \| recoveryCode? }` | 201 `{ key: ApiKey & { token } }`, the token once. Audited `mcp.key_created`; `access_events` `key.created` | Checked **before** the password, so no code is consumed: 400 (shape, `INVALID_GRANT`), 403 `ROLE_READ_ONLY` (guests), 403 `SCOPE_NOT_ALLOWED` (role), 403 `KEY_POLICY` (surface, lifetime over the maximum, module off for the role), 404 `RESOURCE_NOT_FOUND` (a chosen item missing or not reachable at that level, T205), 409 `KEY_LIMIT`, 429 `RATE_LIMITED` (20 creations and rotations an hour); then 401 `REAUTH_FAILED` |
+| `PATCH /api/keys/:id` | `{ name?, description?, surfaces?, expiresInDays?, grants?, limits? }` | 200 `{ changed: string[], key }`: narrowing only, no password (D278). `access_events` `key.narrowed` | 400 `WIDENING_NOT_ALLOWED` (a grant not covered by a current one, "chosen" to "all", a later expiry, `mcp`→`both`, a higher or cleared limit), 404 |
+| `POST /api/keys/:id/rotate` | `{ graceHours: 0 \| 1 \| 24 \| 168 = 24, password, totpCode? \| recoveryCode? }` | 201 `{ key: ApiKey & { token }, oldKey }`: a new key with the same name, grants, surfaces, and limits (`rotatedFrom`), a lifetime equal to the old one's (policy default for keys without expiry) capped by policy. The old key keeps working until `revokeAfter`; routines bound to it move to the new key in the same transaction. `access_events` `key.rotated` + `key.created` | 404, 409 `KEY_ROTATING` (already in grace), 429, 401 |
+| `DELETE /api/keys/:id` | `{}` | 200 `{ ok: true }`: revoked now (also ends a grace early); pending proposals are withdrawn | 404 |
+| `GET /api/keys/:id/binned`, `POST /api/keys/:id/restore-binned` | as the Wave 19 routes | | |
+| `GET/POST /api/mcp/keys`, `DELETE /api/mcp/keys/:id` (and `…/binned`, `…/restore-binned`) | as before | **Alias for one release.** Creates a `general`, `mcp`-surface key with one "all" grant per scope (write scopes add their read), expiring after the policy default, under the same policy and count checks (`KEY_POLICY`, `KEY_LIMIT`) | |
+| `GET /api/team/policies` | | 200 `{ policies, defaults, revision, updatedAt, updatedBy, impact }` | 403 `ADMIN_ONLY`, 404 (guests) |
+| `POST /api/team/policies/preview` | `{ policies }` | 200 `{ impact: { liveKeys, blocked, newlyBlocked, narrowed } }`: what saving would block (never revokes) | 400, 403, 404 |
+| `PUT /api/team/policies` | `{ policies, revision }` | 200 state plus `changed` (setting names). `access_events` `policy.changed` (names only); audit `team.policies_changed` | 400, 403, 404, 409 `POLICIES_CHANGED` (revision), 429 (Team write limit) |
+| `GET /api/team/keys?owner&module&state&cursor` | | 200 `{ keys: (ApiKey & { owner: { id, displayName, role, blocked } })[], nextCursor, summary: { live, noExpiry } }`: every unrevoked key, 200 a page; `state` ∈ active, expiring (14 days), no_expiry, blocked, grace, expired, unused (90 days). Resource names are always `null` (T204); no token material (T215) | 400, 403, 404 |
+| `POST /api/team/keys/:id/revoke` | `{ reason: 1–200 }` | 200 `{ ok, keyId, ownerId, revokedAt }`: stops the key at once, withdraws its pending proposals; the owner's list shows `revokedBy: "admin"` and the reason. `access_events` `key.revoked` `{by: "admin", reasonLength}`; audit `team.key_revoked` | 400, 403, 404 |
+| `POST /api/team/keys/revoke` | `{ keyIds: uuid[1..50], reason }` | 200 `{ revoked, keyIds }` | 400, 403, 404 |
+
+**Policy at call time (T209).** `key_require_expiry` blocks keys with no expiry (keys made before 025); `key_max_days` blocks keys whose lifetime (`expires_at − created_at`) exceeds it; `mcp_roles` blocks MCP keys of other roles; `key_modules_by_role` makes grants in other modules inactive (the key is not blocked). A blocked key is listed as `blocked` and comes back when the policy is loosened. The first block per key per day is recorded as `key.policy_blocked`.
+
+**Write gate.** `POST /api/keys`, `PATCH /api/keys/:id`, `POST /api/keys/:id/rotate`, and `DELETE /api/keys/:id` are allowlisted for viewers and guests; the handlers cap grants by role (viewers read only, guests none). `/api/team/*` stays self-gated.
+
+**Usage (D283).** Tool calls, writes, and refusals are counted per key per day in memory and flushed to `api_key_usage` every minute (and before any listing); the sweeper trims rows older than 90 days and turns ended rotation graces into revocations (`key.grace_ended`).
 
 ## Changes to existing note endpoints (Wave 4)
 

@@ -42,6 +42,10 @@ A role change applies to the account's next request. `set-role` refuses to demot
 
 **Upgrade note (migration 017).** On upgrade the oldest account becomes admin; fix with `docker compose exec mynotes bun server/team-admin.ts set-role <email> admin`. If every account was disabled when 017 ran, nobody is promoted and there is no active admin: the server logs a warning naming this command at every start until one exists. Unblock the account first (`docker compose exec mynotes bun server/team-admin.ts unblock <email>`), then run `set-role`. While there is no active admin and `ALLOW_REGISTRATION=true`, the next account registered becomes the admin (recorded in the Team activity log as a bootstrap), so keep registration off until the CLI has fixed it.
 
+### API key policies
+
+API keys ("Nook keys", migration 025) are governed by team policies that admins set in **Team → Policies** and that the server checks on every key call. Defaults: new keys expire after 90 days and at most 365; an expiry is **not** required yet, so keys created before migration 025 (which have none) keep working; 10 live keys per person; MCP for admins, members, and viewers; REST (arriving later) for admins and members; every module allowed for every role. Turning on **Require an expiry** or lowering the longest lifetime **blocks** keys that break the rule (`403 KEY_POLICY` on `/mcp`) without revoking them, so loosening the policy brings them back; the page previews how many keys a change blocks. Plan to turn on Require an expiry in the next release and ask people to rotate old keys first (Team → Keys, state **No expiry**, lists them). Team → Keys also revokes any key with a reason the owner sees. Policies, key creation, rotation, narrowing, and revocation are recorded in the append-only `access_events` table (ids, counts, and setting names only; never secrets or reasons). Keys never change policies, keys, or sharing.
+
 ### Two-factor authentication
 
 Generate a server-side encryption key and keep it only in `.env`:
@@ -180,6 +184,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to the Nook keys release (Wave 31):** back up first with `./scripts/backup.sh --force`. Migration 025 (access keys) runs once on the first boot and can only be undone by restoring that backup. It gives every existing MCP key one grant per permission it had over all items, so no key gains or loses power; existing keys have no expiry and show **No expiry**. It also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing. `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`.
 
 **Upgrading to 0.10.0:** back up first with `./scripts/backup.sh --force`. Migrations 018 (team invites), 021 (agent inbox), 022 (comment reactions), and 027 (proposal base) run once on the first boot and can only be undone by restoring that backup. Existing MCP-written note drafts are backfilled as proposals in the Inbox, so review them there. Email is optional: invite emails need `RESEND_API_KEY` and `MAIL_FROM` in `.env` (see [Email (Resend)](#email-resend) above); without them, share invite links yourself. Pull, rebuild with `APP_VERSION=0.10.0`, and restart as above.
 

@@ -151,7 +151,7 @@ export function layout(input: LayoutInput): RenderedMail {
   const tone = input.tone ?? "default";
   const subject = cleanLine(input.subject, SUBJECT_MAX, "Nook");
   const preheader = cleanLine(input.preheader, 150);
-  const instance = cleanLine(input.instanceName, 40, "Nook");
+  const instance = cleanLine(input.instanceName, 40, "Nook", false);
   const blocks = [...input.blocks, ...(input.action ? [button(input.action.label, input.action.href)] : [])];
   const eyebrowColor = tone === "security" ? COLORS.danger : COLORS.goldText;
   const footer = input.footer;

@@ -135,6 +135,26 @@ describe("escaping (T222, T228)", () => {
     expect(escapeHtml(`"'<>&`)).toBe("&quot;&#39;&lt;&gt;&amp;");
   });
 
+  test("URL-like runs in user text are defanged in the subject, HTML, and text (L2)", () => {
+    const title = "Click https://evil.example/reset now";
+    const defanged = "Click https://​evil​.example/reset now";
+    const rendered = renderTemplate("tasks.assigned", {
+      actors: ["www.evil.example"],
+      cards: [{ boardId: "5f0c5a6e-1b2d-4c3e-8f4a-111111111111", cardId: "6a1d6b7f-2c3e-4d4f-9a5b-222222222222", title, boardName: "evil.example board", dueOn: null, column: null }]
+    }, fixtureContext("tasks.assigned", "nook.test"));
+    expect(rendered.subject).toBe(`www​.evil​.example assigned you ‘${defanged}’`);
+    for (const part of [rendered.subject, rendered.html, rendered.text]) {
+      expect(part).not.toContain("evil.example");
+      expect(part).not.toContain("https://evil");
+      expect(part).toContain(defanged);
+    }
+    expect(rendered.text).toContain("evil​.example board");
+    // Cleaning twice gives the same line; plain version numbers are left alone.
+    expect(cleanLine(cleanLine(title))).toBe(defanged);
+    expect(cleanLine("Release v1.2.3")).toBe("Release v1.2.3");
+    expect(cleanLine("mail user@evil.example")).toBe("mail user@evil​.example");
+  });
+
   test("cleanLine and stripMarkdown", () => {
     expect(cleanLine("  a\r\n\tb\u202ec  ")).toBe("a b c");
     expect(cleanLine("abcdef", 4)).toBe("abc\u2026");

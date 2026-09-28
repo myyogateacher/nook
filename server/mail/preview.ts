@@ -14,9 +14,12 @@ export function fixtureContext(template: keyof typeof TEMPLATES, instanceName = 
   return {
     instanceName,
     tz: "UTC",
-    unsubscribeHref: definition.class === "activity" ? appLink(paths.unsubscribePage(PREVIEW_UNSUBSCRIBE_TOKEN)) : undefined
+    unsubscribeHref: definition.class === "activity" || definition.class === "reminders" || definition.class === "digest" ? appLink(paths.unsubscribePage(PREVIEW_UNSUBSCRIBE_TOKEN)) : undefined
   };
 }
+
+/** Dark: the prefers-color-scheme overrides applied unconditionally, as a dark-mode client would (goldens too). */
+export const darkPreview = (markup: string) => markup.replace("@media (prefers-color-scheme:dark){", "@media all{");
 
 export function renderFixture(id: string, instanceName?: string) {
   const fixture = previewFixtures().find((item) => item.id === id);
@@ -44,8 +47,7 @@ export function registerMailPreviewRoutes(app: Hono<any>, production = config.is
     if (!rendered) return c.text("Unknown template", 404);
     c.header("Cache-Control", "no-store");
     if (c.req.query("format") === "text") return c.text(`Subject: ${rendered.subject}\n\n${rendered.text}`);
-    // Dark: apply the prefers-color-scheme overrides unconditionally, as a dark-mode client would.
-    const markup = c.req.query("scheme") === "dark" ? rendered.html.replace("@media (prefers-color-scheme:dark){", "@media all{") : rendered.html;
+    const markup = c.req.query("scheme") === "dark" ? darkPreview(rendered.html) : rendered.html;
     return c.html(markup);
   });
 }

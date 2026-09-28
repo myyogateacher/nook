@@ -9,6 +9,7 @@ import { readableCollection } from "../collections/access";
 import { parseStoredScopes } from "../mcpScopes";
 import { stripMarkdown } from "./html";
 import { isMuted } from "./mutes";
+import { resolveEventChanged, resolveReminder } from "./calendarMail";
 import type { TemplateName } from "./registry";
 import type { AssignedCard, CommentExcerpt, SharedItem, SharedKind } from "./templates/activity";
 import type { AccountEvent, TwoFactorEvent } from "./templates/security";
@@ -184,6 +185,8 @@ export function resolvePayload(template: TemplateName, payload: Payload, recipie
     case "security.account": return resolveAccount(payload);
     case "account.verify": return resolveVerify(payload, recipient, nowMs);
     case "account.test": return { data: { sentAt: new Date(nowMs).toISOString() } };
+    case "calendar.reminder": return resolveReminder(payload, recipient, nowMs);
+    case "calendar.event_changed": return resolveEventChanged(payload, recipient, nowMs);
     // Invites are sent synchronously and never queued (D254).
     case "team.invite": return { skip: "empty" };
   }

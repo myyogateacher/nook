@@ -1,0 +1,24 @@
+Subject: ‘Design review’ was cancelled
+
+Nook · nook.test
+
+CALENDAR · CANCELLED
+Priya Shah cancelled an event
+
+On the calendar Team calendar. You have a reminder on it.
+
+> Design review
+  Was Thu 1 Oct 2026, 09:30 (UTC) · Room 2
+
+It is in the Bin now. Your reminder on it is paused.
+
+Open calendar:
+https://nook.test/calendar
+
+--
+You got this because you set a reminder on this event, and someone else changed it.
+Turn off “Reminders by email” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

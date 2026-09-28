@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { cleanLine, escapeHtml, html, SafeHtml, stripMarkdown } from "../server/mail/html";
 import { appLink, paths, setMailOriginForTests } from "../server/mail/links";
 import { previewFixtures, renderTemplate, TEMPLATES } from "../server/mail/registry";
-import { fixtureContext, registerMailPreviewRoutes, renderFixture } from "../server/mail/preview";
+import { darkPreview, fixtureContext, registerMailPreviewRoutes, renderFixture } from "../server/mail/preview";
 import { parseRoute } from "../src/router";
 
 /**
@@ -21,6 +21,8 @@ beforeAll(() => setMailOriginForTests(ORIGIN));
 afterAll(() => setMailOriginForTests(null));
 
 const render = (id: string) => renderFixture(id, "nook.test")!;
+/** Wave 29 templates also keep a dark golden (the dark-mode overrides applied, as the preview does). */
+const DARK_GOLDEN = new Set(["calendar.reminder", "calendar.event_changed", "tasks.sprint", "bin.expiring", "digest.summary"]);
 const hrefs = (markup: string) => [...markup.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replaceAll("&amp;", "&"));
 
 describe("golden files", () => {
@@ -37,6 +39,13 @@ describe("golden files", () => {
       }
       expect(rendered.html).toBe(readFileSync(htmlPath, "utf8"));
       expect(text).toBe(readFileSync(textPath, "utf8"));
+      if (DARK_GOLDEN.has(fixture.template)) {
+        const darkPath = join(GOLDEN, `${fixture.id}.dark.html`);
+        const dark = darkPreview(rendered.html);
+        if (process.env.UPDATE_GOLDEN === "1" || !existsSync(darkPath)) writeFileSync(darkPath, dark);
+        expect(dark).toContain("@media all{");
+        expect(dark).toBe(readFileSync(darkPath, "utf8"));
+      }
     });
   }
 });
@@ -64,9 +73,9 @@ describe("the design contract", () => {
         expect(link.startsWith(`${ORIGIN}/`)).toBe(true);
         expect(text.split("\n").some((line) => line.trim() === link)).toBe(true);
       }
-      // Unsubscribe only on activity mail (B.2); security says it can't be turned off.
+      // Unsubscribe on activity, reminders, and digest mail (B.2); security says it can't be turned off.
       const unsubscribes = hrefs(markup).filter((link) => link.includes("/mail/unsubscribe"));
-      expect(unsubscribes.length > 0).toBe(definition.class === "activity");
+      expect(unsubscribes.length > 0).toBe(definition.class === "activity" || definition.class === "reminders" || definition.class === "digest");
       expect(markup.includes("Security emails can't be turned off") || markup.includes("Security emails can&#39;t be turned off")).toBe(definition.class === "security");
     });
   }
@@ -74,7 +83,10 @@ describe("the design contract", () => {
   test("every link parses back to the intended app with the router; tokens only in fragments", () => {
     const expected: Record<string, string> = {
       "tasks.assigned": "tasks", "tasks.assigned.many": "tasks", "tasks.comment": "tasks", "sharing.shared": "notes", "sharing.shared.one": "notes",
-      "inbox.proposals": "inbox", "security.api_key_created": "home", "security.role_changed": "team", "account.test": "home"
+      "inbox.proposals": "inbox", "security.api_key_created": "home", "security.role_changed": "team", "account.test": "home",
+      "calendar.reminder": "calendar", "calendar.reminder.all_day": "calendar", "calendar.reminder.standalone": "notifications",
+      "calendar.event_changed": "calendar", "calendar.event_changed.cancelled": "calendar",
+      "tasks.sprint": "tasks", "tasks.sprint.completed": "tasks", "bin.expiring": "bin", "digest.summary": "home", "digest.summary.weekly": "home"
     };
     for (const fixture of previewFixtures()) {
       const links = hrefs(render(fixture.id).html);
@@ -123,6 +135,21 @@ describe("escaping (T222, T228)", () => {
     }
     const amp = renderTemplate("sharing.shared", { actors: ["A"], items: [{ kind: "note", id: "7b2e7c80-3d4f-4e5a-8b6c-333333333333", title: "Tom &amp; Jerry", access: null }] }, fixtureContext("sharing.shared", "nook.test"));
     expect(amp.html).toContain("Tom &amp;amp; Jerry");
+  });
+
+  test("Wave 29 templates escape hostile titles, places, and names the same way", () => {
+    const value = "<script>x</script>\r\nBcc: v@example.test \u202e" + "y".repeat(5000);
+    const renders = [
+      renderTemplate("calendar.reminder", { ...TEMPLATES["calendar.reminder"].fixture(), title: value, location: value, calendarName: value }, fixtureContext("calendar.reminder", "nook.test")),
+      renderTemplate("calendar.event_changed", { ...TEMPLATES["calendar.event_changed"].fixture(), title: value, calendarName: value, actors: [value], after: { time: null, location: value } }, fixtureContext("calendar.event_changed", "nook.test"))
+    ];
+    for (const rendered of renders) {
+      expect(rendered.html).not.toContain("<script>");
+      expect(rendered.html).not.toContain("\u202e");
+      expect(rendered.subject).not.toMatch(/[\r\n\u202e]/);
+      expect(rendered.subject.length).toBeLessThanOrEqual(120);
+      expect(rendered.html.length).toBeLessThan(40_000);
+    }
   });
 
   test("SafeHtml is built only by the html tag", () => {

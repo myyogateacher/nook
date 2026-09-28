@@ -36,6 +36,7 @@ import {
   type SeriesInput
 } from "./recurrence";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { mailEventChanged } from "../mail/calendarMail";
 
 export const MAX_CALENDARS_PER_OWNER = 20;
 export const MAX_EVENTS_PER_CALENDAR = 20_000;
@@ -460,7 +461,12 @@ export function patchEvent(userId: string, eventId: string, patch: EventPatch, o
   if (patch.title !== undefined) values.title = patch.title;
   if (patch.description !== undefined) values.description = patch.description;
   if (patch.location !== undefined) values.location = patch.location;
-  const updated = db.transaction(() => applyChange(event, userId, patch.revision, values, "event.update", {}, options.keyId ?? null))();
+  const updated = db.transaction(() => {
+    const next = applyChange(event, userId, patch.revision, values, "event.update", {}, options.keyId ?? null);
+    // "Event changed" mail to readers with a reminder on it (outbound email #24); only a new time or place mails.
+    mailEventChanged(userId, event, next);
+    return next;
+  })();
   rescheduleEventReminders(eventId);
   return eventResponse(updated, calendar, userId);
 }
@@ -481,6 +487,7 @@ export function undoEvent(userId: string, eventId: string, revision: number) {
   if (result.changes !== 1) throw changed(eventById(eventId));
   refreshNextOccurrence(eventById(eventId));
   audit(userId, null, "event.undo", { eventId });
+  mailEventChanged(userId, event, eventById(eventId));
   rescheduleEventReminders(eventId);
   return eventResponse(eventById(eventId), calendar, userId);
 }
@@ -495,19 +502,27 @@ export function addExdate(userId: string, eventId: string, date: string, revisio
   const exdates = parseExdates(event.exdates_json);
   if (exdates.includes(date)) return eventResponse(event, calendar, userId);
   const normalized = checked(() => normalizeExdates([...exdates, date]));
-  const updated = db.transaction(() => applyChange(event, userId, event.revision, { exdates_json: JSON.stringify(normalized) }, "event.exdate"))();
+  const updated = db.transaction(() => {
+    const next = applyChange(event, userId, event.revision, { exdates_json: JSON.stringify(normalized) }, "event.exdate");
+    mailEventChanged(userId, event, next);
+    return next;
+  })();
   rescheduleEventReminders(eventId);
   return eventResponse(updated, calendar, userId);
 }
 
 /** Moves the event to the Bin (anyone with write access). Listed there for the calendar owner and the deleter (D68). */
 export function deleteEvent(userId: string, eventId: string) {
-  writableEvent(eventId, userId);
+  const { event } = writableEvent(eventId, userId);
   const deletedAt = new Date();
   const purgeAfter = purgeAfterFrom(deletedAt);
-  const result = db.query("UPDATE events SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL")
-    .run(deletedAt.toISOString(), userId, purgeAfter, eventId);
-  if (result.changes !== 1) throw eventNotFound();
+  db.transaction(() => {
+    const result = db.query("UPDATE events SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL")
+      .run(deletedAt.toISOString(), userId, purgeAfter, eventId);
+    if (result.changes !== 1) throw eventNotFound();
+    // "Event cancelled" mail to readers with a reminder on it (outbound email #24).
+    mailEventChanged(userId, event, null);
+  })();
   audit(userId, null, "event.delete", { eventId });
   return { ok: true as const, purgeAfter };
 }

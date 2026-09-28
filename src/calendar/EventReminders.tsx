@@ -1,15 +1,35 @@
 import { useEffect, useState } from "react";
-import { Bell, Check, Plus, X } from "lucide-react";
+import { Bell, Check, Mail, Plus, X } from "lucide-react";
 import { api } from "../api";
 import { ModalDialog } from "../files/Dialog";
+import { Select } from "../ui/Select";
+import { getEmailSettings, type EmailSettings } from "../notifications/emailApi";
 import { nextOccurrence, type SeriesInput } from "../../shared/calendarRecurrence";
 import type { EventDetail } from "./calendarApi";
 
-export type ReminderSummary = { id: string; eventId: string | null; offsetMinutes: number | null; title: string | null; tz: string; nextFireAt: string | null; lastFiredAt: string | null; createdAt: string };
+/** Where a reminder goes besides the bell (Wave 29): push, email, or both. */
+export type ReminderChannels = "push" | "email" | "push_email";
+export type ReminderSummary = { id: string; eventId: string | null; offsetMinutes: number | null; title: string | null; tz: string; nextFireAt: string | null; lastFiredAt: string | null; createdAt: string; channels?: ReminderChannels };
 
 export const listEventReminders = (eventId: string) => api<{ reminders: ReminderSummary[] }>(`/reminders?eventId=${encodeURIComponent(eventId)}`);
-export const addEventReminder = (eventId: string, offsetMinutes: number, tz: string) =>
-  api<{ reminder: ReminderSummary }>("/reminders", { method: "POST", body: JSON.stringify({ eventId, offsetMinutes, tz }) });
+export const addEventReminder = (eventId: string, offsetMinutes: number, tz: string, channels: ReminderChannels = "push") =>
+  api<{ reminder: ReminderSummary }>("/reminders", { method: "POST", body: JSON.stringify({ eventId, offsetMinutes, tz, ...(channels === "push" ? {} : { channels }) }) });
+
+export const CHANNEL_LABELS: Record<ReminderChannels, string> = { push: "Notification", email: "Email", push_email: "Notification and email" };
+
+/**
+ * Whether reminders can go by email for this person, and if not, why (the picker's hint). Email
+ * needs mail on for the Nook, a verified address that has not bounced, and the Email and
+ * "Reminders by email" switches on in Settings → Notifications.
+ */
+export function emailChannelHint(settings: Pick<EmailSettings, "configured" | "verified" | "suppressed" | "prefs"> | null): string | null {
+  if (!settings) return "Checking your email settings…";
+  if (!settings.configured) return "Email is off on this Nook.";
+  if (!settings.verified) return "Verify your email address in Settings → Notifications to get reminders by email.";
+  if (settings.suppressed) return "Email to your address bounced. Try again from Settings → Notifications.";
+  if (!settings.prefs.enabled || !settings.prefs.categories.reminders) return "Reminders by email are off in Settings → Notifications.";
+  return null;
+}
 export const removeReminder = (id: string) => api<{ ok: true }>(`/reminders/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" });
 
 /** Choices offered in the picker. All-day events start at local midnight, so "9:00 on the day" is -540. */
@@ -63,7 +83,7 @@ export function EventReminders({ eventId, allDay, reloadKey, onAdd, onRemove }: 
       {reminders.map((reminder) => {
         const label = reminderLabel(reminder.offsetMinutes ?? 0, allDay);
         return <li key={reminder.id}>
-          <span className="calendar-link"><Bell aria-hidden="true" /><span><strong>{label}</strong><small>{reminder.nextFireAt ? `Next ${new Date(reminder.nextFireAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "No upcoming time"}</small></span></span>
+          <span className="calendar-link">{reminder.channels === "email" ? <Mail aria-hidden="true" /> : <Bell aria-hidden="true" />}<span><strong>{label}</strong><small>{reminder.nextFireAt ? `Next ${new Date(reminder.nextFireAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "No upcoming time"}{reminder.channels && reminder.channels !== "push" ? ` · ${CHANNEL_LABELS[reminder.channels]}` : ""}</small></span></span>
           <button className="icon-button" onClick={() => onRemove(reminder)} aria-label={`Remove reminder ${label}`}><X /></button>
         </li>;
       })}
@@ -97,7 +117,9 @@ export const EVENT_OVER_MESSAGE = "This event has already happened, so there is 
 export const SERIES_OVER_MESSAGE = "This series has ended.";
 
 type ReminderPickerProps = {
-  allDay: boolean; existing: number[]; onPick: (offsetMinutes: number) => Promise<void>; onClose: () => void;
+  allDay: boolean; existing: number[]; onPick: (offsetMinutes: number, channels: ReminderChannels) => Promise<void>; onClose: () => void;
+  /** Tests: the email settings instead of fetching them (null: still loading). */
+  emailSettings?: Pick<EmailSettings, "configured" | "verified" | "suppressed" | "prefs"> | null;
   /** The event, so options whose time has passed are disabled (QA 0.9.2); without it every option is offered. */
   event?: Parameters<typeof eventSeries>[0] | null;
   /** The viewer's zone (all-day events start at their midnight) and the clock, for tests. */
@@ -111,8 +133,21 @@ type ReminderPickerProps = {
  * passed", and an event with no upcoming occurrence shows a notice and Close instead of the list
  * (QA 0.9.2). The server's check stays the source of truth; its refusal reads the same way.
  */
-export function ReminderPicker({ allDay, existing, onPick, onClose, event = null, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone, nowMs }: ReminderPickerProps) {
+export function ReminderPicker({ allDay, existing, onPick, onClose, event = null, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone, nowMs, emailSettings }: ReminderPickerProps) {
   const [busy, setBusy] = useState(false);
+  const [channel, setChannel] = useState<ReminderChannels>("push");
+  const [loadedEmail, setLoadedEmail] = useState<Pick<EmailSettings, "configured" | "verified" | "suppressed" | "prefs"> | null>(null);
+  useEffect(() => {
+    if (emailSettings !== undefined) return;
+    let active = true;
+    // Without email settings (an older server, or offline) the email options stay off.
+    getEmailSettings().then((settings) => { if (active) setLoadedEmail(settings); })
+      .catch(() => { if (active) setLoadedEmail({ configured: false, verified: false, suppressed: false, prefs: { enabled: false, categories: { reminders: false } } as EmailSettings["prefs"] }); });
+    return () => { active = false; };
+  }, [emailSettings]);
+  const email = emailSettings !== undefined ? emailSettings : loadedEmail;
+  const emailHint = emailChannelHint(email);
+  const channelOptions = (Object.keys(CHANNEL_LABELS) as ReminderChannels[]).map((value) => ({ value, label: CHANNEL_LABELS[value], disabled: value !== "push" && emailHint !== null }));
   const [error, setError] = useState<string | null>(null);
   const [refused, setRefused] = useState<number[]>([]);
   const options = allDay ? ALL_DAY_OFFSETS : TIMED_OFFSETS;
@@ -125,7 +160,7 @@ export function ReminderPicker({ allDay, existing, onPick, onClose, event = null
     setBusy(true);
     setError(null);
     try {
-      await onPick(offset);
+      await onPick(offset, channel);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Could not add the reminder";
       if (message === NO_UPCOMING_TIME) {
@@ -145,6 +180,12 @@ export function ReminderPicker({ allDay, existing, onPick, onClose, event = null
 
   const available = (offset: number) => !existing.includes(offset) && !passed(offset);
   return <ModalDialog title="Remind me" eyebrow="Event" onClose={onClose} variant="sheet" busy={busy} className="calendar-reminder-dialog">
+    <div className="calendar-reminder-channel">
+      <span id="calendar-reminder-channel-label">Remind me by</span>
+      <Select value={channel} onChange={setChannel} options={channelOptions} label="Remind me by" labelledBy="calendar-reminder-channel-label" disabled={busy} />
+      {emailHint && <small className="calendar-note" id="calendar-reminder-channel-hint">{emailHint}</small>}
+      {!emailHint && channel !== "push" && <small className="calendar-note">Emails go to your address even during quiet hours, since reminders are time-bound.</small>}
+    </div>
     <div className="move-list" role="list" aria-label="When">
       {options.map((offset) => {
         const taken = existing.includes(offset);

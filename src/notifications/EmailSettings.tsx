@@ -16,7 +16,8 @@ const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> =
   { id: "assignments", title: "Assigned to you", help: "Someone assigns you a card. Grouped every 10 minutes." },
   { id: "comments", title: "Comments on your cards", help: "New comments on cards you created or are assigned to." },
   { id: "sharing", title: "Shared with you", help: "Notes, files, boards, calendars, and collections shared with you by name." },
-  { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." }
+  { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." },
+  { id: "reminders", title: "Reminders by email", help: "Reminders you set to email (choose per reminder in Calendar), and changes to events you set a reminder on. Sent even in quiet hours." }
 ];
 
 const DIGEST_OPTIONS = [
@@ -175,10 +176,6 @@ export function EmailSettings() {
         <Switch checked={prefs.categories[row.id]} disabled={locked || !prefs.enabled} labelledBy={`email-${row.id}-label`} describedBy={`email-${row.id}-help`}
           onChange={(on) => { void save({ categories: { ...prefs.categories, [row.id]: on } }); }} />
       </li>)}
-      <li className="modules-row email-row off">
-        <span className="modules-row-text"><strong id="email-reminders-label">Reminders by email</strong><small id="email-reminders-help">Coming in a later update. Reminders appear under the bell and as push.</small></span>
-        <Switch checked={false} disabled labelledBy="email-reminders-label" describedBy="email-reminders-help" />
-      </li>
       <li className="modules-row email-row">
         <span className="modules-row-text"><strong id="email-security-label" className="email-label-icon"><ShieldCheck aria-hidden="true" className="email-inline-icon" />Security</strong><small id="email-security-help">Always on. New API keys, role changes, two-factor changes, and account blocks.</small></span>
         <Switch checked disabled labelledBy="email-security-label" describedBy="email-security-help" />

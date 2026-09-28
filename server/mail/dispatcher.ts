@@ -133,14 +133,15 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
   if ("skip" in resolved) return skip(row, resolved.skip, nowMs);
   const data = security && nowMs - Date.parse(row.created_at) > SECURITY_DELAYED_AFTER_MS ? { ...(resolved.data as object), delayed: true } : resolved.data;
 
-  const activity = row.class === "activity" && row.category !== null;
-  const token = activity ? await createUnsubscribeToken(user.id, row.category!) : null;
+  // Activity and reminders mail can be switched off by category from the mail itself (B.2).
+  const switchable = (row.class === "activity" || row.class === "reminders") && row.category !== null;
+  const token = switchable ? await createUnsubscribeToken(user.id, row.category!) : null;
   const rendered = renderTemplate(template, data, {
     instanceName: config.mail.instanceName,
     tz: prefs.tz,
     unsubscribeHref: token ? appLink(paths.unsubscribePage(token)) : undefined
   });
-  // RFC 8058 one-click unsubscribe, on activity mail only (never security or account, B.2).
+  // RFC 8058 one-click unsubscribe, on activity, reminders, and digest mail (never security or account, B.2).
   const headers = token ? { "List-Unsubscribe": `<${appLink(paths.unsubscribeApi(token))}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined;
   const outcome = await sendMail({ to: user.email, subject: rendered.subject, text: rendered.text, html: rendered.html, headers }, {
     purpose: template,

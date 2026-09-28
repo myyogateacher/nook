@@ -389,7 +389,8 @@ function pumpDeliveries() {
  * Resolves when the queue has drained.
  */
 export function deliverNotifications(created: NotificationCreated[]): Promise<void> {
-  for (const { userId } of created) queuedUsers.add(userId);
+  // A reminder set to email only (Wave 29 channels) makes a bell entry but no push.
+  for (const { userId, push } of created) if (push !== false) queuedUsers.add(userId);
   pumpDeliveries();
   return runningWorkers === 0 ? Promise.resolve() : new Promise((resolve) => drainWaiters.push(resolve));
 }

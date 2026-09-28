@@ -33,7 +33,7 @@ import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
 import { FeedDialog } from "./FeedDialog";
 import { DiscardEventPrompt, EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
-import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderSummary } from "./EventReminders";
+import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderChannels, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
 import { MonthView } from "./MonthView";
@@ -334,8 +334,8 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     });
   }
 
-  async function addReminder(eventId: string, offset: number) {
-    await addEventReminder(eventId, offset, zone);
+  async function addReminder(eventId: string, offset: number, channels: ReminderChannels) {
+    await addEventReminder(eventId, offset, zone, channels);
     setReminderPicker(null);
     setReloadKey((value) => value + 1);
     flash("Reminder added. Only you will see it.");
@@ -509,7 +509,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       showTasks={showTasks}
       onToggleTasks={toggleTasks}
     />}
-    {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} event={reminderPicker.event} timeZone={zone} onPick={(offset) => addReminder(reminderPicker.eventId, offset)} onClose={() => setReminderPicker(null)} />}
+    {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} event={reminderPicker.event} timeZone={zone} onPick={(offset, channels) => addReminder(reminderPicker.eventId, offset, channels)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
     {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}

@@ -1,0 +1,24 @@
+Subject: Reminder: ‘Call the bank’ at Thu 1 Oct 2026, 09:00 (Europe/Berlin) (late)
+
+Nook · nook.test
+
+REMINDER
+Your reminder
+
+This reminder is late: Nook could not send it on time.
+
+> Call the bank
+  Thu 1 Oct 2026, 09:00 (Europe/Berlin)
+
+You set this reminder yourself. Only you get it.
+
+Open notifications:
+https://nook.test/notifications
+
+--
+You got this because you chose email for this reminder in Nook.
+Turn off “Reminders by email” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

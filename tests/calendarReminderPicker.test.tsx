@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EVENT_OVER_MESSAGE, eventSeries, nextReminderFire, PASSED_MESSAGE, ReminderPicker, SERIES_OVER_MESSAGE } from "../src/calendar/EventReminders";
+import { emailChannelHint, EVENT_OVER_MESSAGE, eventSeries, nextReminderFire, PASSED_MESSAGE, ReminderPicker, SERIES_OVER_MESSAGE } from "../src/calendar/EventReminders";
 
 // Operator QA 0.9.2: on a past event every "Remind me" option was offered and picking one failed
 // with a red line. Options whose time has passed are disabled with a hint, and an event with no
@@ -69,4 +69,18 @@ test("the server's refusal reads the same way, and the sheet is wider on desktop
   expect(css).toContain(".file-dialog.calendar-reminder-dialog { width: min(560px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }");
   // Without the event (older callers) every option is offered.
   expect(renderToStaticMarkup(<ReminderPicker allDay={false} existing={[]} onPick={pick} onClose={noop} />)).not.toContain("Already passed");
+});
+
+test("Remind me by (Wave 29): email is offered only with a verified address and the switches on", () => {
+  const prefs = { enabled: true, categories: { assignments: true, comments: true, sharing: true, proposals: true, sprints: false, bin: false, reminders: true } } as never;
+  const ready = { configured: true, verified: true, suppressed: false, prefs };
+  expect(emailChannelHint(ready)).toBeNull();
+  expect(emailChannelHint({ ...ready, verified: false })).toContain("Verify your email");
+  expect(emailChannelHint({ ...ready, configured: false })).toBe("Email is off on this Nook.");
+  expect(emailChannelHint({ ...ready, suppressed: true })).toContain("bounced");
+  const unverified = renderToStaticMarkup(<ReminderPicker allDay={false} existing={[]} timeZone="UTC" nowMs={NOW} onPick={pick} onClose={noop} emailSettings={{ ...ready, verified: false }} />);
+  expect(unverified).toContain("Remind me by");
+  expect(unverified).toContain("Verify your email address in Settings → Notifications to get reminders by email.");
+  const fine = renderToStaticMarkup(<ReminderPicker allDay={false} existing={[]} timeZone="UTC" nowMs={NOW} onPick={pick} onClose={noop} emailSettings={ready} />);
+  expect(fine).not.toContain("calendar-reminder-channel-hint");
 });

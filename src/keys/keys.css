@@ -1,0 +1,113 @@
+/* Nook keys (Wave 31): Settings → API keys, the grant builder, and Team → Keys / Policies.
+   Mobile first: every control is at least 44 px tall; dialogs are full-height sheets below 760 px. */
+
+.keys-status { margin: 0; color: #b9d7a8; font-size: .84rem; }
+.keys-card { gap: 12px; }
+.keys-card-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.keys-card-head > div { min-width: 0; flex: 1 1 220px; }
+.keys-new { display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 16px; }
+.keys-new svg { width: 16px; height: 16px; }
+.keys-empty { margin: 0; color: #88888f; font-size: .84rem; }
+
+.keys-list { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid #29292d; }
+.keys-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px; padding: 13px 0; border-bottom: 1px solid #29292d; }
+.keys-row .key-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #202024; color: #aaaab0; }
+.keys-row .key-icon svg { width: 16px; }
+.keys-row-main { min-width: 0; display: grid; gap: 5px; }
+.keys-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.keys-row-title strong { overflow-wrap: anywhere; color: #f0f0f2; }
+.keys-row small { color: #85858c; font-size: .72rem; overflow-wrap: anywhere; }
+.keys-row small code { color: #b5b5bb; }
+.keys-row-owner { color: #c9c9cd !important; }
+.keys-row-description { color: #a9a9ae !important; }
+.keys-row-warning { color: #f0b36f !important; }
+.keys-chip { padding: 1px 8px; border: 1px solid #3a3a3f; border-radius: 999px; color: #c9c9cd; background: #1b1b1e; font-size: .68rem; white-space: nowrap; }
+.keys-chip.tone-ok { border-color: #2f4a33; color: #a7d3ad; }
+.keys-chip.tone-warn { border-color: #5b4a25; color: #f0c97a; }
+.keys-chip.tone-danger { border-color: #5c2f2f; color: #f2a3a3; }
+.keys-row-usage { display: flex; align-items: center; gap: 8px; }
+.keys-usage { display: inline-flex; color: #d7b86a; }
+.keys-usage rect { fill: currentColor; opacity: .85; }
+.keys-row-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.keys-action { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 1px solid #36363b; border-radius: 9px; background: #1a1a1d; color: #e1e1e3; font-size: .8rem; cursor: pointer; }
+.keys-action svg { width: 15px; height: 15px; }
+.keys-action:hover { border-color: #55555c; }
+.keys-action.danger { color: #f2a3a3; }
+.keys-action:disabled { opacity: .5; cursor: default; }
+.keys-revoked { color: #9a9aa1; font-size: .8rem; }
+.keys-revoked summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.keys-row.state-revoked { opacity: .75; }
+@media (min-width: 761px) {
+  .keys-row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; }
+  .keys-row-actions { grid-column: auto; justify-content: flex-end; max-width: 300px; }
+}
+
+/* Dialogs: above the Settings dialog (41) and the Team pane; below dropdown popups (80) and sheets (90). */
+.keys-dialog-scrim { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / 55%); }
+.keys-dialog { position: fixed; z-index: 61; left: 50%; top: 50%; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); transform: translate(-50%, -50%); border: 1px solid #35353a; border-radius: 18px; padding: 18px; background: #1b1b1f; box-shadow: 0 24px 70px rgb(0 0 0 / 60%); }
+.keys-dialog.wide { width: min(720px, calc(100vw - 32px)); }
+.keys-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.keys-dialog h2 { margin: 0; color: #fafafa; font-size: 1.05rem; overflow-wrap: anywhere; }
+.keys-dialog header p { margin: 4px 0 0; color: #b7b7bd; font-size: .84rem; line-height: 1.5; }
+.keys-dialog header .icon-button { flex: none; width: 44px; height: 44px; }
+.keys-dialog-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.keys-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.keys-dialog-actions button { min-height: 44px; padding: 0 16px; }
+.keys-dialog-actions.inline { margin-top: 4px; }
+.primary-button.danger { background: #e07474; color: #2a0f0f; }
+.primary-button.danger:hover { background: #ec8b8b; }
+@media (max-width: 760px) {
+  .keys-dialog, .keys-dialog.wide { inset: 0; width: auto; max-height: none; height: 100dvh; transform: none; border: 0; border-radius: 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .keys-dialog-actions { flex-direction: column-reverse; }
+  .keys-dialog-actions button { width: 100%; }
+}
+
+.keys-form { display: grid; gap: 14px; }
+.keys-input { display: grid; gap: 6px; color: #c9c9cd; font-size: .78rem; }
+.keys-input input, .keys-input textarea { min-height: 44px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; font: inherit; font-size: .9rem; }
+.keys-input textarea { min-height: 72px; padding: 10px 11px; resize: vertical; }
+.keys-select-field { display: grid; gap: 6px; color: #c9c9cd; font-size: .78rem; }
+.keys-select-field small { color: #85858c; font-size: .72rem; }
+.keys-fieldset { margin: 0; padding: 10px 12px 12px; border: 1px solid #303035; border-radius: 12px; min-width: 0; }
+.keys-fieldset legend { padding: 0 6px; color: #e4e4e7; font-size: .8rem; font-weight: 650; }
+.keys-reauth { display: grid; gap: 10px; }
+@media (min-width: 761px) { .keys-reauth { grid-template-columns: 1fr 1fr; } }
+
+/* The grant builder. */
+.grant-builder { display: grid; gap: 10px; }
+.grant-rows { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.grant-row { display: grid; gap: 8px; padding: 10px; border: 1px solid #2d2d32; border-radius: 10px; background: #141417; }
+.grant-row-head { display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
+.grant-row-number { color: #9a9aa1; font-size: .72rem; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.grant-remove { width: 44px; height: 44px; color: #d98a8a; }
+.grant-remove svg { width: 17px; }
+.grant-row-fields { display: grid; gap: 8px; }
+@media (min-width: 761px) { .grant-row-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.grant-field { display: grid; gap: 5px; min-width: 0; color: #b9b9be; font-size: .74rem; }
+.grant-resources { min-width: 0; }
+.grant-help { margin: 0; color: #85858c; font-size: .72rem; line-height: 1.45; }
+.grant-add { justify-self: start; display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; }
+.grant-add svg { width: 15px; }
+.grant-summary { margin: 0; padding: 9px 11px; border-radius: 9px; background: #211d14; color: #e3cf9c; font-size: .78rem; line-height: 1.5; }
+.grant-empty { margin: 0; color: #88888f; font-size: .8rem; }
+
+/* Team → Keys and Team → Policies. */
+.team-keys-filters { display: grid; gap: 8px; }
+@media (min-width: 761px) { .team-keys-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.team-keys-summary { margin: 0; color: #9a9aa1; font-size: .8rem; }
+.team-keys-more { justify-self: start; min-height: 44px; padding: 0 14px; }
+.policies-form { display: grid; gap: 14px; }
+.policies-section { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid #303035; border-radius: 12px; min-width: 0; }
+.policies-section legend { padding: 0 6px; color: #e4e4e7; font-size: .82rem; font-weight: 650; }
+.policies-section > p { margin: 0; color: #88888f; font-size: .76rem; line-height: 1.5; }
+.policies-grid { display: grid; gap: 10px; }
+@media (min-width: 761px) { .policies-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.policies-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; color: #d6d6da; font-size: .84rem; cursor: pointer; }
+.policies-switch input { width: 20px; height: 20px; flex: none; accent-color: #d7b86a; }
+.policies-role { display: grid; gap: 6px; }
+.policies-role > span { color: #c9c9cd; font-size: .78rem; }
+.policies-impact { margin: 0; padding: 10px 12px; border-radius: 9px; background: #211d14; color: #e3cf9c; font-size: .8rem; line-height: 1.5; }
+.policies-impact.warn { background: #2a1616; color: #f2b0b0; }
+.policies-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.policies-actions button { min-height: 44px; padding: 0 16px; }
+@media (max-width: 760px) { .policies-actions { flex-direction: column-reverse; } .policies-actions button { width: 100%; } }

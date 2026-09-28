@@ -5,7 +5,7 @@ import { Select, type Option } from "./ui/Select";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 
 /**
- * Settings → MCP server → a key's "Review" (docs/plan/WAVES_18-20_SMALL.md D175, T142): what the key
+ * Settings → API keys → a key's "Review" (docs/plan/WAVES_18-20_SMALL.md D175, T142): what the key
  * moved to the Bin in a window, with Restore all and Revoke this key. Back closes the dialog before
  * it leaves Settings (useHistoryDialogGuard); at 390 px it is a full-height sheet with 44 px rows.
  */

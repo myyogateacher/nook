@@ -14,7 +14,7 @@ import { resolveBinExpiring, resolveSprint } from "./laterMail";
 import { resolveDigest } from "./digest";
 import type { TemplateName } from "./registry";
 import type { AssignedCard, CommentExcerpt, SharedItem, SharedKind } from "./templates/activity";
-import type { AccountEvent, TwoFactorEvent } from "./templates/security";
+import type { AccountEvent, PasswordEvent, TwoFactorEvent } from "./templates/security";
 
 /**
  * Send-time resolution (docs/plan/research/2026-09-28-outbound-email.md §D.6, T226, T233). The
@@ -33,6 +33,8 @@ const nameOf = (userId: unknown) => typeof userId === "string" ? (db.query("SELE
 const names = (value: unknown) => ids(value).map(nameOf).filter((name): name is string => name !== null);
 
 export const VERIFY_TTL_MS = 24 * 3_600_000;
+/** A password reset link works for 30 minutes (§A.5, T225). */
+export const RESET_TTL_MS = 30 * 60_000;
 
 function resolveAssigned(payload: Payload, recipient: Recipient): Resolution {
   const cards: AssignedCard[] = [];
@@ -175,6 +177,21 @@ function resolveVerify(_payload: Payload, recipient: Recipient, nowMs: number): 
 
 export const hashAuthToken = tokenHash;
 
+/**
+ * Mints a password reset token at send time (§A.5, T220): 32 random bytes, SHA-256 at rest, 30 min,
+ * single use. Issuing one deletes the account's older unused reset tokens, so only the newest link works.
+ */
+function resolvePasswordReset(recipient: Recipient, nowMs: number): Resolution {
+  const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  const expiresAt = new Date(nowMs + RESET_TTL_MS).toISOString();
+  db.transaction(() => {
+    db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(recipient.id);
+    db.query("INSERT INTO auth_tokens (id, user_id, purpose, token_hash, email_at_issue, expires_at, created_at) VALUES (?, ?, 'password_reset', ?, ?, ?, ?)")
+      .run(crypto.randomUUID(), recipient.id, tokenHash(token), recipient.email, expiresAt, new Date(nowMs).toISOString());
+  })();
+  return { data: { token, expiresAt } };
+}
+
 /** Resolves an outbox row's payload for its recipient at send time. */
 export function resolvePayload(template: TemplateName, payload: Payload, recipient: Recipient, nowMs: number): Resolution {
   switch (template) {
@@ -188,6 +205,8 @@ export function resolvePayload(template: TemplateName, payload: Payload, recipie
     case "security.account": return resolveAccount(payload);
     case "account.verify": return resolveVerify(payload, recipient, nowMs);
     case "account.test": return { data: { sentAt: new Date(nowMs).toISOString() } };
+    case "account.password_reset": return resolvePasswordReset(recipient, nowMs);
+    case "security.password_changed": return { data: { event: String(payload.event) as PasswordEvent, at: String(payload.at) } };
     case "calendar.reminder": return resolveReminder(payload, recipient, nowMs);
     case "calendar.event_changed": return resolveEventChanged(payload, recipient, nowMs);
     case "tasks.sprint": return resolveSprint(payload, recipient);

@@ -22,7 +22,7 @@ afterAll(() => setMailOriginForTests(null));
 
 const render = (id: string) => renderFixture(id, "nook.test")!;
 /** Wave 29 templates also keep a dark golden (the dark-mode overrides applied, as the preview does). */
-const DARK_GOLDEN = new Set(["calendar.reminder", "calendar.event_changed", "tasks.sprint", "bin.expiring", "digest.summary"]);
+const DARK_GOLDEN = new Set(["calendar.reminder", "calendar.event_changed", "tasks.sprint", "bin.expiring", "digest.summary", "account.password_reset", "security.password_changed"]);
 const hrefs = (markup: string) => [...markup.matchAll(/href="([^"]+)"/g)].map((match) => match[1]!.replaceAll("&amp;", "&"));
 
 describe("golden files", () => {
@@ -86,7 +86,8 @@ describe("the design contract", () => {
       "inbox.proposals": "inbox", "security.api_key_created": "home", "security.role_changed": "team", "account.test": "home",
       "calendar.reminder": "calendar", "calendar.reminder.all_day": "calendar", "calendar.reminder.standalone": "notifications",
       "calendar.event_changed": "calendar", "calendar.event_changed.cancelled": "calendar",
-      "tasks.sprint": "tasks", "tasks.sprint.completed": "tasks", "bin.expiring": "bin", "digest.summary": "tasks", "digest.summary.weekly": "tasks"
+      "tasks.sprint": "tasks", "tasks.sprint.completed": "tasks", "bin.expiring": "bin", "digest.summary": "tasks", "digest.summary.weekly": "tasks",
+      "account.password_reset": "home"
     };
     for (const fixture of previewFixtures()) {
       const links = hrefs(render(fixture.id).html);
@@ -107,6 +108,8 @@ describe("the design contract", () => {
     expect(() => paths.note("5f0c5a6e-1b2d-4c3e-8f4a-111111111111?next=//evil")).toThrow();
     expect(() => appLink("//evil.example.com/x")).toThrow();
     expect(() => paths.verifyEmail("has space")).toThrow();
+    expect(() => paths.resetPassword("has space")).toThrow();
+    expect(paths.resetPassword("c".repeat(43))).toBe(`/reset-password#token=${"c".repeat(43)}`);
   });
 
   test("proposals mail carries key names and counts only (T233)", () => {

@@ -79,3 +79,29 @@ export const testTemplate = defineTemplate<{ sentAt: string }>({
   },
   fixture: () => ({ sentAt: "2026-09-28T09:00:00.000Z" })
 });
+
+/**
+ * Reset your password (#11, Wave 30, §A.5). Sent only to an existing, unblocked, verified account.
+ * The token rides in the fragment and is minted at send time (T220); it works once, for 30 minutes.
+ */
+export const passwordResetTemplate = defineTemplate<{ token: string; expiresAt: string }>({
+  name: "account.password_reset",
+  class: "account",
+  render(data, context) {
+    return layout({
+      instanceName: context.instanceName,
+      subject: "Reset your Nook password",
+      preheader: "Choose a new password. The link works once, for 30 minutes.",
+      eyebrow: "Account · Password",
+      title: "Reset your password",
+      lead: "Someone asked to reset the password for the Nook account with this address. Choose a new one with the button below.",
+      blocks: [
+        note(`The link works once, until ${formatInstant(data.expiresAt, context.tz)}. Resetting signs out every device. If you use two-factor authentication, you will need a code from your app or a recovery code.`),
+        note("If you did not ask for this, ignore this email: your password stays the same. Do not forward it; anyone with the link can use it.")
+      ],
+      action: { label: "Choose a new password", href: appLink(paths.resetPassword(data.token)) },
+      footer: accountFooter("You got this because someone entered this address on the “Forgot password?” page.")
+    });
+  },
+  fixture: () => ({ token: "c".repeat(43), expiresAt: "2026-09-28T09:30:00.000Z" })
+});

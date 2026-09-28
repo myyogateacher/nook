@@ -806,7 +806,7 @@ export function App() {
 
   const saveDraft = useCallback(async () => {
     if (savingPromiseRef.current) await savingPromiseRef.current;
-    if (!note?.isOwner || markdown === loadedRef.current) return note?.hasDelta ?? false;
+    if (!(note?.isOwner || note?.canEdit) || markdown === loadedRef.current) return note?.hasDelta ?? false;
     const noteId = note.id;
     const draftMarkdown = markdown;
     const revision = revisionRef.current;
@@ -842,7 +842,7 @@ export function App() {
   }, [loadNavigation, markdown, note]);
 
   useEffect(() => {
-    if (!note?.isOwner || markdown === loadedRef.current) return;
+    if (!(note?.isOwner || note?.canEdit) || markdown === loadedRef.current) return;
     setSaveState("saving");
     const timer = window.setTimeout(() => saveDraft().catch(() => undefined), 900);
     autosaveTimerRef.current = timer;
@@ -850,7 +850,7 @@ export function App() {
       window.clearTimeout(timer);
       if (autosaveTimerRef.current === timer) autosaveTimerRef.current = null;
     };
-  }, [markdown, note?.id, note?.isOwner, saveDraft]);
+  }, [markdown, note?.id, note?.isOwner, note?.canEdit, saveDraft]);
 
   const visibleNotes = useMemo(() => notes.filter((item) => {
     const inSection = selectedFolder === "all" ? true : selectedFolder === "shared" ? item.is_owner === 0 : item.folder_id === selectedFolder;
@@ -875,7 +875,8 @@ export function App() {
 
   // Also locked while the previous note is still shown but a different note is loading.
   const editorLocked = leavingNotes || switchingNote || (note !== null && note.id !== selectedNoteId);
-  const publishInput = { isOwner: Boolean(note?.isOwner), serverHasDelta: Boolean(note?.hasDelta), hasUnsavedChanges: markdown !== loadedRef.current };
+  // Editors (Wave 32, D274) save and publish the shared draft as the owner does; only the owner shares, discards, or deletes.
+  const publishInput = { isOwner: Boolean(note?.isOwner || note?.canEdit), serverHasDelta: Boolean(note?.hasDelta), hasUnsavedChanges: markdown !== loadedRef.current };
   const hasPublishableDelta = canPublish(publishInput);
   const draftBadge = note?.isOwner && note.hasDraft ? mcpDraftBadge(note.draftMcpKeyName) : null;
   // Friction 7: notice when the open draft is published elsewhere (an Inbox approval) and refresh the editor.
@@ -1860,8 +1861,8 @@ export function App() {
             </div>}
           </header>
           <article className="document-shell">
-            <div className="document-meta"><span>{note.isOwner ? "Private workspace" : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={note.isOwner && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
+            <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
+            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
           </article>
         </>}
       </section>

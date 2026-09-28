@@ -1,7 +1,8 @@
 import { db, type NoteRow } from "./db";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
 import { groupGrantExists } from "./access/groups";
-import { audienceLevel, type ItemLevel } from "./access/levels";
+import { atLeast, audienceLevel, type ItemLevel } from "./access/levels";
+import { canWriteContent } from "./team/userRole";
 
 /**
  * Whether `$userId` may read note `n` (binned or not; callers add
@@ -83,6 +84,18 @@ export function noteLevel(note: Pick<NoteRow, "id" | "owner_id" | "folder_id" | 
     return audienceLevel({ kind: "note", id: note.id, ownerId: note.owner_id, visibility: note.visibility as FolderAudienceRow["visibility"], audienceLevel: "view", memberTable: "note_shares", memberColumn: "note_id" }, userId);
   }
   return note.folder_id ? folderLevel(note.folder_id, userId) : "none";
+}
+
+/**
+ * A live note `userId` may write (D274): the owner, or someone at `edit` through the note's or its
+ * folder's shares or groups, while their Team role writes content. Editors write the draft and
+ * publish; sharing, moving, discarding, restoring versions, and deleting stay `ownedNote`.
+ */
+export function editableNote(noteId: string, userId: string) {
+  const note = readableNote(noteId, userId);
+  if (!note) return null;
+  if (note.owner_id === userId) return note;
+  return atLeast(noteLevel(note, userId), "edit") && canWriteContent(userId) ? note : null;
 }
 
 export function ownedNote(noteId: string, userId: string) {

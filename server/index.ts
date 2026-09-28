@@ -6,7 +6,7 @@ import { ZodError } from "zod";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
-import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
+import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
@@ -644,9 +644,12 @@ app.get("/api/notes/:id", async (c) => {
   const note = readableNote(id, userId);
   if (!note) return c.json({ error: "Note not found" }, 404);
   const isOwner = note.owner_id === userId;
+  // Editors (Wave 32, D274) open the shared draft, as the owner does, and write and publish it.
+  const level = noteLevel(note, userId);
+  const canEdit = isOwner || editableNote(id, userId) !== null;
   let markdown: string;
   let expectedChecksum: string | null;
-  if (isOwner && note.draft_revision !== null) {
+  if (canEdit && note.draft_revision !== null) {
     markdown = await storage.readDraft(id);
     expectedChecksum = note.draft_checksum;
   } else {
@@ -666,8 +669,10 @@ app.get("/api/notes/:id", async (c) => {
       ...visible,
       draftMcpKeyName,
       isOwner,
+      level,
+      canEdit,
       hasDraft: note.draft_revision !== null,
-      hasDelta: isOwner && note.draft_revision !== null && expectedChecksum !== null
+      hasDelta: canEdit && note.draft_revision !== null && expectedChecksum !== null
         ? hasDraftDelta(note, expectedChecksum)
         : false,
       markdown
@@ -697,7 +702,8 @@ app.put("/api/notes/:id/draft", async (c) => {
   const body = await parseJson(c.req.raw, draftSchema);
   if (Buffer.byteLength(body.markdown, "utf8") > config.maxMarkdownBytes) return c.json({ error: "Note is too large" }, 413);
   return withNoteLock(id, async () => {
-    const note = ownedNote(id, userId);
+    // The owner or an editor (D274); a reader who cannot write gets the same 404 as a stranger.
+    const note = editableNote(id, userId);
     if (!note) return c.json({ error: "Note not found" }, 404);
     if (body.revision !== note.draft_revision) {
       return c.json({ error: "Draft changed in another session", currentRevision: note.draft_revision }, 409);
@@ -725,7 +731,7 @@ app.post("/api/notes/:id/publish", async (c) => {
   const body = await parseJson(c.req.raw, publishSchema);
   try {
     // The caller publishes the draft revision it last saw (T38), in server/noteDrafts.ts.
-    return c.json(await publishDraft(c.get("user").id, id, body.revision));
+    return c.json(await publishDraft(c.get("user").id, id, body.revision, { allowEditors: true }));
   } catch (error) {
     if (error instanceof DraftActionError) return c.json(error.body, error.status);
     throw error;

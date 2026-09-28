@@ -30,6 +30,9 @@ export type NoteSummary = {
 export type NoteDetail = NoteSummary & {
   draftMcpKeyName: string | null;
   isOwner: boolean;
+  /** Wave 32 (D274): the caller's level, and whether they write the draft and publish (owner or editor). Older servers omit both. */
+  level?: "view" | "edit" | "owner";
+  canEdit?: boolean;
   hasDraft: boolean;
   hasDelta: boolean;
   markdown: string;

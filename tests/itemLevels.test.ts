@@ -122,6 +122,68 @@ describe("board levels (viewer, commenter, editor)", () => {
   });
 });
 
+describe("note editors (D274)", () => {
+  test("an editor writes the shared draft and publishes a version authored by them, but never shares, moves, discards, restores, or deletes", async () => {
+    const owner = await user("Editor note owner");
+    const editor = await user("Editor note editor");
+    const reader = await user("Editor note reader");
+    const note = (await send(owner, "POST", "/notes", { folderId: null })).body.note.id as string;
+    await send(owner, "PUT", `/notes/${note}/draft`, { markdown: "# Plan\n\nOwner text", revision: 1 });
+    await send(owner, "POST", `/notes/${note}/publish`);
+    await send(owner, "PUT", `/notes/${note}/sharing`, { visibility: "selected", userIds: [editor.userId, reader.userId] });
+    setLevel("note_shares", "note_id", note, editor.userId, "edit");
+
+    const opened = (await send(editor, "GET", `/notes/${note}`)).body.note;
+    expect({ isOwner: opened.isOwner, level: opened.level, canEdit: opened.canEdit }).toEqual({ isOwner: false, level: "edit", canEdit: true });
+    expect((await send(reader, "GET", `/notes/${note}`)).body.note).toMatchObject({ level: "view", canEdit: false });
+
+    // The reader cannot write; the editor can, with the draft revision CAS.
+    expect((await send(reader, "PUT", `/notes/${note}/draft`, { markdown: "# Nope", revision: null })).status).toBe(404);
+    const saved = await send(editor, "PUT", `/notes/${note}/draft`, { markdown: "# Plan\n\nEditor text", revision: null });
+    expect(saved.status).toBe(200);
+    expect((await send(editor, "PUT", `/notes/${note}/draft`, { markdown: "# Stale", revision: saved.body.revision - 1 })).status).toBe(409);
+    // The owner sees the editor's draft (one shared draft per note).
+    expect((await send(owner, "GET", `/notes/${note}`)).body.note.markdown).toContain("Editor text");
+    // The editor sees it when reopening too.
+    expect((await send(editor, "GET", `/notes/${note}`)).body.note).toMatchObject({ hasDraft: true, hasDelta: true });
+
+    const published = await send(editor, "POST", `/notes/${note}/publish`, { revision: saved.body.revision });
+    expect(published.status).toBe(200);
+    expect(published.body.version).toBe(2);
+    const versions = (await send(owner, "GET", `/notes/${note}/versions`)).body.versions as Array<{ version_number: number; author_name: string }>;
+    const editorName = (db.query("SELECT display_name FROM users WHERE id = ?").get(editor.userId) as { display_name: string }).display_name;
+    expect(versions.find((version) => version.version_number === 2)?.author_name).toBe(editorName);
+    expect((db.query("SELECT author_id FROM note_versions WHERE note_id = ? AND version_number = 2").get(note) as { author_id: string }).author_id).toBe(editor.userId);
+    // Readers see the editor's version.
+    expect((await send(reader, "GET", `/notes/${note}`)).body.note.markdown).toContain("Editor text");
+
+    // Owner-only actions stay 404 for the editor.
+    await send(editor, "PUT", `/notes/${note}/draft`, { markdown: "# Plan\n\nMore", revision: null });
+    expect((await send(editor, "PUT", `/notes/${note}/sharing`, { visibility: "private", userIds: [] })).status).toBe(404);
+    expect((await send(editor, "GET", `/notes/${note}/sharing`)).status).toBe(404);
+    expect((await send(editor, "DELETE", `/notes/${note}/draft`)).status).toBe(404);
+    expect((await send(editor, "DELETE", `/notes/${note}`)).status).toBe(404);
+    expect((await send(editor, "PATCH", `/notes/${note}`, { folderId: null })).status).toBe(404);
+    expect((await send(editor, "POST", `/notes/${note}/versions/1/restore`)).status).toBe(404);
+    expect((await send(owner, "GET", `/notes/${note}`)).body.note.markdown).toContain("More");
+
+    // A folder shared at edit makes its notes editable (immediate folder only, D271).
+    const folder = (await send(owner, "POST", "/folders", { name: "Editors folder", parentId: null })).body.folder.id as string;
+    await send(owner, "PUT", `/folders/${folder}/sharing`, { visibility: "selected", userIds: [editor.userId] });
+    const inFolder = (await send(owner, "POST", "/notes", { folderId: folder })).body.note.id as string;
+    await send(owner, "PUT", `/notes/${inFolder}/draft`, { markdown: "# Folder note", revision: 1 });
+    await send(owner, "POST", `/notes/${inFolder}/publish`);
+    expect((await send(editor, "PUT", `/notes/${inFolder}/draft`, { markdown: "# Folder note edited", revision: null })).status).toBe(404);
+    setLevel("folder_shares", "folder_id", folder, editor.userId, "edit");
+    expect((await send(editor, "PUT", `/notes/${inFolder}/draft`, { markdown: "# Folder note edited", revision: null })).status).toBe(200);
+    // A viewer Team role never edits (the write gate, then the service).
+    db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(editor.userId);
+    expect((await send(editor, "PUT", `/notes/${inFolder}/draft`, { markdown: "# x", revision: null })).status).toBe(403);
+    expect((await send(editor, "GET", `/notes/${inFolder}`)).body.note.canEdit).toBe(false);
+    db.query("UPDATE users SET role = 'member' WHERE id = ?").run(editor.userId);
+  }, 20_000);
+});
+
 describe("managers (D273, T207)", () => {
   test("a board manager changes structure, columns, tags, and sprints, but never deletes the board or uses the owner's sharing route", async () => {
     const owner = await user("Manager board owner");

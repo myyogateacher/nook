@@ -1,4 +1,4 @@
-import { ownedNote } from "./access";
+import { editableNote, ownedNote } from "./access";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { audit, db, ensureDefaultFolder, now, type NoteRow } from "./db";
 import { config } from "./config";
@@ -24,8 +24,8 @@ export function hasDraftDelta(note: Pick<NoteRow, "id" | "current_version">, dra
 export type DraftWriteResult = { revision: number; title: string; hasDelta: boolean; savedAt: string; proposalId?: string };
 
 /**
- * Writes `markdown` as the owner's draft of `note`, which must have been read
- * under the note lock. The caller has already compared the expected revision
+ * Writes `markdown` as the draft of `note` (the owner's, or an editor's since Wave 32, D274: one
+ * shared draft per note, CAS on draft_revision), which must have been read under the note lock. The caller has already compared the expected revision
  * with `note.draft_revision`; the UPDATE re-checks it, so a lost race returns
  * null and nothing is indexed.
  *
@@ -45,9 +45,9 @@ export async function writeDraftLocked(note: NoteRow, userId: string, markdown: 
   const saved = db.transaction(() => {
     const result = mcpKeyId === undefined
       ? db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND draft_revision IS ?")
-        .run(title, nextRevision, draftChecksum, savedAt, note.id, userId, note.draft_revision)
+        .run(title, nextRevision, draftChecksum, savedAt, note.id, note.owner_id, note.draft_revision)
       : db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, draft_mcp_key_id = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND draft_revision IS ?")
-        .run(title, nextRevision, draftChecksum, mcpKeyId, savedAt, note.id, userId, note.draft_revision);
+        .run(title, nextRevision, draftChecksum, mcpKeyId, savedAt, note.id, note.owner_id, note.draft_revision);
     if (result.changes !== 1) return false;
     indexNote(note.id, "draft", title, markdown, draftChecksum);
     // An agent's draft is its pending note_draft proposal in the inbox (D149); human saves leave it.
@@ -166,9 +166,10 @@ export class DraftActionError extends Error {
  * publish_note_draft (Wave 19), whose `verify` checks the key's seen-revision ledger under the note
  * lock, after the draft exists and before the revision compare (D173).
  */
-export async function publishDraft(userId: string, noteId: string, revision: number | undefined, options: { verify?: (note: NoteRow) => void } = {}) {
+export async function publishDraft(userId: string, noteId: string, revision: number | undefined, options: { verify?: (note: NoteRow) => void; allowEditors?: boolean } = {}) {
   return withNoteLock(noteId, async () => {
-    const note = ownedNote(noteId, userId);
+    // POST /api/notes/:id/publish lets editors publish too (D274); the version is authored by them.
+    const note = options.allowEditors ? editableNote(noteId, userId) : ownedNote(noteId, userId);
     if (!note) throw new DraftActionError(404, "Note not found", { error: "Note not found" });
     if (note.draft_revision === null) throw new DraftActionError(409, "There is no draft to publish", { error: "There is no draft to publish", code: "NO_DRAFT" });
     options.verify?.(note);
@@ -191,14 +192,14 @@ export async function publishDraft(userId: string, noteId: string, revision: num
       db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(versionId, noteId, nextVersion, note.title, checksum(markdown), userId, timestamp);
       const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
-        .run(nextVersion, timestamp, noteId, userId, note.current_version, note.draft_revision);
+        .run(nextVersion, timestamp, noteId, note.owner_id, note.current_version, note.draft_revision);
       if (updated.changes !== 1) throw new Error("Concurrent note update detected");
       indexNote(noteId, "published", note.title, markdown, note.draft_checksum!);
       unindexNote(noteId, "draft");
       resolveNoteDraftProposals(noteId, { kind: "published", revision: note.draft_revision!, userId });
     })();
     await storage.finalizePublished(noteId, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${noteId}`, errorClass(error)));
-    audit(userId, noteId, "note.publish", { version: nextVersion });
+    audit(userId, noteId, "note.publish", { version: nextVersion, ...(note.owner_id !== userId ? { editor: true } : {}) });
     return { version: nextVersion, publishedAt: timestamp };
   });
 }

@@ -210,6 +210,23 @@ export function parseSettingsPath(pathname: string): SettingsSection | null {
 
 export const settingsPath = (section: SettingsSection) => `/settings/${section}`;
 
+const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "MCP server", notifications: "Notifications", about: "About" };
+
+/** The document title while Settings is open: "Settings · Notifications · Nook". */
+export const settingsDocumentTitle = (section: SettingsSection) => `Settings · ${SETTINGS_SECTION_NAMES[section]} · Nook`;
+
+/**
+ * The Settings dialog's hold on the document title: `show` names the open section, and `restore`
+ * (on close) puts back the title from before the dialog opened.
+ */
+export function settingsTitleScope(doc: { title: string }) {
+  const previous = doc.title;
+  return {
+    show(section: SettingsSection) { doc.title = settingsDocumentTitle(section); },
+    restore() { doc.title = previous; }
+  };
+}
+
 /** A location's route, with its query (the one way DOM callers should parse the current URL). */
 export const routeFromLocation = (location: { pathname: string; search: string }) => parseRoute(location.pathname, location.search);
 

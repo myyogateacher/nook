@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatRoute, parseRoute, parseSettingsPath, settingsPath } from "../src/router";
+import { formatRoute, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory } from "../src/auth/mailPages";
 import { HALF_HOURS, prefsInput, type EmailPrefs } from "../src/notifications/emailApi";
@@ -44,6 +44,19 @@ describe("mail link pages", () => {
     expect(h.calls).toEqual(["/mail/unsubscribe"]);
     expect(unsubscribeCategory(token)).toBe("sharing");
     expect(unsubscribeCategory(`${Buffer.from("1|x|security|0").toString("base64url")}.${"b".repeat(22)}`)).toBeNull();
+  });
+
+  test("Settings names its section in the document title and restores the title on close", () => {
+    expect(settingsDocumentTitle("notifications")).toBe("Settings · Notifications · Nook");
+    expect(settingsDocumentTitle("mcp")).toBe("Settings · MCP server · Nook");
+    const doc = { title: "Home · Nook" };
+    const scope = settingsTitleScope(doc);
+    scope.show("notifications");
+    expect(doc.title).toBe("Settings · Notifications · Nook");
+    scope.show("security");
+    expect(doc.title).toBe("Settings · Security · Nook");
+    scope.restore();
+    expect(doc.title).toBe("Home · Nook");
   });
 
   test("the done state is neutral, since the server answers 200 for any token (L5)", () => {

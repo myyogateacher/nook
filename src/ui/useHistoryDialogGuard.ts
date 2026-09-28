@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel, whenHistorySettled } from "../historyDialogs";
 
@@ -33,7 +33,16 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  * with history.go(). At depth 0 on a phone the dialog holds the sentinel entry (historyDialogs.ts).
  * Same contract as FilesApp.
  */
-export function useHistoryDialogGuard(open: boolean, close: () => void) {
+/**
+ * Inside a provider set to true, guarded dialogs and desktop dropdown popups keep their own history
+ * layer at every width (the depth-0 sentinel is held on desktop too), so Back closes one layer at a
+ * time: the dropdown, then a confirm, then the sheet (2i, the Inbox routine sheet).
+ */
+export const DesktopHistoryLayers = createContext(false);
+
+export function useHistoryDialogGuard(open: boolean, close: () => void, options: { desktop?: boolean } = {}) {
+  const inLayers = useContext(DesktopHistoryLayers);
+  const desktop = options.desktop ?? inLayers;
   const openRef = useRef(open);
   openRef.current = open;
   const closeRef = useRef(close);
@@ -43,7 +52,7 @@ export function useHistoryDialogGuard(open: boolean, close: () => void) {
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
-  useDialogSentinel(open);
+  useDialogSentinel(open, desktop);
   // Opened while another guard's undo is in flight (a composer handing Back over to its discard
   // prompt): the entry is the one the undo lands on, so read the depth once it has.
   useEffect(() => open ? whenHistorySettled(() => { depthRef.current = readHistoryDepth(window.history.state); }) : undefined, [open]);

@@ -1,5 +1,30 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+
+test("a desktop-layered dialog holds the depth-0 sentinel at every width (2i)", () => {
+  const holder = globalThis as { window?: unknown };
+  const previous = holder.window;
+  holder.window = { history: {}, location: { href: "https://nook.test/inbox/routines" }, matchMedia: () => ({ matches: false }) };
+  try {
+    expect(defaultSentinelEnv(false).phone()).toBe(false);
+    expect(defaultSentinelEnv(true).phone()).toBe(true);
+    expect(defaultSentinelEnv(true).href()).toBe("https://nook.test/inbox/routines");
+  } finally {
+    holder.window = previous;
+  }
+});
+
+test("the routine sheet and the dropdowns inside it keep their own desktop history layers (2i)", async () => {
+  const pane = await Bun.file(new URL("../src/inbox/RoutinesPane.tsx", import.meta.url)).text();
+  expect(pane).toContain("useHistoryDialogGuard(true, onClose, { desktop: true })");
+  expect(pane).toContain("<DesktopHistoryLayers.Provider value={true}>");
+  expect(pane).toContain("useDialogFocus(sheetRef)");
+  expect(pane).toContain("onKeyDown={trapTabKey}");
+  const listbox = await Bun.file(new URL("../src/ui/Listbox.tsx", import.meta.url)).text();
+  expect(listbox).toContain("useHistoryDialogGuard(useContext(DesktopHistoryLayers), onClose)");
+  const css = await Bun.file(new URL("../src/ui/ui.css", import.meta.url)).text();
+  expect(css).toContain(".ui-chip-remove { width: 44px; height: 44px;");
+});
 
 test("a sentinel is pushed only for a phone dialog opened at depth 0", () => {
   expect(needsDialogSentinel(null, { phone: true, active: false })).toBe(true);

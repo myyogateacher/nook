@@ -173,9 +173,7 @@ export function takeDialogSentinelEntry(state: unknown) {
  * returned release pops it once the last dialog closed by any means other than Back. The pop waits a
  * tick so a dialog that replaces another keeps the same sentinel.
  */
-export function acquireDialogSentinel(env: SentinelEnv = {
-  history: window.history, href: () => window.location.href, phone: () => typeof window.matchMedia === "function" && isMobileViewport()
-}) {
+export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(false)) {
   openDialogs += 1;
   if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
   // history.state still reads the old sentinel (or, while a guard's undo is in flight, the entry Back
@@ -211,7 +209,15 @@ export function acquireDialogSentinel(env: SentinelEnv = {
   };
 }
 
-/** Holds the depth-0 sentinel while `open` (see acquireDialogSentinel). */
-export function useDialogSentinel(open: boolean) {
-  useEffect(() => open ? acquireDialogSentinel() : undefined, [open]);
+/**
+ * The window's history. `desktop` opts a dialog into the sentinel at every width (2i): the Inbox
+ * routine sheet and the dropdowns inside it, so a deep link's Back closes one layer at a time there too.
+ */
+export function defaultSentinelEnv(desktop: boolean): SentinelEnv {
+  return { history: window.history, href: () => window.location.href, phone: () => desktop || (typeof window.matchMedia === "function" && isMobileViewport()) };
+}
+
+/** Holds the depth-0 sentinel while `open` (see acquireDialogSentinel); `desktop` holds it at every width. */
+export function useDialogSentinel(open: boolean, desktop = false) {
+  useEffect(() => open ? acquireDialogSentinel(defaultSentinelEnv(desktop)) : undefined, [open, desktop]);
 }

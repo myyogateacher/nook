@@ -1,9 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Check, X } from "lucide-react";
 import { trapTabKey } from "../files/Dialog";
 import { groupRuns } from "./listNavigation";
 import { correctForContainingBlock, placePopover } from "./popoverPosition";
-import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
+import { DesktopHistoryLayers, useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 // The list shared by Select and Combobox (D91, D114): a fixed-position popup under the trigger on
 // desktop, a bottom sheet with 44 px rows on phones (≤ 760 px). Both render inside the owner's
@@ -135,8 +135,10 @@ export function DropdownSurface(props: SurfaceProps) {
   return props.sheet ? <DropdownSheet {...props} /> : <DropdownPopup {...props} />;
 }
 
-function DropdownPopup({ anchorRef, search, footer, children }: SurfaceProps) {
+function DropdownPopup({ anchorRef, onClose, search, footer, children }: SurfaceProps) {
   const popupRef = useRef<HTMLDivElement>(null);
+  // Inside a host that keeps desktop history layers (the routine sheet), Back closes only this popup.
+  useHistoryDialogGuard(useContext(DesktopHistoryLayers), onClose);
   const [placed, setPlaced] = useState(false);
   useLayoutEffect(() => {
     const place = () => {

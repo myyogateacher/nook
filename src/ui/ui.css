@@ -77,9 +77,8 @@
   .ui-select-cell { min-height: 44px; }
   .ui-combobox-field { min-height: 44px; }
   .ui-chip { min-height: 32px; font-size: .88rem; }
-  /* The chip's remove button gets a 44 px target without growing the chip. */
-  .ui-chip-remove { position: relative; width: 28px; height: 28px; }
-  .ui-chip-remove::after { content: ""; position: absolute; inset: -8px; }
+  /* The chip's remove button is a 44 px target (2k); negative margins keep the chip 32 px tall. */
+  .ui-chip-remove { width: 44px; height: 44px; margin: -6px -2px -6px -8px; }
 }
 
 /* The reaction picker (Wave 20): a 4 x 3 grid of 44 px buttons in the popover or the phone sheet. */

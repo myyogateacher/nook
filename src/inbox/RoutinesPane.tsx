@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClock, Pause, Play, Plus, RotateCcw, Trash2, TriangleAlert, X } from "lucide-react";
 import { api } from "../api";
+import { trapTabKey, useDialogFocus } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { Combobox } from "../ui/Combobox";
 import { Select, type Option } from "../ui/Select";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { DesktopHistoryLayers, useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import {
   createRoutine,
   deleteRoutine,
@@ -48,6 +49,13 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
   const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The button that opened the sheet gets focus back when it closes (2j).
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const openSheet = (routine: Routine | null, trigger: HTMLElement) => { triggerRef.current = trigger; setDialog({ kind: "edit", routine }); };
+  const closeSheet = useCallback(() => {
+    setDialog(null);
+    window.requestAnimationFrame(() => { if (triggerRef.current?.isConnected) triggerRef.current.focus(); });
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -75,7 +83,7 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
   return <section className="inbox-routines" aria-labelledby="inbox-routines-title">
     <header className="inbox-routines-header">
       <h2 id="inbox-routines-title">Routines</h2>
-      {canWrite && <button type="button" className="inbox-action primary" onClick={() => setDialog({ kind: "edit", routine: null })}><Plus />New routine</button>}
+      {canWrite && <button type="button" className="inbox-action primary" onClick={(event) => openSheet(null, event.currentTarget)}><Plus />New routine</button>}
     </header>
     <p className="inbox-muted">A routine is a prompt an agent runs on a schedule. Nook only says when it is due; your MCP client runs it, and every change it suggests waits here for you.</p>
 
@@ -95,7 +103,7 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
     {routines && routines.length > 0 && <ul className="inbox-list">
       {routines.map((routine) => <li key={routine.id}>
         <article className={`inbox-card routine-card${routine.enabled ? "" : " resolved"}`} aria-label={`Routine: ${routine.name}`}>
-          <button type="button" className="inbox-card-open" onClick={() => setDialog({ kind: "edit", routine })}>
+          <button type="button" className="inbox-card-open" onClick={(event) => openSheet(routine, event.currentTarget)}>
             <span className="inbox-card-top">
               <span className={`inbox-status${routine.due && !routine.running ? " due" : ""}`}>{dueText(routine)}</span>
               {routine.lastRunStatus && <span className={`inbox-status run-${routine.lastRunStatus}`}>Last run: {runStatusLabel(routine.lastRunStatus)}{routine.lastRunAt ? ` · ${relativeTime(routine.lastRunAt)}` : ""}</span>}
@@ -115,7 +123,7 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
 
     <ClientRecipe />
 
-    {dialog?.kind === "edit" && <RoutineSheet routine={dialog.routine} canWrite={canWrite} onClose={() => setDialog(null)} flash={flash}
+    {dialog?.kind === "edit" && <RoutineSheet routine={dialog.routine} canWrite={canWrite} onClose={closeSheet} flash={flash}
       onSaved={(saved) => {
         setRoutines((current) => {
           const list = current ?? [];
@@ -124,7 +132,7 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
         });
         setDialog({ kind: "edit", routine: saved });
       }}
-      onDeleted={(id) => { setRoutines((current) => current?.filter((item) => item.id !== id) ?? null); setDialog(null); flash("Routine deleted"); }} />}
+      onDeleted={(id) => { setRoutines((current) => current?.filter((item) => item.id !== id) ?? null); closeSheet(); flash("Routine deleted"); }} />}
   </section>;
 }
 
@@ -248,7 +256,10 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
   const [confirmDelete, setConfirmDelete] = useState(false);
   const pinOptions = usePinOptions(true);
   const readOnly = !canWrite;
-  useHistoryDialogGuard(true, onClose);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  // D69 at every width (2i): a deep link's Back closes an open dropdown, then a confirm, then the sheet.
+  useHistoryDialogGuard(true, onClose, { desktop: true });
+  useDialogFocus(sheetRef);
   useEffect(() => { setForm(formOf(routine)); setError(""); }, [routine]);
   useEffect(() => {
     listInboxKeys().then(({ keys: items }) => setKeys(items.filter((key) => (key.effectiveScopes ?? key.scopes).includes("inbox:write")))).catch(() => setKeys([]));
@@ -311,9 +322,9 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
     }
   }
 
-  return <>
+  return <DesktopHistoryLayers.Provider value={true}>
     <button type="button" className="panel-scrim inbox-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close" tabIndex={-1} />
-    <div className="inbox-dialog inbox-sheet" role="dialog" aria-modal="true" aria-labelledby="routine-sheet-title">
+    <div ref={sheetRef} tabIndex={-1} className="inbox-dialog inbox-sheet" role="dialog" aria-modal="true" aria-labelledby="routine-sheet-title" onKeyDown={trapTabKey}>
       <header>
         <h2 id="routine-sheet-title">{routine ? routine.name : "New routine"}</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
@@ -383,7 +394,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
       </section>}
     </div>
     {confirmDelete && routine && <DeleteConfirm name={routine.name} busy={busy} onClose={() => setConfirmDelete(false)} onConfirm={() => { void remove(); }} />}
-  </>;
+  </DesktopHistoryLayers.Provider>;
 }
 
 function DeleteConfirm({ name, busy, onClose, onConfirm }: { name: string; busy: boolean; onClose: () => void; onConfirm: () => void }) {

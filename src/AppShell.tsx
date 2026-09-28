@@ -5,6 +5,7 @@ import { listBin } from "./bin/binApi";
 import { INBOX_CHANGED, pendingCount } from "./inbox/inboxApi";
 import { useModuleEnabled } from "./modules";
 import { NotificationBell } from "./notifications/NotificationBell";
+import { NOTIFICATIONS_POLLED } from "./notifications/notificationsApi";
 import { listTeam } from "./team/teamApi";
 import { canManageTeam, canSeeTeam, type Role } from "./team/teamRoles";
 
@@ -22,24 +23,28 @@ export const TeamNavContext = createContext<TeamNav | null>(null);
 export type InboxNav = { role: Role | undefined; openInbox: () => void; onInbox: boolean };
 export const InboxNavContext = createContext<InboxNav | null>(null);
 
-/** The pending badge: a bounded count (at most 100, T51), fetched on mount, on focus, and after inbox changes. */
-function useInboxCount(enabled: boolean) {
+/**
+ * The pending badge: a bounded count (at most 100, T51), fetched on mount, after inbox changes, and
+ * whenever the bell refreshes (its poll and focus), so a new proposal shows without a reload.
+ */
+export function useInboxCount(enabled: boolean) {
   const [count, setCount] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
     const refresh = () => { pendingCount().then(({ pending }) => { if (live) setCount(pending); }, () => undefined); };
     refresh();
-    window.addEventListener(INBOX_CHANGED, refresh);
-    window.addEventListener("focus", refresh);
+    for (const name of INBOX_COUNT_SIGNALS) window.addEventListener(name, refresh);
     return () => {
       live = false;
-      window.removeEventListener(INBOX_CHANGED, refresh);
-      window.removeEventListener("focus", refresh);
+      for (const name of INBOX_COUNT_SIGNALS) window.removeEventListener(name, refresh);
     };
   }, [enabled]);
   return count;
 }
+
+/** Window events that refresh the Inbox badge: inbox changes, the bell's refresh, and focus. */
+export const INBOX_COUNT_SIGNALS = [INBOX_CHANGED, NOTIFICATIONS_POLLED, "focus"] as const;
 
 function InboxButton({ nav }: { nav: InboxNav }) {
   const count = useInboxCount(true);
@@ -115,4 +120,15 @@ export function useBinCount(enabled = true) {
  */
 export function AppPageName({ name }: { name: string }) {
   return <span className="app-page-name" aria-hidden="true">{name}</span>;
+}
+
+/**
+ * The Inbox button for headers that do not use AccountActions (Files), with the same rules: hidden
+ * for guests, when the Inbox module is off, and on the Inbox itself (QA note 3).
+ */
+export function HeaderInboxButton() {
+  const inbox = useContext(InboxNavContext);
+  const inboxEnabled = useModuleEnabled("inbox");
+  if (!inbox || !inboxEnabled || inbox.role === "guest" || inbox.onInbox) return null;
+  return <InboxButton nav={inbox} />;
 }

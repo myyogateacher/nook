@@ -213,3 +213,9 @@
   .file-grid .file-row-item { position: relative; display: block; }
   .file-grid .file-row-more { position: absolute; top: 12px; right: 12px; border-radius: 10px; background: rgb(17 17 19 / 82%); }
 }
+
+/* QA note 3: the Inbox button sits beside the bell in the Files header, icon only like the bell. */
+.file-header-row .app-account-inbox { width: 40px; min-width: 40px; height: 40px; justify-content: center; padding: 0; }
+.file-header-row .app-account-inbox .app-account-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.file-header-row .app-account-inbox .app-account-badge { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; font-size: .62rem; }
+@media (max-width: 760px) { .file-header-row .app-account-inbox { width: 44px; min-width: 44px; height: 44px; } }

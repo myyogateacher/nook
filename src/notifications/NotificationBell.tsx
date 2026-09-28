@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Bell, CheckCheck, X } from "lucide-react";
 import { trapTabKey } from "../files/Dialog";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "../calendar/hooks";
-import { badgeLabel, listNotifications, markAllRead, markRead, notificationAge, safeNotificationPath, useNotificationsContext, type NotificationItem } from "./notificationsApi";
+import { badgeLabel, listNotifications, markAllRead, markRead, notificationAge, NOTIFICATIONS_POLLED, safeNotificationPath, useNotificationsContext, type NotificationItem } from "./notificationsApi";
 import "./notifications.css";
 
 const POLL_MS = 60_000;
@@ -28,6 +28,8 @@ export function NotificationBell() {
   const refresh = useCallback(async () => {
     try {
       setUnread((await listNotifications({ unread: true, limit: 1 })).unreadCount);
+      // Badges beside the bell (the Inbox count) refresh on the same signal.
+      window.dispatchEvent(new Event(NOTIFICATIONS_POLLED));
     } catch {
       // The badge is best-effort; the list shows errors.
     }

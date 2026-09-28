@@ -36,10 +36,8 @@ Release history and per-version notes live on the docs site ("What's new") and i
 
 Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md).
 
-- [ ] Journal (S) — note engine plus date key, mood, prompts, streaks; habits fold in.
 - [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve.
-- [ ] Bookmarks and read-later (M) — snapshots stored through Files, never rendered as HTML; fetching off by default with strict server-request protections.
-- [ ] Whiteboard/canvas stored as files — next in line if wanted. Rejected for now: password vault, scanning/OCR, photo gallery, transcription, RSS (reasons in the report); chat is re-opened as the Messages research item above.
+- [ ] Whiteboard/canvas stored as files — next in line if wanted. Rejected: password vault, scanning/OCR, photo gallery, transcription, RSS (reasons in the report), and Journal and Bookmarks/read-later (operator, 2026-09-28); chat is re-opened as the Messages research item above.
 - [ ] Light theme / theme toggle (the app is dark-only; noted by QA).
 - [ ] Nice-to-haves seen in QA: emoji reactions? (decide with Messages); "+N"-only tag footer on very narrow cards; comment box pins late at 761–1099 px in the card drawer.
 

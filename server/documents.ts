@@ -26,7 +26,7 @@ export function setUploadIdleTimeoutForTests(ms: number | null) {
 }
 
 class UploadError extends Error {
-  constructor(readonly status: 400 | 401 | 404 | 408 | 411 | 413 | 507, readonly body: Record<string, unknown>) {
+  constructor(readonly status: 400 | 401 | 404 | 408 | 409 | 411 | 413 | 429 | 507, readonly body: Record<string, unknown>) {
     super(String(body.error));
   }
 }
@@ -81,7 +81,7 @@ function replayFor(userId: string, uploadKey: string) {
 
 type ReceivedFile = { filename: string; size: number; sha256: string; head: Uint8Array };
 
-async function writeFilePart(stream: Readable & { truncated?: boolean }, filename: string, id: string): Promise<ReceivedFile> {
+async function writeFilePart(stream: Readable & { truncated?: boolean }, filename: string, id: string, onChunk?: (size: number) => void): Promise<ReceivedFile> {
   const { handle } = await createStagingFile(id);
   try {
     const hash = createHash("sha256");
@@ -90,6 +90,8 @@ async function writeFilePart(stream: Readable & { truncated?: boolean }, filenam
     let size = 0;
     for await (const chunk of stream as AsyncIterable<Buffer>) {
       size += chunk.byteLength;
+      // May throw to stop early (a raw body longer than declared); the finally closes the handle.
+      onChunk?.(size);
       hash.update(chunk);
       if (headLength < SNIFF_BYTES) {
         const take = Math.min(SNIFF_BYTES - headLength, chunk.byteLength);
@@ -220,6 +222,148 @@ function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> 
   });
 }
 
+type UploadMeta = { folderId: string | null; purpose: string; uploadKey: string | null; name: string };
+
+/**
+ * Commits a received staging file as a document: sniff (never the client's type), move into the
+ * store, then one transaction with the T80 block re-check, the idempotency replay, the folder and
+ * quota re-checks, the insert, and the audit row. Shared by the web multipart upload and the MCP
+ * paths (Wave 19, D176), so both keep exactly these rules. `markCommitted` runs once the staging
+ * file has moved, after which the caller must not discard it.
+ */
+async function commitReceived(userId: string, id: string, received: ReceivedFile, meta: UploadMeta, markCommitted: () => void) {
+  const { folderId, purpose, uploadKey, name } = meta;
+  const quota = config.userStorageQuotaBytes;
+  const { mimeType, previewKind } = sniff(received.head, name, received.size);
+  await commitStaged(id);
+  markCommitted();
+
+  let outcome: { replayOf: string } | { created: true };
+  try {
+    outcome = db.transaction(() => {
+      // T80: an upload that authenticated before its owner was blocked must not commit after it.
+      if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw new UploadError(401, { error: "Authentication required" });
+      if (uploadKey) {
+        const existing = db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string } | null;
+        if (existing) return { replayOf: existing.id };
+      }
+      if (folderId !== null && !ownsFolder(folderId, userId)) throw new UploadError(404, { error: "Folder not found" });
+      if (quota > 0 && storedBytes(userId) + received.size > quota) throw new UploadError(507, { error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" });
+      const timestamp = now();
+      db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, upload_key, purpose, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, userId, folderId, name, mimeType, previewKind, received.size, received.sha256, uploadKey, purpose, timestamp, timestamp);
+      audit(userId, null, "document.upload", { documentId: id, size: received.size, mimeType, ...(purpose === "file" ? {} : { purpose }) });
+      return { created: true as const };
+    })();
+  } catch (error) {
+    await removeObject(id);
+    const uniqueRace = uploadKey && (error as { code?: string }).code?.includes("CONSTRAINT")
+      && db.query("SELECT 1 FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey);
+    if (!uniqueRace) throw error;
+    outcome = { replayOf: (db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string }).id };
+  }
+  if ("replayOf" in outcome) {
+    await removeObject(id);
+    const replay = replayFor(userId, uploadKey!);
+    if (!replay || replay.deleted) throw new UploadError(409, { error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" });
+    return { document: replay.document, replay: true };
+  }
+  return { document: ownedDocumentSummary(id, userId)!, replay: false };
+}
+
+/**
+ * Streams a raw body (no multipart) into staging with the web upload's inactivity watchdog. The
+ * body must be exactly `expectedBytes` long: longer stops at once, shorter fails after it ends.
+ */
+async function receiveRaw(source: Readable, id: string, expectedBytes: number, signal?: AbortSignal): Promise<ReceivedFile> {
+  let failure: UploadError | null = null;
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  const fail = (error: UploadError) => {
+    failure ??= error;
+    source.destroy();
+  };
+  const arm = () => {
+    if (idle) clearTimeout(idle);
+    idle = setTimeout(() => fail(new UploadError(408, { error: "The upload stalled", code: "UPLOAD_TIMEOUT" })), uploadIdleTimeoutMs);
+  };
+  const onAbort = () => fail(badPart("The upload was interrupted"));
+  const sizeMismatch = () => new UploadError(400, { error: "The body length does not match the declared size", code: "SIZE_MISMATCH" });
+  signal?.addEventListener("abort", onAbort, { once: true });
+  arm();
+  try {
+    const received = await writeFilePart(source, "", id, (size) => {
+      arm();
+      if (size > expectedBytes) throw sizeMismatch();
+    });
+    if (failure) throw failure;
+    if (received.size !== expectedBytes) throw sizeMismatch();
+    return received;
+  } catch (error) {
+    if (failure) throw failure;
+    if (error instanceof UploadError) throw error;
+    throw badPart("The upload was interrupted");
+  } finally {
+    if (idle) clearTimeout(idle);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+export type StoreRawOptions = {
+  userId: string;
+  /** Already sanitized with sanitizeDisplayName(…, "upload"). */
+  name: string;
+  folderId: string | null;
+  purpose: "file" | "task_attachment";
+  /** Makes retries idempotent (the web upload's Idempotency-Key; the MCP upload ticket id). */
+  uploadKey: string | null;
+  expectedBytes: number;
+  /** When set, the received bytes must hash to it (hex), or nothing is committed (HASH_MISMATCH). */
+  sha256?: string;
+};
+
+/**
+ * Stores a raw byte stream as a document through the web upload's pipeline (Wave 19, D176): the
+ * idempotent replay, the per-user upload slots and quota reservations, the quota and free-disk
+ * checks, sniffing, the T80 re-check, and the audit row. Answers the web upload's statuses and
+ * bodies: 201 `{document}`, 200 `{document, idempotentReplay: true}`, or an error.
+ */
+export async function storeRawUpload(source: Readable, options: StoreRawOptions, signal?: AbortSignal): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { userId, uploadKey, expectedBytes } = options;
+  if (uploadKey) {
+    const replay = replayFor(userId, uploadKey);
+    if (replay?.deleted) return { status: 409, body: { error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" } };
+    if (replay) return { status: 200, body: { document: replay.document, idempotentReplay: true } };
+  }
+  if (expectedBytes > config.maxUploadBytes) return { status: 413, body: fileTooLarge().body };
+  if (options.folderId !== null && !ownsFolder(options.folderId, userId)) return { status: 404, body: { error: "Folder not found" } };
+  const slot = acquireSlot(userId);
+  if (!slot) return { status: 429, body: { error: "Too many uploads in progress. Wait for one to finish.", code: "TOO_MANY_UPLOADS" } };
+  const id = crypto.randomUUID();
+  let committed = false;
+  try {
+    const quota = config.userStorageQuotaBytes;
+    if (quota > 0 && storedBytes(userId) + slot.otherReservations() + expectedBytes > quota) {
+      return { status: 507, body: { error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" } };
+    }
+    slot.reserve(expectedBytes);
+    const disk = await statfs(config.dataDir);
+    if (disk.bavail * disk.bsize < config.minFreeDiskBytes + expectedBytes) return { status: 507, body: { error: "Storage is full", code: "DISK_FULL" } };
+    const received = await receiveRaw(source, id, expectedBytes, signal);
+    if (options.sha256 && received.sha256 !== options.sha256.toLowerCase()) {
+      return { status: 400, body: { error: "The received bytes do not match the declared SHA-256", code: "HASH_MISMATCH" } };
+    }
+    const result = await commitReceived(userId, id, received, { folderId: options.folderId, purpose: options.purpose, uploadKey, name: options.name }, () => { committed = true; });
+    return result.replay ? { status: 200, body: { document: result.document, idempotentReplay: true } } : { status: 201, body: { document: result.document } };
+  } catch (error) {
+    if (error instanceof UploadError) return { status: error.status, body: error.body };
+    throw error;
+  } finally {
+    slot.release();
+    if (!committed) await discardStaged(id).catch(() => console.error("Could not discard staged upload"));
+  }
+}
+
 function uploadResponse(c: Context<AppEnv>, document: DocumentSummary, replay: boolean) {
   return replay ? c.json({ document, idempotentReplay: true }, 200) : c.json({ document }, 201);
 }
@@ -276,42 +420,8 @@ async function handleUpload(c: Context<AppEnv>) {
 
     const received = await receiveSingleFile(c.req.raw, id);
     const name = sanitizeDisplayName(received.filename, "upload")!;
-    const { mimeType, previewKind } = sniff(received.head, name, received.size);
-    await commitStaged(id);
-    committed = true;
-
-    let outcome: { replayOf: string } | { created: true };
-    try {
-      outcome = db.transaction(() => {
-        // T80: an upload that authenticated before its owner was blocked must not commit after it.
-        if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw new UploadError(401, { error: "Authentication required" });
-        if (uploadKey) {
-          const existing = db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string } | null;
-          if (existing) return { replayOf: existing.id };
-        }
-        if (folderId !== null && !ownsFolder(folderId, userId)) throw new UploadError(404, { error: "Folder not found" });
-        if (quota > 0 && storedBytes(userId) + received.size > quota) throw new UploadError(507, { error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" });
-        const timestamp = now();
-        db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, upload_key, purpose, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(id, userId, folderId, name, mimeType, previewKind, received.size, received.sha256, uploadKey, purpose, timestamp, timestamp);
-        audit(userId, null, "document.upload", { documentId: id, size: received.size, mimeType, ...(purpose === "file" ? {} : { purpose }) });
-        return { created: true as const };
-      })();
-    } catch (error) {
-      await removeObject(id);
-      const uniqueRace = uploadKey && (error as { code?: string }).code?.includes("CONSTRAINT")
-        && db.query("SELECT 1 FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey);
-      if (!uniqueRace) throw error;
-      outcome = { replayOf: (db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string }).id };
-    }
-    if ("replayOf" in outcome) {
-      await removeObject(id);
-      const replay = replayFor(userId, uploadKey!);
-      if (!replay || replay.deleted) return c.json({ error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" }, 409);
-      return uploadResponse(c, replay.document, true);
-    }
-    return uploadResponse(c, ownedDocumentSummary(id, userId)!, false);
+    const result = await commitReceived(userId, id, received, { folderId, purpose, uploadKey, name }, () => { committed = true; });
+    return uploadResponse(c, result.document, result.replay);
   } catch (error) {
     if (error instanceof UploadError) return c.json(error.body, error.status);
     throw error;
@@ -412,6 +522,56 @@ async function handleContent(c: Context<AppEnv>) {
 const notFound = (c: Context<AppEnv>) => c.json({ error: "File not found" }, 404);
 const withDocumentLock = <T>(id: string, operation: () => Promise<T>) => withResourceLock(`document:${id}`, operation);
 
+export class DocumentPatchError extends Error {
+  constructor(readonly status: 400 | 404 | 409, message: string, readonly code?: "AUDIENCE_CHANGE") {
+    super(message);
+    this.name = "DocumentPatchError";
+  }
+}
+
+/** The audience a folder gives inheriting files: its visibility and, for `selected`, its recipients. */
+function folderAudience(folderId: string | null) {
+  if (folderId === null) return "private";
+  const folder = db.query("SELECT visibility FROM folders WHERE id = ?").get(folderId) as { visibility: string } | null;
+  if (!folder || folder.visibility === "private") return "private";
+  if (folder.visibility === "all_users") return "all_users";
+  const users = db.query("SELECT user_id FROM folder_shares WHERE folder_id = ? ORDER BY user_id").all(folderId) as Array<{ user_id: string }>;
+  return `selected:${users.map((user) => user.user_id).join(",")}`;
+}
+
+/**
+ * Renames and/or moves one of the caller's Files documents (PATCH /api/files/:id and the MCP
+ * rename_file and move_file tools). `refuseAudienceChange` (MCP, D177, T147) refuses a move that
+ * would change who can see the file: it inherits its folder's sharing and the two folders' audiences
+ * differ. A file with its own sharing moves freely.
+ */
+export async function patchDocument(userId: string, id: string, input: { name?: string; folderId?: string | null }, options: { refuseAudienceChange?: boolean } = {}) {
+  return withDocumentLock(id, async () => {
+    const document = ownedFileDocument(id, userId);
+    if (!document) throw new DocumentPatchError(404, "File not found");
+    let name: string | null = null;
+    if (input.name !== undefined) {
+      name = sanitizeDisplayName(input.name, "rename");
+      if (!name) throw new DocumentPatchError(400, "Enter a name of 1 to 255 bytes that is not . or ..");
+    }
+    const moving = input.folderId !== undefined;
+    if (input.folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(input.folderId, userId)) {
+      throw new DocumentPatchError(404, "Folder not found");
+    }
+    if (moving && options.refuseAudienceChange && document.sharing_override === 0 && folderAudience(document.folder_id) !== folderAudience(input.folderId ?? null)) {
+      throw new DocumentPatchError(409, "Moving this file would change who can see it", "AUDIENCE_CHANGE");
+    }
+    db.transaction(() => {
+      db.query(`UPDATE documents SET name = COALESCE(?, name), folder_id = CASE WHEN ? THEN ? ELSE folder_id END, updated_at = ?
+        WHERE id = ? AND owner_id = ? AND deleted_at IS NULL`)
+        .run(name, moving ? 1 : 0, input.folderId ?? null, now(), id, userId);
+      if (name !== null) audit(userId, null, "document.rename", { documentId: id });
+      if (moving) audit(userId, null, "document.move", { documentId: id, folderId: input.folderId ?? null });
+    })();
+    return ownedDocumentSummary(id, userId)!;
+  });
+}
+
 export function registerDocumentRoutes(app: Hono<AppEnv>) {
   app.post("/api/files", handleUpload);
 
@@ -432,26 +592,12 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
     const id = uuid.parse(c.req.param("id"));
     const userId = c.get("user").id;
     const body = await parseJson(c.req.raw, documentPatchSchema);
-    return withDocumentLock(id, async () => {
-      if (!ownedFileDocument(id, userId)) return notFound(c);
-      let name: string | null = null;
-      if (body.name !== undefined) {
-        name = sanitizeDisplayName(body.name, "rename");
-        if (!name) return c.json({ error: "Enter a name of 1 to 255 bytes that is not . or .." }, 400);
-      }
-      const moving = body.folderId !== undefined;
-      if (body.folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
-        return c.json({ error: "Folder not found" }, 404);
-      }
-      db.transaction(() => {
-        db.query(`UPDATE documents SET name = COALESCE(?, name), folder_id = CASE WHEN ? THEN ? ELSE folder_id END, updated_at = ?
-          WHERE id = ? AND owner_id = ? AND deleted_at IS NULL`)
-          .run(name, moving ? 1 : 0, body.folderId ?? null, now(), id, userId);
-        if (name !== null) audit(userId, null, "document.rename", { documentId: id });
-        if (moving) audit(userId, null, "document.move", { documentId: id, folderId: body.folderId ?? null });
-      })();
-      return c.json({ document: ownedDocumentSummary(id, userId)! });
-    });
+    try {
+      return c.json({ document: await patchDocument(userId, id, body) });
+    } catch (error) {
+      if (error instanceof DocumentPatchError) return c.json({ error: error.message }, error.status);
+      throw error;
+    }
   });
 
   app.get("/api/files/:id/sharing", (c) => {

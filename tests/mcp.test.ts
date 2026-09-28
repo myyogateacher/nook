@@ -271,7 +271,7 @@ describe("MCP draft-only note writes", () => {
   test("write tools need notes:write-draft, which also grants the read tools", async () => {
     const owner = await createUser("Writer scopes");
     const writer = makeKey(owner, ["notes:read", "notes:write-draft"]);
-    expect(await toolNames(writer)).toEqual([...NOTES_READ_TOOLS, "create_note", "get_note_draft", "update_note_draft"].sort());
+    expect(await toolNames(writer)).toEqual([...NOTES_READ_TOOLS, "create_folder", "create_note", "get_note_draft", "update_note_draft"].sort());
     // Stored without its read scope, the write scope still implies it.
     const writeOnly = makeKey(owner, ["notes:write-draft"]);
     expect(await toolNames(writeOnly)).toContain("list_notes");

@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import type { McpLimitBucket } from "./mcpRateLimit";
 import type { McpScope } from "./mcpScopes";
+import type { RestoreOutcome } from "./bin";
 
 /**
  * Building blocks shared by every module's MCP tools (server/mcpTools.ts and
@@ -30,6 +31,19 @@ export type McpErrorCode =
   | "REMINDER_EXISTS"
   | "ROW_CHANGED"
   | "SCHEMA_CHANGED"
+  // Wave 19 (D181): the same vocabulary as the HTTP codes.
+  | "NO_DRAFT"
+  | "NO_CHANGES"
+  | "DRAFT_NOT_SEEN"
+  | "PURGING"
+  | "PARENT_IN_BIN"
+  | "AUDIENCE_CHANGE"
+  | "NAME_TAKEN"
+  | "SPRINT_ACTIVE"
+  | "UPLOAD_PENDING"
+  | "UPLOAD_EXPIRED"
+  | "HASH_MISMATCH"
+  | "QUOTA_EXCEEDED"
   | "INTERNAL";
 
 export class McpToolError extends Error {
@@ -51,16 +65,45 @@ export function errorResult(code: McpErrorCode, error: string, details?: Record<
 
 export const notFound = (what = "Note") => new McpToolError("NOT_FOUND", `${what} not found`);
 
+/** Buckets every bin_* tool counts against (D174, T142): 50 a day and 10 a minute per key. Restores count only against write. */
+export const BIN_BUCKETS = ["bin_action", "bin_burst"] as const;
+
+/** What every bin_* tool description says, since agents read it (§2.3a). */
+export const BIN_DESCRIPTION = "Moves it to the Bin for 30 days; the person can restore it. Nothing is ever deleted forever over MCP.";
+
+/**
+ * Maps a Bin restore outcome (server/bin.ts restoreItem) to a tool result or error: missing,
+ * forbidden, and never binned by someone who may restore it all look the same (T148).
+ */
+export function restoreResult(outcome: RestoreOutcome, what: string) {
+  switch (outcome.status) {
+    case "restored": return { restored: true, folderId: outcome.folderId, folderName: outcome.folderName, visibility: outcome.visibility };
+    case "already_restored": return { restored: true, alreadyRestored: true };
+    case "calendar_restored": return { restored: true, ...(outcome.alreadyRestored ? { alreadyRestored: true } : {}), calendarId: outcome.calendarId, calendarName: outcome.calendarName };
+    case "purging": throw new McpToolError("PURGING", `This ${what.toLowerCase()} is being permanently deleted`);
+    case "parent_in_bin": throw new McpToolError("PARENT_IN_BIN", outcome.message ?? "Restore its parent from the Bin first");
+    case "limit_reached": throw new McpToolError("LIMIT_REACHED", outcome.message);
+    default: throw notFound(what);
+  }
+}
+
 export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   name: string;
   title: string;
   description: string;
   /** The key needs any one of these (write scopes imply their read scope). */
   scopes: readonly McpScope[];
+  /**
+   * And every one of these (D172), checked at registration and in runTool: a Bin tool needs
+   * `bin:write` and the module's write scope, so a notes-only key with `bin:write` cannot bin cards.
+   */
+  alsoRequires?: readonly McpScope[];
   /** Writes count against the per-minute write limit. */
   write: boolean;
   /** An extra daily bucket this tool counts against. */
   dailyBucket?: Exclude<McpLimitBucket, "call" | "write">;
+  /** Further buckets this tool counts against (Wave 19, for example a Bin tool's daily cap and burst). */
+  buckets?: readonly Exclude<McpLimitBucket, "call" | "write">[];
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

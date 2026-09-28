@@ -7,10 +7,13 @@ import { audit, db, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
-import { hasAnyScope, parseStoredScopes } from "./mcpScopes";
+import { hasAllScopes, hasAnyScope, parseStoredScopes } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
+import { noteManageTools } from "./mcpNoteTools";
+import { fileWriteTools } from "./mcpFileTools";
+import { rememberSeenDraft } from "./mcpSeenDrafts";
 import { checksum, storage, withNoteLock } from "./storage";
 import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
 import { taskTools } from "./tasks/mcpTools";
@@ -60,12 +63,16 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (!hasAnyScope(key.scopes, spec.scopes)) {
     return errorResult("SCOPE_REQUIRED", `This API key does not have the ${spec.scopes.join(" or ")} scope`);
   }
+  if (!hasAllScopes(key.scopes, spec.alsoRequires)) {
+    return errorResult("SCOPE_REQUIRED", `This API key also needs the ${spec.alsoRequires!.join(" and ")} scope`);
+  }
   // Defence in depth (§5.4): effective scopes already drop write scopes for read-only team roles,
   // and a write tool still re-checks the holder's role before any service runs.
   if (spec.write && !canWriteContent(key.userId)) return errorResult("READ_ONLY", "Your team role is read-only");
   const buckets: McpLimitBucket[] = ["call"];
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
+  if (spec.buckets) buckets.push(...spec.buckets);
   const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, buckets);
   if (retryAfter) return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
   try {
@@ -197,24 +204,28 @@ const noteWriteTools: McpToolSpec[] = [
       assertMarkdownSize(markdown);
       if (folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, key.userId)) throw notFound("Folder");
       const created = await createDraftNote(key.userId, folderId ?? null, markdown, { keyId: key.keyId });
+      rememberSeenDraft(key.keyId, created.id, created.revision, checksum(markdown));
       return { noteId: created.id, revision: created.revision, title: created.title, folderId: created.folderId, url: noteUrl(created.id) };
     }
   }),
   defineTool({
     name: "get_note_draft",
     title: "Get a note's draft",
-    description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft. When there is no draft, returns the published text and a null revision.",
-    scopes: ["notes:write-draft"],
+    description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft or publish_note_draft. When there is no draft, returns the published text and a null revision.",
+    scopes: ["notes:write-draft", "notes:publish"],
     write: false,
     inputSchema: z.object({ noteId: z.string().uuid() }),
     handler: async ({ noteId }, key) => withNoteLock(noteId, async () => {
       const note = ownedNote(noteId, key.userId);
       if (!note) throw notFound();
+      const markdown = await currentOwnerText(note);
+      // The revision this key was shown, for publish_note_draft (D173). The checksum was verified above.
+      if (note.draft_revision !== null && note.draft_checksum) rememberSeenDraft(key.keyId, noteId, note.draft_revision, note.draft_checksum);
       return {
         noteId,
         revision: note.draft_revision,
         hasDraft: note.draft_revision !== null,
-        markdown: await currentOwnerText(note),
+        markdown,
         publishedVersion: note.current_version,
         url: noteUrl(noteId)
       };
@@ -244,6 +255,7 @@ const noteWriteTools: McpToolSpec[] = [
         const saved = await writeDraftLocked(note, key.userId, next, key.keyId);
         if (!saved) throw changed();
         audit(key.userId, noteId, "mcp.note_draft_update", { via: "mcp", keyId: key.keyId, mode, revision: saved.revision });
+        rememberSeenDraft(key.keyId, noteId, saved.revision, checksum(next));
         return { noteId, revision: saved.revision, title: saved.title, hasDelta: saved.hasDelta, url: noteUrl(noteId) };
       });
     }
@@ -326,7 +338,9 @@ const fileTools: McpToolSpec[] = [
 export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteReadTools,
   ...noteWriteTools,
+  ...noteManageTools,
   ...fileTools,
+  ...fileWriteTools,
   ...taskTools,
   ...calendarTools,
   ...collectionTools,
@@ -335,10 +349,13 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...inboxTools
 ];
 
+/** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */
+export const toolAllowed = (spec: McpToolSpec, scopes: McpKeyContext["scopes"]) => hasAnyScope(scopes, spec.scopes) && hasAllScopes(scopes, spec.alsoRequires);
+
 /** Registers the tools this key may use on a per-request server. */
 export function registerMcpTools(server: McpServer, key: McpKeyContext) {
   for (const spec of mcpToolSpecs) {
-    if (!hasAnyScope(key.scopes, spec.scopes)) continue;
+    if (!toolAllowed(spec, key.scopes)) continue;
     server.registerTool(spec.name, {
       title: spec.title,
       description: spec.description,

@@ -5,7 +5,9 @@
  * A role is a ceiling on what per-item sharing already grants; it never grants content access by
  * itself. Only admins manage the team, and admins never bypass item ACLs (D73).
  */
-import { IMPLIED_READ_SCOPE, MCP_SCOPES, type McpScope } from "../mcpScopes";
+import { MCP_READ_SCOPES, MCP_SCOPES, type McpScope } from "../mcpScopes";
+
+export { MCP_READ_SCOPES };
 
 export const ROLES = ["admin", "member", "viewer", "guest"] as const;
 export type Role = typeof ROLES[number];
@@ -46,9 +48,6 @@ export const ADMIN_ONLY_SCOPES: readonly McpScope[] = ["team:read"];
 
 /** MCP scopes only members and admins may hold: the inbox exists to produce writes (D152). */
 export const MEMBER_ONLY_SCOPES: readonly McpScope[] = ["inbox:read", "inbox:write"];
-
-/** Read scopes: every scope that is not a write scope (none of them is implied by another). */
-export const MCP_READ_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((scope) => IMPLIED_READ_SCOPE[scope] === undefined);
 
 /**
  * The MCP scopes a key of a user with `role` may use (§5.2.4, §7). Effective scopes are the stored

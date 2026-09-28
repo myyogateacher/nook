@@ -1,9 +1,10 @@
 import * as z from "zod/v4";
 import type { ZodType } from "zod";
 import { withAuditContext } from "../db";
-import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { searchText } from "../search";
-import { listAttachments } from "./attachments";
+import { attachToCard, listAttachments } from "./attachments";
+import { restoreTaskItem } from "./bin";
 import { createRelation, getBoardWithRelationCounts, listRelations, type CardRelation, type RelationCounts } from "./cardRelations";
 import { searchCards } from "./cardSearch";
 import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
@@ -12,15 +13,16 @@ import { createComment, listComments } from "./comments";
 import { reactionGlyph } from "../../shared/reactions";
 import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
 import { filterBoardCardIds } from "./cardQuery";
-import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema, isCalendarDate } from "./routes";
-import { cardDetail, createCard, getBoard, getCard, listBoards, moveCard, patchCard, TaskError, type CardSummary } from "./service";
-import { listBoardTags, type BoardTag } from "./tags";
+import { attachmentSchema, cardCreateSchema, cardMoveSchema, cardPatchSchema, columnPatchSchema, commentCreateSchema, isCalendarDate, tagCreateSchema, tagPatchSchema } from "./routes";
+import { cardDetail, createCard, deleteCard, getBoard, getCard, listBoards, moveCard, patchCard, patchColumn, TaskError, type CardSummary } from "./service";
+import { createTag, listBoardTags, TAG_COLORS, updateTag, type BoardTag } from "./tags";
 import { taskViewTools } from "./viewMcpTools";
 import { boardStructure, cardHierarchy } from "./hierarchy";
 import { levelName, type BoardStructure } from "../../shared/boardStructure";
 import { SPRINT_STATES } from "../../shared/sprintPlan";
 import { openSprintRows, sprintNames } from "./sprintData";
-import { listSprints } from "./sprints";
+import { createSprint, listSprints, patchSprint } from "./sprints";
+import { sprintCreateSchema } from "./sprintRoutes";
 
 /**
  * MCP tools for Task Boards (docs/plan/WAVES_7-9.md §4.2, D38–D40, D70).
@@ -28,12 +30,14 @@ import { listSprints } from "./sprints";
  * Every tool calls the same service functions as the /api/tasks routes, as the
  * key's owner, so board membership, owner-only rules, IDOR joins, ordering,
  * and caps are enforced in one place. A board the user cannot read is
- * NOT_FOUND whether it is missing, private, or binned. There are no delete,
- * unlink, edit-description, column, WIP, or sharing tools: writes are create,
+ * NOT_FOUND whether it is missing, private, or binned. There are no delete-forever,
+ * unlink, edit-description, column-structure, sprint-completion, or sharing tools: writes are create,
  * update (fields other than the description, with a revision compare-and-swap,
- * WAVE_13 §5.5, T99), move, comment, and link_cards. Writes are audited through the usual task.* events with
- * `{via: "mcp", keyId}` merged in, and count against the per-key and per-user
- * `task_write` daily buckets.
+ * WAVE_13 §5.5, T99), move, comment, and link_cards, plus (Wave 19) tags, WIP limits, sprint
+ * create and start (owner only), attachment links, and bin_card/restore_card (bin:write as well).
+ * Writes are audited through the usual task.* events with `{via: "mcp", keyId}` merged in, and
+ * count against the per-key and per-user `task_write` (sprints: `sprint_write`, Bin: `bin_action`
+ * and `bin_burst`) buckets.
  */
 
 const DESCRIPTION_PREVIEW_CHARS = 280;
@@ -53,6 +57,10 @@ export function taskErrorToMcp(error: TaskError) {
     OWNER_ONLY: "OWNER_ONLY",
     COLUMN_FULL: "COLUMN_FULL",
     RELATION_EXISTS: "RELATION_EXISTS",
+    // Wave 19: tags, sprints, and the Bin.
+    TAG_EXISTS: "NAME_TAKEN",
+    SPRINT_ACTIVE: "SPRINT_ACTIVE",
+    SPRINTS_OFF: "INVALID",
     // A level change on a card with children (17A): reported as INVALID with the reason and childCount.
     HAS_CHILDREN: "INVALID",
     // Planning a card into a completed sprint (17B): INVALID with the reason and sprintId.
@@ -315,7 +323,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "list_sprints",
     title: "List a board's sprints",
-    description: "List the sprints of a board the user can open: the active sprint first, then planned ones in order, then completed ones newest first (at most 20; pass nextCursor back as cursor for older ones). Counts are cards at the board's work level. Sprints are planned and completed by the board owner in the app; plan a card into one with create_card or update_card sprintId.",
+    description: "List the sprints of a board the user can open: the active sprint first, then planned ones in order, then completed ones newest first (at most 20; pass nextCursor back as cursor for older ones). Counts are cards at the board's work level. The board owner can add and start sprints with create_sprint and start_sprint; completing a sprint happens only in the app. Plan a card into one with create_card or update_card sprintId.",
     scopes: ["tasks:read"],
     write: false,
     inputSchema: z.object({
@@ -468,6 +476,141 @@ export const taskTools: McpToolSpec[] = [
       });
     }
   }),
+  // ---------------------------------------------------------------- Wave 19 (§2.3)
+  defineTool({
+    name: "bin_card",
+    title: "Move a card to the Bin",
+    description: `Move a card on a board the user can use to the Bin, with its subtasks. ${BIN_DESCRIPTION} Restore it with restore_card.`,
+    scopes: ["tasks:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    buckets: BIN_BUCKETS,
+    inputSchema: z.object({ cardId: uuid }).strict(),
+    handler: async ({ cardId }, key) => service(key, async () => {
+      const { purgeAfter, descendantCount } = await deleteCard(key.userId, cardId);
+      return { cardId, binned: true, purgeAfter, descendantCount };
+    })
+  }),
+  defineTool({
+    name: "restore_card",
+    title: "Restore a card from the Bin",
+    description: "Restore a binned card, with the subtasks binned with it, to its column. Only the board owner or whoever binned it can restore it. A card whose parent is still in the Bin comes back without a parent (detached).",
+    scopes: ["tasks:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    inputSchema: z.object({ cardId: uuid }).strict(),
+    handler: async ({ cardId }, key) => service(key, async () => {
+      const outcome = await restoreTaskItem("card", cardId, key.userId);
+      switch (outcome.status) {
+        case "restored":
+        case "already_restored":
+          return {
+            cardId, restored: true, ...(outcome.status === "already_restored" ? { alreadyRestored: true } : {}), boardId: outcome.boardId, columnId: outcome.columnId, columnName: outcome.columnName,
+            ...(outcome.descendantCount ? { descendantCount: outcome.descendantCount } : {}), ...(outcome.detached ? { detached: true } : {})
+          };
+        case "board_in_bin": throw new McpToolError("PARENT_IN_BIN", "Its board is in the Bin; the person restores the board in the app");
+        case "limit": throw new McpToolError("LIMIT_REACHED", "The board is full");
+        case "purging": throw new McpToolError("PURGING", "This card is being permanently deleted");
+        default: throw new McpToolError("NOT_FOUND", "Card not found");
+      }
+    })
+  }),
+  defineTool({
+    name: "manage_tags",
+    title: "Create, rename, or recolour a tag",
+    description: `Manage a board's tags. action "create" (any board reader; a name that exists in any case is NAME_TAKEN), or "rename" / "recolour" an existing tag (board owner only, OWNER_ONLY otherwise). Colours: ${TAG_COLORS.join(", ")}. Tags cannot be deleted here.`,
+    scopes: ["tasks:write"],
+    write: true,
+    dailyBucket: "task_write",
+    inputSchema: z.object({
+      boardId: uuid,
+      action: z.enum(["create", "rename", "recolour"]),
+      tagId: uuid.optional().describe("The tag to rename or recolour (see list_cards tags)"),
+      name: z.string().min(1).max(80).optional().describe("create and rename"),
+      color: z.enum(TAG_COLORS).optional().describe("create (optional) and recolour")
+    }).strict(),
+    handler: async ({ boardId, action, tagId, name, color }, key) => service(key, async () => {
+      const tagOut = (tag: BoardTag) => ({ tag: { id: tag.id, name: tag.name, color: tag.color } });
+      if (action === "create") {
+        if (tagId) throw new McpToolError("INVALID", "create takes no tagId");
+        return tagOut((await createTag(key.userId, boardId, routeInput(tagCreateSchema, { name, ...(color ? { color } : {}) }))).tag);
+      }
+      if (!tagId) throw new McpToolError("INVALID", `${action} needs tagId`);
+      if (action === "rename" ? color !== undefined : name !== undefined) throw new McpToolError("INVALID", action === "rename" ? "rename changes only the name" : "recolour changes only the colour");
+      const input = action === "rename" ? routeInput(tagPatchSchema, { name }) : routeInput(tagPatchSchema, { color });
+      // The tag must belong to this board, which the caller must be able to read (NOT_FOUND first).
+      if (!getBoard(key.userId, boardId).tags.some((tag) => tag.id === tagId.toLowerCase())) throw new McpToolError("NOT_FOUND", "Tag not found");
+      return tagOut((await updateTag(key.userId, tagId.toLowerCase(), input)).tag);
+    })
+  }),
+  defineTool({
+    name: "set_wip_limit",
+    title: "Set a column's WIP limit",
+    description: "Set or clear (null) the work-in-progress limit of a column, 1 to 1000 cards. Board owner only (OWNER_ONLY otherwise). A limit below the current count only blocks new cards coming in.",
+    scopes: ["tasks:write"],
+    write: true,
+    dailyBucket: "task_write",
+    inputSchema: z.object({ columnId: uuid, wipLimit: z.number().int().min(1).max(1000).nullable() }).strict(),
+    handler: async ({ columnId, wipLimit }, key) => {
+      const input = routeInput(columnPatchSchema, { wipLimit });
+      return service(key, async () => {
+        const { column } = await patchColumn(key.userId, columnId, input);
+        return { column: { id: column.id, name: column.name, wip_limit: column.wip_limit } };
+      });
+    }
+  }),
+  defineTool({
+    name: "create_sprint",
+    title: "Add a sprint",
+    description: "Add a planned sprint at the end of a board's sprints. Board owner only (OWNER_ONLY otherwise), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD.",
+    scopes: ["tasks:write"],
+    write: true,
+    buckets: ["sprint_write"],
+    inputSchema: z.object({
+      boardId: uuid,
+      name: z.string().min(1).max(120),
+      goal: z.string().max(1000).optional(),
+      startOn: z.string().nullable().optional(),
+      endOn: z.string().nullable().optional()
+    }).strict(),
+    handler: async ({ boardId, ...fields }, key) => {
+      const input = routeInput(sprintCreateSchema, fields);
+      return service(key, async () => {
+        const { sprint } = await createSprint(key.userId, boardId, input);
+        return { sprint: { id: sprint.id, name: sprint.name, goal: sprint.goal, state: sprint.state, start_on: sprint.start_on, end_on: sprint.end_on } };
+      });
+    }
+  }),
+  defineTool({
+    name: "start_sprint",
+    title: "Start a sprint",
+    description: "Start a planned sprint. Board owner only. Only one sprint is active at a time: while another is active this fails with SPRINT_ACTIVE and its activeSprintId. Completing a sprint is not possible over MCP.",
+    scopes: ["tasks:write"],
+    write: true,
+    buckets: ["sprint_write"],
+    inputSchema: z.object({ sprintId: uuid }).strict(),
+    handler: async ({ sprintId }, key) => service(key, async () => {
+      const { sprint } = await patchSprint(key.userId, sprintId, { state: "active" });
+      return { sprint: { id: sprint.id, name: sprint.name, state: sprint.state, is_active: sprint.is_active, start_on: sprint.start_on, end_on: sprint.end_on } };
+    })
+  }),
+  defineTool({
+    name: "link_attachment",
+    title: "Attach a file to a card",
+    description: "Link a file to a card, optionally through one of the user's own comments on it. The file must be a card attachment the user uploaded (create_text_file or begin_upload with purpose task_attachment); Files documents cannot be linked (NOT_FOUND). Linking again is harmless.",
+    scopes: ["tasks:write"],
+    write: true,
+    dailyBucket: "task_write",
+    inputSchema: z.object({ cardId: uuid, documentId: uuid, commentId: uuid.nullable().optional() }).strict(),
+    handler: async ({ cardId, ...fields }, key) => {
+      const input = routeInput(attachmentSchema, fields);
+      return service(key, async () => {
+        const { status, attachment } = await attachToCard(key.userId, cardId, input);
+        return { attachment: { cardId, documentId: attachment.document_id, name: attachment.name, commentId: attachment.comment_id }, alreadyLinked: status === 200 };
+      });
+    }
+  }),
   // Saved views and the cross-board query (17C, D145): list_views and query_cards.
   ...taskViewTools
 ];
+

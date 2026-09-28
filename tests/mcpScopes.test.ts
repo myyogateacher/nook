@@ -45,3 +45,32 @@ test("mcpScopesForRole: admins all, members all but team:read, viewers read scop
   expect(effectiveMcpScopes(["tasks:read", "tasks:write", "team:read"], "viewer")).toEqual(["tasks:read"]);
   expect(effectiveMcpScopes(["notes:read"], "guest")).toEqual([]);
 });
+
+test("every scope is classified exactly once as read or write, and bin:write is a write scope with no read (D171, T144)", async () => {
+  const { MCP_READ_SCOPES, MCP_WRITE_SCOPES, isWriteScope, IMPLIED_READ_SCOPE } = await import("../server/mcpScopes");
+  for (const scope of MCP_SCOPES) expect(Number(MCP_READ_SCOPES.includes(scope)) + Number(MCP_WRITE_SCOPES.includes(scope))).toBe(1);
+  expect([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES].sort()).toEqual([...MCP_SCOPES].sort());
+  // Every scope that implies a read is a write scope; bin:write is one without an implied read.
+  for (const scope of Object.keys(IMPLIED_READ_SCOPE) as McpScopeName[]) expect(isWriteScope(scope)).toBe(true);
+  expect(isWriteScope("bin:write")).toBe(true);
+  expect(IMPLIED_READ_SCOPE["bin:write"]).toBeUndefined();
+  expect(normalizeScopes(["bin:write"])).toEqual(["bin:write"]);
+  expect(normalizeScopes(["notes:publish", "files:write"])).toEqual(["notes:read", "notes:publish", "files:read", "files:write"]);
+});
+
+test("alsoRequires is all-of: bin:write alone satisfies nothing that also needs a module write scope (D172)", async () => {
+  const { hasAllScopes } = await import("../server/mcpScopes");
+  expect(hasAllScopes(["bin:write"], ["bin:write", "tasks:write"])).toBe(false);
+  expect(hasAllScopes(["bin:write", "tasks:write"], ["bin:write", "tasks:write"])).toBe(true);
+  expect(hasAllScopes(["notes:read"], undefined)).toBe(true);
+  expect(hasAllScopes(["bin:write", "notes:read"], ["bin:write", "notes:write-draft"])).toBe(false);
+});
+
+test("viewers can hold none of the Wave 19 scopes (snapshot, T144)", async () => {
+  const { effectiveMcpScopes, mcpScopesForRole } = await import("../server/team/roles");
+  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read"]);
+  expect(effectiveMcpScopes(["notes:publish", "files:write", "bin:write", "notes:read"], "viewer")).toEqual(["notes:read"]);
+  expect(mcpScopesForRole("member")).toContain("bin:write");
+});
+
+type McpScopeName = import("../server/mcpScopes").McpScope;

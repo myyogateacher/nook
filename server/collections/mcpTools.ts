@@ -1,10 +1,13 @@
 import * as z from "zod/v4";
 import { config } from "../config";
 import { withAuditContext } from "../db";
-import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { collectionCreateSchema } from "./routes";
+import { COLLECTION_TEMPLATES } from "./templates";
 import { filterSpec, QUERY_LIMITS, type FilterSpec, type SortSpec } from "./query";
 import type { CollectionSchema, FieldDefinition, FieldValue } from "./schema";
-import { CollectionError, collectionDetail, createRow, getRow, listCollections, patchRow, queryRows, requireReadableCollection, schemaOf, type RowSummary } from "./service";
+import { CollectionError, collectionDetail, createCollection, createRow, deleteRow, getRow, listCollections, patchRow, queryRows, requireReadableCollection, schemaOf, type RowSummary } from "./service";
 
 /**
  * MCP tools for Collections (docs/plan/WAVES_10-12.md §3.5, D70, T72–T75).
@@ -16,9 +19,10 @@ import { CollectionError, collectionDetail, createRow, getRow, listCollections, 
  *
  * Agents work with field NAMES: rows come back keyed by name, select values as option labels,
  * note links as titles (or `restricted`), and file fields as attachment names only. Inputs accept
- * a field's name or id, and an option's label or id. Writes are create and merge-update only, with
- * a revision compare-and-swap (ROW_CHANGED); there are no delete, schema, share, view, attachment,
- * or import tools. Every write is audited with `{via: "mcp", keyId}`, sets `updated_via_key_id`
+ * a field's name or id, and an option's label or id. Writes are create and merge-update, with
+ * a revision compare-and-swap (ROW_CHANGED), plus (Wave 19) create_collection (private, from a
+ * template or bounded fields) and bin_row/restore_row with bin:write; there are no delete-forever,
+ * schema-change, share, view, attachment, or import tools. Every write is audited with `{via: "mcp", keyId}`, sets `updated_via_key_id`
  * (the row panel's "Changed by <key> · Undo"), and counts against the `row_write` daily buckets.
  */
 
@@ -269,5 +273,63 @@ export const collectionTools: McpToolSpec[] = [
         return { rowId: row.id, revision: row.revision, url: collectionUrl(row.collection_id, row.id) };
       }, () => schema);
     }
+  }),
+  // Wave 19 (§2.3).
+  defineTool({
+    name: "create_collection",
+    title: "Create a collection",
+    description: `Create a private collection the user owns, from exactly one of templateId (${COLLECTION_TEMPLATES.map((template) => template.id).join(", ")}) or fields (1 to 60 of { name, type: text|number|date|checkbox|select|multi_select|url|note|file, required?, options?: [{ label, color? }] for selects }). Nobody else sees it until the user shares it in Nook. At most 100 collections per user (LIMIT_REACHED).`,
+    scopes: ["collections:write"],
+    write: true,
+    dailyBucket: "row_write",
+    inputSchema: z.object({
+      name: z.string().min(1).max(120),
+      icon: z.string().max(32).optional(),
+      templateId: z.string().max(32).optional(),
+      // z.unknown keeps each field object as sent, so the route schema's prototype-key guard sees
+      // `__proto__` (a z.record copy would drop it silently).
+      fields: z.array(z.unknown()).min(1).max(60).optional().describe("Field definitions: { name, type, required?, options? }")
+    }).strict(),
+    handler: async (args, key) => {
+      if ((args.templateId === undefined) === (args.fields === undefined)) throw new McpToolError("INVALID", "Give exactly one of templateId and fields");
+      const parsed = collectionCreateSchema.safeParse(args);
+      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+      return service(key, () => {
+        const { collection } = createCollection(key.userId, { ...parsed.data, fields: parsed.data.fields as Parameters<typeof createCollection>[1]["fields"] });
+        return {
+          collectionId: collection.id, name: collection.name,
+          fields: collection.fields.map((field) => ({ id: field.id, name: field.name, type: field.type })),
+          url: `${config.appOrigin}/collections/${collection.id}`
+        };
+      });
+    }
+  }),
+  defineTool({
+    name: "bin_row",
+    title: "Move a row to the Bin",
+    description: `Move a row of a collection the user may edit to the Bin. ${BIN_DESCRIPTION} Restore it with restore_row.`,
+    scopes: ["collections:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    buckets: BIN_BUCKETS,
+    inputSchema: z.object({ rowId: uuid }).strict(),
+    handler: async ({ rowId }, key) => service(key, async () => {
+      const { purgeAfter } = await deleteRow(key.userId, rowId.toLowerCase());
+      return { rowId, binned: true, purgeAfter };
+    })
+  }),
+  defineTool({
+    name: "restore_row",
+    title: "Restore a row from the Bin",
+    description: "Restore a binned row. Only the collection owner, or whoever binned it while they can still edit the collection, can restore it. A row whose collection is in the Bin fails with PARENT_IN_BIN.",
+    scopes: ["collections:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    inputSchema: z.object({ rowId: uuid }).strict(),
+    handler: async ({ rowId }, key) => service(key, async () => {
+      const result = restoreResult(await restoreItem("collection_row", rowId.toLowerCase(), key.userId), "Row") as Record<string, unknown>;
+      const collectionId = typeof result.folderId === "string" ? result.folderId : null;
+      return { rowId, restored: true, ...(result.alreadyRestored ? { alreadyRestored: true } : {}), collectionId, ...(collectionId ? { url: collectionUrl(collectionId, rowId) } : {}) };
+    })
   })
 ];

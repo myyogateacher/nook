@@ -21,3 +21,10 @@ test("Settings renders a demoted admin's team:read chip as inactive", () => {
   expect(admin).toContain("<li>Read team</li>");
   expect(admin).not.toContain("inactive");
 });
+
+test("key chips name the Wave 19 permissions", () => {
+  const markup = renderToStaticMarkup(<McpKeyScopeChips name="Agent" scopes={["notes:publish", "files:write", "bin:write"]} effectiveScopes={["notes:publish", "files:write", "bin:write"]} />);
+  expect(markup).toContain("<li>Publish notes</li>");
+  expect(markup).toContain("<li>Write files</li>");
+  expect(markup).toContain("<li>Move to Bin</li>");
+});

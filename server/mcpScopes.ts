@@ -7,8 +7,17 @@
  * implies its read scope. Scopes are fixed when a key is created.
  */
 export const MCP_SCOPES = [
-  "notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read",
+  "notes:read", "notes:write-draft",
+  // Wave 19 (D170): publish drafts; opt-in, since notes:write-draft promises "never publishes".
+  "notes:publish",
+  "files:read",
+  // Wave 19 (D170): upload, rename, and move your own files and create folders; never shares or deletes.
+  "files:write",
+  "tasks:read", "tasks:write", "today:read",
   "calendar:read", "calendar:write", "collections:read", "collections:write",
+  // Wave 19 (D170, D172): move items to the Bin and restore them, always together with the module's
+  // write scope; never deletes forever. It implies no read scope.
+  "bin:write",
   // Admin-only (server/team/roles.ts ADMIN_ONLY_SCOPES); there is no team write scope (D79).
   "team:read",
   // Agent inbox (Wave 21, D151): suggest changes for the key owner to approve; never applies anything.
@@ -21,11 +30,28 @@ export const DEFAULT_MCP_SCOPES: readonly McpScope[] = ["notes:read"];
 /** Each write scope and the read scope it implies. Later modules add their pair here (D70). */
 export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "notes:write-draft": "notes:read",
+  "notes:publish": "notes:read",
+  "files:write": "files:read",
   "tasks:write": "tasks:read",
   "calendar:write": "calendar:read",
   "collections:write": "collections:read",
   "inbox:write": "inbox:read"
 };
+
+/**
+ * Every scope that lets a key change something (D171, T144). An explicit list, not derived from
+ * IMPLIED_READ_SCOPE: `bin:write` implies no read scope and must still never count as a read scope
+ * (read-only roles would otherwise be handed it). tests/mcpScopes.test.ts checks that every scope is
+ * classified exactly once.
+ */
+export const MCP_WRITE_SCOPES: readonly McpScope[] = [
+  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write"
+];
+
+export const isWriteScope = (scope: McpScope) => MCP_WRITE_SCOPES.includes(scope);
+
+/** Every scope that only reads. */
+export const MCP_READ_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((scope) => !isWriteScope(scope));
 
 export const isMcpScope = (value: unknown): value is McpScope => typeof value === "string" && (MCP_SCOPES as readonly string[]).includes(value);
 
@@ -63,3 +89,6 @@ export function hasScope(held: readonly McpScope[], needed: McpScope) {
 
 /** Whether `held` satisfies any one of `anyOf`. */
 export const hasAnyScope = (held: readonly McpScope[], anyOf: readonly McpScope[]) => anyOf.some((scope) => hasScope(held, scope));
+
+/** Whether `held` satisfies every one of `allOf` (a tool's `alsoRequires`, D172). */
+export const hasAllScopes = (held: readonly McpScope[], allOf: readonly McpScope[] = []) => allOf.every((scope) => hasScope(held, scope));

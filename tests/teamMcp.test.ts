@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createUser, db, origin, request, type Session } from "./support/harness";
+import { createUser, db, origin, request, spareEmail, type Session } from "./support/harness";
 
 const { createMcpApiKey } = await import("../server/mcp");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
@@ -156,7 +156,7 @@ describe("Team MCP", () => {
     resetInviteRateLimits();
     db.query("DELETE FROM team_invites").run();
     const admin = await user("MCP invites admin", "admin");
-    const created = await (await call(admin, "POST", "/invites", { role: "viewer", note: "Secret label", email: "allowed-1000@example.test" })).json() as { token: string; invite: { id: string; tokenPrefix: string } };
+    const created = await (await call(admin, "POST", "/invites", { role: "viewer", note: "Secret label", email: spareEmail() })).json() as { token: string; invite: { id: string; tokenPrefix: string } };
     const revoked = await (await call(admin, "POST", "/invites", { role: "guest" })).json() as { invite: { id: string } };
     await call(admin, "POST", `/invites/${revoked.invite.id}/revoke`, {});
 

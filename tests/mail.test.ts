@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowedTestEmails, createUser, db, request, type Session } from "./support/harness";
+import { createUser, db, request, spareEmail, type Session } from "./support/harness";
 
 const mail = await import("../server/mail");
 const { inviteEmail, formatExpiry } = await import("../server/team/inviteEmail");
@@ -182,7 +182,8 @@ async function call(session: Session, method: string, path: string, body: unknow
   const response = await request(path, method === "GET" ? {} : { method, body: JSON.stringify(body) }, session);
   return { status: response.status, body: await response.json() as Record<string, any> };
 }
-const bound = () => allowedTestEmails[1100 + Math.floor(Math.random() * 50)]!;
+// Never a registered address: a fixed index is taken by createUser() once the suite has made that many users.
+const bound = spareEmail;
 
 describe("emailing invites", () => {
   beforeEach(() => { db.query("DELETE FROM team_invites").run(); });

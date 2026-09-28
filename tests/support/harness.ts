@@ -27,7 +27,7 @@ export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 export const port = Number(process.env.MYNOTES_TEST_PORT ?? 22026);
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
-export const allowedTestEmails = Array.from({ length: 1200 }, (_, index) => `allowed-${index + 1}@example.test`);
+export const allowedTestEmails = Array.from({ length: 1500 }, (_, index) => `allowed-${index + 1}@example.test`);
 
 process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;
@@ -60,12 +60,22 @@ export const server = Bun.serve(serverOptions);
 };
 
 export type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
+/** createUser() takes allowlisted emails from the start; spareEmail() hands them out from the end. */
 let emailIndex = 0;
+let spareIndex = allowedTestEmails.length;
 
 function nextEmail() {
-  const email = allowedTestEmails[emailIndex++];
-  if (!email) throw new Error("Test email allowlist exhausted");
-  return email;
+  if (emailIndex >= spareIndex) throw new Error("Test email allowlist exhausted");
+  return allowedTestEmails[emailIndex++]!;
+}
+
+/**
+ * An allowlisted email no account in this run has or will get, for invites bound to an address.
+ * A fixed index would collide with createUser() once the whole suite has registered that many users.
+ */
+export function spareEmail() {
+  if (spareIndex <= emailIndex) throw new Error("Test email allowlist exhausted");
+  return allowedTestEmails[--spareIndex]!;
 }
 
 export async function request(path: string, options: RequestInit = {}, session?: Session) {

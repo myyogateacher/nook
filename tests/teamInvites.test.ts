@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { allowedTestEmails, createUser, db, origin, request, type Session } from "./support/harness";
+import { createUser, db, origin, request, spareEmail, type Session } from "./support/harness";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { resetInviteRateLimits, listInvites, sweepInvites, inviteStatus, maskEmail, hashInviteToken } = await import("../server/team/invites");
@@ -37,8 +37,7 @@ async function call(session: Session | undefined, method: string, path: string, 
 const createInvite = (admin: Session, body: Record<string, unknown> = { role: "viewer" }) => call(admin, "POST", "/team/invites", body);
 
 /** Emails from the end of the harness allowlist, which createUser() (from the start) never reaches. */
-let spareEmail = allowedTestEmails.length;
-const freshEmail = () => allowedTestEmails[--spareEmail]!;
+const freshEmail = spareEmail;
 
 function registerWith(body: Record<string, unknown>) {
   resetRegistrationRateLimit();

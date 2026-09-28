@@ -151,6 +151,8 @@ export function EmailSettings() {
   if (!settings.configured) return <section className="email-settings" aria-labelledby="email-settings-heading">
     {heading}
     <p className="email-settings-muted" role="note"><Mail aria-hidden="true" />{emailOffText(role)}</p>
+    {/* Mutes are made from boards and calendars whether or not email is on (Friction 1). */}
+    <EmailMutesList />
   </section>;
 
   const { prefs } = settings;
@@ -205,7 +207,7 @@ export function EmailSettings() {
       </li>
     </ul>
 
-    {ready && <EmailMutesList />}
+    <EmailMutesList />
 
     <h4 className="notification-settings-subheading">Summary</h4>
     <div className="email-field-row">

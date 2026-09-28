@@ -60,6 +60,11 @@ export function reminderLabel(offsetMinutes: number, allDay: boolean) {
   return `${amount} ${after ? "after the start" : "before"}`;
 }
 
+/** A reminder row's title with how it is sent: "5 minutes before · Email" (Friction 9). */
+export function reminderRowLabel(offsetMinutes: number, allDay: boolean, channels: ReminderChannels | null | undefined) {
+  return `${reminderLabel(offsetMinutes, allDay)} · ${CHANNEL_LABELS[channels ?? "push"]}`;
+}
+
 type EventRemindersProps = { eventId: string; allDay: boolean; reloadKey: number; onAdd: (existing: number[]) => void; onRemove: (reminder: ReminderSummary) => void };
 
 /** The event page's "My reminders": private to the viewer, whatever their role on the calendar. */
@@ -83,7 +88,7 @@ export function EventReminders({ eventId, allDay, reloadKey, onAdd, onRemove }: 
       {reminders.map((reminder) => {
         const label = reminderLabel(reminder.offsetMinutes ?? 0, allDay);
         return <li key={reminder.id}>
-          <span className="calendar-link">{reminder.channels === "email" ? <Mail aria-hidden="true" /> : <Bell aria-hidden="true" />}<span><strong>{label}</strong><small>{reminder.nextFireAt ? `Next ${new Date(reminder.nextFireAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "No upcoming time"}{reminder.channels && reminder.channels !== "push" ? ` · ${CHANNEL_LABELS[reminder.channels]}` : ""}</small></span></span>
+          <span className="calendar-link">{reminder.channels === "email" ? <Mail aria-hidden="true" /> : <Bell aria-hidden="true" />}<span><strong>{reminderRowLabel(reminder.offsetMinutes ?? 0, allDay, reminder.channels)}</strong><small>{reminder.nextFireAt ? `Next ${new Date(reminder.nextFireAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}` : "No upcoming time"}</small></span></span>
           <button className="icon-button" onClick={() => onRemove(reminder)} aria-label={`Remove reminder ${label}`}><X /></button>
         </li>;
       })}

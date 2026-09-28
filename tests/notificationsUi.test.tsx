@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AccountActions } from "../src/AppShell";
 import { createAppHistoryState, readAppHistorySection } from "../src/appShellNavigation";
-import { reminderLabel } from "../src/calendar/EventReminders";
+import { reminderLabel, reminderRowLabel } from "../src/calendar/EventReminders";
 import { popStateClosedDialog, registerHistoryDialogGuard } from "../src/historyDialogs";
 import { badgeLabel, notificationAge, NotificationsContext, safeNotificationPath } from "../src/notifications/notificationsApi";
 import { NotificationsApp } from "../src/notifications/NotificationsApp";
@@ -86,6 +86,10 @@ test("labels for ages, badges, and reminder offsets", () => {
   expect(reminderLabel(900, true)).toBe("9:00 the day before");
   expect(reminderLabel(2340, true)).toBe("9:00, 2 days before");
   expect(reminderLabel(9540, true)).toBe("9:00 a week before");
+  // A reminder row says how it is sent (Friction 9).
+  expect(reminderRowLabel(5, false, "email")).toBe("5 minutes before · Email");
+  expect(reminderRowLabel(0, false, undefined)).toBe("At the start · Notification");
+  expect(reminderRowLabel(-540, true, "push_email")).toBe("9:00 on the day · Notification and email");
 });
 
 test("the calendar Today button and notification text buttons are 44 px targets (L6)", async () => {

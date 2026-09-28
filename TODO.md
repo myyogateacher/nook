@@ -13,6 +13,18 @@ Release history and per-version notes live on the docs site ("What's new") and i
 - [ ] Real-device checks only the operator can run on the HTTPS origin: a push notification to a phone; a phone calendar feed subscription (TEST_PLAN manual rows).
 - [ ] QA instance `nook-qa` (port 22126) holds throwaway `qa*-`/`rev*-` accounts and data only; rebuild from `main` before each QA round.
 
+## Research queue — after Waves 18–22 ship (operator, 2026-09-28): research, then drive development
+
+### Access management and API keys across modules
+- [ ] Research which modules need their own API-key management (today: MCP keys with scopes; vault keys `nkv_` planned in Wave 27) and which API updates are needed for granular role-based usage and access management per module (notes, files, tasks/boards, collections, calendar, inbox/routines, whiteboards, vault).
+- [ ] Design: access management may be driven **inside each module** (optional, per item/space) but must also be drivable **centrally from the Team module** (per user: what they can reach in every module, key inventory and revocation, role templates). One consistent permission vocabulary, audit, and MCP/REST parity.
+- [ ] Then plan waves and build.
+
+### Outbound email across modules
+- [ ] Research every email that should go out from modules, workflows and actions (invites, reminders, mentions/assignments, proposals awaiting approval, shared-with-you, sprint completed, digest, security events such as new API key / blocked account / new device), with per-user preferences and quiet hours.
+- [ ] Email design: modern, looks good, fits the product UI (dark-friendly, brand mark, plain-text alternative), one shared template system over the `server/mail.ts` Resend wrapper (D93), each mail with a contextual deep link back into the web app (`/tasks/:b/card/:k`, `/inbox`, `/team/invites`, …).
+- [ ] Then plan waves and build.
+
 ## Research queue (operator, 2026-09-27) — research only when picked
 
 ### Messages module (Slack-like) — TODO, research not yet run (target doc `docs/plan/research/2026-09-27-messages-module.md`)

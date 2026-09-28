@@ -65,6 +65,7 @@ import {
   type CardSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
+import { levelAtLeast } from "../access/accessLevels";
 
 type BoardViewProps = {
   userId: string;
@@ -115,8 +116,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const [announcement, setAnnouncement] = useState("");
   // The card composer (a guarded dialog, no history entry): the column it was opened from, or null.
   const [composer, setComposer] = useState<{ columnId: string | null; parentId?: string } | null>(null);
-  // Read-only Team roles never get the composer (the card dialog hides its Add controls too).
-  const { readOnly } = useRole();
+  // Read-only Team roles never get the composer (the card dialog hides its Add controls too), and
+  // neither do members below `edit` on this board (Wave 32, D272: viewers and commenters).
+  const { readOnly: roleReadOnly } = useRole();
   const detailRef = useRef(detail);
   detailRef.current = detail;
   // The control that opened the current dialog, so focus can return to it.
@@ -197,6 +199,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
 
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
+  const readOnly = roleReadOnly || !levelAtLeast(board?.level, "edit");
   // The tab names the board, and the open card before it (QA 0.9.0).
   const openCardTitle = openCardId ? detail?.cards.find((card) => card.id === openCardId)?.title ?? null : null;
   useTasksTitle(board ? `${openCardTitle ? `${openCardTitle} · ` : ""}${board.name} · Tasks` : null);
@@ -507,7 +510,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     }
   }
 
-  return <section className="task-board" aria-labelledby={cardPage ? undefined : "task-board-title"}>
+  return <section className="task-board" data-read-only={readOnly && !roleReadOnly ? "true" : undefined} aria-labelledby={cardPage ? undefined : "task-board-title"}>
     {!cardPage && <>
     <header className="task-board-header">
       <button className="icon-button task-back" onClick={onBack} aria-label="Back to boards" title="Back to boards"><ChevronLeft /></button>
@@ -617,6 +620,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       columns={columns}
       columnId={cards.find((card) => card.id === openCardId)?.column_id}
       boardOwner={owner}
+      boardLevel={board?.level}
       onClose={cardPage && onCollapseCard ? onCollapseCard : onCloseCard}
       onMissing={onCardMissing}
       notify={notify}

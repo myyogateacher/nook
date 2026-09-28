@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
+import { audienceLevel, type ItemLevel, type Level } from "../access/levels";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -9,6 +10,8 @@ export type BoardRow = {
   owner_id: string;
   name: string;
   visibility: BoardVisibility;
+  /** The `all_users` audience level (migration 025, D272); `edit` keeps D38 for existing boards. */
+  share_role: "view" | "comment" | "edit";
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -28,6 +31,26 @@ export const readableBoardPredicate = `(
     OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)
       OR ${groupGrantExists("board", "b.id")})))
 )`;
+
+/**
+ * Readers who may change cards (D272): the owner, a member or group at `edit` or `manage`, or
+ * everyone on an `all_users` board whose audience level is `edit`. The Team role cap is applied in
+ * TS (boardLevel); the write gate refuses viewers and guests before any of this runs.
+ */
+export const editableBoardPredicate = `(
+  b.deleted_at IS NULL AND (b.owner_id = $userId OR (b.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS} AND b.share_role = 'edit')
+    OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId AND m.level IN ('edit','manage'))
+      OR ${groupGrantExists("board", "b.id", "$userId", ["edit", "manage"])})))
+)`;
+
+/**
+ * The caller's live level on a board (§D.3, §C.9): owner, or the best of their member row, their
+ * groups, and the `all_users` level, capped by the Team role. `none` for a binned board.
+ */
+export function boardLevel(board: Pick<BoardRow, "id" | "owner_id" | "visibility" | "share_role" | "deleted_at">, userId: string): ItemLevel {
+  if (board.deleted_at) return "none";
+  return audienceLevel({ kind: "board", id: board.id, ownerId: board.owner_id, visibility: board.visibility, audienceLevel: board.share_role as Level, memberTable: "board_members", memberColumn: "board_id" }, userId);
+}
 
 export function readableBoard(boardId: string, userId: string) {
   return db.query(`SELECT b.* FROM boards b WHERE b.id = $boardId AND ${readableBoardPredicate}`).get({ boardId, userId }) as BoardRow | null;

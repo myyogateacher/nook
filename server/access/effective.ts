@@ -1,12 +1,12 @@
 import { db } from "../db";
-import { readableNote } from "../access";
+import { folderLevel, noteLevel, readableNote } from "../access";
 import { readableDocument } from "../documentAccess";
-import { readableBoard } from "../tasks/access";
-import { readableCollection } from "../collections/access";
-import { readableCalendar } from "../calendar/access";
+import { boardLevel, readableBoard } from "../tasks/access";
+import { collectionLevel, readableCollection } from "../collections/access";
+import { calendarLevel, readableCalendar } from "../calendar/access";
 import { listReadableFolders } from "../access";
 import { readableViewPredicate } from "../tasks/views";
-import type { AccessKind } from "./levels";
+import { atLeast, type AccessKind, type ItemLevel } from "./levels";
 
 /**
  * Per-item rights in one place (access plan §C.10). `canReadItem` answers "may this person open the
@@ -30,6 +30,50 @@ export function canReadItem(kind: AccessKind, id: string, userId: string): boole
     case "collection": return readableCollection(id, userId) !== null;
     case "calendar": return readableCalendar(id, userId) !== null;
   }
+}
+
+/**
+ * `itemLevel()` (§C.9, §C.10): the caller's live level on one item, whatever the module. Readable
+ * items resolve through the module's own level function (owner, direct share, groups, audience,
+ * capped by the Team role); anything unreadable is `none`. Files and task views are view-only.
+ */
+export function itemLevel(kind: AccessKind, id: string, userId: string): ItemLevel {
+  switch (kind) {
+    case "note": {
+      const note = readableNote(id, userId);
+      return note ? noteLevel(note, userId) : "none";
+    }
+    case "folder": return canReadItem("folder", id, userId) ? folderLevel(id, userId) : "none";
+    case "document": {
+      const document = readableDocument(id, userId);
+      if (!document || document.purpose !== "file") return "none";
+      return document.owner_id === userId ? "owner" : "view";
+    }
+    case "board": {
+      const board = readableBoard(id, userId);
+      return board ? boardLevel(board, userId) : "none";
+    }
+    case "task_view": {
+      if (!readableTaskView(id, userId)) return "none";
+      const owner = db.query("SELECT owner_id FROM task_views WHERE id = ?").get(id) as { owner_id: string };
+      return owner.owner_id === userId ? "owner" : "view";
+    }
+    case "collection": {
+      const collection = readableCollection(id, userId);
+      return collection ? collectionLevel(collection, userId) : "none";
+    }
+    case "calendar": {
+      const calendar = readableCalendar(id, userId);
+      return calendar ? calendarLevel(calendar, userId) : "none";
+    }
+  }
+}
+
+/** §C.10 for one item and a session: ok, NOT_FOUND for no access (never disclosed), READ_ONLY below `needed`. */
+export function authorizeItem(kind: AccessKind, id: string, userId: string, needed: ItemLevel): "ok" | "NOT_FOUND" | "READ_ONLY" {
+  const level = itemLevel(kind, id, userId);
+  if (level === "none") return "NOT_FOUND";
+  return atLeast(level, needed) ? "ok" : "READ_ONLY";
 }
 
 /** Table, title column, and label per kind, for redacted presentations (D269). */

@@ -2,7 +2,7 @@ import { audit, db, now } from "../db";
 import { OPTION_COLORS, type OptionColor } from "../collections/schema";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import { readableBoardPredicate } from "./access";
-import { limitReached, ownerOnly, requireReadableBoard, TaskError, withBoardLock } from "./service";
+import { limitReached, ownerOnly, requireBoardAt, requireReadableBoard, TaskError, withBoardLock } from "./service";
 
 /**
  * Board tags and card flags (WAVE_13_TASK_CARD_UX.md D109, D110, T101;
@@ -82,10 +82,10 @@ function requireFreeName(tags: BoardTag[], name: string, exceptId?: string) {
   if (clash) throw new TaskError(409, "A tag with this name already exists", "TAG_EXISTS", { tag: clash });
 }
 
-/** Any reader. A name that exists (in any case) returns 409 TAG_EXISTS with that tag, so a picker can use it. */
+/** Anyone who edits cards (D272). A name that exists (in any case) returns 409 TAG_EXISTS with that tag, so a picker can use it. */
 export function createTag(userId: string, boardId: string, input: { name: string; color?: OptionColor }) {
   return withBoardLock(boardId, () => {
-    requireReadableBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "edit");
     const tags = listBoardTags(boardId);
     requireFreeName(tags, input.name);
     if (tags.length >= MAX_TAGS_PER_BOARD) throw limitReached(`A board can have up to ${MAX_TAGS_PER_BOARD} tags`);

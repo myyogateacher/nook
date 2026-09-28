@@ -6,6 +6,8 @@ import { liveChildCount } from "./hierarchy";
 import { HIERARCHY_LIMITS } from "../../shared/boardStructure";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
+import { atLeast } from "../access/levels";
+import { boardLevel, type BoardRow } from "./access";
 
 /**
  * Cards and boards in the shared Bin (WAVES_7-9.md D41 and §3.3). Deleting only sets the Bin
@@ -133,6 +135,9 @@ export async function restoreTaskItem(type: TaskBinType, id: string, userId: str
     if (card.purge_started_at) return { status: "purging" };
     if (!card.deleted_at) return { status: "already_restored", boardId: card.board_id, boardName: card.board_name, columnId: card.column_id, columnName: columnName(card.column_id) };
     if (card.board_deleted_at) return { status: "board_in_bin" };
+    // A deleter whose level dropped below edit since (D272) can no longer put cards back.
+    const liveBoard = db.query("SELECT * FROM boards WHERE id = ?").get(card.board_id) as BoardRow;
+    if (!atLeast(boardLevel(liveBoard, userId), "edit")) return { status: "not_found" };
     const members = db.query(`SELECT k.id, k.column_id FROM cards k LEFT JOIN board_columns col ON col.id = k.column_id
       WHERE k.bin_root_id = ? AND k.deleted_at IS NOT NULL ORDER BY col.position, k.position, k.id`).all(id) as Array<{ id: string; column_id: string | null }>;
     const live = (db.query("SELECT COUNT(*) AS count FROM cards WHERE board_id = ? AND deleted_at IS NULL").get(card.board_id) as { count: number }).count;

@@ -4,6 +4,7 @@ import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { planInsert, POSITION_STEP, type Positioned } from "../tasks/boardOrder";
 import {
+  collectionLevel,
   collectionRole,
   readableCollection,
   readableCollectionPredicate,
@@ -33,6 +34,8 @@ import { indexRow, reindexCollection } from "./search";
 import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates";
 import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { shareRoleToLevel, type ItemLevel } from "../access/levels";
 
 /**
  * Collections services (WAVES_10-12.md §3). Routes are thin adapters over
@@ -110,6 +113,8 @@ export type CollectionSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   role: CollectionRole;
+  /** The caller's level (§D.3, D272): owner, manage, edit, or view. */
+  level: ItemLevel;
   visibility: CollectionVisibility;
   share_role: ShareRole;
   row_count: number;
@@ -128,12 +133,12 @@ const summarySelect = `
          c.created_at, c.updated_at
   FROM collections c JOIN users u ON u.id = c.owner_id
 `;
-type SummaryRow = Omit<CollectionSummary, "role" | "field_count"> & { schema_json: string; schema_version: number };
+type SummaryRow = Omit<CollectionSummary, "role" | "level" | "field_count"> & { schema_json: string; schema_version: number };
 
 function toDetail(row: SummaryRow, userId: string): CollectionDetail {
   const { schema_json, ...rest } = row;
   const fields = parseStoredSchema(schema_json).fields;
-  return { ...rest, role: collectionRole(row, userId), field_count: fields.length, fields };
+  return { ...rest, role: collectionRole(row, userId), level: collectionLevel(row, userId), field_count: fields.length, fields };
 }
 
 export function collectionDetail(collectionId: string, userId: string) {
@@ -242,14 +247,15 @@ export async function putSharing(userId: string, collectionId: string, input: { 
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) throw new CollectionError(400, "One or more users were not found");
   }
+  if (input.visibility === "selected" && guestShareBlocked(uniqueIds)) throw new CollectionError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withCollectionLock(collectionId, () => {
     requireOwnedCollection(collectionId, userId);
     db.transaction(() => {
       const before = shareMembers("collection_members", "collection_id", collectionId);
-      db.query("DELETE FROM collection_members WHERE collection_id = ?").run(collectionId);
+      // The old route's one role applies to everyone it names, as before (D54); managers stay managers
+      // and group grants are left as they are (D272).
+      writeDirectShares("collection", collectionId, input.visibility === "selected" ? legacyShareLevels("collection", collectionId, uniqueIds, shareRoleToLevel(input.role), true) : []);
       if (input.visibility === "selected") {
-        const statement = db.query("INSERT INTO collection_members (collection_id, user_id, created_at) VALUES (?, ?, ?)");
-        for (const recipientId of uniqueIds) statement.run(collectionId, recipientId, now());
         // "Shared with you" mail (outbound email #25).
         mailShared(userId, "collection", collectionId, before, uniqueIds);
       }

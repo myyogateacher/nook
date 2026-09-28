@@ -1,6 +1,7 @@
 import { db, type NoteRow } from "./db";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
 import { groupGrantExists } from "./access/groups";
+import { audienceLevel, type ItemLevel } from "./access/levels";
 
 /**
  * Whether `$userId` may read note `n` (binned or not; callers add
@@ -59,6 +60,29 @@ export function listReadableFolders(userId: string) {
     id: string; parent_id: string | null; name: string; is_default: number; visibility: string;
     created_at: string; updated_at: string; owner_id: string; owner_name: string; is_owner: 0 | 1;
   }>;
+}
+
+type FolderAudienceRow = { id: string; owner_id: string; visibility: "private" | "selected" | "all_users" };
+
+/** The caller's level on a folder (§D.3): owner, or view/edit through its shares and groups, role-capped. */
+export function folderLevel(folderId: string, userId: string): ItemLevel {
+  const folder = db.query("SELECT id, owner_id, visibility FROM folders WHERE id = ?").get(folderId) as FolderAudienceRow | null;
+  if (!folder) return "none";
+  return audienceLevel({ kind: "folder", id: folder.id, ownerId: folder.owner_id, visibility: folder.visibility, audienceLevel: "view", memberTable: "folder_shares", memberColumn: "folder_id" }, userId);
+}
+
+/**
+ * The caller's level on a note (§D.3, D274): the owner; for a note-level override its own shares and
+ * groups; otherwise its immediate folder's (no cascade, D271). `all_users` always reads. An `edit`
+ * level writes the draft and publishes; only the owner shares, moves, restores versions, or deletes.
+ */
+export function noteLevel(note: Pick<NoteRow, "id" | "owner_id" | "folder_id" | "visibility" | "sharing_override" | "deleted_at">, userId: string): ItemLevel {
+  if (note.deleted_at) return "none";
+  if (note.owner_id === userId) return audienceLevel({ kind: "note", id: note.id, ownerId: note.owner_id, visibility: "private", audienceLevel: "view", memberTable: "note_shares", memberColumn: "note_id" }, userId);
+  if (note.sharing_override) {
+    return audienceLevel({ kind: "note", id: note.id, ownerId: note.owner_id, visibility: note.visibility as FolderAudienceRow["visibility"], audienceLevel: "view", memberTable: "note_shares", memberColumn: "note_id" }, userId);
+  }
+  return note.folder_id ? folderLevel(note.folder_id, userId) : "none";
 }
 
 export function ownedNote(noteId: string, userId: string) {

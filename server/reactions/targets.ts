@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { readableBoardPredicate } from "../tasks/access";
+import { boardLevel, readableBoardPredicate, type BoardRow } from "../tasks/access";
+import { atLeast } from "../access/levels";
 import { canWriteContent } from "../team/userRole";
 
 /**
@@ -46,7 +47,11 @@ registerReactionTarget({
       WHERE m.id = $targetId AND ${readableBoardPredicate}`).get({ targetId, userId }) as { board_id: string } | null;
     return row ? { lockKey: `board:${row.board_id}` } : null;
   },
-  // Any reader of the card who may write content may comment, so may react. Viewers and guests are
+  // Anyone who may comment on the card may react (D272: `comment` and up). Viewers and guests are
   // refused by the HTTP write gate first; this is the defence in depth behind it.
-  writable: (_targetId, userId) => canWriteContent(userId)
+  writable: (targetId, userId) => {
+    if (!canWriteContent(userId)) return false;
+    const board = db.query("SELECT b.* FROM card_comments m JOIN cards k ON k.id = m.card_id JOIN boards b ON b.id = k.board_id WHERE m.id = ?").get(targetId) as BoardRow | null;
+    return board !== null && atLeast(boardLevel(board, userId), "comment");
+  }
 });

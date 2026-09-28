@@ -1,6 +1,6 @@
 import { audit, db, now } from "../db";
 import { relationTypeFor, storedRelation, type RelationKind, type RelationType, type StoredRelation } from "./relations";
-import { getBoard, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
+import { getBoard, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
 
@@ -128,10 +128,10 @@ export function insertRelation(userId: string, cardId: string, otherCardId: stri
 
 /** POST /cards/:k/relations: 201 `{ relation }`, seen from `k`. Never changes either card's revision. */
 export async function createRelation(userId: string, cardId: string, input: { type: RelationType; cardId: string }) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   if (input.cardId === cardId) throw new TaskError(400, "A card cannot relate to itself");
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
+    requireCardAt(cardId, userId, "edit");
     const created = db.transaction(() => {
       const inserted = insertRelation(userId, cardId, input.cardId, input.type);
       audit(userId, null, "task.relation_create", { boardId: board.id, cardId, relationId: inserted.id, kind: inserted.kind });
@@ -146,9 +146,9 @@ export async function createRelation(userId: string, cardId: string, input: { ty
  * A restricted relation may be removed too: it is metadata on the caller's own card.
  */
 export async function deleteRelation(userId: string, cardId: string, relationId: string) {
-  const { board } = requireReadableCard(cardId, userId);
+  const { board } = requireCardAt(cardId, userId, "edit");
   return withBoardLock(board.id, () => {
-    requireReadableCard(cardId, userId);
+    requireCardAt(cardId, userId, "edit");
     const row = db.query("SELECT id, kind FROM card_relations WHERE id = ?1 AND (source_card_id = ?2 OR target_card_id = ?2)").get(relationId, cardId) as
       { id: string; kind: RelationKind } | null;
     if (!row) throw new TaskError(404, "Relation not found");

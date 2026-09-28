@@ -15,6 +15,7 @@ import { withResourceLock } from "./storage";
 import { purgeAfterFrom } from "./bin";
 import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
 import { mailShared, shareMembers } from "./mail/triggers";
+import { GUEST_SHARE_DISABLED, guestShareBlocked, writeDirectShares } from "./access/shares";
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
@@ -625,14 +626,14 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
       if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
     }
+    if (body.visibility === "selected" && guestShareBlocked(uniqueIds)) return c.json(GUEST_SHARE_DISABLED, 400);
     return withDocumentLock(id, async () => {
       if (!ownedFileDocument(id, userId)) return notFound(c);
       db.transaction(() => {
         const before = shareMembers("document_shares", "document_id", id);
-        db.query("DELETE FROM document_shares WHERE document_id = ?").run(id);
+        // Files stay view-only (D275); group grants are left as they are.
+        writeDirectShares("document", id, body.visibility === "selected" ? uniqueIds.map((recipientId) => ({ userId: recipientId, level: "view" as const })) : []);
         if (body.visibility === "selected") {
-          const statement = db.query("INSERT INTO document_shares (document_id, user_id, created_at) VALUES (?, ?, ?)");
-          for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
           // "Shared with you" mail (outbound email #25).
           mailShared(userId, "file", id, before, uniqueIds);
         }

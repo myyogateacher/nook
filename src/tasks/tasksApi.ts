@@ -3,6 +3,7 @@ import { uploadErrorMessage } from "../files/filesApi";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import type { BoardStructure, BoardTemplateId } from "../../shared/boardStructure";
 import type { ReactionAggregate, ReactionKey } from "../../shared/reactions";
+import type { ItemLevel } from "../access/accessLevels";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -14,6 +15,10 @@ export type BoardSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   visibility: BoardVisibility;
+  /** The `all_users` audience level (Wave 32, D272); older servers omit it (edit). */
+  share_role?: "view" | "comment" | "edit";
+  /** The caller's level on the board (Wave 32, §D.3); older servers omit it (every member edits, D38). */
+  level?: ItemLevel;
   card_count: number;
   /** Level names, work level, and sprints (migration 019); older servers omit it (Flat). */
   structure?: BoardStructure;

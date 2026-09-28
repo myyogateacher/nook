@@ -107,10 +107,29 @@ describe("mail wrapper", () => {
       logs.restore();
     }
     expect(logs.lines).toEqual([
-      `Mail failed: purpose=test recipient=${mail.recipientHash("fail@example.test")} error=validation_error`,
+      `Mail failed: purpose=test recipient=${mail.recipientHash("fail@example.test")} error=validation_error status=422`,
       `Mail failed: purpose=test recipient=${mail.recipientHash("slow@example.test")} error=timeout`
     ]);
     expect(mail.MAIL_TIMEOUT_MS).toBe(10_000);
+  });
+
+  test("the Resend SDK never logs a provider error body; only status and a hashed recipient are logged (L3)", async () => {
+    // A fake provider that fails the way Resend does, quoting the recipient in its error body.
+    const provider = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ name: "validation_error", statusCode: 422, message: "Invalid `to` field: leak@example.test" }, { status: 422 })
+    });
+    mail.setMailTransportForTests(mail.resendTransport("re_placeholder", `http://localhost:${provider.port}`));
+    expect(process.env.NODE_ENV).not.toBe("production");
+    const logs = captureLogs();
+    try {
+      expect(await mail.sendMail({ to: "leak@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null })).toEqual({ sent: false, reason: "failed" });
+    } finally {
+      logs.restore();
+      provider.stop(true);
+    }
+    expect(logs.lines).toEqual([`Mail failed: purpose=test recipient=${mail.recipientHash("leak@example.test")} error=validation_error status=422`]);
+    for (const secret of ["leak@example.test", "Resend API Error", "re_placeholder"]) expect(logs.lines.join("\n")).not.toContain(secret);
   });
 
   test("rate limits: 5 an hour per recipient, 20 an hour per sender, 200 a day per instance", async () => {

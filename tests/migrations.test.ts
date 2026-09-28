@@ -740,4 +740,19 @@ describe("database migrations", () => {
     ]);
     db.close();
   });
+
+  test("migration 027 adds the pre-agent draft base to proposals; existing rows keep an unknown base", () => {
+    const db = openDb();
+    runMigrations(db);
+    const columns = (db.query("PRAGMA table_info(proposals)").all() as Array<{ name: string }>).map((column) => column.name);
+    expect(columns).toEqual(expect.arrayContaining(["base_state", "base_draft_revision", "base_draft_markdown", "base_draft_key_id"]));
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 27").get() as { name: string }).name).toBe("proposal_base");
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'o@example.test', 'Owner', 'x', '2026-01-01')").run();
+    const insert = (id: string, state: string | null) => db.query(`INSERT INTO proposals (id, owner_id, key_name, kind, target_type, target_id, title, payload, created_at, expires_at, base_state)
+      VALUES (?, 'u1', 'k', 'note_draft', 'note', 'n', 'T', '{}', '2026-01-01', '2026-02-01', ?)`).run(id, state);
+    insert("p1", null);
+    insert("p2", "draft");
+    expect(() => insert("p3", "weird")).toThrow();
+    db.close();
+  });
 });

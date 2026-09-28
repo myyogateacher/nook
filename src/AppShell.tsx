@@ -47,6 +47,20 @@ function InboxButton({ nav }: { nav: InboxNav }) {
   return <button className="app-account-button app-account-inbox" onClick={nav.openInbox} aria-label={label} title="Inbox"><Inbox /><span className="app-account-label">Inbox</span>{count > 0 && <span className="app-account-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>}</button>;
 }
 
+/**
+ * The Inbox row of a sidebar account footer (Notes, review L2): Notes renders its own shell, so on
+ * a phone this row is its way into the Inbox. Same rules as the header button: hidden for guests
+ * and when the Inbox module is off; the badge is the same bounded pending count.
+ */
+export function SidebarInboxRow({ nav }: { nav: Pick<InboxNav, "role" | "openInbox"> }) {
+  const enabled = useModuleEnabled("inbox");
+  const shown = enabled && nav.role !== undefined && nav.role !== "guest";
+  const count = useInboxCount(shown);
+  if (!shown) return null;
+  const label = count > 0 ? `Inbox, ${count >= 100 ? "100 or more" : count} pending` : "Inbox";
+  return <button className="footer-bin footer-inbox" onClick={nav.openInbox} aria-label={label}><Inbox />Inbox{count > 0 && <span className="footer-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>}</button>;
+}
+
 /** Admins see how many accounts are blocked: one lazy look on mount, like the Bin count. */
 function useBlockedCount(enabled: boolean) {
   const [count, setCount] = useState(0);

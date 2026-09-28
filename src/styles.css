@@ -108,6 +108,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .footer-signout, .footer-bin { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: #77777f; text-align: left; }
 .footer-signout:hover, .footer-bin:hover { background: #171719; color: #ddd; }
 .footer-signout svg, .footer-bin svg { width: 16px; }
+.footer-badge { margin-left: auto; min-width: 20px; padding: 1px 6px; border-radius: 999px; background: #2a2a2f; color: #e3e3e5; font-size: .72rem; font-weight: 600; text-align: center; }
 
 .note-pane { display: flex; flex-direction: column; background: #111113; border-right: 1px solid var(--border); }
 .note-pane-header { padding: 22px 18px 14px; position: relative; }

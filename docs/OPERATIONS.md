@@ -76,7 +76,7 @@ Nook can send email through [Resend](https://resend.com). Invites are the first 
 2. In `.env`, set `RESEND_API_KEY` and `MAIL_FROM` (an address on that domain, or `Nook <nook@your-domain>`). Compose passes both through. Restart the container.
 3. In the Resend dashboard, keep **click tracking off** for the domain. Tracked links would send the invite link through Resend's redirector. Nook's messages contain no images and no tracking of their own.
 
-Limits: 5 messages an hour per recipient, 20 an hour per admin, 200 a day per instance, and a 10 second timeout per send. Logs show a hashed recipient and Resend's message id, never the address, subject, body, or key. A provider outage never blocks the main action; the admin can still copy the link. An invite email goes only to the address the invite is bound to.
+Limits: 5 messages an hour per recipient, 20 an hour per admin, 200 a day per instance, and a 10 second timeout per send. Logs show a hashed recipient and Resend's message id (or, for a failure, Resend's error name and HTTP status), never the address, subject, body, or key. The Resend SDK's own error logging is switched off: outside `NODE_ENV=production` it would print the provider's whole error body, which can quote the address. A provider outage never blocks the main action; the admin can still copy the link. An invite email goes only to the address the invite is bound to.
 
 ## Configuration
 

@@ -21,7 +21,7 @@ import {
   type ProposalRef,
   type ProposalSummary
 } from "./inboxApi";
-import { actionLabel, BULK_CONFIRM_OVER, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, statusLabel } from "./inboxFormat";
+import { actionLabel, BULK_CONFIRM_OVER, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, rejectedText, rejectEffectText, statusLabel } from "./inboxFormat";
 import "./inbox.css";
 
 type InboxRoute = Extract<Route, { app: "inbox" }>;
@@ -40,7 +40,7 @@ type InboxAppProps = {
 };
 
 type Dialog =
-  | { kind: "reject"; ids: string[]; label: string }
+  | { kind: "reject"; ids: string[]; label: string; effect: string }
   | { kind: "approve-all"; items: ProposalSummary[] };
 
 type Banner = { text: string; ref?: ProposalRef | null; tone: "ok" | "warn" };
@@ -209,7 +209,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
     try {
       if (ids.length === 1) {
         const result = await rejectProposal(ids[0]!, reason || undefined);
-        setBanner({ text: result.draftDiscarded ? "Rejected. The agent's draft was discarded." : "Rejected", tone: "ok" });
+        setBanner({ text: rejectedText(result.draft), tone: "ok" });
       } else {
         const { results } = await bulkProposals("reject", ids, reason || undefined);
         setBanner({ text: bulkSummary(results), tone: "ok" });
@@ -262,7 +262,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       }
       if (!detail || detail.status !== "pending" || busy) return;
       if (key === "a" && canWrite && !detail.restricted) void approve(detail, detail.position?.nextId);
-      if (key === "r") setDialog({ kind: "reject", ids: [detail.id], label: detail.title });
+      if (key === "r") setDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -317,7 +317,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
             <header className="inbox-group-header">
               <h2 id={headingId}>{groupTitle(group)}<span className="inbox-group-count"> · {group.items.length}</span></h2>
               {status === "pending" && pending.length > 1 && <div className="inbox-group-actions">
-                <button type="button" className="inbox-action" onClick={() => setDialog({ kind: "reject", ids: pending.map((item) => item.id), label: `${pending.length} proposals from ${groupTitle(group)}` })} disabled={busy !== null}>Reject all</button>
+                <button type="button" className="inbox-action" onClick={() => setDialog({ kind: "reject", ids: pending.map((item) => item.id), label: `${pending.length} proposals from ${groupTitle(group)}`, effect: rejectEffectText(pending) })} disabled={busy !== null}>Reject all</button>
                 {canWrite && <button type="button" className="inbox-action primary" onClick={() => requestApproveAll(pending)} disabled={busy !== null}><CheckCheck />Approve all {pending.length}</button>}
               </div>}
             </header>
@@ -330,7 +330,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
                   canApprove={canWrite}
                   onOpen={() => { if (item.id !== route.proposalId) go({ view: route.view, proposalId: item.id }, Boolean(route.proposalId) && window.matchMedia?.("(min-width: 761px)").matches); }}
                   onApprove={() => { void approve(item); }}
-                  onReject={() => setDialog({ kind: "reject", ids: [item.id], label: item.title })}
+                  onReject={() => setDialog({ kind: "reject", ids: [item.id], label: item.title, effect: rejectEffectText([item]) })}
                 />
               </li>)}
             </ul>
@@ -343,7 +343,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
         {route.proposalId && detail?.id === route.proposalId
           ? <ProposalView proposal={detail} busy={busy !== null} canApprove={canWrite} onBack={back} onOpenPath={onOpenPath}
             onApprove={() => { void approve(detail, detail.position?.nextId); }}
-            onReject={() => setDialog({ kind: "reject", ids: [detail.id], label: detail.title })} />
+            onReject={() => setDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) })} />
           : route.proposalId
             ? detailError ? <div className="inbox-state inbox-error" role="alert"><p>{detailError}</p><button className="inbox-action" onClick={() => { void loadDetail(route.proposalId!); }}><RotateCcw />Try again</button></div>
               : <p className="inbox-loading" role="status">Loading…</p>
@@ -351,7 +351,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       </section>
     </div>
 
-    {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} onClose={() => setDialog(null)} onReject={(reason) => reject(dialog.ids, reason)} />}
+    {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={() => setDialog(null)} onReject={(reason) => reject(dialog.ids, reason)} />}
     {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={() => setDialog(null)} onConfirm={() => { void approveAll(dialog.items); }} />}
   </main>;
 }
@@ -468,7 +468,8 @@ function Preview({ proposal }: { proposal: ProposalDetail }) {
   </section>;
 }
 
-function RejectDialog({ label, count, onClose, onReject }: { label: string; count: number; onClose: () => void; onReject: (reason: string) => Promise<void> }) {
+/** `effect` says exactly what the reject does (rejectEffectText, review H1). */
+export function RejectDialog({ label, count, effect, onClose, onReject }: { label: string; count: number; effect: string; onClose: () => void; onReject: (reason: string) => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useHistoryDialogGuard(true, onClose);
@@ -497,7 +498,7 @@ function RejectDialog({ label, count, onClose, onReject }: { label: string; coun
       </header>
       <form onSubmit={submit}>
         <p className="inbox-dialog-subject">{label}</p>
-        <p>Nothing changes. A note draft is discarded only if it is still the agent's version.</p>
+        <p>{effect}</p>
         <label className="inbox-field">Reason (optional, the agent can read it)<textarea name="reason" maxLength={200} rows={2} autoFocus /></label>
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="inbox-dialog-actions">

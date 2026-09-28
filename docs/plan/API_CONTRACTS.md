@@ -1362,6 +1362,7 @@ type ProposalSummary = {
   createdAt: string; expiresAt: string; resolvedAt: string | null;
   resultCode: string | null; rejectReason: string | null;
   ref: { type: "note" | "card" | "event" | "row"; id: string; href: string } | null; // what an approve produced
+  rejectEffect?: "restore" | "discard" | "keep"; // pending note_draft only: what a reject would do to the draft now
 };
 type ProposalPreview =
   | { restricted: true }
@@ -1377,8 +1378,8 @@ Guests get **404** on every Inbox route (and the write gate refuses their writes
 | --- | --- | --- | --- |
 | `GET /api/inbox/proposals` | `status=pending\|resolved` (default pending), `group=run\|none`, `cursor`, `limit ≤ 50` | 200 `{ groups: [{ routine: null, run: null, key: { name } \| null, items: ProposalSummary[] }], nextCursor }`. Pending: newest group first, items in submission order. Resolved: newest resolved first | 400 (bad query or cursor) |
 | `GET /api/inbox/proposals/:id` | | 200 `{ proposal: ProposalSummary & { preview, position?: { index, of, nextId } } }`; the preview is computed now, for the viewer, never stored | 404 |
-| `POST /api/inbox/proposals/:id/approve` | `{}` | 200 `{ id, status: "applied", ref }` | 409 `{ status: "failed", code }` (nothing applied); 409 `NOT_PENDING` `{ status }`; 403 `ROLE_READ_ONLY`; 404 |
-| `POST /api/inbox/proposals/:id/reject` | `{ reason?: string }` (the user's words, cleaned and cut to 200; the agent can read it) | 200 `{ id, status: "rejected", draftDiscarded? }`; a `note_draft` discards the draft only while it is still the proposed revision and the user may write | 409 `NOT_PENDING`; 404 |
+| `POST /api/inbox/proposals/:id/approve` | `{}` | 200 `{ id, status: "applied", ref }` | 409 `{ status: "failed", code }` (nothing applied); 409 `NOT_PENDING` `{ status }`; 409 `KEY_REVOKED` `{ status: "superseded" }` (the suggesting key was revoked; revoking a key supersedes its pending proposals with `result_code` KEY_REVOKED, and note drafts stay in their notes); 409 `EXPIRED` `{ status: "expired" }` (past `expiresAt`, marked expired at once, before the hourly sweep); 403 `ROLE_READ_ONLY`; 404 |
+| `POST /api/inbox/proposals/:id/reject` | `{ reason?: string }` (the user's words, cleaned and cut to 200; the agent can read it) | 200 `{ id, status: "rejected", draft?, draftDiscarded? }`. A `note_draft` acts only while the draft is still the proposed revision and the user may write: `draft: "restored"` writes back the draft from before the agent's write as a new revision (audited `inbox.draft_restored`); `"discarded"` drops the agent's draft of a published note that had none; otherwise `"kept"` (a never-published note is never binned by a reject; a draft edited since is left alone). `draftDiscarded` is `draft === "discarded"` | 409 `NOT_PENDING`; 404 |
 | `POST /api/inbox/proposals/bulk` | `{ action: "approve" \| "reject", ids: uuid[1..50] }` or `{ action, runId }`, `reason?` | 200 `{ results: [{ id, status, code?, ref?, error? }] }`, applied **one at a time in submission order**, never all-or-nothing; unknown ids are `not_found` | 400; 403 `ROLE_READ_ONLY` (approve by a read-only role) |
 | `GET /api/inbox/count` | | 200 `{ pending }`, at most 100 (`SELECT 1 … LIMIT 100`, T51) | |
 | `GET /api/inbox/settings`, `PUT /api/inbox/settings` | `{ push: boolean }` | 200 `{ push }`: whether new-proposal notifications are also pushed (off by default, O5) | 400 |

@@ -8,8 +8,9 @@
  *   and 200 a day per instance. Attempts count, successful or not, so a failing provider cannot be
  *   hammered.
  * - A 10 second timeout per send.
- * - Logs name the purpose, a hashed recipient, and the provider's message id. Never the address,
- *   the subject, the body (an invite link is a credential), or the API key.
+ * - Logs name the purpose, a hashed recipient, and the provider's message id (or error name and
+ *   HTTP status). Never the address, the subject, the body (an invite link is a credential), or
+ *   the API key. The Resend SDK's own error logging is silenced (see `quietResend`).
  * - Tests install a transport with `setMailTransportForTests`, so the suite never reaches the network.
  */
 import { createHash } from "node:crypto";
@@ -33,8 +34,21 @@ export const NOT_CONFIGURED_MESSAGE = "Email is not configured";
 /** A short, stable, non-reversible handle for a recipient in logs. */
 export const recipientHash = (address: string) => createHash("sha256").update(address.trim().toLowerCase()).digest("hex").slice(0, 12);
 
-function resendTransport(apiKey: string): MailTransport {
-  const client = new Resend(apiKey);
+/**
+ * A Resend client that never logs. The SDK has no logger option, and outside NODE_ENV=production
+ * it prints the provider's whole error body with console.error, which can quote the recipient's
+ * address (review L3). Its private `logError` is shadowed on the instance; `sendMail` logs the
+ * failure itself with the error name, the HTTP status, and a hashed recipient only.
+ */
+function quietResend(apiKey: string, baseUrl?: string) {
+  const client = new Resend(apiKey, baseUrl ? { baseUrl } : undefined);
+  Object.defineProperty(client, "logError", { value: () => undefined });
+  return client;
+}
+
+/** The Resend transport; `baseUrl` lets tests point it at a local fake provider. */
+export function resendTransport(apiKey: string, baseUrl?: string): MailTransport {
+  const client = quietResend(apiKey, baseUrl);
   return async (message, signal) => {
     // `signal` is passed through to fetch by the SDK's request options.
     const options = { idempotencyKey: message.idempotencyKey, signal } as { idempotencyKey: string };
@@ -130,7 +144,8 @@ export async function sendMail(message: MailMessage, options: { purpose: string;
     return { sent: true, id };
   } catch (error) {
     const code = error instanceof MailProviderError ? error.providerCode : error instanceof Error ? error.name : "unknown_error";
-    console.error(`Mail failed: purpose=${options.purpose} recipient=${handle} error=${code}`);
+    const status = error instanceof MailProviderError && Number.isInteger(error.status) ? ` status=${error.status}` : "";
+    console.error(`Mail failed: purpose=${options.purpose} recipient=${handle} error=${code}${status}`);
     return { sent: false, reason: "failed" };
   }
 }

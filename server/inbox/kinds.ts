@@ -101,6 +101,8 @@ function readCheck<T>(operation: () => T): T {
 /** The approver runs the tool's handler as themselves; the key id marks "Changed by key" badges. */
 function approverKey(approverId: string, proposal: StoredProposal): McpKeyContext {
   if (!proposal.key_id) throw new McpToolError("NOT_FOUND", "The key that suggested this change no longer exists");
+  // Rows of revoked keys persist; a revoked key never acts, even through its owner's approve (M1).
+  if (db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND revoked_at IS NOT NULL").get(proposal.key_id)) throw new McpToolError("NOT_FOUND", "The key that suggested this change was revoked");
   return { keyId: proposal.key_id, userId: approverId, name: proposal.key_name, scopes: [] };
 }
 
@@ -117,11 +119,17 @@ function text(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-const userNames = (ids: readonly string[]) => {
+/**
+ * Assignee names for a preview. Only people who could be assigned on the board resolve (active
+ * and able to open it, as `requireAssignableUser` checks): an agent's payload cannot turn a
+ * stranger's or a blocked account's id into their name (review L4). Anyone else is "Unknown person".
+ */
+const userNames = (ids: readonly string[], boardId: string) => {
   if (!ids.length) return [];
-  const rows = db.query(`SELECT id, display_name FROM users WHERE id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(ids)) as Array<{ id: string; display_name: string }>;
-  const names = new Map(rows.map((row) => [row.id, row.display_name]));
-  return ids.map((id) => names.get(id.toLowerCase()) ?? names.get(id) ?? "Unknown person");
+  const rows = db.query(`SELECT id, display_name FROM users WHERE id IN (SELECT value FROM json_each(?)) AND disabled_at IS NULL`)
+    .all(JSON.stringify(ids.map((id) => id.toLowerCase()))) as Array<{ id: string; display_name: string }>;
+  const names = new Map(rows.filter((row) => readableBoard(boardId, row.id)).map((row) => [row.id, row.display_name]));
+  return ids.map((id) => names.get(id.toLowerCase()) ?? "Unknown person");
 };
 
 const cardTitleFor = (cardId: unknown, viewerId: string) => typeof cardId === "string" ? readableCard(cardId.toLowerCase(), viewerId)?.card.title ?? "A card you cannot open" : null;
@@ -131,7 +139,7 @@ const CARD_FIELDS: Array<[string, string]> = [["title", "Title"], ["description"
 
 function cardValue(field: string, value: unknown, boardId: string, viewerId: string): string | null {
   if (value === null || value === undefined) return null;
-  if (field === "assigneeIds") return text(userNames(value as string[]));
+  if (field === "assigneeIds") return text(userNames(value as string[], boardId));
   if (field === "parentId") return cardTitleFor(value, viewerId);
   if (field === "sprintId") return sprintNames(boardId).get(lower(value)) ?? "Unknown sprint";
   return text(value);

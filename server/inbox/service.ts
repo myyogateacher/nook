@@ -4,9 +4,9 @@ import { consumeMcpLimits } from "../mcpRateLimit";
 import { hasScope } from "../mcpScopes";
 import { McpToolError, type McpErrorCode, type McpKeyContext } from "../mcpToolKit";
 import { canWriteContent } from "../team/userRole";
-import { discardDraft, DraftActionError } from "../noteDrafts";
+import { DraftActionError, rejectAgentDraft, type RejectDraftOutcome } from "../noteDrafts";
 import { isProposalKind, PROPOSAL_KIND_DEFS, type ProposalKind, type ProposalPreview, type ProposalRef, type StoredProposal } from "./kinds";
-import { PROPOSAL_EXPIRE_MS, type NoteDraftPayload } from "./noteDraftProposals";
+import { PROPOSAL_EXPIRE_MS, rejectEffectFor, type NoteDraftPayload, type ProposalBaseRow, type RejectEffect } from "./noteDraftProposals";
 import { cleanLine, cleanText } from "./text";
 
 /**
@@ -52,7 +52,7 @@ type ProposalRow = {
   kind: ProposalKind; target_type: string; target_id: string; title: string; rationale: string | null; payload: string;
   status: ProposalStatus; result_code: string | null; result_ref: string | null; reject_reason: string | null;
   reviewed_by: string | null; created_at: string; expires_at: string; resolved_at: string | null; claimed_at: string | null;
-};
+} & ProposalBaseRow;
 
 const stored = (row: ProposalRow): StoredProposal => ({ kind: row.kind, payload: JSON.parse(row.payload) as Record<string, unknown>, key_id: row.key_id, key_name: row.key_name, target_id: row.target_id });
 const parseRef = (value: string | null): ProposalRef | null => {
@@ -199,7 +199,17 @@ export type ProposalSummary = {
   id: string; kind: ProposalKind; kindLabel: string; title: string; rationale: string | null; status: ProposalStatus;
   targetLabel: string; restricted: boolean; targetHref: string | null; digest: string; keyName: string;
   createdAt: string; expiresAt: string; resolvedAt: string | null; resultCode: string | null; rejectReason: string | null; ref: ProposalRef | null;
+  /** A pending note_draft only: what rejecting it would do to the note now (review H1). */
+  rejectEffect?: RejectEffect;
 };
+
+const noteState = db.query("SELECT draft_revision, current_version, deleted_at FROM notes WHERE id = ? AND owner_id = ?");
+
+/** What rejecting this pending note_draft would do now, for the reject dialog's copy. */
+function noteDraftRejectEffect(row: ProposalRow, viewerId: string): RejectEffect {
+  const note = noteState.get(row.target_id, viewerId) as { draft_revision: number | null; current_version: number; deleted_at: string | null } | null;
+  return rejectEffectFor(note, (stored(row).payload as unknown as NoteDraftPayload).revision, row, canWriteContent(viewerId));
+}
 
 function summary(row: ProposalRow, viewerId: string): ProposalSummary {
   const kind = PROPOSAL_KIND_DEFS[row.kind];
@@ -210,7 +220,8 @@ function summary(row: ProposalRow, viewerId: string): ProposalSummary {
     id: row.id, kind: row.kind, kindLabel: kind.label, title: row.title, rationale: row.rationale, status: row.status,
     targetLabel: label ?? "restricted", restricted: label === null, targetHref: label === null ? null : kind.targetHref(proposal), digest: kind.digest(proposal.payload), keyName: row.key_name,
     createdAt: row.created_at, expiresAt: row.expires_at, resolvedAt: row.resolved_at, resultCode: row.result_code, rejectReason: row.reject_reason,
-    ref: parseRef(row.result_ref)
+    ref: parseRef(row.result_ref),
+    ...(row.kind === "note_draft" && row.status === "pending" ? { rejectEffect: noteDraftRejectEffect(row, viewerId) } : {})
   };
 }
 
@@ -317,6 +328,9 @@ async function withProposalLock<T>(proposalId: string, operation: () => Promise<
   }
 }
 
+const revokedKey = db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND revoked_at IS NOT NULL");
+const keyRevoked = (keyId: string) => revokedKey.get(keyId) !== null;
+
 const notPending = (row: Pick<ProposalRow, "status">) => new InboxError(409, `This proposal is already ${row.status}`, "NOT_PENDING", { status: row.status });
 
 /**
@@ -333,8 +347,22 @@ export async function approveProposal(approverId: string, proposalId: string): P
     if (!canWriteContent(approverId)) throw new InboxError(403, "Your team role is read-only", "ROLE_READ_ONLY");
     if (row.status !== "pending") throw notPending(row);
     const timestamp = now();
-    const claimed = db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending'").run(timestamp, id, approverId);
-    if (claimed.changes !== 1) throw notPending(ownedProposal(approverId, id));
+    if (row.key_id && keyRevoked(row.key_id)) {
+      // Revoking a key supersedes its pending proposals; this catches any left pending (M1).
+      db.query("UPDATE proposals SET status = 'superseded', result_code = 'KEY_REVOKED', resolved_at = ?, base_draft_markdown = NULL WHERE id = ? AND status = 'pending'").run(timestamp, id);
+      throw new InboxError(409, "The key that suggested this change was revoked", "KEY_REVOKED", { status: "superseded" });
+    }
+    // Past expires_at a proposal is expired even before the hourly sweep reaches it (L1).
+    const claimed = db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending' AND expires_at > ?").run(timestamp, id, approverId, timestamp);
+    if (claimed.changes !== 1) {
+      const expired = db.query("UPDATE proposals SET status = 'expired', resolved_at = ?, base_draft_markdown = NULL WHERE id = ? AND owner_id = ? AND status = 'pending' AND expires_at <= ?")
+        .run(timestamp, id, approverId, timestamp);
+      if (expired.changes === 1) {
+        audit(approverId, null, "proposal.expired", { count: 1 });
+        throw new InboxError(409, "This proposal expired", "EXPIRED", { status: "expired" });
+      }
+      throw notPending(ownedProposal(approverId, id));
+    }
     const kind = PROPOSAL_KIND_DEFS[row.kind];
     try {
       const ref = await withProposalAuditContext({ via: "proposal", proposalId: id, keyId: row.key_id }, () => kind.apply(approverId, stored(row)));
@@ -360,9 +388,12 @@ export async function approveProposal(approverId: string, proposalId: string): P
 }
 
 /**
- * Rejects a pending proposal with the owner's optional reason (kept for the agent, §4.3). A
- * note_draft's draft is discarded only while it is still the proposed revision and the owner may
- * still write; otherwise only the proposal changes (T130). Viewers keep reject (allowlisted, D152).
+ * Rejects a pending proposal with the owner's optional reason (kept for the agent, §4.3). Viewers
+ * keep reject (allowlisted, D152). A note_draft undoes the agent's write only while the draft is
+ * still the proposed revision and the owner may still write (T130, review H1): the draft from
+ * before the agent's write is restored (`draft: "restored"`), or a published note that had none
+ * drops the agent's draft (`"discarded"`). Otherwise the draft stays (`"kept"`): a never-published
+ * note is never binned by a reject, and a draft someone edited since is left alone.
  */
 export async function rejectProposal(userId: string, proposalId: string, reason?: string) {
   const id = proposalId.toLowerCase();
@@ -374,17 +405,17 @@ export async function rejectProposal(userId: string, proposalId: string, reason?
       .run(cleanReason, userId, now(), id, userId);
     if (result.changes !== 1) throw notPending(ownedProposal(userId, id));
     audit(userId, null, "proposal.rejected", { proposalId: id, kind: row.kind, keyId: row.key_id });
-    let draftDiscarded = false;
+    let draft: RejectDraftOutcome = "kept";
     if (row.kind === "note_draft" && canWriteContent(userId)) {
       const { noteId, revision } = stored(row).payload as unknown as NoteDraftPayload;
       try {
-        const discarded = await discardDraft(userId, noteId, revision) as { kept?: boolean };
-        draftDiscarded = !discarded.kept;
+        draft = await rejectAgentDraft(userId, noteId, { proposalId: id, revision, base: row });
       } catch (error) {
         if (!(error instanceof DraftActionError)) throw error;
       }
     }
-    return { id, status: "rejected" as const, ...(row.kind === "note_draft" ? { draftDiscarded } : {}) };
+    if (row.base_draft_markdown !== null) db.query("UPDATE proposals SET base_draft_markdown = NULL WHERE id = ?").run(id);
+    return { id, status: "rejected" as const, ...(row.kind === "note_draft" ? { draft, draftDiscarded: draft === "discarded" } : {}) };
   });
 }
 
@@ -438,6 +469,8 @@ export function sweepProposals(nowMs = Date.now()) {
     const interrupted = db.query("UPDATE proposals SET status = 'failed', result_code = 'INTERRUPTED', resolved_at = ? WHERE status = 'applying' AND claimed_at <= ?")
       .run(timestamp, new Date(nowMs - APPLYING_TIMEOUT_MS).toISOString()).changes;
     const purged = db.query("DELETE FROM proposals WHERE status NOT IN ('pending', 'applying') AND resolved_at <= ?").run(new Date(nowMs - RESOLVED_RETENTION_MS).toISOString()).changes;
+    // A resolved note_draft no longer needs the draft text it could have restored (H1).
+    db.query("UPDATE proposals SET base_draft_markdown = NULL WHERE status NOT IN ('pending', 'applying') AND base_draft_markdown IS NOT NULL").run();
     return { expired, interrupted, purged };
   })();
 }

@@ -1,7 +1,8 @@
 import { ownedNote } from "./access";
 import { purgeAfterFrom, purgeLocked } from "./bin";
 import { audit, db, ensureDefaultFolder, now, type NoteRow } from "./db";
-import { recordNoteDraftProposal, resolveNoteDraftProposals } from "./inbox/noteDraftProposals";
+import { config } from "./config";
+import { recordNoteDraftProposal, rejectEffectFor, resolveNoteDraftProposals, type DraftBase, type ProposalBaseRow, type RejectEffect } from "./inbox/noteDraftProposals";
 import { indexNote, unindexNote } from "./searchIndex";
 import { checksum, storage, withNoteLock } from "./storage";
 import { deriveNoteTitle } from "./validation";
@@ -35,6 +36,8 @@ export type DraftWriteResult = { revision: number; title: string; hasDelta: bool
 export async function writeDraftLocked(note: NoteRow, userId: string, markdown: string, mcpKeyId?: string): Promise<DraftWriteResult | null> {
   const nextRevision = (note.draft_revision ?? 0) + 1;
   const title = deriveNoteTitle(markdown);
+  // An agent's write records the draft it replaces, so rejecting it can give that draft back (H1).
+  const base = mcpKeyId === undefined ? null : await draftBase(note);
   await storage.writeDraft(note.id, markdown);
   const draftChecksum = checksum(markdown);
   const savedAt = now();
@@ -48,11 +51,28 @@ export async function writeDraftLocked(note: NoteRow, userId: string, markdown: 
     if (result.changes !== 1) return false;
     indexNote(note.id, "draft", title, markdown, draftChecksum);
     // An agent's draft is its pending note_draft proposal in the inbox (D149); human saves leave it.
-    if (mcpKeyId !== undefined) proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: note.id, keyId: mcpKeyId, revision: nextRevision, created: note.current_version === 0, title });
+    if (mcpKeyId !== undefined) proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: note.id, keyId: mcpKeyId, revision: nextRevision, created: note.current_version === 0, title, base: base! });
     return true;
   })();
   if (!saved) return null;
   return { revision: nextRevision, title, hasDelta: hasDraftDelta(note, draftChecksum), savedAt, ...(proposalId ? { proposalId } : {}) };
+}
+
+/**
+ * The draft of `note` as it is before a write: its revision, exact text, and the key that wrote
+ * it. The text is kept only when it passes the checksum and fits the draft size limit; otherwise
+ * it is null and a reject keeps whatever draft is there. Call under the note lock.
+ */
+async function draftBase(note: NoteRow): Promise<DraftBase> {
+  if (note.draft_revision === null) return { state: "none" };
+  let markdown: string | null = null;
+  try {
+    const text = await storage.readDraft(note.id);
+    if (note.draft_checksum && checksum(text) === note.draft_checksum && Buffer.byteLength(text, "utf8") <= config.maxMarkdownBytes) markdown = text;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return { state: "draft", revision: note.draft_revision, markdown, keyId: note.draft_mcp_key_id };
 }
 
 /**
@@ -75,7 +95,7 @@ export async function createDraftNote(userId: string, folderId: string | null, m
     if (markdown !== "") indexNote(id, "draft", title, markdown, draftChecksum);
     if (mcp) {
       audit(userId, id, "mcp.note_create", { via: "mcp", keyId: mcp.keyId });
-      proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: id, keyId: mcp.keyId, revision: 1, created: true, title });
+      proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: id, keyId: mcp.keyId, revision: 1, created: true, title, base: { state: "none" } });
     } else {
       audit(userId, id, "note.create");
     }
@@ -201,15 +221,48 @@ export async function discardDraft(userId: string, noteId: string, expectedRevis
       db.transaction(() => resolveNoteDraftProposals(noteId, { kind: "discarded", userId }))();
       return { ...binned, binned: true as const };
     }
-    const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(noteId, note.current_version) as { title: string } | null;
-    db.transaction(() => {
-      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
-        .run(versionTitle?.title ?? note.title, now(), noteId, userId);
-      unindexNote(noteId, "draft");
-      resolveNoteDraftProposals(noteId, { kind: "discarded", userId });
-    })();
-    await storage.discardDraft(noteId).catch((error) => console.error(`Could not remove discarded draft for note ${noteId}`, errorClass(error)));
-    audit(userId, noteId, "draft.discard");
+    await discardPublishedDraftLocked(note, userId);
     return { ok: true as const };
+  });
+}
+
+/** Drops the draft of a published note, back to its current version. Call under the note lock. */
+async function discardPublishedDraftLocked(note: NoteRow, userId: string) {
+  const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(note.id, note.current_version) as { title: string } | null;
+  db.transaction(() => {
+    db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
+      .run(versionTitle?.title ?? note.title, now(), note.id, userId);
+    unindexNote(note.id, "draft");
+    resolveNoteDraftProposals(note.id, { kind: "discarded", userId });
+  })();
+  await storage.discardDraft(note.id).catch((error) => console.error(`Could not remove discarded draft for note ${note.id}`, errorClass(error)));
+  audit(userId, note.id, "draft.discard");
+}
+
+export type RejectDraftOutcome = "restored" | "discarded" | "kept";
+
+/**
+ * Undoes an agent's draft write when its note_draft proposal is rejected (review H1). Decided under
+ * the note lock by `rejectEffectFor`: while the draft is still the agent's `revision`, the draft
+ * from before the agent's write is written back as a new revision (with the key that wrote it, if
+ * any; audited `inbox.draft_restored`), or a published note with no earlier draft drops the
+ * agent's draft. Otherwise nothing changes: a never-published note is never binned here, and a
+ * draft someone edited since stays as it is.
+ */
+export async function rejectAgentDraft(userId: string, noteId: string, input: { proposalId: string; revision: number; base: ProposalBaseRow }): Promise<RejectDraftOutcome> {
+  return withNoteLock(noteId, async () => {
+    const note = ownedNote(noteId, userId);
+    const effect: RejectEffect = rejectEffectFor(note, input.revision, input.base, true);
+    if (!note || effect === "keep") return "kept";
+    if (effect === "discard") {
+      await discardPublishedDraftLocked(note, userId);
+      return "discarded";
+    }
+    const saved = await writeDraftLocked(note, userId, input.base.base_draft_markdown!);
+    if (!saved) return "kept";
+    db.query("UPDATE notes SET draft_mcp_key_id = (SELECT id FROM mcp_api_keys WHERE id = ?) WHERE id = ? AND draft_revision = ?")
+      .run(input.base.base_draft_key_id, noteId, saved.revision);
+    audit(userId, noteId, "inbox.draft_restored", { proposalId: input.proposalId, revision: saved.revision, fromRevision: input.base.base_draft_revision });
+    return "restored";
   });
 }

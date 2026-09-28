@@ -29,6 +29,8 @@ export type TodayContext = {
    * Sections that mix modules (binSoon) filter their items by these (T74).
    */
   scopes?: readonly McpScope[];
+  /** The MCP key calling get_today, for sections that list only that key's own items (agent inbox T131). */
+  keyId?: string;
 };
 
 export type TodayPage<T = unknown> = { items: T[]; more: boolean };
@@ -139,6 +141,6 @@ export function addDays(date: string, days: number) {
   return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
 }
 
-export function todayContext(userId: string, tz: string, now = new Date(), scopes?: readonly McpScope[]): TodayContext {
-  return { userId, tz, today: dateInZone(now, tz), now, ...(scopes ? { scopes } : {}) };
+export function todayContext(userId: string, tz: string, now = new Date(), scopes?: readonly McpScope[], keyId?: string): TodayContext {
+  return { userId, tz, today: dateInZone(now, tz), now, ...(scopes ? { scopes } : {}), ...(keyId ? { keyId } : {}) };
 }

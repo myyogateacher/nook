@@ -89,7 +89,7 @@ async function card(session: Session, boardId: string, columnId: string, title: 
 async function expectParity(session: Session) {
   const view = await today(session);
   const notes = new Set((await json<{ notes: Array<{ id: string; is_owner: number }> }>(await request("/notes", {}, session))).notes.map((note) => note.id));
-  for (const name of ["notesRecent", "drafts", "agentDrafts"]) for (const id of ids(view.sections[name])) expect(notes.has(id)).toBe(true);
+  for (const name of ["notesRecent", "drafts"]) for (const id of ids(view.sections[name])) expect(notes.has(id)).toBe(true);
   const files = new Set((await json<{ documents: Array<{ id: string }> }>(await request("/files", {}, session))).documents.map((document) => document.id));
   for (const id of ids(view.sections.files)) expect(files.has(id)).toBe(true);
   const boards = (await tasks(session, "GET", "/boards")).body.boards as Array<{ id: string }>;
@@ -105,7 +105,8 @@ describe("GET /api/today", () => {
   test("returns every installed section, bounded, with hrefs and no bodies", async () => {
     const user = await createUser("Today shape");
     const view = await today(user, "Europe/Berlin");
-    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage"]);
+    // agentDrafts retired with the agent inbox (D158): MCP drafts are listed under proposals.
+    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage", "proposals"]);
     // Calendar (W12) is installed: a user with no calendars gets an empty section linking to /calendar.
     expect(view.sections.upcoming).toEqual({ items: [], more: false, href: "/calendar" });
     expect(view.date).toBe(dateInZone(new Date(view.generatedAt), "Europe/Berlin"));
@@ -249,15 +250,31 @@ describe("GET /api/today", () => {
     expect(ids((await expectParity(owner)).sections.notesRecent)).not.toContain(overridden);
   });
 
-  test("agent drafts are listed apart from the owner's drafts, with the key name", async () => {
+  test("agent drafts are listed apart from the owner's drafts, as proposals with the key name (D158)", async () => {
     const owner = await createUser("Today agent");
     const key = createMcpApiKey(owner.userId, "Laptop agent", ["notes:read", "notes:write-draft"]);
     const created = await createDraftNote(owner.userId, null, "# Agent summary\n\ntext", { keyId: key.id });
     const view = await expectParity(owner);
-    expect(view.sections.agentDrafts!.items).toEqual([expect.objectContaining({ id: created.id, title: "Agent summary", keyName: "Laptop agent" })]);
+    expect(view.sections.agentDrafts).toBeUndefined();
+    expect(view.sections.proposals!.items).toEqual([expect.objectContaining({ id: created.proposalId, kind: "note_draft", kindLabel: "Note draft", title: "Agent summary", keyName: "Laptop agent" })]);
+    expect(view.sections.proposals!.href).toBe("/inbox");
     expect(ids(view.sections.drafts)).not.toContain(created.id);
     const recipient = await createUser("Today agent other");
-    expect((await today(recipient)).sections.agentDrafts!.items).toEqual([]);
+    expect((await today(recipient)).sections.proposals!.items).toEqual([]);
+  });
+
+  test("proposals: ten plus more from an eleven-row fetch, never a COUNT (T51)", async () => {
+    const owner = await createUser("Today proposals");
+    const insert = db.query(`INSERT INTO proposals (id, owner_id, key_name, kind, target_type, target_id, title, payload, created_at, expires_at)
+      VALUES (?, ?, 'agent', 'card_create', 'board', 'b', ?, '{}', ?, ?)`);
+    for (let index = 0; index < 12; index += 1) insert.run(crypto.randomUUID(), owner.userId, `P${index}`, new Date(Date.now() - index * 1000).toISOString(), new Date(Date.now() + 86_400_000).toISOString());
+    const section = (await today(owner)).sections.proposals!;
+    expect(section.items.length).toBe(10);
+    expect(section.more).toBe(true);
+    expect((section.items[0] as { title: string }).title).toBe("P0");
+    const source = await Bun.file(new URL("../server/inbox/today.ts", import.meta.url)).text();
+    expect(source).not.toMatch(/COUNT\(/i);
+    db.query("DELETE FROM proposals WHERE owner_id = ?").run(owner.userId);
   });
 
   test("files: shared folders, attachments, unshare, and bin match the Files list; storage and binSoon", async () => {

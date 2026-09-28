@@ -123,8 +123,12 @@ registerTodayProvider("drafts", {
     .map((row) => ({ ...row, neverPublished: row.neverPublished === 1 })))
 });
 
-/** Whether migration 010 (MCP key scopes, W8) is present: without it there are no agent drafts, and the section is absent. */
-const hasAgentDrafts = () => (db.query("PRAGMA table_info(notes)").all() as Array<{ name: string }>).some((column) => column.name === "draft_mcp_key_id");
+/**
+ * Whether migration 010 (MCP key scopes, W8) is present: without it there are no agent drafts, and the section is absent.
+ * Retired once the agent inbox (migration 021) exists: MCP drafts are note_draft proposals in "Proposals awaiting you" (D158).
+ */
+const hasAgentDrafts = () => (db.query("PRAGMA table_info(notes)").all() as Array<{ name: string }>).some((column) => column.name === "draft_mcp_key_id")
+  && !db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'proposals'").get();
 
 registerTodayProvider("agentDrafts", {
   mcpScope: "notes:read",

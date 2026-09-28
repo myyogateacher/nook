@@ -52,7 +52,7 @@ describe("get_today MCP tool", () => {
     expect(JSON.stringify(alone.value)).not.toContain("Agent visible title");
 
     const notes = await getToday(user, ["today:read", "notes:read"]);
-    expect(Object.keys(notes.value.sections)).toEqual(["notesRecent", "drafts", "agentDrafts", "binSoon", "storage"]);
+    expect(Object.keys(notes.value.sections)).toEqual(["notesRecent", "drafts", "binSoon", "storage"]);
     expect(notes.value.sections.drafts.items).toEqual([expect.objectContaining({ id: noteId, title: "Agent visible title" })]);
     // Titles only: never a body.
     expect(JSON.stringify(notes.value)).not.toContain("secret body text");
@@ -64,7 +64,9 @@ describe("get_today MCP tool", () => {
     expect(Object.keys((await getToday(user, ["today:read", "calendar:read"])).value.sections)).toEqual(["binSoon", "upcoming", "storage"]);
     expect(Object.keys((await getToday(user, ["today:read", "calendar:write"])).value.sections)).toEqual(["binSoon", "upcoming", "storage"]);
     const all = await getToday(user, ["today:read", "notes:read", "files:read", "tasks:read"]);
-    expect(Object.keys(all.value.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "agentDrafts", "files", "binSoon", "storage"]);
+    expect(Object.keys(all.value.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "binSoon", "storage"]);
+    // Proposals need inbox:read (agent inbox D158), and list only the calling key's own (T131).
+    expect(Object.keys((await getToday(user, ["today:read", "inbox:read"])).value.sections)).toEqual(["binSoon", "storage", "proposals"]);
   });
 
   test("shares the 30-a-minute Today budget with the web, per user", async () => {

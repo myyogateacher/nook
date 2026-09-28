@@ -181,3 +181,24 @@
 @media (max-width: 760px) {
   .team-email-details div { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* Team → Groups (Wave 32, access plan §C.6). */
+.team-back.team-back-visible { min-height: 44px; display: inline-flex; align-items: center; gap: 4px; justify-self: start; border: 0; border-radius: 9px; padding: 0 10px 0 4px; background: transparent; color: #b2b2b8; font-size: .9rem; cursor: pointer; }
+.team-back.team-back-visible svg { width: 18px; }
+.team-groups-new { min-height: 44px; flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; }
+.team-groups-new svg { width: 16px; }
+.team-group-row { grid-template-columns: 40px minmax(0, 1fr) 20px; }
+.team-group-row .team-avatar svg, .team-group-page .team-avatar svg { width: 20px; height: 20px; }
+.team-group-row > svg { width: 18px; color: #7c7c83; }
+.group-member-list, .group-item-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.group-member-row, .group-item-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #242428; border-radius: 12px; padding: 6px 6px 6px 12px; background: #161618; }
+.group-item-row { padding-right: 12px; }
+.group-member-remove { width: 44px; height: 44px; flex: none; }
+.group-item-hidden { width: 15px; height: 15px; flex: none; color: #8d8d94; }
+.group-history { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.group-history li { display: flex; justify-content: space-between; gap: 12px; color: #c9c9ce; font-size: .82rem; }
+.group-history time { flex: none; color: #7c7c83; }
+.group-history-self { color: #f0c674; }
+@media (max-width: 760px) {
+  .team-groups-new { width: 100%; justify-content: center; }
+}

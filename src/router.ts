@@ -18,7 +18,8 @@ export type Route =
   // `invites` (Wave 18): the admin Invites panel at /team/invites, in the detail pane. Never with a user.
   // `email` (Wave 28): the admin Email log at /team/email, the same way.
   // `keys` and `policies` (Wave 31): Team → Keys at /team/keys and Team → Policies at /team/policies, the same way.
-  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true }
+  // `groups` (Wave 32): Team → Groups at /team/groups, and one group at /team/groups/:groupId.
+  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
@@ -135,6 +136,9 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "team" && rest.length === 1 && rest[0] === "email") return { app: "team", userId: null, email: true };
   if (app === "team" && rest.length === 1 && rest[0] === "keys") return { app: "team", userId: null, keys: true };
   if (app === "team" && rest.length === 1 && rest[0] === "policies") return { app: "team", userId: null, policies: true };
+  if (app === "team" && rest[0] === "groups" && rest.length <= 2) {
+    return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, groups: true, groupId: rest[1]!.toLowerCase() } : { app: "team", userId: null, groups: true };
+  }
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   if (app === "inbox") return parseInbox(rest);
   return { app: "home" };
@@ -182,7 +186,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
     const base = route.view === "history" ? "/inbox/history" : "/inbox";

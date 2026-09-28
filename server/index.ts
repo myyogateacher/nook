@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { serveStatic } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
@@ -30,12 +30,14 @@ import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes }
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
+import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
 import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
 import {
   draftSchema,
   folderSharingSchema,
   folderSchema,
+  invitePreviewSchema,
   JSON_BODY_LIMIT_BYTES,
   loginSchema,
   mcpApiKeySchema,
@@ -166,6 +168,12 @@ app.use("/api/auth/register", async (c, next) => {
   if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
   await next();
 });
+app.use("/api/auth/invite", async (c, next) => {
+  if (c.req.method !== "POST") return next();
+  if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);
+  if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
+  await next();
+});
 
 const authAttempts = new Map<string, { count: number; resetAt: number }>();
 function rateLimited(key: string, limit = 10) {
@@ -185,14 +193,42 @@ function rateLimited(key: string, limit = 10) {
 /** Test hook: `bun test` runs every file on one server, so the run-wide register:global bucket is shared. */
 export function resetRegistrationRateLimit() {
   authAttempts.delete("register:global");
+  authAttempts.delete("invite:global");
 }
+
+const inviteErrorResponse = (c: Context<AppEnv>, error: InviteError) => c.json({ error: error.message, code: error.code }, error.status);
+
+/**
+ * Pre-auth invite preview (D166). The token comes in the JSON body only (the link carries it in
+ * the URL fragment, which browsers never send), and is never logged.
+ */
+app.post("/api/auth/invite", async (c) => {
+  if (rateLimited("invite:global", 30)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+  const body = await parseJson(c.req.raw, invitePreviewSchema);
+  try {
+    return c.json(previewInvite(body.token));
+  } catch (error) {
+    if (error instanceof InviteError) return inviteErrorResponse(c, error);
+    throw error;
+  }
+});
 
 app.post("/api/auth/register", async (c) => {
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
-  if (!config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
-  if (rateLimited("register:global", 10)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  // The body is read first: only it can say whether an invite (D162) opens a closed instance.
   const body = await parseJson(c.req.raw, registerSchema);
+  // D162: a valid invite bypasses ALLOW_REGISTRATION and nothing else.
+  const inviteHash = body.inviteToken ? hashInviteToken(body.inviteToken) : null;
+  if (!inviteHash && !config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
+  if (rateLimited("register:global", 10)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   if (!isEmailAllowed(body.email)) return c.json({ error: "This email is not allowed to create an account" }, 403);
+  try {
+    // Checked before the account lookup, so a made-up token cannot probe which emails exist.
+    if (inviteHash && userCount > 0) inviteForRegistration(inviteHash, body.email, now());
+  } catch (error) {
+    if (error instanceof InviteError) return inviteErrorResponse(c, error);
+    throw error;
+  }
   const exists = db.query("SELECT id FROM users WHERE email = ?").get(body.email);
   if (exists) return c.json({ error: "An account with that email already exists" }, 409);
   const id = crypto.randomUUID();
@@ -201,20 +237,29 @@ app.post("/api/auth/register", async (c) => {
   try {
     db.transaction(() => {
       const currentCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
-      if (!config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
+      const timestamp = now();
+      // An empty instance ignores any token: its first account is the admin (D163). Otherwise the
+      // invite is re-checked here, in the transaction that claims it.
+      const invite = inviteHash && currentCount > 0 ? inviteForRegistration(inviteHash, body.email, timestamp) : null;
+      if (!invite && !config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
       // D76: the first account on an empty instance is the admin, and so is an account registered
       // while no active admin exists (an upgrade where every account was disabled, so migration 017
       // had nobody to promote). The check and the insert share this transaction, so two concurrent
-      // registrations cannot both become admin.
-      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : config.signupRole;
-      const timestamp = now();
+      // registrations cannot both become admin. A usable invite implies an active admin (D162).
+      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : invite ? invite.role : config.signupRole;
       db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, body.email, body.displayName, passwordHash, timestamp, role);
       if (role === "admin") recordBootstrapAdmin(id, timestamp);
       ensureDefaultFolder(id);
+      if (invite) {
+        // Single use (T141): a lost race throws INVITE_INVALID and rolls the new account back.
+        claimInvite(invite.id, id, timestamp);
+        audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
+      }
     })();
   } catch (error) {
     if (error instanceof HTTPException) throw error;
+    if (error instanceof InviteError) return inviteErrorResponse(c, error);
     if ((error as { code?: string }).code?.includes("CONSTRAINT")) return c.json({ error: "An account with that email already exists" }, 409);
     throw error;
   }
@@ -278,7 +323,7 @@ app.get("/api/auth/me", (c) => {
 });
 
 app.use("/api/*", async (c, next) => {
-  if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
+  if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register", "/api/auth/invite"].includes(c.req.path)) return next();
   // Calendar feeds carry their own token (D66); only GET or HEAD of the exact feed pattern skips the session.
   if (isFeedRequest(c.req.method, c.req.path)) return next();
   return requireAuth(c, next);
@@ -293,7 +338,7 @@ const totpSetupPaths = new Set([
   "/api/auth/totp/enable"
 ]);
 app.use("/api/*", async (c, next) => {
-  if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register"].includes(c.req.path)) return next();
+  if (["/api/health", "/api/about", "/api/auth/login", "/api/auth/register", "/api/auth/invite"].includes(c.req.path)) return next();
   // A feed token was created from a gated session and is read-only (T70).
   if (isFeedRequest(c.req.method, c.req.path)) return next();
   if (config.totpPolicy === "required" && !c.get("user").totp_enabled_at && !totpSetupPaths.has(c.req.path)) {

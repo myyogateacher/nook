@@ -6,11 +6,17 @@ export const uuid = z.string().uuid();
 export const email = z.string().trim().email().max(254).transform((value) => value.toLowerCase());
 export const password = z.string().min(12).max(256);
 
+/** A team invite token (D161): 32 random bytes, base64url. It travels in JSON bodies only. */
+export const inviteToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/, "This invite link is not valid");
+
+/** `role` is never accepted: an invite fixes it, otherwise SIGNUP_ROLE or the bootstrap rule does (D163). */
 export const registerSchema = z.object({
   email,
   displayName: z.string().trim().min(1).max(80),
-  password
+  password,
+  inviteToken: inviteToken.optional()
 }).strict();
+export const invitePreviewSchema = z.object({ token: inviteToken }).strict();
 
 export const totpCode = z.string().trim().regex(/^\d{6}$/, "Enter the six-digit authentication code");
 export const recoveryCode = z.string().trim().min(10).max(32);

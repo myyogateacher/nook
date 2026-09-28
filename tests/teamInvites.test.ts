@@ -184,3 +184,127 @@ describe("Team invites: create, list, revoke", () => {
     expect(left).toEqual([live.id, recentRevoked.id].sort());
   });
 });
+
+describe("Team invites: preview and register (registration open)", () => {
+  test("preview takes the token in the body and masks a bound email", async () => {
+    const admin = await user("Preview admin", "admin");
+    const email = freshEmail();
+    const { token, invite } = (await createInvite(admin, { role: "viewer", email })).body;
+    const preview = await call(undefined, "POST", "/auth/invite", { token });
+    expect(preview.status).toBe(200);
+    expect(preview.body).toEqual({ role: "viewer", emailHint: `a•••${email.slice(email.indexOf("@"))}`, expiresAt: invite.expiresAt, inviterName: "Preview admin" });
+    expect((await call(undefined, "POST", "/auth/invite", { token: "x".repeat(43) })).body.code).toBe("INVITE_INVALID");
+    expect((await call(undefined, "POST", "/auth/invite", { token: "short" })).status).toBe(400);
+    expect((await call(undefined, "POST", "/auth/invite", { token, extra: 1 })).status).toBe(400);
+    // Not a GET route, with or without a query (the token must never sit in a URL).
+    const byQuery = await request(`/auth/invite?token=${token}`, {}, admin);
+    expect(byQuery.status).toBe(404);
+    // Pre-auth checks: Origin and JSON.
+    expect((await request("/auth/invite", { method: "POST", headers: { Origin: "https://evil.example" }, body: JSON.stringify({ token }) })).status).toBe(403);
+    expect((await request("/auth/invite", { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ token }) })).status).toBe(415);
+  });
+
+  test("preview is limited to 30 a minute server-wide", async () => {
+    resetRegistrationRateLimit();
+    for (let index = 0; index < 30; index += 1) expect((await call(undefined, "POST", "/auth/invite", { token: "y".repeat(43) })).status).toBe(404);
+    expect((await call(undefined, "POST", "/auth/invite", { token: "y".repeat(43) })).status).toBe(429);
+    resetRegistrationRateLimit();
+  });
+
+  test("a valid invite fixes the role, is single use, and writes one accept audit row", async () => {
+    const admin = await user("Accept admin", "admin");
+    const { token, invite } = (await createInvite(admin, { role: "viewer" })).body;
+    const email = freshEmail();
+    const registered = await registerWith({ email, inviteToken: token });
+    expect(registered.status).toBe(201);
+    expect(registered.body.user.role).toBe("viewer");
+    const row = inviteRow(invite.id);
+    expect(row.used_by).toBe(registered.body.user.id);
+    expect(row.used_at).toBeTruthy();
+    const accepts = auditRows("team.invite_accept").filter((item) => item.metadata_json.includes(invite.id));
+    expect(accepts).toEqual([{ actor_id: registered.body.user.id, metadata_json: JSON.stringify({ inviteId: invite.id, role: "viewer" }) }]);
+
+    const again = await registerWith({ email: freshEmail(), inviteToken: token });
+    expect(again).toMatchObject({ status: 404, body: { code: "INVITE_INVALID" } });
+    expect((await call(undefined, "POST", "/auth/invite", { token })).status).toBe(404);
+
+    // Admin detail shows how the account joined (D165), and the list shows who used it.
+    const detail = await call(admin, "GET", `/team/${registered.body.user.id}`);
+    expect(detail.body.member.joinedWithInvite).toMatchObject({ role: "viewer", invitedBy: { id: admin.userId, displayName: "Accept admin" } });
+    expect((await call(admin, "GET", "/team/invites")).body.invites[0]).toMatchObject({ status: "used", usedBy: { id: registered.body.user.id, displayName: "Invitee" } });
+  });
+
+  test("an invalid, expired, revoked, or orphaned invite is refused, never silently ignored", async () => {
+    const admin = await user("Refuse admin", "admin");
+    const fresh = () => freshEmail();
+    const users = () => (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
+    const before = users();
+
+    expect(await registerWith({ email: fresh(), inviteToken: "z".repeat(43) })).toMatchObject({ status: 404, body: { code: "INVITE_INVALID" } });
+    expect((await registerWith({ email: fresh(), inviteToken: "bad" })).status).toBe(400);
+
+    const expiredInvite = (await createInvite(admin)).body;
+    db.query("UPDATE team_invites SET created_at = ?, expires_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", expiredInvite.invite.id);
+    expect(await registerWith({ email: fresh(), inviteToken: expiredInvite.token })).toMatchObject({ status: 410, body: { code: "INVITE_EXPIRED" } });
+    expect((await call(undefined, "POST", "/auth/invite", { token: expiredInvite.token })).body.code).toBe("INVITE_EXPIRED");
+
+    const revokedInvite = (await createInvite(admin)).body;
+    await call(admin, "POST", `/team/invites/${revokedInvite.invite.id}/revoke`, {});
+    expect(await registerWith({ email: fresh(), inviteToken: revokedInvite.token })).toMatchObject({ status: 404, body: { code: "INVITE_INVALID" } });
+
+    // The creator is demoted, then blocked: the link dies with the privilege (D162).
+    const creator = await user("Former admin", "admin");
+    const demoted = (await createInvite(creator)).body;
+    db.query("UPDATE users SET role = 'member' WHERE id = ?").run(creator.userId);
+    expect((await registerWith({ email: fresh(), inviteToken: demoted.token })).body.code).toBe("INVITE_INVALID");
+    db.query("UPDATE users SET role = 'admin', disabled_at = ? WHERE id = ?").run(new Date().toISOString(), creator.userId);
+    expect((await registerWith({ email: fresh(), inviteToken: demoted.token })).body.code).toBe("INVITE_INVALID");
+    db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(creator.userId);
+    // Restored, the same link works again (it was never claimed).
+    expect((await registerWith({ email: fresh(), inviteToken: demoted.token })).status).toBe(201);
+    // The former admin, and the one account the restored link created.
+    expect(users()).toBe(before + 2);
+  });
+
+  test("the allowlist, a bound email, and a strict body still apply", async () => {
+    const admin = await user("Bound admin", "admin");
+    const email = freshEmail();
+    const { token } = (await createInvite(admin, { role: "guest", email })).body;
+    expect(await registerWith({ email: freshEmail(), inviteToken: token })).toMatchObject({ status: 403, body: { code: "INVITE_EMAIL_MISMATCH" } });
+    expect((await registerWith({ email: "outsider@example.test", inviteToken: token })).status).toBe(403);
+    expect((await registerWith({ email, inviteToken: token, role: "admin" })).status).toBe(400);
+    // A made-up token answers INVITE_INVALID even for an existing account (no email probing).
+    expect((await registerWith({ email: admin.email, inviteToken: "q".repeat(43) })).body.code).toBe("INVITE_INVALID");
+    const registered = await registerWith({ email: email.toUpperCase(), inviteToken: token });
+    expect(registered.status).toBe(201);
+    expect(registered.body.user.role).toBe("guest");
+  });
+
+  test("two concurrent claims of one invite create exactly one account", async () => {
+    const admin = await user("Race admin", "admin");
+    const { token, invite } = (await createInvite(admin, { role: "member" })).body;
+    const emails = [freshEmail(), freshEmail()];
+    resetRegistrationRateLimit();
+    const results = await Promise.all(emails.map((email) => call(undefined, "POST", "/auth/register", { email, displayName: "Racer", password: "correct horse battery staple", inviteToken: token })));
+    expect(results.map((result) => result.status).sort()).toEqual([201, 404]);
+    const created = db.query("SELECT COUNT(*) AS count FROM users WHERE email IN (?, ?)").get(emails[0]!, emails[1]!) as { count: number };
+    expect(created.count).toBe(1);
+    expect(inviteRow(invite.id).used_by).toBe(results.find((result) => result.status === 201)!.body.user.id);
+  });
+
+  test("audit rows never carry a token, hash, or email; team_events is unchanged", async () => {
+    const admin = await user("Audit admin", "admin");
+    const email = freshEmail();
+    const eventsBefore = (db.query("SELECT COUNT(*) AS count FROM team_events").get() as { count: number }).count;
+    const { token, invite } = (await createInvite(admin, { role: "viewer", email })).body;
+    await registerWith({ email, inviteToken: token });
+    const other = (await createInvite(admin)).body;
+    await call(admin, "POST", `/team/invites/${other.invite.id}/revoke`, {});
+    const rows = db.query("SELECT event_type, metadata_json FROM audit_log WHERE event_type LIKE 'team.invite_%'").all() as Array<{ event_type: string; metadata_json: string }>;
+    expect(new Set(rows.map((row) => row.event_type))).toEqual(new Set(["team.invite_create", "team.invite_accept", "team.invite_revoke"]));
+    const all = JSON.stringify(db.query("SELECT metadata_json FROM audit_log").all());
+    for (const secret of [token, other.token, hashInviteToken(token), inviteRow(invite.id).token_hash, email]) expect(all).not.toContain(secret);
+    for (const row of rows) expect(Object.keys(JSON.parse(row.metadata_json)).sort()).toEqual(["inviteId", "role"]);
+    expect((db.query("SELECT COUNT(*) AS count FROM team_events").get() as { count: number }).count).toBe(eventsBefore);
+  });
+});

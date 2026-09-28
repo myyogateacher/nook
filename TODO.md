@@ -6,6 +6,8 @@ Release history and per-version notes live on the docs site ("What's new") and i
 
 ## Open
 
+- [ ] Email: reminders and notification digests over the `server/mail.ts` (Resend) wrapper once Wave 18 lands it; per-user "email me" preference in Settings → Notifications.
+
 - [ ] Wave 16 (Team C): invite links (`team_invites`, migration `018`), per `docs/plan/research/2026-09-26-team-module.md` §8 — unscheduled.
 - [ ] MCP write-coverage wave: publish notes, bin/restore cards and events, file upload, tag and sprint management, collection creation — proposed, awaiting go-ahead.
 - [ ] Real-device checks only the operator can run on the HTTPS origin: a push notification to a phone; a phone calendar feed subscription (TEST_PLAN manual rows).

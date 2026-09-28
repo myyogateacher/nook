@@ -1,34 +1,20 @@
 # Nook implementation tracker
 
-**Current state (2026-09-27):** production runs **v0.9.3** at `45a47e9`. Every planned wave (1–17) has shipped: Notes, Files, shared Bin, URL routing, full-text search, Task Boards with views, filters, hierarchy, sprints and a Tasks home, MCP scopes across every module, Today, Collections, Calendar with reminders/push/feeds, Team roles (admin/member/viewer/guest) with blocking, Settings → Modules, custom dropdowns everywhere, and a feature-led README + docs site. Suite: 1156 tests, Docker verify green.
+**Current state (2026-09-28):** production runs **v0.10.0** at `4479949` (Team invites + Resend email, emoji reactions, Agent inbox proposals, review + QA fixes; migrations 018/021/022/027; 1291 tests). Every planned wave (1–17) has shipped: Notes, Files, shared Bin, URL routing, full-text search, Task Boards with views, filters, hierarchy, sprints and a Tasks home, MCP scopes across every module, Today, Collections, Calendar with reminders/push/feeds, Team roles (admin/member/viewer/guest) with blocking, Settings → Modules, custom dropdowns everywhere, and a feature-led README + docs site. Suite: 1156 tests, Docker verify green.
 
 Release history and per-version notes live on the docs site ("What's new") and in `git log`; plans of record are in `DEVELOPMENT_PLAN.md`, `docs/plan/WAVE_13_TASK_CARD_UX.md`, `docs/plan/WAVES_7-9.md`, `docs/plan/WAVES_10-12.md`, and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
-
-## PAUSED 2026-09-28 — resume checklist
-
-All agents were stopped on the operator's request. Production: **v0.9.3** (`45a47e9`). `main` = `6c5dd1c` (pushed): Waves 18, 20, 21 merged (1257 tests, Docker verify green) — the **v0.10.0 candidate**, not yet reviewed/QA'd/released. QA container `nook-qa` runs `ce0eb9c` on :22126.
-
-Parked worktrees under `.claude/worktrees/` (branches `worktree-agent-<id>`), all based on `ce0eb9c`/`e11e68c`:
-- `agent-a4b4dd3c58216b3ff` — **Wave 19 MCP writes**: 2 commits (scopes; notes publish/folders/bin), clean tree. Resume: continue the Wave 19 commit list (tasks, calendar, collections, files upload path, restore-all, enumeration test, docs).
-- `agent-ade650a85f18758fb` — **Wave 22 routines**: 2 commits (service + runs API; MCP tools/prompts/abandon sweep), 1 uncommitted file (inboxApi.ts routines client in progress). Resume: UI (Routines segment, sheets), docs, QA.
-- `agent-ae654ce2fcec338b3` — **Wave 28 email**: 1 commit (migration 026), 2 uncommitted files (in progress). Resume: templates + preview + golden tests, outbox/dispatcher, verification, preferences, emails, settings routes/UI, email log, docs.
-- `agent-a3c67b3a2d93be535` — **Excalidraw spike** (passed): 1 commit, parked until Waves 23–24 are scheduled.
-
-Stopped mid-run (restart fresh when resuming): v0.10.0 independent review (range 45a47e9..ce0eb9c) and delegated QA.
-
-Resume order: 1) finish Waves 19, 22, 28 in their worktrees (fresh agents; fast-forward to main first); 2) v0.10.0 review + QA → fixes → release (backup: migrations 018, 021, 022); 3) merge 19/22 → v0.11.0; 4) Wave 31 (access keys, migration 025) after 19/22; Wave 28 → v0.12.0; 5) whiteboard/vault after the operator's pick.
 
 ## In flight (2026-09-28)
 
 Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agent inbox & routines](docs/plan/research/2026-09-28-agent-inbox-routines.md) · [whiteboard](docs/plan/research/2026-09-28-whiteboard-module.md) · [password vault](docs/plan/research/2026-09-28-password-vault-module.md).
 
-- [ ] Wave 18 Team invites + outbound email wrapper (Resend, D93) — merged. → v0.10.0 with Wave 20 (merged `b85b1d2`) and Wave 21 (merged `e33015a`) — review + QA in progress.
-- [ ] Wave 21 Agent inbox: proposals — merged `e33015a`, ships in v0.10.0.
-- [ ] Wave 19 MCP write coverage — building. → v0.11.0.
-- [ ] Wave 22 Routines and runs — building. → v0.11.0.
-- [ ] **Priority (operator, 2026-09-28):** access management & API keys, and outbound email — research running now, then waves. Migration ids 025 (access) and 026 (email prefs).
+- [x] Waves 18, 20, 21 — released in **v0.10.0** (`4479949`).
+- [ ] Wave 19 MCP write coverage — built on branch `wave-19-mcp-writes` (1301 tests); merging for v0.11.0.
+- [ ] Wave 22 Routines and runs — built on `worktree-agent-ade650a85f18758fb` (1281 tests); merging for v0.11.0.
+- [ ] **Priority:** Wave 28 email foundation — building (migration 026). Waves 29–30 email, Waves 31–34 access management (migration 025, after 19/22 merge) follow.
 - [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.
-- [ ] Email consumers after Wave 18: Calendar reminders, notification digests, per-user "email me" preference (folded into the email research below).
+
+- [ ] Reliability: two flakes seen once each in full runs — `tests/teamMcp.test.ts` list_invites ordering (same-millisecond invites) and `tests/reactions.test.ts` "one aggregate query per page"; hunt after v0.11.0.
 
 ## Research queue — after Waves 18–22 ship (operator, 2026-09-28): research, then drive development
 

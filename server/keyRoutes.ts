@@ -10,6 +10,7 @@ import { keyEvents } from "./access/events";
 import { grantsForScopes } from "./keyGrants";
 import type { McpScope } from "./mcpScopes";
 import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
+import { pendingProposalsByKey } from "./inbox/service";
 import { mailApiKeyCreated, mailTwoFactor } from "./mail/triggers";
 import { verifyReauth } from "./reauth";
 import { readPolicies } from "./team/policies";
@@ -95,7 +96,9 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     const listed = listApiKeys(userId);
     // What each key moved to the Bin in the last 24 hours, for the key row's Review line (D175).
     const binned = binnedCountsByKey(userId, new Date(Date.now() - BINNED_WINDOWS["24h"]).toISOString());
-    return c.json({ ...listed, keys: listed.keys.map((key) => ({ ...key, binnedToday: binned.get(key.id) ?? 0 })) });
+    // Its pending Inbox suggestions, which a revoke withdraws (the revoke confirm says so only then).
+    const pending = pendingProposalsByKey(userId);
+    return c.json({ ...listed, keys: listed.keys.map((key) => ({ ...key, binnedToday: binned.get(key.id) ?? 0, pendingProposals: pending.get(key.id) ?? 0 })) });
   });
 
   app.get("/api/keys/:id", (c) => {

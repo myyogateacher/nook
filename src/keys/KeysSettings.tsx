@@ -346,6 +346,23 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
   </KeysDialog>;
 }
 
+/**
+ * The revoke confirm's words (Friction 7). During a rotation grace the old and new keys share a name,
+ * so it names the old key and its prefix; the Inbox line appears only when the key has pending suggestions.
+ */
+export function revokeCopy(key: Pick<ApiKey, "name" | "prefix" | "state" | "pendingProposals">) {
+  const pending = key.pendingProposals ?? 0;
+  const inbox = pending > 0 ? ` Its ${pending === 1 ? "pending suggestion" : `${pending} pending suggestions`} in the Inbox ${pending === 1 ? "is" : "are"} withdrawn.` : "";
+  if (key.state === "grace") return {
+    title: `Revoke the old key for ${key.name} now?`,
+    description: `The old key (${key.prefix}…) stops working at once instead of at the end of its grace. The new key keeps working.${inbox} This cannot be undone.`
+  };
+  return {
+    title: `Revoke ${key.name}?`,
+    description: `Clients using this key (${key.prefix}…) stop working at once.${inbox} This cannot be undone.`
+  };
+}
+
 function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClose: () => void; onRevoked: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -360,8 +377,9 @@ function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClo
       setBusy(false);
     }
   }
-  return <KeysDialog title={`Revoke ${apiKey.name}?`} description="Clients using this key stop working at once, and its pending suggestions in the Inbox are withdrawn. This cannot be undone." onClose={onClose} busy={busy}
-    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirm} disabled={busy}>{busy ? "Revoking…" : "Revoke key"}</button></>}>
+  const copy = revokeCopy(apiKey);
+  return <KeysDialog title={copy.title} description={copy.description} onClose={onClose} busy={busy}
+    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirm} disabled={busy}>{busy ? "Revoking…" : apiKey.state === "grace" ? "Revoke old key" : "Revoke key"}</button></>}>
     {error && <p className="form-error" role="alert">{error}</p>}
   </KeysDialog>;
 }

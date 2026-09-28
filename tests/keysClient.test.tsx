@@ -5,7 +5,7 @@ import {
   expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
   type GrantRow, type KeyGrantView
 } from "../src/keys/keyGrants";
-import { keyAfterRevoke, KeyRow, keyToRows } from "../src/keys/KeysSettings";
+import { keyAfterRevoke, KeyRow, keyToRows, revokeCopy } from "../src/keys/KeysSettings";
 import type { ApiKey } from "../src/keys/keysApi";
 
 /** Settings → API keys (access plan §E, §G "UI"): the client vocabulary, the builder's rules, and a key row. */
@@ -106,6 +106,19 @@ describe("key grants on the client", () => {
     expect(grace).not.toContain("Rotate");
     const admin = renderToStaticMarkup(<KeyRow apiKey={apiKey({ state: "revoked", revokedBy: "admin", revokeReason: "Leaked" })} />);
     expect(admin).toContain("An admin revoked this key: “Leaked”");
+  });
+
+  test("the revoke confirm names the old key and its prefix during a grace, and the Inbox only when it has suggestions (Friction 7)", () => {
+    const grace = revokeCopy(apiKey({ state: "grace", pendingProposals: 0 }));
+    expect(grace.title).toBe("Revoke the old key for Claude Code now?");
+    expect(grace.description).toContain("The old key (mynotes_Ab3fXyZ…) stops working at once");
+    expect(grace.description).toContain("The new key keeps working.");
+    expect(grace.description).not.toContain("Inbox");
+    expect(revokeCopy(apiKey({ state: "grace", pendingProposals: 1 })).description).toContain("Its pending suggestion in the Inbox is withdrawn.");
+    const plain = revokeCopy(apiKey({ pendingProposals: 3 }));
+    expect(plain.title).toBe("Revoke Claude Code?");
+    expect(plain.description).toBe("Clients using this key (mynotes_Ab3fXyZ…) stop working at once. Its 3 pending suggestions in the Inbox are withdrawn. This cannot be undone.");
+    expect(revokeCopy(apiKey()).description).not.toContain("Inbox");
   });
 
   test("after Revoke, Revoke now, Review, or Restore all, focus lands on a control, never the body (QA 0.12 item 2)", async () => {

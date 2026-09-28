@@ -226,6 +226,20 @@ describe("/api/keys", () => {
     expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.revoked"]);
   });
 
+  test("the list counts each key's pending Inbox suggestions, for the revoke confirm (Friction 7)", async () => {
+    const owner = await createUser("Keys pending");
+    const { key } = (await createKey(owner)).body;
+    const { key: quiet } = (await createKey(owner, { name: "Quiet" })).body;
+    const insert = (status: string) => db.query(`INSERT INTO proposals (id, owner_id, key_id, key_name, kind, target_type, target_id, title, payload, created_at, expires_at, status)
+      VALUES (?, ?, ?, 'Laptop', 'card_create', 'board', 'b', 'Card', '{}', ?, ?, ?)`).run(crypto.randomUUID(), owner.userId, key.id, new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), status);
+    insert("pending");
+    insert("pending");
+    insert("rejected");
+    const listed = (await api(owner, "GET", "/keys")).body.keys as Array<{ id: string; pendingProposals: number }>;
+    expect(listed.find((item) => item.id === key.id)!.pendingProposals).toBe(2);
+    expect(listed.find((item) => item.id === quiet.id)!.pendingProposals).toBe(0);
+  });
+
   test("counts calls per key per day (D283)", async () => {
     const owner = await createUser("Keys usage");
     const { key } = (await createKey(owner)).body;

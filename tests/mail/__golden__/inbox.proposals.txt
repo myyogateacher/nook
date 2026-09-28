@@ -1,0 +1,26 @@
+Subject: 4 proposals awaiting your review
+
+Nook · nook.test
+
+INBOX · PROPOSALS
+4 proposals awaiting you
+
+Your MCP keys suggested changes. Nothing changes until you approve them in the Inbox.
+
+> Key “laptop”
+  3 pending changes
+> Key “ci-bot”
+  1 pending change
+
+The oldest expires Thu 1 Oct 2026, 09:00 (UTC).
+
+Review in Inbox:
+https://nook.test/inbox
+
+--
+You got this because MCP keys you own suggested changes that wait for you.
+Turn off “Proposals awaiting you” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

@@ -188,9 +188,9 @@ export const inviteUrl = (origin: string, token: string) => `${origin}/register#
  * happened, and the invite itself stands either way.
  */
 export async function emailInvite(actor: Actor, invite: Pick<TeamInviteRow, "id" | "role" | "email" | "expires_at">, url: string): Promise<MailOutcome> {
-  if (!invite.email) return { sent: false, reason: "failed" };
+  if (!invite.email) return { sent: false, reason: "failed", code: "no_address", retryable: false };
   const inviter = (db.query("SELECT display_name FROM users WHERE id = ?").get(actor.id) as { display_name: string } | null)?.display_name ?? "An admin";
-  const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team_invite", senderId: actor.id });
+  const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team.invite", senderId: actor.id, recipient: "address" });
   if (outcome.sent) audit(actor.id, null, "team.invite_emailed", { inviteId: invite.id, role: invite.role });
   return outcome;
 }

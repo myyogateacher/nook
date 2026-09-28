@@ -1,0 +1,36 @@
+Subject: Priya Shah and Sam Lee assigned you 7 cards on Launch
+
+Nook · nook.test
+
+TASKS · ASSIGNED
+Priya Shah and Sam Lee assigned you 7 cards
+
+On the board Launch.
+
+> Card 1
+  Due Fri 2 Oct · Column In progress
+  https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-000000000000
+> Card 2
+  Column In progress
+  https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-000000000001
+> Card 3
+  Due Fri 2 Oct · Column In progress
+  https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-000000000002
+> Card 4
+  Column In progress
+  https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-000000000003
+> Card 5
+  Due Fri 2 Oct · Column In progress
+  https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-000000000004
+> and 2 more
+
+Open My work:
+https://nook.test/tasks/my
+
+--
+You got this because someone assigned you a card in Nook.
+Turn off “Assigned to you” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

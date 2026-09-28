@@ -31,6 +31,7 @@ import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes }
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
+import { registerMailPreviewRoutes } from "./mail/preview";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -797,6 +798,9 @@ app.onError((error, c) => {
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
 app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
+
+// Dev-only mail preview (D253); in production every /dev path answers 404 (T232).
+registerMailPreviewRoutes(app);
 
 // The service worker must be revalidated on every registration check (T69).
 app.use("/sw.js", async (c, next) => {

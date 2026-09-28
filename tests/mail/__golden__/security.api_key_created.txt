@@ -1,0 +1,25 @@
+Subject: New API key “laptop” on your Nook account
+
+Nook · nook.test
+
+SECURITY · MCP KEY
+A new MCP API key was created
+
+An AI client can use this key to reach your notes and other modules with the permissions below.
+
+> “laptop”
+  Created Mon 28 Sep 2026, 09:00 (UTC)
+> Permissions
+  Notes: read, write drafts · Tasks: read
+
+If this wasn't you, sign in and revoke the key, then change your password, or ask your admin.
+
+Review in Settings:
+https://nook.test/settings/mcp
+
+--
+You got this because it is about your own Nook account.
+Security emails can't be turned off. They tell you about changes to your account.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

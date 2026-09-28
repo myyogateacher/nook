@@ -24,11 +24,14 @@ test("every app page header carries a visible phone page name (F2)", async () =>
   expect(renderToStaticMarkup(<AppPageName name="Calendar" />)).toBe('<span class="app-page-name" aria-hidden="true">Calendar</span>');
 });
 
-test("Calendar and Team, which have no other h1, name the page with an h1 in the header", async () => {
-  for (const [path, name] of [["calendar/CalendarApp.tsx", "Calendar"], ["team/TeamApp.tsx", "Team"]]) {
+test("Calendar, which has no other h1, names the page with an h1 in the header; Team keeps its list h1", async () => {
+  for (const [path, name] of [["calendar/CalendarApp.tsx", "Calendar"]]) {
     const source = await Bun.file(join(root, path)).text();
     expect(source).toContain(`<h1 className="app-page-title">${name}</h1>`);
   }
+  const team = await Bun.file(join(root, "team/TeamApp.tsx")).text();
+  expect(team).toContain('<h1 id="team-title">Team</h1>');
+  expect(team).not.toContain('className="app-page-title"');
 });
 
 test("the phone stylesheet shows the page name and keeps the hidden brand in the accessibility tree", async () => {

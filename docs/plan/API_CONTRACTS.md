@@ -1672,7 +1672,7 @@ type Policies = {
 
 ## Groups, levels, and item access (Wave 32, Access B)
 
-Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.5, §C.7, §C.9, §D.2–§D.3 (D266–D275). No migration: 025 created `user_groups`, `group_members`, `group_grants`, the per-person `level` columns, `boards.share_role`, and `team_settings`.
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.5, §C.7, §C.9, §D.2–§D.3 (D266–D275). 025 created `user_groups`, `group_members`, `group_grants`, the per-person `level` columns, `boards.share_role`, and `team_settings`. Migration **029** (`access_levels`) only brings collection and calendar member rows written by v0.12.0 (level `view` under an `editor` audience role) up to `edit`, so nobody loses editing when levels start to count.
 
 **Levels (D266, §D.3).** `view < comment < edit < manage < owner`, allow-only: a person's level on an item is the highest of their direct share, their groups' grants, and the `all_users` audience level, **capped by the Team role** (viewers and guests read at most; owners stay `owner`). Group grants count only under `selected`. Levels are resolved live on every request (`itemLevel()` in `server/access/effective.ts`).
 

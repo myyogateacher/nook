@@ -93,14 +93,14 @@ describe("note_draft proposals", () => {
     const key = makeKey(owner, ["inbox:write", "notes:write-draft"]);
     const [first] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Agent", payload: { noteId, markdown: "Agent text", baseRevision: null } }] })).value.results;
     const rejected = await api(owner, "POST", `/inbox/proposals/${first.proposalId}/reject`, { reason: "Not now" });
-    expect(rejected.body).toEqual({ id: first.proposalId, status: "rejected", draftDiscarded: true });
+    expect(rejected.body).toEqual({ id: first.proposalId, status: "rejected", draft: "discarded", draftDiscarded: true });
     expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.hasDraft).toBe(false);
 
     const [second] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Again", payload: { noteId, markdown: "Agent again", baseRevision: null } }] })).value.results;
     const note = await api(owner, "GET", `/notes/${noteId}`);
     await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "Mine now", revision: note.body.note.draft_revision });
     const stale = await api(owner, "POST", `/inbox/proposals/${second.proposalId}/reject`, {});
-    expect(stale.body).toEqual({ id: second.proposalId, status: "rejected", draftDiscarded: false });
+    expect(stale.body).toEqual({ id: second.proposalId, status: "rejected", draft: "kept", draftDiscarded: false });
     const kept = await api(owner, "GET", `/notes/${noteId}`);
     expect(kept.body.note.markdown).toBe("Mine now");
   });
@@ -157,5 +157,109 @@ describe("note_draft proposals", () => {
     const mcpToday = await callTool(writer, "get_today", { tz: "UTC" });
     expect(mcpToday.value.sections.proposals.items.map((item: { id: string }) => item.id)).toEqual([created.proposalId]);
     expect(mcpToday.value.sections.agentDrafts).toBeUndefined();
+  });
+});
+
+/**
+ * Review H1: rejecting an agent's note draft never loses the person's own draft. The proposal
+ * records the draft from before the agent's write; reject restores it, discards only an agent-only
+ * draft of a published note, never bins a never-published note, and leaves a draft edited since.
+ */
+describe("note_draft reject keeps the person's draft (H1)", () => {
+  const noteRow = (noteId: string) => db.query("SELECT draft_revision, current_version, deleted_at, draft_mcp_key_id FROM notes WHERE id = ?").get(noteId) as {
+    draft_revision: number | null; current_version: number; deleted_at: string | null; draft_mcp_key_id: string | null;
+  };
+  const effectOf = async (owner: Session, proposalId: string) => (await api(owner, "GET", `/inbox/proposals/${proposalId}`)).body.proposal.rejectEffect;
+
+  test("append over a human draft of a published note: reject restores the human draft as a new revision", async () => {
+    const owner = await createUser("H1 append");
+    const noteId = await publishedNote(owner, "# Plan\n\nv1");
+    const human = await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "# Plan\n\nv1\n\nMy unpublished thoughts", revision: null });
+    expect(human.body.revision).toBe(1);
+    const key = makeKey(owner, ["inbox:write", "notes:write-draft"]);
+    const [item] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Add line", payload: { noteId, mode: "append", markdown: "Agent line", baseRevision: 1 } }] })).value.results;
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("# Plan\n\nv1\n\nMy unpublished thoughts\n\nAgent line");
+    expect(await effectOf(owner, item.proposalId)).toBe("restore");
+
+    const rejected = await api(owner, "POST", `/inbox/proposals/${item.proposalId}/reject`, {});
+    expect(rejected.body).toEqual({ id: item.proposalId, status: "rejected", draft: "restored", draftDiscarded: false });
+    const note = (await api(owner, "GET", `/notes/${noteId}`)).body.note;
+    expect(note.markdown).toBe("# Plan\n\nv1\n\nMy unpublished thoughts");
+    expect(note.hasDraft).toBe(true);
+    expect(note.draftMcpKeyName).toBeNull();
+    expect(noteRow(noteId)).toMatchObject({ draft_revision: 3, current_version: 1, deleted_at: null, draft_mcp_key_id: null });
+    const restored = db.query("SELECT metadata_json FROM audit_log WHERE note_id = ? AND event_type = 'inbox.draft_restored'").get(noteId) as { metadata_json: string };
+    expect(JSON.parse(restored.metadata_json)).toMatchObject({ proposalId: item.proposalId, revision: 3, fromRevision: 1 });
+    // The kept text is dropped from the resolved proposal.
+    expect(db.query("SELECT base_draft_markdown FROM proposals WHERE id = ?").get(item.proposalId)).toEqual({ base_draft_markdown: null });
+  });
+
+  test("a chain of agent writes over a human draft still restores the human draft", async () => {
+    const owner = await createUser("H1 chain");
+    const noteId = await publishedNote(owner, "Base");
+    await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "Mine", revision: null });
+    const key = makeKey(owner, ["notes:write-draft"]);
+    const first = await callTool(key, "update_note_draft", { noteId, markdown: "One", baseRevision: 1, mode: "append" });
+    const second = await callTool(key, "update_note_draft", { noteId, markdown: "Two", baseRevision: first.value.revision, mode: "append" });
+    expect(second.isError).toBe(false);
+    const pending = pendingFor(noteId).find((row) => row.status === "pending")!;
+    expect((await api(owner, "POST", `/inbox/proposals/${pending.id}/reject`, {})).body.draft).toBe("restored");
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("Mine");
+  });
+
+  test("never-published notes are never binned: a human draft is restored, an agent-created note stays", async () => {
+    const owner = await createUser("H1 unpublished");
+    const created = await api(owner, "POST", "/notes", {});
+    const noteId = created.body.note.id as string;
+    const human = await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "# Idea\n\nHuman text", revision: created.body.note.draft_revision });
+    const key = makeKey(owner, ["inbox:write", "notes:write-draft"]);
+    const [item] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "More", payload: { noteId, mode: "append", markdown: "Agent line", baseRevision: human.body.revision } }] })).value.results;
+    expect(await effectOf(owner, item.proposalId)).toBe("restore");
+    expect((await api(owner, "POST", `/inbox/proposals/${item.proposalId}/reject`, {})).body.draft).toBe("restored");
+    expect(noteRow(noteId).deleted_at).toBeNull();
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("# Idea\n\nHuman text");
+
+    // A note the agent created: reject keeps the note and its draft, and only resolves the proposal.
+    const [fresh] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "New", payload: { markdown: "# Agent note\n\nBody" } }] })).value.results;
+    const agentNoteId = (db.query("SELECT target_id FROM proposals WHERE id = ?").get(fresh.proposalId) as { target_id: string }).target_id;
+    expect(await effectOf(owner, fresh.proposalId)).toBe("keep");
+    expect((await api(owner, "POST", `/inbox/proposals/${fresh.proposalId}/reject`, {})).body).toEqual({ id: fresh.proposalId, status: "rejected", draft: "kept", draftDiscarded: false });
+    expect(noteRow(agentNoteId)).toMatchObject({ deleted_at: null, draft_revision: 1, current_version: 0 });
+    expect((await api(owner, "GET", `/notes/${agentNoteId}`)).body.note.markdown).toBe("# Agent note\n\nBody");
+  });
+
+  test("a published note with no earlier draft: reject discards only the agent's draft", async () => {
+    const owner = await createUser("H1 no draft");
+    const noteId = await publishedNote(owner, "Published");
+    const key = makeKey(owner, ["inbox:write", "notes:write-draft"]);
+    const [item] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Rewrite", payload: { noteId, markdown: "Agent rewrite", baseRevision: null } }] })).value.results;
+    expect(await effectOf(owner, item.proposalId)).toBe("discard");
+    expect((await api(owner, "POST", `/inbox/proposals/${item.proposalId}/reject`, {})).body.draft).toBe("discarded");
+    expect(noteRow(noteId)).toMatchObject({ draft_revision: null, current_version: 1, deleted_at: null });
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("Published");
+  });
+
+  test("a draft edited after the agent wrote stays exactly as it is", async () => {
+    const owner = await createUser("H1 edited");
+    const noteId = await publishedNote(owner, "Published");
+    await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "Mine", revision: null });
+    const key = makeKey(owner, ["inbox:write", "notes:write-draft"]);
+    const [item] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Add", payload: { noteId, mode: "append", markdown: "Agent", baseRevision: 1 } }] })).value.results;
+    await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "Mine\n\nAgent\n\nMy edit on top", revision: 2 });
+    expect(await effectOf(owner, item.proposalId)).toBe("keep");
+    expect((await api(owner, "POST", `/inbox/proposals/${item.proposalId}/reject`, {})).body.draft).toBe("kept");
+    expect(noteRow(noteId)).toMatchObject({ draft_revision: 3, current_version: 1, deleted_at: null });
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("Mine\n\nAgent\n\nMy edit on top");
+  });
+
+  test("a proposal recorded before migration 027 (unknown base) keeps the draft", async () => {
+    const owner = await createUser("H1 legacy");
+    const noteId = await publishedNote(owner, "Published");
+    const key = makeKey(owner, ["notes:write-draft"]);
+    await callTool(key, "update_note_draft", { noteId, markdown: "Agent", baseRevision: null });
+    const pending = pendingFor(noteId).find((row) => row.status === "pending")!;
+    db.query("UPDATE proposals SET base_state = NULL WHERE id = ?").run(pending.id);
+    expect((await api(owner, "POST", `/inbox/proposals/${pending.id}/reject`, {})).body.draft).toBe("kept");
+    expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("Agent");
   });
 });

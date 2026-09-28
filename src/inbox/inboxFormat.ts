@@ -1,4 +1,4 @@
-import type { BulkResult, ProposalGroup, ProposalKind, ProposalStatus, ProposalSummary } from "./inboxApi";
+import type { BulkResult, ProposalGroup, ProposalKind, ProposalStatus, ProposalSummary, RejectEffect } from "./inboxApi";
 
 /** Pure copy and helpers for the Inbox (agent inbox §9), unit-tested in tests/inboxApp.test.tsx. */
 
@@ -86,6 +86,44 @@ export function bulkConfirmText(items: readonly Pick<ProposalSummary, "kind">[])
   }
   const parts = [...counts].map(([noun, count]) => `${count} ${nouns[noun]![count === 1 ? 0 : 1]}`);
   return `Apply ${items.length} change${items.length === 1 ? "" : "s"}: ${parts.join(", ")}`;
+}
+
+const REJECT_EFFECT_COPY: Record<RejectEffect, string> = {
+  restore: "Your earlier draft will be restored.",
+  discard: "The agent's draft will be discarded.",
+  keep: "The draft stays as it is."
+};
+
+/**
+ * What the reject dialog says will happen (review H1), from each proposal's `rejectEffect`: a note
+ * draft is restored to the draft from before the agent wrote, discarded, or left as it is; any
+ * other kind changes nothing. A note draft without an effect (not pending any more) keeps its draft.
+ */
+export function rejectEffectText(items: readonly Pick<ProposalSummary, "kind" | "rejectEffect">[]) {
+  const effectOf = (item: Pick<ProposalSummary, "kind" | "rejectEffect">): RejectEffect | null => item.kind === "note_draft" ? item.rejectEffect ?? "keep" : null;
+  if (items.length === 1) {
+    const effect = effectOf(items[0]!);
+    return effect ? REJECT_EFFECT_COPY[effect] : "Nothing changes.";
+  }
+  const counts = { restore: 0, discard: 0, keep: 0 };
+  for (const item of items) {
+    const effect = effectOf(item);
+    if (effect) counts[effect] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.restore) parts.push(counts.restore === 1 ? "1 earlier draft will be restored." : `${counts.restore} earlier drafts will be restored.`);
+  if (counts.discard) parts.push(counts.discard === 1 ? "1 agent draft will be discarded." : `${counts.discard} agent drafts will be discarded.`);
+  if (counts.keep) parts.push(counts.keep === 1 ? "1 draft stays as it is." : `${counts.keep} drafts stay as they are.`);
+  parts.push(parts.length ? "Nothing else changes." : "Nothing changes.");
+  return parts.join(" ");
+}
+
+/** The banner after rejecting one proposal, from the server's `draft` outcome. */
+export function rejectedText(draft: "restored" | "discarded" | "kept" | undefined) {
+  if (draft === "restored") return "Rejected. Your earlier draft was restored.";
+  if (draft === "discarded") return "Rejected. The agent's draft was discarded.";
+  if (draft === "kept") return "Rejected. The draft stays as it is.";
+  return "Rejected";
 }
 
 /** Bulk approve asks for confirmation above this many items (§9.3). */

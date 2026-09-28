@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AccountActions, InboxNavContext } from "../src/AppShell";
 import { diffStats, lineDiff } from "../src/diff/lineDiff";
-import { InboxApp, ProposalCard, ProposalView } from "../src/inbox/InboxApp";
+import { InboxApp, ProposalCard, ProposalView, RejectDialog } from "../src/inbox/InboxApp";
 import type { ProposalDetail, ProposalSummary } from "../src/inbox/inboxApi";
-import { actionLabel, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, statusLabel } from "../src/inbox/inboxFormat";
+import { actionLabel, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, rejectedText, rejectEffectText, statusLabel } from "../src/inbox/inboxFormat";
 import { hiddenModuleForApp, hiddenTodaySections, MODULES, ModulesContext } from "../src/modules";
 import { formatRoute, parseRoute } from "../src/router";
 import { safeNotificationPath } from "../src/notifications/notificationsApi";
@@ -136,6 +136,22 @@ describe("Inbox rendering", () => {
     } finally {
       globals.window = previous;
     }
+  });
+
+  test("the reject dialog says exactly what happens to a note draft (review H1)", () => {
+    const note = (rejectEffect?: "restore" | "discard" | "keep") => summary({ kind: "note_draft", kindLabel: "Note draft", ...(rejectEffect ? { rejectEffect } : {}) });
+    expect(rejectEffectText([note("restore")])).toBe("Your earlier draft will be restored.");
+    expect(rejectEffectText([note("discard")])).toBe("The agent's draft will be discarded.");
+    expect(rejectEffectText([note("keep")])).toBe("The draft stays as it is.");
+    expect(rejectEffectText([note()])).toBe("The draft stays as it is.");
+    expect(rejectEffectText([summary()])).toBe("Nothing changes.");
+    expect(rejectEffectText([summary(), summary()])).toBe("Nothing changes.");
+    expect(rejectEffectText([note("restore"), note("discard"), note("discard"), summary()])).toBe("1 earlier draft will be restored. 2 agent drafts will be discarded. Nothing else changes.");
+    expect(rejectedText("restored")).toBe("Rejected. Your earlier draft was restored.");
+    expect(rejectedText(undefined)).toBe("Rejected");
+    const markup = renderToStaticMarkup(<RejectDialog label="Weekly" count={1} effect={rejectEffectText([note("restore")])} onClose={noop} onReject={async () => undefined} />);
+    expect(markup).toContain("Your earlier draft will be restored.");
+    expect(markup).not.toContain("Nothing changes");
   });
 
   test("44 px touch targets at 390 px (§9.2)", async () => {

@@ -27,7 +27,11 @@ export type ProposalSummary = {
   resultCode: string | null;
   rejectReason: string | null;
   ref: ProposalRef | null;
+  /** A pending note_draft only: what rejecting it would do to the draft now. */
+  rejectEffect?: RejectEffect;
 };
+
+export type RejectEffect = "restore" | "discard" | "keep";
 
 export type PreviewField = { name: string; before: string | null; after: string | null };
 export type ProposalPreview =
@@ -59,7 +63,7 @@ export function listProposals(options: { status: "pending" | "resolved"; cursor?
 export const getProposal = (id: string) => api<{ proposal: ProposalDetail }>(`/inbox/proposals/${id}`);
 export const approveProposal = (id: string) => api<{ id: string; status: "applied"; ref: ProposalRef }>(`/inbox/proposals/${id}/approve`, { method: "POST", body: "{}" });
 export const rejectProposal = (id: string, reason?: string) =>
-  api<{ id: string; status: "rejected"; draftDiscarded?: boolean }>(`/inbox/proposals/${id}/reject`, { method: "POST", body: JSON.stringify(reason ? { reason } : {}) });
+  api<{ id: string; status: "rejected"; draft?: "restored" | "discarded" | "kept"; draftDiscarded?: boolean }>(`/inbox/proposals/${id}/reject`, { method: "POST", body: JSON.stringify(reason ? { reason } : {}) });
 export const bulkProposals = (action: "approve" | "reject", ids: string[], reason?: string) =>
   api<{ results: BulkResult[] }>("/inbox/proposals/bulk", { method: "POST", body: JSON.stringify({ action, ids, ...(reason ? { reason } : {}) }) });
 export const pendingCount = () => api<{ pending: number }>("/inbox/count");

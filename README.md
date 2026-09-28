@@ -90,7 +90,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.9.3 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.10.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -99,6 +99,16 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.10.0
+
+- **Team invites**: admins create single-use invite links at `/team/invites`, optionally bound to one email address, with a fixed role. When email is configured, Nook sends the invite by email.
+- **Outbound email** through Resend, off unless `RESEND_API_KEY` and `MAIL_FROM` are both set.
+- **Emoji reactions** on card comments.
+- **Agent inbox**: MCP keys with `inbox:read`/`inbox:write` propose changes instead of making them; you approve or reject each one in the app only, with a diff. Bulk approve, **Proposals awaiting you** on Today, an Inbox button with a badge, and opt-in push.
+- **Review fixes**: rejecting a draft proposal restores your own draft; proposals from a revoked key are superseded; expiry is enforced on approve.
+- **QA fixes**: the Settings → MCP checkbox no longer crashes, an app-wide error card replaces a blank page, phones show the page name, a chip marks stale proposals, and bulk approve names the proposals that failed.
+- Migrations 018, 021, 022, and 027 run on the first boot, so back up first. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.9.3
 

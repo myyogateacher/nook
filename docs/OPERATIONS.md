@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.9.3 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.10.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -105,7 +105,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `PUSH_ENDPOINT_HOSTS` | empty | Extra push-service hosts, comma-separated (`push.example.com` or `*.push.example.com`), besides the built-in `*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, and `*.notify.windows.com`. |
 | `RESEND_API_KEY` | empty | Resend API key for outbound email (a single token without spaces). Email is on only when this and `MAIL_FROM` are both set. Never logged. |
 | `MAIL_FROM` | empty | Sender, `nook@example.com` or `Nook <nook@example.com>`, on a domain verified in Resend. Anything else stops the server at startup. |
-| `APP_VERSION` | `0.9.3` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.10.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -180,6 +180,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.10.0:** back up first with `./scripts/backup.sh --force`. Migrations 018 (team invites), 021 (agent inbox), 022 (comment reactions), and 027 (proposal base) run once on the first boot and can only be undone by restoring that backup. Existing MCP-written note drafts are backfilled as proposals in the Inbox, so review them there. Email is optional: invite emails need `RESEND_API_KEY` and `MAIL_FROM` in `.env` (see [Email (Resend)](#email-resend) above); without them, share invite links yourself. Pull, rebuild with `APP_VERSION=0.10.0`, and restart as above.
 
 **Upgrading to 0.9.3:** no migration; no backup needed beyond your usual schedule. Pull, rebuild with `APP_VERSION=0.9.3`, and restart as above.
 

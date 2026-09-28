@@ -458,6 +458,7 @@ type CardComment = {
   is_author: 0 | 1;
   body: string;                        // plain text, 1–16,384 UTF-8 bytes, not only whitespace
   created_at: string; edited_at: string | null;
+  reactions: ReactionAggregate[];      // Wave 20, § Reactions; [] when none
 };
 ```
 
@@ -469,6 +470,30 @@ type CardComment = {
 | `DELETE /comments/:m` | author or board owner | 200 `{ ok: true }`. Comments are deleted outright, not binned; links made through the comment go with it. | 403 `AUTHOR_ONLY`, 404 |
 
 Comments on binned cards, binned boards, or boards the caller can no longer read return 404.
+
+### Reactions (Wave 20, D182–D190, migration 022)
+
+People who may comment may react to a comment with one of 12 fixed emoji. Keys, not glyphs, are stored and sent (`shared/reactions.ts`): `thumbs_up` 👍, `thumbs_down` 👎, `heart` ❤️, `laugh` 😂, `tada` 🎉, `eyes` 👀, `rocket` 🚀, `check` ✅, `fire` 🔥, `thinking` 🤔, `pray` 🙏, `sad` 😢.
+
+```ts
+type ReactionAggregate = {
+  emoji: ReactionKey;   // one of the 12 keys
+  count: number;        // everyone who reacted with it (blocked accounts are not counted while blocked)
+  reacted: boolean;     // the caller is one of them
+  names: string[];      // the other people (never the caller), oldest first, at most 10
+  more: number;         // the other people beyond those 10: count = names.length + more + (reacted ? 1 : 0)
+};
+```
+
+Each comment's `reactions` is ordered by the first reaction's time and comes from one grouped query per comment page (at most 50), in `GET /cards/:k`, `GET /cards/:k/comments`, and the comment create and edit responses.
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `PUT /comments/:m/reactions/:emoji` | a reader of the card whose role may write content | 200 `{ reactions: ReactionAggregate[] }` for that comment. Idempotent: already reacted is still 200 with no change. | 400 `INVALID_EMOJI`, 403 `ROLE_READ_ONLY` (viewers and guests, the write gate), 404 (unknown, unreadable, or on a binned card or board), 429 `RATE_LIMITED` with `Retry-After` |
+| `DELETE /comments/:m/reactions/:emoji` | same | 200 `{ reactions }`. Idempotent: absent is still 200. | same |
+| `PUT` and `DELETE /api/reactions/:kind/:targetId/:emoji` | same, per kind | The generic form of the two above; v1 registers only `card_comment` (`server/reactions/targets.ts`). | 404 for an unknown or malformed kind or id, otherwise as above |
+
+The body is empty; the session, Origin, JSON `Content-Type`, CSRF, TOTP, and role gates still apply. The UI "toggle" chooses the verb from the chip's current state, so a retry or a double tap never flips twice. Writes are limited to 60 a minute per user (in memory). Reactions are not audited, create no notifications, are not searchable, and never change the card's `revision` or `updated_at`. Deleting a comment, or purging its card or board, deletes its reactions (a trigger on `card_comments`); a binned card's reactions are hidden until it is restored. A later module adds its own kind with `registerReactionTarget` and a cleanup trigger, with no change to the table.
 
 ### Attachments
 
@@ -763,7 +788,7 @@ type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]
 
 | `list_boards` | tasks:read | `{}` | `{ boards }` as `GET /api/tasks/boards` |
 | `list_cards` | tasks:read | `{ boardId, columnId?, assigneeIds?, tags?, flags?, dueBefore?, dueAfter?, dueNone?, text? }` | `{ board: { id, name, owner_name, is_owner }, columns: { id, name, position, wip_limit }[], tags: { id, name, color }[], cards: { id, column_id, column_name, position, title, description_preview, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, comment_count, relation_count, open_blockers, attachments: string[], updated_at }[] }`. `assignees` and `tags` are names in assignment and tagging order (Wave 13); `assignee_name` is the first assignee. `relation_count` and `open_blockers` are computed for the key's owner as in `GET /api/tasks/boards/:b` (13D). `description_preview` is plain text, at most 280 characters; `attachments` are file names only. A `columnId` not on the board is `NOT_FOUND`. **Filters (Wave 13C, D113)** run on the server with bound SQL (`server/tasks/cardQuery.ts`) and mean what the client's `shared/taskQuery.ts` means: values inside one filter are OR-ed and filters are AND-ed. `assigneeIds` (≤ 30): user ids, `"me"` (the key's user), or `"none"` (unassigned); `tags` (≤ 30): names in any case or ids of this board's tags, or `"none"` (untagged), where an unknown tag is `INVALID` with `reason: "UNKNOWN_TAG"`, the unknown `tags`, and the board's `known` names; `flags`: the fixed set or `"none"`; `dueBefore`/`dueAfter`: real dates, exclusive, AND-ed into one range over dated cards (the card's own civil `due_on`); `dueNone: true` adds cards without a date (alone: only those); `text` (1–100): a substring of the title or `description_excerpt`, ignoring case and accents, with no wildcards. The listing keeps the board order |
-| `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, created_at, updated_at }, comments (latest 50), hasMoreComments, attachments: string[], relations: McpRelation[] }`. `description` is plain text; `relations` resolve for the key's owner exactly as `GET /api/tasks/cards/:k` does, newest first (13D) |
+| `get_card` | tasks:read | `{ cardId }` | `{ card: { id, board_id, board_name, column_id, column_name, title, description, revision, creator_name, description_excerpt, due_on, due_time, due_tz, due_at, assignees: string[], assignee_name, tags: string[], flags, created_at, updated_at }, comments (latest 50, each with `reactions: [{ emoji, glyph, count, reacted }]` and no names, Wave 20), hasMoreComments, attachments: string[], relations: McpRelation[] }`. There is no reaction write tool. `description` is plain text; `relations` resolve for the key's owner exactly as `GET /api/tasks/cards/:k` does, newest first (13D) |
 | `list_children` | tasks:read | `{ cardId }` | `{ children: { id, title, level, level_name, column_id, column_name, is_done, due_on, child_count, done_child_count }[] }`: live direct children by column, then position, at most 100, always on the card's own board. `NOT_FOUND` for a card the owner cannot read (17A, D139) |
 | `search_cards` | tasks:read | `{ query (1–100, trimmed), boardId?, limit? (1–20, default 20) }` | `{ results: { id, board_id, board_name, title, column_name, is_done }[], truncated }` as `GET /api/tasks/cards/search`: titles only, live cards on boards the owner can read, `boardId` first (a hint). Not rate-limited beyond the per-key call limits (13D) |
 | (hierarchy, 17A) | | | Every card `list_cards`, `get_card`, `create_card`, and `update_card` return adds `parent_id`, `level`, `level_name`, `child_count`, and `done_child_count`; `list_cards`'s `board` adds `levels` (names, top first) and `work_level`; `get_card` adds `card.parent_title` and `children` (as `list_children`); `query_cards` cards add `parent_id`, `parent_title`, and `level`, and its filter takes `parent:`, `level:`, and `has:subtasks`. `create_card` and `update_card` take `parentId` and `level` with the REST rules (§ Hierarchy): an invalid parent is `INVALID` with `reason: "PARENT_INVALID"`, a level change on a card with children `INVALID` with `reason: "HAS_CHILDREN"` and `childCount`; audited like the REST writes with `{ via: "mcp", keyId }` in the `task_write` bucket. No structure or sprint tools (D139, T119) |

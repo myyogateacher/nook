@@ -212,6 +212,46 @@ describe("/api/keys", () => {
     expect((await mcp(again.body.key.token)).status).toBe(200);
   });
 
+  test("rotation runs the creation checks before the password: role, policy, and the count with the graced key (review L1)", async () => {
+    const admin = await createUser("Keys rotate admin");
+    db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+    const setPolicies = (patch: Record<string, unknown>) => writePolicies(admin.userId, { ...DEFAULT_POLICIES, ...patch }, policiesRevision());
+    const owner = await createUser("Keys rotate checks");
+    const { key } = (await createKey(owner, { grants: grants(["notes", "read"], ["tasks", "write"]) })).body;
+    // Refusals come before the password: a wrong one still gets the policy code, never 401.
+    const rotate = (id: string, graceHours: number, password = "wrong") => api(owner, "POST", `/keys/${id}/rotate`, { password, graceHours });
+
+    // The count counts the old key while its grace runs: at the limit, only a 0-hour rotation fits.
+    const live = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(owner.userId) as { count: number }).count;
+    setPolicies({ keysPerUser: live });
+    expect((await rotate(key.id, 24)).body).toMatchObject({ code: "KEY_LIMIT", limit: live });
+    expect((await rotate(key.id, 24, owner.password)).status).toBe(409);
+    expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ?").get(owner.userId)).toEqual({ count: live });
+    setPolicies({});
+
+    // Surface and module policy.
+    setPolicies({ mcpRoles: ["admin"] });
+    expect((await rotate(key.id, 24)).body.code).toBe("KEY_POLICY");
+    setPolicies({ keyModulesByRole: { ...DEFAULT_POLICIES.keyModulesByRole, member: ["notes"] } });
+    expect((await rotate(key.id, 24)).body).toMatchObject({ code: "KEY_POLICY", module: "tasks" });
+    setPolicies({});
+
+    // A viewer cannot renew a write grant; a demoted guest cannot rotate at all.
+    db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(owner.userId);
+    expect((await rotate(key.id, 24)).body.code).toBe("SCOPE_NOT_ALLOWED");
+    db.query("UPDATE users SET role = 'guest' WHERE id = ?").run(owner.userId);
+    expect((await rotate(key.id, 24)).body.code).toBe("ROLE_READ_ONLY");
+    db.query("UPDATE users SET role = 'member' WHERE id = ?").run(owner.userId);
+    expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE rotated_from = ?").get(key.id)).toEqual({ count: 0 });
+
+    // An expired key may still be rotated with the password: that is how it is renewed.
+    db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), key.id);
+    const renewed = await rotate(key.id, 24, owner.password);
+    expect(renewed.status).toBe(201);
+    expect(renewed.body.key.state).toBe("active");
+    expect((await mcp(renewed.body.key.token)).status).toBe(200);
+  });
+
   test("revoke is immediate, withdraws pending proposals, and is the owner's only", async () => {
     const owner = await createUser("Keys revoke");
     const { key } = (await createKey(owner)).body;

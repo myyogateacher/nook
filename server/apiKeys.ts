@@ -505,14 +505,37 @@ function supersedeProposals(keyId: string, ownerId: string, timestamp: string) {
 }
 
 /**
+ * The checks a rotation runs, the same as creating a key (review L1), before the password and again
+ * inside rotateApiKey: the holder's role may create keys (a guest may not, even for a key made
+ * before a demotion), policy allows the key's surfaces and every module it holds, the role allows
+ * every permission, and the count has room for the new key. The old key still counts while its
+ * grace runs, so a rotation with grace needs a free slot; a 0-hour rotation revokes the old key in
+ * the same transaction and needs none. An expired key may be rotated (with the password): that is
+ * how its holder renews it without re-entering its grants.
+ */
+export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number]) {
+  const row = liveOwnKey(userId, keyId);
+  if (row.revoke_after !== null) throw new KeyError(409, "KEY_ROTATING", "This key was already rotated. Revoke it now or wait for its grace period to end.");
+  const policies = readPolicies();
+  checkCreatePolicy(userId, row.role, { surfaces: row.surfaces }, policies);
+  const allowed = mcpScopesForRole(row.role);
+  const modules = activeModules(row.role, policies);
+  for (const grant of loadGrants(row.id)) {
+    const scope = scopeFor(grant.module, grant.permission);
+    if (!scope || !allowed.includes(scope)) throw new KeyError(403, "SCOPE_NOT_ALLOWED", "Your team role cannot hold this key's permissions. Create a new key instead.");
+    if (!modules.includes(grant.module)) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow keys for this module for your team role", { module: grant.module });
+  }
+  if (graceHours > 0) checkKeyCount(userId, policies);
+  return { row, policies };
+}
+
+/**
  * POST /api/keys/:id/rotate (D277), after re-authentication: a new token with the same name,
  * grants, surfaces, and limits, linked by `rotated_from`. The old key works for `graceHours`, then
  * stops. Routines bound to the old key move to the new one in the same transaction.
  */
 export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number]) {
-  const row = liveOwnKey(userId, keyId);
-  if (row.revoke_after !== null) throw new KeyError(409, "KEY_ROTATING", "This key was already rotated. Revoke it now or wait for its grace period to end.");
-  const policies = readPolicies();
+  const { row, policies } = checkRotation(userId, keyId, graceHours);
   const lifetimeDays = row.expires_at === null ? policies.keyDefaultDays
     : Math.max(1, Math.round((Date.parse(row.expires_at) - Date.parse(row.created_at)) / DAY_MS));
   const days = Math.min(lifetimeDays, policies.keyMaxDays);

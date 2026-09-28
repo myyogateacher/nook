@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "./auth";
 import { audit } from "./db";
 import {
-  createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
+  createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, checkRotation, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
   revokeOwnKey, rotateApiKey, rotateKeySchema, validateGrants, type GrantInput
 } from "./apiKeys";
 import { keyEvents } from "./access/events";
@@ -143,10 +143,14 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     if (!id) return notFound(c);
     const body = await parseJson(c.req.raw, rotateKeySchema);
     const user = c.get("user");
-    // Refusals that need no password come first (missing key, already rotating).
-    const current = ownApiKey(user.id, id);
-    if (!current || current.state === "revoked") return notFound(c);
-    if (current.revokeAfter !== null) return c.json({ error: "This key was already rotated. Revoke it now or wait for its grace period to end.", code: "KEY_ROTATING" }, 409);
+    // Refusals that need no password come first, so no code is consumed: missing key, already
+    // rotating, and the creation checks (role, policy, count; review L1).
+    try {
+      checkRotation(user.id, id, body.graceHours);
+    } catch (error) {
+      if (error instanceof KeyError) return keyError(c, error);
+      throw error;
+    }
     if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
     if (!await verifyReauth(user.id, body, "api_key_rotate")) {
       audit(user.id, null, "key.rotate_failed", { keyId: id });

@@ -1484,7 +1484,7 @@ type RunSummary = {
 };
 ```
 
-**Schedule** (D153): wall-clock slots in `tz`. A new, rescheduled, or resumed routine is due from its current period's slot (a daily 08:00 routine created at 10:00 is due at once). `finish_run` advances `nextDueAt` to the first slot after both the run's slot and now, so a late run does not drift and missed slots do not pile up. A DST gap moves the slot forward by the gap; a repeated hour uses the earlier instant. `manual` is never due but can still be started.
+**Schedule** (D153): wall-clock slots in `tz`. A new or rescheduled routine is due from its current period's slot (a daily 08:00 routine created at 10:00 is due at once). A resumed one is too, unless a run (not an abandoned one) already took that slot: then it is due at the first slot after max(that slot, now), so pausing and resuming never makes today's run due again. `finish_run` advances `nextDueAt` to the first slot after both the run's slot and now, so a late run does not drift and missed slots do not pile up. A DST gap moves the slot forward by the gap; a repeated hour uses the earlier instant. `manual` is never due but can still be started.
 
 ### Endpoints
 

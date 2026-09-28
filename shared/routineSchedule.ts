@@ -88,6 +88,18 @@ export function dueAfterRun(schedule: RoutineSchedule, slotMs: number, nowMs: nu
   return slot === null ? null : new Date(slot).toISOString();
 }
 
+/**
+ * `next_due_at` for a resumed routine (Friction 5): the current period's slot, as for a new one,
+ * unless a run already covered it (`lastRunSlotMs`, the latest slot a run took), in which case the
+ * first slot after max(that slot, now). Pausing and resuming never makes a slot that ran due again.
+ */
+export function resumedDueAt(schedule: RoutineSchedule, nowMs: number, lastRunSlotMs: number | null): string | null {
+  const current = latestSlotAtOrBefore(schedule, nowMs);
+  if (lastRunSlotMs === null || current === null || lastRunSlotMs < current) return initialDueAt(schedule, nowMs);
+  const slot = nextSlotAfter(schedule, Math.max(lastRunSlotMs, nowMs));
+  return slot === null ? null : new Date(slot).toISOString();
+}
+
 const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 export const weekdayName = (weekday: number) => WEEKDAY_NAMES[weekday] ?? "";
 

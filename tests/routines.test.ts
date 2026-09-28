@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
-import { cadenceText, dueAfterRun, initialDueAt, latestSlotAtOrBefore, nextSlotAfter, scheduleProblem, type RoutineSchedule } from "../shared/routineSchedule";
+import { cadenceText, dueAfterRun, initialDueAt, latestSlotAtOrBefore, nextSlotAfter, resumedDueAt, scheduleProblem, type RoutineSchedule } from "../shared/routineSchedule";
 
 const { createMcpApiKey } = await import("../server/mcp");
 const { setRole } = await import("../server/team/service");
-const { ROUTINE_LIMIT } = await import("../server/inbox/routines");
+const { ROUTINE_LIMIT, setRoutineEnabled } = await import("../server/inbox/routines");
 
 /**
  * Routines (docs/plan/research/2026-09-28-agent-inbox-routines.md §5.1, §8, §13 Wave B, D152,
@@ -60,6 +60,17 @@ describe("routine schedules (D153)", () => {
     expect(dueAfterRun(daily, at("2026-09-28T08:00:00Z"), at("2026-09-28T08:40:00Z"))).toBe("2026-09-29T08:00:00.000Z");
   });
 
+  test("resuming never makes a slot that already ran due again (Friction 5)", () => {
+    const daily: RoutineSchedule = { cadence: "daily", atTime: "08:00", weekday: null, tz: "UTC" };
+    const now = at("2026-09-28T15:00:00Z");
+    // Today's 08:00 ran: the next slot is tomorrow's.
+    expect(resumedDueAt(daily, now, at("2026-09-28T08:00:00Z"))).toBe("2026-09-29T08:00:00.000Z");
+    // The last run was yesterday's slot (or none): today's slot is due now, as for a new routine.
+    expect(resumedDueAt(daily, now, at("2026-09-27T08:00:00Z"))).toBe("2026-09-28T08:00:00.000Z");
+    expect(resumedDueAt(daily, now, null)).toBe(initialDueAt(daily, now));
+    expect(resumedDueAt({ ...daily, cadence: "manual", atTime: null }, now, at("2026-09-28T08:00:00Z"))).toBeNull();
+  });
+
   test("validation and copy", () => {
     expect(scheduleProblem({ cadence: "daily", atTime: "25:00", weekday: null, tz: "UTC" })).toBeTruthy();
     expect(scheduleProblem({ cadence: "weekly", atTime: "08:00", weekday: null, tz: "UTC" })).toBeTruthy();
@@ -106,6 +117,22 @@ describe("/api/inbox/routines", () => {
     expect((await api(owner, "GET", `/inbox/routines/${view.id}/runs`)).body.runs).toEqual([]);
     expect((await api(owner, "DELETE", `/inbox/routines/${view.id}`)).body).toEqual({ deleted: true });
     expect((await api(owner, "GET", `/inbox/routines/${view.id}`)).status).toBe(404);
+  });
+
+  test("pause, then resume after today's run: the routine is not due again until the next slot (Friction 5)", async () => {
+    const owner = await createUser("Routine resume");
+    const created = await api(owner, "POST", "/inbox/routines", routine({ name: "Resume check", cadence: "daily", atTime: "08:00", tz: "UTC" }));
+    const id = created.body.routine.id as string;
+    const now = at("2026-09-28T15:00:00Z");
+    db.query(`INSERT INTO routine_runs (id, routine_id, owner_id, status, slot_at, started_at, lease_expires_at, finished_at)
+      VALUES (?, ?, ?, 'succeeded', ?, ?, ?, ?)`).run(crypto.randomUUID(), id, owner.userId, "2026-09-28T08:00:00.000Z", "2026-09-28T08:05:00.000Z", "2026-09-28T10:05:00.000Z", "2026-09-28T08:10:00.000Z");
+    expect(setRoutineEnabled(owner.userId, id, false, now).routine.enabled).toBe(false);
+    const resumed = setRoutineEnabled(owner.userId, id, true, now).routine;
+    expect(resumed).toMatchObject({ enabled: true, due: false, nextDueAt: "2026-09-29T08:00:00.000Z" });
+    // An abandoned run leaves its slot due (D154).
+    db.query("UPDATE routine_runs SET status = 'abandoned' WHERE routine_id = ?").run(id);
+    setRoutineEnabled(owner.userId, id, false, now);
+    expect(setRoutineEnabled(owner.userId, id, true, now).routine).toMatchObject({ due: true, nextDueAt: "2026-09-28T08:00:00.000Z" });
   });
 
   test("names are unique per owner, case-folded; other owners get 404", async () => {

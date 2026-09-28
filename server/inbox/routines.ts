@@ -8,7 +8,7 @@ import { McpToolError, type McpKeyContext } from "../mcpToolKit";
 import { readableBoard } from "../tasks/access";
 import { canWriteContent } from "../team/userRole";
 import { validTimeZone } from "../today/registry";
-import { cadenceText, CADENCES, dueAfterRun, initialDueAt, scheduleProblem, type Cadence, type RoutineSchedule } from "../../shared/routineSchedule";
+import { cadenceText, CADENCES, dueAfterRun, initialDueAt, resumedDueAt, scheduleProblem, type Cadence, type RoutineSchedule } from "../../shared/routineSchedule";
 import { InboxError } from "./errors";
 import { PROPOSAL_KINDS, type ProposalKind, type TargetType } from "./kinds";
 import { cleanLine, cleanText } from "./text";
@@ -263,7 +263,10 @@ export function updateRoutine(ownerId: string, routineId: string, patch: Routine
   if (nameTaken(ownerId, value.nameFold, row.id)) throw takenError();
   const scheduleChanged = value.cadence !== row.cadence || value.atTime !== row.at_time || value.weekday !== row.weekday || value.tz !== row.tz;
   const resumed = value.enabled && row.enabled === 0;
-  const nextDue = scheduleChanged || resumed ? initialDueAt({ cadence: value.cadence, atTime: value.atTime, weekday: value.weekday, tz: value.tz }, nowMs) : row.next_due_at;
+  const schedule = { cadence: value.cadence, atTime: value.atTime, weekday: value.weekday, tz: value.tz };
+  const nextDue = scheduleChanged ? initialDueAt(schedule, nowMs)
+    : resumed ? resumedDueAt(schedule, nowMs, lastRunSlot(row.id))
+    : row.next_due_at;
   const timestamp = new Date(nowMs).toISOString();
   try {
     db.transaction(() => {
@@ -285,6 +288,12 @@ export function updateRoutine(ownerId: string, routineId: string, patch: Routine
 }
 
 /** Pause or resume without a revision (a toggle; the routine's other fields are untouched). */
+/** The latest slot a run of this routine took (an abandoned run leaves its slot due, D154). */
+function lastRunSlot(routineId: string) {
+  const row = db.query("SELECT MAX(slot_at) AS slot FROM routine_runs WHERE routine_id = ? AND status != 'abandoned' AND slot_at IS NOT NULL").get(routineId) as { slot: string | null };
+  return row.slot ? Date.parse(row.slot) : null;
+}
+
 export function setRoutineEnabled(ownerId: string, routineId: string, enabled: boolean, nowMs = Date.now()) {
   requireWriter(ownerId);
   const row = ownedRoutineRow(ownerId, routineId);

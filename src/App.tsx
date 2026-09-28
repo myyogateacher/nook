@@ -206,7 +206,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   );
 }
 
-function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; totpEnabled: boolean; role: User["role"] }) {
+function McpSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange: (open: boolean) => void; totpEnabled: boolean; role: User["role"] }) {
   const [keys, setKeys] = useState<McpApiKey[]>([]);
   const [newToken, setNewToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -214,7 +214,12 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
   const [copied, setCopied] = useState("");
   const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_KEY_SCOPES]);
   const [reviewKey, setReviewKey] = useState<McpApiKey | null>(null);
-  const closeReview = useCallback(() => setReviewKey(null), []);
+  const reviewTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const closeReview = useCallback(() => {
+    setReviewKey(null);
+    // Focus goes back to the Review button that opened the dialog (it is gone after a revoke).
+    window.requestAnimationFrame(() => { if (reviewTriggerRef.current?.isConnected) reviewTriggerRef.current.focus(); });
+  }, []);
   const locked = lockedScopes(scopes);
   const endpoint = `${window.location.origin}/mcp`;
   const displayToken = newToken || "<YOUR_API_KEY>";
@@ -237,6 +242,11 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
     onPendingChange(Boolean(newToken));
     return () => onPendingChange(false);
   }, [newToken, onPendingChange]);
+  // Settings leaves Escape to the Review dialog while it is open (1i).
+  useEffect(() => {
+    onNestedDialogChange(reviewKey !== null);
+    return () => onNestedDialogChange(false);
+  }, [reviewKey, onNestedDialogChange]);
 
   async function createKey(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -295,7 +305,7 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={onCheckedChange((checked) => setScopes((current) => toggleScope(current, permission.scope, checked)))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small>{permission.warning && <small className="mcp-permission-warning">{permission.warning}</small>}</span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
       {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
-      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} />{binnedTodayLine(key.binnedToday) && <small className="mcp-key-binned">{binnedTodayLine(key.binnedToday)} · <button type="button" className="text-button" onClick={() => setReviewKey(key)}>Review</button></small>}</div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
+      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} />{binnedTodayLine(key.binnedToday) && <small className="mcp-key-binned">{binnedTodayLine(key.binnedToday)} · <button type="button" className="text-button" onClick={(event) => { reviewTriggerRef.current = event.currentTarget; setReviewKey(key); }}>Review</button></small>}</div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
     </div>
     {reviewKey && <McpBinnedReview keyId={reviewKey.id} keyName={reviewKey.name} onClose={() => { closeReview(); loadKeys(); }} onRevoke={() => { const key = reviewKey; closeReview(); void revokeKey(key); }} />}
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
@@ -313,6 +323,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [copied, setCopied] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [mcpKeyPending, setMcpKeyPending] = useState(false);
+  const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
 
   const guardedClose = useCallback(() => {
     if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
@@ -342,11 +353,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }, []);
 
   useEffect(() => {
-    if (state.setupRequired) return;
+    if (state.setupRequired || nestedDialogOpen) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired]);
+  }, [guardedClose, state.setupRequired, nestedDialogOpen]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
   // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
@@ -479,7 +490,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );

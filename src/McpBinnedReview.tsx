@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarDays, FileText, LayoutList, RotateCcw, Table2, X } from "lucide-react";
 import { api } from "./api";
+import { formatDateTime, relativeTime } from "./files/format";
 import { Select, type Option } from "./ui/Select";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 
@@ -94,7 +95,7 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
         : items && items.length === 0 ? <p className="mcp-review-empty">Nothing this key moved to the Bin in this window is still there.</p>
         : items && <ul className="mcp-review-list">{items.map((item) => {
           const Icon = TYPE_ICON[item.type];
-          return <li key={`${item.type}:${item.id}`}><Icon aria-hidden="true" /><span><strong>{item.title || "Untitled"}</strong><small>{TYPE_LABEL[item.type]} · {new Date(item.binnedAt).toLocaleString()}</small></span></li>;
+          return <li key={`${item.type}:${item.id}`}><Icon aria-hidden="true" /><span><strong>{item.title || "Untitled"}</strong><small>{TYPE_LABEL[item.type]} · <time dateTime={item.binnedAt} title={formatDateTime(item.binnedAt)}>{relativeTime(item.binnedAt)}</time></small></span></li>;
         })}</ul>}
       {truncated && <p className="mcp-review-empty">Showing the latest 500.</p>}
       <div className="mcp-review-actions">

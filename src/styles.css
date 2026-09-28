@@ -322,6 +322,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-review-list small { color: #8e8e93; font-size: .72rem; }
 .mcp-review-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .mcp-review-actions button { min-height: 44px; }
+.mcp-review-actions .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-top: 0; padding: 0 16px; white-space: nowrap; }
+.mcp-review-actions .primary-button svg { flex: none; width: 18px; height: 18px; }
 @media (max-width: 760px) {
   .mcp-review-dialog { inset: 0; width: auto; max-height: none; height: 100dvh; transform: none; border: 0; border-radius: 0; align-content: start; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
   .mcp-review-actions { flex-direction: column-reverse; }

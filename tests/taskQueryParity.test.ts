@@ -200,7 +200,7 @@ describe("sprint key (17B): the board's in-memory matcher and the cross-board qu
     const nextTask = await add("Next task", { sprintId: next });
     await add("Next subtask", { parentId: nextTask });
     await add("Later task", { sprintId: later });
-    await add("Backlog task", {});
+    await add("Backlog task", { sprintId: null });
     // A detached subtask (restored while its parent was in the Bin, D130): the API refuses to make one.
     db.query("UPDATE cards SET parent_card_id = NULL WHERE id = ?").run(await add("Loose subtask", { parentId: nextTask }));
     // A second board with its own active sprint: `current` is per board.

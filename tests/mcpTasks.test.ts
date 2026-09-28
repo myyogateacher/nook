@@ -553,7 +553,10 @@ describe("MCP task tools: sprints (17B, D139, T119)", () => {
     // A subtask stores no sprint: INVALID with the reason; an unknown sprint is NOT_FOUND.
     expect((await callTool(key, "update_card", { cardId: subtask.id, baseRevision: subtask.revision, sprintId: next })).value).toMatchObject({ code: "INVALID", reason: "SPRINT_LEVEL" });
     expect((await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "Nope", sprintId: crypto.randomUUID() })).value).toMatchObject({ code: "NOT_FOUND" });
-    await callTool(key, "create_card", { boardId, columnId: backlogColumn!.id, title: "Idea" });
+    await callTool(key, "create_card", { boardId, columnId: backlogColumn!.id, title: "Idea", sprintId: null });
+    // Friction 3: no sprintId at the work level joins the active sprint; null above stays in the backlog.
+    const routine = (await callTool(key, "create_card", { boardId, columnId: todo!.id, title: "From a routine" })).value.card;
+    expect(routine).toMatchObject({ sprint_id: first, sprint_name: "Sprint 1" });
     await callTool(key, "create_card", { boardId, columnId: done!.id, title: "Shipped", sprintId: first });
 
     const moved = (await callTool(key, "update_card", { cardId: task.id, baseRevision: task.revision, sprintId: next })).value.card;
@@ -562,7 +565,7 @@ describe("MCP task tools: sprints (17B, D139, T119)", () => {
     expect(detail).toMatchObject({ sprint_id: next, sprint_name: "Sprint 2" });
 
     const titles = async (sprint: string) => ((await callTool(key, "list_cards", { boardId, sprint })).value.cards as Array<{ title: string }>).map((card) => card.title).sort();
-    expect(await titles("current")).toEqual(["Shipped"]);
+    expect(await titles("current")).toEqual(["From a routine", "Shipped"]);
     expect(await titles("next")).toEqual(["Checkout", "Form"]);
     expect(await titles(next)).toEqual(["Checkout", "Form"]);
     expect(await titles("none")).toEqual(["Idea"]);

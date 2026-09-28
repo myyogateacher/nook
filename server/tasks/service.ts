@@ -550,7 +550,11 @@ export type CardCreateInput = {
   parentId?: string | null;
   /** 0–2 and below the board's level count; defaults to the parent's level plus one, else the work level (D122). */
   level?: number;
-  /** A planned or active sprint of this board (17B, D124); only on a work-level card of a board with sprints on. */
+  /**
+   * A planned or active sprint of this board (17B, D124); only on a work-level card of a board with
+   * sprints on. null files the card in the backlog. Omitted, a work-level card joins the board's
+   * active sprint when there is one (Friction 3: routines and MCP clients rarely pass it).
+   */
   sprintId?: string | null;
 };
 
@@ -571,6 +575,12 @@ function resolveSprint(boardId: string, structure: BoardStructure, level: number
   if (!sprint) throw new TaskError(404, "Sprint not found");
   if (sprint.state === "closed") throw new TaskError(409, "This sprint is completed", "SPRINT_COMPLETED", { sprintId: sprint.id });
   return sprint.id;
+}
+
+/** The sprint an omitted `sprintId` means (Friction 3): the active sprint, for a work-level card on a board with sprints on. */
+function defaultSprint(boardId: string, structure: BoardStructure, level: number) {
+  if (!structure.sprints || level !== structure.workLevel) return null;
+  return (db.query("SELECT id FROM board_sprints WHERE board_id = ? AND state = 'active'").get(boardId) as { id: string } | null)?.id ?? null;
 }
 
 /**
@@ -629,7 +639,9 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
     const attachmentIds = input.attachmentIds === undefined ? [] : [...new Set(input.attachmentIds.map((documentId) => documentId.toLowerCase()))];
     const placement = resolvePlacement(boardId, { parentId: input.parentId ? input.parentId.toLowerCase() : null, level: input.level });
     if (placement.parentId) requireChildRoom(placement.parentId);
-    const sprintId = resolveSprint(boardId, placement.structure, placement.level, input.sprintId ?? null);
+    const sprintId = input.sprintId === undefined
+      ? defaultSprint(boardId, placement.structure, placement.level)
+      : resolveSprint(boardId, placement.structure, placement.level, input.sprintId);
     const plan = planInsert(liveCardsIn(input.columnId), input.afterCardId);
     if (!plan) throw stalePosition(input.columnId);
     const id = crypto.randomUUID();

@@ -380,7 +380,7 @@ export const taskTools: McpToolSpec[] = [
       flags: flagsInput.optional(),
       parentId: uuid.nullable().optional().describe("A card on the same board one level up to put this card under (see the board's levels in list_cards); its level then defaults to the parent's plus one"),
       level: z.number().int().min(0).max(2).optional().describe("0 is the top level; defaults to the parent's level plus one, else the board's work level"),
-      sprintId: uuid.nullable().optional().describe("A planned or active sprint of the board (see list_sprints) to plan the card in; only for cards at the board's work level, since subtasks follow their parent"),
+      sprintId: uuid.nullable().optional().describe("A planned or active sprint of the board (see list_sprints) to plan the card in, or null for the backlog; omitted, a work-level card joins the active sprint when there is one. Only for cards at the board's work level, since subtasks follow their parent"),
       afterCardId: uuid.nullable().optional()
     }),
     handler: async ({ boardId, tags, ...fields }, key) => {

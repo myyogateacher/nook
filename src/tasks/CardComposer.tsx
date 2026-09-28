@@ -137,7 +137,8 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     try {
       // Only a work-level card is planned in a sprint (17B); a subtask follows its parent.
       const planned = structure.sprints && (current.level ?? structure.workLevel) === structure.workLevel ? current.sprintId : null;
-      const { card } = await createCard(boardId, createBody({ ...current, sprintId: planned }, check.name));
+      // Always sent: null is the backlog (the server puts an omitted sprint on the active one, Friction 3).
+      const { card } = await createCard(boardId, { ...createBody({ ...current, sprintId: planned }, check.name), sprintId: planned });
       onCreated(card, mode, { hadRelations: current.relations.length > 0 });
       if (mode === "another") {
         notify(`Added “${card.title}”. Add another.`);

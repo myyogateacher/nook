@@ -182,6 +182,27 @@ describe("planning cards in sprints", () => {
     expect(cards.filter((card) => card.sprint_id === other.id).map((card) => card.title)).toEqual(["Checkout"]);
   });
 
+  test("a work-level card created without sprintId joins the active sprint; null keeps it in the backlog (Friction 3)", async () => {
+    const { owner, member, boardId, columns } = await setup("Default sprint");
+    // No active sprint yet: an omitted sprint is the backlog.
+    const early = await addCard(member, boardId, columns[0].id, "Before the sprint");
+    expect(early.sprint_id).toBeNull();
+    const sprint = await addSprint(owner, boardId, "Sprint 1");
+    expect((await call(owner, "PATCH", `/sprints/${sprint.id}`, { state: "active" })).status).toBe(200);
+    const joined = await addCard(member, boardId, columns[0].id, "From a routine");
+    expect(joined.sprint_id).toBe(sprint.id);
+    expect(lastAudit("task.card_create")).toMatchObject({ cardId: joined.id, sprintId: sprint.id });
+    const backlog = await addCard(member, boardId, columns[0].id, "For later", { sprintId: null });
+    expect(backlog.sprint_id).toBeNull();
+    // Below the work level nothing is stored; the subtask follows its parent.
+    const subtask = await addCard(member, boardId, columns[0].id, "Its subtask", { parentId: backlog.id });
+    expect(subtask.sprint_id).toBeNull();
+    expect((db.query("SELECT sprint_id FROM cards WHERE id = ?").get(subtask.id) as { sprint_id: string | null }).sprint_id).toBeNull();
+    // A board with sprints off never defaults.
+    const flat = await setup("Default sprint flat", { levels: [{ name: "Card", plural: "Cards" }], workLevel: 0, sprints: false });
+    expect((await addCard(flat.member, flat.boardId, flat.columns[0].id, "Plain")).sprint_id).toBeNull();
+  });
+
   test("a sprint of another board is 404, a completed one 409, and sprints off 400; changing level clears the stored sprint", async () => {
     const { owner, member, boardId, columns } = await setup("Refusals");
     const sprint = await addSprint(owner, boardId, "Sprint 1");
@@ -236,7 +257,7 @@ describe("completing a sprint", () => {
     const open = await addCard(member, boardId, columns[0].id, "Still open", { sprintId: sprint.id });
     const doing = await addCard(member, boardId, columns[1].id, "Half done", { sprintId: sprint.id });
     const subtask = await addCard(member, boardId, columns[0].id, "Its subtask", { parentId: open.id });
-    const backlog = await addCard(member, boardId, columns[0].id, "Backlog");
+    const backlog = await addCard(member, boardId, columns[0].id, "Backlog", { sprintId: null });
     return { ...setupResult, sprint, done, open, doing, subtask, backlog };
   }
 

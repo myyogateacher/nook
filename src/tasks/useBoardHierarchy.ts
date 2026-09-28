@@ -151,7 +151,7 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
       const columnId = newChildColumn(detailRef.current?.columns ?? []);
       if (!columnId) return false;
       try {
-        const { card } = await createCard(parent.board_id, { columnId, title, parentId: parent.id });
+        const { card } = await createCard(parent.board_id, { columnId, title, parentId: parent.id, sprintId: null });
         setDetail((current) => current ? { ...current, cards: [...current.cards, card], board: { ...current.board, card_count: current.board.card_count + 1 } } : current);
         return true;
       } catch (reason) {

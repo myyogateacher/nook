@@ -161,4 +161,12 @@ describe("sprint words and defaults", () => {
     expect(createBody(emptyDraft("todo", { sprintId: S1 }), "Task")).toEqual({ columnId: "todo", title: "Task", sprintId: S1 });
     expect(createBody(emptyDraft("todo"), "Task")).toEqual({ columnId: "todo", title: "Task" });
   });
+
+  test("the composer always sends the sprint, so the Backlog stays the backlog (Friction 3)", async () => {
+    // The server puts an omitted sprintId on the active sprint; the composer's null means the backlog.
+    const source = await Bun.file(new URL("../src/tasks/CardComposer.tsx", import.meta.url)).text();
+    expect(source).toContain("{ ...createBody({ ...current, sprintId: planned }, check.name), sprintId: planned }");
+    const hierarchy = await Bun.file(new URL("../src/tasks/useBoardHierarchy.ts", import.meta.url)).text();
+    expect(hierarchy).toContain("parentId: parent.id, sprintId: null");
+  });
 });

@@ -48,7 +48,9 @@ function mutatingRoutes() {
 }
 
 /** Registered before the session middleware: there is no user, so the gate never applies. */
-const PUBLIC_WRITES = new Set(["POST /api/auth/login", "POST /api/auth/register", "POST /api/auth/invite", "POST /api/mail/verify", "POST /api/mail/unsubscribe", "POST /api/mail/webhook"]);
+const PUBLIC_WRITES = new Set(["POST /api/auth/login", "POST /api/auth/register", "POST /api/auth/invite", "POST /api/mail/verify", "POST /api/mail/unsubscribe", "POST /api/mail/webhook",
+  // Wave 30: forgot / reset password work signed out.
+  "POST /api/auth/password-reset/request", "POST /api/auth/password-reset/check", "POST /api/auth/password-reset/complete"]);
 
 const concrete = (path: string) => path.replace(/:type/g, "note").replace(/:[A-Za-z]+/g, () => crypto.randomUUID());
 

@@ -2,7 +2,7 @@
  * Pure helpers for Team invites (docs/plan/WAVES_18-20_SMALL.md §1.6). No DOM, so
  * tests/teamInvitesClient.test.tsx checks them directly.
  */
-import type { InviteRole, InviteStatus, TeamInvite } from "./teamApi";
+import type { InviteRole, InviteStatus, MailOutcome, TeamInvite } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 
 export const INVITE_ROLES: readonly InviteRole[] = ["member", "viewer", "guest"];
@@ -40,6 +40,16 @@ export function inviteTimeLabel(invite: TeamInvite, nowMs = Date.now()) {
 export function shownOnceWarning(role: InviteRole, expiresAt: string) {
   const date = new Date(expiresAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
   return `This link is shown once. Anyone with it can create ${withArticle(role)} account until ${date}.`;
+}
+
+export const EMAIL_NOT_CONFIGURED = "Email is not configured";
+
+/** What happened to an invite email, in one line. */
+export function mailOutcomeLabel(outcome: MailOutcome, address: string | null) {
+  if (outcome.sent) return address ? `Emailed to ${address}` : "Email sent";
+  if (outcome.reason === "not_configured") return EMAIL_NOT_CONFIGURED;
+  if (outcome.reason === "rate_limited") return "Too many emails were sent recently. Share the link another way, or try later.";
+  return "The email could not be sent. Share the link another way, or try again later.";
 }
 
 /** Why "New invite" is unavailable, or null. */

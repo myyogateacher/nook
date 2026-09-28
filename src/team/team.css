@@ -143,6 +143,14 @@
 .team-invite-created input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
 .team-invite-warning { display: flex; align-items: flex-start; gap: 8px; color: #f0c674 !important; }
 .team-invite-warning svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.team-invite-mail { display: flex; align-items: flex-start; gap: 8px; }
+.team-invite-mail.sent { color: #9be3a6 !important; }
+.team-invite-mail svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.team-check { min-height: 44px; display: flex; align-items: center; gap: 10px; color: #d6d6d9; font-size: .84rem; cursor: pointer; }
+.team-check input { width: 20px; height: 20px; flex: none; accent-color: var(--yellow); }
+.team-check span { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.team-check small { color: #8d8d94; font-size: .76rem; }
+.team-check.disabled { cursor: not-allowed; opacity: .75; }
 
 @media (max-width: 760px) {
   .team-invites-header { flex-direction: column; }

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Ban, Check, ChevronLeft, Copy, Link2, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { Ban, Check, ChevronLeft, Copy, Link2, Mail, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
-import { createTeamInvite, revokeTeamInvite, type InviteRole, type TeamInvite, type TeamInviteList } from "./teamApi";
+import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
+import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 
 type Props = {
@@ -17,7 +17,7 @@ type Props = {
   flash: (message: string) => void;
 };
 
-type Dialog = { kind: "create" } | { kind: "revoke"; invite: TeamInvite };
+type Dialog = { kind: "create" } | { kind: "revoke"; invite: TeamInvite } | { kind: "email"; invite: TeamInvite };
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
@@ -30,6 +30,7 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const limitHint = data ? inviteLimitHint(data.liveCount, data.liveLimit) : null;
+  const emailEnabled = data?.emailEnabled === true;
 
   const open = (next: Dialog) => {
     triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -81,13 +82,15 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
           <span>Created {relativeTime(invite.createdAt)}{invite.createdBy ? ` by ${invite.createdBy.displayName}` : ""}</span>
         </p>
         {(invite.status === "live" || (invite.status === "used" && invite.usedBy)) && <div className="team-invite-actions">
+          {invite.status === "live" && invite.email && <button type="button" className="team-action" onClick={() => { if (emailEnabled) open({ kind: "email", invite }); else flash(EMAIL_NOT_CONFIGURED); }}><Mail />Resend email</button>}
           {invite.status === "live" && <button type="button" className="team-action danger" onClick={() => open({ kind: "revoke", invite })}><Ban />Revoke</button>}
           {invite.status === "used" && invite.usedBy && <button type="button" className="team-action" onClick={() => onOpenMember(invite.usedBy!.id)}>Open {invite.usedBy.displayName}</button>}
         </div>}
       </li>)}
     </ul>}
 
-    {dialog?.kind === "create" && <InviteCreateDialog onClose={close} onCreated={onReload} />}
+    {dialog?.kind === "create" && <InviteCreateDialog emailEnabled={emailEnabled} onClose={close} onCreated={onReload} />}
+    {dialog?.kind === "email" && <InviteEmailDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); flash(message); onReload(); }} />}
     {dialog?.kind === "revoke" && <InviteRevokeDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); flash(message); onReload(); }} />}
   </article>;
 }
@@ -104,14 +107,17 @@ function useDialogChrome(busy: boolean, onClose: () => void) {
   }, [busy, onClose]);
 }
 
-type Created = { url: string; role: InviteRole; expiresAt: string };
+type Created = { url: string; role: InviteRole; expiresAt: string; email: string | null; mail?: MailOutcome };
 
 /**
  * The create dialog, then the shown-once state: the link lives only in this component's state, so
  * closing the dialog drops it (D161).
  */
-function InviteCreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled: boolean; onClose: () => void; onCreated: () => void }) {
   const [role, setRole] = useState<InviteRole>(DEFAULT_INVITE_ROLE);
+  const [email, setEmail] = useState("");
+  const [sendEmail, setSendEmail] = useState(false);
+  const boundEmail = email.trim();
   const [expiry, setExpiry] = useState<ExpiryDays>(DEFAULT_EXPIRY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -123,13 +129,13 @@ function InviteCreateDialog({ onClose, onCreated }: { onClose: () => void; onCre
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const email = String(form.get("email") ?? "").trim();
     const note = String(form.get("note") ?? "").trim();
     setBusy(true);
     setError("");
     try {
-      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(email ? { email } : {}), ...(note ? { note } : {}) });
-      setCreated({ url: result.url, role: result.invite.role, expiresAt: result.invite.expiresAt });
+      const mailIt = Boolean(boundEmail) && sendEmail && emailEnabled;
+      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(boundEmail ? { email: boundEmail } : {}), ...(note ? { note } : {}), ...(mailIt ? { sendEmail: true } : {}) });
+      setCreated({ url: result.url, role: result.invite.role, expiresAt: result.invite.expiresAt, email: result.invite.email, ...(result.email ? { mail: result.email } : {}) });
       onCreated();
     } catch (reason) {
       setError(messageOf(reason, "Could not create the invite"));
@@ -163,6 +169,7 @@ function InviteCreateDialog({ onClose, onCreated }: { onClose: () => void; onCre
           <input ref={linkRef} readOnly value={created.url} onFocus={(event) => event.currentTarget.select()} aria-describedby="team-invite-warning" />
         </label>
         <p id="team-invite-warning" className="team-invite-warning"><TriangleAlert aria-hidden="true" />{shownOnceWarning(created.role, created.expiresAt)}</p>
+        {created.mail && <p className={`team-invite-mail${created.mail.sent ? " sent" : ""}`} role="status"><Mail aria-hidden="true" />{mailOutcomeLabel(created.mail, created.email)}</p>}
         <p className="sr-only" aria-live="polite">{copied ? "Link copied" : ""}</p>
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose}>Done</button>
@@ -179,8 +186,12 @@ function InviteCreateDialog({ onClose, onCreated }: { onClose: () => void; onCre
           <Select labelledBy="team-invite-expiry-label" label="Expires" value={expiry} options={expiryOptions()} onChange={setExpiry} disabled={busy} />
         </div>
         <label className="team-field">Email (optional)
-          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} />
+          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
+        {boundEmail && <label className={`team-check${emailEnabled ? "" : " disabled"}`}>
+          <input type="checkbox" checked={sendEmail && emailEnabled} disabled={busy || !emailEnabled} onChange={(event) => setSendEmail(event.target.checked)} />
+          <span>Send by email to {boundEmail}{!emailEnabled && <small>{EMAIL_NOT_CONFIGURED}</small>}</span>
+        </label>}
         <label className="team-field">Label (optional, only admins see it)
           <input name="note" maxLength={80} placeholder="For the design contractor" disabled={busy} />
         </label>
@@ -226,6 +237,48 @@ function InviteRevokeDialog({ invite, onClose, onDone }: { invite: TeamInvite; o
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="team-action primary danger" disabled={busy} autoFocus>{busy ? "Working…" : "Revoke"}</button>
+        </div>
+      </form>
+    </div>
+  </>;
+}
+
+/** "Resend email": a fresh link goes to the bound address; the current link stops working once it is sent. */
+function InviteEmailDialog({ invite, onClose, onDone }: { invite: TeamInvite; onClose: () => void; onDone: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useDialogChrome(busy, onClose);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await emailTeamInvite(invite.id);
+      if (result.email.sent) onDone(mailOutcomeLabel(result.email, invite.email));
+      else {
+        setError(mailOutcomeLabel(result.email, invite.email));
+        setBusy(false);
+      }
+    } catch (reason) {
+      setError(messageOf(reason, "Could not send the email"));
+      setBusy(false);
+    }
+  }
+
+  return <>
+    <button type="button" className="panel-scrim team-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close" tabIndex={-1} />
+    <div className="team-dialog" role="dialog" aria-modal="true" aria-labelledby="team-email-dialog-title">
+      <header>
+        <h2 id="team-email-dialog-title">Email a new link to {invite.email}?</h2>
+        <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
+      </header>
+      <form onSubmit={submit}>
+        <p>Nook emails a fresh {ROLE_LABELS[invite.role]} link to this address only. Once it is sent, the link you copied earlier stops working. The expiry stays the same.</p>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="team-dialog-actions">
+          <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="team-action primary" disabled={busy} autoFocus>{busy ? "Sending…" : "Send email"}</button>
         </div>
       </form>
     </div>

@@ -13,6 +13,8 @@
 import { createHash } from "node:crypto";
 import { isEmailAllowed } from "../config";
 import { audit, db, now, type TeamInviteRow } from "../db";
+import { mailEnabled, sendMail, type MailOutcome } from "../mail";
+import { inviteEmail } from "./inviteEmail";
 import { can, type Role } from "./roles";
 
 export const INVITE_ROLES = ["member", "viewer", "guest"] as const;
@@ -42,7 +44,8 @@ export type InviteErrorCode =
   | "INVITE_EXPIRED"
   | "INVITE_EMAIL_MISMATCH"
   | "EMAIL_NOT_ALLOWED"
-  | "ACCOUNT_EXISTS";
+  | "ACCOUNT_EXISTS"
+  | "EMAIL_REQUIRED";
 
 export class InviteError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 410 | 429, readonly code: InviteErrorCode, message: string) {
@@ -124,7 +127,7 @@ export function listInvites(actor: Actor, options: { status?: "live" | "all" } =
   const live = db.query(`${listSelect} WHERE i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC, i.id`).all(at) as ListedRow[];
   const dead = options.status === "live" ? [] : db.query(`${listSelect} WHERE NOT (i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?) ORDER BY i.created_at DESC, i.id LIMIT ?`).all(at, DEAD_LIST_LIMIT) as ListedRow[];
   const invites = [...live, ...dead].sort((left, right) => right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id)).map((row) => present(row, at));
-  return { invites, liveCount: live.length, liveLimit: LIVE_INVITE_LIMIT };
+  return { invites, liveCount: live.length, liveLimit: LIVE_INVITE_LIMIT, emailEnabled: mailEnabled() };
 }
 
 /** Per-admin creation timestamps for the rolling hour (in memory, like the Team write limit). */
@@ -142,13 +145,14 @@ function recentCreations(userId: string, nowMs: number) {
   return recent;
 }
 
-export type CreateInviteInput = { role: InviteRole; email?: string | null; expiresInDays?: number; note?: string | null };
+export type CreateInviteInput = { role: InviteRole; email?: string | null; expiresInDays?: number; note?: string | null; sendEmail?: boolean };
 
 /**
  * Creates an invite and returns the token once (D161). The link carries the token in the URL
  * fragment (`/register#invite=…`), so it never reaches the server, a proxy log, or a Referer.
  */
 export function createInvite(actor: Actor, input: CreateInviteInput, origin: string) {
+  if (input.sendEmail && !input.email?.trim()) throw new InviteError(400, "EMAIL_REQUIRED", "Add the invitee's email to send the link by email");
   requireAdmin(actor);
   const nowMs = Date.now();
   const recent = recentCreations(actor.id, nowMs);
@@ -159,7 +163,7 @@ export function createInvite(actor: Actor, input: CreateInviteInput, origin: str
   if (email && !isEmailAllowed(email)) throw new InviteError(400, "EMAIL_NOT_ALLOWED", "This email is not on this Nook's allowed list (ALLOWED_EMAILS)");
   const note = input.note?.trim() ? input.note.trim().slice(0, INVITE_NOTE_MAX) : null;
   const days = Math.min(INVITE_MAX_DAYS, Math.max(1, Math.trunc(input.expiresInDays ?? INVITE_MAX_DAYS)));
-  const token = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  const token = newToken();
   const id = crypto.randomUUID();
   const createdAt = new Date(nowMs).toISOString();
   const expiresAt = new Date(nowMs + days * 86_400_000).toISOString();
@@ -172,8 +176,50 @@ export function createInvite(actor: Actor, input: CreateInviteInput, origin: str
     return db.query(`${listSelect} WHERE i.id = ?`).get(id) as ListedRow;
   })();
   creations.set(actor.id, [...recent, nowMs]);
-  return { invite: present(row, createdAt), token, url: `${origin}/register#invite=${token}` };
+  return { invite: present(row, createdAt), token, url: inviteUrl(origin, token), row };
 }
+
+const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+export const inviteUrl = (origin: string, token: string) => `${origin}/register#invite=${token}`;
+
+/**
+ * Emails an invite link to the invite's bound address, and only there: an email-less invite is
+ * never mailed, so email cannot carry a token anywhere else. Never throws; the outcome says what
+ * happened, and the invite itself stands either way.
+ */
+export async function emailInvite(actor: Actor, invite: Pick<TeamInviteRow, "id" | "role" | "email" | "expires_at">, url: string): Promise<MailOutcome> {
+  if (!invite.email) return { sent: false, reason: "failed" };
+  const inviter = (db.query("SELECT display_name FROM users WHERE id = ?").get(actor.id) as { display_name: string } | null)?.display_name ?? "An admin";
+  const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team_invite", senderId: actor.id });
+  if (outcome.sent) audit(actor.id, null, "team.invite_emailed", { inviteId: invite.id, role: invite.role });
+  return outcome;
+}
+
+/**
+ * "Resend email" on a live, email-bound invite. The token is never stored, so a new one is made
+ * and mailed; only once the mail is accepted does it replace the old one (the old link then stops
+ * working). The new token is never shown to the admin.
+ */
+export async function resendInviteEmail(actor: Actor, inviteId: string, origin: string) {
+  requireAdmin(actor);
+  const load = () => db.query("SELECT * FROM team_invites WHERE id = ?").get(inviteId) as TeamInviteRow | null;
+  const row = load();
+  if (!row) throw new InviteError(404, "NOT_FOUND", "Invite not found");
+  if (inviteStatus(row, now()) !== "live") throw new InviteError(409, "INVITE_NOT_LIVE", "Only a live invite can be emailed");
+  if (!row.email) throw new InviteError(400, "EMAIL_REQUIRED", "This invite has no email address. Create a new invite bound to one.");
+  const present = () => ({ invite: presentOne(inviteId) });
+  if (!mailEnabled()) return { ...present(), email: { sent: false, reason: "not_configured" } as MailOutcome };
+  const token = newToken();
+  const outcome = await emailInvite(actor, row, inviteUrl(origin, token));
+  if (outcome.sent) {
+    const at = now();
+    const result = db.query(`UPDATE team_invites SET token_hash = ?, token_prefix = ? WHERE id = ? AND ${LIVE_WHERE}`).run(hashInviteToken(token), token.slice(0, 6), inviteId, at);
+    if (result.changes !== 1) throw new InviteError(409, "INVITE_NOT_LIVE", "This invite was used or revoked while the email was sent");
+  }
+  return { ...present(), email: outcome };
+}
+
+const presentOne = (inviteId: string) => present(db.query(`${listSelect} WHERE i.id = ?`).get(inviteId) as ListedRow, now());
 
 /** Revokes a live invite. Revoking a revoked invite answers with it again (idempotent). */
 export function revokeInvite(actor: Actor, inviteId: string) {

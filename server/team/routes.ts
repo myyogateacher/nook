@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { config, isOriginAllowed } from "../config";
 import { email, parseJson, uuid } from "../validation";
-import { createInvite, INVITE_MAX_DAYS, INVITE_NOTE_MAX, INVITE_ROLES, InviteError, listInvites, revokeInvite } from "./invites";
+import { createInvite, emailInvite, INVITE_MAX_DAYS, INVITE_NOTE_MAX, INVITE_ROLES, InviteError, listInvites, resendInviteEmail, revokeInvite } from "./invites";
 import { can, ROLES } from "./roles";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
@@ -23,7 +23,9 @@ export const createInviteSchema = z.object({
   role: z.enum(INVITE_ROLES),
   email: email.nullish(),
   expiresInDays: z.number().int().min(1).max(INVITE_MAX_DAYS).optional(),
-  note: z.string().max(INVITE_NOTE_MAX).nullish()
+  note: z.string().max(INVITE_NOTE_MAX).nullish(),
+  /** Also email the link to the bound address (only there, never elsewhere). */
+  sendEmail: z.boolean().optional()
 }).strict();
 
 /** 30 Team writes a minute per admin (§5.5). In memory, like the auth limits. */
@@ -96,7 +98,22 @@ function registerInviteRoutes(app: Hono<AppEnv>) {
     const refused = writeGate(c);
     if (refused) return refused;
     const body = await parseJson(c.req.raw, createInviteSchema);
-    return run(c, () => createInvite(c.get("user"), body, linkOrigin(c)), 201);
+    const actor = c.get("user");
+    return run(c, async () => {
+      const { row, ...created } = createInvite(actor, body, linkOrigin(c));
+      // The invite stands even when the email cannot go out; the outcome says why.
+      return body.sendEmail ? { ...created, email: await emailInvite(actor, row, created.url) } : created;
+    }, 201);
+  });
+
+  app.post("/api/team/invites/:inviteId/email", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const id = uuid.safeParse(c.req.param("inviteId")?.toLowerCase()).data;
+    if (!id) return notFound(c);
+    await parseJson(c.req.raw, emptySchema);
+    const actor = c.get("user");
+    return run(c, () => resendInviteEmail(actor, id, linkOrigin(c)));
   });
 
   app.post("/api/team/invites/:inviteId/revoke", async (c) => {

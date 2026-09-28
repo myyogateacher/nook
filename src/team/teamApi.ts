@@ -56,8 +56,10 @@ export type TeamInvite = {
   revokedAt: string | null;
 };
 
-export type TeamInviteList = { invites: TeamInvite[]; liveCount: number; liveLimit: number };
-export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string };
+/** `emailEnabled`: whether mail is configured on the server (RESEND_API_KEY and MAIL_FROM). */
+export type TeamInviteList = { invites: TeamInvite[]; liveCount: number; liveLimit: number; emailEnabled?: boolean };
+export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string; sendEmail?: boolean };
+export type MailOutcome = { sent: true; id: string } | { sent: false; reason: "not_configured" | "rate_limited" | "failed" };
 
 const memberPath = (userId: string) => `/team/${encodeURIComponent(userId)}`;
 
@@ -75,6 +77,9 @@ export const revokeTeamSessions = (userId: string) =>
 export const listTeamInvites = () => api<TeamInviteList>("/team/invites");
 /** The token and link come back from this call only (D161). */
 export const createTeamInvite = (body: CreateInviteBody) =>
-  api<{ invite: TeamInvite; token: string; url: string }>("/team/invites", { method: "POST", body: JSON.stringify(body) });
+  api<{ invite: TeamInvite; token: string; url: string; email?: MailOutcome }>("/team/invites", { method: "POST", body: JSON.stringify(body) });
+/** Mails a fresh link to the invite's bound address; the old link stops working once it is sent. */
+export const emailTeamInvite = (inviteId: string) =>
+  api<{ invite: TeamInvite; email: MailOutcome }>(`/team/invites/${encodeURIComponent(inviteId)}/email`, { method: "POST", body: "{}" });
 export const revokeTeamInvite = (inviteId: string) =>
   api<{ invite: TeamInvite }>(`/team/invites/${encodeURIComponent(inviteId)}/revoke`, { method: "POST", body: "{}" });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TeamInvite, TeamInviteList } from "../src/team/teamApi";
-import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, expiryOptions, INVITE_ROLES, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, shownOnceWarning } from "../src/team/inviteFormat";
+import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, expiryOptions, INVITE_ROLES, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning } from "../src/team/inviteFormat";
 import { joinedLabel } from "../src/team/teamFormat";
 import { TeamInvites } from "../src/team/TeamInvites";
 
@@ -63,6 +63,19 @@ describe("Invites panel", () => {
     expect(markup).not.toContain("<select");
     // The token is never in the list: only its six-character prefix.
     expect(markup).toContain("abcdef…");
+  });
+
+  test("Resend email appears only on live invites bound to an email, and mail outcomes read plainly", () => {
+    const markup = render({ invites: [
+      invite({ email: "dana@example.test" }),
+      invite({}),
+      invite({ email: "old@example.test", status: "expired" })
+    ], liveCount: 2, liveLimit: 20, emailEnabled: false });
+    expect(markup.match(/Resend email/g)).toHaveLength(1);
+    expect(mailOutcomeLabel({ sent: true, id: "m" }, "dana@example.test")).toBe("Emailed to dana@example.test");
+    expect(mailOutcomeLabel({ sent: false, reason: "not_configured" }, "dana@example.test")).toBe("Email is not configured");
+    expect(mailOutcomeLabel({ sent: false, reason: "failed" }, null)).toContain("could not be sent");
+    expect(mailOutcomeLabel({ sent: false, reason: "rate_limited" }, null)).toContain("Too many emails");
   });
 
   test("New invite is disabled at the live limit, with a hint", () => {

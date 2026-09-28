@@ -37,6 +37,7 @@ Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agen
 - [ ] Incoming/outgoing webhooks for external agents; incoming messages as reusable component JSON (Block-Kit-like).
 - [ ] Per-person configurable notifications.
 - [ ] Link unfurl when the URL supports it, as a hookable module so per-site unfurlers can be added later.
+- [ ] Reactions on messages: a quick-reaction row (the curated set) AND a complete emoji set picker with search; reuse the Wave 20 `reactions` registry (`message` target kind) and its counts/names semantics.
 - [ ] UI/UX research: how Slack, Discord, Zulip, Mattermost, Element do it; best UX for Nook (mobile-first, history parity).
 
 ### Agentic chat module — TODO, research not yet started (pick up later)

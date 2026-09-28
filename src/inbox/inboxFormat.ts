@@ -17,7 +17,8 @@ const FAILURE_COPY: Record<string, string> = {
   INVALID: "The change is no longer valid",
   INTERRUPTED: "Approving was interrupted",
   STALE_POSITION: "The board changed since the agent read it",
-  KEY_REVOKED: "The key that suggested this was revoked"
+  KEY_REVOKED: "The key that suggested this was revoked",
+  EXPIRED: "This proposal expired"
 };
 
 export function failureText(code: string | null) {
@@ -61,7 +62,7 @@ export function groupTitle(group: Pick<ProposalGroup, "routine" | "key">) {
 const SHORT_FAILURE: Record<string, string> = {
   CARD_CHANGED: "card changed", EVENT_CHANGED: "event changed", ROW_CHANGED: "row changed", SCHEMA_CHANGED: "fields changed",
   DRAFT_CHANGED: "draft changed", NOT_FOUND: "no longer available", NOT_PENDING: "already resolved", READ_ONLY: "read-only", COLUMN_FULL: "column full",
-  KEY_REVOKED: "key revoked"
+  KEY_REVOKED: "key revoked", EXPIRED: "expired"
 };
 
 /** "7 applied · 1 failed (card changed)" for a bulk result. */

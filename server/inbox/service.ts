@@ -352,8 +352,17 @@ export async function approveProposal(approverId: string, proposalId: string): P
       db.query("UPDATE proposals SET status = 'superseded', result_code = 'KEY_REVOKED', resolved_at = ?, base_draft_markdown = NULL WHERE id = ? AND status = 'pending'").run(timestamp, id);
       throw new InboxError(409, "The key that suggested this change was revoked", "KEY_REVOKED", { status: "superseded" });
     }
-    const claimed =db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending'").run(timestamp, id, approverId);
-    if (claimed.changes !== 1) throw notPending(ownedProposal(approverId, id));
+    // Past expires_at a proposal is expired even before the hourly sweep reaches it (L1).
+    const claimed = db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending' AND expires_at > ?").run(timestamp, id, approverId, timestamp);
+    if (claimed.changes !== 1) {
+      const expired = db.query("UPDATE proposals SET status = 'expired', resolved_at = ?, base_draft_markdown = NULL WHERE id = ? AND owner_id = ? AND status = 'pending' AND expires_at <= ?")
+        .run(timestamp, id, approverId, timestamp);
+      if (expired.changes === 1) {
+        audit(approverId, null, "proposal.expired", { count: 1 });
+        throw new InboxError(409, "This proposal expired", "EXPIRED", { status: "expired" });
+      }
+      throw notPending(ownedProposal(approverId, id));
+    }
     const kind = PROPOSAL_KIND_DEFS[row.kind];
     try {
       const ref = await withProposalAuditContext({ via: "proposal", proposalId: id, keyId: row.key_id }, () => kind.apply(approverId, stored(row)));

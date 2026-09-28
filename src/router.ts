@@ -16,7 +16,8 @@ export type Route =
   | { app: "notifications" }
   | { app: "bin" }
   // `invites` (Wave 18): the admin Invites panel at /team/invites, in the detail pane. Never with a user.
-  | { app: "team"; userId: string | null; invites?: true }
+  // `email` (Wave 28): the admin Email log at /team/email, the same way.
+  | { app: "team"; userId: string | null; invites?: true; email?: true }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   | { app: "inbox"; view: "pending" | "history"; proposalId: string | null };
@@ -129,6 +130,7 @@ export function parseRoute(pathname: string, search = ""): Route {
   // /team and /team/:userId. A malformed id, or anything after it, opens the list.
   // /team/invites is matched before the id rule (D167).
   if (app === "team" && rest.length === 1 && rest[0] === "invites") return { app: "team", userId: null, invites: true };
+  if (app === "team" && rest.length === 1 && rest[0] === "email") return { app: "team", userId: null, email: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   if (app === "inbox") return parseInbox(rest);
   return { app: "home" };
@@ -175,7 +177,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.email ? "/team/email" : "/team";
   if (route.app === "inbox") {
     const base = route.view === "history" ? "/inbox/history" : "/inbox";
     return route.proposalId && isRouteId(route.proposalId) ? `${base}/p/${route.proposalId.toLowerCase()}` : base;
@@ -188,6 +190,22 @@ function formatTasksHome(home: TasksHome) {
   if (home.section === "view" && (home.viewId === NEW_VIEW || isRouteId(home.viewId))) return `/tasks/views/${home.viewId.toLowerCase()}${formatHomeSearch(home)}`;
   return "/tasks/views";
 }
+
+/**
+ * Settings deep links (Wave 28, outbound email §E.1): `/settings/:section` opens the Settings dialog
+ * at that section over the app. They are not a Route: the app under the dialog stays what it was
+ * (Home for a deep link), and `parseRoute` reads the path as Home. Back closes the dialog and
+ * Forward reopens it, because opening it pushes this entry.
+ */
+export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "notifications", "about"] as const;
+export type SettingsSection = typeof SETTINGS_SECTIONS[number];
+
+export function parseSettingsPath(pathname: string): SettingsSection | null {
+  const match = /^\/settings\/([a-z]+)\/?$/.exec(pathname);
+  return match && (SETTINGS_SECTIONS as readonly string[]).includes(match[1]!) ? match[1] as SettingsSection : null;
+}
+
+export const settingsPath = (section: SettingsSection) => `/settings/${section}`;
 
 /** A location's route, with its query (the one way DOM callers should parse the current URL). */
 export const routeFromLocation = (location: { pathname: string; search: string }) => parseRoute(location.pathname, location.search);

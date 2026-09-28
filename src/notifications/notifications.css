@@ -51,3 +51,38 @@
 @media (max-width: 760px) {
   .app-notification-bell { width: 44px; height: 44px; }
 }
+
+/* Settings → Notifications → Email (Wave 28). */
+.email-settings { display: grid; gap: 10px; max-width: 640px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+.email-settings .notification-settings-subheading { margin-top: 6px; }
+.email-list { gap: 8px; }
+.email-row { grid-template-columns: minmax(0, 1fr) auto; min-height: 44px; }
+.email-row:has(.modules-row-icon) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.email-row.off strong { color: #c9c9ce; }
+.email-verified { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; color: #b9e6c9; }
+.email-verified svg, .email-inline-icon { width: 14px; height: 14px; vertical-align: -2px; }
+.email-inline-icon { margin-right: 6px; color: var(--yellow); }
+.email-settings-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 16px; font-size: .86rem; }
+.email-settings-button svg { width: 16px; }
+.email-test-button { justify-self: start; }
+.email-settings-muted { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: #8b8b92; font-size: .82rem; line-height: 1.5; }
+.email-settings-muted svg { width: 16px; flex: none; }
+.email-zone .text-button { min-height: 44px; padding: 0; }
+.email-notice { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px 14px; border: 1px solid #624c21; border-radius: 12px; background: #282116; color: #f3ce79; font-size: .86rem; line-height: 1.5; }
+.email-notice p { margin: 0; }
+.email-notice svg { width: 18px; margin-top: 2px; }
+.email-notice .email-settings-button { grid-column: 1 / -1; justify-self: start; }
+.email-notice.danger { border-color: #6b2a36; background: #2a1519; color: #fda4af; }
+.email-field-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.email-field { display: grid; gap: 6px; min-width: 160px; color: #a4a4ab; font-size: .8rem; }
+
+@media (max-width: 760px) {
+  .email-row:has(.modules-row-icon) { grid-template-columns: minmax(0, 1fr) auto; }
+  .email-test-button, .email-notice .email-settings-button { justify-self: stretch; width: 100%; }
+  .email-field-row { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .email-field { min-width: 0; }
+}
+
+/* Mail link pages (/verify-email, /mail/unsubscribe). */
+.mail-link-card .auth-form { display: grid; gap: 10px; }
+.mail-link-card .secondary-button, .mail-link-card .primary-button { min-height: 44px; }

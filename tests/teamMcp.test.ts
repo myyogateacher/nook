@@ -100,6 +100,12 @@ describe("Team MCP", () => {
     const writeRefused = await create(viewer, ["tasks:write"]);
     expect(writeRefused.status).toBe(403);
     expect((await writeRefused.json() as { code: string }).code).toBe("SCOPE_NOT_ALLOWED");
+    // The Wave 19 scopes are write scopes: a viewer can hold none of them (T144).
+    for (const scope of ["notes:publish", "files:write", "bin:write"]) {
+      const refused = await create(viewer, [scope]);
+      expect(refused.status).toBe(403);
+      expect((await refused.json() as { code: string }).code).toBe("SCOPE_NOT_ALLOWED");
+    }
     expect((await create(viewer, ["notes:read", "tasks:read", "calendar:read", "collections:read", "files:read", "today:read"])).status).toBe(201);
     const guestRefused = await create(guest, ["notes:read"]);
     expect(guestRefused.status).toBe(403);

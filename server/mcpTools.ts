@@ -7,7 +7,7 @@ import { audit, db, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
-import { hasAnyScope, parseStoredScopes } from "./mcpScopes";
+import { hasAllScopes, hasAnyScope, parseStoredScopes } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
@@ -60,12 +60,16 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (!hasAnyScope(key.scopes, spec.scopes)) {
     return errorResult("SCOPE_REQUIRED", `This API key does not have the ${spec.scopes.join(" or ")} scope`);
   }
+  if (!hasAllScopes(key.scopes, spec.alsoRequires)) {
+    return errorResult("SCOPE_REQUIRED", `This API key also needs the ${spec.alsoRequires!.join(" and ")} scope`);
+  }
   // Defence in depth (§5.4): effective scopes already drop write scopes for read-only team roles,
   // and a write tool still re-checks the holder's role before any service runs.
   if (spec.write && !canWriteContent(key.userId)) return errorResult("READ_ONLY", "Your team role is read-only");
   const buckets: McpLimitBucket[] = ["call"];
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
+  if (spec.buckets) buckets.push(...spec.buckets);
   const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, buckets);
   if (retryAfter) return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
   try {
@@ -335,10 +339,13 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...inboxTools
 ];
 
+/** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */
+export const toolAllowed = (spec: McpToolSpec, scopes: McpKeyContext["scopes"]) => hasAnyScope(scopes, spec.scopes) && hasAllScopes(scopes, spec.alsoRequires);
+
 /** Registers the tools this key may use on a per-request server. */
 export function registerMcpTools(server: McpServer, key: McpKeyContext) {
   for (const spec of mcpToolSpecs) {
-    if (!hasAnyScope(key.scopes, spec.scopes)) continue;
+    if (!toolAllowed(spec, key.scopes)) continue;
     server.registerTool(spec.name, {
       title: spec.title,
       description: spec.description,

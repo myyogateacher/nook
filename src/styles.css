@@ -299,6 +299,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-permissions label strong { color: #e4e4e7; font-size: .8rem; font-weight: 600; }
 .mcp-permissions label small { color: #818188; font-size: .72rem; line-height: 1.4; }
 .mcp-permissions label.locked { cursor: default; opacity: .8; }
+.mcp-permissions label small.mcp-permission-warning { color: #e0b765; }
 .scope-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 0; padding: 0; list-style: none; }
 .scope-chips li { padding: 2px 8px; border: 1px solid #38383d; border-radius: 999px; color: #c9c9cd; background: #18181b; font-size: .68rem; }
 .scope-chips li.inactive { border-style: dashed; color: #8e8e93; background: transparent; }

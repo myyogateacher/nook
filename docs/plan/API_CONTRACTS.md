@@ -760,12 +760,15 @@ type Preferences = { disabledModules: ModuleId[]; revision: number; updatedAt: s
 | `DELETE /api/mcp/keys/:id` | `{}` | 200 `{ ok: true }` | 404 |
 
 ```ts
-type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
-  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "team:read";
+type McpScope = "notes:read" | "notes:write-draft" | "notes:publish" | "files:read" | "files:write" | "tasks:read" | "tasks:write" | "today:read"
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "bin:write" | "team:read"
+  | "inbox:read" | "inbox:write";
 type McpKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; created_at: string; last_used_at: string | null };
 ```
 
-- `scopes`: 1–10 unique values (one per defined scope), default `["notes:read"]`. A write scope adds its read scope (`notes:write-draft` → `notes:read`, `tasks:write` → `tasks:read`, `calendar:write` → `calendar:read`, `collections:write` → `collections:read`). Scopes are returned in the order above and cannot be changed later; create a new key instead.
+- `scopes`: unique values (at most one per defined scope), default `["notes:read"]`. A write scope adds its read scope (`notes:write-draft` and `notes:publish` → `notes:read`, `files:write` → `files:read`, `tasks:write` → `tasks:read`, `calendar:write` → `calendar:read`, `collections:write` → `collections:read`, `inbox:write` → `inbox:read`); `bin:write` adds none. Scopes are returned in the order above and cannot be changed later; create a new key instead.
+- **Write scopes (Wave 19, D171)** are an explicit list (`MCP_WRITE_SCOPES` in `server/mcpScopes.ts`, mirrored in `src/mcpPermissions.ts`): `notes:write-draft`, `notes:publish`, `files:write`, `tasks:write`, `calendar:write`, `collections:write`, `bin:write`, `inbox:write`. Every other scope is a read scope. Viewers may hold read scopes only, so `POST /api/mcp/keys` answers 403 `SCOPE_NOT_ALLOWED` to a viewer asking for any write scope, the three Wave 19 scopes included.
+- A tool may also declare `alsoRequires` (all-of, D172): every `bin_*`/`restore_*` tool needs `bin:write` **and** the module's write scope, so `bin:write` alone lists no tools.
 - Keys created before migration 010 have `["notes:read"]`.
 - The audit row `mcp.key_created` records `{ keyId, name, scopes }`.
 

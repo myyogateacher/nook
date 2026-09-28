@@ -37,3 +37,16 @@ test("team:read is offered only to admins, matching the server's role scopes", (
   }
   expect(offeredMcpPermissions(undefined).some((permission) => permission.scope === "team:read")).toBe(false);
 });
+
+test("the client write list mirrors the server's, so viewers are never offered bin:write, notes:publish, or files:write (D171)", async () => {
+  const { MCP_WRITE_SCOPES: serverWrite } = await import("../server/mcpScopes");
+  const { MCP_WRITE_SCOPES: clientWrite, isWriteScope } = await import("../src/mcpPermissions");
+  expect([...clientWrite]).toEqual([...serverWrite]);
+  expect(isWriteScope("bin:write")).toBe(true);
+  const viewerScopes = offeredMcpPermissions("viewer").map((permission) => permission.scope);
+  for (const scope of ["bin:write", "notes:publish", "files:write"] as const) expect(viewerScopes).not.toContain(scope);
+  expect(MCP_PERMISSIONS.find((permission) => permission.scope === "notes:publish")!.warning).toBe("An agent can make its drafts visible to everyone the note is shared with.");
+  expect(toggleScope([], "notes:publish", true)).toEqual(["notes:read", "notes:publish"]);
+  expect(toggleScope([], "files:write", true)).toEqual(["files:read", "files:write"]);
+  expect(toggleScope([], "bin:write", true)).toEqual(["bin:write"]);
+});

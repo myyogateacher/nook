@@ -30,6 +30,19 @@ export type McpErrorCode =
   | "REMINDER_EXISTS"
   | "ROW_CHANGED"
   | "SCHEMA_CHANGED"
+  // Wave 19 (D181): the same vocabulary as the HTTP codes.
+  | "NO_DRAFT"
+  | "NO_CHANGES"
+  | "DRAFT_NOT_SEEN"
+  | "PURGING"
+  | "PARENT_IN_BIN"
+  | "AUDIENCE_CHANGE"
+  | "NAME_TAKEN"
+  | "SPRINT_ACTIVE"
+  | "UPLOAD_PENDING"
+  | "UPLOAD_EXPIRED"
+  | "HASH_MISMATCH"
+  | "QUOTA_EXCEEDED"
   | "INTERNAL";
 
 export class McpToolError extends Error {
@@ -57,10 +70,17 @@ export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   description: string;
   /** The key needs any one of these (write scopes imply their read scope). */
   scopes: readonly McpScope[];
+  /**
+   * And every one of these (D172), checked at registration and in runTool: a Bin tool needs
+   * `bin:write` and the module's write scope, so a notes-only key with `bin:write` cannot bin cards.
+   */
+  alsoRequires?: readonly McpScope[];
   /** Writes count against the per-minute write limit. */
   write: boolean;
   /** An extra daily bucket this tool counts against. */
   dailyBucket?: Exclude<McpLimitBucket, "call" | "write">;
+  /** Further buckets this tool counts against (Wave 19, for example a Bin tool's daily cap and burst). */
+  buckets?: readonly Exclude<McpLimitBucket, "call" | "write">[];
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

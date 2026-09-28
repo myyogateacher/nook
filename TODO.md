@@ -4,6 +4,20 @@
 
 Release history and per-version notes live on the docs site ("What's new") and in `git log`; plans of record are in `DEVELOPMENT_PLAN.md`, `docs/plan/WAVE_13_TASK_CARD_UX.md`, `docs/plan/WAVES_7-9.md`, `docs/plan/WAVES_10-12.md`, and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
+## PAUSED 2026-09-28 — resume checklist
+
+All agents were stopped on the operator's request. Production: **v0.9.3** (`45a47e9`). `main` = `6c5dd1c` (pushed): Waves 18, 20, 21 merged (1257 tests, Docker verify green) — the **v0.10.0 candidate**, not yet reviewed/QA'd/released. QA container `nook-qa` runs `ce0eb9c` on :22126.
+
+Parked worktrees under `.claude/worktrees/` (branches `worktree-agent-<id>`), all based on `ce0eb9c`/`e11e68c`:
+- `agent-a4b4dd3c58216b3ff` — **Wave 19 MCP writes**: 2 commits (scopes; notes publish/folders/bin), clean tree. Resume: continue the Wave 19 commit list (tasks, calendar, collections, files upload path, restore-all, enumeration test, docs).
+- `agent-ade650a85f18758fb` — **Wave 22 routines**: 2 commits (service + runs API; MCP tools/prompts/abandon sweep), 1 uncommitted file (inboxApi.ts routines client in progress). Resume: UI (Routines segment, sheets), docs, QA.
+- `agent-ae654ce2fcec338b3` — **Wave 28 email**: 1 commit (migration 026), 2 uncommitted files (in progress). Resume: templates + preview + golden tests, outbox/dispatcher, verification, preferences, emails, settings routes/UI, email log, docs.
+- `agent-a3c67b3a2d93be535` — **Excalidraw spike** (passed): 1 commit, parked until Waves 23–24 are scheduled.
+
+Stopped mid-run (restart fresh when resuming): v0.10.0 independent review (range 45a47e9..ce0eb9c) and delegated QA.
+
+Resume order: 1) finish Waves 19, 22, 28 in their worktrees (fresh agents; fast-forward to main first); 2) v0.10.0 review + QA → fixes → release (backup: migrations 018, 021, 022); 3) merge 19/22 → v0.11.0; 4) Wave 31 (access keys, migration 025) after 19/22; Wave 28 → v0.12.0; 5) whiteboard/vault after the operator's pick.
+
 ## In flight (2026-09-28)
 
 Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agent inbox & routines](docs/plan/research/2026-09-28-agent-inbox-routines.md) · [whiteboard](docs/plan/research/2026-09-28-whiteboard-module.md) · [password vault](docs/plan/research/2026-09-28-password-vault-module.md).

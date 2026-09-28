@@ -62,3 +62,10 @@ export function prefsInput(prefs: EmailPrefs, change: Partial<EmailPrefsInput> =
 
 /** Half-hour steps for the quiet-hours pickers. */
 export const HALF_HOURS = Array.from({ length: 48 }, (_, index) => `${String(Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`);
+
+/** Per-board, per-calendar, and per-collection email mutes (Wave 29, D249). */
+export type MuteType = "board" | "calendar" | "collection";
+export type EmailMute = { targetType: MuteType; targetId: string; name: string; createdAt: string };
+export const listEmailMutes = () => api<{ mutes: EmailMute[] }>("/mail/mutes");
+export const muteEmails = (type: MuteType, id: string) => api<{ muted: true }>(`/mail/mutes/${type}/${encodeURIComponent(id)}`, { method: "PUT", body: "{}" });
+export const unmuteEmails = (type: MuteType, id: string) => api<{ muted: false }>(`/mail/mutes/${type}/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" });

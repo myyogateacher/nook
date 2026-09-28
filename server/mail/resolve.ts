@@ -8,6 +8,7 @@ import { readableCalendar } from "../calendar/access";
 import { readableCollection } from "../collections/access";
 import { parseStoredScopes } from "../mcpScopes";
 import { stripMarkdown } from "./html";
+import { isMuted } from "./mutes";
 import type { TemplateName } from "./registry";
 import type { AssignedCard, CommentExcerpt, SharedItem, SharedKind } from "./templates/activity";
 import type { AccountEvent, TwoFactorEvent } from "./templates/security";
@@ -21,7 +22,7 @@ import type { AccountEvent, TwoFactorEvent } from "./templates/security";
  */
 
 export type Recipient = { id: string; email: string; displayName: string; role: string; tz: string };
-export type Resolution = { data: unknown } | { skip: "access_lost" | "empty" };
+export type Resolution = { data: unknown } | { skip: "access_lost" | "empty" | "muted" };
 
 type Payload = Record<string, unknown>;
 const ids = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -32,14 +33,20 @@ export const VERIFY_TTL_MS = 24 * 3_600_000;
 
 function resolveAssigned(payload: Payload, recipient: Recipient): Resolution {
   const cards: AssignedCard[] = [];
+  let muted = 0;
   for (const cardId of ids(payload.cardIds)) {
     const found = readableCard(cardId, recipient.id);
     if (!found) continue;
+    // A board muted since the enqueue (D249) drops its cards too.
+    if (isMuted(recipient.id, "board", found.board.id)) {
+      muted += 1;
+      continue;
+    }
     if (!db.query("SELECT 1 FROM card_assignees WHERE card_id = ? AND user_id = ?").get(cardId, recipient.id)) continue;
     const column = found.card.column_id ? (db.query("SELECT name FROM board_columns WHERE id = ?").get(found.card.column_id) as { name: string } | null)?.name ?? null : null;
     cards.push({ boardId: found.board.id, cardId, title: found.card.title, boardName: found.board.name, dueOn: found.card.due_on, column });
   }
-  if (!cards.length) return { skip: "access_lost" };
+  if (!cards.length) return { skip: muted ? "muted" : "access_lost" };
   return { data: { actors: names(payload.actorIds), cards } };
 }
 
@@ -47,6 +54,7 @@ function resolveComment(payload: Payload, recipient: Recipient): Resolution {
   const cardId = typeof payload.cardId === "string" ? payload.cardId : "";
   const found = readableCard(cardId, recipient.id);
   if (!found) return { skip: "access_lost" };
+  if (isMuted(recipient.id, "board", found.board.id)) return { skip: "muted" };
   const rows = db.query(`SELECT m.id, m.body, u.display_name AS author FROM card_comments m LEFT JOIN users u ON u.id = m.author_id
       WHERE m.card_id = ? AND m.id IN (SELECT value FROM json_each(?)) AND (m.author_id IS NULL OR m.author_id <> ?) ORDER BY m.created_at DESC, m.rowid DESC`)
     .all(cardId, JSON.stringify(ids(payload.commentIds)), recipient.id) as Array<{ id: string; body: string; author: string | null }>;

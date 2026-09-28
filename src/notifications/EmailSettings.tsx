@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Mail, MailWarning, RotateCcw, Send, ShieldCheck } from "lucide-react";
 import { ApiError } from "../api";
 import { Select } from "../ui/Select";
+import { EmailMutesList } from "./emailMutes";
 import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
 
 /**
@@ -183,6 +184,8 @@ export function EmailSettings() {
         <Switch checked disabled labelledBy="email-security-label" describedBy="email-security-help" />
       </li>
     </ul>
+
+    {ready && <EmailMutesList />}
 
     <h4 className="notification-settings-subheading">Summary</h4>
     <div className="email-field-row">

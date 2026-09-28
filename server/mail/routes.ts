@@ -11,6 +11,7 @@ import { kickMailDispatch, MAX_ATTEMPTS, runMailDispatch } from "./dispatcher";
 import { enqueueMail } from "./outbox";
 import { emailPrefsPutSchema, readEmailPrefs, turnCategoryOff, writeEmailPrefs } from "./prefs";
 import { hashAuthToken } from "./resolve";
+import { isMuteType, listMutes, MuteError, muteTarget, unmuteTarget } from "./mutes";
 import { clearOwnSuppression, suppressionOf } from "./suppression";
 import { verifyUnsubscribeToken } from "./unsubscribe";
 import { registerMailWebhookRoutes } from "./webhooks";
@@ -153,6 +154,30 @@ export function registerMailRoutes(app: Hono<AppEnv>) {
     if (recentCount(userId, "account.verify") >= SELF_SERVE_HOURLY) return c.json({ error: "Too many verification emails. Try again in an hour.", code: "RATE_LIMITED" }, 429);
     enqueueVerifyMail(userId);
     return c.json({ queued: true });
+  });
+
+  // Mute emails from a board, calendar, or collection (§B.1 D249): the caller's own switch.
+  app.get("/api/mail/mutes", (c) => c.json(listMutes(c.get("user").id)));
+  const muteTargetOf = (c: Context<AppEnv>) => {
+    const type = c.req.param("targetType") ?? "";
+    const id = uuid.safeParse(c.req.param("targetId")?.toLowerCase()).data;
+    return isMuteType(type) && id ? { type, id } : null;
+  };
+  app.put("/api/mail/mutes/:targetType/:targetId", async (c) => {
+    const target = muteTargetOf(c);
+    if (!target) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    await parseJson(c.req.raw, emptySchema);
+    try {
+      return c.json(muteTarget(c.get("user").id, target.type, target.id));
+    } catch (error) {
+      if (error instanceof MuteError) return c.json({ error: error.message, code: error.code }, error.status);
+      throw error;
+    }
+  });
+  app.delete("/api/mail/mutes/:targetType/:targetId", (c) => {
+    const target = muteTargetOf(c);
+    if (!target) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    return c.json(unmuteTarget(c.get("user").id, target.type, target.id));
   });
 
   // "Try again" after a bounce (§B.4): the owner clears their own address, once a day.

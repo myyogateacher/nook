@@ -33,6 +33,7 @@ import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } fr
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
 import { registerMailPreviewRoutes } from "./mail/preview";
+import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -177,6 +178,9 @@ app.post("/api/auth/invite", async (c) => {
   }
 });
 
+// Email verification and one-click unsubscribe work without a session (outbound email §A.4, §B.2).
+registerPublicMailRoutes(app);
+
 app.post("/api/auth/register", async (c) => {
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
   // The body is read first: only it can say whether an invite (D162) opens a closed instance.
@@ -218,6 +222,8 @@ app.post("/api/auth/register", async (c) => {
       if (invite) {
         // Single use (T141): a lost race throws INVITE_INVALID and rolls the new account back.
         claimInvite(invite.id, id, timestamp);
+        // An invite bound to this address proved control of the inbox (D244).
+        if (invite.email !== null) db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(timestamp, id);
         audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
       }
     })();
@@ -229,6 +235,8 @@ app.post("/api/auth/register", async (c) => {
   }
   const csrfToken = await createSession(c, id);
   audit(id, null, "auth.register");
+  // Everyone else verifies their address before Nook sends them anything but security mail.
+  enqueueVerifyMail(id);
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role },
     csrfToken,
@@ -785,6 +793,8 @@ registerTodayRoutes(app);
 registerCollectionRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
+registerMailRoutes(app);
+registerMailLogRoutes(app);
 registerTeamRoutes(app);
 registerInboxRoutes(app);
 

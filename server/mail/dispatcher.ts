@@ -47,11 +47,11 @@ export function setMailJitterForTests(source: (() => number) | null) {
   random = source ?? Math.random;
 }
 
-/** Terminal states drop the payload and any address, so history holds no titles (§B.3 retention). */
+/** Terminal states drop the payload (dead rows keep their ids for an admin Retry) and the address (§B.3). */
 function finish(id: string, status: "sent" | "skipped" | "suppressed" | "dead", extra: { skipReason?: string; providerId?: string; errorCode?: string; nowMs: number; attempt?: boolean }) {
   db.query(`UPDATE mail_outbox SET status = ?, skip_reason = ?, provider_id = COALESCE(?, provider_id), error_code = COALESCE(?, error_code),
-      sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END, attempts = attempts + ?, payload = '{}', to_address = NULL, claimed_at = NULL WHERE id = ?`)
-    .run(status, extra.skipReason ?? null, extra.providerId ?? null, extra.errorCode ?? null, status, iso(extra.nowMs), extra.attempt ? 1 : 0, id);
+      sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END, attempts = attempts + ?, payload = CASE WHEN ? = 'dead' THEN payload ELSE '{}' END, to_address = NULL, claimed_at = NULL WHERE id = ?`)
+    .run(status, extra.skipReason ?? null, extra.providerId ?? null, extra.errorCode ?? null, status, iso(extra.nowMs), extra.attempt ? 1 : 0, status, id);
 }
 
 function requeue(id: string, notBeforeMs: number, extra: { attempt?: boolean; errorCode?: string | null } = {}) {
@@ -230,5 +230,11 @@ export function sweepMail(nowMs = Date.now()) {
   const tokens = db.query("DELETE FROM auth_tokens WHERE (used_at IS NOT NULL AND used_at < ?) OR expires_at < ?").run(iso(nowMs - 7 * DAY), iso(nowMs - 7 * DAY)).changes;
   const events = db.query("DELETE FROM mail_webhook_events WHERE received_at < ?").run(iso(nowMs - 7 * DAY)).changes;
   return { outbox, tokens, events };
+}
+
+/** Runs a tick soon after an enqueue the user is waiting for (verify, test). The test suite ticks itself. */
+export function kickMailDispatch() {
+  if (process.env.NODE_ENV === "test") return;
+  setTimeout(() => { runMailDispatch().catch(() => undefined); }, 0);
 }
 

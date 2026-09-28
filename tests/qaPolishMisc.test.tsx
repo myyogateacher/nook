@@ -17,12 +17,15 @@ test("/team/invites is replaced with /team for anyone but admins (QA note 10)", 
 
 test("the card drawer title wraps instead of being cut off (QA note 12)", async () => {
   const markup = renderToStaticMarkup(<CardTitleField id="t" className="task-card-title-input task-card-title-field" value="A long card title" onValueChange={() => undefined} aria-label="Card title" />);
-  expect(markup).toMatch(/^<textarea[^>]*rows="1"/);
+  expect(markup).toMatch(/^<span class="task-card-title-wrap"><textarea[^>]*rows="1"/);
+  // A clamped, decorative copy ends a long title with an ellipsis while the field is not focused.
+  expect(markup).toContain('<span class="task-card-title-display" aria-hidden="true">A long card title</span>');
   expect(markup).toContain('aria-label="Card title"');
   expect(singleLineTitle("one\ntwo\r\nthree")).toBe("one two three");
   const css = await Bun.file(join(root, "tasks", "tasks.css")).text();
-  expect(css).toMatch(/\.task-card-title-field \{[^}]*max-height: calc\(2 \* 1\.3em \+ 16px\)/);
+  expect(css).toMatch(/\.task-card-dialog textarea\.task-card-title-field \{[^}]*max-height: calc\(2 \* 1\.3em \+ 18px\);[^}]*resize: none;/);
   expect(css).toMatch(/\.task-card-title-static \{ display: -webkit-box;[^}]*-webkit-line-clamp: 2; \}/);
+  expect(css).toMatch(/\.task-card-title-display \{[^}]*-webkit-line-clamp: 2;[^}]*pointer-events: none;/);
 });
 
 test("the login screen offers the first account only on a fresh instance (QA note 13)", async () => {

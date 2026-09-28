@@ -5,6 +5,7 @@ import { config, isOriginAllowed } from "../config";
 import { email, parseJson, uuid } from "../validation";
 import { createInvite, emailInvite, INVITE_MAX_DAYS, INVITE_NOTE_MAX, INVITE_ROLES, InviteError, listInvites, resendInviteEmail, revokeInvite } from "./invites";
 import { can, ROLES } from "./roles";
+import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPoliciesSchema, writePolicies } from "./policies";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
@@ -126,8 +127,55 @@ function registerInviteRoutes(app: Hono<AppEnv>) {
   });
 }
 
+/**
+ * Team → Policies (Wave 31, access plan §C.6, §C.7): admins only (guests 404,
+ * everyone else 403 ADMIN_ONLY). The inventory is metadata only (T215): prefix, name, owner, grant
+ * summary, expiry, last use, state; never a hash or token, never an item title (T204). Registered
+ * before `/api/team/:userId` so "keys" and "policies" are never read as user ids.
+ */
+function registerAccessRoutes(app: Hono<AppEnv>) {
+  const readGate = (c: Context<AppEnv>) => {
+    const user = c.get("user");
+    if (!can(user.role, "team.read")) return notFound(c);
+    if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage keys and policies", code: "ADMIN_ONLY" }, 403);
+    return null;
+  };
+  const accessError = (c: Context<AppEnv>, error: unknown) => {
+    if (error instanceof PolicyError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  };
+
+  app.get("/api/team/policies", (c) => {
+    const refused = readGate(c);
+    if (refused) return refused;
+    const state = policiesState();
+    return c.json({ ...state, impact: policyImpact(state.policies) });
+  });
+
+  app.post("/api/team/policies/preview", async (c) => {
+    const refused = readGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, previewPoliciesSchema);
+    return c.json({ impact: policyImpact(body.policies) });
+  });
+
+  app.put("/api/team/policies", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, putPoliciesSchema);
+    try {
+      const { changed } = writePolicies(c.get("user").id, body.policies, body.revision);
+      const state = policiesState();
+      return c.json({ ...state, changed, impact: policyImpact(state.policies) });
+    } catch (error) {
+      return accessError(c, error);
+    }
+  });
+}
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerInviteRoutes(app);
+  registerAccessRoutes(app);
 
   app.get("/api/team", (c) => {
     const user = c.get("user");

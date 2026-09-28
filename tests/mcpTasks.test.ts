@@ -575,4 +575,20 @@ describe("MCP task tools: sprints (17B, D139, T119)", () => {
     // No sprint lifecycle tools (D139): agents plan cards, the owner runs the sprints.
     expect((await toolNames(key)).filter((name) => /sprint/.test(name))).toEqual(["list_sprints"]);
   });
+
+  test("get_card comments carry reactions with glyphs and without names; no reaction tool exists (Wave 20, D189)", async () => {
+    const s = await setup("MCP reactions");
+    const comment = (await api(s.owner, "POST", `/cards/${s.cardId}/comments`, { body: "Looks good" })).body.comment as { id: string };
+    for (const [session, emoji] of [[s.owner, "thumbs_up"], [s.member, "thumbs_up"], [s.member, "eyes"]] as const) {
+      expect((await request(`/tasks/comments/${comment.id}/reactions/${emoji}`, { method: "PUT", body: "" }, session)).status).toBe(200);
+    }
+    const key = makeKey(s.member, ["tasks:read", "tasks:write"]);
+    const detail = (await callTool(key, "get_card", { cardId: s.cardId })).value;
+    const reactions = detail.comments.find((item: { id: string }) => item.id === comment.id).reactions as Array<Record<string, unknown>>;
+    expect(reactions.map((item) => item.emoji).sort()).toEqual(["eyes", "thumbs_up"]);
+    expect(reactions.find((item) => item.emoji === "thumbs_up")).toEqual({ emoji: "thumbs_up", glyph: "👍", count: 2, reacted: true });
+    expect(JSON.stringify(reactions)).not.toContain("MCP reactions owner");
+    for (const item of reactions) expect(Object.keys(item).sort()).toEqual(["count", "emoji", "glyph", "reacted"]);
+    expect((await toolNames(key)).filter((name) => /react|emoji/.test(name))).toEqual([]);
+  });
 });

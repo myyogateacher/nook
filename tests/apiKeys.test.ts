@@ -252,6 +252,31 @@ describe("/api/keys", () => {
     expect((await mcp(renewed.body.key.token)).status).toBe(200);
   });
 
+  test("a key revoked by its owner during a rotation grace is listed as revoked by self, not by the rotation (review L4)", async () => {
+    const owner = await createUser("Keys revoke during grace");
+    const listedBy = async (id: string) => ((await api(owner, "GET", "/keys")).body.keys as Array<{ id: string; state: string; revokedBy: string | null }>).find((item) => item.id === id);
+    const first = (await createKey(owner)).body.key;
+    expect((await api(owner, "POST", `/keys/${first.id}/rotate`, { password: owner.password, graceHours: 24 })).status).toBe(201);
+    expect(await listedBy(first.id)).toMatchObject({ state: "grace", revokedBy: null });
+    expect((await api(owner, "DELETE", `/keys/${first.id}`)).status).toBe(200);
+    expect(await listedBy(first.id)).toMatchObject({ state: "revoked", revokedBy: "self" });
+    expect(db.query("SELECT revoked_by FROM mcp_api_keys WHERE id = ?").get(first.id)).toEqual({ revoked_by: owner.userId });
+    // A grace that runs out, and a 0-hour rotation, are the rotation's.
+    const second = (await createKey(owner, { name: "Second" })).body.key;
+    const rotated = await api(owner, "POST", `/keys/${second.id}/rotate`, { password: owner.password, graceHours: 1 });
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), second.id);
+    expect(await listedBy(second.id)).toMatchObject({ state: "revoked", revokedBy: "rotation" });
+    sweepKeyGraces();
+    expect(await listedBy(second.id)).toMatchObject({ state: "revoked", revokedBy: "rotation" });
+    const third = rotated.body.key;
+    expect((await api(owner, "POST", `/keys/${third.id}/rotate`, { password: owner.password, graceHours: 0 })).status).toBe(201);
+    expect(await listedBy(third.id)).toMatchObject({ state: "revoked", revokedBy: "rotation" });
+    // An owner revoke from before the actor was recorded still reads "self": it landed before the grace end.
+    const legacy = (await createKey(owner, { name: "Legacy" })).body.key;
+    db.query("UPDATE mcp_api_keys SET revoke_after = ?, revoked_at = ? WHERE id = ?").run(new Date(Date.now() + 3_600_000).toISOString(), new Date().toISOString(), legacy.id);
+    expect(await listedBy(legacy.id)).toMatchObject({ state: "revoked", revokedBy: "self" });
+  });
+
   test("revoke is immediate, withdraws pending proposals, and is the owner's only", async () => {
     const owner = await createUser("Keys revoke");
     const { key } = (await createKey(owner)).body;

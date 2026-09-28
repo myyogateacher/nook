@@ -565,7 +565,8 @@ export function rotateApiKey(userId: string, keyId: string, graceHours: typeof G
 export function revokeOwnKey(userId: string, keyId: string) {
   return db.transaction(() => {
     const timestamp = now();
-    const result = db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL").run(timestamp, keyId, userId);
+    // The owner is recorded as the actor, so a revoke during a rotation grace reads "self", not "rotation".
+    const result = db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoked_by = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL").run(timestamp, userId, keyId, userId);
     if (!result.changes) return false;
     const superseded = supersedeProposals(keyId, userId, timestamp);
     audit(userId, null, "mcp.key_revoked", { keyId, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
@@ -683,11 +684,23 @@ export type ApiKeyView = {
   grants: GrantView[]; scopes: McpScope[]; effectiveScopes: McpScope[]; limits: KeyLimits; usage14d: number[];
 };
 
+/**
+ * Who stopped a key (review L4): an admin (`revoked_by` is someone else), the owner (`revoked_by` is
+ * them; also an owner revoke from before it was recorded, which lands before the grace end), or the
+ * rotation (the grace ran out, or a 0-hour rotation revoked it at the grace end itself).
+ */
+function revokedByOf(row: KeyRow, state: KeyState): ApiKeyView["revokedBy"] {
+  if (row.revoked_at === null && state !== "revoked") return null;
+  if (row.revoked_by) return row.revoked_by === row.user_id ? "self" : "admin";
+  if (row.revoke_after === null) return "self";
+  return row.revoked_at === null || Date.parse(row.revoked_at) >= Date.parse(row.revoke_after) ? "rotation" : "self";
+}
+
 function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usage: number[], viewerIsOwner: boolean): ApiKeyView {
   const { state, blockedBy } = keyState(row, policies);
   const modules = activeModules(row.role, policies);
   const effective = effectiveOf(row, grants, policies);
-  const revokedBy = row.revoked_at === null && state !== "revoked" ? null : row.revoked_by && row.revoked_by !== row.user_id ? "admin" : row.revoke_after !== null ? "rotation" : "self";
+  const revokedBy = revokedByOf(row, state);
   return {
     id: row.id, name: row.name, description: row.description, prefix: row.key_prefix, kind: row.kind, surfaces: row.surfaces,
     createdAt: row.created_at, lastUsedAt: row.last_used_at, expiresAt: row.expires_at, revokeAfter: row.revoke_after, revokedAt: row.revoked_at,

@@ -150,15 +150,15 @@ export function EmailSettings() {
         <Switch checked={false} disabled labelledBy="email-reminders-label" describedBy="email-reminders-help" />
       </li>
       <li className="modules-row email-row">
-        <span className="modules-row-text"><strong id="email-security-label"><ShieldCheck aria-hidden="true" className="email-inline-icon" />Security</strong><small id="email-security-help">Always on. New API keys, role changes, two-factor changes, and account blocks.</small></span>
+        <span className="modules-row-text"><strong id="email-security-label" className="email-label-icon"><ShieldCheck aria-hidden="true" className="email-inline-icon" />Security</strong><small id="email-security-help">Always on. New API keys, role changes, two-factor changes, and account blocks.</small></span>
         <Switch checked disabled labelledBy="email-security-label" describedBy="email-security-help" />
       </li>
     </ul>
 
     <h4 className="notification-settings-subheading">Summary</h4>
     <div className="email-field-row">
-      <span className="email-field"><span id="email-digest-label">Digest</span><Select value="off" onChange={() => undefined} options={[...DIGEST_OPTIONS]} labelledBy="email-digest-label" disabled /></span>
-      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={() => undefined} options={TIME_OPTIONS} labelledBy="email-digest-time-label" disabled /></span>
+      <span className="email-field"><span id="email-digest-label">Digest</span><Select value="off" onChange={() => undefined} options={[...DIGEST_OPTIONS]} label="Digest" labelledBy="email-digest-label" disabled /></span>
+      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={() => undefined} options={TIME_OPTIONS} label="Digest time" labelledBy="email-digest-time-label" disabled /></span>
     </div>
     <p className="email-settings-muted">A daily or weekly summary is coming in a later update.</p>
 
@@ -168,8 +168,8 @@ export function EmailSettings() {
         onChange={(on) => { void save({ quietHours: on ? { start: "22:00", end: "07:30" } : null }); }} />
     </div>
     {quietOn && <div className="email-field-row">
-      <span className="email-field"><span id="email-quiet-from">From</span><Select value={prefs.quietStart} onChange={(start) => { if (start !== prefs.quietEnd) void save({ quietHours: { start, end: prefs.quietEnd! } }); }} options={TIME_OPTIONS} labelledBy="email-quiet-from" disabled={locked} /></span>
-      <span className="email-field"><span id="email-quiet-to">To</span><Select value={prefs.quietEnd} onChange={(end) => { if (end !== prefs.quietStart) void save({ quietHours: { start: prefs.quietStart!, end } }); }} options={TIME_OPTIONS} labelledBy="email-quiet-to" disabled={locked} /></span>
+      <span className="email-field"><span id="email-quiet-from">From</span><Select value={prefs.quietStart} onChange={(start) => { if (start !== prefs.quietEnd) void save({ quietHours: { start, end: prefs.quietEnd! } }); }} options={TIME_OPTIONS} label="Quiet hours from" labelledBy="email-quiet-from" disabled={locked} /></span>
+      <span className="email-field"><span id="email-quiet-to">To</span><Select value={prefs.quietEnd} onChange={(end) => { if (end !== prefs.quietStart) void save({ quietHours: { start: prefs.quietStart!, end } }); }} options={TIME_OPTIONS} label="Quiet hours to" labelledBy="email-quiet-to" disabled={locked} /></span>
     </div>}
     <p className="email-settings-muted email-zone">Time zone: {zone}{zone !== device && ready && <button type="button" className="text-button" onClick={() => { void save({ tz: device }); }}>Use this device's time zone ({device})</button>}</p>
   </section>;

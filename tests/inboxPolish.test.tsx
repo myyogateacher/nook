@@ -72,3 +72,10 @@ test("the phone approve toast sits above the sticky bar and phone targets are 44
   // The toast carries the same Open link as the desktop banner.
   expect(source).toMatch(/phoneToast\.ref && <button[^\n]*?\{refLabel\[phoneToast\.ref\.type\]\}/);
 });
+
+test("Cancel or Escape in the Reject dialog hands focus back to the opener (4c)", async () => {
+  const source = await Bun.file(new URL("../src/inbox/InboxApp.tsx", import.meta.url)).text();
+  expect(source).not.toContain("setDialog({ kind: \"reject\"");
+  expect(source).toContain("<RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={closeDialog}");
+  expect(source).toMatch(/dialogReturnRef\.current\?\.isConnected\) dialogReturnRef\.current\.focus\(\)/);
+});

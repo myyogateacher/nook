@@ -76,6 +76,17 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   const [detailError, setDetailError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  // Cancel or Escape hands focus back to the control that opened the dialog (4c: Reject…).
+  const dialogReturnRef = useRef<HTMLElement | null>(null);
+  const openDialog = (next: Dialog) => {
+    const active = document.activeElement;
+    dialogReturnRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    setDialog(next);
+  };
+  const closeDialog = () => {
+    setDialog(null);
+    window.requestAnimationFrame(() => { if (dialogReturnRef.current?.isConnected) dialogReturnRef.current.focus(); });
+  };
   const [banner, setBanner] = useState<Banner | null>(null);
   // Phones: the list (and its banner) hides behind the next proposal, so approving says so in a toast above the sticky bar.
   const [phoneToast, setPhoneToast] = useState<{ text: string; ref: ProposalRef | null } | null>(null);
@@ -264,7 +275,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   }
 
   function requestApproveAll(group: ProposalSummary[]) {
-    if (group.length > BULK_CONFIRM_OVER) setDialog({ kind: "approve-all", items: group });
+    if (group.length > BULK_CONFIRM_OVER) openDialog({ kind: "approve-all", items: group });
     else void approveAll(group);
   }
 
@@ -288,7 +299,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       }
       if (!detail || detail.status !== "pending" || busy) return;
       if (key === "a" && canWrite && !detail.restricted) void approve(detail, detail.position?.nextId);
-      if (key === "r") setDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) });
+      if (key === "r") openDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -350,7 +361,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
                 {group.run?.summary && <p className="inbox-run-summary"><span className="inbox-agent-label">Written by the agent</span> {group.run.summary}</p>}
               </div>
               {status === "pending" && pending.length > 1 && <div className="inbox-group-actions">
-                <button type="button" className="inbox-action" onClick={() => setDialog({ kind: "reject", ids: pending.map((item) => item.id), label: `${pending.length} proposals from ${groupTitle(group)}`, effect: rejectEffectText(pending) })} disabled={busy !== null}>Reject all</button>
+                <button type="button" className="inbox-action" onClick={() => openDialog({ kind: "reject", ids: pending.map((item) => item.id), label: `${pending.length} proposals from ${groupTitle(group)}`, effect: rejectEffectText(pending) })} disabled={busy !== null}>Reject all</button>
                 {canWrite && <button type="button" className="inbox-action primary" onClick={() => requestApproveAll(pending)} disabled={busy !== null}><CheckCheck />Approve all {pending.length}</button>}
               </div>}
             </header>
@@ -363,7 +374,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
                   canApprove={canWrite}
                   onOpen={() => { if (item.id !== route.proposalId) go({ view: route.view, proposalId: item.id }, Boolean(route.proposalId) && window.matchMedia?.("(min-width: 761px)").matches); }}
                   onApprove={() => { void approve(item); }}
-                  onReject={() => setDialog({ kind: "reject", ids: [item.id], label: item.title, effect: rejectEffectText([item]) })}
+                  onReject={() => openDialog({ kind: "reject", ids: [item.id], label: item.title, effect: rejectEffectText([item]) })}
                 />
               </li>)}
             </ul>
@@ -377,7 +388,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
         {route.proposalId && detail?.id === route.proposalId
           ? <ProposalView proposal={detail} busy={busy !== null} canApprove={canWrite} onBack={back} onOpenPath={onOpenPath}
             onApprove={() => { void approve(detail, detail.position?.nextId); }}
-            onReject={() => setDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) })} />
+            onReject={() => openDialog({ kind: "reject", ids: [detail.id], label: detail.title, effect: rejectEffectText([detail]) })} />
           : route.proposalId
             ? detailError ? <div className="inbox-state inbox-error" role="alert"><p>{detailError}</p><button className="inbox-action" onClick={() => { void loadDetail(route.proposalId!); }}><RotateCcw />Try again</button></div>
               : <p className="inbox-loading" role="status">Loading…</p>
@@ -391,8 +402,8 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
       <button type="button" className="icon-button" onClick={() => setPhoneToast(null)} aria-label="Dismiss"><X /></button>
     </div>}
 
-    {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={() => setDialog(null)} onReject={(reason) => reject(dialog.ids, reason)} />}
-    {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={() => setDialog(null)} onConfirm={() => { void approveAll(dialog.items); }} />}
+    {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={closeDialog} onReject={(reason) => reject(dialog.ids, reason)} />}
+    {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={closeDialog} onConfirm={() => { void approveAll(dialog.items); }} />}
   </main>;
 }
 

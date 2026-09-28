@@ -224,7 +224,7 @@
         <aside class="callout"><strong>Hiding is not a security boundary.</strong> Nothing is deleted, sharing is unchanged, and MCP keys and feed links keep working. Revoke a key or link to stop it.</aside>
       </section>
 
-      <section id="mcp" class="doc-section searchable" data-search="mcp model context protocol ai client agent api key token bearer streamable http scopes permissions notes drafts files tasks cards views query_cards sprints collections rows calendar events reminders today team revoke rate limits">
+      <section id="mcp" class="doc-section searchable" data-search="mcp model context protocol ai client agent api key token bearer streamable http scopes permissions notes drafts publish files upload tasks cards views query_cards sprints collections rows calendar events reminders today team revoke rate limits bin restore review undo">
         <span class="eyebrow">Using Nook</span><h2>MCP server</h2><p class="lead">An authenticated Model Context Protocol endpoint over Streamable HTTP lets trusted AI clients read your workspace and, with the permissions you grant, write drafts, cards, rows, and events.</p>
         <div class="steps"><article><b>1</b><div><h3>Create a key</h3><p>Open <b>Settings → MCP server</b>, name the key, and choose its <b>Permissions</b>. It is shown in full only once; Nook stores its SHA-256 hash and a short prefix, never the plaintext. Viewers can create read-only keys; guests cannot create keys.</p></div></article><article><b>2</b><div><h3>Configure the client</h3><p>Copy the ready-to-paste configuration. The endpoint is <code>&lt;your origin&gt;/mcp</code> and the key is sent as a bearer token:</p><pre><code>{
   "mcpServers": {
@@ -236,11 +236,13 @@
   }
 }</code></pre></div></article><article><b>3</b><div><h3>Revoke when done</h3><p>Use a separate key per client, treat keys like passwords, and revoke unused keys from the same screen.</p></div></article></div>
         <div class="table-wrap"><table><thead><tr><th>Permission</th><th>What the client can do</th></tr></thead><tbody>
-          <tr><td><code>notes:read</code>, <code>notes:write-draft</code></td><td>List, read, and search published notes; create notes and write drafts of your own notes. It never publishes: that stays with you.</td></tr>
-          <tr><td><code>files:read</code></td><td>List files and folders and read text files up to 1 MiB.</td></tr>
-          <tr><td><code>tasks:read</code>, <code>tasks:write</code></td><td>Boards, cards, comments, relations, subtasks, sprints, saved views, and cross-board <code>query_cards</code>; create, update, move, link, and comment on cards, and plan them in sprints. Never deletes.</td></tr>
-          <tr><td><code>collections:read</code>, <code>collections:write</code></td><td>Query and read rows; add and change rows. Never deletes or changes fields.</td></tr>
+          <tr><td><code>notes:read</code>, <code>notes:write-draft</code></td><td>List, read, and search published notes; create notes and folders and write drafts of your own notes. It never publishes.</td></tr>
+          <tr><td><code>notes:publish</code></td><td>Publish a draft of your own note, only a revision the key has read. Opt-in, with a warning: shared notes become visible to their readers.</td></tr>
+          <tr><td><code>files:read</code>, <code>files:write</code></td><td>List files and folders and read text files up to 1 MiB; store text files, upload files through a one-time ticket, rename and move your own files, and create folders. Never shares or deletes, and refuses moves that would change who can see a file.</td></tr>
+          <tr><td><code>tasks:read</code>, <code>tasks:write</code></td><td>Boards, cards, comments, relations, subtasks, sprints, saved views, and cross-board <code>query_cards</code>; create, update, move, link, and comment on cards, plan them in sprints, manage tags and WIP limits, add and start sprints (owner only), and attach files. Never deletes.</td></tr>
+          <tr><td><code>collections:read</code>, <code>collections:write</code></td><td>Query and read rows; add and change rows and create private collections. Never deletes or changes fields.</td></tr>
           <tr><td><code>calendar:read</code>, <code>calendar:write</code></td><td>List calendars and events; create and change events and set your own reminders.</td></tr>
+          <tr><td><code>bin:write</code></td><td>Move notes, cards, events, and rows to the Bin and restore them, only together with that module's write permission. Nothing is deleted forever; at most 10 a minute and 50 a day per key, and <b>Review → Restore all</b> on the key undoes it.</td></tr>
           <tr><td><code>today:read</code></td><td>The Today summary, limited by the key's other permissions.</td></tr>
           <tr><td><code>team:read</code></td><td>Admins only: names, roles, and status of accounts.</td></tr>
         </tbody></table></div>

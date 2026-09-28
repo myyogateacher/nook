@@ -10,7 +10,7 @@ Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agen
 
 - [ ] Wave 18 Team invites + outbound email wrapper (Resend, D93) — merged. → v0.10.0 with Wave 20 (merged `b85b1d2`) and Wave 21 (merged `e33015a`) — review + QA in progress.
 - [ ] Wave 21 Agent inbox: proposals — merged `e33015a`, ships in v0.10.0.
-- [ ] Wave 19 MCP write coverage — building. → v0.11.0.
+- [ ] Wave 19 MCP write coverage — implemented on `wave-19-mcp-writes` (21 tools, scopes `notes:publish`, `files:write`, `bin:write`, Review / Restore all); awaiting review, `/security-review` (T142–T149), and the real-client gate. → v0.11.0. Deferred: the Bin "via <key>" chip.
 - [ ] Wave 22 Routines and runs — building. → v0.11.0.
 - [ ] **Priority (operator, 2026-09-28):** access management & API keys, and outbound email — research running now, then waves. Migration ids 025 (access) and 026 (email prefs).
 - [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.

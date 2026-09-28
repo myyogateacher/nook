@@ -44,6 +44,7 @@ import { registerInboxRoutes } from "./inbox/routes";
 import { registerMailPreviewRoutes } from "./mail/preview";
 import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./mail/triggers";
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
+import { passwordResetAvailable, registerPasswordChangeRoute, registerPasswordResetRoutes } from "./passwordFlows";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -135,7 +136,9 @@ app.get("/api/health", (c) => c.json({ status: "ok" }));
 // fresh instance (QA note 13): a yes/no, never a count.
 app.get("/api/about", (c) => c.json({
   version: config.appVersion, gitSha: config.gitSha,
-  hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration
+  hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration,
+  // Wave 30: whether "Forgot password?" can mail a link (email on); an instance fact, never per account.
+  passwordReset: passwordResetAvailable()
 }));
 
 app.use("/api/auth/login", async (c, next) => {
@@ -195,6 +198,8 @@ app.post("/api/auth/invite", async (c) => {
 
 // Email verification and one-click unsubscribe work without a session (outbound email §A.4, §B.2).
 registerPublicMailRoutes(app);
+// Forgot / reset password (Wave 30, outbound email §A.5): no session, identical answers (T224).
+registerPasswordResetRoutes(app);
 
 app.post("/api/auth/register", async (c) => {
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
@@ -342,6 +347,9 @@ app.use("/api/*", roleWriteGate);
 
 // Nook keys (Wave 31): /api/keys; /api/mcp/keys below stays as an alias for one release.
 registerKeyRoutes(app);
+
+// Settings → Security → Change password (Wave 30).
+registerPasswordChangeRoute(app);
 
 app.get("/api/mcp/keys", (c) => {
   const userId = c.get("user").id;

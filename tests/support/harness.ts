@@ -29,7 +29,8 @@ export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
 /**
  * The first SEQUENTIAL_TEST_EMAILS go to register()/createUser() in order (the whole suite shares one
- * process and counter); the rest are spares for tests that need an address no account uses.
+ * process and counter); the rest are spares, handed out from the end by spareEmail(), for tests that
+ * need an address no account uses.
  */
 export const SEQUENTIAL_TEST_EMAILS = 2000;
 export const allowedTestEmails = Array.from({ length: 3000 }, (_, index) => `allowed-${index + 1}@example.test`);
@@ -65,12 +66,22 @@ export const server = Bun.serve(serverOptions);
 };
 
 export type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
+/** createUser() takes allowlisted emails from the start; spareEmail() hands them out from the end. */
 let emailIndex = 0;
+let spareIndex = allowedTestEmails.length;
 
 function nextEmail() {
-  const email = emailIndex < SEQUENTIAL_TEST_EMAILS ? allowedTestEmails[emailIndex++] : undefined;
-  if (!email) throw new Error("Test email allowlist exhausted");
-  return email;
+  if (emailIndex >= SEQUENTIAL_TEST_EMAILS) throw new Error("Test email allowlist exhausted");
+  return allowedTestEmails[emailIndex++]!;
+}
+
+/**
+ * An allowlisted email no account in this run has or will get, for invites bound to an address.
+ * It never reaches the sequential block, so createUser() cannot take it later in the run.
+ */
+export function spareEmail() {
+  if (spareIndex <= SEQUENTIAL_TEST_EMAILS) throw new Error("Spare test emails exhausted");
+  return allowedTestEmails[--spareIndex]!;
 }
 
 export async function request(path: string, options: RequestInit = {}, session?: Session) {

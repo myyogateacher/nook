@@ -143,6 +143,22 @@ describe("card attachments", () => {
     expect(capped.body.code).toBe("LIMIT_REACHED");
   });
 
+  test("attachments linked in the same millisecond list in linking order, whatever their random ids", async () => {
+    const { owner, cardId } = await setup("Attach ties");
+    const timestamp = new Date().toISOString();
+    const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
+      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
+    const link = db.query("INSERT INTO card_attachments (card_id, document_id, linked_by, created_at) VALUES (?, ?, ?, ?)");
+    // Each later link gets a smaller document id, so a document-id tie-break would reverse them.
+    const ids = Array.from({ length: 3 }, () => crypto.randomUUID()).sort().reverse();
+    for (const id of ids) {
+      insertDocument.run(id, owner.userId, "0".repeat(64), timestamp, timestamp);
+      link.run(cardId, id, owner.userId, timestamp);
+    }
+    const card = await call(owner, "GET", `/cards/${cardId}`);
+    expect(card.body.attachments.map((item: { document_id: string }) => item.document_id)).toEqual(ids);
+  });
+
   test("a card holds at most 50 attachments", async () => {
     const { owner, cardId } = await setup("Attach cap");
     const timestamp = new Date().toISOString();

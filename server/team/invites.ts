@@ -89,10 +89,10 @@ export type TeamInvite = {
   revokedAt: string | null;
 };
 
-type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null };
+type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number };
 
 const listSelect = `
-  SELECT i.*, c.display_name AS created_by_name, u.display_name AS used_by_name
+  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name
   FROM team_invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by`;
 
 function present(row: ListedRow, at: string): TeamInvite {
@@ -121,13 +121,16 @@ function requireAdmin(actor: Actor) {
   if (!can(actor.role, "team.manage")) throw new InviteError(403, "ADMIN_ONLY", "Only admins can manage invites");
 }
 
-/** Every live invite plus the latest dead ones, newest first (admins only). */
+/**
+ * Every live invite plus the latest dead ones, newest first (admins only). Invites made in the same
+ * millisecond share `created_at`; rowid (insertion order) breaks the tie, never the random id.
+ */
 export function listInvites(actor: Actor, options: { status?: "live" | "all" } = {}) {
   requireAdmin(actor);
   const at = now();
-  const live = db.query(`${listSelect} WHERE i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC, i.id`).all(at) as ListedRow[];
-  const dead = options.status === "live" ? [] : db.query(`${listSelect} WHERE NOT (i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?) ORDER BY i.created_at DESC, i.id LIMIT ?`).all(at, DEAD_LIST_LIMIT) as ListedRow[];
-  const invites = [...live, ...dead].sort((left, right) => right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id)).map((row) => present(row, at));
+  const live = db.query(`${listSelect} WHERE i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC, i.rowid DESC`).all(at) as ListedRow[];
+  const dead = options.status === "live" ? [] : db.query(`${listSelect} WHERE NOT (i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?) ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`).all(at, DEAD_LIST_LIMIT) as ListedRow[];
+  const invites = [...live, ...dead].sort((left, right) => right.created_at.localeCompare(left.created_at) || right.seq - left.seq).map((row) => present(row, at));
   return { invites, liveCount: live.length, liveLimit: LIVE_INVITE_LIMIT, emailEnabled: mailEnabled() };
 }
 

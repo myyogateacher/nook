@@ -90,7 +90,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.10.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.11.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -99,6 +99,14 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.11.0
+
+- **MCP write coverage**: three new opt-in scopes. `notes:publish` lets an agent publish a note draft it has read, `files:write` lets it upload files, store text files, create folders, and rename or move files, and `bin:write` lets it move items to the Bin and restore them (never forever). Existing keys gain nothing. Settings → MCP has a **Review** dialog per key listing what it binned, with **Restore all** for that key.
+- **Routines and runs**: scheduled routines, at `/inbox/routines`, that your MCP agents run on a cadence. Each run is listed in its history with the proposals it made; pause and resume a routine at any time. Routine proposals reach the Inbox and, when email is on, your email.
+- **Outbound email**: Resend via `RESEND_API_KEY` and `MAIL_FROM`, off unless both are set. Verified addresses, per-user email settings in Settings → Notifications → Email, one-click unsubscribe pages, and **Team → Email log** for admins. Templates cover invites, security notices, assignments, comments, shares, and proposals. Links in mail point only to `APP_ORIGIN`.
+- **Fixes**: steadier ordering for rows created in the same millisecond, React 19 handler bugs, History and Back layering for dialogs and sheets, the phone Settings tab strip scrolls to the active section, 44 px phone targets, new cards go into the active sprint when none is given, note-draft proposals are compared with the draft the agent built on, a resumed routine does not re-run a slot that already ran, MCP `create_sprint` dates sprints by default, and an open note refreshes when its draft is published from the Inbox.
+- Migration 026 runs on the first boot, so back up first. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.10.0
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GENERAL_KEY_MODULES, SCOPE_GRANTS, SELECTOR_KINDS as SERVER_SELECTORS } from "../server/keyGrants";
 import {
-  expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
+  expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowModuleChoices, rowPermissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
   type GrantRow, type KeyGrantView
 } from "../src/keys/keyGrants";
 import { keyAfterRevoke, KeyRow, keyToRows, revokeCopy } from "../src/keys/KeysSettings";
@@ -42,6 +42,32 @@ describe("key grants on the client", () => {
     const modules = moduleChoices("viewer", policy);
     expect(modules.find((module) => module.value === "bin")).toMatchObject({ disabled: true });
     expect(modules.find((module) => module.value === "tasks")).toMatchObject({ disabled: false, firstPermission: "read" });
+  });
+
+  test("the builder never offers a module and permission another row holds (Friction 4)", () => {
+    const rows = [row({ key: "a", module: "today", permission: "read" }), row({ key: "b", module: "tasks", permission: "read" }), row({ key: "c", module: "notes", permission: "read" })];
+    // Today has one permission, held by row 1: another row cannot pick Today; row 1 itself can.
+    expect(rowModuleChoices("member", policy, rows, "b").find((module) => module.value === "today")).toMatchObject({ disabled: true, description: "Already in permission 1" });
+    expect(rowModuleChoices("member", policy, rows, "a").find((module) => module.value === "today")).toMatchObject({ disabled: false, firstPermission: "read" });
+    // Tasks still has write free: open, and a switch to it starts on the free permission.
+    expect(rowModuleChoices("member", policy, rows, "c").find((module) => module.value === "tasks")).toMatchObject({ disabled: false, firstPermission: "write" });
+    expect(rowPermissionChoices("tasks", "member", policy, rows, "c").map((choice) => [choice.value, choice.disabled, choice.reason])).toEqual([["read", true, "Already in permission 2"], ["write", false, null]]);
+    // Add permission (no row of its own) skips modules whose permissions are all taken.
+    expect(rowModuleChoices("member", policy, rows, null).find((module) => !module.disabled)?.value).toBe("notes");
+  });
+
+  test("the board picker hides chosen boards, keeps a placeholder, and its chip × is 28 px on desktop, 44 px on phones (Friction 3)", async () => {
+    const builder = await Bun.file(new URL("../src/keys/GrantBuilder.tsx", import.meta.url)).text();
+    expect(builder).toContain("const unchosen = resourceOptions.filter((option) => !row.resourceIds.includes(option.value));");
+    expect(builder).toContain("placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}");
+    const combobox = await Bun.file(new URL("../src/ui/Combobox.tsx", import.meta.url)).text();
+    expect(combobox).toContain("placeholder={value.length && !inSheet ? placeholderWithValues : placeholder}");
+    const css = await Bun.file(new URL("../src/keys/keys.css", import.meta.url)).text();
+    const desktop = css.indexOf(".grant-resources .ui-chip-remove { width: 28px; height: 28px; }");
+    const phone = css.indexOf(".grant-resources .ui-chip-remove, .policies-role .ui-chip-remove { width: 44px; height: 44px; }");
+    expect(desktop).toBeGreaterThan(-1);
+    // The phone rule comes later, so it wins inside its media query.
+    expect(phone).toBeGreaterThan(desktop);
   });
 
   test("rows become the request's grants, with chosen items only where a module has them", () => {

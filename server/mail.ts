@@ -28,7 +28,8 @@ export type MailTransport = (message: MailSendRequest, signal: AbortSignal) => P
 
 export type MailOutcome =
   | { sent: true; id: string }
-  | { sent: false; reason: "not_configured" | "rate_limited" }
+  | { sent: false; reason: "not_configured" }
+  | { sent: false; reason: "rate_limited" }
   /** `code` is the provider's error name (or "timeout"); `retryable` is false for a 4xx validation error. */
   | { sent: false; reason: "failed"; code: string; retryable: boolean };
 

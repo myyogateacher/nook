@@ -15,6 +15,7 @@ import { isEmailAllowed } from "../config";
 import { audit, db, now, type TeamInviteRow } from "../db";
 import { mailEnabled, sendMail, type MailOutcome } from "../mail";
 import { inviteEmail } from "./inviteEmail";
+import { logSentMail } from "../mail/outbox";
 import { can, type Role } from "./roles";
 
 export const INVITE_ROLES = ["member", "viewer", "guest"] as const;
@@ -191,6 +192,8 @@ export async function emailInvite(actor: Actor, invite: Pick<TeamInviteRow, "id"
   if (!invite.email) return { sent: false, reason: "failed", code: "no_address", retryable: false };
   const inviter = (db.query("SELECT display_name FROM users WHERE id = ?").get(actor.id) as { display_name: string } | null)?.display_name ?? "An admin";
   const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team.invite", senderId: actor.id, recipient: "address" });
+  // Sent at once for the admin's feedback, and logged in the outbox for the Email log (D254).
+  if (outcome.sent || outcome.reason !== "not_configured") logSentMail({ template: "team.invite", to: invite.email, outcome });
   if (outcome.sent) audit(actor.id, null, "team.invite_emailed", { inviteId: invite.id, role: invite.role });
   return outcome;
 }

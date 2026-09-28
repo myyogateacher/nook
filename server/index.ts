@@ -10,6 +10,7 @@ import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, vi
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
+import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
@@ -859,6 +860,7 @@ try {
   console.error("Web Push setup failed; reminders still appear in the app", errorClass(error));
 }
 startDispatcher();
+startMailDispatcher();
 
 export default {
   port: config.port,

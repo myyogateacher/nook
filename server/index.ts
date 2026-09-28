@@ -33,6 +33,7 @@ import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } fr
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
 import { registerMailPreviewRoutes } from "./mail/preview";
+import { mailShared, shareMembers } from "./mail/triggers";
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
@@ -542,10 +543,13 @@ app.put("/api/folders/:id/sharing", async (c) => {
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
   db.transaction(() => {
+    const before = shareMembers("folder_shares", "folder_id", id);
     db.query("DELETE FROM folder_shares WHERE folder_id = ?").run(id);
     if (body.visibility === "selected") {
       const statement = db.query("INSERT INTO folder_shares (folder_id, user_id, created_at) VALUES (?, ?, ?)");
       for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+      // "Shared with you" mail for people newly added by name (outbound email #25, D239).
+      mailShared(userId, "folder", id, before, uniqueIds);
     }
     db.query("UPDATE folders SET visibility = ?, updated_at = ? WHERE id = ? AND owner_id = ?").run(body.visibility, now(), id, userId);
   })();
@@ -758,10 +762,12 @@ app.put("/api/notes/:id/sharing", async (c) => {
   return withNoteLock(id, async () => {
     if (!ownedNote(id, userId)) return c.json({ error: "Note not found" }, 404);
     db.transaction(() => {
+      const before = shareMembers("note_shares", "note_id", id);
       db.query("DELETE FROM note_shares WHERE note_id = ?").run(id);
       if (body.visibility === "selected") {
         const statement = db.query("INSERT INTO note_shares (note_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+        mailShared(userId, "note", id, before, uniqueIds);
       }
       const visibility = body.visibility === "inherit" ? "private" : body.visibility;
       db.query("UPDATE notes SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")

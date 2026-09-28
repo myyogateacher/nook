@@ -39,13 +39,42 @@ async function call(session: Session, method: string, path: string, body?: unkno
 const mailFor = (session: Session) => sent.filter((message) => message.to === session.email);
 const queued = (userId: string, template: string) => db.query("SELECT * FROM mail_outbox WHERE user_id = ? AND template = ?").all(userId, template) as Array<Record<string, any>>;
 
-async function board(owner: Session, members: Session[]) {
+async function board(owner: Session, members: Session[], options: { dropShareMail?: boolean } = {}) {
   const created = await call(owner, "POST", "/tasks/boards", { name: "Launch" });
   const boardId = created.body.board.id as string;
   const columnId = created.body.columns[0].id as string;
   expect((await call(owner, "PUT", `/tasks/boards/${boardId}/sharing`, { visibility: "selected", userIds: members.map((member) => member.userId) })).status).toBe(200);
+  // The share itself mails (covered above); these tests look at what follows.
+  if (options.dropShareMail !== false) db.query("DELETE FROM mail_outbox WHERE template = 'sharing.shared'").run();
   return { boardId, columnId };
 }
+
+describe("Shared with you", () => {
+  test("one template for boards and calendars; only newly added people; all_users sends nothing", async () => {
+    const owner = await person("Priya Share");
+    const first = await person("First Share");
+    const second = await person("Second Share");
+    const { boardId } = await board(owner, [first], { dropShareMail: false });
+    const calendar = (await call(owner, "POST", "/calendars", { name: "Team calendar" })).body.calendar;
+    expect((await call(owner, "PUT", `/calendars/${calendar.id}/sharing`, { visibility: "selected", shareRole: "editor", userIds: [first.userId] })).status).toBe(200);
+    // Re-saving with the same member adds nobody; adding the second mails only them.
+    await call(owner, "PUT", `/tasks/boards/${boardId}/sharing`, { visibility: "selected", userIds: [first.userId, second.userId] });
+    await call(owner, "PUT", `/calendars/${calendar.id}/sharing`, { visibility: "all_users", shareRole: "viewer", userIds: [] });
+    expect(queued(owner.userId, "sharing.shared")).toEqual([]);
+    const rows = queued(first.userId, "sharing.shared");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.payload).items).toEqual([{ kind: "board", id: boardId }, { kind: "calendar", id: calendar.id }]);
+    expect(JSON.parse(queued(second.userId, "sharing.shared")[0]!.payload).items).toEqual([{ kind: "board", id: boardId }]);
+    await runMailDispatch({ nowMs: later() });
+    const firstMail = mailFor(first)[0]!;
+    expect(firstMail.subject).toBe("Priya Share shared 2 items with you");
+    expect(firstMail.text).toContain(`/tasks/${boardId}`);
+    expect(firstMail.text).toContain("/calendar");
+    expect(mailFor(second)[0]!.subject).toBe("Priya Share shared ‘Launch’ with you");
+    // Other files expect no calendar shared with everyone.
+    await call(owner, "PUT", `/calendars/${calendar.id}/sharing`, { visibility: "private", shareRole: "viewer", userIds: [] });
+  });
+});
 
 describe("Tasks", () => {
   test("assigning others coalesces into one mail with a deep link; self-assignment sends nothing", async () => {

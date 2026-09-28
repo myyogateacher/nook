@@ -215,6 +215,45 @@ describe("group grants in every access predicate (D270)", () => {
     expect((await send(inGroup, "GET", `/notes/${noteInFolder}`)).status).toBe(404);
   }, 30_000);
 
+  test("MCP list tools honour group grants, and a board commenter's key cannot write cards", async () => {
+    const { createApiKey } = await import("../server/apiKeys");
+    const { invokeMcpToolForTests } = await import("../server/mcpTools");
+    const { resetMcpLimits } = await import("../server/mcpRateLimit");
+    resetMcpLimits();
+    const admin = await user("MCP grants admin", "admin");
+    const owner = await user("MCP grants owner");
+    const member = await user("MCP grants member");
+    const group = (await send(admin, "POST", "/team/groups", { name: `MCP ${marker()}` })).body.group;
+    await send(admin, "PUT", `/team/groups/${group.id}/members`, { userIds: [member.userId], revision: 1 });
+    const created = (await send(owner, "POST", "/tasks/boards", { name: `MCP group board ${marker()}` })).body;
+    const board = created.board.id as string;
+    const stranger = await user("MCP grants stranger");
+    await send(owner, "PUT", `/tasks/boards/${board}/sharing`, { visibility: "selected", userIds: [stranger.userId] });
+    grant("board", board, group.id, "comment");
+    const collection = await newCollection(owner, { name: `MCP group collection ${marker()}`, fields: [{ name: "Name", type: "text" }] });
+    await send(owner, "PUT", `/collections/${collection.id}/sharing`, { visibility: "selected", userIds: [stranger.userId], role: "viewer" });
+    grant("collection", collection.id, group.id);
+    const keyId = createApiKey(member.userId, {
+      name: "Group agent", surfaces: "mcp", expiresInDays: 30,
+      grants: [{ module: "tasks", permission: "write", resourceKind: null, resourceId: null }, { module: "collections", permission: "read", resourceKind: null, resourceId: null }]
+    }).id;
+    const call = async (name: string, args: Record<string, unknown> = {}) => {
+      const result = await invokeMcpToolForTests(name, args, keyId);
+      return { isError: result.isError === true, text: result.content[0]!.text };
+    };
+    expect((await call("list_boards")).text).toContain(board);
+    expect((await call("list_collections")).text).toContain(collection.id);
+    // Comment level: the key reads the board but its card writes are READ_ONLY (D272).
+    const refused = await call("create_card", { boardId: board, columnId: created.columns[0].id, title: "From a key" });
+    expect(refused.isError).toBe(true);
+    expect(JSON.parse(refused.text).code).toBe("READ_ONLY");
+    // Leaving the group ends it on the next call (T202).
+    await send(admin, "PUT", `/team/groups/${group.id}/members`, { userIds: [], revision: 2 });
+    expect((await call("list_boards")).text).not.toContain(board);
+    expect((await call("list_collections")).text).not.toContain(collection.id);
+    await send(admin, "DELETE", `/team/groups/${group.id}`, {});
+  });
+
   test("purging an item removes the group grants on it (T206)", async () => {
     const admin = await user("Purge grants admin", "admin");
     const owner = await user("Purge grants owner");

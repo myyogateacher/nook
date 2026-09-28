@@ -94,3 +94,11 @@ test("the calendar Today button and notification text buttons are 44 px targets 
   const notificationsCss = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
   expect(notificationsCss).toMatch(/\.notification-text-button \{ min-height: 44px;/);
 });
+
+test("the Push new proposals row wraps its text instead of overflowing the card (3b)", async () => {
+  const css = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
+  // No icon: a text column sized to its content (the base three-column grid) ran 766 px in a 710 px box.
+  expect(css).toContain(".modules-row.notification-proposals-row { grid-template-columns: minmax(0, 1fr) auto; }");
+  const source = await Bun.file(new URL("../src/notifications/NotificationSettings.tsx", import.meta.url)).text();
+  expect(source).toContain("className=\"modules-row notification-proposals-row\"");
+});

@@ -52,6 +52,8 @@
   .app-notification-bell { width: 44px; height: 44px; }
 }
 
+/* Agent proposals (3b): no icon, so the text takes the flexible column and wraps instead of pushing the switch out of the card. */
+.modules-row.notification-proposals-row { grid-template-columns: minmax(0, 1fr) auto; }
 /* Settings → Notifications → Email (Wave 28). */
 .email-settings { display: grid; gap: 10px; max-width: 640px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .email-settings .notification-settings-subheading { margin-top: 6px; }

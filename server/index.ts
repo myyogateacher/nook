@@ -31,6 +31,10 @@ import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { handleMcpUpload } from "./mcpUploads";
+import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
+import { z } from "zod";
+
+const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
@@ -314,7 +318,28 @@ app.use("/api/*", async (c, next) => {
 // Viewers and guests read; every other write is refused unless allowlisted (D75, T87).
 app.use("/api/*", roleWriteGate);
 
-app.get("/api/mcp/keys", (c) => c.json({ keys: listMcpApiKeys(c.get("user").id) }));
+app.get("/api/mcp/keys", (c) => {
+  const userId = c.get("user").id;
+  // What each key moved to the Bin in the last 24 hours, for the key row's Review line (D175).
+  const binned = binnedCountsByKey(userId, new Date(Date.now() - BINNED_WINDOWS["24h"]).toISOString());
+  return c.json({ keys: listMcpApiKeys(userId).map((key) => ({ ...key, binnedToday: binned.get(key.id) ?? 0 })) });
+});
+
+// Review / Restore all for one key (Wave 19, D175): the key owner's only; anyone else gets 404.
+app.get("/api/mcp/keys/:id/binned", (c) => {
+  const keyId = uuid.parse(c.req.param("id"));
+  const window = c.req.query("window") ?? "24h";
+  if (!isBinnedWindow(window)) return c.json({ error: "Invalid request", details: ["window must be 1h, 24h, or 7d"] }, 400);
+  const listed = listKeyBinned(c.get("user").id, keyId, window);
+  return listed ? c.json(listed) : c.json({ error: "API key not found" }, 404);
+});
+
+app.post("/api/mcp/keys/:id/restore-binned", async (c) => {
+  const keyId = uuid.parse(c.req.param("id"));
+  const body = await parseJson(c.req.raw, restoreBinnedSchema);
+  const result = await restoreKeyBinned(c.get("user").id, keyId, body.window);
+  return result ? c.json(result) : c.json({ error: "API key not found" }, 404);
+});
 
 app.post("/api/mcp/keys", async (c) => {
   const body = await parseJson(c.req.raw, mcpApiKeySchema);

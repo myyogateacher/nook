@@ -303,6 +303,28 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .scope-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 0; padding: 0; list-style: none; }
 .scope-chips li { padding: 2px 8px; border: 1px solid #38383d; border-radius: 999px; color: #c9c9cd; background: #18181b; font-size: .68rem; }
 .scope-chips li.inactive { border-style: dashed; color: #8e8e93; background: transparent; }
+/* Wave 19: a key's "Moved N items to the Bin today · Review" line and the Review dialog (D175). */
+.mcp-key-binned { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 4px; color: #e0b765; }
+.mcp-key-binned .text-button { width: auto; min-height: 44px; margin: 0; padding: 0 4px; color: var(--yellow); text-decoration: underline; font-size: inherit; }
+.mcp-review-scrim { position: fixed; inset: 0; z-index: 60; background: rgb(0 0 0 / 55%); }
+.mcp-review-dialog { position: fixed; z-index: 61; left: 50%; top: 50%; display: grid; gap: 12px; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; transform: translate(-50%, -50%); border: 1px solid #35353a; border-radius: 18px; padding: 18px; background: #1b1b1f; box-shadow: 0 24px 70px rgb(0 0 0 / 60%); }
+.mcp-review-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mcp-review-dialog h2 { margin: 0; color: #fafafa; font-size: 1.05rem; overflow-wrap: anywhere; }
+.mcp-review-dialog header p, .mcp-review-empty, .mcp-review-message { margin: 4px 0 0; color: #b7b7bd; font-size: .84rem; line-height: 1.5; }
+.mcp-review-dialog header .icon-button { flex: none; width: 44px; height: 44px; }
+.mcp-review-window { display: grid; gap: 6px; color: #c9c9cd; font-size: .8rem; }
+.mcp-review-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.mcp-review-list li { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 0; border-top: 1px solid #2a2a2e; }
+.mcp-review-list li svg { flex: none; width: 18px; height: 18px; color: #a1a1a8; }
+.mcp-review-list li span { display: grid; min-width: 0; }
+.mcp-review-list strong { overflow: hidden; color: #e4e4e7; font-size: .85rem; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-review-list small { color: #8e8e93; font-size: .72rem; }
+.mcp-review-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.mcp-review-actions button { min-height: 44px; }
+@media (max-width: 760px) {
+  .mcp-review-dialog { inset: 0; width: auto; max-height: none; height: 100dvh; transform: none; border: 0; border-radius: 0; align-content: start; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .mcp-review-actions { flex-direction: column-reverse; }
+}
 .new-api-key { padding: 14px; border: 1px solid #6c5424; border-radius: 10px; background: #242016; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }

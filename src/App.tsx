@@ -69,6 +69,7 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 import { canCreateMcpKeys, DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
 import { McpKeyScopeChips } from "./McpKeyScopes";
+import { binnedTodayLine, McpBinnedReview } from "./McpBinnedReview";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, routeFromLocation, type Route } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -88,7 +89,7 @@ type SessionResponse = { user: User; csrfToken: string; totp: TotpState; prefere
 type SettingsSection = "security" | "modules" | "mcp" | "notifications" | "about";
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
-type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; effectiveScopes?: McpScope[]; created_at: string; last_used_at: string | null };
+type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; effectiveScopes?: McpScope[]; created_at: string; last_used_at: string | null; binnedToday?: number };
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "updated-desc", label: "Recently edited" },
@@ -203,6 +204,8 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
   const [error, setError] = useState("");
   const [copied, setCopied] = useState("");
   const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_KEY_SCOPES]);
+  const [reviewKey, setReviewKey] = useState<McpApiKey | null>(null);
+  const closeReview = useCallback(() => setReviewKey(null), []);
   const locked = lockedScopes(scopes);
   const endpoint = `${window.location.origin}/mcp`;
   const displayToken = newToken || "<YOUR_API_KEY>";
@@ -281,8 +284,9 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
         return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={(event) => setScopes((current) => toggleScope(current, permission.scope, event.currentTarget.checked))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small>{permission.warning && <small className="mcp-permission-warning">{permission.warning}</small>}</span></label>;
       })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
       {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
-      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} /></div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
+      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} />{binnedTodayLine(key.binnedToday) && <small className="mcp-key-binned">{binnedTodayLine(key.binnedToday)} · <button type="button" className="text-button" onClick={() => setReviewKey(key)}>Review</button></small>}</div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
     </div>
+    {reviewKey && <McpBinnedReview keyId={reviewKey.id} keyName={reviewKey.name} onClose={() => { closeReview(); loadKeys(); }} onRevoke={() => { const key = reviewKey; closeReview(); void revokeKey(key); }} />}
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
   </section>;
 }

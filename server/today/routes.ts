@@ -3,6 +3,7 @@ import type { AppEnv } from "../auth";
 import { todayRateLimited as rateLimited } from "./rateLimit";
 import { loadToday, todayContext, todaySectionNames, validTimeZone } from "./registry";
 import "./providers";
+import "../inbox/today";
 
 export { resetTodayRateLimit, TODAY_RATE_LIMIT, TODAY_RATE_WINDOW_MS } from "./rateLimit";
 

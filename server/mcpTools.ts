@@ -18,6 +18,7 @@ import { todayTools } from "./today/mcpTools";
 import { calendarTools } from "./calendar/mcpTools";
 import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
+import { inboxTools } from "./inbox/mcpTools";
 import { effectiveMcpScopes, type Role } from "./team/roles";
 import { canWriteContent } from "./team/userRole";
 
@@ -330,7 +331,8 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...calendarTools,
   ...collectionTools,
   ...todayTools,
-  ...teamTools
+  ...teamTools,
+  ...inboxTools
 ];
 
 /** Registers the tools this key may use on a per-request server. */

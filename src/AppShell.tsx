@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { LogOut, Settings, Trash2, Users } from "lucide-react";
+import { Inbox, LogOut, Settings, Trash2, Users } from "lucide-react";
 import "./appShell.css";
 import { listBin } from "./bin/binApi";
+import { INBOX_CHANGED, pendingCount } from "./inbox/inboxApi";
 import { useModuleEnabled } from "./modules";
 import { NotificationBell } from "./notifications/NotificationBell";
 import { listTeam } from "./team/teamApi";
@@ -13,6 +14,38 @@ import { canManageTeam, canSeeTeam, type Role } from "./team/teamRoles";
  */
 export type TeamNav = { role: Role | undefined; openTeam: () => void; onTeam: boolean };
 export const TeamNavContext = createContext<TeamNav | null>(null);
+
+/**
+ * The Inbox button in the account row, next to the bell (agent inbox D157), provided once by App.
+ * Hidden for guests (they have no inbox), when the Inbox module is off, and on the Inbox itself.
+ */
+export type InboxNav = { role: Role | undefined; openInbox: () => void; onInbox: boolean };
+export const InboxNavContext = createContext<InboxNav | null>(null);
+
+/** The pending badge: a bounded count (at most 100, T51), fetched on mount, on focus, and after inbox changes. */
+function useInboxCount(enabled: boolean) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    const refresh = () => { pendingCount().then(({ pending }) => { if (live) setCount(pending); }, () => undefined); };
+    refresh();
+    window.addEventListener(INBOX_CHANGED, refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      live = false;
+      window.removeEventListener(INBOX_CHANGED, refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [enabled]);
+  return count;
+}
+
+function InboxButton({ nav }: { nav: InboxNav }) {
+  const count = useInboxCount(true);
+  const label = count > 0 ? `Inbox, ${count >= 100 ? "100 or more" : count} pending` : "Inbox";
+  return <button className="app-account-button app-account-inbox" onClick={nav.openInbox} aria-label={label} title="Inbox"><Inbox /><span className="app-account-label">Inbox</span>{count > 0 && <span className="app-account-badge" aria-hidden="true">{count > 99 ? "99+" : count}</span>}</button>;
+}
 
 /** Admins see how many accounts are blocked: one lazy look on mount, like the Bin count. */
 function useBlockedCount(enabled: boolean) {
@@ -47,6 +80,8 @@ export function AccountActions({ displayName, onSettings, onSignOut, onBin, binC
   // Team turned off hides its button too (admins still reach Team from Settings → Manage team).
   const teamEnabled = useModuleEnabled("team");
   const team = useContext(TeamNavContext);
+  const inbox = useContext(InboxNavContext);
+  const inboxEnabled = useModuleEnabled("inbox");
   const binLabel = binCount > 0 ? `Bin, ${binCount} item${binCount === 1 ? "" : "s"}` : "Bin";
   // The bell sits beside the group (it renders only inside the signed-in shell).
   return <><div className="app-account" role="group" aria-label="Account">
@@ -55,7 +90,7 @@ export function AccountActions({ displayName, onSettings, onSignOut, onBin, binC
     {onBin && binEnabled && <button className="app-account-button app-account-bin" onClick={onBin} aria-label={binLabel} title="Bin"><Trash2 /><span className="app-account-label">Bin</span>{binCount > 0 && <span className="app-account-badge" aria-hidden="true">{binCount > 99 ? "99+" : binCount}</span>}</button>}
     {team && teamEnabled && canSeeTeam(team.role) && !team.onTeam && <TeamButton nav={team} />}
     <button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
-  </div><NotificationBell /></>;
+  </div>{inbox && inboxEnabled && inbox.role !== "guest" && !inbox.onInbox && <InboxButton nav={inbox} />}<NotificationBell /></>;
 }
 
 /**

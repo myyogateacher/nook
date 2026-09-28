@@ -10,7 +10,9 @@ export const MCP_SCOPES = [
   "notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read",
   "calendar:read", "calendar:write", "collections:read", "collections:write",
   // Admin-only (server/team/roles.ts ADMIN_ONLY_SCOPES); there is no team write scope (D79).
-  "team:read"
+  "team:read",
+  // Agent inbox (Wave 21, D151): suggest changes for the key owner to approve; never applies anything.
+  "inbox:read", "inbox:write"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
@@ -21,7 +23,8 @@ export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "notes:write-draft": "notes:read",
   "tasks:write": "tasks:read",
   "calendar:write": "calendar:read",
-  "collections:write": "collections:read"
+  "collections:write": "collections:read",
+  "inbox:write": "inbox:read"
 };
 
 export const isMcpScope = (value: unknown): value is McpScope => typeof value === "string" && (MCP_SCOPES as readonly string[]).includes(value);

@@ -188,6 +188,21 @@ export function onNotification(listener: (created: NotificationCreated[]) => voi
   return () => { const index = listeners.indexOf(listener); if (index >= 0) listeners.splice(index, 1); };
 }
 
+/**
+ * Hands notifications created outside the dispatcher (agent inbox proposals, D159) to the same
+ * listeners, so push delivery stays in one place.
+ */
+export function emitNotifications(created: NotificationCreated[]) {
+  if (!created.length) return;
+  for (const listener of listeners) {
+    try {
+      listener(created);
+    } catch (error) {
+      console.error("Notification listener failed", error instanceof Error ? error.name : "Unknown error");
+    }
+  }
+}
+
 type DueRow = ReminderRow & { event_live: number | null; calendar_id: string | null };
 
 let dispatching = false;
@@ -328,7 +343,19 @@ export function notificationHref(eventId: string | null) {
   return eventId && idPattern.test(eventId) ? `/calendar/event/${eventId}` : "/notifications";
 }
 
-type NotificationRow = { id: string; event_id: string | null; reminder_title: string | null; late: number; read_at: string | null; created_at: string; occurrence_start: string | null };
+type NotificationRow = {
+  id: string; event_id: string | null; reminder_title: string | null; late: number; read_at: string | null; created_at: string; occurrence_start: string | null;
+  kind: "reminder" | "proposals"; proposal_count: number | null; key_name: string | null;
+};
+
+/**
+ * A proposals notification (agent inbox D159, T135): "Key “laptop” suggested 2 changes". Only the
+ * user's own key name and a count, never agent text; it opens the Inbox.
+ */
+export function proposalNotificationTitle(keyName: string | null, count: number) {
+  const changes = `${count} change${count === 1 ? "" : "s"}`;
+  return keyName ? `Key “${keyName}” suggested ${changes}` : `An agent suggested ${changes}`;
+}
 
 /**
  * The caller's notifications, newest first. Titles are resolved now, for the caller (T67). One
@@ -336,11 +363,15 @@ type NotificationRow = { id: string; event_id: string | null; reminder_title: st
  * tie, not the random id.
  */
 export function listNotifications(userId: string, options: { unread: boolean; limit: number }) {
-  const rows = db.query(`SELECT n.id, n.event_id, r.title AS reminder_title, n.late, n.read_at, n.created_at, n.occurrence_start
-      FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id
+  const rows = db.query(`SELECT n.id, n.event_id, r.title AS reminder_title, n.late, n.read_at, n.created_at, n.occurrence_start,
+             n.kind, n.proposal_count, k.name AS key_name
+      FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id LEFT JOIN mcp_api_keys k ON k.id = n.proposal_key_id
       WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NotificationRow[];
   const items = rows.map((row): NotificationItem => {
+    if (row.kind === "proposals") {
+      return { id: row.id, title: proposalNotificationTitle(row.key_name, row.proposal_count ?? 1), href: "/inbox", late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null };
+    }
     const event = row.event_id ? readableEvent(row.event_id, userId) : null;
     const title = event ? event.event.title : row.event_id ? "An event you can no longer open" : row.reminder_title ?? "Reminder";
     return { id: row.id, title, href: notificationHref(event ? row.event_id : null), late: row.late === 1, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: row.occurrence_start };

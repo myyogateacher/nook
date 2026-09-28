@@ -15,9 +15,9 @@ describe("authorization and version workflow", () => {
     expect(statSync(join(dataDir, "mynotes.sqlite")).mode & 0o777).toBe(0o600);
     const migrations = db.query("SELECT id, name FROM schema_migrations ORDER BY id").all() as Array<{ id: number; name: string }>;
     expect(migrations.map((migration) => migration.id)).toEqual([...registeredMigrationIds]);
-    // 1–20 are on main; later waves (021 and up) may or may not be registered yet.
-    expect(registeredMigrationIds.slice(0, 20)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
-    expect(registeredMigrationIds.slice(20).every((id) => id >= 21)).toBe(true);
+    // 1–22 are on main; later waves (023 and up) may or may not be registered yet.
+    expect(registeredMigrationIds.slice(0, 22)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
+    expect(registeredMigrationIds.slice(22).every((id) => id >= 23)).toBe(true);
   });
 
   test("registration is limited to 10 attempts a minute server-wide, refused ones included", async () => {

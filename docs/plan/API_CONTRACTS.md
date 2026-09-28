@@ -1310,6 +1310,7 @@ Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-mo
 | `POST /api/mcp/keys`, `DELETE /api/mcp/keys/:id` | both | own keys; creation is then limited by role (below) |
 | `POST /api/collections/:collectionId/query` | both | a read sent as POST |
 | `POST /api/tasks/query` | both | a read sent as POST; a **guest's** `q` must contain a plain `assignee:me` term (not negated, the only value), otherwise 403 `ROLE_READ_ONLY` |
+| `POST /api/inbox/proposals/:id/reject`, `POST /api/inbox/proposals/bulk`, `PUT /api/inbox/settings` | viewer | clear own proposals and the own proposal push setting (Wave 21, D152); bulk `approve` is refused by the handler with 403 `ROLE_READ_ONLY` |
 | `POST /api/tasks/views`, `PATCH /api/tasks/views/:viewId`, `DELETE /api/tasks/views/:viewId`, `POST /api/tasks/views/:viewId/duplicate` | viewer | own private views; `PUT /api/tasks/views/:viewId/sharing` stays refused |
 
 `/api/team/*` answers for itself (guests 404, others 403 `ADMIN_ONLY` on writes). Login and register have no session and are unaffected. Everything else, including every route added later, is refused: note drafts, publish, version restore, sharing, folders, uploads and file changes, Bin restore, purge, and empty (O3), cards, comments, boards, columns, tags, collections, rows, imports, schema, calendars, events, links, and feed tokens (O5). `GET /api/tasks/views/:viewId/cards` is a read. `tests/writeGate.test.ts` enumerates every mutating route in `server/` and checks each one for both roles (T87).
@@ -1321,6 +1322,88 @@ Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-mo
 **MCP.** `mcpScopesForRole`: admin every scope; member every scope but `team:read`; viewer the read scopes only (`notes:read`, `files:read`, `tasks:read`, `today:read`, `calendar:read`, `collections:read`); guest none. Effective scopes are recomputed on every request and tool call (T81), so a demoted member's write key loses its write tools at once and a guest's key has no tools at all. `POST /api/mcp/keys` refuses guests with 403 `ROLE_READ_ONLY` and a viewer asking for a write scope with 403 `SCOPE_NOT_ALLOWED`. Write tools also re-check the holder's role before running (`READ_ONLY`).
 
 **Sign-up role.** `SIGNUP_ROLE` (env, validated at startup: `guest | viewer | member`, default `guest`) is the role of accounts registered after the first (D80, O14).
+
+## Inbox (Wave 21)
+
+Plan of record: [research/2026-09-28-agent-inbox-routines.md](research/2026-09-28-agent-inbox-routines.md) (Wave A; D146–D160 and the director review). Migration `021_agent_inbox` creates `proposals`, `routines`, and `routine_runs` (the last two stay unused until Wave 22), adds `notifications.kind | run_id | proposal_key_id | proposal_count`, adds `user_preferences.proposal_push`, and backfills every live MCP-written note draft as a pending `note_draft` proposal.
+
+A **proposal** is a change an MCP key suggests. Only the key's owner sees and reviews it (D147); anyone else gets 404, admins included. It applies only through `approve` below, under a signed-in session that passed CSRF and the TOTP gate; there is no MCP approve tool and no auto-apply (D146).
+
+**Kinds** (D150) mirror the MCP write tools one to one; the payload is that tool's arguments:
+
+| Kind | Payload | Module scope the key also needs | Applied by |
+| --- | --- | --- | --- |
+| `card_create` | `create_card` arguments | `tasks:read` | `create_card` as the approver |
+| `card_update` | `update_card` arguments (with `baseRevision`) | `tasks:read` | `update_card` as the approver (`CARD_CHANGED` fails) |
+| `card_comment` | `comment_on_card` arguments (body ≤ 8 KiB) | `tasks:read` | `comment_on_card` as the approver |
+| `event_create` | `create_event` arguments | `calendar:read` | `create_event` as the approver |
+| `event_update` | `update_event` arguments (with `baseRevision`) | `calendar:read` | `update_event` as the approver (`EVENT_CHANGED` fails) |
+| `row_create` | `create_row` arguments | `collections:read` | `create_row` as the approver |
+| `row_update` | `update_row` arguments (with `baseRevision`) | `collections:read` | `update_row` as the approver (`ROW_CHANGED`, `SCHEMA_CHANGED` fail) |
+| `note_draft` | `{ noteId?, folderId?, markdown, mode?: "replace" \| "append", baseRevision? }` | `notes:write-draft` | publish of exactly the recorded draft revision (`DRAFT_CHANGED` fails) |
+
+**Double validation** (D148): at submit the tool's own input schema validates the payload and the target must be readable by the owner (`NOT_FOUND`, the same as missing); at approve the tool's handler runs again through the module's service as the **approver** (ACL, role, CAS, caps). A refusal makes the proposal `failed` with the service's code and nothing is applied. The service's own audit event carries `{ via: "proposal", proposalId, keyId }`; calendar and collection writes set `updated_via_key_id` to the proposal's key, so "Changed by key" still names the agent.
+
+A `note_draft` proposal is a pointer `{ noteId, revision, created }` (D149): submitting writes the draft at once (as `update_note_draft`/`create_note` do), and plain `update_note_draft` and `create_note` record the same proposal. A newer MCP draft on the note supersedes the older proposal. Publishing in the editor resolves it (`applied` `PUBLISHED_IN_EDITOR` when it published that revision, else `superseded` `DRAFT_CHANGED`); discarding rejects it (`DISCARDED_IN_EDITOR`); restoring a version supersedes it (`VERSION_RESTORED`).
+
+**Statuses:** `pending`, `applying` (claimed by an approve in progress), `applied`, `rejected`, `expired`, `failed`, `superseded`, `withdrawn`. Every status but `pending` and `applying` is final.
+
+### Types
+
+```ts
+type ProposalSummary = {
+  id: string; kind: ProposalKind; kindLabel: string;
+  title: string;            // agent text (≤ 120, controls, bidi, and zero-width characters stripped): render as text only
+  rationale: string | null; // agent text (≤ 1000, newlines kept): render as text only
+  status: ProposalStatus;
+  targetLabel: string;      // Nook's own name for the target, resolved for the viewer now, or "restricted"
+  restricted: boolean; targetHref: string | null; // ids only; null when restricted
+  digest: string; keyName: string;
+  createdAt: string; expiresAt: string; resolvedAt: string | null;
+  resultCode: string | null; rejectReason: string | null;
+  ref: { type: "note" | "card" | "event" | "row"; id: string; href: string } | null; // what an approve produced
+};
+type ProposalPreview =
+  | { restricted: true }
+  | { fields: Array<{ name: string; before: string | null; after: string | null }> }
+  | { markdown: { published: string; draft: string; draftChanged: boolean } };
+```
+
+### Endpoints
+
+Guests get **404** on every Inbox route (and the write gate refuses their writes). Read-only roles may reject (allowlisted above) but not approve.
+
+| Endpoint | Body / query | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/inbox/proposals` | `status=pending\|resolved` (default pending), `group=run\|none`, `cursor`, `limit ≤ 50` | 200 `{ groups: [{ routine: null, run: null, key: { name } \| null, items: ProposalSummary[] }], nextCursor }`. Pending: newest group first, items in submission order. Resolved: newest resolved first | 400 (bad query or cursor) |
+| `GET /api/inbox/proposals/:id` | | 200 `{ proposal: ProposalSummary & { preview, position?: { index, of, nextId } } }`; the preview is computed now, for the viewer, never stored | 404 |
+| `POST /api/inbox/proposals/:id/approve` | `{}` | 200 `{ id, status: "applied", ref }` | 409 `{ status: "failed", code }` (nothing applied); 409 `NOT_PENDING` `{ status }`; 403 `ROLE_READ_ONLY`; 404 |
+| `POST /api/inbox/proposals/:id/reject` | `{ reason?: string }` (the user's words, cleaned and cut to 200; the agent can read it) | 200 `{ id, status: "rejected", draftDiscarded? }`; a `note_draft` discards the draft only while it is still the proposed revision and the user may write | 409 `NOT_PENDING`; 404 |
+| `POST /api/inbox/proposals/bulk` | `{ action: "approve" \| "reject", ids: uuid[1..50] }` or `{ action, runId }`, `reason?` | 200 `{ results: [{ id, status, code?, ref?, error? }] }`, applied **one at a time in submission order**, never all-or-nothing; unknown ids are `not_found` | 400; 403 `ROLE_READ_ONLY` (approve by a read-only role) |
+| `GET /api/inbox/count` | | 200 `{ pending }`, at most 100 (`SELECT 1 … LIMIT 100`, T51) | |
+| `GET /api/inbox/settings`, `PUT /api/inbox/settings` | `{ push: boolean }` | 200 `{ push }`: whether new-proposal notifications are also pushed (off by default, O5) | 400 |
+
+Approve claims the row `pending → applying` before the service runs, so a double click or a second tab gets `NOT_PENDING`; an unexpected error releases the claim, and a crash leaves `applying`, which the sweeper fails as `INTERRUPTED` after 10 minutes (T129).
+
+**Sweeper** (hourly, D156): pending proposals past `expires_at` (14 days) become `expired` (their targets are untouched; an expired note draft keeps its draft and badge), and resolved proposals are deleted 90 days after they resolved. Audit rows stay.
+
+**Notifications** (D159): a successful `submit_proposals` adds `N` to the key's unread `proposals` notification from the last 15 minutes, or creates one. `GET /api/notifications` lists it as `{ title: "Key “<key name>” suggested N changes", href: "/inbox" }`, built at read time from the key name and the count only, never agent text (T127, T135). It is pushed (payload-less, as reminders) only when the user turned on `push`.
+
+**Today** (D158): the `proposals` section ("Proposals awaiting you", Today group) lists the owner's pending proposals `{ id, kind, kindLabel, title, keyName, created_at, expires_at }`, ten plus `more` from an eleven-row fetch, `href: "/inbox"`. The `agentDrafts` section is no longer returned. `get_today` includes `proposals` for keys with `inbox:read`, listing only that key's own proposals.
+
+**Audit:** `proposal.submitted { keyId, kind, runId, proposalId }`, `proposal.applied { proposalId, kind, keyId }` (plus the service's event with `via: "proposal"`), `proposal.failed { proposalId, kind, keyId, code }`, `proposal.rejected`, `proposal.withdrawn`, `proposal.expired { count }`, `inbox.push_setting { enabled }`. No titles, payloads, or reasons.
+
+### MCP (`inbox:read`, `inbox:write`)
+
+`inbox:write` implies `inbox:read`. Both are member-only: `mcpScopesForRole` leaves them out for viewers and guests (D152). Neither can approve anything (T125).
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `submit_proposals` | inbox:write (+ each kind's module scope) | `{ proposals: [{ kind, title, rationale?, payload }] }`, 1–20 | `{ results: [{ proposalId, status: "pending", expiresAt } \| { error, code, details? }], submitted }`, validated and saved per item. Codes: `INVALID`, `NOT_FOUND`, `SCOPE_REQUIRED`, `READ_ONLY`, `LIMIT_REACHED` (500 pending), `RATE_LIMITED` (`retryAfterSeconds`), `TOO_LARGE` (payload > 64 KiB), `DRAFT_CHANGED` |
+| `list_my_proposals` | inbox:read | `{ status?, limit ≤ 50 }` | `{ proposals: [{ id, kind, title, status, resultCode, rejectReason, createdAt, expiresAt, resolvedAt }] }`, this key's own only (T131) |
+| `withdraw_proposal` | inbox:write | `{ proposalId }` | `{ proposalId, status: "withdrawn" }`; `NOT_FOUND` for another key's; `INVALID` once resolved |
+
+**Limits:** every item costs one `proposal_write` (200 a day per key, 400 per user); the call costs one `write`. At most 500 pending proposals per user. Payloads are at most 64 KiB of JSON.
 
 ## Changes to existing note endpoints (Wave 4)
 

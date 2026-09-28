@@ -46,7 +46,11 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "PATCH", path: "/api/tasks/views/:viewId", roles: ["viewer"], why: "own private view (owner-only, private-only in the service)" },
   { method: "DELETE", path: "/api/tasks/views/:viewId", roles: ["viewer"], why: "own private view (owner-only, private-only in the service)" },
   { method: "PUT", path: "/api/tasks/views/:viewId/sharing", roles: ["viewer"], why: "withdraw a share of own view (only to private in the service)" },
-  { method: "POST", path: "/api/tasks/views/:viewId/duplicate", roles: ["viewer"], why: "private copy of a readable view" }
+  { method: "POST", path: "/api/tasks/views/:viewId/duplicate", roles: ["viewer"], why: "private copy of a readable view" },
+  // Agent inbox (D152): a demoted owner keeps clearing their own proposals; approve stays refused.
+  { method: "POST", path: "/api/inbox/proposals/:id/reject", roles: ["viewer"], why: "clear own proposals" },
+  { method: "POST", path: "/api/inbox/proposals/bulk", roles: ["viewer"], why: "clear own proposals; the handler refuses approve for read-only roles" },
+  { method: "PUT", path: "/api/inbox/settings", roles: ["viewer"], why: "own proposal push setting" }
 ];
 
 /**

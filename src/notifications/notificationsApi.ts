@@ -21,6 +21,8 @@ const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[
  * only same-origin paths (T68): anything else opens the notifications list.
  */
 export function safeNotificationPath(href: string) {
+  // Proposal notifications (agent inbox D159) open the Inbox.
+  if (href === "/inbox") return "/inbox";
   const match = /^\/calendar\/event\/([^/?#]+)$/.exec(href);
   return match && idPattern.test(match[1]!) ? `/calendar/event/${match[1]!.toLowerCase()}` : "/notifications";
 }

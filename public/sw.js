@@ -12,6 +12,8 @@ const MAX_SHOWN = 5;
 
 /** The only paths a notification may open: an event page built from its id, or the list. */
 function safePath(href) {
+  // The agent inbox (Wave 21): proposal notifications open the Inbox.
+  if (href === "/inbox") return "/inbox";
   const match = typeof href === "string" ? /^\/calendar\/event\/([^/?#]+)$/.exec(href) : null;
   return match && idPattern.test(match[1]) ? `/calendar/event/${match[1].toLowerCase()}` : "/notifications";
 }

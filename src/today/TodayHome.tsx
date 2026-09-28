@@ -237,7 +237,7 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
   // those of modules that are turned off (they are not offered in Customize either).
   const moduleHidden = moduleHiddenKey ? moduleHiddenKey.split(",") : [];
   // Client registry order (group order), whatever order the server answered in.
-  const available = DEFAULT_SECTION_ORDER.filter((name) => data ? data.sections[name] : name !== "agentDrafts")
+  const available = DEFAULT_SECTION_ORDER.filter((name) => data ? data.sections[name] : true)
     .filter((name) => !moduleHidden.includes(name));
   const names = available.filter((name) => !hidden.includes(name));
   const firstName = displayName.split(" ")[0] || displayName;

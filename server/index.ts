@@ -13,10 +13,10 @@ import { startDispatcher } from "./calendar/reminders";
 import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
-import { purgeAfterFrom, purgeLocked } from "./bin";
 import { registerBinRoutes } from "./binRoutes";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
-import { createDraftNote, hasDraftDelta, writeDraftLocked } from "./noteDrafts";
+import { createDraftNote, discardDraft, DraftActionError, hasDraftDelta, isBlankNote, moveNoteToBin, publishDraft, purgeBlankNote, writeDraftLocked } from "./noteDrafts";
+import { resolveNoteDraftProposals } from "./inbox/noteDraftProposals";
 import { registerSearchRoutes } from "./searchRoutes";
 import { registerTaskRoutes } from "./tasks/routes";
 import { registerReactionRoutes } from "./reactions/routes";
@@ -30,6 +30,7 @@ import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { registerTeamRoutes } from "./team/routes";
+import { registerInboxRoutes } from "./inbox/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -71,46 +72,6 @@ function errorClass(error: unknown) {
   if (!(error instanceof Error)) return "Unknown error";
   const code = (error as NodeJS.ErrnoException).code;
   return typeof code === "string" ? `${error.name} (${code})` : error.name;
-}
-
-/**
- * A note is blank when it was never published and has no draft, or only a
- * whitespace draft (the client's `markdown.trim() === ""` check). The draft is
- * read, not inferred from its checksum. Call under the note lock.
- */
-async function isBlankNote(note: NoteRow) {
-  if (note.current_version !== 0) return false;
-  if (note.draft_revision === null) return true;
-  try {
-    return (await storage.readDraft(note.id)).trim() === "";
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    throw error;
-  }
-}
-
-/** Moves a live note to the Bin for 30 days. Drafts, versions, files, and shares are kept. Call under the note lock. */
-function moveNoteToBin(note: NoteRow, userId: string) {
-  const deletedAt = new Date();
-  const purgeAfter = purgeAfterFrom(deletedAt);
-  db.transaction(() => {
-    const result = db.query("UPDATE notes SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
-      .run(deletedAt.toISOString(), userId, purgeAfter, note.id, userId);
-    if (result.changes !== 1) throw new Error("Concurrent note update detected");
-    audit(userId, note.id, "note.delete");
-  })();
-  return { ok: true as const, purgeAfter };
-}
-
-/** D12: blank never-published notes skip the Bin and are purged at once. Call under the note lock. */
-async function purgeBlankNote(note: NoteRow, userId: string) {
-  const timestamp = now();
-  const result = db.query("UPDATE notes SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
-    .run(timestamp, userId, timestamp, note.id, userId);
-  if (result.changes !== 1) throw new Error("Concurrent note update detected");
-  const outcome = await purgeLocked("note", note.id, { reason: "blank", actorId: userId, ownerId: userId });
-  // A pending purge is already unreadable; the sweeper finishes removing it.
-  return outcome === "pending" ? { ok: true as const, purged: true as const, pending: true as const } : { ok: true as const, purged: true as const };
 }
 
 function totpState(user: Pick<UserRow, "totp_enabled_at">) {
@@ -685,66 +646,26 @@ app.put("/api/notes/:id/draft", async (c) => {
 
 app.delete("/api/notes/:id/draft", async (c) => {
   const id = uuid.parse(c.req.param("id"));
-  const userId = c.get("user").id;
-  return withNoteLock(id, async () => {
-    const note = ownedNote(id, userId);
-    if (!note) return c.json({ error: "Note not found" }, 404);
-    if (note.current_version === 0) {
-      // Discarding a never-published note deletes it: blank ones are purged, anything
-      // with content moves to the Bin with its draft (and draft revision) intact.
-      if (await isBlankNote(note)) return c.json(await purgeBlankNote(note, userId));
-      return c.json({ ...moveNoteToBin(note, userId), binned: true });
-    }
-    const versionTitle = db.query("SELECT title FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, note.current_version) as { title: string } | null;
-    db.transaction(() => {
-      db.query("UPDATE notes SET title = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ?")
-        .run(versionTitle?.title ?? note.title, now(), id, userId);
-      unindexNote(id, "draft");
-    })();
-    await storage.discardDraft(id).catch((error) => console.error(`Could not remove discarded draft for note ${id}`, errorClass(error)));
-    audit(userId, id, "draft.discard");
-    return c.json({ ok: true });
-  });
+  try {
+    // Discarding a never-published note deletes it: blank ones are purged, anything with content
+    // moves to the Bin with its draft (and draft revision) intact (server/noteDrafts.ts).
+    return c.json(await discardDraft(c.get("user").id, id));
+  } catch (error) {
+    if (error instanceof DraftActionError) return c.json(error.body, error.status);
+    throw error;
+  }
 });
 
 app.post("/api/notes/:id/publish", async (c) => {
   const id = uuid.parse(c.req.param("id"));
-  const userId = c.get("user").id;
   const body = await parseJson(c.req.raw, publishSchema);
-  return withNoteLock(id, async () => {
-    const note = ownedNote(id, userId);
-    if (!note) return c.json({ error: "Note not found" }, 404);
-    if (note.draft_revision === null) return c.json({ error: "There is no draft to publish" }, 409);
-    // The caller publishes the draft revision it last saw (T38). Older clients that send no
-    // revision may still publish their own draft, but never one an MCP key wrote.
-    if (body.revision === undefined && note.draft_mcp_key_id !== null) {
-      return c.json({ error: "Invalid request", details: ["revision is required to publish a draft written through MCP"] }, 400);
-    }
-    if (body.revision !== undefined && body.revision !== note.draft_revision) {
-      return c.json({ error: "Draft changed since you last saw it", code: "DRAFT_CHANGED", currentRevision: note.draft_revision }, 409);
-    }
-    const markdown = await storage.readDraft(id);
-    if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new Error("Draft content failed integrity verification");
-    if (!hasDraftDelta(note, note.draft_checksum)) return c.json({ error: "Draft matches the published version" }, 409);
-    const nextVersion = note.current_version + 1;
-    const stagedMetadata = db.query("SELECT id FROM note_versions WHERE note_id = ? AND version_number = ?").get(id, nextVersion);
-    if (stagedMetadata) throw new Error("Next version is already committed");
-    await storage.stageVersion(id, nextVersion, markdown, true);
-    const timestamp = now();
-    const versionId = crypto.randomUUID();
-    db.transaction(() => {
-      db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(versionId, id, nextVersion, note.title, checksum(markdown), userId, timestamp);
-      const updated = db.query("UPDATE notes SET current_version = ?, draft_revision = NULL, draft_checksum = NULL, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND current_version = ? AND draft_revision = ?")
-        .run(nextVersion, timestamp, id, userId, note.current_version, note.draft_revision);
-      if (updated.changes !== 1) throw new Error("Concurrent note update detected");
-      indexNote(id, "published", note.title, markdown, note.draft_checksum!);
-      unindexNote(id, "draft");
-    })();
-    await storage.finalizePublished(id, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${id}`, errorClass(error)));
-    audit(userId, id, "note.publish", { version: nextVersion });
-    return c.json({ version: nextVersion, publishedAt: timestamp });
-  });
+  try {
+    // The caller publishes the draft revision it last saw (T38), in server/noteDrafts.ts.
+    return c.json(await publishDraft(c.get("user").id, id, body.revision));
+  } catch (error) {
+    if (error instanceof DraftActionError) return c.json(error.body, error.status);
+    throw error;
+  }
 });
 
 app.get("/api/notes/:id/versions", (c) => {
@@ -790,7 +711,11 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
       // The restored text is the owner's choice, so the draft is no longer an MCP key's.
       const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
         .run(metadata.title, revision, metadata.checksum, now(), id, userId, note.draft_revision);
-      if (result.changes === 1) indexNote(id, "draft", metadata.title, markdown, metadata.checksum);
+      if (result.changes === 1) {
+        indexNote(id, "draft", metadata.title, markdown, metadata.checksum);
+        // The restored text replaces an agent's draft, so its note_draft proposal is superseded (D149).
+        resolveNoteDraftProposals(id, { kind: "restored" });
+      }
     })();
     audit(userId, id, "version.restore_to_draft", { version });
     return c.json({ revision });
@@ -859,6 +784,7 @@ registerCollectionRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerTeamRoutes(app);
+registerInboxRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

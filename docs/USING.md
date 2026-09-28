@@ -34,6 +34,8 @@ Signing in lands on **Home**, which is also **Today** (below): a row of app link
 | `/notifications` | Your notifications |
 | `/bin` | Bin |
 | `/team`, `/team/<user-id>` | Team, and one person's page |
+| `/inbox`, `/inbox/history` | Inbox: proposals waiting for you, and resolved ones |
+| `/inbox/p/<proposal-id>` | One proposal with its changes |
 
 Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; in Tasks it steps from a card to its board, to the board list, then to Home. With a dialog or sheet open, Back only closes it.
 
@@ -41,7 +43,7 @@ Unknown paths open Home. A link to a note or file you cannot read (or that is mi
 
 ## Today
 
-Home shows what needs you today, in sections of up to ten items each, in three groups: **Today** (Due soon, Upcoming, My tasks), **Recent work** (Recent notes, Recent files, Recently edited rows), and **Housekeeping** (drafts, Leaving the Bin soon, Storage). Wide screens show one group per column, medium screens two columns with Housekeeping below, and phones one column. A section with items shows its count ("Due soon · 3"); an empty one folds into a single line, and a group with nothing in it says **All clear**. Every item is a link; Back from it returns to Today. **View all** opens the owning app.
+Home shows what needs you today, in sections of up to ten items each, in three groups: **Today** (Due soon, Upcoming, My tasks, Proposals awaiting you), **Recent work** (Recent notes, Recent files, Recently edited rows), and **Housekeeping** (drafts, Leaving the Bin soon, Storage). Wide screens show one group per column, medium screens two columns with Housekeeping below, and phones one column. A section with items shows its count ("Due soon · 3"); an empty one folds into a single line, and a group with nothing in it says **All clear**. Every item is a link; Back from it returns to Today. **View all** opens the owning app.
 
 | Section | Shows |
 | --- | --- |
@@ -49,7 +51,7 @@ Home shows what needs you today, in sections of up to ten items each, in three g
 | My tasks | Open cards assigned to you or added by you |
 | Recent notes | Notes you can read, newest change first (someone else's note appears once it is published, with its published title) |
 | Unpublished drafts | Your notes whose draft differs from what is published |
-| Drafts from agents | Your notes with a draft written through an MCP key |
+| Proposals awaiting you | Changes your MCP keys suggested that wait for you in the Inbox, including note drafts they wrote (this replaces Drafts from agents; if you had hidden that section, this one stays hidden) |
 | Recent files | Files you can see in Files |
 | Recently edited rows | Rows in collections you can open, most recently changed first (titles only) |
 | Leaving the Bin soon | Your Bin items that are deleted forever within three days |
@@ -208,6 +210,7 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 | Search | The search box in Notes and <kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>/</kbd>, and the **Filter cards** text box on Tasks boards (a text filter from a link still applies and shows as a chip you can remove). The note list and the other board filters stay. Pickers inside other apps keep working. |
 | Bin | The **Bin** buttons and **Leaving the Bin soon**. Deleting still moves items to the Bin, and they are still deleted forever after 30 days; turn the Bin back on to restore something. |
 | Notifications | The bell and `/notifications`. Reminders are still created, and push notifications still arrive on devices where you turned them on. |
+| Inbox | The **Inbox** button, `/inbox`, and **Proposals awaiting you**. Agents can still suggest changes while it is off; nothing is applied until you approve it. Guests do not see this row. |
 | Team | The **Team** button and `/team`. Guests do not see this row. Admins keep **Settings → Manage team**, which still opens Team while the module is off. Roles and blocking apply as before. |
 
 **Back and Forward past a module that is off.** Back steps over an entry of a module that is off to the page before it. Forward cannot pass beyond such an entry: it stays where you are and shows the hint. For example, after Home, then Team, then Calendar, with Team turned off and Back to Home, Forward stops at Home, and Calendar is not reachable with Forward. Turning the module back on restores it: Forward then goes to Team and on to Calendar again.
@@ -243,6 +246,22 @@ Admins add people with a single-use **invite link**, even while registration is 
 - **The allowlist still applies.** An invite only opens registration; when the operator sets `ALLOWED_EMAILS`, the invitee's address must be on it.
 - **Links die with your admin role.** If you stop being an admin (demoted or blocked), your outstanding links stop working.
 
+## Inbox
+
+The **Inbox** collects changes your MCP keys **suggest** instead of making. Open it with the **Inbox** button next to the bell (its badge counts what is waiting, up to 99+) or at `/inbox`. Nothing an agent suggests changes anything until you approve it, and only you see the suggestions your own keys make.
+
+- **What an agent can suggest:** a new card, a change to a card's fields, a comment on a card, a new or changed event, a new or changed row, or a note draft. Each suggestion is a **proposal**, grouped under the key that sent it, in the order it was sent.
+- **Reviewing.** Each proposal shows its kind, the agent's title, the agent's reason under **Written by the agent** (shown as plain text: treat it as the agent's claim, not Nook's), what it changes (for example **Home › To do**), and the changes themselves: a **Before / After** table for fields, or the line diff for a note draft (**Changes** or **Full draft**). On desktop the list and the open proposal sit side by side; on a phone a proposal is its own screen.
+- **Approve** applies the change as you, with your access: exactly as if you had made it yourself, and the audit log records that you approved the key's proposal. For a note draft, **Approve and publish** publishes that exact draft as a new version. If the card, event, row, or draft changed after the agent read it, or you can no longer edit it, the proposal is marked **Failed** with the reason and nothing is applied.
+- **Reject** takes an optional reason, which the agent can read to learn what not to suggest again. Rejecting a note draft discards it only if it is still the agent's version.
+- **Approve all** and **Reject all** act on every waiting proposal of one key, one at a time; the result says how many applied and why any failed. More than ten asks you to confirm first.
+- **History** lists approved, rejected, failed, expired, and withdrawn proposals for 90 days.
+- **Keyboard** (desktop): <kbd>J</kbd>/<kbd>K</kbd> move between proposals, <kbd>A</kbd> approves, <kbd>R</kbd> rejects.
+
+Proposals expire after **14 days** without a decision (an expired note draft stays in the note). The bell tells you when a key suggests changes ("Key “laptop” suggested 3 changes"); turn on **Settings → Notifications → Push new proposals** to get a push too. The notification and the push name only the key and a count, never the agent's text. **Proposals awaiting you** on Today lists the newest ones.
+
+Viewers can reject proposals that were waiting when their role changed, but not approve them; guests have no Inbox.
+
 ## MCP server
 
 Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes and files, and write drafts for you to review.
@@ -265,14 +284,16 @@ Permissions are fixed when the key is created; to change them, create a new key 
 | Read team | `team:read` | Admins only. List the accounts on this Nook with their names, team roles, and status (`list_team_members`), read one account's latest team activity (`get_team_member`), and list invite links with their role, status, and dates (`list_invites`). Emails, block reasons, invite tokens, and invite labels are never returned, and there are no team write tools: agents cannot create, revoke, or email invites. If you stop being an admin, the key loses these tools on its next call. |
 | Write calendar | `calendar:write` | Create and change events on calendars you own or may edit (`create_event`, `update_event`), and set reminders **for yourself** (`create_reminder`). It never deletes events, skips dates, shares calendars, or creates feed links. A change fails with `EVENT_CHANGED` if the event changed since the client read it. Includes Read calendar. |
 | Read collections | `collections:read` | List your collections with their fields (`list_collections`), query rows with filters, sorting, and search (`query_rows`, up to 50 a page), and read one row (`get_row`). Rows come back keyed by field name; note links as titles or "restricted"; attachments as file names only. |
+| Read inbox | `inbox:read` | List this key's own proposals and their status, failure code, and your reject reason (`list_my_proposals`). |
+| Suggest changes | `inbox:write` | Suggest changes for you to approve in the Inbox (`submit_proposals`, up to 20 at a time; `withdraw_proposal`). Never applies anything. Each suggestion also needs that module's **read** permission (Read tasks, Read calendar, Read collections), or Write drafts for a note draft. Members and admins only. Includes Read inbox. |
 | Write collections | `collections:write` | Add rows and change values in collections you own or may edit (`create_row`, `update_row`, which keeps fields it does not name). It never deletes rows, changes fields, views, or sharing, attaches files, or imports. A change fails with `ROW_CHANGED` if the row changed since the client read it. Includes Read collections. |
 
-There are ten permissions in all. Keys created before this release keep exactly what they could do before. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
+There are thirteen permissions in all. A key with read permissions plus **Suggest changes** can propose anything it can read and change nothing by itself: a good choice for scheduled agents. Keys created before this release keep exactly what they could do before. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
 
 **Reviewing an agent's events and rows.** An event or row last changed through a key says **Changed by the MCP key <name>**. The event view's **Undo last change**, and the **Undo** button next to that note in a row, put the previous values back; your own next edit clears the note.
 
-**Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
+**Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header, and waits in the **Inbox** as a note draft proposal. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
 
-**Limits.** Each key can make 120 tool calls and 30 writes a minute, and per day create 200 notes, make 500 task changes, 200 event changes, 100 reminders, and 500 row changes. All keys of one account together get 1000 calls and 60 writes a minute, and per day 400 new notes, 1000 task changes, 400 event changes, 200 reminders, and 1000 row changes. Beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
+**Limits.** Each key can make 120 tool calls and 30 writes a minute, and per day create 200 notes, make 500 task changes, 200 event changes, 100 reminders, 500 row changes, and 200 proposals. All keys of one account together get 1000 calls and 60 writes a minute, and per day 400 new notes, 1000 task changes, 400 event changes, 200 reminders, 1000 row changes, and 400 proposals, with at most 500 proposals waiting at once. Beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
 
 Treat API keys like passwords, use a separate key per client, and give each only the permissions it needs. The text of your notes and files is passed to the client as data. A client that follows instructions hidden in that text is the client's risk, which is why writing is opt-in and publishing always stays with you.

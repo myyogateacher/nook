@@ -5,6 +5,7 @@ import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./document
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { sweepInvites } from "./team/invites";
+import { sweepProposals } from "./inbox/service";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -76,6 +77,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (invites) console.info(`Invite sweep: ${invites} old invites removed`);
       } catch (error) {
         console.error("Invite sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Agent inbox (D156): expire pending proposals, fail stuck approvals, drop old resolved ones.
+        const swept = sweepProposals(options.nowMs);
+        if (swept.expired || swept.interrupted || swept.purged) console.info(`Proposal sweep: ${swept.expired} expired, ${swept.interrupted} interrupted, ${swept.purged} removed`);
+      } catch (error) {
+        console.error("Proposal sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

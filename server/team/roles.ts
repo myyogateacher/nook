@@ -44,6 +44,9 @@ export const can = (role: Role, capability: Capability) => CAPABILITIES[role].in
 /** MCP scopes only admins may hold (D79: read only, no emails). */
 export const ADMIN_ONLY_SCOPES: readonly McpScope[] = ["team:read"];
 
+/** MCP scopes only members and admins may hold: the inbox exists to produce writes (D152). */
+export const MEMBER_ONLY_SCOPES: readonly McpScope[] = ["inbox:read", "inbox:write"];
+
 /** Read scopes: every scope that is not a write scope (none of them is implied by another). */
 export const MCP_READ_SCOPES: readonly McpScope[] = MCP_SCOPES.filter((scope) => IMPLIED_READ_SCOPE[scope] === undefined);
 
@@ -57,7 +60,7 @@ export function mcpScopesForRole(role: Role): McpScope[] {
   switch (role) {
     case "admin": return [...MCP_SCOPES];
     case "member": return MCP_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
-    case "viewer": return MCP_READ_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope));
+    case "viewer": return MCP_READ_SCOPES.filter((scope) => !ADMIN_ONLY_SCOPES.includes(scope) && !MEMBER_ONLY_SCOPES.includes(scope));
     case "guest": return [];
   }
 }

@@ -23,13 +23,12 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not 021, 023, or 024 are present yet (parallel waves), and pins 1–20 and 022.
+ * holds whether or not 023 or 024 are present yet (parallel waves), and pins 1–22.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  expect(ids.slice(0, 20)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
-  expect(ids.slice(20).every((id) => id >= 21)).toBe(true);
-  expect(ids).toContain(22);
+  expect(ids.slice(0, 22)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
+  expect(ids.slice(22).every((id) => id >= 23)).toBe(true);
 }
 
 function openDb() {
@@ -603,6 +602,74 @@ describe("database migrations", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM task_view_members").get() as { count: number }).count).toBe(0);
     expect(db.query("SELECT id FROM task_views ORDER BY id").all()).toEqual([{ id: "v1" }, { id: "v2" }]);
     db.query("DELETE FROM task_views WHERE id = 'v2'").run();
+    db.close();
+  });
+
+  test("migration 021 adds the inbox tables and notification columns and backfills MCP drafts as proposals", () => {
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    // A v0.9.3-shaped database without 017–020: 021 needs only 005, 010, 013, and 016.
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO folders (id, owner_id, parent_id, name, is_default, created_at, updated_at) VALUES ('f1', 'u1', NULL, 'Default', 1, ?, ?)").run(old, old);
+    db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, scopes, created_at) VALUES ('k1', 'u1', 'laptop', 'mynotes_abc', 'h1', '[\"notes:write-draft\"]', ?)").run(old);
+    const note = db.query("INSERT INTO notes (id, owner_id, folder_id, title, current_version, draft_revision, draft_checksum, draft_mcp_key_id, created_at, updated_at, deleted_at, purge_after) VALUES (?, 'u1', 'f1', ?, ?, ?, 'c', ?, ?, ?, ?, ?)");
+    note.run("n1", "Agent draft", 1, 3, "k1", old, old, null, null);
+    note.run("n2", "Agent new note", 0, 1, "k1", old, old, null, null);
+    note.run("n3", "Human draft", 1, 2, null, old, old, null, null);
+    note.run("n4", "Binned agent draft", 1, 2, "k1", old, old, old, "2025-02-01T00:00:00.000Z");
+    db.query("INSERT INTO notifications (id, user_id, created_at) VALUES ('old', 'u1', ?)").run(old);
+
+    runMigrations(db);
+
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 21").get() as { name: string }).name).toBe("agent_inbox");
+    const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('proposals','routines','routine_runs') ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);
+    expect(tables).toEqual(["proposals", "routine_runs", "routines"]);
+    // Existing notifications are reminders.
+    expect(db.query("SELECT kind, proposal_count FROM notifications WHERE id = 'old'").get()).toEqual({ kind: "reminder", proposal_count: null });
+
+    // Live MCP drafts only, with one timestamp and a 14-day expiry.
+    const backfilled = db.query("SELECT target_id, kind, target_type, status, key_id, key_name, title, payload, created_at, expires_at FROM proposals ORDER BY target_id").all() as Array<Record<string, string>>;
+    expect(backfilled.map((row) => row.target_id)).toEqual(["n1", "n2"]);
+    expect(backfilled.every((row) => row.kind === "note_draft" && row.target_type === "note" && row.status === "pending" && row.key_id === "k1" && row.key_name === "laptop")).toBe(true);
+    expect(JSON.parse(backfilled[0]!.payload!)).toEqual({ noteId: "n1", revision: 3, created: false });
+    expect(JSON.parse(backfilled[1]!.payload!)).toEqual({ noteId: "n2", revision: 1, created: true });
+    expect(backfilled[0]!.created_at).toBe(backfilled[1]!.created_at!);
+    expect(Date.parse(backfilled[0]!.expires_at!) - Date.parse(backfilled[0]!.created_at!)).toBe(14 * 86_400_000);
+
+    // CHECKs refuse bad kinds, statuses, sizes, and JSON.
+    const insert = db.query(`INSERT INTO proposals (id, owner_id, key_id, key_name, kind, target_type, target_id, title, payload, status, created_at, expires_at)
+      VALUES (?, 'u1', 'k1', 'laptop', ?, ?, 'x', ?, ?, ?, ?, ?)`);
+    insert.run("p1", "card_create", "board", "Add a card", "{}", "pending", old, old);
+    expect(() => insert.run("p2", "card_delete", "board", "Delete", "{}", "pending", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "board", "Add", "{}", "approved", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "user", "Add", "{}", "pending", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "board", "", "{}", "pending", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "board", "x".repeat(121), "{}", "pending", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "board", "Add", "not json", "pending", old, old)).toThrow();
+    expect(() => insert.run("p2", "card_create", "board", "Add", JSON.stringify({ a: "x".repeat(65_536) }), "pending", old, old)).toThrow();
+    expect(() => db.query("UPDATE proposals SET reject_reason = ? WHERE id = 'p1'").run("x".repeat(201))).toThrow();
+    expect(() => db.query("INSERT INTO notifications (id, user_id, created_at, kind) VALUES ('n', 'u1', ?, 'mail')").run(old)).toThrow();
+
+    // One running run per routine.
+    db.query(`INSERT INTO routines (id, owner_id, name, name_fold, instructions, output_kinds, cadence, tz, created_at, updated_at)
+      VALUES ('r1', 'u1', 'Weekly', 'weekly', 'Do it', '["card_create"]', 'weekly', 'UTC', ?, ?)`).run(old, old);
+    const run = db.query("INSERT INTO routine_runs (id, routine_id, owner_id, status, started_at, lease_expires_at) VALUES (?, 'r1', 'u1', ?, ?, ?)");
+    run.run("run1", "running", old, old);
+    expect(() => run.run("run2", "running", old, old)).toThrow();
+    run.run("run2", "succeeded", old, old);
+    expect(() => db.query(`INSERT INTO routines (id, owner_id, name, name_fold, instructions, output_kinds, cadence, tz, created_at, updated_at)
+      VALUES ('r2', 'u1', 'WEEKLY', 'weekly', 'x', '[]', 'weekly', 'UTC', ?, ?)`).run(old, old)).toThrow();
+    // Deleting a key keeps its proposals (key_name stays); deleting the owner removes them.
+    db.query("DELETE FROM mcp_api_keys WHERE id = 'k1'").run();
+    expect(db.query("SELECT key_id, key_name FROM proposals WHERE id = 'p1'").get()).toEqual({ key_id: null, key_name: "laptop" });
     db.close();
   });
 

@@ -16,7 +16,8 @@ export type Route =
   | { app: "notifications" }
   | { app: "bin" }
   // `invites` (Wave 18): the admin Invites panel at /team/invites, in the detail pane. Never with a user.
-  | { app: "team"; userId: string | null; invites?: true }
+  // `keys` and `policies` (Wave 31): Team → Keys at /team/keys and Team → Policies at /team/policies, the same way.
+  | { app: "team"; userId: string | null; invites?: true; keys?: true; policies?: true }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
@@ -130,6 +131,8 @@ export function parseRoute(pathname: string, search = ""): Route {
   // /team and /team/:userId. A malformed id, or anything after it, opens the list.
   // /team/invites is matched before the id rule (D167).
   if (app === "team" && rest.length === 1 && rest[0] === "invites") return { app: "team", userId: null, invites: true };
+  if (app === "team" && rest.length === 1 && rest[0] === "keys") return { app: "team", userId: null, keys: true };
+  if (app === "team" && rest.length === 1 && rest[0] === "policies") return { app: "team", userId: null, policies: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   if (app === "inbox") return parseInbox(rest);
   return { app: "home" };
@@ -177,7 +180,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : "/team";
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
     const base = route.view === "history" ? "/inbox/history" : "/inbox";

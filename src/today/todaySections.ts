@@ -69,6 +69,16 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
   tasksDue: { title: "Due soon", group: "today", empty: "nothing due in the next 7 days", app: "Tasks", row: taskRow },
   upcoming: { title: "Upcoming", group: "today", empty: "nothing in the next 7 days", app: "Calendar", row: upcomingRow },
   tasksMine: { title: "My tasks", group: "today", empty: "no other open cards for you", app: "Tasks", row: taskRow, viewAll: "/tasks/my" },
+  // Agent inbox (D158): replaces Housekeeping's "Drafts from agents". Titles are agent text, shown as text.
+  proposals: {
+    title: "Proposals awaiting you", group: "today", empty: "none from agents", app: "Inbox",
+    row: (item) => ({
+      key: item.id,
+      label: item.title || "Untitled",
+      meta: [item.kindLabel, `Key \u201c${item.keyName}\u201d`, relativeTime(item.created_at)].filter(Boolean).join(" · "),
+      route: { app: "inbox", view: "pending", proposalId: item.id }
+    })
+  },
   // Recent work
   notesRecent: {
     title: "Recent notes", group: "recent", empty: "no notes yet", app: "Notes",
@@ -91,10 +101,6 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
   drafts: {
     title: "Unpublished drafts", group: "housekeeping", empty: "none", app: "Notes",
     row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `${item.neverPublished ? "Never published" : "Unpublished changes"} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
-  },
-  agentDrafts: {
-    title: "Drafts from agents", group: "housekeeping", empty: "none from MCP keys", app: "Notes",
-    row: (item) => ({ key: item.id, label: item.title || "Untitled", meta: `Draft by ${item.keyName} · ${relativeTime(item.updated_at)}`, route: noteRoute(item.id) })
   },
   binSoon: {
     title: "Leaving the Bin soon", group: "housekeeping", empty: "nothing in the next 3 days", app: "Bin",

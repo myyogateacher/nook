@@ -61,6 +61,17 @@ type KindDef = {
   targetLabel: (viewerId: string, proposal: StoredProposal) => string | null;
   /** A one-line digest of what changes ("Due, Tags"), computed from the payload alone. */
   digest: (payload: Record<string, unknown>) => string;
+  /** The in-app path of the target, built from ids only; only sent when the viewer can read it. */
+  targetHref: (proposal: StoredProposal) => string | null;
+};
+
+const cardHref = (cardId: unknown) => {
+  const row = db.query("SELECT board_id FROM cards WHERE id = ?").get(lower(cardId)) as { board_id: string } | null;
+  return row ? `/tasks/${row.board_id}/card/${lower(cardId)}` : null;
+};
+const rowHref = (rowId: unknown) => {
+  const row = db.query("SELECT collection_id FROM collection_rows WHERE id = ?").get(lower(rowId)) as { collection_id: string } | null;
+  return row ? `/collections/${row.collection_id}/row/${lower(rowId)}` : null;
 };
 
 const tool = (name: string): McpToolSpec => {
@@ -173,7 +184,8 @@ const tasksKinds = {
       const column = listColumns(board.id).find((item) => item.id === lower(proposal.payload.columnId));
       return column ? `${board.name} › ${column.name}` : board.name;
     },
-    digest: (payload) => `New card${payload.dueOn ? `, due ${String(payload.dueOn)}` : ""}`
+    digest: (payload) => `New card${payload.dueOn ? `, due ${String(payload.dueOn)}` : ""}`,
+    targetHref: (proposal) => `/tasks/${lower(proposal.payload.boardId)}`
   },
   card_update: {
     scope: "tasks:read",
@@ -202,7 +214,8 @@ const tasksKinds = {
       };
     },
     targetLabel: (viewerId, proposal) => readableCard(lower(proposal.payload.cardId), viewerId)?.card.title ?? null,
-    digest: cardDigest
+    digest: cardDigest,
+    targetHref: (proposal) => cardHref(proposal.payload.cardId)
   },
   card_comment: {
     scope: "tasks:read",
@@ -225,7 +238,8 @@ const tasksKinds = {
       return { fields: [{ name: "Card", before: null, after: found.card.title }, { name: "Comment", before: null, after: text(proposal.payload.body) }] };
     },
     targetLabel: (viewerId, proposal) => readableCard(lower(proposal.payload.cardId), viewerId)?.card.title ?? null,
-    digest: () => "New comment"
+    digest: () => "New comment",
+    targetHref: (proposal) => cardHref(proposal.payload.cardId)
   }
 } satisfies Record<string, KindDef>;
 
@@ -262,7 +276,8 @@ const calendarKinds = {
       };
     },
     targetLabel: (viewerId, proposal) => readableCalendar(lower(proposal.payload.calendarId), viewerId)?.name ?? null,
-    digest: (payload) => `New event, ${String(payload.start ?? "")}`.replace(/, $/, "")
+    digest: (payload) => `New event, ${String(payload.start ?? "")}`.replace(/, $/, ""),
+    targetHref: () => "/calendar"
   },
   event_update: {
     scope: "calendar:read",
@@ -286,7 +301,8 @@ const calendarKinds = {
       return { fields: EVENT_FIELDS.filter(([field]) => proposal.payload[field] !== undefined).map(([field, name]) => ({ name, before: text(before[field]), after: text(proposal.payload[field]) })) };
     },
     targetLabel: (viewerId, proposal) => readableEvent(lower(proposal.payload.eventId), viewerId)?.event.title ?? null,
-    digest: (payload) => EVENT_FIELDS.filter(([field]) => payload[field] !== undefined).map(([, label]) => label).join(", ")
+    digest: (payload) => EVENT_FIELDS.filter(([field]) => payload[field] !== undefined).map(([, label]) => label).join(", "),
+    targetHref: (proposal) => `/calendar/event/${lower(proposal.payload.eventId)}`
   }
 } satisfies Record<string, KindDef>;
 
@@ -332,7 +348,8 @@ const collectionKinds = {
       };
     },
     targetLabel: (viewerId, proposal) => readableCollection(lower(proposal.payload.collectionId), viewerId)?.name ?? null,
-    digest: (payload) => `New row, ${Object.keys(payload.values as object).length} value${Object.keys(payload.values as object).length === 1 ? "" : "s"}`
+    digest: (payload) => `New row, ${Object.keys(payload.values as object).length} value${Object.keys(payload.values as object).length === 1 ? "" : "s"}`,
+    targetHref: (proposal) => `/collections/${lower(proposal.payload.collectionId)}`
   },
   row_update: {
     scope: "collections:read",
@@ -361,7 +378,8 @@ const collectionKinds = {
       const { row } = readCheck(() => getRow(viewerId, found.row.id));
       return `${found.collection.name} › ${row.title || "Untitled"}`;
     },
-    digest: (payload) => Object.keys(payload.values as object).join(", ")
+    digest: (payload) => Object.keys(payload.values as object).join(", "),
+    targetHref: (proposal) => rowHref(proposal.payload.rowId)
   }
 } satisfies Record<string, KindDef>;
 
@@ -450,7 +468,8 @@ const noteKinds = {
       const note = readableNote(draftPayload(proposal.payload).noteId, viewerId);
       return note && note.owner_id === viewerId && note.deleted_at === null ? note.title || "Untitled" : null;
     },
-    digest: (payload) => draftPayload(payload).created ? "New note" : "Draft changes"
+    digest: (payload) => draftPayload(payload).created ? "New note" : "Draft changes",
+    targetHref: (proposal) => `/notes/${lower(draftPayload(proposal.payload).noteId)}`
   }
 } satisfies Record<string, KindDef>;
 

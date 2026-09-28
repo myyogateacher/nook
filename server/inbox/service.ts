@@ -197,7 +197,7 @@ export function setProposalPush(userId: string, enabled: boolean) {
 
 export type ProposalSummary = {
   id: string; kind: ProposalKind; kindLabel: string; title: string; rationale: string | null; status: ProposalStatus;
-  targetLabel: string; restricted: boolean; digest: string; keyName: string;
+  targetLabel: string; restricted: boolean; targetHref: string | null; digest: string; keyName: string;
   createdAt: string; expiresAt: string; resolvedAt: string | null; resultCode: string | null; rejectReason: string | null; ref: ProposalRef | null;
 };
 
@@ -208,7 +208,7 @@ function summary(row: ProposalRow, viewerId: string): ProposalSummary {
   try { label = kind.targetLabel(viewerId, proposal); } catch { label = null; }
   return {
     id: row.id, kind: row.kind, kindLabel: kind.label, title: row.title, rationale: row.rationale, status: row.status,
-    targetLabel: label ?? "restricted", restricted: label === null, digest: kind.digest(proposal.payload), keyName: row.key_name,
+    targetLabel: label ?? "restricted", restricted: label === null, targetHref: label === null ? null : kind.targetHref(proposal), digest: kind.digest(proposal.payload), keyName: row.key_name,
     createdAt: row.created_at, expiresAt: row.expires_at, resolvedAt: row.resolved_at, resultCode: row.result_code, rejectReason: row.reject_reason,
     ref: parseRef(row.result_ref)
   };

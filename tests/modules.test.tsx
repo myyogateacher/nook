@@ -37,7 +37,7 @@ describe("module registry (D92)", () => {
   });
 
   test("Settings lists every module, Team included, but never shows Team to guests", () => {
-    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team"]);
+    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team", "inbox"]);
     expect(settingsModulesFor("admin").map((module) => module.id)).toContain("team");
     expect(settingsModulesFor("viewer").map((module) => module.id)).toContain("team");
     expect(settingsModulesFor("guest").map((module) => module.id)).not.toContain("team");
@@ -94,7 +94,9 @@ describe("Settings → Modules", () => {
   test("guests get no Team row, and admins are told Team stays in Settings", () => {
     const guest = render([], null, "guest");
     expect(guest).not.toContain("module-label-team");
-    expect([...guest.matchAll(/role="switch"/g)]).toHaveLength(SETTINGS_MODULES.length - 1);
+    // Guests have no inbox either (agent inbox D152).
+    expect(guest).not.toContain("module-label-inbox");
+    expect([...guest.matchAll(/role="switch"/g)]).toHaveLength(SETTINGS_MODULES.length - 2);
     expect(render(["team"], null, "admin")).toContain("You are an admin: Team stays available from Settings.");
   });
 

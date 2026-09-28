@@ -1,0 +1,150 @@
+/* The Inbox (agent inbox §9). Phone first: one pane at a time below 761 px, list and proposal side by side above. */
+.inbox-layout { width: calc(100vw - 32px); margin: 0 auto; padding: 22px 0 calc(56px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+.inbox-intro h1 { margin: 0 0 6px; color: #fafafa; font-size: clamp(1.8rem, 4.5vw, 2.6rem); letter-spacing: -.05em; line-height: 1.05; }
+.inbox-intro p { max-width: 520px; margin: 0; color: #9a9aa1; font-size: .9rem; line-height: 1.5; }
+
+.inbox-segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 18px 0 14px; border: 1px solid #28282c; border-radius: 12px; padding: 4px; background: #121214; }
+.inbox-segments button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 9px; background: transparent; color: #a8a8ae; font-size: .86rem; font-weight: 650; cursor: pointer; }
+.inbox-segments button.active { background: #2b271d; color: #f5cf79; }
+.inbox-segments b { min-width: 20px; border-radius: 999px; padding: 1px 6px; background: rgb(255 255 255 / 8%); font-size: .7rem; }
+
+.inbox-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 12px; border: 1px solid #2c3a2f; border-radius: 12px; padding: 6px 6px 6px 12px; background: #142017; color: #cfeed6; font-size: .85rem; }
+.inbox-banner.warn { border-color: #4a3b1d; background: #211b10; color: #f0d9a4; }
+.inbox-banner > span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
+.inbox-banner .icon-button { width: 44px; height: 44px; }
+
+.inbox-group { margin: 0 0 18px; }
+.inbox-group-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.inbox-group-header h2 { margin: 0; min-width: 0; color: #d6d6d9; font-size: .86rem; font-weight: 700; overflow-wrap: anywhere; }
+.inbox-group-count { color: #7c7c83; font-weight: 600; }
+.inbox-group-actions { display: flex; gap: 6px; }
+.inbox-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+
+.inbox-card { display: grid; gap: 0; border: 1px solid #242428; border-radius: 14px; background: #131315; }
+.inbox-card.selected { border-color: #6f5928; background: #1c1a15; }
+.inbox-card.resolved { opacity: .88; }
+.inbox-card-open { display: grid; gap: 5px; width: 100%; border: 0; border-radius: 14px; padding: 12px 12px 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.inbox-card-open:hover { background: rgb(255 255 255 / 2%); }
+.inbox-card-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.inbox-card-title { color: #ededee; font-size: .95rem; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inbox-card-digest { color: #b7b7bd; font-size: .8rem; overflow-wrap: anywhere; }
+.inbox-card-meta { color: #7c7c83; font-size: .75rem; overflow-wrap: anywhere; }
+.inbox-card-failure { color: #f0c674; font-size: .76rem; }
+.inbox-card-actions { display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #202024; padding: 8px 10px 10px; }
+
+.inbox-kind { border-radius: 6px; padding: 2px 7px; background: #26262a; color: #c9c9ce; font-size: .68rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; }
+.inbox-kind-card { background: #1d2530; color: #a9c7ef; }
+.inbox-kind-event { background: #2a1f2e; color: #e0b3ef; }
+.inbox-kind-row { background: #1d2a26; color: #9fe0c9; }
+.inbox-kind-note { background: #2b271d; color: #f5cf79; }
+.inbox-status { border-radius: 999px; padding: 2px 8px; background: #1d1d21; color: #c9c9ce; font-size: .7rem; font-weight: 650; }
+.inbox-status.applied { background: #172619; color: #9be3a6; }
+.inbox-status.failed { background: #2b2415; color: #f0c674; }
+.inbox-status.rejected, .inbox-status.expired, .inbox-status.withdrawn, .inbox-status.superseded { background: #222226; color: #a8a8ae; }
+p.inbox-status { justify-self: start; margin: 8px 0 0; }
+
+.inbox-action { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #303035; border-radius: 10px; padding: 0 14px; background: transparent; color: #d6d6d9; font-size: .84rem; font-weight: 650; cursor: pointer; }
+.inbox-action:hover:not(:disabled) { background: #202024; border-color: #45454b; }
+.inbox-action:disabled { opacity: .45; cursor: not-allowed; }
+.inbox-action svg { width: 16px; height: 16px; }
+.inbox-action.primary { border-color: transparent; background: var(--yellow); color: #281f0b; }
+.inbox-action.primary:hover:not(:disabled) { background: var(--yellow-strong); }
+.inbox-action.primary.danger { background: #b8424f; color: #fff; }
+.inbox-more { width: 100%; }
+.inbox-link-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 9px; padding: 0 8px; background: transparent; color: #f5cf79; font: inherit; font-weight: 650; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.inbox-link-button svg { width: 14px; height: 14px; flex: none; }
+
+.inbox-state { display: grid; justify-items: center; gap: 8px; border: 1px dashed #303035; border-radius: 16px; padding: 36px 20px; text-align: center; }
+.inbox-state h2 { margin: 6px 0 0; color: #ededee; font-size: 1rem; }
+.inbox-state p { max-width: 380px; margin: 0; color: #8d8d94; font-size: .86rem; line-height: 1.5; }
+.inbox-state .primary-button { display: inline-flex; align-items: center; gap: 7px; padding: 0 18px; }
+.inbox-state-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #303035; border-radius: 15px; background: #19191c; color: #c9a85c; }
+.inbox-state-icon svg { width: 21px; }
+.inbox-error .inbox-state-icon { color: var(--red); }
+.inbox-loading, .inbox-muted { color: var(--muted); font-size: .84rem; line-height: 1.45; }
+.inbox-muted { margin: 0; }
+
+.inbox-detail-pane { min-width: 0; }
+@media (max-width: 760px) {
+  .inbox-app:not(.inbox-detail-open) .inbox-detail-pane { display: none; }
+  .inbox-app.inbox-detail-open .inbox-list-pane { display: none; }
+}
+.inbox-placeholder { display: grid; justify-items: center; gap: 10px; border: 1px dashed #303035; border-radius: 16px; padding: 56px 24px; color: #8d8d94; text-align: center; font-size: .88rem; }
+.inbox-placeholder svg { width: 28px; height: 28px; color: #c9a85c; }
+.inbox-detail { display: grid; gap: 14px; padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+.inbox-detail-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-back { min-height: 44px; display: inline-flex; align-items: center; gap: 4px; border: 0; border-radius: 9px; padding: 0 10px 0 4px; background: transparent; color: #b2b2b8; font-size: .9rem; cursor: pointer; }
+.inbox-back svg { width: 18px; }
+.inbox-position { color: #7c7c83; font-size: .78rem; }
+.inbox-detail-header h2 { margin: 6px 0 0; color: #fafafa; font-size: 1.3rem; letter-spacing: -.02em; line-height: 1.3; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inbox-detail-kind { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #8d8d94; font-size: .8rem; overflow-wrap: anywhere; }
+.inbox-rationale { border-left: 3px solid #3a3a40; padding: 2px 0 2px 12px; }
+.inbox-agent-label { color: #7c7c83; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.inbox-rationale p { margin: 4px 0 0; color: #d6d6d9; font-size: .88rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inbox-failure, .inbox-restricted { margin: 0; display: flex; align-items: flex-start; gap: 8px; border: 1px solid #4a3b1d; border-radius: 12px; padding: 10px 12px; background: #211b10; color: #f0d9a4; font-size: .85rem; line-height: 1.45; }
+.inbox-failure svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+
+.inbox-preview { display: grid; gap: 8px; min-width: 0; }
+.inbox-preview-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: #85858c; font-size: .78rem; }
+.inbox-toggle { display: inline-flex; gap: 2px; border: 1px solid #28282c; border-radius: 10px; padding: 2px; }
+.inbox-toggle button { min-height: 40px; border: 0; border-radius: 8px; padding: 0 12px; background: transparent; color: #a8a8ae; font-size: .8rem; font-weight: 650; cursor: pointer; }
+.inbox-toggle button.active { background: #2b271d; color: #f5cf79; }
+.inbox-diff { margin: 0; max-height: 60vh; }
+.inbox-changes { width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid #28282c; border-radius: 12px; overflow: hidden; font-size: .84rem; }
+.inbox-changes th, .inbox-changes td { padding: 9px 10px; border-bottom: 1px solid #202024; vertical-align: top; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inbox-changes thead th { color: #7c7c83; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.inbox-changes tbody th { width: 30%; color: #b7b7bd; font-weight: 650; }
+.inbox-changes td.before { color: #efb2bf; background: rgb(107 53 65 / 14%); }
+.inbox-changes td.after { color: #b6e0c2; background: rgb(49 95 66 / 16%); }
+.inbox-changes em { color: #7c7c83; font-style: normal; }
+.inbox-facts { margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.inbox-facts div { display: grid; gap: 2px; min-width: 0; }
+.inbox-facts dt { color: #7c7c83; font-size: .72rem; }
+.inbox-facts dd { margin: 0; color: #ededee; font-size: .86rem; overflow-wrap: anywhere; }
+.inbox-facts dd .inbox-link-button { padding: 0; min-height: 32px; }
+
+.inbox-detail-footer { position: fixed; z-index: 5; left: 0; right: 0; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #242428; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: rgb(12 12 14 / 96%); }
+.inbox-detail-footer .inbox-action { flex: 1 1 0; padding: 0 10px; white-space: nowrap; }
+.inbox-detail-footer .inbox-action.primary { flex-grow: 1.7; }
+@media (max-width: 760px) { .inbox-detail-footer .inbox-action.primary svg { display: none; } }
+
+.inbox-dialog-scrim { z-index: 40; }
+.inbox-dialog { position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; max-height: 90dvh; overflow: auto; border: 1px solid #35353a; border-bottom: 0; border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); background: #1b1b1f; box-shadow: 0 24px 70px rgb(0 0 0 / 60%); }
+.inbox-dialog header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.inbox-dialog h2 { margin: 4px 0 0; color: #fafafa; font-size: 1.05rem; line-height: 1.35; overflow-wrap: anywhere; }
+.inbox-dialog header .icon-button { width: 44px; height: 44px; margin: -6px -6px 0 0; }
+.inbox-dialog form { display: grid; gap: 12px; margin-top: 8px; }
+.inbox-dialog p { margin: 0; color: #b7b7bd; font-size: .86rem; line-height: 1.5; }
+.inbox-dialog > p { margin-top: 8px; }
+.inbox-dialog-subject { color: #ededee !important; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inbox-field { display: grid; gap: 6px; color: #b7b7bd; font-size: .8rem; font-weight: 600; }
+.inbox-field textarea { width: 100%; min-height: 44px; border: 1px solid #34343a; border-radius: 10px; padding: 10px 12px; background: #151517; color: #ededee; font: inherit; font-size: .9rem; font-weight: 400; resize: vertical; }
+.inbox-field textarea:focus { border-color: #6f5928; outline: none; }
+.inbox-dialog-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 12px; }
+.inbox-dialog-actions .inbox-action { width: 100%; }
+
+/* The account-row Inbox button (D157) sits next to the bell. */
+.app-account-inbox { position: relative; }
+/*
+ * One more 44 px button made phone headers wider than 390 px allows (see appShell.css for the Team
+ * button). While the Inbox button is shown, app pages drop the brand mark and its already hidden
+ * name (the Home button, each page's h1, and the document title name the app), and Home keeps its
+ * mark but visually hides the word "Home", which stays available to assistive tech.
+ */
+@media (max-width: 760px) {
+  .app-page-header:has(.app-account-inbox) .app-home-brand { display: none; }
+  .app-home-header:has(.app-account-inbox) .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+
+@media (min-width: 761px) {
+  .inbox-layout { width: min(1180px, calc(100vw - 40px)); padding-top: clamp(28px, 5vh, 48px); grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 28px; align-items: start; }
+  .inbox-detail-pane { position: sticky; top: 20px; }
+  .inbox-back { display: none; }
+  .inbox-detail { padding-bottom: 0; }
+  .inbox-detail-footer { position: static; border: 0; padding: 0; background: transparent; }
+  .inbox-detail-footer .inbox-action { flex: 0 0 auto; }
+  .inbox-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .inbox-dialog { left: 50%; top: 50%; right: auto; bottom: auto; width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); transform: translate(-50%, -50%); border-bottom: 1px solid #35353a; border-radius: 18px; padding: 18px; }
+  .inbox-dialog-actions { flex-direction: row; justify-content: flex-end; }
+  .inbox-dialog-actions .inbox-action { width: auto; }
+}

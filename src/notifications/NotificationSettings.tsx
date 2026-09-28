@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bell, BellRing, Send, Smartphone, Trash2 } from "lucide-react";
+import { getInboxSettings, setInboxPush } from "../inbox/inboxApi";
+import { useRole } from "../team/roleAccess";
 import {
   currentEndpoint,
   enablePushOnThisDevice,
@@ -112,5 +114,43 @@ export function NotificationSettings() {
     </>}
     {message && <p className="notification-settings-message" role="status">{message}</p>}
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <ProposalPushSetting />
   </section>;
+}
+
+/**
+ * Agent proposals (agent inbox O5, D159): they always appear under the bell; pushing them is off
+ * until the user turns it on. The push carries no content, and its title is the key name and a count.
+ */
+function ProposalPushSetting() {
+  const { isGuest } = useRole();
+  const [push, setPush] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (isGuest) return;
+    let live = true;
+    getInboxSettings().then((result) => { if (live) setPush(result.push); }, () => { if (live) setError("Could not load the proposal setting"); });
+    return () => { live = false; };
+  }, [isGuest]);
+  if (isGuest) return null;
+  async function toggle() {
+    if (push === null) return;
+    setError(null);
+    try {
+      setPush((await setInboxPush(!push)).push);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not save");
+    }
+  }
+  return <>
+    <h4 className="notification-settings-subheading" id="proposal-push-label">Agent proposals</h4>
+    <div className="modules-row notification-proposals-row">
+      <span className="modules-row-text"><strong>Push new proposals</strong><small id="proposal-push-help">Changes your MCP keys suggest always appear under the bell and in the Inbox. Turn this on to get a push too, named only by the key and how many.</small></span>
+      <button type="button" role="switch" className="modules-switch" aria-checked={push === true} aria-labelledby="proposal-push-label" aria-describedby="proposal-push-help" disabled={push === null} onClick={() => { void toggle(); }}>
+        <span className="modules-switch-track" aria-hidden="true"><span className="modules-switch-thumb" /></span>
+        <span className="modules-switch-state" aria-hidden="true">{push ? "On" : "Off"}</span>
+      </button>
+    </div>
+    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+  </>;
 }

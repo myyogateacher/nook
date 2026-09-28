@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { Archive, Bell, CalendarDays, FileText, KanbanSquare, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
+import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
 import type { AppSection } from "./appShellNavigation";
 
 /**
@@ -12,7 +12,7 @@ import type { AppSection } from "./appShellNavigation";
  */
 
 /** Every module id, in Settings order. Keep in step with `MODULE_IDS` in server/moduleIds.ts. */
-export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team"] as const;
+export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team", "inbox"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** The apps with a Today launcher tile. */
@@ -31,13 +31,13 @@ export type ModuleDef = {
   /** The Today sections it provides (keys of TODAY_SECTIONS and of the server's providers). */
   todaySections: readonly string[];
   /** Shared chrome it owns: the Bin button, the notification bell, or the Notes search box and Ctrl/⌘+K. */
-  headerItem?: "bin" | "bell" | "search";
+  headerItem?: "bin" | "bell" | "search" | "inbox";
   /** Reserved for a later wave: accepted by the server, kept on by default, and not listed in Settings yet. */
   planned?: boolean;
 };
 
 export const MODULES: readonly ModuleDef[] = [
-  { id: "notes", label: "Notes", description: "Markdown notes with drafts, versions, and sharing.", icon: Archive, routeApps: ["notes"], launcher: { section: "notes", href: "/notes" }, todaySections: ["notesRecent", "drafts", "agentDrafts"] },
+  { id: "notes", label: "Notes", description: "Markdown notes with drafts, versions, and sharing.", icon: Archive, routeApps: ["notes"], launcher: { section: "notes", href: "/notes" }, todaySections: ["notesRecent", "drafts"] },
   { id: "files", label: "Files", description: "Uploads, previews, and your storage use on Today.", icon: FileText, routeApps: ["files"], launcher: { section: "files", href: "/files" }, todaySections: ["files", "storage"] },
   { id: "tasks", label: "Tasks", description: "Boards, cards, and the Due soon and My tasks sections.", icon: KanbanSquare, routeApps: ["tasks"], launcher: { section: "tasks", href: "/tasks" }, todaySections: ["tasksDue", "tasksMine"] },
   { id: "collections", label: "Collections", description: "Tables of rows with fields, views, and CSV.", icon: Table2, routeApps: ["collections"], launcher: { section: "collections", href: "/collections" }, todaySections: ["collectionsRecent"] },
@@ -45,7 +45,10 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides the Bin button and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
-  { id: "team", label: "Team", description: "The Team button and the people in this workspace. Roles and blocking still apply.", icon: Users, routeApps: ["team"], todaySections: [] }
+  { id: "team", label: "Team", description: "The Team button and the people in this workspace. Roles and blocking still apply.", icon: Users, routeApps: ["team"], todaySections: [] },
+  // Agent inbox (D157): an account-row button next to the bell, no launcher tile. Hiding it is not a
+  // boundary: MCP keys can still suggest changes, which wait until it is turned on again (T97).
+  { id: "inbox", label: "Inbox", description: "Proposals from agents and your routines, and Proposals awaiting you on Today. Agents can still suggest changes while it is off; nothing is applied until you approve.", icon: Inbox, routeApps: ["inbox"], todaySections: ["proposals"], headerItem: "inbox" }
 ];
 
 const byId = new Map(MODULES.map((module) => [module.id, module]));
@@ -60,7 +63,8 @@ export const SETTINGS_MODULES = MODULES.filter((module) => !module.planned);
  * access to it, so it is left out rather than shown as a switch.
  */
 export function settingsModulesFor(role: string | undefined): readonly ModuleDef[] {
-  return role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team") : SETTINGS_MODULES;
+  // Guests have no inbox either (D152): they cannot hold keys or apply proposals.
+  return role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team" && module.id !== "inbox") : SETTINGS_MODULES;
 }
 
 /** Unique known ids in registry order; anything else (unknown ids, non-arrays) is ignored. */

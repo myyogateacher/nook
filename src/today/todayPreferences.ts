@@ -13,10 +13,13 @@ const browserStorage = (): StorageLike | null => {
   }
 };
 
+/** Retired sections whose saved "hidden" choice carries over to their replacement (agent inbox D158). */
+const RENAMED_SECTIONS: Record<string, string> = { agentDrafts: "proposals" };
+
 export function readHiddenSections(userId: string, storage: StorageLike | null = browserStorage()): string[] {
   try {
     const value: unknown = JSON.parse(storage?.getItem(hiddenSectionsKey(userId)) ?? "[]");
-    return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && /^[a-z][A-Za-z]{1,31}$/.test(item)))] : [];
+    return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && /^[a-z][A-Za-z]{1,31}$/.test(item)).map((item) => RENAMED_SECTIONS[item] ?? item))] : [];
   } catch {
     return [];
   }

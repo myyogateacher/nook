@@ -41,8 +41,10 @@ import QRCode from "qrcode";
 import { api, ApiError, setCsrfToken } from "./api";
 import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
+import { InboxApp } from "./inbox/InboxApp";
+import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
-import { TeamNavContext } from "./AppShell";
+import { InboxNavContext, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
@@ -454,28 +456,6 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   );
 }
 
-function lineDiff(previous: string, current: string) {
-  const before = previous.split("\n");
-  const after = current.split("\n");
-  const rows = Array.from({ length: before.length + 1 }, () => Array(after.length + 1).fill(0)) as number[][];
-  for (let i = before.length - 1; i >= 0; i -= 1) {
-    for (let j = after.length - 1; j >= 0; j -= 1) rows[i][j] = before[i] === after[j] ? rows[i + 1][j + 1] + 1 : Math.max(rows[i + 1][j], rows[i][j + 1]);
-  }
-  const output: Array<{ kind: "same" | "add" | "remove"; text: string }> = [];
-  let i = 0;
-  let j = 0;
-  while (i < before.length || j < after.length) {
-    if (i < before.length && j < after.length && before[i] === after[j]) {
-      output.push({ kind: "same", text: before[i] }); i += 1; j += 1;
-    } else if (j < after.length && (i === before.length || rows[i][j + 1] >= rows[i + 1][j])) {
-      output.push({ kind: "add", text: after[j] }); j += 1;
-    } else {
-      output.push({ kind: "remove", text: before[i] }); i += 1;
-    }
-  }
-  return output;
-}
-
 function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
   const [versions, setVersions] = useState<Version[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -821,7 +801,7 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session]);
@@ -1246,6 +1226,7 @@ export function App() {
     if (section === "collections") return { app: "collections", collectionId: null, viewId: null, rowId: null };
     if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
     if (section === "team") return { app: "team", userId: null };
+    if (section === "inbox") return { app: "inbox", view: "pending", proposalId: null };
     return { app: section };
   }
 
@@ -1623,8 +1604,15 @@ export function App() {
   // Notifications off (D92): no provider, so every bell renders nothing and stops polling.
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
   const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: shownApp === "team" };
+  const inboxNav = { role: session.user.role, openInbox: () => { void openApp("inbox"); }, onInbox: shownApp === "inbox" };
+  // The Inbox opens a proposal's target as a new entry: a note through the Notes loader, anything else by its route.
+  const openInboxPath = (path: string) => {
+    const route = parseRoute(path);
+    if (route.app === "notes" && route.noteId) openLinkedNote(route.noteId);
+    else openNotificationPath(path);
+  };
 
-  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}>
+  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}><InboxNavContext.Provider value={inboxNav}>
     {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
@@ -1632,11 +1620,12 @@ export function App() {
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
     {toastStatus}
-  </TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
+  </InboxNavContext.Provider></TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
   // Viewers and guests read notes; create, edit, share, and delete controls are hidden (Wave 15).
   const canWrite = canWriteContent(session.user.role);

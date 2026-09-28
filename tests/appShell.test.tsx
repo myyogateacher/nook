@@ -64,7 +64,7 @@ test("Today starts with busy skeleton sections, each labelled by its heading", (
   const markup = home();
   expect(markup).toContain('<div class="today-groups" aria-busy="true">');
   const sections = [...markup.matchAll(/<section class="today-section today-section-(\w+)" aria-labelledby="today-(\w+)"/g)];
-  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "upcoming", "tasksMine", "notesRecent", "files", "collectionsRecent", "drafts", "binSoon", "storage"]);
+  expect(sections.map((match) => match[1])).toEqual(["tasksDue", "upcoming", "tasksMine", "proposals", "notesRecent", "files", "collectionsRecent", "drafts", "binSoon", "storage"]);
   for (const [, name] of sections) expect(markup).toContain(`<h3 id="today-${name}">${TODAY_SECTIONS[name!]!.title}</h3>`);
   expect(markup).toContain('class="today-skeleton" aria-hidden="true"');
   expect(markup).toContain('role="status" aria-live="polite"');

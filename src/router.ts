@@ -15,7 +15,10 @@ export type Route =
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
   | { app: "bin" }
-  | { app: "team"; userId: string | null };
+  | { app: "team"; userId: string | null }
+  // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
+  // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
+  | { app: "inbox"; view: "pending" | "history"; proposalId: string | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -124,7 +127,16 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "bin" && rest.length === 0) return { app: "bin" };
   // /team and /team/:userId. A malformed id, or anything after it, opens the list.
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
+  if (app === "inbox") return parseInbox(rest);
   return { app: "home" };
+}
+
+// /inbox, /inbox/history, /inbox/p/:id, and /inbox/history/p/:id. Anything malformed opens the list it names.
+function parseInbox(segments: string[]): Route {
+  const history = segments[0] === "history";
+  const [kind, id] = history ? segments.slice(1) : segments;
+  const proposalId = kind === "p" && id !== undefined && isRouteId(id) && segments.length === (history ? 3 : 2) ? id.toLowerCase() : null;
+  return { app: "inbox", view: history ? "history" : "pending", proposalId };
 }
 
 function formatCollection(base: string, folder: string, itemId: string | null) {
@@ -161,6 +173,10 @@ export function formatRoute(route: Route): string {
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
   if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : "/team";
+  if (route.app === "inbox") {
+    const base = route.view === "history" ? "/inbox/history" : "/inbox";
+    return route.proposalId && isRouteId(route.proposalId) ? `${base}/p/${route.proposalId.toLowerCase()}` : base;
+  }
   return "/";
 }
 

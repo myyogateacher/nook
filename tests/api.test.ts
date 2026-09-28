@@ -19,6 +19,7 @@ describe("authorization and version workflow", () => {
     expect(registeredMigrationIds.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
     expect(registeredMigrationIds.slice(17).every((id) => id >= 18)).toBe(true);
     expect(registeredMigrationIds).toContain(20);
+    expect(registeredMigrationIds).toContain(21);
   });
 
   test("registration is limited to 10 attempts a minute server-wide, refused ones included", async () => {

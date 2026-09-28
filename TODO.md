@@ -6,7 +6,7 @@ Release history and per-version notes live on the docs site ("What's new") and i
 
 ## Open
 
-- [ ] Wave 16 (Team C): invite links (`team_invites`, migration `018`), per `docs/plan/research/2026-09-26-team-module.md` §8 — unscheduled.
+- [ ] Wave 18 (Team C, formerly "Wave 16"): invite links (`team_invites`, migration `018`) plus outbound email through Resend (`server/mail.ts`, operator decision 2026-09-28), per `docs/plan/WAVES_18-20_SMALL.md` §1 — implemented on a branch, awaiting review and release as v0.10.0 (back up first: migration 018).
 - [ ] MCP write-coverage wave: publish notes, bin/restore cards and events, file upload, tag and sprint management, collection creation — proposed, awaiting go-ahead.
 - [ ] Real-device checks only the operator can run on the HTTPS origin: a push notification to a phone; a phone calendar feed subscription (TEST_PLAN manual rows).
 - [ ] QA instance `nook-qa` (port 22126) holds throwaway `qa*-`/`rev*-` accounts and data only; rebuild from `main` before each QA round.

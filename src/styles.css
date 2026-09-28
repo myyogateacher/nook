@@ -409,7 +409,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .note-header-actions { top: 15px; }
   .note-list { padding-top: 6px; }
   .note-card { min-height: 78px; }
-  .note-delete-button { opacity: 1; }
+  .note-delete-button { opacity: 1; width: 44px; height: 44px; }
   .editor-toolbar { height: 58px; padding: 0 10px; }
   .mobile-editor-nav { display: block; }
   .collapsed-trigger, .desktop-only { display: none !important; }

@@ -49,7 +49,10 @@ type ProposalRow = {
   reviewed_by: string | null; created_at: string; expires_at: string; resolved_at: string | null; claimed_at: string | null;
 } & ProposalBaseRow;
 
-const stored = (row: ProposalRow): StoredProposal => ({ kind: row.kind, payload: JSON.parse(row.payload) as Record<string, unknown>, key_id: row.key_id, key_name: row.key_name, target_id: row.target_id });
+const stored = (row: ProposalRow): StoredProposal => ({
+  kind: row.kind, payload: JSON.parse(row.payload) as Record<string, unknown>, key_id: row.key_id, key_name: row.key_name, target_id: row.target_id,
+  base_state: row.base_state, base_draft_markdown: row.base_draft_markdown
+});
 const parseRef = (value: string | null): ProposalRef | null => {
   if (!value) return null;
   try { return JSON.parse(value) as ProposalRef; } catch { return null; }

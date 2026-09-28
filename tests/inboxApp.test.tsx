@@ -118,10 +118,16 @@ describe("Inbox rendering", () => {
     const restricted = renderToStaticMarkup(<ProposalView proposal={{ ...detail, restricted: true, preview: { restricted: true } }} busy={false} canApprove onBack={noop} onOpenPath={noop} onApprove={noop} onReject={noop} />);
     expect(restricted).toContain("cannot be shown or approved");
     expect(restricted).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Approve: /);
-    const note: ProposalDetail = { ...summary({ kind: "note_draft", kindLabel: "Note draft", targetHref: `/notes/${id}` }), preview: { markdown: { published: "a", draft: "a\nb", draftChanged: false } } };
+    const note: ProposalDetail = { ...summary({ kind: "note_draft", kindLabel: "Note draft", targetHref: `/notes/${id}` }), preview: { markdown: { published: "a", base: "a", baseKind: "published", draft: "a\nb", draftChanged: false } } };
     const noteMarkup = renderToStaticMarkup(<ProposalView proposal={note} busy={false} canApprove onBack={noop} onOpenPath={noop} onApprove={noop} onReject={noop} />);
     expect(noteMarkup).toContain('class="diff-view inbox-diff"');
     expect(noteMarkup).toContain("+1 −0 lines");
+    expect(noteMarkup).toContain("Changes by the agent");
+    // Measured against the recorded draft, not the published version (Friction 2).
+    const overDraft: ProposalDetail = { ...note, preview: { markdown: { published: "a", base: "a\nmine", baseKind: "draft", draft: "a\nmine\nagent", draftChanged: false } } };
+    const overDraftMarkup = renderToStaticMarkup(<ProposalView proposal={overDraft} busy={false} canApprove onBack={noop} onOpenPath={noop} onApprove={noop} onReject={noop} />);
+    expect(overDraftMarkup).toContain("+1 −0 lines since your draft");
+    expect(overDraftMarkup).not.toContain("+ mine");
     expect(noteMarkup).toContain(">Open note</button>");
     expect(noteMarkup).toContain("Approve and publish");
   });

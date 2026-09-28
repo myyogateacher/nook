@@ -42,9 +42,18 @@ export type PreviewField = { name: string; before: string | null; after: string 
 export type ProposalPreview =
   | { restricted: true }
   | { fields: PreviewField[] }
-  | { markdown: { published: string; draft: string; draftChanged: boolean } };
+  /**
+   * `base` is what the agent's changes are measured against (Friction 2): the draft recorded just
+   * before the agent wrote (a person's unsaved-to-publish text, migration 027), else the published
+   * version. `baseKind` says which. `published` stays for older clients.
+   */
+  | { markdown: { published: string; base: string; baseKind: "draft" | "published"; draft: string; draftChanged: boolean } };
 
-export type StoredProposal = { kind: ProposalKind; payload: Record<string, unknown>; key_id: string | null; key_name: string; target_id: string };
+export type StoredProposal = {
+  kind: ProposalKind; payload: Record<string, unknown>; key_id: string | null; key_name: string; target_id: string;
+  /** note_draft only (migration 027): the draft just before the agent wrote, while the proposal is pending. */
+  base_state?: "none" | "draft" | null; base_draft_markdown?: string | null;
+};
 
 type SubmitResult = { targetType: TargetType; targetId: string; payload: Record<string, unknown>; proposalId?: string };
 
@@ -469,8 +478,11 @@ const noteKinds = {
       const note = ownedNote(noteId, viewerId);
       if (!note) return { restricted: true };
       const published = await readPublished(note);
-      if (note.draft_revision === null) return { markdown: { published, draft: published, draftChanged: true } };
-      return { markdown: { published, draft: await readDraftText(note), draftChanged: note.draft_revision !== revision } };
+      const recorded = proposal.base_state === "draft" && typeof proposal.base_draft_markdown === "string";
+      const base = recorded ? proposal.base_draft_markdown! : published;
+      const baseKind = recorded ? "draft" as const : "published" as const;
+      if (note.draft_revision === null) return { markdown: { published, base, baseKind, draft: published, draftChanged: true } };
+      return { markdown: { published, base, baseKind, draft: await readDraftText(note), draftChanged: note.draft_revision !== revision } };
     },
     targetLabel: (viewerId, proposal) => {
       const note = readableNote(draftPayload(proposal.payload).noteId, viewerId);

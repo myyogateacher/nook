@@ -39,7 +39,8 @@ export type PreviewField = { name: string; before: string | null; after: string 
 export type ProposalPreview =
   | { restricted: true }
   | { fields: PreviewField[] }
-  | { markdown: { published: string; draft: string; draftChanged: boolean } };
+  /** `base` (Friction 2): the draft just before the agent wrote, else the published version; older servers omit it. */
+  | { markdown: { published: string; base?: string; baseKind?: "draft" | "published"; draft: string; draftChanged: boolean } };
 
 export type ProposalDetail = ProposalSummary & { preview: ProposalPreview; position?: { index: number; of: number; nextId: string | null } };
 

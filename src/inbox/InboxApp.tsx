@@ -493,13 +493,14 @@ function Preview({ proposal }: { proposal: ProposalDetail }) {
   const [mode, setMode] = useState<"changes" | "full">("changes");
   const preview = proposal.preview;
   const markdown = "markdown" in preview ? preview.markdown : null;
-  const diff = useMemo(() => markdown ? lineDiff(markdown.published, markdown.draft) : [], [markdown]);
+  // Measured against the draft just before the agent wrote, so a person's own unpublished text is not shown as the agent's (Friction 2).
+  const diff = useMemo(() => markdown ? lineDiff(markdown.base ?? markdown.published, markdown.draft) : [], [markdown]);
   if ("restricted" in preview) return <p className="inbox-restricted" role="note">You can no longer open what this proposal changes, so it cannot be shown or approved.</p>;
   if (markdown) {
     const stats = diffStats(diff);
-    return <section className="inbox-preview" aria-label="Changes">
+    return <section className="inbox-preview" aria-label="Changes by the agent">
       <div className="inbox-preview-heading">
-        <span>{stats.label}</span>
+        <span><strong>Changes by the agent</strong> · {stats.label}{markdown.baseKind === "draft" ? " since your draft" : ""}</span>
         <div className="inbox-toggle" role="group" aria-label="Show">
           <button type="button" aria-pressed={mode === "changes"} className={mode === "changes" ? "active" : ""} onClick={() => setMode("changes")}>Changes</button>
           <button type="button" aria-pressed={mode === "full"} className={mode === "full" ? "active" : ""} onClick={() => setMode("full")}>Full draft</button>

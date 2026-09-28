@@ -1406,7 +1406,9 @@ type ProposalSummary = {
 type ProposalPreview =
   | { restricted: true }
   | { fields: Array<{ name: string; before: string | null; after: string | null }> }
-  | { markdown: { published: string; draft: string; draftChanged: boolean } };
+  // base: what the agent's changes are measured against ("Changes by the agent"): the draft recorded just
+  // before the agent wrote (baseKind "draft", migration 027), else the published version ("published").
+  | { markdown: { published: string; base: string; baseKind: "draft" | "published"; draft: string; draftChanged: boolean } };
 ```
 
 ### Endpoints

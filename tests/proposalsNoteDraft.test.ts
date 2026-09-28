@@ -62,7 +62,8 @@ describe("note_draft proposals", () => {
     expect(pendingFor(noteId).map((row) => [row.status, row.title])).toEqual([["pending", "Weekly summary"]]);
 
     const detail = await api(owner, "GET", `/inbox/proposals/${item.proposalId}`);
-    expect(detail.body.proposal.preview).toEqual({ markdown: { published: "# Weekly\n\nOld line", draft: "# Weekly\n\nNew line", draftChanged: false } });
+    // No draft before the agent wrote: its changes are measured against the published version.
+    expect(detail.body.proposal.preview).toEqual({ markdown: { published: "# Weekly\n\nOld line", base: "# Weekly\n\nOld line", baseKind: "published", draft: "# Weekly\n\nNew line", draftChanged: false } });
 
     const approved = await api(owner, "POST", `/inbox/proposals/${item.proposalId}/approve`, {});
     expect(approved.body).toMatchObject({ status: "applied", ref: { type: "note", id: noteId, href: `/notes/${noteId}` } });
@@ -180,6 +181,14 @@ describe("note_draft reject keeps the person's draft (H1)", () => {
     const [item] = (await callTool(key, "submit_proposals", { proposals: [{ kind: "note_draft", title: "Add line", payload: { noteId, mode: "append", markdown: "Agent line", baseRevision: 1 } }] })).value.results;
     expect((await api(owner, "GET", `/notes/${noteId}`)).body.note.markdown).toBe("# Plan\n\nv1\n\nMy unpublished thoughts\n\nAgent line");
     expect(await effectOf(owner, item.proposalId)).toBe("restore");
+    // Friction 2: the preview measures the agent's changes against the person's draft, so their own
+    // unpublished line is not shown as the agent's.
+    const preview = (await api(owner, "GET", `/inbox/proposals/${item.proposalId}`)).body.proposal.preview;
+    expect(preview.markdown).toMatchObject({ published: "# Plan\n\nv1", base: "# Plan\n\nv1\n\nMy unpublished thoughts", baseKind: "draft" });
+    const { lineDiff } = await import("../src/diff/lineDiff");
+    const added = lineDiff(preview.markdown.base, preview.markdown.draft).filter((line) => line.kind === "add").map((line) => line.text);
+    expect(added).toContain("Agent line");
+    expect(added).not.toContain("My unpublished thoughts");
 
     const rejected = await api(owner, "POST", `/inbox/proposals/${item.proposalId}/reject`, {});
     expect(rejected.body).toEqual({ id: item.proposalId, status: "rejected", draft: "restored", draftDiscarded: false });

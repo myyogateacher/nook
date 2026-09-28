@@ -18,10 +18,13 @@ import { userPreferencesMigration } from "./016_user_preferences";
 import { teamRolesMigration } from "./017_team_roles";
 import { taskHierarchyMigration } from "./019_task_hierarchy";
 import { taskViewsMigration } from "./020_task_views";
+import { reactionsMigration } from "./022_reactions";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) comes from a parallel wave; 019 (task hierarchy) and 020 (task views) do not depend on it or on each other.
-  taskHierarchyMigration, taskViewsMigration];
+  taskHierarchyMigration, taskViewsMigration,
+  // 021 (Agent inbox) comes from a parallel wave; 022 (reactions) needs only 001 and 009.
+  reactionsMigration];
 
 /**
  * Ids of every registered migration, in order. Tests assert against this list. Ids must ascend;

@@ -2,6 +2,7 @@ import * as z from "zod/v4";
 import type { McpLimitBucket } from "./mcpRateLimit";
 import type { McpScope } from "./mcpScopes";
 import type { RestoreOutcome } from "./bin";
+import type { Grant } from "./keyGrants";
 
 /**
  * Building blocks shared by every module's MCP tools (server/mcpTools.ts and
@@ -10,7 +11,23 @@ import type { RestoreOutcome } from "./bin";
  * on it without import cycles.
  */
 
-export type McpKeyContext = { keyId: string; userId: string; name: string; scopes: McpScope[] };
+/**
+ * The key a tool runs for. `scopes` are the effective scopes (the compatibility view of the key's
+ * grants, access plan D262). `grants` are the effective grants, when the caller loaded them (every
+ * MCP call does); a context without them is treated as holding its scopes over "all".
+ */
+export type McpKeyContext = { keyId: string; userId: string; name: string; scopes: McpScope[]; grants?: Grant[] };
+
+/**
+ * The one resource a tool touches, named by one argument (access plan D281, T203). A key whose
+ * grant for the tool's module names chosen items sees only tools that declare this, and each call
+ * must name an item inside a granted container (a card's board, a row's collection, an event's
+ * calendar). Tools without it are hidden from such keys until Wave 34 adds list filters.
+ */
+export type McpToolResource = {
+  arg: string;
+  kind: "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event";
+};
 
 export type McpErrorCode =
   | "NOT_FOUND"
@@ -48,6 +65,8 @@ export type McpErrorCode =
   | "KIND_NOT_ALLOWED"
   | "TARGET_NOT_ALLOWED"
   | "RUN_ACTIVE"
+  // Nook keys (Wave 31, D263): team policy blocks this key (not revoked; policy can allow it again).
+  | "KEY_POLICY"
   | "INTERNAL";
 
 export class McpToolError extends Error {
@@ -108,6 +127,13 @@ export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   dailyBucket?: Exclude<McpLimitBucket, "call" | "write">;
   /** Further buckets this tool counts against (Wave 19, for example a Bin tool's daily cap and burst). */
   buckets?: readonly Exclude<McpLimitBucket, "call" | "write">[];
+  /** The resource this tool touches (D281); see McpToolResource. */
+  resource?: McpToolResource;
+  /**
+   * A list tool whose result field is an array of containers `{id, …}` (D281 `list`): a key with
+   * chosen items gets only those entries back. The only other shape such a key may see.
+   */
+  listFilter?: { field: string; kind: "board" | "collection" | "calendar" };
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

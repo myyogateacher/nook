@@ -1,13 +1,15 @@
-import { createHash, randomBytes } from "node:crypto";
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
-import { audit, db, now } from "./db";
+import { db, now } from "./db";
 import { registerMcpTools, type McpKeyContext } from "./mcpTools";
 import { registerRoutinePrompts } from "./inbox/prompts";
-import { DEFAULT_MCP_SCOPES, normalizeScopes, parseStoredScopes, type McpScope } from "./mcpScopes";
+import { DEFAULT_MCP_SCOPES, normalizeScopes, type McpScope } from "./mcpScopes";
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
-import { effectiveMcpScopes, type Role } from "./team/roles";
+import { type Role } from "./team/roles";
+import { createApiKey, hashKeyToken, isKeyDenial, listApiKeys, resolveKeyActor, revokeOwnKey, type KeyActor } from "./apiKeys";
+import { grantsForScopes } from "./keyGrants";
+import { readPolicies } from "./team/policies";
 
 type McpKeyRow = {
   id: string;
@@ -19,47 +21,34 @@ type McpKeyRow = {
   scopes: string;
   email: string;
   role: Role;
+  /** The key's effective grants and scopes for this request (Nook keys, D263). */
+  actor: KeyActor;
 };
 
-export const hashMcpToken = (token: string) => createHash("sha256").update(token).digest("hex");
+export const hashMcpToken = hashKeyToken;
 
-/** Creates a key with fixed scopes (write scopes add their read scope). The token is returned once and stored only as a hash. */
+/**
+ * Creates a general MCP key over "all" of each scope (write scopes add their read scope), expiring
+ * after the policy's default lifetime (D276). This is the `/api/mcp/keys` alias's shape (one release,
+ * access plan §C.7); `/api/keys` creates keys from grants. The token is returned once.
+ */
 export function createMcpApiKey(userId: string, name: string, requestedScopes: readonly McpScope[] = DEFAULT_MCP_SCOPES) {
-  const token = `mynotes_${randomBytes(32).toString("base64url")}`;
   const scopes = normalizeScopes(requestedScopes);
   if (scopes.length === 0) throw new Error("An MCP key needs at least one scope");
-  const row = {
-    id: crypto.randomUUID(),
-    userId,
-    name,
-    prefix: token.slice(0, 16),
-    scopes,
-    createdAt: now()
-  };
-  db.transaction(() => {
-    db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(row.id, row.userId, row.name, row.prefix, hashMcpToken(token), JSON.stringify(scopes), row.createdAt);
-    audit(userId, null, "mcp.key_created", { keyId: row.id, name, scopes });
-  })();
-  return { ...row, token };
+  const created = createApiKey(userId, { name, surfaces: "mcp", grants: grantsForScopes(scopes), expiresInDays: readPolicies().keyDefaultDays });
+  return { id: created.id, userId, name, prefix: created.prefix, scopes: created.scopes, createdAt: created.createdAt, expiresAt: created.expiresAt, token: created.token };
 }
 
 /**
- * The caller's live keys. `scopes` are the stored ones; `effectiveScopes` are what the key can use
- * right now under the owner's current role (a demoted admin's key keeps `team:read` stored but not
- * effective), so Settings can show the difference.
+ * The caller's live keys in the pre-grants shape (the alias `GET /api/mcp/keys`). `scopes` are
+ * what the grants amount to; `effectiveScopes` are what the key can use right now under the
+ * owner's current role and team policy, so Settings can show the difference.
  */
 export function listMcpApiKeys(userId: string) {
-  const rows = db.query(`
-    SELECT k.id, k.name, k.key_prefix, k.scopes, k.created_at, k.last_used_at, u.role
-    FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE k.user_id = ? AND k.revoked_at IS NULL
-    ORDER BY k.created_at DESC
-  `).all(userId) as Array<{ id: string; name: string; key_prefix: string; scopes: string; created_at: string; last_used_at: string | null; role: Role }>;
-  return rows.map(({ role, ...row }) => {
-    const scopes = parseStoredScopes(row.scopes);
-    return { ...row, scopes, effectiveScopes: effectiveMcpScopes(scopes, role) };
-  });
+  return listApiKeys(userId).keys.filter((key) => key.state !== "revoked").map((key) => ({
+    id: key.id, name: key.name, key_prefix: key.prefix, scopes: key.scopes, effectiveScopes: key.state === "blocked" ? [] : key.effectiveScopes,
+    created_at: key.createdAt, last_used_at: key.lastUsedAt, expires_at: key.expiresAt, state: key.state
+  }));
 }
 
 /**
@@ -67,18 +56,7 @@ export function listMcpApiKeys(userId: string) {
  * `superseded` with KEY_REVOKED, so nothing a revoked key suggested can be approved. A note draft
  * the key wrote stays in the note, as after any resolved proposal; only the proposal changes.
  */
-export function revokeMcpApiKey(userId: string, keyId: string) {
-  return db.transaction(() => {
-    const timestamp = now();
-    const result = db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
-      .run(timestamp, keyId, userId);
-    if (!result.changes) return false;
-    const superseded = db.query(`UPDATE proposals SET status = 'superseded', result_code = 'KEY_REVOKED', resolved_at = ?, base_draft_markdown = NULL
-      WHERE key_id = ? AND owner_id = ? AND status = 'pending'`).run(timestamp, keyId, userId).changes;
-    audit(userId, null, "mcp.key_revoked", { keyId, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
-    return true;
-  })();
-}
+export const revokeMcpApiKey = (userId: string, keyId: string) => revokeOwnKey(userId, keyId);
 
 const mcpHandler = createMcpHandler(({ authInfo }) => {
   const server = new McpServer({ name: "nook", version: config.appVersion });
@@ -147,20 +125,27 @@ export function authenticateMcpRequest(request: Request): McpKeyRow | Response {
     return mcpJsonError(limited ? "Too many authentication failures" : "A valid Bearer API key is required", limited ? 429 : 401, true);
   }
   const token = match[1]!;
-  const key = db.query(`
+  const row = db.query(`
     SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, u.email, u.role
     FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
     WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
-  `).get(hashMcpToken(token)) as McpKeyRow | null;
-  if (!key || !isEmailAllowed(key.email)) {
+  `).get(hashMcpToken(token)) as Omit<McpKeyRow, "actor"> | null;
+  if (!row || !isEmailAllowed(row.email)) {
     const limited = recordInvalidAuth();
     return mcpJsonError(limited ? "Too many authentication failures" : "Invalid or revoked API key", limited ? 429 : 401, true);
   }
-
-  if (!key.last_used_at || Date.now() - new Date(key.last_used_at).getTime() > 300_000) {
-    db.query("UPDATE mcp_api_keys SET last_used_at = ? WHERE id = ?").run(now(), key.id);
+  // Expired, past its rotation grace, or blocked by team policy (D263, D276, D277, T209).
+  const actor = resolveKeyActor(row.id, "mcp");
+  if (isKeyDenial(actor)) {
+    if (actor.code === "KEY_POLICY") return mcpResponse(JSON.stringify({ error: actor.message, code: "KEY_POLICY" }), { status: 403, headers: { "Content-Type": "application/json" } });
+    const limited = recordInvalidAuth();
+    return mcpJsonError(limited ? "Too many authentication failures" : actor.message, limited ? 429 : 401, true);
   }
-  return key;
+
+  if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > 300_000) {
+    db.query("UPDATE mcp_api_keys SET last_used_at = ? WHERE id = ?").run(now(), row.id);
+  }
+  return { ...row, actor };
 }
 
 /** Runs `operation` in one of the shared MCP request slots (24 at once), or answers 503. */
@@ -191,9 +176,9 @@ export async function handleMcpRequest(request: Request) {
       if (error instanceof HTTPException && error.status === 413) return mcpJsonError("Request is too large", 413);
       throw error;
     }
-    // Effective scopes: what the key stores, narrowed to the holder's current role (T81).
-    const scopes = effectiveMcpScopes(parseStoredScopes(key.scopes), key.role);
-    const context: McpKeyContext = { keyId: key.id, userId: key.user_id, name: key.name, scopes };
+    // Effective grants and scopes: grants ∩ the holder's current role ∩ team policy (T81, D263).
+    const { scopes, grants } = key.actor;
+    const context: McpKeyContext = { keyId: key.id, userId: key.user_id, name: key.name, scopes, grants };
     const authInfo: AuthInfo = { token, clientId: key.user_id, scopes, extra: { key: context } };
     const response = await mcpHandler.fetch(bounded, { authInfo });
     return mcpResponse(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });

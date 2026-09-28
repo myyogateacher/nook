@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, origin, request, type Session } from "./support/harness";
 
 const { createMcpApiKey } = await import("../server/mcp");
+const { setKeyScopesForTests } = await import("../server/apiKeys");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
 const { resetMcpLimits, consumeMcpLimits, MCP_LIMITS, MCP_USER_LIMITS } = await import("../server/mcpRateLimit");
 type McpScope = import("../server/mcpScopes").McpScope;
@@ -13,7 +14,7 @@ type Key = { id: string; token: string };
 /** A key with exactly `scopes` stored, as the keys API would store them. */
 function makeKey(session: Session, scopes: McpScope[], name = "Agent") {
   const key = createMcpApiKey(session.userId, name);
-  db.query("UPDATE mcp_api_keys SET scopes = ? WHERE id = ?").run(JSON.stringify(scopes), key.id);
+  setKeyScopesForTests(key.id, scopes);
   return { id: key.id, token: key.token } satisfies Key;
 }
 

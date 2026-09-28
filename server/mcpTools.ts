@@ -7,7 +7,9 @@ import { audit, db, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
-import { hasAllScopes, hasAnyScope, parseStoredScopes } from "./mcpScopes";
+import { hasAllScopes, hasAnyScope, type McpScope } from "./mcpScopes";
+import { containerKindOf, countKeyUsage, isKeyDenial, resolveContainer, resolveKeyActor, toolReach } from "./apiKeys";
+import { grantsForScopes, scopeReach } from "./keyGrants";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
@@ -23,7 +25,6 @@ import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { inboxTools } from "./inbox/mcpTools";
 import { countRunToolCall } from "./inbox/routineHooks";
-import { effectiveMcpScopes, type Role } from "./team/roles";
 import { canWriteContent } from "./team/userRole";
 
 /**
@@ -40,32 +41,59 @@ import { canWriteContent } from "./team/userRole";
 export { defineTool, errorResult, McpToolError, notFound, textResult } from "./mcpToolKit";
 export type { McpErrorCode, McpKeyContext, McpToolSpec } from "./mcpToolKit";
 
-const liveKey = db.query(`
-  SELECT k.id, k.user_id, k.name, k.scopes, u.role FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-  WHERE k.id = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
-`);
-
 /**
- * The key as stored now, or null once it is revoked or its user is disabled. Its scopes are the
- * effective ones: stored scopes narrowed to what the holder's current role allows (T81).
+ * The key as it stands now (Nook keys, access plan D263), or null once it is revoked, expired, past
+ * its rotation grace, its holder blocked, or team policy blocks it. Scopes and grants are the
+ * effective ones: grants ∩ the holder's current role ∩ policy, recomputed on every call (T81).
  */
 export function loadLiveKey(keyId: string): McpKeyContext | null {
-  const row = liveKey.get(keyId) as { id: string; user_id: string; name: string; scopes: string; role: Role } | null;
-  return row ? { keyId: row.id, userId: row.user_id, name: row.name, scopes: effectiveMcpScopes(parseStoredScopes(row.scopes), row.role) } : null;
+  const actor = resolveKeyActor(keyId, "mcp");
+  return isKeyDenial(actor) ? null : actor;
 }
 
 /**
- * Runs one tool for a key: re-checks the key and its scope, charges the
- * per-key limits, and maps errors to `{error, code}` results.
+ * How the key reaches a tool (D281): null when it cannot use it at all; otherwise the resource
+ * selectors the call must stay inside (none for keys whose grants cover the whole module).
+ */
+function reachOf(spec: McpToolSpec, key: McpKeyContext) {
+  if (!hasAnyScope(key.scopes, spec.scopes) || !hasAllScopes(key.scopes, spec.alsoRequires)) return null;
+  const grants = key.grants ?? grantsForScopes(key.scopes);
+  return toolReach(grants, key.scopes, spec.scopes, spec.alsoRequires);
+}
+
+/** Whether `key` reaches the resource a call names: missing, unreadable, and outside the grant look the same (T203). */
+function callInsideSelectors(spec: McpToolSpec, selectors: ReturnType<typeof toolReach> & object, args: unknown) {
+  if (selectors.all) return true;
+  if (!spec.resource) return false;
+  const value = (args as Record<string, unknown> | null | undefined)?.[spec.resource.arg];
+  if (typeof value !== "string") return false;
+  const container = resolveContainer(spec.resource.kind, value);
+  if (!container) return false;
+  return selectors.selectors.every((selector) => selector.kind === container.kind && selector.ids.has(container.id));
+}
+
+/**
+ * Runs one tool for a key: re-checks the key, its grants, and policy, charges the per-key limits,
+ * and maps errors to `{error, code}` results.
  */
 export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): Promise<ToolResult> {
-  const key = loadLiveKey(keyId);
-  if (!key) return errorResult("SCOPE_REQUIRED", "This API key is no longer active");
+  const actor = resolveKeyActor(keyId, "mcp");
+  if (isKeyDenial(actor)) {
+    return actor.code === "KEY_POLICY" ? errorResult("KEY_POLICY", actor.message) : errorResult("SCOPE_REQUIRED", actor.message);
+  }
+  const key: McpKeyContext = actor;
   if (!hasAnyScope(key.scopes, spec.scopes)) {
+    countKeyUsage(key.keyId, "denied");
     return errorResult("SCOPE_REQUIRED", `This API key does not have the ${spec.scopes.join(" or ")} scope`);
   }
   if (!hasAllScopes(key.scopes, spec.alsoRequires)) {
+    countKeyUsage(key.keyId, "denied");
     return errorResult("SCOPE_REQUIRED", `This API key also needs the ${spec.alsoRequires!.join(" and ")} scope`);
+  }
+  const reach = reachOf(spec, key);
+  if (!reach || (!reach.all && !toolFitsSelectors(spec, reach))) {
+    countKeyUsage(key.keyId, "denied");
+    return errorResult("SCOPE_REQUIRED", "This API key covers only chosen items, and this tool is not available to it");
   }
   // Defence in depth (§5.4): effective scopes already drop write scopes for read-only team roles,
   // and a write tool still re-checks the holder's role before any service runs.
@@ -74,14 +102,23 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
   if (spec.buckets) buckets.push(...spec.buckets);
-  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, buckets);
-  if (retryAfter) return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
+  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId, limits: actor.limits }, buckets);
+  if (retryAfter) {
+    countKeyUsage(key.keyId, "denied");
+    return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
+  }
+  countKeyUsage(key.keyId, spec.write ? "write" : "call");
   // Agent inbox D160: an admitted call counts toward the key's open routine run, if it has one.
   countRunToolCall(key.keyId);
   try {
     const parsed = spec.inputSchema.safeParse(args ?? {});
     if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
-    return textResult(await spec.handler(parsed.data, key));
+    if (!spec.listFilter && !callInsideSelectors(spec, reach, parsed.data)) throw notFound(resourceLabel(spec));
+    // Cross-module paths (Today sections, proposal targets, uploads) read `scopes`: a handler sees
+    // only the scopes the key holds over every resource, so a scope limited to chosen items never
+    // leaks through another module (T203; Wave 34 filters those paths by resource).
+    const handlerKey: McpKeyContext = reach.all && key.grants?.every((grant) => grant.resourceKind === null) ? key : { ...key, scopes: wholeModuleScopes(key) };
+    return textResult(filterListResult(spec, reach, await spec.handler(parsed.data, handlerKey)));
   } catch (error) {
     if (error instanceof McpToolError) return errorResult(error.code, error.message, error.details);
     console.error(`MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
@@ -355,10 +392,49 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
 /** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */
 export const toolAllowed = (spec: McpToolSpec, scopes: McpKeyContext["scopes"]) => hasAnyScope(scopes, spec.scopes) && hasAllScopes(scopes, spec.alsoRequires);
 
+/**
+ * Whether a key whose grants name chosen items may see `spec` (D281): only a tool that declares
+ * the one resource it touches, of the kind every selector names, is offered; everything else is
+ * hidden until Wave 34 filters lists by resource (fail closed, T203).
+ */
+function toolFitsSelectors(spec: McpToolSpec, reach: NonNullable<ReturnType<typeof toolReach>>) {
+  if (reach.all) return true;
+  if (spec.listFilter) return reach.selectors.every((selector) => selector.kind === spec.listFilter!.kind);
+  const resource = spec.resource;
+  return Boolean(resource) && reach.selectors.every((selector) => selector.kind === containerKindOf(resource!.kind));
+}
+
+/** A list tool's result narrowed to the chosen items of a selector key. */
+function filterListResult(spec: McpToolSpec, reach: NonNullable<ReturnType<typeof toolReach>>, result: unknown) {
+  if (reach.all || !spec.listFilter || !result || typeof result !== "object") return result;
+  const field = spec.listFilter.field;
+  const items = (result as Record<string, unknown>)[field];
+  if (!Array.isArray(items)) return { ...(result as Record<string, unknown>), [field]: [] };
+  const kept = items.filter((item) => typeof (item as { id?: unknown })?.id === "string" && reach.selectors.every((selector) => selector.ids.has((item as { id: string }).id)));
+  return { ...(result as Record<string, unknown>), [field]: kept };
+}
+
+/** Whether `key` may see and call `spec` with its grants (scopes plus resource selectors). */
+export function toolVisible(spec: McpToolSpec, key: McpKeyContext) {
+  const reach = reachOf(spec, key);
+  return reach !== null && toolFitsSelectors(spec, reach);
+}
+
+/** The scopes the key holds over every resource of the module (not only chosen items). */
+function wholeModuleScopes(key: McpKeyContext): McpScope[] {
+  const grants = key.grants ?? grantsForScopes(key.scopes);
+  return key.scopes.filter((scope) => scopeReach(grants, scope) === "all");
+}
+
+const RESOURCE_LABELS: Record<NonNullable<McpToolSpec["resource"]>["kind"], string> = {
+  board: "Board", card: "Card", column: "Column", sprint: "Sprint", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event"
+};
+const resourceLabel = (spec: McpToolSpec) => spec.resource ? RESOURCE_LABELS[spec.resource.kind] : "Item";
+
 /** Registers the tools this key may use on a per-request server. */
 export function registerMcpTools(server: McpServer, key: McpKeyContext) {
   for (const spec of mcpToolSpecs) {
-    if (!toolAllowed(spec, key.scopes)) continue;
+    if (!toolVisible(spec, key)) continue;
     server.registerTool(spec.name, {
       title: spec.title,
       description: spec.description,

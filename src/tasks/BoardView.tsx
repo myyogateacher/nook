@@ -200,6 +200,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
   const readOnly = roleReadOnly || !levelAtLeast(board?.level, "edit");
+  // Managers (Wave 32, D273) change the structure, columns, tags, sprints, and sharing up to Can edit.
+  const canManage = !roleReadOnly && (owner || board?.level === "manage");
   // The tab names the board, and the open card before it (QA 0.9.0).
   const openCardTitle = openCardId ? detail?.cards.find((card) => card.id === openCardId)?.title ?? null : null;
   useTasksTitle(board ? `${openCardTitle ? `${openCardTitle} · ` : ""}${board.name} · Tasks` : null);
@@ -527,7 +529,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     </header>
     {data && sprints.selection && <SprintBar sprints={sprints.sprints} selection={sprints.selection} cards={data.cards} columns={columns} workLevel={hierarchy.structure.workLevel}
       name={hierarchy.structure.levels[hierarchy.structure.workLevel]?.name ?? "Card"} plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"}
-      today={viewContext.today} owner={owner} onSelect={sprints.select} onStart={(sprint) => { void sprints.start(sprint); }}
+      today={viewContext.today} owner={canManage} onSelect={sprints.select} onStart={(sprint) => { void sprints.start(sprint); }}
       onComplete={(sprint, trigger) => openDialog({ kind: "completeSprint", sprintId: sprint.id }, trigger)}
       onNewSprint={(trigger) => openDialog({ kind: "newSprint" }, trigger)} onManage={onOpenSprints} />}
     <KeyboardMoveHint id="task-card-keys">Press Alt with an arrow key to move a card up, down, or to the next column.</KeyboardMoveHint>
@@ -567,7 +569,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
           <span>{column.name}</span><b className={badge.wip ? `task-wip ${badge.wip}` : undefined} aria-label={badge.label}>{badge.text}</b>
         </button>;
       })}
-      {owner && columns.length < MAX_COLUMNS && <button className="task-tab-add" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Add column"><Plus /></button>}
+      {canManage && columns.length < MAX_COLUMNS && <button className="task-tab-add" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Add column"><Plus /></button>}
     </nav>}
     {detail && view === "board" && <div className="task-columns" ref={trackRef} onScroll={onTrackScroll}>
       {columns.map((column, index) => {
@@ -606,7 +608,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         }}
       />;
       })}
-      {owner && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
+      {canManage && columns.length < MAX_COLUMNS && <button className="task-add-column" onClick={(event) => openDialog({ kind: "addColumn" }, event.currentTarget)} aria-haspopup="dialog"><Plus />Add column</button>}
     </div>}
     </>}
 
@@ -653,13 +655,13 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       sprints={sprints.enabled ? sprints.sprints : undefined}
       initialSprintId={sprints.composerSprintId}
     />}
-    {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
+    {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={canManage} isOwner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
       onClose={closeDialog} notify={notify}
       onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
       onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)}
-      sprintsSection={<SprintDefaultsSection defaults={sprints.defaults} owner={owner} onSave={sprints.saveDefaults} onManage={() => { closeDialog(); onOpenSprints?.(); }} />} />}
+      sprintsSection={<SprintDefaultsSection defaults={sprints.defaults} owner={canManage} onSave={sprints.saveDefaults} onManage={() => { closeDialog(); onOpenSprints?.(); }} />} />}
     {sprintsOpen && sprints.enabled && board && onCloseSprints && <SprintsSheet boardName={board.name} onClose={onCloseSprints} suspended={dialog !== null}>
-      <SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={owner} today={viewContext.today}
+      <SprintSettingsSection boardId={boardId} sprints={data ? withLocalCounts(sprints.sprints, data.cards, columns, hierarchy.structure.workLevel) : sprints.sprints} owner={canManage} today={viewContext.today}
         plural={hierarchy.structure.levels[hierarchy.structure.workLevel]?.plural ?? "Cards"} defaults={sprints.defaults}
         onCreate={sprints.create} onUpdate={sprints.update} onStart={sprints.start} onDelete={sprints.remove}
         onComplete={(sprint) => openDialog({ kind: "completeSprint", sprintId: sprint.id })} />

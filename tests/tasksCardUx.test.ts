@@ -250,7 +250,7 @@ describe("owner-set WIP limits (D108, T96)", () => {
   test("only the owner sets a limit of 1–1000 or null; columns carry wip_limit", async () => {
     const { owner, member, stranger, boardId, columns } = await setup("WIP set");
     expect((await call(owner, "GET", `/boards/${boardId}`)).body.columns.map((column: { wip_limit: number | null }) => column.wip_limit)).toEqual([null, null, null]);
-    expect((await call(member, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 })).body.code).toBe("OWNER_ONLY");
+    expect((await call(member, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 })).body.code).toBe("MANAGER_REQUIRED");
     expect((await call(stranger, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 })).status).toBe(404);
     for (const wipLimit of [0, 1001, 2.5, "2"]) expect((await call(owner, "PATCH", `/columns/${columns[1].id}`, { wipLimit })).status).toBe(400);
     const set = await call(owner, "PATCH", `/columns/${columns[1].id}`, { wipLimit: 2 });

@@ -74,19 +74,21 @@ describe("task boards", () => {
     const { board, columns } = await newBoard(owner);
     await share(owner, board.id, "selected", [member.userId]);
     const columnId = columns[1]!.id;
-    const ownerOnly: Array<[string, string, unknown?]> = [
-      ["PATCH", `/boards/${board.id}`, { name: "Renamed" }],
+    // Structure is the owner's or a manager's (MANAGER_REQUIRED, Wave 32 D273); deleting and the
+    // older sharing route stay the owner's. A member at edit is neither.
+    const ownerOnly: Array<[string, string, unknown?, string?]> = [
+      ["PATCH", `/boards/${board.id}`, { name: "Renamed" }, "MANAGER_REQUIRED"],
       ["DELETE", `/boards/${board.id}`],
       ["GET", `/boards/${board.id}/sharing`],
       ["PUT", `/boards/${board.id}/sharing`, { visibility: "private", userIds: [] }],
-      ["POST", `/boards/${board.id}/columns`, { name: "Review" }],
-      ["PATCH", `/columns/${columnId}`, { name: "Renamed" }],
-      ["PATCH", `/columns/${columnId}`, { afterColumnId: null }],
-      ["DELETE", `/columns/${columnId}`]
+      ["POST", `/boards/${board.id}/columns`, { name: "Review" }, "MANAGER_REQUIRED"],
+      ["PATCH", `/columns/${columnId}`, { name: "Renamed" }, "MANAGER_REQUIRED"],
+      ["PATCH", `/columns/${columnId}`, { afterColumnId: null }, "MANAGER_REQUIRED"],
+      ["DELETE", `/columns/${columnId}`, undefined, "MANAGER_REQUIRED"]
     ];
-    for (const [method, path, body] of ownerOnly) {
+    for (const [method, path, body, code = "OWNER_ONLY"] of ownerOnly) {
       const asMember = await call(member, method, path, body);
-      expect([method, path, asMember.status, asMember.body.code]).toEqual([method, path, 403, "OWNER_ONLY"]);
+      expect([method, path, asMember.status, asMember.body.code]).toEqual([method, path, 403, code]);
       const asStranger = await call(stranger, method, path, body);
       expect([method, path, asStranger.status]).toEqual([method, path, 404]);
     }
@@ -110,7 +112,7 @@ describe("task boards", () => {
     const seen = await call(anyone, "GET", `/boards/${board.id}`);
     expect(seen.status).toBe(200);
     expect(seen.body.board).toMatchObject({ is_owner: 0, visibility: "all_users" });
-    expect((await call(anyone, "PATCH", `/boards/${board.id}`, { name: "Mine now" })).body.code).toBe("OWNER_ONLY");
+    expect((await call(anyone, "PATCH", `/boards/${board.id}`, { name: "Mine now" })).body.code).toBe("MANAGER_REQUIRED");
   });
 
   test("sharing follows the notes rules and revokes access at once", async () => {

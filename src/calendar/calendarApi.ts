@@ -1,4 +1,5 @@
 import { api } from "../api";
+import type { ItemLevel } from "../access/accessLevels";
 import type { Visibility } from "../types";
 
 export type CalendarColor = "blue" | "green" | "amber" | "red" | "violet" | "slate";
@@ -13,6 +14,8 @@ export type CalendarSummary = {
   owner_name: string;
   is_owner: 0 | 1;
   role: CalendarRole;
+  /** The caller's level (Wave 32, §D.3): owner, manage, edit, or view; older servers omit it. */
+  level?: ItemLevel;
   name: string;
   color: CalendarColor;
   visibility: Visibility;

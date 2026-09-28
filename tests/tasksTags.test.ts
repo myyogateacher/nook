@@ -74,8 +74,8 @@ describe("board tags (D109, T101)", () => {
     const { owner, member, stranger, boardId, columns, card } = await setup("Tag admin");
     const backend = (await call(member, "POST", `/boards/${boardId}/tags`, { name: "Backend" })).body.tag;
     const other = (await call(member, "POST", `/boards/${boardId}/tags`, { name: "Other" })).body.tag;
-    expect((await call(member, "PATCH", `/tags/${backend.id}`, { name: "Server" })).body.code).toBe("OWNER_ONLY");
-    expect((await call(member, "DELETE", `/tags/${backend.id}`)).body.code).toBe("OWNER_ONLY");
+    expect((await call(member, "PATCH", `/tags/${backend.id}`, { name: "Server" })).body.code).toBe("MANAGER_REQUIRED");
+    expect((await call(member, "DELETE", `/tags/${backend.id}`)).body.code).toBe("MANAGER_REQUIRED");
     expect((await call(stranger, "PATCH", `/tags/${backend.id}`, { name: "Server" })).status).toBe(404);
     expect((await call(stranger, "DELETE", `/tags/${backend.id}`)).status).toBe(404);
     expect((await call(owner, "PATCH", `/tags/${crypto.randomUUID()}`, { name: "Server" })).status).toBe(404);

@@ -35,7 +35,7 @@ import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates"
 import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
-import { shareRoleToLevel, type ItemLevel } from "../access/levels";
+import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 
 /**
  * Collections services (WAVES_10-12.md §3). Routes are thin adapters over
@@ -44,9 +44,10 @@ import { shareRoleToLevel, type ItemLevel } from "../access/levels";
  *
  * Authorization (D54): readers (owner, members of a `selected` collection,
  * everyone on an `all_users` one) read; editors (the owner, or every reader
- * when share_role = 'editor') write rows; only the owner edits the schema,
- * views, name, and sharing, and deletes. Non-readers get 404; readers get 403
- * READ_ONLY (row writes) or OWNER_ONLY.
+ * when share_role = 'editor') write rows; the owner and managers (D273) edit the
+ * schema, views, name, and icon (403 MANAGER_REQUIRED for others); only the owner
+ * deletes and uses the older sharing route (403 OWNER_ONLY). Non-readers get 404;
+ * readers get 403 READ_ONLY for row writes.
  */
 export class CollectionError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 413 | 429, message: string, readonly code?: string, readonly extra: Record<string, unknown> = {}) {
@@ -62,6 +63,7 @@ export const LIMITS = { collectionsPerOwner: 100, liveRowsPerCollection: 10_000,
 const collectionNotFound = () => new CollectionError(404, "Collection not found");
 const rowNotFound = () => new CollectionError(404, "Row not found");
 const ownerOnly = () => new CollectionError(403, "Only the collection owner can do this", "OWNER_ONLY");
+const managerRequired = () => new CollectionError(403, "Only the collection owner or a manager can do this", "MANAGER_REQUIRED");
 const readOnly = () => new CollectionError(403, "You can view this collection but not change it", "READ_ONLY");
 const limitReached = (message: string) => new CollectionError(409, message, "LIMIT_REACHED");
 
@@ -78,6 +80,13 @@ export function requireReadableCollection(collectionId: string, userId: string) 
 export function requireOwnedCollection(collectionId: string, userId: string) {
   const collection = requireReadableCollection(collectionId, userId);
   if (collection.owner_id !== userId) throw ownerOnly();
+  return collection;
+}
+
+/** The owner or a manager who may write content (D273): structure, views, and sharing up to editor. */
+export function requireManagedCollection(collectionId: string, userId: string) {
+  const collection = requireReadableCollection(collectionId, userId);
+  if (!atLeast(collectionLevel(collection, userId), "manage") || !canWriteContent(userId)) throw managerRequired();
   return collection;
 }
 
@@ -200,7 +209,7 @@ export function getCollection(userId: string, collectionId: string) {
 
 export function patchCollection(userId: string, collectionId: string, input: { name?: string; icon?: string }) {
   return withCollectionLock(collectionId, () => {
-    requireOwnedCollection(collectionId, userId);
+    requireManagedCollection(collectionId, userId);
     db.transaction(() => {
       db.query("UPDATE collections SET name = COALESCE(?, name), icon = COALESCE(?, icon), updated_at = ? WHERE id = ? AND deleted_at IS NULL")
         .run(input.name ?? null, input.icon ?? null, now(), collectionId);
@@ -278,7 +287,7 @@ export async function putSharing(userId: string, collectionId: string, input: { 
  */
 export function putSchema(userId: string, collectionId: string, input: { fields: FieldInput[]; schemaVersion: number }) {
   return withCollectionLock(collectionId, () => {
-    const collection = requireOwnedCollection(collectionId, userId);
+    const collection = requireManagedCollection(collectionId, userId);
     if (collection.schema_version !== input.schemaVersion) {
       throw new CollectionError(409, "Someone else changed the fields", "SCHEMA_CHANGED", { collection: collectionDetail(collectionId, userId) });
     }
@@ -341,17 +350,17 @@ function viewSummary(viewId: string): ViewSummary | null {
 
 const viewNotFound = () => new CollectionError(404, "View not found");
 
-/** A view path id joined to a collection the caller owns: 404 for non-readers, 403 OWNER_ONLY for other readers. */
+/** A view path id joined to a collection the caller owns or manages: 404 for non-readers, 403 MANAGER_REQUIRED for other readers. */
 function requireOwnedView(viewId: string, userId: string) {
   const found = readableView(viewId, userId);
   if (!found) throw viewNotFound();
-  if (found.collection.owner_id !== userId) throw ownerOnly();
+  if (!atLeast(collectionLevel(found.collection, userId), "manage") || !canWriteContent(userId)) throw managerRequired();
   return found;
 }
 
 export function createView(userId: string, collectionId: string, input: { name: string; config: ViewConfig }) {
   return withCollectionLock(collectionId, () => {
-    const collection = requireOwnedCollection(collectionId, userId);
+    const collection = requireManagedCollection(collectionId, userId);
     const config = checkViewConfig(collection, input.config);
     const count = (db.query("SELECT COUNT(*) AS count FROM collection_views WHERE collection_id = ?").get(collectionId) as { count: number }).count;
     if (count >= LIMITS.viewsPerCollection) throw limitReached(`A collection can have up to ${LIMITS.viewsPerCollection} views`);

@@ -30,7 +30,7 @@ type CalendarsDialogProps = {
 
 const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
   ? calendar.visibility === "private" ? "Private" : calendar.share_role === "editor" ? "Shared · others can edit" : "Shared · others can view"
-  : `${calendar.owner_name} · ${calendar.role === "editor" ? "you can edit" : "view only"}`;
+  : `${calendar.owner_name} · ${calendar.level === "manage" ? "you manage it" : calendar.role === "editor" ? "you can edit" : "view only"}`;
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */
 export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onFeeds, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
@@ -98,6 +98,15 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
               <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
               {mute}
               <button className="icon-button danger" onClick={() => onDelete(calendar)} aria-label={`Move ${calendar.name} to the Bin`}><Trash2 /></button>
+            </span>;
+            // Managers (Wave 32, D273) rename, recolour, and share up to Can edit; only the owner deletes.
+            if (calendar.is_owner !== 1 && canWrite && calendar.level === "manage") return <span className="calendar-list-actions">
+              <Select variant="compact" swatchOnly value={calendar.color} label={`Colour of ${calendar.name}`} options={colourOptions}
+                onChange={(next) => { void onUpdate(calendar, { color: next }).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not update the calendar")); }} />
+              <button className="icon-button" onClick={() => { setDraft(calendar.name); setEditing(calendar.id); }} aria-label={`Rename ${calendar.name}`}><Pencil /></button>
+              <button className="icon-button" onClick={() => onShare(calendar)} aria-label={`Share ${calendar.name}`}><Share2 /></button>
+              <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>
+              {mute}
             </span>;
             if (calendar.is_owner !== 1 && (canWrite || mute)) return <span className="calendar-list-actions">
               {canWrite && <button className="icon-button" onClick={() => onFeeds(calendar)} aria-label={`Subscribe links for ${calendar.name}`}><Rss /></button>}

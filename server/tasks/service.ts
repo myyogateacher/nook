@@ -27,9 +27,10 @@ import { groupGrantExists } from "../access/groups";
  *
  * Authorization (D38, D39, D272): readers of a board (owner, members, groups, everyone on an
  * all_users board) hold a level. `edit` works with cards (every member before Wave 32, D38),
- * `comment` only comments and reacts, `view` only reads (403 READ_ONLY). Only the owner renames
- * the board, manages columns and sharing, and deletes. Non-readers get 404, readers calling an
- * owner-only action get 403 OWNER_ONLY.
+ * `comment` only comments and reacts, `view` only reads (403 READ_ONLY). The owner and managers
+ * (D273) rename the board and change its structure, columns, WIP limits, tags, and sprints (403
+ * MANAGER_REQUIRED for everyone else); only the owner deletes it and changes its audience through
+ * the older sharing route (403 OWNER_ONLY). Non-readers get 404.
  */
 export class TaskError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, message: string, readonly code?: string, readonly extra: Record<string, unknown> = {}) {
@@ -327,7 +328,7 @@ function checkStructureChange(boardId: string, structure: BoardStructure) {
  */
 export function updateBoard(userId: string, boardId: string, input: { name?: string; structure?: BoardStructure; keepSprintDefaults?: boolean }) {
   return withBoardLock(boardId, () => {
-    requireOwnedBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "manage");
     const { name } = input;
     // A structure sent without `sprintDefaults` keeps the stored ones; `null` clears them.
     const kept = input.structure && input.keepSprintDefaults ? boardStructure(boardId).sprintDefaults : undefined;
@@ -411,7 +412,7 @@ export function applyRenumber(table: "board_columns" | "cards" | "task_views" | 
 
 export function createColumn(userId: string, boardId: string, input: { name: string; afterColumnId?: string | null }) {
   return withBoardLock(boardId, () => {
-    requireOwnedBoard(boardId, userId);
+    requireBoardAt(boardId, userId, "manage");
     const columns = listColumns(boardId);
     if (columns.length >= LIMITS.columnsPerBoard) throw limitReached(`A board can have up to ${LIMITS.columnsPerBoard} columns`);
     const plan = planInsert(columns, input.afterColumnId);
@@ -430,11 +431,11 @@ export function createColumn(userId: string, boardId: string, input: { name: str
   });
 }
 
-/** Resolves a column path id to its board and checks ownership (404 / 403). */
+/** Resolves a column path id to its board and checks the owner or a manager (404 / 403 MANAGER_REQUIRED). */
 function requireOwnedColumn(columnId: string, userId: string) {
   const found = readableColumn(columnId, userId);
   if (!found) throw columnNotFound();
-  if (found.board.owner_id !== userId) throw ownerOnly();
+  requireLevel(found.board, userId, "manage");
   return found;
 }
 

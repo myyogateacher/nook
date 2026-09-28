@@ -38,7 +38,7 @@ import {
 } from "./recurrence";
 import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
-import { shareRoleToLevel, type ItemLevel } from "../access/levels";
+import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { mailEventChanged } from "../mail/calendarMail";
 
 export const MAX_CALENDARS_PER_OWNER = 20;
@@ -65,6 +65,7 @@ export class CalendarError extends Error {
 const calendarNotFound = () => new CalendarError(404, "Calendar not found");
 const eventNotFound = () => new CalendarError(404, "Event not found");
 const ownerOnly = () => new CalendarError(403, "Only the calendar's owner can do that", "OWNER_ONLY");
+const managerRequired = () => new CalendarError(403, "Only the calendar's owner or a manager can do that", "MANAGER_REQUIRED");
 const readOnly = () => new CalendarError(403, "This calendar is shared with you read-only", "READ_ONLY");
 const invalid = (message: string) => new CalendarError(400, message);
 
@@ -152,10 +153,19 @@ function ownedCalendar(calendarId: string, userId: string) {
   return calendar;
 }
 
+/** A readable calendar the caller owns or manages (D273); 404 for strangers, 403 MANAGER_REQUIRED for other readers. */
+export function managedCalendar(calendarId: string, userId: string) {
+  const calendar = readableCalendar(calendarId, userId);
+  if (!calendar) throw calendarNotFound();
+  if (!atLeast(calendarLevel(calendar, userId), "manage") || !canWriteContent(userId)) throw managerRequired();
+  return calendar;
+}
+
+/** Rename and colour: the owner or a manager (D273). */
 export function patchCalendar(userId: string, calendarId: string, input: { name?: string; color?: CalendarColor }) {
-  ownedCalendar(calendarId, userId);
-  db.query("UPDATE calendars SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
-    .run(input.name ?? null, input.color ?? null, now(), calendarId, userId);
+  managedCalendar(calendarId, userId);
+  db.query("UPDATE calendars SET name = COALESCE(?, name), color = COALESCE(?, color), updated_at = ? WHERE id = ? AND deleted_at IS NULL")
+    .run(input.name ?? null, input.color ?? null, now(), calendarId);
   audit(userId, null, "calendar.update", { calendarId });
   return { calendar: calendarSummary(calendarId, userId)! };
 }

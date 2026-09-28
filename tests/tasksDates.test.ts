@@ -92,7 +92,7 @@ describe("task due dates, assignees, and done columns", () => {
 
   test("only the owner sets isDone on a column", async () => {
     const { owner, member, stranger, columns } = await setup("Done column");
-    expect((await call(member, "PATCH", `/columns/${columns[1].id}`, { isDone: true })).body.code).toBe("OWNER_ONLY");
+    expect((await call(member, "PATCH", `/columns/${columns[1].id}`, { isDone: true })).body.code).toBe("MANAGER_REQUIRED");
     expect((await call(stranger, "PATCH", `/columns/${columns[1].id}`, { isDone: true })).status).toBe(404);
     const done = await call(owner, "PATCH", `/columns/${columns[1].id}`, { isDone: true });
     expect(done.status).toBe(200);

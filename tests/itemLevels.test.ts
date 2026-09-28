@@ -122,6 +122,66 @@ describe("board levels (viewer, commenter, editor)", () => {
   });
 });
 
+describe("managers (D273, T207)", () => {
+  test("a board manager changes structure, columns, tags, and sprints, but never deletes the board or uses the owner's sharing route", async () => {
+    const owner = await user("Manager board owner");
+    const manager = await user("Manager board manager");
+    const editor = await user("Manager board editor");
+    const created = (await send(owner, "POST", "/tasks/boards", { name: "Managed board", template: "scrum" })).body;
+    const boardId = created.board.id as string;
+    await send(owner, "PUT", `/tasks/boards/${boardId}/sharing`, { visibility: "selected", userIds: [manager.userId, editor.userId] });
+    setLevel("board_members", "board_id", boardId, manager.userId, "manage");
+    expect((await send(manager, "GET", `/tasks/boards/${boardId}`)).body.board.level).toBe("manage");
+
+    expect((await send(manager, "PATCH", `/tasks/boards/${boardId}`, { name: "Managed board 2" })).status).toBe(200);
+    const column = await send(manager, "POST", `/tasks/boards/${boardId}/columns`, { name: "Review" });
+    expect(column.status).toBe(201);
+    expect((await send(manager, "PATCH", `/tasks/columns/${column.body.column.id}`, { wipLimit: 3 })).status).toBe(200);
+    const tag = (await send(manager, "POST", `/tasks/boards/${boardId}/tags`, { name: "Ops" })).body.tag;
+    expect((await send(manager, "PATCH", `/tasks/tags/${tag.id}`, { color: "red" })).status).toBe(200);
+    expect((await send(manager, "POST", `/tasks/boards/${boardId}/sprints`, { name: "Managed sprint" })).status).toBe(201);
+    expect((await send(manager, "DELETE", `/tasks/columns/${column.body.column.id}`)).status).toBe(200);
+
+    // An editor does none of that.
+    expect((await send(editor, "PATCH", `/tasks/boards/${boardId}`, { name: "No" })).body.code).toBe("MANAGER_REQUIRED");
+    expect((await send(editor, "PATCH", `/tasks/tags/${tag.id}`, { color: "blue" })).body.code).toBe("MANAGER_REQUIRED");
+
+    // The owner's alone: delete, and the older audience-wide sharing route.
+    expect((await send(manager, "DELETE", `/tasks/boards/${boardId}`)).body.code).toBe("OWNER_ONLY");
+    expect((await send(manager, "GET", `/tasks/boards/${boardId}/sharing`)).body.code).toBe("OWNER_ONLY");
+    expect((await send(manager, "PUT", `/tasks/boards/${boardId}/sharing`, { visibility: "all_users", userIds: [] })).body.code).toBe("OWNER_ONLY");
+  }, 20_000);
+
+  test("collection and calendar managers change structure but never delete", async () => {
+    const owner = await user("Manager cc owner");
+    const manager = await user("Manager cc manager");
+    const collection = await newCollection(owner, { name: "Managed collection", fields: [{ name: "Name", type: "text" }] });
+    await send(owner, "PUT", `/collections/${collection.id}/sharing`, { visibility: "selected", userIds: [manager.userId], role: "editor" });
+    setLevel("collection_members", "collection_id", collection.id, manager.userId, "manage");
+    expect((await send(manager, "PATCH", `/collections/${collection.id}`, { name: "Managed 2" })).status).toBe(200);
+    expect((await send(manager, "PUT", `/collections/${collection.id}/schema`, { fields: [{ id: collection.fields[0]!.id, name: "Title", type: "text" }, { name: "Qty", type: "number" }], schemaVersion: collection.schema_version })).status).toBe(200);
+    const view = await send(manager, "POST", `/collections/${collection.id}/views`, { name: "Mine", config: {} });
+    expect(view.status).toBe(201);
+    expect((await send(manager, "DELETE", `/collections/views/${view.body.view.id}`)).status).toBe(200);
+    expect((await send(manager, "DELETE", `/collections/${collection.id}`)).body.code).toBe("OWNER_ONLY");
+    // The older route keeps the manager a manager whatever role it sends.
+    await send(owner, "PUT", `/collections/${collection.id}/sharing`, { visibility: "selected", userIds: [manager.userId], role: "viewer" });
+    expect(itemLevel("collection", collection.id, manager.userId)).toBe("manage");
+
+    const calendar = (await send(owner, "POST", "/calendars", { name: "Managed calendar", color: "blue" })).body.calendar.id as string;
+    await send(owner, "PUT", `/calendars/${calendar}/sharing`, { visibility: "selected", shareRole: "viewer", userIds: [manager.userId] });
+    setLevel("calendar_members", "calendar_id", calendar, manager.userId, "manage");
+    const patched = await send(manager, "PATCH", `/calendars/${calendar}`, { name: "Managed calendar 2", color: "red" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.calendar).toMatchObject({ name: "Managed calendar 2", color: "red", level: "manage", role: "editor" });
+    expect((await send(manager, "DELETE", `/calendars/${calendar}`)).body.code).toBe("OWNER_ONLY");
+    // A read-only Team role never manages, whatever the row says.
+    db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(manager.userId);
+    expect(itemLevel("calendar", calendar, manager.userId)).toBe("view");
+    db.query("UPDATE users SET role = 'member' WHERE id = ?").run(manager.userId);
+  });
+});
+
 describe("collection and calendar levels", () => {
   test("collections: each person has their own level; the older route's role still applies to everyone it names", async () => {
     const owner = await user("Level collection owner");

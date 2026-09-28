@@ -6,7 +6,7 @@ import { readHistoryDepth } from "../appShellNavigation";
 import { createCalendarHistoryState, readCalendarHint, type CalendarHint } from "../calendarNavigation";
 import { agendaRoute, calendarBackAction, eventRoute, localDate, monthOf, monthRoute, resolveMonth, shiftMonth, type CalendarRoute } from "../calendarRoute";
 import { ConfirmDialog } from "../files/Dialog";
-import { popStateClosedDialog } from "../historyDialogs";
+import { offerDialogReopen, popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
 import { AgendaView } from "./AgendaView";
 import {
@@ -215,6 +215,16 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   // Back or Forward while a dialog is open closes the top one (D69).
   useDialogBackGuard(dialogOpen, (forced) => {
     if (forced) {
+      // Back off the phone sentinel lands here (the depths match): Forward onto the sentinel shows
+      // the same layers again instead of a dead entry (Friction 12). A confirm is not reopened.
+      const shown = { calendarsOpen, sharing, feeds, picker, reminderPicker };
+      if (calendarsOpen || sharing || feeds || picker || reminderPicker) offerDialogReopen(() => {
+        setCalendarsOpen(shown.calendarsOpen);
+        setSharing(shown.sharing);
+        setFeeds(shown.feeds);
+        setPicker(shown.picker);
+        setReminderPicker(shown.reminderPicker);
+      });
       setConfirm(null);
       closeSheet();
       setSharing(null);

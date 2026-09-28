@@ -1344,6 +1344,7 @@ Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-mo
 | --- | --- | --- |
 | `POST /api/auth/logout` | both | sign out |
 | `POST /api/auth/totp/setup`, `POST /api/auth/totp/enable`, `POST /api/auth/totp/recovery-codes`, `POST /api/auth/totp/recovery-codes/regenerate`, `DELETE /api/auth/totp` | both | own two-factor |
+| `POST /api/auth/password/change` | both | own password (Wave 30) |
 | `POST /api/notifications/read` | both | own notifications |
 | `POST /api/push/subscriptions`, `DELETE /api/push/subscriptions`, `POST /api/push/test` | both | own push devices |
 | `POST /api/reminders`, `DELETE /api/reminders/:reminderId` | both | own reminders on readable events (O4) |
@@ -1525,9 +1526,9 @@ type RunSummary = {
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
-## Email (Waves 28–29)
+## Email (Waves 28–30)
 
-Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1 and Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.
+Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1, Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes), and Wave 30 / E3 (change and reset password). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.
 
 ### Types
 
@@ -1573,6 +1574,21 @@ All need the session, CSRF, Origin, and the TOTP gate. Viewers and guests may us
 | `GET /api/mail/unsubscribe` | — | 405. A GET never changes anything (link scanners) |
 | `POST /api/mail/webhook` | Resend's JSON event, **raw**, at most 64 KiB, with `svix-id`, `svix-timestamp`, `svix-signature` | 404 unless `RESEND_WEBHOOK_SECRET` is set. 401 `Invalid signature` (bad or missing signature, a changed body, a timestamp more than 5 minutes off) and nothing stored. `{ ok: true }` for a first delivery, `{ ok: true, duplicate: true }` for a replayed `svix-id`. `email.bounced` (bounce type `Permanent`), `email.complained`, `email.suppressed` suppress the recipient hash; other bounce types count as soft; `email.failed` marks the outbox row `failed`; every other type is ignored. 413 over 64 KiB |
 
+### Password flows (Wave 30, E3)
+
+Plan: §A.5 and §E.6 of the research. No migration: reset tokens use `auth_tokens` from 026 (`purpose = 'password_reset'`). Code: `server/passwordFlows.ts`. There is no admin-initiated reset (D246); the host CLI stays the way out of an admin lockout (OPERATIONS).
+
+| Method and path | Auth | Body | Result |
+| --- | --- | --- | --- |
+| `POST /api/auth/password/change` | session, CSRF, Origin (viewers and guests too: write-gate allowlist) | `{ currentPassword, newPassword (12–256), totpCode? \| recoveryCode? }` (strict; a code is required when two-factor is on) | `{ ok: true, signedOut }`: the password is replaced, **this** session is kept and every other one deleted, unused reset tokens are voided, security mail `security.password_changed` (`event: "changed"`) is queued, `auth.password_changed` audited. 400 `REAUTH_FAILED` (wrong password or code; the code is consumed only after the password verifies), 400 `SAME_PASSWORD`, 400 for a short password, 428 `TOTP_REQUIRED` with `requiresTotp`, 429 `RATE_LIMITED` (5 per 10 min per account). Works with email off |
+| `POST /api/auth/password-reset/request` | none; Origin and JSON required | `{ email }` | Always **202** `{ ok: true }` with the same bytes, after at least 400 ms (+ up to 150 ms jitter). The lookup runs after the response: only an existing, unblocked, verified, allowlisted account gets `account.password_reset` (coalesced while queued); nothing is looked up when email is off. The per-address limit (3 an hour, by address hash, unknown addresses too) is silent; 429 `RATE_LIMITED` after 10 an hour per client address. 400 for a malformed address |
+| `POST /api/auth/password-reset/check` | none; Origin and JSON required | `{ token }` (43 base64url characters, from `/reset-password#token=`) | `{ ok: true, needsCode }` (whether the account has two-factor, the only thing said about it); 400 `TOKEN_EXPIRED` or `TOKEN_INVALID` (unknown, used, superseded, burned, blocked account, or the address changed since); 429 after 20 a minute per client (shared with complete). Changes nothing |
+| `POST /api/auth/password-reset/complete` | none; Origin and JSON required | `{ token, newPassword (12–256), totpCode? \| recoveryCode? }` | `{ ok: true }`: the token is claimed once, the password replaced, other reset tokens deleted, **every** session and push subscription revoked, `security.password_changed` (`event: "reset"`) queued, `auth.password_reset` audited. Never signs in (no cookie, no CSRF token). With two-factor on: 428 `TOTP_REQUIRED`, 401 `TOTP_INVALID` (audited `auth.password_reset_code_failed`); the fifth wrong code burns the token (400 `TOKEN_INVALID`). A recovery code used here sends `security.two_factor` (`recovery_used`). API keys are not revoked |
+
+`GET /api/about` gains `passwordReset: boolean` (email is on, so the forgot page can mail a link; an instance fact, never per account).
+
+Tokens: 32 random bytes, base64url, stored as a SHA-256, minted by the dispatcher at send time (the outbox row holds `{}`), 30 minutes, single use; minting deletes the account's older unused reset tokens. Pages: `/forgot-password` (signed out; its own history entry from the sign-in card) and `/reset-password#token=…` (the fragment is stripped on load; `Referrer-Policy: no-referrer` on every response).
+
 ### Admin endpoints (Team)
 
 Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `ADMIN_ONLY`.
@@ -1585,7 +1601,7 @@ Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `
 ### Mail links and headers
 
 - Every link is `APP_ORIGIN` plus a path from `server/mail/links.ts` (ids checked against the router's pattern; no query except the unsubscribe token; no redirect parameters): `/tasks/:b/card/:c`, `/tasks/:b`, `/tasks/:b/sprints`, `/tasks/my`, `/tasks/views/:v`, `/notes/:n`, `/notes/folder/:f`, `/notes/shared`, `/files/:d`, `/files/shared`, `/collections/:c`, `/calendar`, `/calendar/event/:e`, `/notifications`, `/bin`, `/inbox`, `/team/:u`, `/settings/:section`, `/`.
-- Credential links keep their token in the fragment: `/register#invite=…`, `/verify-email#token=…`. The SPA reads it once, strips it, and POSTs it.
+- Credential links keep their token in the fragment: `/register#invite=…`, `/verify-email#token=…`, `/reset-password#token=…`. The SPA reads it once, strips it, and POSTs it.
 - Activity, reminders, and digest mail: a footer link `/mail/unsubscribe#t=<token>` (the page asks before it POSTs; the digest's token turns the digest off), and the headers `List-Unsubscribe: <APP_ORIGIN/api/mail/unsubscribe?t=<token>>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Security and account mail carry neither.
 - `/settings/:section` (`security`, `modules`, `mcp`, `notifications`, `about`) opens the Settings dialog at that section as a history entry of its own: Back closes it, Forward reopens it; a deep link opens it over Home. `/team/email` is the admin Email log.
 
@@ -1596,6 +1612,8 @@ Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `
 | `team.invite` | account | Admin sends an invite (sent at once, logged in the outbox) | — |
 | `account.verify` | account | Registration without an email-bound invite; Settings → Send verification email | — |
 | `account.test` | account | Settings → Send me a test email | — |
+| `account.password_reset` | account | `POST /api/auth/password-reset/request` for a verified, unblocked account (Wave 30); the token is minted at send time | Merged while queued |
+| `security.password_changed` | security | Password changed in Settings or reset from a link (Wave 30); links to Settings → Security and Settings → API keys | — |
 | `tasks.assigned` | activity / assignments | Someone else adds you to a card's assignees (web or MCP) | 10 min per recipient |
 | `tasks.comment` | activity / comments | A comment on a card you created or are assigned to, by someone else | 10 min per recipient and card |
 | `sharing.shared` | activity / sharing | You are added by name to a note, folder, file, board, calendar, collection, or task view (never `all_users`) | 10 min per recipient |

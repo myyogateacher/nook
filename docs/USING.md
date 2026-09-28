@@ -225,7 +225,7 @@ When your admin has set up email (OPERATIONS → Email), Nook can email you abou
 - **Verify your address first.** An account made with an invite sent to your address is already verified. Otherwise Nook emails you a verification link when you sign up; open it (it works once, for 24 hours) or press **Send verification email**. Until you verify, Nook sends you only security emails.
 - **What Nook emails.** *Assigned to you* (someone else adds you to a card), *Comments on your cards* (cards you created or are assigned to), *Shared with you* (a note, folder, file, board, calendar, collection, or task view shared with you by name; sharing with everyone sends nothing), and *Proposals awaiting you* (your MCP keys suggested changes: only the key's name and how many, never the agent's text). Each has its own switch, and **Email notifications** turns them all off at once. Nothing you do yourself emails you.
 - **Grouped, not noisy.** Emails of one kind wait up to 10 minutes and arrive together ("Priya assigned you 3 cards on Launch"); proposals wait up to an hour and come at most every 3 hours. If you lose access to an item before the email goes out, it is left out.
-- **Security emails are always on**: a new MCP key on your account, your team role changing, two-factor turned on or off, new recovery codes or a recovery code used, and your account being blocked, unblocked, or signed out everywhere. If one of these was not you, act on it straight away.
+- **Security emails are always on**: a new MCP key on your account, your team role changing, two-factor turned on or off, new recovery codes or a recovery code used, your password being changed or reset, and your account being blocked, unblocked, or signed out everywhere. If one of these was not you, act on it straight away.
 - **Quiet hours** hold activity emails until they end, in the time zone shown under them (**Use this device's time zone** changes it). Security emails are never held.
 - **Send me a test email** checks that mail reaches you (3 an hour).
 - **Unsubscribe.** Every activity, reminder, and digest email has a link at the bottom that turns off that one kind of email (or the digest); the page asks before it changes anything. Mail apps that offer an "Unsubscribe" button use the same switch. Security emails cannot be turned off.
@@ -238,6 +238,14 @@ When your admin has set up email (OPERATIONS → Email), Nook can email you abou
 Emails link straight to the card, note, board, Inbox, or Settings section they are about, on this Nook's address. Nook never asks for your password by email, and its emails contain no images, trackers, or remote content.
 
 Admins see what Nook emailed in **Team → Email log** (`/team/email`): which kind of email, to whom, when, and whether it was sent, held, skipped (and why), or failed, with a **Retry** for failed ones. A **Bounced**, **Spam report**, or **Soft bounces** tag next to a name means Nook is holding back all but security email to that person's address. It never shows addresses, subjects, or content.
+
+## Password
+
+**Change it** in **Settings → Security → Password** (`/settings/security`): press **Change password**, enter your current password, the new one twice (at least 12 characters), and, if you use two-factor authentication, a code from your app or a recovery code. Every other device signed in to your account is signed out; the one you are using stays signed in. Nook emails you that the password changed. This works whether or not email is set up. Your API keys keep working, so review them under **Settings → API keys** if you changed the password because something looked wrong.
+
+**Forgot it?** On the sign-in page press **Forgot password?** (`/forgot-password`), enter your address, and press **Send reset link**. The page always answers "If that address has a verified account, we sent a link": it never says whether an account exists. The email arrives only when the account's address is verified and the account is not blocked. Its link works once, for 30 minutes, and a newer link replaces an older one. Open it, choose a new password, and, if the account uses two-factor authentication, enter a code from your app or a recovery code (a mailbox alone cannot take over the account). Resetting signs you out on **every** device, including this one, and does not sign you in: sign in with the new password. Nook emails you that the password was reset, with a link to review your API keys, which keep working.
+
+When email is off on your Nook, the forgot page says so and sends nothing: ask an admin. Admins cannot send a reset email for someone else.
 
 ## Team
 

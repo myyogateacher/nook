@@ -54,6 +54,14 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
     return () => globalThis.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
   useEffect(() => closeRef.current?.focus(), []);
+  // Restore all disables every button while it runs (and empties the list after), so focus would
+  // fall to the page body: once it settles, Close takes focus.
+  const refocusRef = useRef(false);
+  useEffect(() => {
+    if (busy || !refocusRef.current) return;
+    refocusRef.current = false;
+    closeRef.current?.focus();
+  }, [busy]);
 
   const load = useCallback(() => {
     setItems(null);
@@ -75,6 +83,7 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not restore the items");
     } finally {
+      refocusRef.current = true;
       setBusy(false);
     }
   }

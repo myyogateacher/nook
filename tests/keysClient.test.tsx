@@ -5,7 +5,7 @@ import {
   expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
   type GrantRow, type KeyGrantView
 } from "../src/keys/keyGrants";
-import { KeyRow, keyToRows } from "../src/keys/KeysSettings";
+import { keyAfterRevoke, KeyRow, keyToRows } from "../src/keys/KeysSettings";
 import type { ApiKey } from "../src/keys/keysApi";
 
 /** Settings → API keys (access plan §E, §G "UI"): the client vocabulary, the builder's rules, and a key row. */
@@ -106,5 +106,22 @@ describe("key grants on the client", () => {
     expect(grace).not.toContain("Rotate");
     const admin = renderToStaticMarkup(<KeyRow apiKey={apiKey({ state: "revoked", revokedBy: "admin", revokeReason: "Leaked" })} />);
     expect(admin).toContain("An admin revoked this key: “Leaked”");
+  });
+
+  test("after Revoke, Revoke now, Review, or Restore all, focus lands on a control, never the body (QA 0.12 item 2)", async () => {
+    // The next live key down, else the one above, else none (New key, else the list heading).
+    expect(keyAfterRevoke(["a", "b", "c"], "b")).toBe("c");
+    expect(keyAfterRevoke(["a", "b", "c"], "c")).toBe("b");
+    expect(keyAfterRevoke(["a"], "a")).toBeNull();
+    expect(keyAfterRevoke(["a", "b"], "gone")).toBe("a");
+    expect(renderToStaticMarkup(<KeyRow apiKey={apiKey()} />)).toContain('data-key-id="k1"');
+    const source = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+    expect(source).toContain("onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id));");
+    expect(source).toContain("onClose={() => closeDialogAfterReload(dialog.key.id)}");
+    expect(source).toMatch(/\?\? \(newKeyRef\.current && !newKeyRef\.current\.disabled \? newKeyRef\.current : null\)\s+\?\? headingRef\.current;/);
+    expect(source).toContain('<h4 ref={headingRef} tabIndex={-1}>Your keys</h4>');
+    const review = await Bun.file(new URL("../src/McpBinnedReview.tsx", import.meta.url)).text();
+    expect(review).toMatch(/refocusRef\.current = true;\s+setBusy\(false\);/);
+    expect(review).toMatch(/if \(busy \|\| !refocusRef\.current\) return;\s+refocusRef\.current = false;\s+closeRef\.current\?\.focus\(\);/);
   });
 });

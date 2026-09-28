@@ -46,6 +46,7 @@ import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./ma
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
+import { registerItemAccessRoutes } from "./access/itemAccess";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
 import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
@@ -528,7 +529,9 @@ app.get("/api/users", (c) => {
   const currentUser = c.get("user");
   // The share picker: read-only roles cannot share, so they get no directory either (§2.2).
   if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
-  const users = db.query("SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL ORDER BY display_name LIMIT 100")
+  // With the share_with_guests policy off, guests are left out of the picker (Wave 32, D.2, T213).
+  const guests = readPolicies().shareWithGuests ? "" : " AND role <> 'guest'";
+  const users = db.query(`SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL${guests} ORDER BY display_name LIMIT 100`)
     .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"] }>;
   // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
   return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role })) });
@@ -859,6 +862,8 @@ registerMailRoutes(app);
 registerMailLogRoutes(app);
 registerTeamRoutes(app);
 registerInboxRoutes(app);
+// The Access sheet's GET/PUT …/access for the seven shareable kinds (Wave 32, access plan §C.5).
+registerItemAccessRoutes(app);
 
 app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);

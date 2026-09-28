@@ -42,9 +42,9 @@ const KIND_VERB: Record<ProposalKind, string> = {
 /** "Approve: update card Pay insurance" (§9.5). */
 export const actionLabel = (verb: "Approve" | "Reject", proposal: Pick<ProposalSummary, "kind" | "title">) => `${verb}: ${KIND_VERB[proposal.kind]} ${proposal.title}`;
 
-/** "expires in 13 days", "expires today". */
+/** "expires in 14 days", "expires today": rounded to the nearest day, so a fresh 14-day proposal reads 14. */
 export function expiresText(expiresAt: string, nowMs = Date.now()) {
-  const days = Math.floor((Date.parse(expiresAt) - nowMs) / 86_400_000);
+  const days = Math.round((Date.parse(expiresAt) - nowMs) / 86_400_000);
   if (!Number.isFinite(days)) return "";
   if (days < 1) return "expires today";
   return `expires in ${days} day${days === 1 ? "" : "s"}`;
@@ -61,17 +61,29 @@ const SHORT_FAILURE: Record<string, string> = {
   DRAFT_CHANGED: "draft changed", NOT_FOUND: "no longer available", NOT_PENDING: "already resolved", READ_ONLY: "read-only", COLUMN_FULL: "column full"
 };
 
-/** "7 applied · 1 failed (card changed)" for a bulk result. */
-export function bulkSummary(results: readonly BulkResult[]) {
+const shortFailure = (code: string) => SHORT_FAILURE[code] ?? code.toLowerCase().replace(/_/g, " ");
+/** Failed items named in a bulk summary before "and N more". */
+const NAMED_FAILURES = 3;
+
+/**
+ * "7 applied · 1 failed (card changed)" for a bulk result; with `titleOf`, failed items are named:
+ * "7 applied · 1 failed: Alpha card (card changed)".
+ */
+export function bulkSummary(results: readonly BulkResult[], titleOf?: (id: string) => string | undefined) {
   const applied = results.filter((result) => result.status === "applied").length;
   const rejected = results.filter((result) => result.status === "rejected").length;
   const failed = results.filter((result) => result.status !== "applied" && result.status !== "rejected");
   const parts: string[] = [];
   if (applied) parts.push(`${applied} applied`);
   if (rejected) parts.push(`${rejected} rejected`);
-  if (failed.length) {
+  const named = titleOf ? failed.map((result) => ({ title: titleOf(result.id), code: result.code })).filter((item): item is { title: string; code: string | undefined } => Boolean(item.title)) : [];
+  if (failed.length && named.length === failed.length) {
+    const shown = named.slice(0, NAMED_FAILURES).map((item) => `${item.title}${item.code ? ` (${shortFailure(item.code)})` : ""}`);
+    const more = failed.length - shown.length;
+    parts.push(`${failed.length} failed: ${shown.join(", ")}${more > 0 ? ` and ${more} more` : ""}`);
+  } else if (failed.length) {
     const codes = [...new Set(failed.map((result) => result.code).filter((code): code is string => Boolean(code)))];
-    parts.push(`${failed.length} failed${codes.length ? ` (${codes.map((code) => SHORT_FAILURE[code] ?? code.toLowerCase().replace(/_/g, " ")).join(", ")})` : ""}`);
+    parts.push(`${failed.length} failed${codes.length ? ` (${codes.map(shortFailure).join(", ")})` : ""}`);
   }
   return parts.join(" · ") || "Nothing changed";
 }

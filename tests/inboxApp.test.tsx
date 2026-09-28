@@ -79,12 +79,16 @@ describe("Inbox copy", () => {
     expect(failureText("CARD_CHANGED")).toBe("The card changed since the agent read it (CARD_CHANGED). Nothing was applied.");
     expect(failureText(null)).toBe("The change could not be applied. Nothing was applied.");
     expect(statusLabel("applied", "PUBLISHED_IN_EDITOR")).toBe("Published in the editor");
-    expect(expiresText(new Date(Date.now() + 13.5 * 86_400_000).toISOString())).toBe("expires in 13 days");
+    expect(expiresText(new Date(Date.now() + 13.5 * 86_400_000).toISOString())).toBe("expires in 14 days");
+    // A fresh 14-day proposal reads 14 days, not 13 (rounded to the nearest day).
+    expect(expiresText(new Date(Date.now() + 14 * 86_400_000 - 60_000).toISOString())).toBe("expires in 14 days");
+    expect(expiresText(new Date(Date.now() + 1.2 * 86_400_000).toISOString())).toBe("expires in 1 day");
+    expect(expiresText(new Date(Date.now() + 0.4 * 86_400_000).toISOString())).toBe("expires today");
     expect(groupTitle({ routine: null, key: { name: "laptop" } })).toBe("Key “laptop”");
     expect(bulkSummary([{ id: "a", status: "applied" }, { id: "b", status: "applied" }, { id: "c", status: "failed", code: "CARD_CHANGED" }])).toBe("2 applied · 1 failed (card changed)");
     expect(bulkConfirmText([{ kind: "card_create" }, { kind: "card_update" }, { kind: "row_update" }])).toBe("Apply 3 changes: 2 cards, 1 row");
     const diff = lineDiff("a\nb", "a\nc\nd");
-    expect(diff.map((line) => `${line.kind}:${line.text}`)).toEqual(["same:a", "add:c", "add:d", "remove:b"]);
+    expect(diff.map((line) => `${line.kind}:${line.text}`)).toEqual(["same:a", "remove:b", "add:c", "add:d"]);
     expect(diffStats(diff).label).toBe("+2 −1 lines");
   });
 });

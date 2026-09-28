@@ -17,10 +17,11 @@ export function lineDiff(previous: string, current: string): DiffLine[] {
   while (i < before.length || j < after.length) {
     if (i < before.length && j < after.length && before[i] === after[j]) {
       output.push({ kind: "same", text: before[i]! }); i += 1; j += 1;
-    } else if (j < after.length && (i === before.length || rows[i]![j + 1]! >= rows[i + 1]![j]!)) {
-      output.push({ kind: "add", text: after[j]! }); j += 1;
-    } else {
+    } else if (i < before.length && (j === after.length || rows[i + 1]![j]! >= rows[i]![j + 1]!)) {
+      // Removals come before additions in a changed run, the way unified diffs read (− then +).
       output.push({ kind: "remove", text: before[i]! }); i += 1;
+    } else {
+      output.push({ kind: "add", text: after[j]! }); j += 1;
     }
   }
   return output;

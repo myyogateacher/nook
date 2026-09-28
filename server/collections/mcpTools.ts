@@ -3,6 +3,7 @@ import { config } from "../config";
 import { withAuditContext } from "../db";
 import { restoreItem } from "../bin";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { keyMayRead } from "../keyReach";
 import { collectionCreateSchema } from "./routes";
 import { COLLECTION_TEMPLATES } from "./templates";
 import { filterSpec, QUERY_LIMITS, type FilterSpec, type SortSpec } from "./query";
@@ -91,15 +92,22 @@ function translateValue(field: FieldDefinition, value: unknown) {
   return value;
 }
 
-/** MCP values (keyed by field name or id) → API values (keyed by id, option ids). */
-function translateValues(schema: CollectionSchema, values: Record<string, unknown>) {
+/**
+ * MCP values (keyed by field name or id) → API values (keyed by id, option ids). A note field may
+ * only point at a note the key may read (T203): otherwise NOT_FOUND, the same as a missing note, so
+ * a key without notes:read cannot link a note and read its title back.
+ */
+function translateValues(schema: CollectionSchema, values: Record<string, unknown>, key: McpKeyContext) {
   const translated: Record<string, unknown> = {};
   const fieldErrors: Record<string, string> = Object.create(null);
   for (const [reference, value] of Object.entries(values)) {
     const field = findField(schema, reference);
     if (!field) fieldErrors[reference.slice(0, 64)] = "Unknown field";
     else if (field.type === "file") fieldErrors[field.name] = "Files cannot be attached over MCP";
-    else translated[field.id] = translateValue(field, value);
+    else {
+      if (field.type === "note" && typeof value === "string" && !keyMayRead(key, { type: "note", id: value.toLowerCase() })) throw new McpToolError("NOT_FOUND", "Note not found");
+      translated[field.id] = translateValue(field, value);
+    }
   }
   if (Object.keys(fieldErrors).length) throw new McpToolError("INVALID", "Some values are not valid", { fieldErrors });
   return translated;
@@ -127,8 +135,12 @@ const translateSort = (schema: CollectionSchema, sort: SortInput[] | undefined):
 
 type McpValue = FieldValue | { noteId: string; title: string } | { restricted: true } | string[];
 
-/** A row as an agent sees it: values keyed by field name, labels for options, titles for notes, names for files. */
-export function presentRow(schema: CollectionSchema, row: RowSummary) {
+/**
+ * A row as an agent sees it: values keyed by field name, labels for options, titles for notes, names
+ * for files. A note is `{ restricted: true }` when the user cannot read it (T59) or, given `key`, the
+ * key may not (T203: no notes:read). Without `key` (a person's own proposal preview) only T59 applies.
+ */
+export function presentRow(schema: CollectionSchema, row: RowSummary, key?: McpKeyContext) {
   // Keyed by user-chosen names: no prototype, so a (legacy) field named __proto__ is an ordinary key.
   const values: Record<string, McpValue> = Object.create(null);
   for (const field of schema.fields) {
@@ -141,7 +153,7 @@ export function presentRow(schema: CollectionSchema, row: RowSummary) {
     if (value === undefined) continue;
     if (field.type === "note") {
       const link = row.links[field.id];
-      values[field.name] = link && "title" in link ? { noteId: link.id, title: link.title || "Untitled" } : { restricted: true };
+      values[field.name] = link && "title" in link && (!key || keyMayRead(key, { type: "note", id: link.id })) ? { noteId: link.id, title: link.title || "Untitled" } : { restricted: true };
     } else if (field.type === "select") {
       values[field.name] = field.options?.find((option) => option.id === value)?.label ?? String(value);
     } else if (field.type === "multi_select") {
@@ -223,7 +235,7 @@ export const collectionTools: McpToolSpec[] = [
           limit: limit ?? 20,
           ...(cursor ? { cursor } : {})
         });
-        return { rows: result.rows.map((row) => presentRow(schema!, row)), total: result.total, nextCursor: result.nextCursor };
+        return { rows: result.rows.map((row) => presentRow(schema!, row, key)), total: result.total, nextCursor: result.nextCursor };
       }, () => schema);
     }
   }),
@@ -238,7 +250,7 @@ export const collectionTools: McpToolSpec[] = [
     handler: async ({ rowId }, key) => service(key, () => {
       const { row, role } = getRow(key.userId, rowId.toLowerCase());
       const collection = requireReadableCollection(row.collection_id, key.userId);
-      return { row: presentRow(schemaOf(collection), row), revision: row.revision, role, collectionName: collection.name };
+      return { row: presentRow(schemaOf(collection), row, key), revision: row.revision, role, collectionName: collection.name };
     })
   }),
   defineTool({
@@ -255,7 +267,7 @@ export const collectionTools: McpToolSpec[] = [
       return service(key, async () => {
         const collection = requireReadableCollection(collectionId.toLowerCase(), key.userId);
         schema = schemaOf(collection);
-        const { row } = await createRow(key.userId, collection.id, { values: translateValues(schema, values) }, { keyId: key.keyId });
+        const { row } = await createRow(key.userId, collection.id, { values: translateValues(schema, values, key) }, { keyId: key.keyId });
         return { rowId: row.id, revision: row.revision, url: collectionUrl(row.collection_id, row.id) };
       }, () => schema);
     }
@@ -274,7 +286,7 @@ export const collectionTools: McpToolSpec[] = [
       return service(key, async () => {
         const { row: current } = getRow(key.userId, rowId.toLowerCase());
         schema = schemaOf(requireReadableCollection(current.collection_id, key.userId));
-        const { row } = await patchRow(key.userId, current.id, { values: translateValues(schema, values), revision: baseRevision }, { keyId: key.keyId });
+        const { row } = await patchRow(key.userId, current.id, { values: translateValues(schema, values, key), revision: baseRevision }, { keyId: key.keyId });
         return { rowId: row.id, revision: row.revision, url: collectionUrl(row.collection_id, row.id) };
       }, () => schema);
     }

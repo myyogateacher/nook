@@ -16,7 +16,14 @@ import type { Grant } from "./keyGrants";
  * grants, access plan D262). `grants` are the effective grants, when the caller loaded them (every
  * MCP call does); a context without them is treated as holding its scopes over "all".
  */
-export type McpKeyContext = { keyId: string; userId: string; name: string; scopes: McpScope[]; grants?: Grant[] };
+export type McpKeyContext = {
+  keyId: string; userId: string; name: string; scopes: McpScope[]; grants?: Grant[];
+  /**
+   * Set only when a signed-in person runs a tool's handler as themselves (approving an inbox
+   * proposal): what the key may see about foreign items (server/keyReach.ts) does not limit them.
+   */
+  person?: true;
+};
 
 /**
  * The one resource a tool touches, named by one argument (access plan D281, T203). A key whose

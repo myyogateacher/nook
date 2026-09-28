@@ -5,6 +5,7 @@ import { withAuditContext } from "../db";
 import { restoreItem } from "../bin";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { readableEvent } from "./access";
+import { keyMayRead } from "../keyReach";
 import { RecurrenceError, rangeFor, zonedToUtc } from "./recurrence";
 import { reminderSchema } from "./reminderRoutes";
 import { createReminder, ReminderError } from "./reminders";
@@ -111,8 +112,12 @@ function nextDay(value: string) {
   return new Date(Date.UTC(year!, month! - 1, day! + 1)).toISOString().slice(0, 10);
 }
 
-/** Plain event fields for an agent: descriptions are plain text, links are titles or `restricted`. */
-function eventOutput(result: ReturnType<typeof getEvent>) {
+/**
+ * Plain event fields for an agent: descriptions are plain text, links are titles or `restricted`.
+ * A link is restricted when the user cannot open its target (T59) or the key may not (T203: the
+ * key needs the target module's read grant, inside its chosen boards or collections if it has any).
+ */
+function eventOutput(result: ReturnType<typeof getEvent>, key: McpKeyContext) {
   const { event, calendar, role, links } = result;
   return {
     event: {
@@ -133,7 +138,7 @@ function eventOutput(result: ReturnType<typeof getEvent>) {
     },
     revision: event.revision,
     role,
-    links: links.map((link) => link.restricted ? { targetType: link.targetType, restricted: true } : { targetType: link.targetType, targetId: link.targetId, title: link.title }),
+    links: links.map((link) => link.restricted || !keyMayRead(key, { type: link.targetType, id: link.targetId }) ? { targetType: link.targetType, restricted: true } : { targetType: link.targetType, targetId: link.targetId, title: link.title }),
     url: eventUrl(event.id)
   };
 }
@@ -185,7 +190,7 @@ export const calendarTools: McpToolSpec[] = [
     resource: { arg: "eventId", kind: "event" },
     write: false,
     inputSchema: z.object({ eventId: uuid }),
-    handler: async ({ eventId }, key) => service(key, () => eventOutput(getEvent(key.userId, eventId.toLowerCase())))
+    handler: async ({ eventId }, key) => service(key, () => eventOutput(getEvent(key.userId, eventId.toLowerCase()), key))
   }),
   defineTool({
     name: "create_event",

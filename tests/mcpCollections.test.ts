@@ -179,9 +179,13 @@ describe("MCP collection tools", () => {
     const documentId = ((await (await request("/files?purpose=collection_attachment", { method: "POST", body: upload }, s.owner)).json()) as { document: { id: string } }).document.id;
     expect((await call(s.owner, "POST", `/rows/${withReadable.id}/attachments`, { documentId, fieldId: s.f("Photo").id })).status).toBe(201);
 
-    const viewer = makeKey(s.viewer, ["collections:read"]);
+    // A note title needs notes:read too (T203); without it the link is restricted like an unreadable one.
+    const viewer = makeKey(s.viewer, ["collections:read", "notes:read"]);
     const readableRow = (await callTool(viewer, "get_row", { rowId: withReadable.id })).value.row;
     expect(readableRow.values["Recipe note"]).toEqual({ noteId: readable, title: "Grandma's soup" });
+    const collectionsOnly = (await callTool(makeKey(s.viewer, ["collections:read"]), "get_row", { rowId: withReadable.id })).value.row;
+    expect(collectionsOnly.values["Recipe note"]).toEqual({ restricted: true });
+    expect(JSON.stringify(collectionsOnly)).not.toContain("Grandma's soup");
     expect(readableRow.values.Photo).toEqual(["soup-photo.txt"]);
     expect(JSON.stringify(readableRow)).not.toContain(documentId);
     const hiddenRow = (await callTool(viewer, "get_row", { rowId: withHidden.id })).value.row;
@@ -218,7 +222,11 @@ describe("MCP collection tools", () => {
     expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Unknown: 1 } })).value.fieldErrors).toEqual({ Unknown: "Unknown field" });
     expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Name: "x", Photo: ["a"] } })).value.code).toBe("INVALID");
     expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Servings: 1 } })).value.fieldErrors).toEqual({ Name: "This field is required" });
-    expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Name: "x", "Recipe note": insertNote(s.owner.userId, "Not readable by editor") } })).value.fieldErrors).toEqual({ "Recipe note": "You can't link this note" });
+    // A key without notes:read cannot link a note at all (T203); with it, the editor's own access decides.
+    const unreadable = insertNote(s.owner.userId, "Not readable by editor");
+    expect((await direct(editor, "create_row", { collectionId: s.editable.id, values: { Name: "x", "Recipe note": unreadable } })).value.code).toBe("NOT_FOUND");
+    const editorWithNotes = makeKey(s.editor, ["collections:write", "notes:read"], "Kitchen bot with notes");
+    expect((await direct(editorWithNotes, "create_row", { collectionId: s.editable.id, values: { Name: "x", "Recipe note": unreadable } })).value.fieldErrors).toEqual({ "Recipe note": "You can't link this note" });
   });
 
   test("a legacy field named __proto__ is written by id and comes back as an ordinary key", async () => {

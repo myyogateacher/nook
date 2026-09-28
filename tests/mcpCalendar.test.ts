@@ -277,8 +277,10 @@ describe("MCP calendar tools", () => {
     await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: "# Private note title", revision: 1 });
     await api(owner, "POST", `/notes/${noteId}/publish`);
     expect((await api(owner, "POST", `/events/${eventId}/links`, { targetType: "note", targetId: noteId })).status).toBe(201);
-    const ownerView = await callTool(makeKey(owner, ["calendar:read"]), "get_event", { eventId });
+    // A link title needs the target module's read scope too (T203).
+    const ownerView = await callTool(makeKey(owner, ["calendar:read", "notes:read"]), "get_event", { eventId });
     expect(ownerView.value.links).toEqual([{ targetType: "note", targetId: noteId, title: "Private note title" }]);
+    expect((await callTool(makeKey(owner, ["calendar:read"]), "get_event", { eventId })).value.links).toEqual([{ targetType: "note", restricted: true }]);
     const memberView = await callTool(makeKey(member, ["calendar:read"]), "get_event", { eventId });
     expect(memberView.value.links).toEqual([{ targetType: "note", restricted: true }]);
     expect(JSON.stringify(memberView.value)).not.toContain("Private note title");

@@ -2,6 +2,7 @@ import * as z from "zod/v4";
 import type { ZodType } from "zod";
 import { withAuditContext } from "../db";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { keyMayRead } from "../keyReach";
 import { searchText } from "../search";
 import { attachToCard, listAttachments } from "./attachments";
 import { restoreTaskItem } from "./bin";
@@ -49,7 +50,7 @@ const DESCRIPTION_PREVIEW_CHARS = 280;
  * which returns plain text. Other 400s (ASSIGNEE_NOT_MEMBER among them) are
  * INVALID, with the service code as `reason`.
  */
-export function taskErrorToMcp(error: TaskError) {
+export function taskErrorToMcp(error: TaskError, key?: McpKeyContext) {
   const known: Partial<Record<string, McpErrorCode>> = {
     STALE_POSITION: "STALE_POSITION",
     LIMIT_REACHED: "LIMIT_REACHED",
@@ -73,7 +74,7 @@ export function taskErrorToMcp(error: TaskError) {
   }
   if (code === "RELATION_EXISTS") {
     const existing = error.extra.relation as CardRelation | undefined;
-    return new McpToolError(code, error.message, existing ? { relation: mcpRelation(existing) } : undefined);
+    return new McpToolError(code, error.message, existing ? { relation: mcpRelation(existing, key) } : undefined);
   }
   if (code === "INVALID" && error.code) return new McpToolError(code, error.message, { reason: error.code, ...error.extra });
   return new McpToolError(code, error.message, error.extra);
@@ -83,7 +84,7 @@ async function service<T>(key: McpKeyContext, operation: () => T | Promise<T>): 
   try {
     return await withAuditContext({ via: "mcp", keyId: key.keyId }, operation);
   } catch (error) {
-    if (error instanceof TaskError) throw taskErrorToMcp(error);
+    if (error instanceof TaskError) throw taskErrorToMcp(error, key);
     throw error;
   }
 }
@@ -105,10 +106,12 @@ function preview(markdown: string) {
 
 /**
  * A relation as agents see it, from the card they asked about (WAVE_13 §5.5): the other card's id,
- * title, and board name, or only `{ type, restricted: true }` when the user cannot read it (T90).
+ * title, and board name, or only `{ type, restricted: true }` when the user cannot read it (T90)
+ * or the key may not (T203: a key limited to chosen boards, or without tasks:read, sees no card
+ * outside them). Without a key (tests, error details before one is known) only T90 applies.
  */
-export function mcpRelation(relation: CardRelation) {
-  if (relation.restricted) return { type: relation.type, restricted: true as const };
+export function mcpRelation(relation: CardRelation, key?: McpKeyContext) {
+  if (relation.restricted || (key && !keyMayRead(key, { type: "card", id: relation.card.id }))) return { type: relation.type, restricted: true as const };
   return { type: relation.type, cardId: relation.card.id, title: relation.card.title, boardName: relation.card.board_name, columnName: relation.card.column_name, isDone: relation.card.is_done === 1 };
 }
 
@@ -306,7 +309,7 @@ export const taskTools: McpToolSpec[] = [
           reactions: comment.reactions.map((reaction) => ({ emoji: reaction.emoji, glyph: reactionGlyph(reaction.emoji), count: reaction.count, reacted: reaction.reacted })) })),
         hasMoreComments: page.hasMore,
         attachments: attachmentNames(cardId),
-        relations: listRelations(key.userId, cardId).map(mcpRelation)
+        relations: listRelations(key.userId, cardId).map((relation) => mcpRelation(relation, key))
       };
     })
   }),
@@ -464,7 +467,7 @@ export const taskTools: McpToolSpec[] = [
       const input = routeInput(relationCreateSchema, { type, cardId: targetCardId });
       return service(key, async () => {
         const { relation } = await createRelation(key.userId, cardId, input);
-        return { relation: mcpRelation(relation) };
+        return { relation: mcpRelation(relation, key) };
       });
     }
   }),

@@ -112,7 +112,7 @@ function approverKey(approverId: string, proposal: StoredProposal): McpKeyContex
   if (!proposal.key_id) throw new McpToolError("NOT_FOUND", "The key that suggested this change no longer exists");
   // Rows of revoked keys persist; a revoked key never acts, even through its owner's approve (M1).
   if (db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND revoked_at IS NOT NULL").get(proposal.key_id)) throw new McpToolError("NOT_FOUND", "The key that suggested this change was revoked");
-  return { keyId: proposal.key_id, userId: approverId, name: proposal.key_name, scopes: [] };
+  return { keyId: proposal.key_id, userId: approverId, name: proposal.key_name, scopes: [], person: true };
 }
 
 const lower = (value: unknown) => typeof value === "string" ? value.toLowerCase() : "";

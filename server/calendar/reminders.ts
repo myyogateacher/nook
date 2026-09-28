@@ -345,15 +345,17 @@ export function notificationHref(eventId: string | null) {
 
 type NotificationRow = {
   id: string; event_id: string | null; reminder_title: string | null; late: number; read_at: string | null; created_at: string; occurrence_start: string | null;
-  kind: "reminder" | "proposals"; proposal_count: number | null; key_name: string | null;
+  kind: "reminder" | "proposals"; proposal_count: number | null; key_name: string | null; routine_name: string | null;
 };
 
 /**
  * A proposals notification (agent inbox D159, T135): "Key “laptop” suggested 2 changes". Only the
  * user's own key name and a count, never agent text; it opens the Inbox.
  */
-export function proposalNotificationTitle(keyName: string | null, count: number) {
+export function proposalNotificationTitle(keyName: string | null, count: number, routineName: string | null = null) {
   const changes = `${count} change${count === 1 ? "" : "s"}`;
+  // A routine run (Wave 22): the user's own routine name, never the run summary.
+  if (routineName) return `${routineName} suggested ${changes}`;
   return keyName ? `Key “${keyName}” suggested ${changes}` : `An agent suggested ${changes}`;
 }
 
@@ -364,13 +366,14 @@ export function proposalNotificationTitle(keyName: string | null, count: number)
  */
 export function listNotifications(userId: string, options: { unread: boolean; limit: number }) {
   const rows = db.query(`SELECT n.id, n.event_id, r.title AS reminder_title, n.late, n.read_at, n.created_at, n.occurrence_start,
-             n.kind, n.proposal_count, k.name AS key_name
+             n.kind, n.proposal_count, k.name AS key_name, ro.name AS routine_name
       FROM notifications n LEFT JOIN reminders r ON r.id = n.reminder_id LEFT JOIN mcp_api_keys k ON k.id = n.proposal_key_id
+      LEFT JOIN routine_runs rr ON rr.id = n.run_id LEFT JOIN routines ro ON ro.id = rr.routine_id
       WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NotificationRow[];
   const items = rows.map((row): NotificationItem => {
     if (row.kind === "proposals") {
-      return { id: row.id, title: proposalNotificationTitle(row.key_name, row.proposal_count ?? 1), href: "/inbox", late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null };
+      return { id: row.id, title: proposalNotificationTitle(row.key_name, row.proposal_count ?? 1, row.routine_name), href: "/inbox", late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null };
     }
     const event = row.event_id ? readableEvent(row.event_id, userId) : null;
     const title = event ? event.event.title : row.event_id ? "An event you can no longer open" : row.reminder_title ?? "Reminder";

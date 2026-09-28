@@ -53,14 +53,14 @@ const cardProposal = (target: { boardId: string; columnId: string }, title = "Bu
 describe("inbox MCP tools", () => {
   test("no tool approves, applies, or publishes (T125)", () => {
     const inbox = mcpToolSpecs.filter((spec) => spec.scopes.some((scope) => scope.startsWith("inbox:")));
-    expect(inbox.map((spec) => spec.name).sort()).toEqual(["list_my_proposals", "submit_proposals", "withdraw_proposal"]);
+    expect(inbox.map((spec) => spec.name).sort()).toEqual(["finish_run", "list_due_routines", "list_my_proposals", "list_routines", "start_run", "submit_proposals", "withdraw_proposal"]);
     for (const spec of mcpToolSpecs) expect({ name: spec.name, approveLike: /approve|apply|publish/i.test(spec.name) }).toEqual({ name: spec.name, approveLike: false });
   });
 
   test("inbox tools follow the scopes: inbox:write implies inbox:read", async () => {
     const user = await createUser("Inbox scopes");
-    expect(await toolNames(makeKey(user, ["inbox:read"]))).toEqual(["list_my_proposals"]);
-    expect(await toolNames(makeKey(user, ["inbox:write"]))).toEqual(["list_my_proposals", "submit_proposals", "withdraw_proposal"]);
+    expect(await toolNames(makeKey(user, ["inbox:read"]))).toEqual(["list_due_routines", "list_my_proposals", "list_routines"]);
+    expect(await toolNames(makeKey(user, ["inbox:write"]))).toEqual(["finish_run", "list_due_routines", "list_my_proposals", "list_routines", "start_run", "submit_proposals", "withdraw_proposal"]);
   });
 
   test("a kind needs its module read scope, never the write scope; results are per item", async () => {

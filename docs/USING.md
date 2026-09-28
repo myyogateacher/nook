@@ -217,6 +217,23 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 
 **A hidden module is not a security boundary.** Turning a module off only hides it in this app for you. Nothing is deleted, sharing is unchanged, people you share with still see what you share, MCP keys keep every permission they were given, and calendar feed links keep working. To stop an MCP client or a feed, revoke its key or link instead.
 
+## Email
+
+When your admin has set up email (OPERATIONS → Email), Nook can email you about things that involve you. Open **Settings → Notifications** and scroll to **Email**; the direct link is `/settings/notifications`. Settings has a URL for each section now (`/settings/security`, `/settings/mcp`, …): Back closes Settings, and Forward opens it again at the same section.
+
+- **Verify your address first.** An account made with an invite sent to your address is already verified. Otherwise Nook emails you a verification link when you sign up; open it (it works once, for 24 hours) or press **Send verification email**. Until you verify, Nook sends you only security emails.
+- **What Nook emails.** *Assigned to you* (someone else adds you to a card), *Comments on your cards* (cards you created or are assigned to), *Shared with you* (a note, folder, file, board, calendar, collection, or task view shared with you by name; sharing with everyone sends nothing), and *Proposals awaiting you* (your MCP keys suggested changes: only the key's name and how many, never the agent's text). Each has its own switch, and **Email notifications** turns them all off at once. Nothing you do yourself emails you.
+- **Grouped, not noisy.** Emails of one kind wait up to 10 minutes and arrive together ("Priya assigned you 3 cards on Launch"); proposals wait up to an hour and come at most every 3 hours. If you lose access to an item before the email goes out, it is left out.
+- **Security emails are always on**: a new MCP key on your account, your team role changing, two-factor turned on or off, new recovery codes or a recovery code used, and your account being blocked, unblocked, or signed out everywhere. If one of these was not you, act on it straight away.
+- **Quiet hours** hold activity emails until they end, in the time zone shown under them (**Use this device's time zone** changes it). Security emails are never held.
+- **Send me a test email** checks that mail reaches you (3 an hour).
+- **Unsubscribe.** Every activity email has a link at the bottom that turns off that one kind of email; the page asks before it changes anything. Mail apps that offer an "Unsubscribe" button use the same switch. Security emails cannot be turned off.
+- **Coming later:** a daily or weekly summary, reminders by email, and muting one board or calendar. Their controls are shown but not yet available.
+
+Emails link straight to the card, note, board, Inbox, or Settings section they are about, on this Nook's address. Nook never asks for your password by email, and its emails contain no images, trackers, or remote content.
+
+Admins see what Nook emailed in **Team → Email log** (`/team/email`): which kind of email, to whom, when, and whether it was sent, held, skipped (and why), or failed, with a **Retry** for failed ones. It never shows addresses, subjects, or content.
+
 ## Team
 
 Changing a role, blocking, unblocking, or signing someone out everywhere asks you to confirm in a dialog; there is no password re-check for signed-in admins.

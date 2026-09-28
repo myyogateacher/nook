@@ -70,13 +70,22 @@ Docker publishes port `2026` on all host interfaces for LAN access. Prefer Tails
 
 ### Email (Resend)
 
-Nook can send email through [Resend](https://resend.com). Invites are the first use; the module (`server/mail.ts`) is generic so reminders and notifications can use it later. Email is **off** unless both variables are set; while it is off every "send" action says **Email is not configured** and the main action (creating the invite) still works.
+Nook sends email through [Resend](https://resend.com): team invites, email verification, a test email, activity (assigned to you, comments on your cards, shared with you, proposals awaiting you), and security notices (new MCP key, role change, two-factor changes, recovery codes, blocked or unblocked, signed out everywhere). Email is **off** unless `RESEND_API_KEY` and `MAIL_FROM` are both set **and** links in mail can work (see below); while it is off every "send" action says **Email is not configured**, nothing is queued, and the main action still works.
 
-1. Verify a sending domain in Resend and create an API key with sending access only.
-2. In `.env`, set `RESEND_API_KEY` and `MAIL_FROM` (an address on that domain, or `Nook <nook@your-domain>`). Compose passes both through. Restart the container.
-3. In the Resend dashboard, keep **click tracking off** for the domain. Tracked links would send the invite link through Resend's redirector. Nook's messages contain no images and no tracking of their own.
+1. Verify a sending domain in Resend and create an API key with sending access only. Resend's domain setup adds SPF and DKIM; add a DMARC record too.
+2. In `.env`, set `RESEND_API_KEY` and `MAIL_FROM` (an address on that domain, or `Nook <nook@your-domain>`; the display name may not contain `@`). Compose passes both through. Restart the container.
+3. `APP_ORIGIN` must be `https://…` (every link in mail is built from it, never from the request's Host header). A LAN or Tailscale `http://` origin works only with `MAIL_ALLOW_HTTP_LINKS=true` (a startup warning says links are not encrypted). `http://localhost` is never used for mail: the server logs "Email is off" and sends nothing.
+4. In the Resend dashboard, keep **click tracking and open tracking off** for the domain. Tracked links would send credential links (invite, verify) through Resend's redirector. Nook's messages contain no images, no remote content, and no tracking of their own.
+5. Anyone with Resend dashboard access can read sent messages, including invite and verification links. Keep that access to the operator.
+6. On Resend's free tier (100 a day, 3,000 a month) set `MAIL_DAILY_LIMIT=100`.
 
-Limits: 5 messages an hour per recipient, 20 an hour per admin, 200 a day per instance, and a 10 second timeout per send. Logs show a hashed recipient and Resend's message id, never the address, subject, body, or key. A provider outage never blocks the main action; the admin can still copy the link. An invite email goes only to the address the invite is bound to.
+How delivery works: every mail except an invite goes through a durable outbox (`mail_outbox`), written in the same database transaction as the action that caused it. A 30-second dispatcher sends due rows, re-checking at send time that the recipient still exists, is not blocked (blocked accounts get only their security mail), has a verified address (unverified addresses get only verification and security mail), has that email type turned on, and can still open the item (titles are read at send time, never stored in the outbox). Activity mail is grouped: assignments, comments, and shares for 10 minutes, proposals for up to an hour and at most one every 3 hours. Quiet hours hold activity mail; security mail is never held. The provider gets the outbox row id as its idempotency key, so a retry cannot send twice. Timeouts and 5xx answers retry after 1 min, 5 min, 30 min, 2 h, and 6 h, then the row is **dead**; a 4xx validation error is dead at once. Admins see all of this, with ids and statuses only, in **Team → Email log** (`/team/email`), where a dead email can be retried.
+
+Limits: per account address 20 an hour, per bare address (invites) 5 an hour, 20 an hour per sender, and `MAIL_DAILY_LIMIT` a day per instance (in memory, provider-facing); durably from the outbox, 12 activity emails an hour and 60 a day per person and 10 security emails an hour per person (held, not dropped, when full), and 10% of the instance's day kept for security and account mail. A 10 second timeout per send. Logs show the template, a hashed recipient, and Resend's message id, never the address, subject, body, token, or key. Outbox history is deleted after 30 days (sent, skipped) or 90 days (failed, dead); payloads are cleared as soon as a row is sent or skipped.
+
+Unsubscribe: activity mail carries `List-Unsubscribe` and `List-Unsubscribe-Post` (RFC 8058) headers and a footer link. Each link is HMAC-signed with `mail-signing.key` in the data directory (created on first use, 0600; it is in the backup with the rest of the data directory) and can only turn one email type off. Security mail cannot be turned off.
+
+Development: `MAIL_TRANSPORT=file` with an absolute `MAIL_FILE_PATH` writes every message to that JSON file instead of sending it, and `/dev/mail/preview` renders every template with sample data. Both exist only outside production (`NODE_ENV=production` refuses the file transport at startup and answers 404 for `/dev/*`).
 
 ## Configuration
 
@@ -104,7 +113,12 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `PUSH_SUBJECT` | `APP_ORIGIN` | The VAPID contact push services may use: an `http(s)` URL or a `mailto:` address. |
 | `PUSH_ENDPOINT_HOSTS` | empty | Extra push-service hosts, comma-separated (`push.example.com` or `*.push.example.com`), besides the built-in `*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, and `*.notify.windows.com`. |
 | `RESEND_API_KEY` | empty | Resend API key for outbound email (a single token without spaces). Email is on only when this and `MAIL_FROM` are both set. Never logged. |
-| `MAIL_FROM` | empty | Sender, `nook@example.com` or `Nook <nook@example.com>`, on a domain verified in Resend. Anything else stops the server at startup. |
+| `MAIL_FROM` | empty | Sender, `nook@example.com` or `Nook <nook@example.com>`, on a domain verified in Resend. The display name may not contain `@`, `<`, `>`, or quotes. Anything else stops the server at startup. |
+| `MAIL_INSTANCE_NAME` | the `APP_ORIGIN` host | Shown in every mail's header band and footer, so people with two Nooks can tell them apart. One line of at most 40 characters. |
+| `MAIL_DAILY_LIMIT` | `500` | Messages a day for the whole instance, 1–10000. Set it to your Resend plan (100 on the free tier). 10% is kept for security and account mail. |
+| `MAIL_ALLOW_HTTP_LINKS` | `false` | `true` lets mail go out when `APP_ORIGIN` is a non-localhost `http://` address (LAN or Tailscale without HTTPS). Links in mail are then unencrypted. |
+| `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
+| `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `APP_VERSION` | `0.9.3` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 

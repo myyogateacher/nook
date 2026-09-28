@@ -4,7 +4,8 @@
  * Pure, so the checkbox rules are unit-tested.
  */
 export type McpScope = "notes:read" | "notes:write-draft" | "files:read" | "tasks:read" | "tasks:write" | "today:read"
-  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "team:read";
+  | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "team:read"
+  | "inbox:read" | "inbox:write";
 
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope };
 
@@ -19,7 +20,9 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" },
   { scope: "collections:read", label: "Read collections", help: "Collections you can open, their fields, and their rows; attachments as names only" },
   { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit: never deletes, and never changes fields or sharing", implies: "collections:read" },
-  { scope: "team:read", label: "Read team", help: "Names, roles, and status of accounts; never emails. Admins only, and it stops working if you stop being an admin" }
+  { scope: "team:read", label: "Read team", help: "Names, roles, and status of accounts; never emails. Admins only, and it stops working if you stop being an admin" },
+  { scope: "inbox:read", label: "Read inbox", help: "See your routines and this key's own proposals" },
+  { scope: "inbox:write", label: "Suggest changes", help: "Suggest changes for you to approve in the Inbox. Never applies anything; each suggestion also needs that module's read permission", implies: "inbox:read" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */
@@ -28,6 +31,9 @@ export const OFFERED_MCP_PERMISSIONS = MCP_PERMISSIONS;
 /** Scopes only admins may hold (mirrors server/team/roles.ts ADMIN_ONLY_SCOPES). */
 export const ADMIN_ONLY_MCP_SCOPES: readonly McpScope[] = ["team:read"];
 
+/** Scopes only members and admins may hold (mirrors server/team/roles.ts MEMBER_ONLY_SCOPES). */
+export const MEMBER_ONLY_MCP_SCOPES: readonly McpScope[] = ["inbox:read", "inbox:write"];
+
 /**
  * The permissions Settings offers to someone with `role` (mirrors server mcpScopesForRole): admins
  * everything, members all but team:read, viewers read permissions only, guests none (no key UI).
@@ -35,7 +41,7 @@ export const ADMIN_ONLY_MCP_SCOPES: readonly McpScope[] = ["team:read"];
 export function offeredMcpPermissions(role: string | undefined) {
   if (role === "guest") return [];
   const forRole = role === "admin" ? OFFERED_MCP_PERMISSIONS : OFFERED_MCP_PERMISSIONS.filter((permission) => !ADMIN_ONLY_MCP_SCOPES.includes(permission.scope));
-  return role === "viewer" ? forRole.filter((permission) => !isWriteScope(permission.scope)) : forRole;
+  return role === "viewer" ? forRole.filter((permission) => !isWriteScope(permission.scope) && !MEMBER_ONLY_MCP_SCOPES.includes(permission.scope)) : forRole;
 }
 
 /** Write scopes are the ones that imply a read scope. */

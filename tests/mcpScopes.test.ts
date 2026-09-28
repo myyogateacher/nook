@@ -34,7 +34,13 @@ test("mcpScopesForRole: admins all, members all but team:read, viewers read scop
   const { effectiveMcpScopes, mcpScopesForRole } = await import("../server/team/roles");
   expect(mcpScopesForRole("admin")).toEqual([...MCP_SCOPES]);
   expect(mcpScopesForRole("member")).toEqual(MCP_SCOPES.filter((scope) => scope !== "team:read"));
+  // Viewers get no inbox scopes (D152), not even inbox:read.
   expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read"]);
+  expect(normalizeScopes(["inbox:write"])).toEqual(["inbox:read", "inbox:write"]);
+  expect(hasScope(["inbox:write"], "inbox:read")).toBe(true);
+  expect(hasScope(["inbox:read"], "inbox:write")).toBe(false);
+  expect(effectiveMcpScopes(["inbox:read", "inbox:write", "tasks:read"], "viewer")).toEqual(["tasks:read"]);
+  expect(effectiveMcpScopes(["inbox:read", "inbox:write"], "member")).toEqual(["inbox:read", "inbox:write"]);
   expect(mcpScopesForRole("guest")).toEqual([]);
   expect(effectiveMcpScopes(["tasks:read", "tasks:write", "team:read"], "viewer")).toEqual(["tasks:read"]);
   expect(effectiveMcpScopes(["notes:read"], "guest")).toEqual([]);

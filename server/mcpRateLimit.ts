@@ -9,7 +9,7 @@
  * bucket it touches has room, and then all of them are charged, so a refused
  * call costs nothing.
  */
-export type McpLimitBucket = "call" | "write" | "create_note" | "task_write" | "event_write" | "reminder_write" | "row_write";
+export type McpLimitBucket = "call" | "write" | "create_note" | "task_write" | "event_write" | "reminder_write" | "row_write" | "proposal_write";
 type Limit = { limit: number; windowMs: number };
 
 const MINUTE = 60_000;
@@ -25,7 +25,9 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   event_write: { limit: 200, windowMs: DAY },
   reminder_write: { limit: 100, windowMs: DAY },
   // create_row and update_row (collections:write, WAVES_10-12.md §3.5).
-  row_write: { limit: 500, windowMs: DAY }
+  row_write: { limit: 500, windowMs: DAY },
+  // Every item submit_proposals checks (agent inbox D155, section 7.3).
+  proposal_write: { limit: 200, windowMs: DAY }
 };
 
 /** Per user, across every key. Buckets without an entry are limited per key only. */
@@ -36,7 +38,8 @@ export const MCP_USER_LIMITS: Partial<Record<McpLimitBucket, Limit>> = {
   task_write: { limit: 1000, windowMs: DAY },
   event_write: { limit: 400, windowMs: DAY },
   reminder_write: { limit: 200, windowMs: DAY },
-  row_write: { limit: 1000, windowMs: DAY }
+  row_write: { limit: 1000, windowMs: DAY },
+  proposal_write: { limit: 400, windowMs: DAY }
 };
 
 type Window = { count: number; resetAt: number };

@@ -112,9 +112,21 @@ export function withAuditContext<T>(extra: Record<string, unknown>, operation: (
   return auditContext.run(extra, operation);
 }
 
+/**
+ * The provenance of an approved proposal (agent inbox D146): `{via: "proposal", proposalId, keyId}`.
+ * Kept apart from the audit context above and merged last, so a module's MCP wrapper (which sets
+ * `{via: "mcp"}`) cannot hide that a person approved the change.
+ */
+const proposalAuditContext = new AsyncLocalStorage<Record<string, unknown>>();
+
+export function withProposalAuditContext<T>(extra: Record<string, unknown>, operation: () => T): T {
+  return proposalAuditContext.run(extra, operation);
+}
+
 export function audit(actorId: string | null, noteId: string | null, eventType: string, metadata?: unknown) {
   const extra = auditContext.getStore();
-  const merged = extra ? { ...(metadata as Record<string, unknown> | undefined), ...extra } : metadata;
+  const proposal = proposalAuditContext.getStore();
+  const merged = extra || proposal ? { ...(metadata as Record<string, unknown> | undefined), ...extra, ...proposal } : metadata;
   db.query(
     "INSERT INTO audit_log (id, actor_id, note_id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(crypto.randomUUID(), actorId, noteId, eventType, merged ? JSON.stringify(merged) : null, now());

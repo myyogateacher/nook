@@ -89,9 +89,10 @@ export function defangUrls(value: string) {
 export function cleanLine(value: string | null | undefined, max = 120, fallback = "", defang = true) {
   const line = (value ?? "").replace(DEFANG_MARKS, "").replace(UNSAFE_CHARS, " ").replace(/\s+/g, " ").trim();
   if (!line) return fallback;
-  const chars = [...line];
-  const cut = chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}\u2026` : line;
-  return defang ? defangUrls(cut) : cut;
+  // Defang before the cut so the marks count toward `max` and a capped subject stays capped.
+  const safe = defang ? defangUrls(line) : line;
+  const chars = [...safe];
+  return chars.length > max ? `${chars.slice(0, max - 1).join("").trimEnd()}\u2026` : safe;
 }
 
 /** Plain text from Markdown for a comment excerpt: syntax removed, one line, at most `max` characters. */

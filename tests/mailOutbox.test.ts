@@ -147,15 +147,18 @@ describe("dispatch", () => {
     expect(logs.join("\n")).not.toContain(token);
   });
 
-  test("a suppressed address is not mailed; a card the recipient cannot read is skipped as access_lost", async () => {
+  test("a suppressed address gets security mail only; a card the recipient cannot read is skipped as access_lost", async () => {
     mail.setMailTransportForTests(transport().fn);
     const suppressed = await verifiedUser("Dispatch suppressed");
     db.query("INSERT INTO mail_suppressions (address_hash, reason, created_at) VALUES (?, 'bounce', ?)").run(mail.addressHash(suppressed.email), new Date().toISOString());
-    const id = twoFactor(suppressed.userId)!;
+    const id = enqueueMail({ userId: suppressed.userId, template: "account.test", payload: {} })!;
+    const security = twoFactor(suppressed.userId)!;
     const reader = await verifiedUser("Dispatch access");
     const lost = enqueueMail({ userId: reader.userId, template: "tasks.assigned", payload: { cardIds: [crypto.randomUUID()], actorIds: [] } })!;
     await runMailDispatch();
     expect(row(id).status).toBe("suppressed");
+    // Wave 29 (§B.4): security mail still reaches a bounced address; it protects the account.
+    expect(row(security).status).toBe("sent");
     expect(row(lost)).toMatchObject({ status: "skipped", skip_reason: "access_lost", payload: "{}" });
   });
 

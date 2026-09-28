@@ -83,6 +83,9 @@ describe("mail wrapper", () => {
     expect(load({ MAIL_DAILY_LIMIT: "100" }).ok).toBe(true);
     expect(load({ MAIL_INSTANCE_NAME: "x".repeat(41) }).ok).toBe(false);
     expect(load({ MAIL_ALLOW_HTTP_LINKS: "yes" }).ok).toBe(false);
+    // Webhook signing secrets use Resend's whsec_ form (placeholder values only).
+    expect(load({ RESEND_WEBHOOK_SECRET: "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw" }).ok).toBe(true);
+    expect(load({ RESEND_WEBHOOK_SECRET: "not-a-secret" }).ok).toBe(false);
     expect(load({ ...mailOn, MAIL_FROM: "a@b.c <nook@example.com>" }).ok).toBe(false);
   }, 60_000);
 

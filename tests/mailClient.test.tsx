@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { formatRoute, parseRoute, parseSettingsPath, settingsPath } from "../src/router";
 import { takeMailLinkFromLocation, unsubscribeCategory } from "../src/auth/mailPages";
 import { HALF_HOURS, prefsInput, type EmailPrefs } from "../src/notifications/emailApi";
+import { suppressionCopy } from "../src/notifications/EmailSettings";
 
 /** Client pieces of Wave 28: routes, mail link pages, and the email settings request body. */
 
@@ -53,5 +54,16 @@ describe("email settings body", () => {
     expect(prefsInput({ ...prefs, quietStart: null, quietEnd: null }).quietHours).toBeNull();
     expect(HALF_HOURS).toHaveLength(48);
     expect(HALF_HOURS.slice(0, 3)).toEqual(["00:00", "00:30", "01:00"]);
+  });
+});
+
+describe("the bounced notice (Wave 29)", () => {
+  test("says why mail stopped, and that security email still goes", () => {
+    const address = "person@example.test";
+    expect(suppressionCopy({ address, suppression: { reason: "bounce", since: "2026-09-28T00:00:00.000Z", until: null } })).toContain("bounced");
+    expect(suppressionCopy({ address, suppression: { reason: "complaint", since: "2026-09-28T00:00:00.000Z", until: null } })).toContain("reported as spam");
+    const soft = suppressionCopy({ address, suppression: { reason: "soft", since: "2026-09-28T00:00:00.000Z", until: "2026-10-01T00:00:00.000Z" } });
+    expect(soft).toContain("paused it until");
+    for (const reason of ["bounce", "complaint", "soft"] as const) expect(suppressionCopy({ address, suppression: { reason, since: "x", until: null } })).toContain("Security emails still go");
   });
 });

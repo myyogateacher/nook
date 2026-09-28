@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { db } from "../db";
-import { addressHash, mailEnabled, sendMail } from "../mail";
+import { mailEnabled, sendMail } from "../mail";
+import { suppressionOf, sweepSoftBounces } from "./suppression";
 import { appLink, paths } from "./links";
 import { prefsAllow, quietHoursEnd, readEmailPrefs } from "./prefs";
 import { isTemplateName, renderTemplate, TEMPLATES, type TemplateName } from "./registry";
@@ -103,8 +104,10 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
   const security = row.class === "security";
   // T230: a blocked account gets its security mail (blocked, unblocked, signed out) and nothing else.
   if (user.disabled_at !== null && !security) return skip(row, "blocked", nowMs);
-  if (db.query("SELECT 1 FROM mail_suppressions WHERE address_hash = ?").get(addressHash(user.email))) {
-    finish(row.id, "suppressed", { skipReason: "suppressed", nowMs });
+  // A bounced or complaining address gets security mail only (§B.4); a soft bounce holds it back for a while.
+  const suppression = security ? null : suppressionOf(user.email, nowMs);
+  if (suppression) {
+    finish(row.id, "suppressed", { skipReason: suppression.reason === "soft" ? "soft_bounce" : "suppressed", nowMs });
     return "suppressed";
   }
   // D244/D245: unverified addresses get only the verification mail and security mail.
@@ -229,7 +232,9 @@ export function sweepMail(nowMs = Date.now()) {
     .run(iso(nowMs - 30 * DAY), iso(nowMs - 90 * DAY)).changes;
   const tokens = db.query("DELETE FROM auth_tokens WHERE (used_at IS NOT NULL AND used_at < ?) OR expires_at < ?").run(iso(nowMs - 7 * DAY), iso(nowMs - 7 * DAY)).changes;
   const events = db.query("DELETE FROM mail_webhook_events WHERE received_at < ?").run(iso(nowMs - 7 * DAY)).changes;
-  return { outbox, tokens, events };
+  const softBounces = sweepSoftBounces(nowMs);
+  const shareLog = db.query("DELETE FROM mail_share_log WHERE created_at < ?").run(iso(nowMs - 30 * DAY)).changes;
+  return { outbox, tokens, events, softBounces, shareLog };
 }
 
 /** Runs a tick soon after an enqueue the user is waiting for (verify, test). The test suite ticks itself. */

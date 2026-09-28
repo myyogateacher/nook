@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Mail, MailWarning, RotateCcw, Send, ShieldCheck } from "lucide-react";
 import { ApiError } from "../api";
 import { Select } from "../ui/Select";
-import { deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
+import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
 
 /**
  * Settings → Notifications → Email (Wave 28, outbound email §E.2–E.3). Preferences gate sending
@@ -25,6 +25,17 @@ const DIGEST_OPTIONS = [
 ] as const;
 const TIME_OPTIONS = HALF_HOURS.map((value) => ({ value, label: value }));
 
+/** What the bounced notice says for each reason (security email keeps coming either way). */
+export function suppressionCopy(settings: Pick<Settings, "address" | "suppression">) {
+  const reason = settings.suppression?.reason ?? "bounce";
+  if (reason === "complaint") return `An email to ${settings.address} was reported as spam, so Nook stopped sending to it. Security emails still go.`;
+  if (reason === "soft") {
+    const until = settings.suppression?.until ? new Date(settings.suppression.until).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
+    return `Email to ${settings.address} kept bouncing, so Nook paused it${until ? ` until ${until}` : ""}. Security emails still go.`;
+  }
+  return `Email to ${settings.address} bounced, so Nook stopped sending to it. Security emails still go. Check the address with your admin, or try again.`;
+}
+
 function Switch({ checked, disabled, labelledBy, describedBy, onChange }: { checked: boolean; disabled?: boolean; labelledBy: string; describedBy?: string; onChange?: (next: boolean) => void }) {
   return <button type="button" role="switch" className="modules-switch" aria-checked={checked} aria-labelledby={labelledBy} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange?.(!checked)}>
     <span className="modules-switch-track" aria-hidden="true"><span className="modules-switch-thumb" /></span>
@@ -39,6 +50,7 @@ export function EmailSettings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [cooling, setCooling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const coolTimer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -64,6 +76,22 @@ export function EmailSettings() {
       else setError(reason instanceof Error ? reason.message : "Could not save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** "Try again" after a bounce (§B.4): clears this address's suppression, once a day. */
+  async function tryAgain() {
+    setRetrying(true);
+    setError(null);
+    setMessage(null);
+    try {
+      setSettings(await clearSuppression());
+      setMessage("Nook will email this address again.");
+    } catch (reason) {
+      const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+      setError(code === "RATE_LIMITED" ? "You can try again once a day." : reason instanceof Error ? reason.message : "Could not try again");
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -111,7 +139,8 @@ export function EmailSettings() {
     {heading}
     {settings.suppressed && <div className="email-notice danger" role="alert">
       <MailWarning aria-hidden="true" />
-      <p>Email to {settings.address} bounced, so Nook stopped sending to it. Ask your admin to check the address.</p>
+      <p>{suppressionCopy(settings)}</p>
+      <button type="button" className="secondary-button email-settings-button" disabled={retrying} onClick={() => { void tryAgain(); }}><RotateCcw aria-hidden="true" />Try again</button>
     </div>}
     {!settings.verified && <div className="email-notice" role="note">
       <Mail aria-hidden="true" />

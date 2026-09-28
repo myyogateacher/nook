@@ -4,14 +4,16 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { config, isOriginAllowed } from "../config";
 import { audit, db, now } from "../db";
-import { addressHash, mailEnabled } from "../mail";
+import { mailEnabled } from "../mail";
 import { can } from "../team/roles";
 import { parseJson, uuid } from "../validation";
 import { kickMailDispatch, MAX_ATTEMPTS, runMailDispatch } from "./dispatcher";
 import { enqueueMail } from "./outbox";
 import { emailPrefsPutSchema, readEmailPrefs, turnCategoryOff, writeEmailPrefs } from "./prefs";
 import { hashAuthToken } from "./resolve";
+import { clearOwnSuppression, suppressionOf } from "./suppression";
 import { verifyUnsubscribeToken } from "./unsubscribe";
+import { registerMailWebhookRoutes } from "./webhooks";
 
 /**
  * Email routes (docs/plan/research/2026-09-28-outbound-email.md §A.4, §B, §D.4, §E).
@@ -80,11 +82,14 @@ export function consumeVerifyToken(token: string, nowMs = Date.now()): "verified
 /** What Settings → Notifications → Email shows. */
 export function emailSettings(userId: string) {
   const user = db.query("SELECT email, email_verified_at FROM users WHERE id = ?").get(userId) as { email: string; email_verified_at: string | null };
+  const suppression = suppressionOf(user.email);
   return {
     configured: mailEnabled(),
     address: user.email,
     verified: user.email_verified_at !== null,
-    suppressed: Boolean(db.query("SELECT 1 FROM mail_suppressions WHERE address_hash = ?").get(addressHash(user.email))),
+    suppressed: suppression !== null,
+    /** Why mail is held back (bounce, complaint, soft bounce), and until when for a soft bounce. */
+    suppression,
     prefs: readEmailPrefs(userId)
   };
 }
@@ -103,6 +108,9 @@ export function enqueueVerifyMail(userId: string) {
 
 /** Public routes: call before the session middleware. */
 export function registerPublicMailRoutes(app: Hono<AppEnv>) {
+  // Resend bounce and complaint webhooks: 404 unless RESEND_WEBHOOK_SECRET is set (§B.4).
+  registerMailWebhookRoutes(app);
+
   app.post("/api/mail/verify", async (c) => {
     if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);
     if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
@@ -147,6 +155,16 @@ export function registerMailRoutes(app: Hono<AppEnv>) {
     return c.json({ queued: true });
   });
 
+  // "Try again" after a bounce (§B.4): the owner clears their own address, once a day.
+  app.post("/api/mail/suppression/clear", async (c) => {
+    await parseJson(c.req.raw, emptySchema);
+    const userId = c.get("user").id;
+    const result = clearOwnSuppression(userId);
+    if (result === "limited") return c.json({ error: "You can try again once a day.", code: "RATE_LIMITED" }, 429);
+    if (result === "none") return c.json({ error: "Email to your address is not held back", code: "NOT_SUPPRESSED" }, 409);
+    return c.json(emailSettings(userId));
+  });
+
   app.post("/api/mail/test", async (c) => {
     await parseJson(c.req.raw, emptySchema);
     const userId = c.get("user").id;
@@ -160,7 +178,7 @@ export function registerMailRoutes(app: Hono<AppEnv>) {
   });
 }
 
-type LogRow = { id: string; user_id: string | null; to_hash: string; template: string; class: string; status: string; skip_reason: string | null; attempts: number; error_code: string | null; provider_id: string | null; created_at: string; sent_at: string | null; not_before: string; display_name: string | null };
+type LogRow = { id: string; user_id: string | null; to_hash: string; template: string; class: string; status: string; skip_reason: string | null; attempts: number; error_code: string | null; provider_id: string | null; created_at: string; sent_at: string | null; not_before: string; display_name: string | null; email: string | null };
 const LOG_STATUSES = ["queued", "sending", "sent", "failed", "suppressed", "skipped", "dead"] as const;
 const logQuery = z.object({
   status: z.enum(["all", "sent", "held", "failed", "dead", "skipped"]).optional(),
@@ -172,7 +190,7 @@ export function mailLog(options: z.infer<typeof logQuery>) {
   const statuses: Record<string, readonly string[]> = { all: LOG_STATUSES, sent: ["sent"], held: ["queued", "sending"], failed: ["failed", "suppressed"], dead: ["dead"], skipped: ["skipped"] };
   const wanted = statuses[options.status ?? "all"]!;
   const [cursorAt, cursorId] = options.cursor?.split("|") ?? [];
-  const rows = db.query(`SELECT o.id, o.user_id, o.to_hash, o.template, o.class, o.status, o.skip_reason, o.attempts, o.error_code, o.provider_id, o.created_at, o.sent_at, o.not_before, u.display_name
+  const rows = db.query(`SELECT o.id, o.user_id, o.to_hash, o.template, o.class, o.status, o.skip_reason, o.attempts, o.error_code, o.provider_id, o.created_at, o.sent_at, o.not_before, u.display_name, u.email
       FROM mail_outbox o LEFT JOIN users u ON u.id = o.user_id
       WHERE o.status IN (SELECT value FROM json_each($statuses)) AND ($cursorAt IS NULL OR o.created_at < $cursorAt OR (o.created_at = $cursorAt AND o.id < $cursorId))
       ORDER BY o.created_at DESC, o.id DESC LIMIT 51`)
@@ -186,6 +204,9 @@ export function mailLog(options: z.infer<typeof logQuery>) {
     FROM mail_outbox`).get({ since }) as Record<string, number | null>;
   const page = rows.slice(0, 50);
   const last = page.at(-1);
+  // Whether each recipient account's address is suppressed now (never the address itself).
+  const suppressed = new Map<string, string | null>();
+  for (const row of page) if (row.user_id && row.email && !suppressed.has(row.user_id)) suppressed.set(row.user_id, suppressionOf(row.email)?.reason ?? null);
   return {
     emailEnabled: mailEnabled(),
     today: { sent: counts.sent ?? 0, held: counts.held ?? 0, failed: counts.failed ?? 0, dead: counts.dead ?? 0, limit: config.mail.dailyLimit },
@@ -201,7 +222,9 @@ export function mailLog(options: z.infer<typeof logQuery>) {
       createdAt: row.created_at,
       sentAt: row.sent_at,
       notBefore: row.status === "queued" ? row.not_before : null,
-      to: row.user_id && row.display_name !== null ? { userId: row.user_id, displayName: row.display_name } : { hash: row.to_hash }
+      to: row.user_id && row.display_name !== null ? { userId: row.user_id, displayName: row.display_name } : { hash: row.to_hash },
+      /** The recipient address's suppression now: bounce, complaint, soft, manual, or null. */
+      suppression: row.user_id ? suppressed.get(row.user_id) ?? null : null
     })),
     nextCursor: rows.length > 50 && last ? `${last.created_at}|${last.id}` : null
   };

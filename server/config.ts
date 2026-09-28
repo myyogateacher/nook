@@ -92,6 +92,9 @@ if (mailTransportValue === "file" && process.env.NODE_ENV === "production") thro
 const mailFilePath = process.env.MAIL_FILE_PATH?.trim() || null;
 if (mailTransportValue === "file" && (!mailFilePath || !mailFilePath.startsWith("/"))) throw new Error("MAIL_TRANSPORT=file needs an absolute MAIL_FILE_PATH");
 const mailDailyLimit = integerEnv("MAIL_DAILY_LIMIT", 500, 1, 10_000);
+// Resend webhooks (bounces and complaints, Wave 29): the endpoint exists only when this is set.
+const resendWebhookSecret = process.env.RESEND_WEBHOOK_SECRET?.trim() || null;
+if (resendWebhookSecret && !/^whsec_[A-Za-z0-9+/]{16,}={0,2}$/.test(resendWebhookSecret)) throw new Error("RESEND_WEBHOOK_SECRET must be the whsec_… signing secret from the Resend webhook page");
 const mailAllowHttpValue = process.env.MAIL_ALLOW_HTTP_LINKS?.trim() || "false";
 if (!(mailAllowHttpValue === "true" || mailAllowHttpValue === "false")) throw new Error("MAIL_ALLOW_HTTP_LINKS must be true or false");
 const appOriginUrl = new URL(appOrigin);
@@ -160,7 +163,9 @@ export const config = {
     /** Shown in the brand band and footer, so people with two Nooks can tell them apart. */
     instanceName: mailInstanceName,
     /** Messages a day for the whole instance (§D.2); 10% of it is kept for security and account mail. */
-    dailyLimit: mailDailyLimit
+    dailyLimit: mailDailyLimit,
+    /** Signs Resend's bounce and complaint webhooks; POST /api/mail/webhook answers 404 without it. */
+    webhookSecret: resendWebhookSecret
   }
 };
 

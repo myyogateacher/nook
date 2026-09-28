@@ -16,7 +16,9 @@ export type EmailPrefs = {
   updatedAt: string | null;
 };
 
-export type EmailSettings = { configured: boolean; address: string; verified: boolean; suppressed: boolean; prefs: EmailPrefs };
+/** Why Nook holds mail back from this address (Wave 29 webhooks): a bounce, a spam report, or a run of soft bounces. */
+export type Suppression = { reason: "bounce" | "complaint" | "manual" | "soft"; since: string; until: string | null } | null;
+export type EmailSettings = { configured: boolean; address: string; verified: boolean; suppressed: boolean; suppression?: Suppression; prefs: EmailPrefs };
 
 export type EmailPrefsInput = {
   enabled: boolean;
@@ -31,6 +33,7 @@ export type EmailPrefsInput = {
 export const getEmailSettings = () => api<EmailSettings>("/mail/settings");
 export const putEmailSettings = (input: EmailPrefsInput) => api<EmailSettings>("/mail/settings", { method: "PUT", body: JSON.stringify(input) });
 export const sendVerificationEmail = () => api<{ queued: true }>("/mail/verify/send", { method: "POST", body: "{}" });
+export const clearSuppression = () => api<EmailSettings>("/mail/suppression/clear", { method: "POST", body: "{}" });
 export const sendTestEmail = () => api<{ queued: true }>("/mail/test", { method: "POST", body: "{}" });
 
 /** The browser's zone, or UTC. */

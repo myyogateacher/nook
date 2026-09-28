@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { groupGrantExists } from "../access/groups";
 import { canWriteContent } from "../team/userRole";
 
 export type CalendarVisibility = "private" | "selected" | "all_users";
@@ -59,7 +60,8 @@ export type EventRow = {
  * their calendar through this predicate (T61).
  */
 export const calendarAudiencePredicate = `(k.owner_id = $userId OR (k.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-  OR (k.visibility = 'selected' AND EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)))`;
+  OR (k.visibility = 'selected' AND (EXISTS (SELECT 1 FROM calendar_members m WHERE m.calendar_id = k.id AND m.user_id = $userId)
+    OR ${groupGrantExists("calendar", "k.id")})))`;
 export const readableCalendarPredicate = `(k.deleted_at IS NULL AND ${calendarAudiencePredicate})`;
 
 /** Readers who may write events (D54): the owner, or everyone shared with when the audience role is `editor`. */

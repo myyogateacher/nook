@@ -536,8 +536,10 @@ function folderAudience(folderId: string | null) {
   const folder = db.query("SELECT visibility FROM folders WHERE id = ?").get(folderId) as { visibility: string } | null;
   if (!folder || folder.visibility === "private") return "private";
   if (folder.visibility === "all_users") return "all_users";
-  const users = db.query("SELECT user_id FROM folder_shares WHERE folder_id = ? ORDER BY user_id").all(folderId) as Array<{ user_id: string }>;
-  return `selected:${users.map((user) => user.user_id).join(",")}`;
+  const users = db.query("SELECT user_id, level FROM folder_shares WHERE folder_id = ? ORDER BY user_id").all(folderId) as Array<{ user_id: string; level: string }>;
+  // Groups count too (Wave 32): the same people with a different group grant is a different audience.
+  const groups = db.query("SELECT group_id, level FROM group_grants WHERE resource_kind = 'folder' AND resource_id = ? ORDER BY group_id").all(folderId) as Array<{ group_id: string; level: string }>;
+  return `selected:${users.map((user) => `${user.user_id}=${user.level}`).join(",")}|${groups.map((group) => `${group.group_id}=${group.level}`).join(",")}`;
 }
 
 /**

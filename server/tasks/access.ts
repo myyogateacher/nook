@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { groupGrantExists } from "../access/groups";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -24,7 +25,8 @@ export type BoardRow = {
  */
 export const readableBoardPredicate = `(
   b.deleted_at IS NULL AND (b.owner_id = $userId OR (b.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-    OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)))
+    OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)
+      OR ${groupGrantExists("board", "b.id")})))
 )`;
 
 export function readableBoard(boardId: string, userId: string) {

@@ -17,6 +17,7 @@ import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCa
 import { audienceAllUsersFor } from "../team/roles";
 import { dateInZone, validTimeZone } from "../today/registry";
 import { mailShared, shareMembers } from "../mail/triggers";
+import { groupGrantExists } from "../access/groups";
 
 /**
  * Task Boards services (WAVES_7-9.md §3). Routes are thin adapters over these
@@ -733,7 +734,8 @@ export function listBoardReaders(userId: string, boardId: string, options: { q?:
   const rows = (board.visibility === "all_users"
     ? db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId OR ${audienceAllUsersFor("u.id")}) AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ ownerId: board.owner_id, q, limit: limit + 1 })
     : db.query(`SELECT u.id, u.display_name FROM users u WHERE u.disabled_at IS NULL AND (u.id = $ownerId
-        OR ($visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)))
+        OR ($visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = $boardId AND m.user_id = u.id)
+          OR ${groupGrantExists("board", "$boardId", "u.id")})))
         AND ${match} ORDER BY u.display_name, u.id LIMIT $limit`).all({ ownerId: board.owner_id, visibility: board.visibility, boardId, q, limit: limit + 1 })
   ) as Array<{ id: string; display_name: string }>;
   return {

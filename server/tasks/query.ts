@@ -9,6 +9,7 @@ import { dueAt } from "./dueTime";
 import { TaskError } from "./service";
 import { AUDIENCE_ALL_USERS, audienceAllUsersFor, can } from "../team/roles";
 import { userRole } from "../team/userRole";
+import { groupGrantExists } from "../access/groups";
 
 /**
  * The cross-board card query (research 2026-09-26 §10.3–§10.4, D140, D144,
@@ -43,7 +44,8 @@ export const readableOtherBoardPredicate = readableBoardPredicate.replace(/\bb\.
 
 /** Whether the caller is in the audience of another card's board `ob`, binned or not (D105: binning is never disclosed). */
 export const otherBoardAudience = `(ob.owner_id = $userId OR (ob.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-  OR (ob.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members om WHERE om.board_id = ob.id AND om.user_id = $userId)))`;
+  OR (ob.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members om WHERE om.board_id = ob.id AND om.user_id = $userId)
+    OR ${groupGrantExists("board", "ob.id")})))`;
 
 /** A relation from card `k` to another card `o` is visible unless the caller is in `o`'s audience and `o` or its board is binned. */
 const visibleOther = `(NOT ${otherBoardAudience} OR (o.deleted_at IS NULL AND ob.deleted_at IS NULL))`;
@@ -466,7 +468,8 @@ export function resolveRefs(userId: string, query: TaskQuery, pageCards: readonl
       AND ($directory = 1 OR u.id = $userId OR u.id IN (SELECT value FROM json_each($onPage))
         OR EXISTS (SELECT 1 FROM boards b WHERE ${readableBoardPredicate} AND (b.owner_id = u.id
           OR (b.visibility = 'all_users' AND ${audienceAllUsersFor("u.id")})
-          OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members bm WHERE bm.board_id = b.id AND bm.user_id = u.id)))))`)
+          OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members bm WHERE bm.board_id = b.id AND bm.user_id = u.id)
+            OR ${groupGrantExists("board", "b.id", "u.id")})))))`)
     .all({ ids: JSON.stringify(userIds), userId, directory: directory ? 1 : 0, onPage: JSON.stringify(onPage) }) as Array<{ id: string; display_name: string }>).map((row) => [row.id, row]));
   return {
     boards: boardIds.map((id) => readableBoards.get(id) ?? { id, restricted: true as const }),

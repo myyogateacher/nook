@@ -5,6 +5,7 @@ import { applyRenumber, LIMITS, liveCardsIn, withBoardLock } from "./service";
 import { liveChildCount } from "./hierarchy";
 import { HIERARCHY_LIMITS } from "../../shared/boardStructure";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { groupGrantExists } from "../access/groups";
 
 /**
  * Cards and boards in the shared Bin (WAVES_7-9.md D41 and §3.3). Deleting only sets the Bin
@@ -50,7 +51,8 @@ type BoardBinRow = { id: string; owner_id: string; name: string; visibility: str
 
 /** The board's audience ignoring whether it is binned: owner, all_users, or a member row. */
 const boardAudience = `(b.owner_id = $userId OR (b.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-  OR (b.visibility = 'selected' AND EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)))`;
+  OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members m WHERE m.board_id = b.id AND m.user_id = $userId)
+    OR ${groupGrantExists("board", "b.id")})))`;
 
 /**
  * `dueBy` lists only items not being purged whose `purge_after` is at or before it, soonest

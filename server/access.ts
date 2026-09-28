@@ -1,5 +1,6 @@
 import { db, type NoteRow } from "./db";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
+import { groupGrantExists } from "./access/groups";
 
 /**
  * Whether `$userId` may read note `n` (binned or not; callers add
@@ -9,14 +10,14 @@ import { AUDIENCE_ALL_USERS } from "./team/roles";
  */
 export const readableNotePredicate = `(
   n.owner_id = $userId OR (n.sharing_override = 1 AND (
-    (n.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (n.visibility = 'selected' AND EXISTS (
+    (n.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (n.visibility = 'selected' AND (EXISTS (
       SELECT 1 FROM note_shares s WHERE s.note_id = n.id AND s.user_id = $userId
-    ))
+    ) OR ${groupGrantExists("note", "n.id")}))
   )) OR (n.sharing_override = 0 AND EXISTS (
     SELECT 1 FROM folders f WHERE f.id = n.folder_id AND (
-      (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (f.visibility = 'selected' AND EXISTS (
+      (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (f.visibility = 'selected' AND (EXISTS (
         SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-      ))
+      ) OR ${groupGrantExists("folder", "f.id")}))
     )
   ))
 )`;
@@ -27,6 +28,7 @@ export const readableNotePredicate = `(
  */
 export const visibleNoteFolderIdExpression = `CASE WHEN n.owner_id = $userId OR (n.sharing_override = 0 AND (
   (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR EXISTS (SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId)
+    OR (f.visibility = 'selected' AND ${groupGrantExists("folder", "f.id")})
 )) THEN n.folder_id ELSE NULL END`;
 
 const readableSql = `SELECT n.* FROM notes n WHERE n.id = $noteId AND n.deleted_at IS NULL AND ${readableNotePredicate}`;
@@ -48,9 +50,9 @@ export function listReadableFolders(userId: string) {
            CASE WHEN f.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
     FROM folders f JOIN users u ON u.id = f.owner_id
     WHERE f.owner_id = $userId OR (f.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (
-      f.visibility = 'selected' AND EXISTS (
+      f.visibility = 'selected' AND (EXISTS (
         SELECT 1 FROM folder_shares fs WHERE fs.folder_id = f.id AND fs.user_id = $userId
-      )
+      ) OR ${groupGrantExists("folder", "f.id")})
     )
     ORDER BY is_owner DESC, f.is_default DESC, f.name COLLATE NOCASE
   `).all({ userId }) as Array<{

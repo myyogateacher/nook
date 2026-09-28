@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
+import { groupGrantExists } from "../access/groups";
 import { canWriteContent } from "../team/userRole";
 
 export type CollectionVisibility = "private" | "selected" | "all_users";
@@ -31,7 +32,8 @@ export type CollectionRecord = {
  */
 export const readableCollectionPredicate = `(
   c.deleted_at IS NULL AND (c.owner_id = $userId OR (c.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS})
-    OR (c.visibility = 'selected' AND EXISTS (SELECT 1 FROM collection_members m WHERE m.collection_id = c.id AND m.user_id = $userId)))
+    OR (c.visibility = 'selected' AND (EXISTS (SELECT 1 FROM collection_members m WHERE m.collection_id = c.id AND m.user_id = $userId)
+      OR ${groupGrantExists("collection", "c.id")})))
 )`;
 
 /** Readers who may write rows: the owner, or everyone with access when the audience role is editor (D54). */

@@ -1,6 +1,6 @@
 # Nook implementation tracker
 
-**Current state (2026-09-28):** production runs **v0.11.0** at `8858c23` (MCP write coverage with notes:publish/files:write/bin:write, agent routines and runs, outbound email via Resend, review + QA fixes; migration 026; 1469 tests). Every planned wave (1–17) has shipped: Notes, Files, shared Bin, URL routing, full-text search, Task Boards with views, filters, hierarchy, sprints and a Tasks home, MCP scopes across every module, Today, Collections, Calendar with reminders/push/feeds, Team roles (admin/member/viewer/guest) with blocking, Settings → Modules, custom dropdowns everywhere, and a feature-led README + docs site. Suite: 1156 tests, Docker verify green.
+**Current state (2026-09-28):** production runs **v0.12.0** at `da7a819` (API keys with grants, expiry, rotation and policies; Team → Keys/Policies; email digests, reminders by email, mutes, Resend webhooks; review + QA fixes; migrations 025/028; 1600 tests). Every planned wave (1–17) has shipped: Notes, Files, shared Bin, URL routing, full-text search, Task Boards with views, filters, hierarchy, sprints and a Tasks home, MCP scopes across every module, Today, Collections, Calendar with reminders/push/feeds, Team roles (admin/member/viewer/guest) with blocking, Settings → Modules, custom dropdowns everywhere, and a feature-led README + docs site. Suite: 1156 tests, Docker verify green.
 
 Release history and per-version notes live on the docs site ("What's new") and in `git log`; plans of record are in `DEVELOPMENT_PLAN.md`, `docs/plan/WAVE_13_TASK_CARD_UX.md`, `docs/plan/WAVES_7-9.md`, `docs/plan/WAVES_10-12.md`, and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
@@ -10,8 +10,8 @@ Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agen
 
 - [x] Waves 18, 20, 21 — released in **v0.10.0** (`4479949`).
 - [x] Waves 19, 22, 28 — released in **v0.11.0** (`8858c23`, migration 026, backup taken before deploy).
-- [ ] Wave 29 email digests/reminders/webhooks/mutes (migration 028) and Wave 31 access keys/grants/policies (migration 025) — built on their branches; merging for **v0.12.0** (review + QA next). Deferred from Wave 31 to 32–34: REST `/api/v1` surface, "No expiry" option, bell notification on admin revoke, settings URL still `/settings/mcp`. Deferred from Wave 29: Today one-time digest prompt (D248).
-- [ ] Then Wave 30 (password reset, T225) and Waves 32–34 (groups, levels, templates, IP allowlists).
+- [x] Waves 29 and 31 — released in **v0.12.0** (`da7a819`, migrations 025/028, backup taken before deploy). Review HIGH (chosen-item keys leaked foreign titles via relations/links/note fields) fixed pre-release.
+- [ ] Next: Wave 30 (password reset, T225) and Waves 32–34 (REST `/api/v1` surface, groups, per-person levels, templates, IP allowlists). Carry-overs: "No expiry" option, bell notification on admin revoke, settings URL still `/settings/mcp`, Today one-time digest prompt (D248), `RESEND_WEBHOOK_SECRET` row missing from the site env table, remaining native `window.confirm` calls (API key not saved, disable 2FA, recovery codes, discard draft, Empty bin, leaving during uploads), muted calendar shown only by icon.
 - [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.
 
 - [ ] Reliability: two flakes seen once each in full runs — `tests/teamMcp.test.ts` list_invites ordering (same-millisecond invites) and `tests/reactions.test.ts` "one aggregate query per page"; hunt after v0.11.0.

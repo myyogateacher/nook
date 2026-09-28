@@ -102,7 +102,12 @@ function recordInvalidAuth() {
   return invalidAuthCount > 60;
 }
 
-export async function handleMcpRequest(request: Request) {
+/**
+ * The Host/Origin checks and the Bearer key lookup of every MCP entry point: /mcp and, since Wave 19,
+ * PUT /mcp/uploads/:id (server/mcpUploads.ts). Returns the live key and its holder, or the error
+ * response (401 with WWW-Authenticate, 403 for a bad host or origin, 429 after many failures).
+ */
+export function authenticateMcpRequest(request: Request): McpKeyRow | Response {
   const allowedHosts = new Set<string>();
   for (const allowedOrigin of config.appOrigins) {
     const appUrl = new URL(allowedOrigin);
@@ -139,6 +144,27 @@ export async function handleMcpRequest(request: Request) {
   if (!key.last_used_at || Date.now() - new Date(key.last_used_at).getTime() > 300_000) {
     db.query("UPDATE mcp_api_keys SET last_used_at = ? WHERE id = ?").run(now(), key.id);
   }
+  return key;
+}
+
+/** Runs `operation` in one of the shared MCP request slots (24 at once), or answers 503. */
+export async function withMcpRequestSlot(operation: () => Promise<Response>) {
+  if (activeRequests >= 24) return mcpJsonError("MCP server is busy", 503);
+  activeRequests += 1;
+  try {
+    return await operation();
+  } finally {
+    activeRequests -= 1;
+  }
+}
+
+export { mcpJsonError, mcpResponse };
+
+export async function handleMcpRequest(request: Request) {
+  const authenticated = authenticateMcpRequest(request);
+  if (authenticated instanceof Response) return authenticated;
+  const key = authenticated;
+  const token = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "")![1]!;
   if (activeRequests >= 24) return mcpJsonError("MCP server is busy", 503);
   activeRequests += 1;
   try {

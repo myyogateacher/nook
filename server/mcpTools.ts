@@ -12,6 +12,7 @@ import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
 import { noteManageTools } from "./mcpNoteTools";
+import { fileWriteTools } from "./mcpFileTools";
 import { rememberSeenDraft } from "./mcpSeenDrafts";
 import { checksum, storage, withNoteLock } from "./storage";
 import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
@@ -339,6 +340,7 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteWriteTools,
   ...noteManageTools,
   ...fileTools,
+  ...fileWriteTools,
   ...taskTools,
   ...calendarTools,
   ...collectionTools,

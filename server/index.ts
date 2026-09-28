@@ -30,6 +30,7 @@ import { readPreferences, registerPreferenceRoutes } from "./preferences";
 import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
+import { handleMcpUpload } from "./mcpUploads";
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
@@ -794,6 +795,8 @@ app.onError((error, c) => {
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
 app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
+// Ticketed MCP uploads (Wave 19, D176): the same Bearer key that called begin_upload.
+app.put("/mcp/uploads/:uploadId", (c) => handleMcpUpload(c.req.raw, c.req.param("uploadId")));
 
 // The service worker must be revalidated on every registration check (T69).
 app.use("/sw.js", async (c, next) => {

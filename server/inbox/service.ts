@@ -8,6 +8,7 @@ import { discardDraft, DraftActionError } from "../noteDrafts";
 import { isProposalKind, PROPOSAL_KIND_DEFS, type ProposalKind, type ProposalPreview, type ProposalRef, type StoredProposal } from "./kinds";
 import { PROPOSAL_EXPIRE_MS, type NoteDraftPayload } from "./noteDraftProposals";
 import { cleanLine, cleanText } from "./text";
+import { mailProposalsAwaiting } from "../mail/triggers";
 
 /**
  * The proposal primitive (docs/plan/research/2026-09-28-agent-inbox-routines.md §4, D146–D159).
@@ -175,6 +176,8 @@ export function notifyProposals(ownerId: string, keyId: string, count: number, n
     db.query("INSERT INTO notifications (id, user_id, kind, proposal_key_id, proposal_count, created_at) VALUES (?, ?, 'proposals', ?, ?, ?)").run(id, ownerId, keyId, count, timestamp);
     return id;
   })();
+  // "Proposals awaiting you" mail (Wave 28 hook): key names and counts only, read at send time.
+  mailProposalsAwaiting(ownerId);
   if (created && proposalPushEnabled(ownerId)) emitNotifications([{ id: created, userId: ownerId }]);
   return created;
 }

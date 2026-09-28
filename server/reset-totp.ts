@@ -1,5 +1,6 @@
 import { audit, db } from "./db";
 import { revokeUserPushSubscriptions } from "./calendar/push";
+import { mailTwoFactor } from "./mail/triggers";
 
 const email = process.argv[2]?.trim().toLowerCase();
 if (!email) {
@@ -18,6 +19,8 @@ db.transaction(() => {
   db.query("DELETE FROM sessions WHERE user_id = ?").run(user.id);
   revokeUserPushSubscriptions(user.id, "sessions_revoked");
   audit(user.id, null, "auth.totp_admin_reset");
+  // Security mail (outbound email #6); the running server's dispatcher sends it.
+  mailTwoFactor(user.id, "admin_reset");
 })();
 
 console.log("Two-factor authentication was reset and all sessions were revoked. The user must enroll again at next sign-in.");

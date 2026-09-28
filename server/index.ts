@@ -33,7 +33,7 @@ import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } fr
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
 import { registerMailPreviewRoutes } from "./mail/preview";
-import { mailShared, shareMembers } from "./mail/triggers";
+import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./mail/triggers";
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
@@ -272,7 +272,10 @@ app.post("/api/auth/login", async (c) => {
       audit(user.id, null, "auth.totp_failed");
       return c.json({ error: "Invalid or already-used authentication or recovery code", requiresTotp: true }, 401);
     }
-    if (usedRecoveryCode) audit(user.id, null, "auth.recovery_code_used");
+    if (usedRecoveryCode) {
+      audit(user.id, null, "auth.recovery_code_used");
+      mailTwoFactor(user.id, "recovery_used");
+    }
   }
   const csrfToken = await createSession(c, user.id);
   audit(user.id, null, "auth.login");
@@ -349,11 +352,17 @@ app.post("/api/mcp/keys", async (c) => {
       audit(userId, null, "mcp.key_create_failed");
       return c.json({ error: "Invalid password or authentication code" }, 401);
     }
-    if (body.recoveryCode) audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
+    if (body.recoveryCode) {
+      audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
+      mailTwoFactor(userId, "recovery_used");
+    }
   }
   const activeCount = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(userId) as { count: number }).count;
   if (activeCount >= 10) return c.json({ error: "Revoke an existing API key before creating another" }, 409);
-  return c.json({ key: createMcpApiKey(userId, body.name, body.scopes) }, 201);
+  const key = createMcpApiKey(userId, body.name, body.scopes);
+  // Security mail (outbound email #5): the key's name and scopes, read at send time.
+  mailApiKeyCreated(userId, key.id);
+  return c.json({ key }, 201);
 });
 
 app.delete("/api/mcp/keys/:id", (c) => {
@@ -410,6 +419,7 @@ app.post("/api/auth/totp/enable", async (c) => {
       .run(timestamp, encryptedRecoveryCodes, user.id, user.totp_secret, acceptedCounter);
     if (result.changes !== 1) return false;
     db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+    mailTwoFactor(user.id, "enabled");
     return true;
   })();
   if (!enabled) return c.json({ error: "Authenticator setup changed. Start setup again." }, 409);
@@ -449,6 +459,7 @@ app.post("/api/auth/totp/recovery-codes/regenerate", async (c) => {
   const encrypted = encryptRecoveryCodes(recoveryCodes, config.totpEncryptionKey, user.id);
   db.query("UPDATE users SET totp_recovery_codes = ? WHERE id = ?").run(encrypted, user.id);
   audit(user.id, null, "auth.totp_recovery_regenerated", { count: recoveryCodes.length });
+  mailTwoFactor(user.id, "recovery_regenerated", recoveryCodes.length);
   return c.json({ recoveryCodes });
 });
 
@@ -465,6 +476,7 @@ app.delete("/api/auth/totp", async (c) => {
       .run(user.id, user.totp_secret, acceptedCounter);
     if (result.changes !== 1) throw new Error("Concurrent authenticator update detected");
     db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+    mailTwoFactor(user.id, "disabled");
   })();
   audit(user.id, null, "auth.totp_disabled");
   return c.json({ enabled: false, required: false, setupRequired: false });

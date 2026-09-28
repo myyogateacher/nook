@@ -133,3 +133,70 @@ describe("Tasks", () => {
     expect(message!.headers!["List-Unsubscribe"]).toContain("/api/mail/unsubscribe?t=");
   });
 });
+
+describe("Security and proposals", () => {
+  test("role changes coalesce and a toggle back sends nothing; block, unblock, sign-out mail the target", async () => {
+    const admin = await person("Priya Admin");
+    db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+    const target = await person("Target Security");
+    const toggle = await createUser("Toggle Security");
+    expect((await call(admin, "PUT", `/team/${target.userId}/role`, { role: "viewer", expectedRole: "member" })).status).toBe(200);
+    expect((await call(admin, "PUT", `/team/${target.userId}/role`, { role: "guest", expectedRole: "viewer" })).status).toBe(200);
+    await call(admin, "PUT", `/team/${toggle.userId}/role`, { role: "viewer", expectedRole: "member" });
+    await call(admin, "PUT", `/team/${toggle.userId}/role`, { role: "member", expectedRole: "viewer" });
+    expect(queued(target.userId, "security.role_changed")).toHaveLength(1);
+    await runMailDispatch({ nowMs: later() });
+    expect(mailFor(target).map((message) => message.subject)).toEqual(["Your Nook role is now Guest"]);
+    expect(mailFor(target)[0]!.text).toContain("Member → Guest");
+    expect(mailFor(target)[0]!.headers).toBeUndefined();
+    expect(queued(toggle.userId, "security.role_changed")[0]).toMatchObject({ status: "skipped", skip_reason: "empty" });
+
+    sent = [];
+    expect((await call(admin, "POST", `/team/${target.userId}/block`, { reason: "Private admin reason" })).status).toBe(200);
+    await runMailDispatch();
+    const blocked = mailFor(target)[0]!;
+    expect(blocked.subject).toBe("Your Nook account was blocked");
+    expect(blocked.text + blocked.html).not.toContain("Private admin reason");
+    await call(admin, "POST", `/team/${target.userId}/unblock`, {});
+    await call(admin, "POST", `/team/${target.userId}/sessions/revoke`, {});
+    await runMailDispatch();
+    expect(mailFor(target).map((message) => message.subject)).toEqual(["Your Nook account was blocked", "Your Nook account was unblocked", "You were signed out of Nook everywhere"]);
+  });
+
+  test("a new MCP key mails its owner the key name and scopes", async () => {
+    const owner = await person("Key Owner");
+    const created = await call(owner, "POST", "/mcp/keys", { name: "laptop", password: owner.password, scopes: ["notes:read", "tasks:write"] });
+    expect(created.status).toBe(201);
+    await runMailDispatch();
+    const message = mailFor(owner)[0]!;
+    expect(message.subject).toBe("New API key “laptop” on your Nook account");
+    expect(message.text).toContain("Notes: read · Tasks: read, write");
+    expect(message.text).not.toContain(created.body.key.token);
+    expect(message.text).toContain("/settings/mcp");
+  });
+
+  test("proposals coalesce for an hour and carry key names and counts only (T233)", async () => {
+    const { notifyProposals } = await import("../server/inbox/service");
+    const owner = await person("Proposal Owner");
+    const keyId = crypto.randomUUID();
+    db.query("INSERT INTO mcp_api_keys (id, user_id, name, key_prefix, token_hash, scopes, created_at) VALUES (?, ?, 'laptop', 'mynotes_abcdefgh', ?, '[\"inbox:write\"]', ?)")
+      .run(keyId, owner.userId, crypto.randomUUID().replaceAll("-", "").padEnd(64, "0"), new Date().toISOString());
+    for (let index = 0; index < 3; index += 1) {
+      db.query("INSERT INTO proposals (id, owner_id, key_id, key_name, kind, target_type, target_id, title, rationale, payload, created_at, expires_at) VALUES (?, ?, ?, 'laptop', 'card_comment', 'card', ?, 'Click here to reset your password', 'Agent rationale', '{}', ?, ?)")
+        .run(crypto.randomUUID(), owner.userId, keyId, crypto.randomUUID(), new Date().toISOString(), new Date(Date.now() + 3 * 86_400_000).toISOString());
+      notifyProposals(owner.userId, keyId, 1);
+    }
+    expect(queued(owner.userId, "inbox.proposals")).toHaveLength(1);
+    await runMailDispatch({ nowMs: Date.now() + 30 * 60_000 });
+    expect(sent).toEqual([]);
+    await runMailDispatch({ nowMs: Date.now() + 61 * 60_000 });
+    const message = mailFor(owner)[0]!;
+    expect(message.subject).toBe("Key “laptop” suggested 3 changes");
+    expect(message.html + message.text).not.toMatch(/reset your password|Agent rationale/);
+    expect(message.text).toContain("/inbox");
+    // A new burst right after waits for the 3-hour gap (D240).
+    notifyProposals(owner.userId, keyId, 1);
+    const next = queued(owner.userId, "inbox.proposals").find((row) => row.status === "queued")!;
+    expect(Date.parse(next.not_before) - Date.now()).toBeGreaterThan(2.9 * 3_600_000);
+  });
+});

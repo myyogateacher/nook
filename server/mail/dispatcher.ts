@@ -237,4 +237,3 @@ export function kickMailDispatch() {
   if (process.env.NODE_ENV === "test") return;
   setTimeout(() => { runMailDispatch().catch(() => undefined); }, 0);
 }
-

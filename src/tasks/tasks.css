@@ -685,3 +685,29 @@
 @media (max-width: 760px) {
   .task-link-button { min-height: 44px; }
 }
+
+/* Reactions under a comment (Wave 20, section 3.5): chips wrap, never scroll; 44 px targets on phones. */
+.task-comment { position: relative; }
+.task-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.task-reaction-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 2px 10px; border: 1px solid #2e2e33; border-radius: 999px; background: #1d1d21; color: #d0d0d5; font: inherit; font-size: .8rem; font-variant-numeric: tabular-nums; cursor: pointer; touch-action: manipulation; }
+.task-reaction-chip:hover { border-color: #46464d; }
+.task-reaction-chip:focus-visible { outline: 2px solid #8a7340; outline-offset: 1px; }
+.task-reaction-chip.reacted { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.task-reaction-chip.static { cursor: default; }
+.task-reaction-glyph { font-size: 18px; line-height: 1; }
+.task-reaction-add { width: 30px; height: 30px; touch-action: manipulation; }
+.task-reaction-add svg { width: 16px; }
+.task-reaction-summary { margin: 0; padding: 0 18px 8px; list-style: none; display: grid; gap: 6px; color: #b4b4ba; font-size: .84rem; }
+.task-reaction-summary li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.task-reaction-summary li > span:first-child { font-size: 18px; }
+.task-reaction-names { min-width: 0; overflow-wrap: anywhere; }
+@media (min-width: 761px) {
+  /* No reactions yet: the Add button waits at the header's end and shows on hover or focus. */
+  .task-reactions.empty { position: absolute; top: 10px; right: 12px; }
+  .task-comment:has(> .task-reactions.empty) .task-comment-actions { margin-right: 34px; }
+  .task-comment:not(:hover):not(:focus-within) .task-reactions.empty .task-reaction-add { opacity: 0; }
+}
+@media (max-width: 760px) {
+  .task-reaction-chip { min-height: 44px; padding: 0 12px; }
+  .task-reaction-add { width: 44px; height: 44px; }
+}

@@ -40,6 +40,7 @@ import {
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 import { CopyCardLinkButton } from "./cardLink";
+import { CommentReactions } from "./CommentReactions";
 import type { TaskNotify } from "./taskActions";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
@@ -365,6 +366,11 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
     }
   }
 
+  // Reactions change only their comment's list (Wave 20): no card revision, no onChanged.
+  const updateReactions = useCallback((commentId: string, update: (current: NonNullable<CardComment["reactions"]>) => NonNullable<CardComment["reactions"]>) => {
+    setComments((current) => current.map((item) => item.id === commentId ? { ...item, reactions: update(item.reactions ?? []) } : item));
+  }, []);
+
   async function removeComment(commentId: string) {
     setDeleteBusy(true);
     try {
@@ -613,6 +619,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, onCl
                   </div>
                   : <p className="task-comment-body">{comment.body}</p>}
                 {attachmentList(attachmentsFor(attachments, comment.id))}
+                <CommentReactions commentId={comment.id} reactions={comment.reactions ?? []} readOnly={readOnly} onUpdate={updateReactions} notify={notify} />
               </li>)}
               {!comments.length && <li className="task-comment-empty">No comments yet.</li>}
             </ol>

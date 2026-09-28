@@ -28,7 +28,7 @@ import {
 } from "./collectionsApi";
 import { Attachments } from "./Attachments";
 import { CollectionCards, useIsPhone } from "./CollectionCards";
-import { CollectionSharePanel } from "./CollectionSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { CollectionTable } from "./CollectionTable";
 import { useDialogLayer } from "./dialogLayers";
 import { FieldEditor } from "./FieldEditor";
@@ -363,9 +363,9 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       notify(`Imported ${rowCountLabel(count)}`);
       void rows.reload();
     }} />}
-    {dialog?.kind === "share" && <CollectionSharePanel collection={collection} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && <AccessSheet kind="collection" id={collection.id} title={collection.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Sharing updated");
+      notify("Access updated");
       void loadCollection();
     }} />}
     {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {

@@ -49,7 +49,7 @@ import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPr
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
-import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
+import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
 import { TasksApp } from "./tasks/TasksApp";
 import { CollectionsApp } from "./collections/CollectionsApp";
@@ -74,6 +74,7 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
+import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
@@ -449,91 +450,6 @@ function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: 
         <pre className="diff-view">{diff.map((line, index) => <span key={`${index}-${line.kind}`} className={line.kind}>{line.kind === "add" ? "+ " : line.kind === "remove" ? "− " : "  "}{line.text || " "}</span>)}</pre>
         {note.isOwner && canRestore && <button className="secondary-button restore-button" disabled={busy} onClick={restore}>Restore as draft</button>}
       </>}
-    </aside>
-  );
-}
-
-function SharePanel({ note, onClose, onChanged }: { note: NoteDetail; onClose: () => void; onChanged: () => void }) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [visibility, setVisibility] = useState<"inherit" | "private" | "selected" | "all_users">("inherit");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(true);
-
-  useEffect(() => {
-    Promise.all([
-      api<{ users: User[] }>("/users"),
-      api<{ visibility: typeof visibility; users: Array<{ id: string }> }>(`/notes/${note.id}/sharing`)
-    ]).then(([allUsers, sharing]) => {
-      setUsers(allUsers.users);
-      setVisibility(sharing.visibility);
-      setSelected(sharing.users.map((user) => user.id));
-      setBusy(false);
-    });
-  }, [note.id]);
-
-  async function save() {
-    setBusy(true);
-    await api(`/notes/${note.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds: visibility === "selected" ? selected : [] }) });
-    setBusy(false);
-    onChanged();
-  }
-
-  return (
-    <aside className="side-panel share-panel">
-      <header><div><span className="eyebrow">Access</span><h2>Share note</h2></div><button className="icon-button" onClick={onClose} aria-label="Close sharing"><X /></button></header>
-      <div className="share-options">
-        <label><input type="radio" checked={visibility === "inherit"} onChange={() => setVisibility("inherit")} /><span><FolderIcon />Use folder access<small>Inherit this note’s folder sharing</small></span></label>
-        <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this note</small></span></label>
-        <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Choose registered users below</small></span></label>
-        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>Everyone signed in except guests; never public</small></span></label>
-      </div>
-      {visibility === "selected" && <div className="user-picker">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} />{user.email && <small>{user.email}</small>}</span></label>)}
-        {!users.length && <p className="empty-copy">Create another account before sharing with selected people.</p>}
-      </div>}
-      <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save access</button>
-    </aside>
-  );
-}
-
-function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onClose: () => void; onChanged: () => void }) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [visibility, setVisibility] = useState<"private" | "selected" | "all_users">(folder.visibility);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [busy, setBusy] = useState(true);
-
-  useEffect(() => {
-    Promise.all([
-      api<{ users: User[] }>("/users"),
-      api<{ visibility: typeof visibility; users: Array<{ id: string }> }>(`/folders/${folder.id}/sharing`)
-    ]).then(([allUsers, sharing]) => {
-      setUsers(allUsers.users);
-      setVisibility(sharing.visibility);
-      setSelected(sharing.users.map((user) => user.id));
-      setBusy(false);
-    });
-  }, [folder.id]);
-
-  async function save() {
-    setBusy(true);
-    await api(`/folders/${folder.id}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds: visibility === "selected" ? selected : [] }) });
-    setBusy(false);
-    onChanged();
-  }
-
-  return (
-    <aside className="side-panel share-panel">
-      <header><div><span className="eyebrow">Folder access</span><h2>{folder.name}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close folder sharing"><X /></button></header>
-      <div className="share-options">
-        <label><input type="radio" checked={visibility === "private"} onChange={() => setVisibility("private")} /><span><Lock />Private<small>Only you can open this folder’s notes</small></span></label>
-        <label><input type="radio" checked={visibility === "selected"} onChange={() => setVisibility("selected")} /><span><Users />Selected people<small>Share inherited notes with chosen users</small></span></label>
-        <label><input type="radio" checked={visibility === "all_users"} onChange={() => setVisibility("all_users")} /><span><Share2 />Everyone here<small>All signed-in allowlisted users</small></span></label>
-      </div>
-      {visibility === "selected" && <div className="user-picker">
-        {users.map((user) => <label key={user.id}><input type="checkbox" checked={selected.includes(user.id)} onChange={() => setSelected((items) => items.includes(user.id) ? items.filter((id) => id !== user.id) : [...items, user.id])} /><span>{user.displayName}<ShareRoleHint role={user.role} /></span></label>)}
-        {!users.length && <p className="empty-copy">Another signed-in user is needed before sharing this folder.</p>}
-      </div>}
-      <button className="primary-button share-save" onClick={save} disabled={busy || (visibility === "selected" && !selected.length)}>Save folder access</button>
     </aside>
   );
 }
@@ -1868,7 +1784,7 @@ export function App() {
       </section>
 
       {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
-      {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
+      {panel === "share" && note && <AccessSheet kind="note" id={note.id} title={note.title || "Untitled"} guardHistory onClose={() => setPanel(null)} onSaved={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Access updated"); }} />}
       {deletingNote && <NoteDeleteConfirm title={deletingNote.title}
         onCancel={() => { setDeletingNote(null); focusAfterDeleteConfirm(); }}
         onConfirm={() => {
@@ -1876,9 +1792,9 @@ export function App() {
           setDeletingNote(null);
           void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
         }} />}
-      {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
+      {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder access updated"); }} />}
       {settingsDialog}
-      {(panel || sharingFolder || settingsOpen) && (settingsOpen && session.totp.setupRequired
+      {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired
         ? <div className="panel-scrim" aria-hidden="true" />
         : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) closeSettings(); }} aria-label="Close panel" />)}
       {toastStatus}

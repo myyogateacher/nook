@@ -15,7 +15,7 @@ import { ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { BoardColumnView } from "./BoardColumnView";
-import { BoardSharePanel } from "./BoardSharePanel";
+import { AccessSheet } from "../access/AccessSheet";
 import { CardComposer, type ComposerMode } from "./CardComposer";
 import { CardDialog } from "./CardDialog";
 import { CardPage } from "./CardPage";
@@ -685,9 +685,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         }} />;
     })()}
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && board && <BoardSharePanel board={board} onClose={closeDialog} onChanged={() => {
+    {dialog?.kind === "share" && board && <AccessSheet kind="board" id={board.id} title={board.name} onClose={closeDialog} onSaved={() => {
       closeDialog();
-      notify("Sharing updated");
+      notify("Access updated");
       void load();
     }} />}
     {dialog?.kind === "deleteBoard" && board && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", board.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void removeBoard(); }} onCancel={closeDialog} />}

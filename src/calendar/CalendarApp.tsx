@@ -29,7 +29,8 @@ import {
   type Occurrence
 } from "./calendarApi";
 import { formFromEvent, formToInput, newEventForm, sameForm, shortDate, type EventForm } from "./calendarFormat";
-import { CalendarSharePanel, CalendarsDialog } from "./CalendarsDialog";
+import { CalendarsDialog } from "./CalendarsDialog";
+import { AccessSheet } from "../access/AccessSheet";
 import { FeedDialog } from "./FeedDialog";
 import { DiscardEventPrompt, EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
@@ -530,7 +531,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} event={reminderPicker.event} timeZone={zone} onPick={(offset, channels) => addReminder(reminderPicker.eventId, offset, channels)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
-    {sharing && <CalendarSharePanel calendar={sharing} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Sharing updated"); void loadCalendars(); }} />}
+    {sharing && <AccessSheet kind="calendar" id={sharing.id} title={sharing.name} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Access updated"); void loadCalendars(); }} />}
     {confirm?.kind === "discard" && <DiscardEventPrompt onDiscard={() => { void confirmAction(); }} onKeep={keepEditing} />}
     {confirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${confirm.data.event.title}”${confirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
     {confirm?.kind === "deleteCalendar" && <ConfirmDialog title="Move calendar to the Bin?" message={`Move “${confirm.calendar.name}” and its events to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}

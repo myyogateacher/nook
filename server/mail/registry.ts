@@ -1,9 +1,9 @@
-import { inviteTemplate, testTemplate, verifyTemplate } from "./templates/account";
+import { inviteTemplate, passwordResetTemplate, testTemplate, verifyTemplate } from "./templates/account";
 import { assignedTemplate, commentTemplate, proposalsTemplate, sharedTemplate } from "./templates/activity";
 import { eventChangedTemplate, reminderTemplate } from "./templates/calendar";
 import { binExpiringTemplate, sprintTemplate } from "./templates/later";
 import { digestTemplate } from "./templates/digest";
-import { accountEventTemplate, apiKeyCreatedTemplate, roleChangedTemplate, twoFactorTemplate } from "./templates/security";
+import { accountEventTemplate, apiKeyCreatedTemplate, passwordChangedTemplate, roleChangedTemplate, twoFactorTemplate } from "./templates/security";
 import type { TemplateDef } from "./templates/types";
 
 /**
@@ -28,7 +28,10 @@ export const TEMPLATES = {
   "calendar.event_changed": eventChangedTemplate,
   "tasks.sprint": sprintTemplate,
   "bin.expiring": binExpiringTemplate,
-  "digest.summary": digestTemplate
+  "digest.summary": digestTemplate,
+  // Wave 30 (E3).
+  "account.password_reset": passwordResetTemplate,
+  "security.password_changed": passwordChangedTemplate
 } as const;
 
 export type TemplateName = keyof typeof TEMPLATES;
@@ -54,6 +57,7 @@ export function previewFixtures(): Array<{ id: string; template: TemplateName; d
     { id: "digest.summary.weekly", template: "digest.summary", data: { ...digestTemplate.fixture(), period: "weekly", date: "2026-09-28", proposals: null,
       cards: Array.from({ length: 7 }, (_, index) => ({ ...digestTemplate.fixture().cards[1]!, cardId: `6a1d6b7f-2c3e-4d4f-9a5b-${String(index).padStart(12, "0")}`, title: `Card ${index + 1}`, dueAt: null, dueOn: "2026-10-01" })), cardsTotal: 9,
       shared: [], sharedTotal: 0 } },
+    { id: "security.password_changed.reset", template: "security.password_changed", data: { event: "reset", at: "2026-09-28T09:00:00.000Z" } },
     { id: "security.account.sessions_revoked", template: "security.account", data: { event: "sessions_revoked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" } }
   ];
 }

@@ -1,0 +1,25 @@
+/* Wave 30: forgot / reset password pages and Settings → Security → Password. Every target is 44 px. */
+.password-card .text-button, .password-card .inline-auth-switch { min-height: 44px; }
+.password-card .auth-form { display: grid; gap: 16px; }
+.password-card .auth-heading p + p { margin-top: 8px; }
+.inline-auth-switch { min-height: 44px; }
+.forgot-password-link { display: inline-flex; align-items: center; text-decoration: none; }
+
+.password-change-card { margin-bottom: 22px; }
+.password-change-summary { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.password-change-summary > div { flex: 1 1 240px; display: grid; gap: 4px; }
+.password-change-summary strong { color: #ececef; }
+.password-change-summary small { color: #85858c; font-size: .84rem; line-height: 1.5; }
+.password-change-summary .secondary-button { min-height: 44px; padding: 0 16px; }
+.password-change-form { max-width: 420px; margin-top: 18px; }
+.password-change-hint { color: #85858c; font-size: .78rem; line-height: 1.45; }
+.password-change-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.password-change-actions .primary-button, .password-change-actions .secondary-button { min-height: 44px; margin-top: 0; padding: 0 16px; }
+.password-change-done { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: #b7e4c7; font-size: .86rem; }
+.password-change-done svg { width: 16px; flex: none; }
+
+@media (max-width: 760px) {
+  .password-change-summary .secondary-button { width: 100%; }
+  .password-change-form { max-width: none; }
+  .password-change-actions > * { flex: 1 1 100%; }
+}

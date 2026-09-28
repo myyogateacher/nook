@@ -3,7 +3,7 @@ import { isMuted } from "./mutes";
 import { logShare } from "./digest";
 import { enqueueMail, mergeIds, PROPOSALS_MIN_GAP_MS, WINDOW_MS, type Payload } from "./outbox";
 import type { SharedKind } from "./templates/activity";
-import type { AccountEvent, TwoFactorEvent } from "./templates/security";
+import type { AccountEvent, PasswordEvent, TwoFactorEvent } from "./templates/security";
 
 /**
  * The hooks modules call to send mail (docs/plan/research/2026-09-28-outbound-email.md §A.2 v1 set).
@@ -122,4 +122,9 @@ export function mailTwoFactor(userId: string, event: TwoFactorEvent, remaining: 
 /** #3/#4/#8: blocked, unblocked, or signed out everywhere by an admin. The admin's reason is never sent. */
 export function mailAccountEvent(userId: string, event: AccountEvent, actorId: string | null) {
   safely("security.account", () => enqueueMail({ userId, template: "security.account", payload: { event, actorId, at: new Date().toISOString() } }));
+}
+
+/** #12: the password was changed in Settings or reset from a mailed link (Wave 30). */
+export function mailPasswordChanged(userId: string, event: PasswordEvent) {
+  safely("security.password_changed", () => enqueueMail({ userId, template: "security.password_changed", payload: { event, at: new Date().toISOString() } }));
 }

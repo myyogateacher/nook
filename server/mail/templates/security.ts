@@ -132,3 +132,40 @@ export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorN
   },
   fixture: () => ({ event: "blocked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" })
 });
+
+export type PasswordEvent = "changed" | "reset";
+
+/**
+ * #12: the password was changed in Settings → Security, or reset from a mailed link (Wave 30,
+ * outbound email §A.5). A reset signs out every device; a change keeps the one that made it. API keys
+ * keep working either way, so the mail points at them.
+ */
+export const passwordChangedTemplate = defineTemplate<{ event: PasswordEvent; at: string; delayed?: boolean }>({
+  name: "security.password_changed",
+  class: "security",
+  render(data, ctx) {
+    const reset = data.event === "reset";
+    const lead = reset
+      ? "Your Nook password was reset with a link sent to this address. Every device was signed out."
+      : "Your Nook password was changed in Settings. All other sessions were signed out.";
+    return layout({
+      instanceName: ctx.instanceName,
+      tone: "security",
+      subject: delayed(reset ? "Your Nook password was reset" : "Your Nook password was changed", data.delayed),
+      preheader: lead,
+      eyebrow: "Security · Password",
+      title: reset ? "Your password was reset" : "Your password was changed",
+      lead,
+      blocks: [
+        context([
+          { title: formatInstant(data.at, ctx.tz) },
+          { title: "Review your API keys", meta: "Keys keep working after a password change. Revoke any you do not recognise.", href: appLink(paths.settings("mcp")) }
+        ], { tone: "security" }),
+        paragraph("If this wasn't you, reset your password from the sign-in page at once, then ask your admin to check your account.")
+      ],
+      action: { label: "Review in Settings", href: appLink(paths.settings("security")) },
+      footer: securityFooter()
+    });
+  },
+  fixture: () => ({ event: "changed", at: "2026-09-28T09:00:00.000Z" })
+});

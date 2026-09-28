@@ -52,6 +52,7 @@ export const paths = {
   },
   /** Credential links keep the token in the fragment (T220). */
   verifyEmail: (value: string) => `/verify-email#token=${token(value)}`,
+  resetPassword: (value: string) => `/reset-password#token=${token(value)}`,
   unsubscribePage: (value: string) => `/mail/unsubscribe#t=${token(value)}`,
   /** The RFC 8058 header URL cannot use a fragment; the token is low-power (T221). */
   unsubscribeApi: (value: string) => `/api/mail/unsubscribe?t=${token(value)}`

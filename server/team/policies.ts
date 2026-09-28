@@ -188,6 +188,22 @@ export function policyBlock(key: { createdAt: string; expiresAt: string | null }
   return null;
 }
 
+/**
+ * The SQL twin of `surfaceBlocks(…).block !== null` for `k` (mcp_api_keys) joined to `u` (users),
+ * so a listing can filter blocked keys before its LIMIT (review L3). Keep in step with policyBlock.
+ */
+export function blockedKeySql(policies: Policies): { sql: string; params: Array<string | number> } {
+  const roleFails = (roles: readonly string[]) => roles.length ? `(u.role <> 'guest' AND u.role NOT IN (${roles.map(() => "?").join(", ")}))` : "(u.role <> 'guest')";
+  const sql = `((k.surfaces = 'mcp' AND ${roleFails(policies.mcpRoles)}) OR (k.surfaces = 'rest' AND ${roleFails(policies.restRoles)})
+    OR (k.surfaces = 'both' AND ${roleFails(policies.mcpRoles)} AND ${roleFails(policies.restRoles)})
+    OR (k.expires_at IS NULL AND ? = 1)
+    OR (k.expires_at IS NOT NULL AND (julianday(k.expires_at) - julianday(k.created_at)) * ${DAY_MS} > ?))`;
+  return {
+    sql,
+    params: [...policies.mcpRoles, ...policies.restRoles, ...policies.mcpRoles, ...policies.restRoles, policies.keyRequireExpiry ? 1 : 0, policies.keyMaxDays * DAY_MS + LIFETIME_SLACK_MS]
+  };
+}
+
 /** The modules a key held by `role` may use under the policy (grants elsewhere are inactive). */
 export function activeModules(role: Role, policies: Policies = readPolicies()): readonly GrantModule[] {
   return role === "guest" ? [] : policies.keyModulesByRole[role];

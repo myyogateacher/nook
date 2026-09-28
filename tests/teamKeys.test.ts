@@ -36,6 +36,73 @@ async function mcpStatus(token: string) {
   return response.status;
 }
 
+describe("Team → Keys inventory state filter (review L3)", () => {
+  test("the state filter runs before the page cut: pages are full and nextCursor is honest", async () => {
+    const admin = await user("Inventory paging admin", "admin");
+    const member = await user("Inventory paging member");
+    const old = [0, 1, 2].map((index) => {
+      const created = createApiKey(member.userId, { name: `Forever ${index}`, surfaces: "mcp", grants: [all("notes", "read")], expiresInDays: null });
+      db.query("UPDATE mcp_api_keys SET created_at = ? WHERE id = ?").run(new Date(Date.now() - (10 + index) * 86_400_000).toISOString(), created.id);
+      return created.id;
+    });
+    // More than a page of newer keys that do not match.
+    for (let index = 0; index < 205; index += 1) createApiKey(member.userId, { name: `Busy ${index}`, surfaces: "mcp", grants: [all("notes", "read")], expiresInDays: 30 });
+    const listed = await api(admin, "GET", `/team/keys?owner=${member.userId}&state=no_expiry`);
+    expect(listed.body.keys.map((key: { id: string }) => key.id)).toEqual(old);
+    expect(listed.body.nextCursor).toBeNull();
+    // Unfiltered, the first page is full and points on.
+    const first = await api(admin, "GET", `/team/keys?owner=${member.userId}`);
+    expect(first.body.keys.length).toBe(200);
+    expect(first.body.nextCursor).not.toBeNull();
+    const active = await api(admin, "GET", `/team/keys?owner=${member.userId}&state=active`);
+    expect(active.body.keys.length).toBe(200);
+    const rest = await api(admin, "GET", `/team/keys?owner=${member.userId}&state=active&cursor=${encodeURIComponent(active.body.nextCursor)}`);
+    expect(rest.body.keys.length).toBe(8);
+    expect(rest.body.nextCursor).toBeNull();
+  });
+
+  test("every state filter returns exactly the keys whose listed state matches", async () => {
+    const admin = await user("Inventory states admin", "admin");
+    const member = await user("Inventory states member");
+    const make = (name: string, surfaces: "mcp" | "rest" | "both", days: number | null) => createApiKey(member.userId, { name, surfaces, grants: [all("notes", "read")], expiresInDays: days }).id;
+    make("Active", "mcp", 30);
+    make("Soon", "mcp", 5);
+    make("Forever", "both", null);
+    make("Rest", "rest", 30);
+    const long = make("Long", "mcp", 200);
+    const grace = make("Grace", "mcp", 30);
+    const ended = make("Grace ended", "mcp", 30);
+    const expired = make("Expired", "mcp", 30);
+    const unused = make("Unused", "mcp", 30);
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() + 3_600_000).toISOString(), grace);
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), ended);
+    db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), expired);
+    db.query("UPDATE mcp_api_keys SET last_used_at = ? WHERE user_id = ? AND id <> ?").run(new Date().toISOString(), member.userId, unused);
+    // Blocks: the 200-day key by lifetime, the REST key by role; the both key keeps MCP.
+    writePolicies(admin.userId, { ...DEFAULT_POLICIES, keyMaxDays: 90, keyDefaultDays: 30, restRoles: ["admin"] }, policiesRevision());
+    const everything = (await api(admin, "GET", `/team/keys?owner=${member.userId}`)).body.keys as Array<{ id: string; name: string; state: string; expiresAt: string | null; lastUsedAt: string | null }>;
+    const expected: Record<string, (key: typeof everything[number]) => boolean> = {
+      active: (key) => key.state === "active",
+      grace: (key) => key.state === "grace",
+      blocked: (key) => key.state === "blocked",
+      expired: (key) => key.state === "expired",
+      expiring: (key) => key.expiresAt !== null && Date.parse(key.expiresAt) > Date.now() && Date.parse(key.expiresAt) - Date.now() < 14 * 86_400_000,
+      no_expiry: (key) => key.expiresAt === null,
+      unused: (key) => key.lastUsedAt === null
+    };
+    for (const [state, matches] of Object.entries(expected)) {
+      const filtered = (await api(admin, "GET", `/team/keys?owner=${member.userId}&state=${state}`)).body.keys as Array<{ name: string }>;
+      expect({ state, names: filtered.map((key) => key.name).sort() }).toEqual({ state, names: everything.filter(matches).map((key) => key.name).sort() });
+    }
+    const names = (state: string) => everything.filter(expected[state]!).map((key) => key.name).sort();
+    expect(names("blocked")).toEqual(["Long", "Rest"]);
+    expect(names("active")).toEqual(["Active", "Forever", "Soon", "Unused"]);
+    expect(names("grace")).toEqual(["Grace"]);
+    expect(names("expired")).toEqual(["Expired"]);
+    expect(everything.find((key) => key.id === long)!.state).toBe("blocked");
+  });
+});
+
 describe("Team → Keys inventory", () => {
   test("lists every live key with owner and grant summary, never token material or item names", async () => {
     const admin = await user("Inventory admin", "admin");

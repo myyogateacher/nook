@@ -9,7 +9,7 @@ import {
 import { hasScope, type McpScope } from "./mcpScopes";
 import { MCP_LIMITS } from "./mcpRateLimit";
 import { recoveryCode, totpCode } from "./validation";
-import { activeModules, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, surfaceBlocks, type PolicyBlock, type Policies } from "./team/policies";
+import { activeModules, blockedKeySql, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, surfaceBlocks, type PolicyBlock, type Policies } from "./team/policies";
 import { can, mcpScopesForRole, type Role } from "./team/roles";
 import { readableBoardPredicate } from "./tasks/access";
 import { editableCollectionPredicate, readableCollectionPredicate } from "./collections/access";
@@ -735,9 +735,45 @@ export const INVENTORY_PAGE = 200;
  * Every unrevoked key across the team, metadata only: prefix, name, owner, grant summary (module
  * and permission; resource names never, T204), expiry, last use, and state. Never a hash or token.
  */
-export function listInventory(filter: InventoryFilter) {
-  const params: string[] = [];
+export function listInventory(filter: InventoryFilter, time = Date.now()) {
+  const params: Array<string | number> = [];
+  const policies = readPolicies();
   let where = "k.revoked_at IS NULL";
+  // The state filter runs in SQL, before the page cut, so pages are full and nextCursor is honest
+  // (review L3). Each condition mirrors keyState: grace ended, then expired, paused, blocked.
+  if (filter.state) {
+    const at = new Date(time).toISOString();
+    const graceEnded = "(k.revoke_after IS NOT NULL AND k.revoke_after <= ?)";
+    const expired = "(k.expires_at IS NOT NULL AND k.expires_at <= ?)";
+    const blocked = blockedKeySql(policies);
+    const usable = `NOT ${graceEnded} AND NOT ${expired} AND u.disabled_at IS NULL`;
+    switch (filter.state) {
+      case "active":
+      case "grace":
+        where += ` AND ${usable} AND NOT ${blocked.sql} AND k.revoke_after IS ${filter.state === "active" ? "NULL" : "NOT NULL"}`;
+        params.push(at, at, ...blocked.params);
+        break;
+      case "blocked":
+        where += ` AND ${usable} AND ${blocked.sql}`;
+        params.push(at, at, ...blocked.params);
+        break;
+      case "expired":
+        where += ` AND NOT ${graceEnded} AND ${expired}`;
+        params.push(at, at);
+        break;
+      case "expiring":
+        where += " AND k.expires_at IS NOT NULL AND k.expires_at > ? AND k.expires_at < ?";
+        params.push(at, new Date(time + 14 * DAY_MS).toISOString());
+        break;
+      case "no_expiry":
+        where += " AND k.expires_at IS NULL";
+        break;
+      case "unused":
+        where += " AND (k.last_used_at IS NULL OR k.last_used_at < ?)";
+        params.push(new Date(time - 90 * DAY_MS).toISOString());
+        break;
+    }
+  }
   if (filter.owner) {
     where += " AND k.user_id = ?";
     params.push(filter.owner);
@@ -756,30 +792,16 @@ export function listInventory(filter: InventoryFilter) {
   const rows = db.query(`SELECT ${keyColumns}, u.display_name AS owner_name FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
     WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string }>;
   const page = rows.slice(0, INVENTORY_PAGE);
-  const policies = readPolicies();
   const usage = usage14d(page.map((row) => row.id));
-  const time = Date.now();
   const keys: InventoryKey[] = page.map((row) => ({
     ...present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], false),
     owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null }
   })).map((key) => ({ ...key, grants: key.grants.map((grant) => ({ ...grant, resource: grant.resource ? { kind: grant.resource.kind, id: grant.resource.id, name: null } : null })) }));
-  const filtered = keys.filter((key) => {
-    switch (filter.state) {
-      case undefined: return true;
-      case "active": return key.state === "active";
-      case "expiring": return key.expiresAt !== null && key.state !== "expired" && Date.parse(key.expiresAt) - time < 14 * DAY_MS;
-      case "no_expiry": return key.expiresAt === null;
-      case "blocked": return key.state === "blocked";
-      case "grace": return key.state === "grace";
-      case "expired": return key.state === "expired";
-      case "unused": return !key.lastUsedAt || time - Date.parse(key.lastUsedAt) > 90 * DAY_MS;
-    }
-  });
   const last = page.at(-1);
   const summary = db.query(`SELECT COUNT(*) AS live, SUM(CASE WHEN k.expires_at IS NULL THEN 1 ELSE 0 END) AS no_expiry
     FROM mcp_api_keys k WHERE k.revoked_at IS NULL`).get() as { live: number; no_expiry: number | null };
   return {
-    keys: filtered,
+    keys,
     nextCursor: rows.length > INVENTORY_PAGE && last ? `${last.created_at}|${last.id}` : null,
     summary: { live: summary.live, noExpiry: summary.no_expiry ?? 0 }
   };

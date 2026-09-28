@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, House, Link2, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, useBinCount } from "../AppShell";
+import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
@@ -182,7 +182,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   return <main className={`app-page team-app${routeUserId || routeInvites ? " team-detail-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><h1 className="app-page-title">Team</h1></span></span><AppPageName name="Team" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
 

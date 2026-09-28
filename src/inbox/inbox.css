@@ -132,7 +132,7 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
  * mark but visually hides the word "Home", which stays available to assistive tech.
  */
 @media (max-width: 760px) {
-  .app-page-header:has(.app-account-inbox) .app-home-brand { display: none; }
+  .app-page-header:has(.app-account-inbox) .app-home-brand { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .app-home-header:has(.app-account-inbox) .brand-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 

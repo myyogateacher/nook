@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CheckCheck, ChevronLeft, ExternalLink, House, Inbox, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, useBinCount } from "../AppShell";
+import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { diffStats, lineDiff } from "../diff/lineDiff";
 import { relativeTime } from "../files/format";
@@ -273,7 +273,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   return <main className={`app-page inbox-app${route.proposalId ? " inbox-detail-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Inbox</strong></span></span>
+      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Inbox</strong></span></span><AppPageName name="Inbox" />
       <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     <ReadOnlyBanner />

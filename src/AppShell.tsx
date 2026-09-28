@@ -107,3 +107,12 @@ export function useBinCount(enabled = true) {
   }, [enabled]);
   return binCount;
 }
+
+/**
+ * The page name shown on phones, where the header's brand name is visually hidden to fit the
+ * account buttons (F2). A compact eyebrow on its own header line; decorative, since the header's
+ * brand text (or each page's h1) already names the app for assistive tech.
+ */
+export function AppPageName({ name }: { name: string }) {
+  return <span className="app-page-name" aria-hidden="true">{name}</span>;
+}

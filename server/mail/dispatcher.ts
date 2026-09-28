@@ -1,12 +1,15 @@
 import { config } from "../config";
 import { db } from "../db";
-import { addressHash, mailEnabled, sendMail } from "../mail";
+import { mailEnabled, sendMail } from "../mail";
+import { suppressionOf, sweepSoftBounces } from "./suppression";
 import { appLink, paths } from "./links";
 import { prefsAllow, quietHoursEnd, readEmailPrefs } from "./prefs";
 import { isTemplateName, renderTemplate, TEMPLATES, type TemplateName } from "./registry";
 import { resolvePayload, type Recipient } from "./resolve";
 import type { MailCategory, MailClass } from "./templates/types";
 import { createUnsubscribeToken } from "./unsubscribe";
+import { scheduleBinExpiry } from "./laterMail";
+import { scheduleDigests } from "./digest";
 
 /**
  * The mail dispatcher (docs/plan/research/2026-09-28-outbound-email.md §D.1–D.3), on the reminders
@@ -103,8 +106,10 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
   const security = row.class === "security";
   // T230: a blocked account gets its security mail (blocked, unblocked, signed out) and nothing else.
   if (user.disabled_at !== null && !security) return skip(row, "blocked", nowMs);
-  if (db.query("SELECT 1 FROM mail_suppressions WHERE address_hash = ?").get(addressHash(user.email))) {
-    finish(row.id, "suppressed", { skipReason: "suppressed", nowMs });
+  // A bounced or complaining address gets security mail only (§B.4); a soft bounce holds it back for a while.
+  const suppression = security ? null : suppressionOf(user.email, nowMs);
+  if (suppression) {
+    finish(row.id, "suppressed", { skipReason: suppression.reason === "soft" ? "soft_bounce" : "suppressed", nowMs });
     return "suppressed";
   }
   // D244/D245: unverified addresses get only the verification mail and security mail.
@@ -130,14 +135,16 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
   if ("skip" in resolved) return skip(row, resolved.skip, nowMs);
   const data = security && nowMs - Date.parse(row.created_at) > SECURITY_DELAYED_AFTER_MS ? { ...(resolved.data as object), delayed: true } : resolved.data;
 
-  const activity = row.class === "activity" && row.category !== null;
-  const token = activity ? await createUnsubscribeToken(user.id, row.category!) : null;
+  // Activity and reminders mail can be switched off by category from the mail itself (B.2).
+  const switchable = (row.class === "activity" || row.class === "reminders") && row.category !== null;
+  // The digest's link turns the digest off (B.2).
+  const token = switchable ? await createUnsubscribeToken(user.id, row.category!) : row.class === "digest" ? await createUnsubscribeToken(user.id, "digest") : null;
   const rendered = renderTemplate(template, data, {
     instanceName: config.mail.instanceName,
     tz: prefs.tz,
     unsubscribeHref: token ? appLink(paths.unsubscribePage(token)) : undefined
   });
-  // RFC 8058 one-click unsubscribe, on activity mail only (never security or account, B.2).
+  // RFC 8058 one-click unsubscribe, on activity, reminders, and digest mail (never security or account, B.2).
   const headers = token ? { "List-Unsubscribe": `<${appLink(paths.unsubscribeApi(token))}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } : undefined;
   const outcome = await sendMail({ to: user.email, subject: rendered.subject, text: rendered.text, html: rendered.html, headers }, {
     purpose: template,
@@ -183,6 +190,13 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
   const counts: TickCounts = { sent: 0, skipped: 0, held: 0, retried: 0, dead: 0, suppressed: 0 };
   try {
     const nowMs = options.nowMs ?? Date.now();
+    // Scheduled mail is queued first, so a due digest or Bin reminder goes out in the same tick.
+    try {
+      scheduleDigests(nowMs);
+      scheduleBinExpiry(nowMs);
+    } catch (error) {
+      console.error(`Mail scheduling failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+    }
     const due = db.query("SELECT * FROM mail_outbox WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, created_at LIMIT ?").all(iso(nowMs), MAIL_BATCH) as Row[];
     for (const row of due) {
       const claimed = db.query("UPDATE mail_outbox SET status = 'sending', claimed_at = ? WHERE id = ? AND status = 'queued'").run(iso(nowMs), row.id);
@@ -229,7 +243,9 @@ export function sweepMail(nowMs = Date.now()) {
     .run(iso(nowMs - 30 * DAY), iso(nowMs - 90 * DAY)).changes;
   const tokens = db.query("DELETE FROM auth_tokens WHERE (used_at IS NOT NULL AND used_at < ?) OR expires_at < ?").run(iso(nowMs - 7 * DAY), iso(nowMs - 7 * DAY)).changes;
   const events = db.query("DELETE FROM mail_webhook_events WHERE received_at < ?").run(iso(nowMs - 7 * DAY)).changes;
-  return { outbox, tokens, events };
+  const softBounces = sweepSoftBounces(nowMs);
+  const shareLog = db.query("DELETE FROM mail_share_log WHERE created_at < ?").run(iso(nowMs - 30 * DAY)).changes;
+  return { outbox, tokens, events, softBounces, shareLog };
 }
 
 /** Runs a tick soon after an enqueue the user is waiting for (verify, test). The test suite ticks itself. */

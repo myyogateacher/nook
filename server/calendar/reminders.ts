@@ -1,6 +1,7 @@
 import { audit, db } from "../db";
 import { calendarAudiencePredicate, readableEvent, type EventRow } from "./access";
 import { isValidTimeZone, nextOccurrence, parseLocal, zonedToUtc, type RecurrenceRule, type SeriesInput } from "./recurrence";
+import { mailReminder } from "../mail/calendarMail";
 
 /**
  * Reminders, the dispatcher, and in-app notifications (WAVES_10-12.md §4.1–4.3, D64, T66, T67).
@@ -56,7 +57,12 @@ export type ReminderRow = {
   last_fired_at: string | null;
   created_via_key_id: string | null;
   created_at: string;
+  /** Where it goes besides the bell (Wave 29): push, email, or both. */
+  channels: ReminderChannels;
 };
+
+export const REMINDER_CHANNELS = ["push", "email", "push_email"] as const;
+export type ReminderChannels = typeof REMINDER_CHANNELS[number];
 
 export type ReminderSummary = {
   id: string;
@@ -67,6 +73,7 @@ export type ReminderSummary = {
   nextFireAt: string | null;
   lastFiredAt: string | null;
   createdAt: string;
+  channels: ReminderChannels;
 };
 
 const summary = (row: ReminderRow): ReminderSummary => ({
@@ -77,7 +84,8 @@ const summary = (row: ReminderRow): ReminderSummary => ({
   tz: row.tz,
   nextFireAt: row.next_fire_at,
   lastFiredAt: row.last_fired_at,
-  createdAt: row.created_at
+  createdAt: row.created_at,
+  channels: row.channels
 });
 
 type SeriesRow = Pick<EventRow, "all_day" | "start_date" | "end_date" | "start_local" | "tz" | "duration_minutes" | "rrule_json" | "exdates_json">;
@@ -111,7 +119,7 @@ export function listReminders(userId: string, eventId: string | null) {
   return { reminders: rows.map(summary) };
 }
 
-export type ReminderInput = { eventId: string; offsetMinutes: number; tz: string } | { title: string; fireAt: string; tz: string };
+export type ReminderInput = ({ eventId: string; offsetMinutes: number; tz: string } | { title: string; fireAt: string; tz: string }) & { channels?: ReminderChannels };
 
 /** Creates a reminder for `userId` only. The event must be readable by them (viewers may set reminders). */
 export function createReminder(userId: string, input: ReminderInput, options: { nowMs?: number; keyId?: string | null } = {}) {
@@ -119,6 +127,7 @@ export function createReminder(userId: string, input: ReminderInput, options: { 
   if (!isValidTimeZone(input.tz)) throw new ReminderError(400, "Unknown time zone");
   const id = crypto.randomUUID();
   const createdAt = iso(nowMs);
+  const channels = input.channels ?? "push";
   if ("eventId" in input) {
     const found = readableEvent(input.eventId, userId);
     if (!found) throw new ReminderError(404, "Event not found");
@@ -128,8 +137,8 @@ export function createReminder(userId: string, input: ReminderInput, options: { 
       const existing = db.query("SELECT offset_minutes FROM reminders WHERE user_id = ? AND event_id = ?").all(userId, input.eventId) as Array<{ offset_minutes: number }>;
       if (existing.some((row) => row.offset_minutes === input.offsetMinutes)) throw new ReminderError(409, "You already have this reminder", "REMINDER_EXISTS");
       if (existing.length >= MAX_REMINDERS_PER_EVENT) throw new ReminderError(409, `An event can have at most ${MAX_REMINDERS_PER_EVENT} of your reminders`, "LIMIT_REACHED");
-      db.query(`INSERT INTO reminders (id, user_id, event_id, offset_minutes, title, tz, next_fire_at, created_via_key_id, created_at)
-        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)`).run(id, userId, input.eventId, input.offsetMinutes, input.tz, iso(next.fireMs), options.keyId ?? null, createdAt);
+      db.query(`INSERT INTO reminders (id, user_id, event_id, offset_minutes, title, tz, next_fire_at, created_via_key_id, created_at, channels)
+        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`).run(id, userId, input.eventId, input.offsetMinutes, input.tz, iso(next.fireMs), options.keyId ?? null, createdAt, channels);
       audit(userId, null, "reminder.create", { reminderId: id, eventId: input.eventId });
     })();
   } else {
@@ -139,8 +148,8 @@ export function createReminder(userId: string, input: ReminderInput, options: { 
     db.transaction(() => {
       const pending = (db.query("SELECT COUNT(*) AS count FROM reminders WHERE user_id = ? AND event_id IS NULL AND next_fire_at IS NOT NULL").get(userId) as { count: number }).count;
       if (pending >= MAX_STANDALONE_REMINDERS) throw new ReminderError(409, `You can have at most ${MAX_STANDALONE_REMINDERS} upcoming reminders`, "LIMIT_REACHED");
-      db.query(`INSERT INTO reminders (id, user_id, event_id, offset_minutes, title, tz, next_fire_at, created_via_key_id, created_at)
-        VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?)`).run(id, userId, input.title, input.tz, iso(fireMs), options.keyId ?? null, createdAt);
+      db.query(`INSERT INTO reminders (id, user_id, event_id, offset_minutes, title, tz, next_fire_at, created_via_key_id, created_at, channels)
+        VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)`).run(id, userId, input.title, input.tz, iso(fireMs), options.keyId ?? null, createdAt, channels);
       audit(userId, null, "reminder.create", { reminderId: id });
     })();
   }
@@ -179,7 +188,8 @@ export function rescheduleCalendarReminders(calendarId: string, nowMs = Date.now
 // Dispatcher
 
 export type DispatchCounts = { notified: number; skipped: number; limited: number; removed: number; dormant: number };
-export type NotificationCreated = { id: string; userId: string };
+/** `push: false` for a reminder that goes to email only: the bell entry is kept, the push skipped. */
+export type NotificationCreated = { id: string; userId: string; push?: boolean };
 
 const listeners: Array<(created: NotificationCreated[]) => void> = [];
 /** Extension point for Web Push (Stage C): called after each tick's transactions commit. */
@@ -293,7 +303,10 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
             const id = crypto.randomUUID();
             db.query("INSERT INTO notifications (id, user_id, reminder_id, event_id, occurrence_start, late, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
               .run(id, row.user_id, row.id, row.event_id, occurrenceStart, late > LATE_AFTER_MS ? 1 : 0, now);
-            created.push({ id, userId: row.user_id });
+            created.push({ id, userId: row.user_id, push: row.channels !== "email" });
+            // Reminders by email (Wave 29): the outbox row joins this transaction, so a rolled-back
+            // fire sends nothing. Reminders are time-bound, so quiet hours never hold them (D242).
+            if (row.channels !== "push") mailReminder(row.user_id, { reminderId: row.id, eventId: row.event_id, occurrenceStart, fireAt: row.next_fire_at!, lateMs: late });
             counts.notified += 1;
           }
         }

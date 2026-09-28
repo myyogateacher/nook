@@ -13,6 +13,8 @@ export type MailLogEntry = {
   id: string; template: string; class: string; status: string; skipReason: string | null; attempts: number;
   errorCode: string | null; providerId: string | null; createdAt: string; sentAt: string | null; notBefore: string | null;
   to: { userId: string; displayName: string } | { hash: string };
+  /** The recipient address's suppression now (Wave 29 webhooks), or null. */
+  suppression?: "bounce" | "complaint" | "manual" | "soft" | null;
 };
 export type MailLog = { emailEnabled: boolean; today: { sent: number; held: number; failed: number; dead: number; limit: number }; entries: MailLogEntry[]; nextCursor: string | null };
 type Filter = "all" | "sent" | "held" | "failed" | "dead" | "skipped";
@@ -25,13 +27,17 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 export const TEMPLATE_LABELS: Record<string, string> = {
   "team.invite": "Invite", "account.verify": "Verify email", "account.test": "Test email", "tasks.assigned": "Assigned to you",
   "tasks.comment": "Card comments", "sharing.shared": "Shared with you", "inbox.proposals": "Proposals",
-  "security.api_key_created": "New API key", "security.role_changed": "Role changed", "security.two_factor": "Two-factor", "security.account": "Account"
+  "security.api_key_created": "New API key", "security.role_changed": "Role changed", "security.two_factor": "Two-factor", "security.account": "Account",
+  "calendar.reminder": "Reminder", "calendar.event_changed": "Event changed", "tasks.sprint": "Sprint", "bin.expiring": "Bin clean-up", "digest.summary": "Digest"
 };
 const STATUS_LABELS: Record<string, string> = { queued: "Held", sending: "Sending", sent: "Sent", failed: "Failed", suppressed: "Bounced", skipped: "Skipped", dead: "Dead" };
 const SKIP_LABELS: Record<string, string> = {
   prefs_off: "Turned off in their settings", unverified: "Address not verified", access_lost: "They can no longer open it", empty: "Nothing left to send",
-  blocked: "Account blocked", stale: "Too old to send", suppressed: "Address bounced", no_user: "Account removed"
+  blocked: "Account blocked", stale: "Too old to send", suppressed: "Address bounced", no_user: "Account removed",
+  soft_bounce: "Paused after repeated soft bounces", muted: "They muted this board or calendar"
 };
+/** The recipient's suppression, shown on the row (never the address). */
+export const SUPPRESSION_LABELS: Record<string, string> = { bounce: "Bounced", complaint: "Spam report", manual: "Suppressed", soft: "Soft bounces" };
 
 export const fetchMailLog = (status: Filter, cursor?: string | null) => {
   const params = new URLSearchParams();
@@ -112,7 +118,7 @@ export function TeamEmailLog({ onBack, flash }: { onBack: () => void; flash: (me
               <strong>{TEMPLATE_LABELS[entry.template] ?? entry.template}</strong>
               <span className={`team-status-chip mail-${entry.status}`}>{STATUS_LABELS[entry.status] ?? entry.status}</span>
             </span>
-            <span className="team-row-meta">To {who} · {relativeTime(entry.sentAt ?? entry.createdAt)} · {entry.attempts} attempt{entry.attempts === 1 ? "" : "s"}</span>
+            <span className="team-row-meta">To {who}{entry.suppression ? <span className="team-status-chip mail-suppressed team-email-suppression">{SUPPRESSION_LABELS[entry.suppression] ?? entry.suppression}</span> : null} · {relativeTime(entry.sentAt ?? entry.createdAt)} · {entry.attempts} attempt{entry.attempts === 1 ? "" : "s"}</span>
           </button>
           {expanded && <dl className="team-email-details">
             <div><dt>Id</dt><dd><code>{entry.id}</code></dd></div>
@@ -120,6 +126,7 @@ export function TeamEmailLog({ onBack, flash }: { onBack: () => void; flash: (me
             {entry.sentAt && <div><dt>Sent</dt><dd>{new Date(entry.sentAt).toLocaleString()}</dd></div>}
             {entry.notBefore && <div><dt>Next try</dt><dd>{new Date(entry.notBefore).toLocaleString()}</dd></div>}
             {entry.skipReason && <div><dt>Reason</dt><dd>{SKIP_LABELS[entry.skipReason] ?? entry.skipReason}</dd></div>}
+            {entry.suppression && <div><dt>Recipient</dt><dd>{entry.suppression === "soft" ? "Paused after repeated soft bounces" : entry.suppression === "complaint" ? "Reported an email as spam; only security email goes" : "Address bounced; only security email goes"}</dd></div>}
             {entry.errorCode && <div><dt>Error</dt><dd><code>{entry.errorCode}</code></dd></div>}
             {entry.providerId && <div><dt>Provider id</dt><dd><code>{entry.providerId}</code></dd></div>}
             {entry.status === "dead" && "userId" in entry.to && <div className="team-email-retry"><button type="button" className="team-action" onClick={() => { void retry(entry); }}><RotateCcw />Retry</button></div>}

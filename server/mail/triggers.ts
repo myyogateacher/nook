@@ -1,4 +1,6 @@
 import { db } from "../db";
+import { isMuted } from "./mutes";
+import { logShare } from "./digest";
 import { enqueueMail, mergeIds, PROPOSALS_MIN_GAP_MS, WINDOW_MS, type Payload } from "./outbox";
 import type { SharedKind } from "./templates/activity";
 import type { AccountEvent, TwoFactorEvent } from "./templates/security";
@@ -19,11 +21,13 @@ function safely(label: string, run: () => void) {
 }
 
 const unique = (values: readonly string[]) => [...new Set(values)];
+const boardOf = (cardId: string) => (db.query("SELECT board_id FROM cards WHERE id = ?").get(cardId) as { board_id: string } | null)?.board_id ?? null;
 
 /** #16: users newly added to a card's assignees by someone else. Coalesced 10 min per recipient. */
 export function mailAssigned(actorId: string, cardId: string, addedUserIds: readonly string[]) {
+  const boardId = boardOf(cardId);
   for (const userId of unique(addedUserIds)) {
-    if (userId === actorId) continue;
+    if (userId === actorId || (boardId && isMuted(userId, "board", boardId))) continue;
     safely("tasks.assigned", () => enqueueMail({
       userId, template: "tasks.assigned", payload: { cardIds: [cardId], actorIds: [actorId] },
       coalesceKey: `tasks.assigned:${userId}`, windowMs: WINDOW_MS.activity,
@@ -34,11 +38,11 @@ export function mailAssigned(actorId: string, cardId: string, addedUserIds: read
 
 /** #17: a comment on a card; its assignees and creator hear about it, never the author. 10 min per (recipient, card). */
 export function mailComment(authorId: string, cardId: string, commentId: string) {
-  const card = db.query("SELECT created_by FROM cards WHERE id = ?").get(cardId) as { created_by: string | null } | null;
+  const card = db.query("SELECT created_by, board_id FROM cards WHERE id = ?").get(cardId) as { created_by: string | null; board_id: string } | null;
   if (!card) return;
   const assignees = (db.query("SELECT user_id FROM card_assignees WHERE card_id = ?").all(cardId) as Array<{ user_id: string }>).map((row) => row.user_id);
   for (const userId of unique([...assignees, ...(card.created_by ? [card.created_by] : [])])) {
-    if (userId === authorId) continue;
+    if (userId === authorId || isMuted(userId, "board", card.board_id)) continue;
     safely("tasks.comment", () => enqueueMail({
       userId, template: "tasks.comment", payload: { cardId, commentIds: [commentId] },
       coalesceKey: `tasks.comment:${userId}:${cardId}`, windowMs: WINDOW_MS.activity,
@@ -63,6 +67,8 @@ export function mailShared(actorId: string, kind: SharedKind, itemId: string, be
   const had = new Set(before);
   for (const userId of unique(after)) {
     if (userId === actorId || had.has(userId)) continue;
+    // The digest's "Shared with you" reads this log (ids only), whatever the sharing switch says.
+    safely("digest.share_log", () => logShare(userId, kind, itemId, actorId));
     safely("sharing.shared", () => enqueueMail({
       userId, template: "sharing.shared", payload: { items: [{ kind, id: itemId }], actorIds: [actorId] },
       coalesceKey: `sharing.shared:${userId}`, windowMs: WINDOW_MS.activity,

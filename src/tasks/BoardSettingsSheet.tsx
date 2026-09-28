@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Check, Columns3, Layers, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
+import { Check, Columns3, Layers, Mail, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
+import { MuteEmailsToggle } from "../notifications/emailMutes";
 import { trapTabKey, useDialogFocus } from "../files/Dialog";
 import { Select } from "../ui/Select";
 import {
@@ -194,6 +195,11 @@ export function BoardSettingsSheet({ board, owner, showAllLevels, onShowAllLevel
             <span>Show all levels on the board<small>Only for you, on this device. Off: columns show {saved.levels[saved.workLevel]!.plural.toLowerCase()} only.</small></span>
           </label>
         </section>}
+
+        <section className="task-settings-section" aria-labelledby={`${titleId}-email`}>
+          <h3 id={`${titleId}-email`}><Mail aria-hidden="true" />Email</h3>
+          <MuteEmailsToggle type="board" id={board.id} name={board.name} />
+        </section>
 
         {owner && <section className="task-settings-section" aria-labelledby={`${titleId}-columns`}>
           <h3 id={`${titleId}-columns`}><Columns3 aria-hidden="true" />Columns</h3>

@@ -48,7 +48,7 @@ function mutatingRoutes() {
 }
 
 /** Registered before the session middleware: there is no user, so the gate never applies. */
-const PUBLIC_WRITES = new Set(["POST /api/auth/login", "POST /api/auth/register", "POST /api/auth/invite", "POST /api/mail/verify", "POST /api/mail/unsubscribe"]);
+const PUBLIC_WRITES = new Set(["POST /api/auth/login", "POST /api/auth/register", "POST /api/auth/invite", "POST /api/mail/verify", "POST /api/mail/unsubscribe", "POST /api/mail/webhook"]);
 
 const concrete = (path: string) => path.replace(/:type/g, "note").replace(/:[A-Za-z]+/g, () => crypto.randomUUID());
 

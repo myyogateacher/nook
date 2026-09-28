@@ -113,6 +113,10 @@
 /* Remind me (QA 0.9.2): a little wider on desktop; a passed time is muted and says so. */
 .calendar-reminder-passed small { color: #85858c; }
 .calendar-reminder-over { padding-bottom: 12px; }
+/* Remind me by (Wave 29): notification, email, or both, above the times. */
+.calendar-reminder-channel { display: grid; gap: 6px; padding: 4px 20px 8px; }
+.calendar-reminder-channel > span { color: #a1a1aa; font-size: .82rem; font-weight: 650; }
+.calendar-reminder-channel .calendar-note { margin: 0; }
 @media (min-width: 761px) {
   .file-dialog.calendar-event-dialog { width: min(720px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }
   .file-dialog.calendar-reminder-dialog { width: min(560px, 94vw); max-height: min(92vh, calc(100dvh - 32px)); }

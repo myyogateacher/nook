@@ -38,14 +38,18 @@ export function mailSigningKey() {
 
 const mac = (key: Buffer, payload: string) => createHmac("sha256", key).update(payload).digest().subarray(0, 16);
 
-export async function createUnsubscribeToken(userId: string, category: MailCategory) {
+/** What an unsubscribe link can switch off: one category, or the digest. */
+export type UnsubscribeTarget = MailCategory | "digest";
+const TARGETS: readonly string[] = [...MAIL_CATEGORIES, "digest"];
+
+export async function createUnsubscribeToken(userId: string, category: UnsubscribeTarget) {
   const epoch = readEmailPrefs(userId).unsubEpoch;
   const payload = `1|${userId}|${category}|${epoch}`;
   return `${Buffer.from(payload).toString("base64url")}.${mac(await mailSigningKey(), payload).toString("base64url")}`;
 }
 
 /** The user and category a token names when its signature and epoch hold, else null. */
-export async function verifyUnsubscribeToken(token: string): Promise<{ userId: string; category: MailCategory } | null> {
+export async function verifyUnsubscribeToken(token: string): Promise<{ userId: string; category: UnsubscribeTarget } | null> {
   if (typeof token !== "string" || token.length > 300) return null;
   const [encoded, signature, extra] = token.split(".");
   if (!encoded || !signature || extra !== undefined || !/^[A-Za-z0-9_-]+$/.test(encoded) || !/^[A-Za-z0-9_-]+$/.test(signature)) return null;
@@ -54,10 +58,10 @@ export async function verifyUnsubscribeToken(token: string): Promise<{ userId: s
   const supplied = Buffer.from(signature, "base64url");
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null;
   const [version, userId, category, epoch] = payload.split("|");
-  if (version !== "1" || !userId || !category || !(MAIL_CATEGORIES as readonly string[]).includes(category) || !/^\d+$/.test(epoch ?? "")) return null;
+  if (version !== "1" || !userId || !category || !TARGETS.includes(category) || !/^\d+$/.test(epoch ?? "")) return null;
   if (!db.query("SELECT 1 FROM users WHERE id = ?").get(userId)) return null;
   if (readEmailPrefs(userId).unsubEpoch !== Number(epoch)) return null;
-  return { userId, category: category as MailCategory };
+  return { userId, category: category as UnsubscribeTarget };
 }
 
 /** "Reset email links": every unsubscribe token issued so far stops working. */

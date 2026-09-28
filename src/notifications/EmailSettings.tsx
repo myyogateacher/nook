@@ -3,7 +3,8 @@ import { CheckCircle2, Mail, MailWarning, RotateCcw, Send, ShieldCheck } from "l
 import { ApiError } from "../api";
 import { useRole } from "../team/roleAccess";
 import { Select } from "../ui/Select";
-import { deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
+import { EmailMutesList } from "./emailMutes";
+import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, insideQuietHours, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
 
 /**
  * Settings → Notifications → Email (Wave 28, outbound email §E.2–E.3). Preferences gate sending
@@ -16,15 +17,43 @@ const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> =
   { id: "assignments", title: "Assigned to you", help: "Someone assigns you a card. Grouped every 10 minutes." },
   { id: "comments", title: "Comments on your cards", help: "New comments on cards you created or are assigned to." },
   { id: "sharing", title: "Shared with you", help: "Notes, files, boards, calendars, and collections shared with you by name." },
-  { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." }
+  { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." },
+  { id: "reminders", title: "Reminders by email", help: "Reminders you set to email (choose per reminder in Calendar), and changes to events you set a reminder on. Sent even in quiet hours." },
+  { id: "sprints", title: "Sprints", help: "A sprint with your cards in it started or was completed. Off by default." },
+  { id: "bin", title: "Bin clean-up", help: "Items in your Bin are deleted for good within 3 days. At most once a week. Off by default." }
 ];
 
-const DIGEST_OPTIONS = [
+const DIGEST_OPTIONS: Array<{ value: "off" | "daily" | "weekly"; label: string }> = [
   { value: "off", label: "Off" },
-  { value: "daily", label: "Daily", disabled: true },
-  { value: "weekly", label: "Weekly (Mondays)", disabled: true }
-] as const;
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly (Mondays)" }
+];
 const TIME_OPTIONS = HALF_HOURS.map((value) => ({ value, label: value }));
+
+/** Half hours, plus a stored time between them; times inside quiet hours are disabled (the server moves them to the end). */
+export function digestTimeOptions(current: string, quietStart: string | null, quietEnd: string | null) {
+  const times = HALF_HOURS.includes(current) ? HALF_HOURS : [...HALF_HOURS, current].sort();
+  return times.map((value) => ({ value, label: value, disabled: value !== current && insideQuietHours(value, quietStart, quietEnd) }));
+}
+
+/** "Overdue and due-soon cards…" plus when the next one goes. */
+export function digestNote(prefs: Pick<Settings["prefs"], "digest" | "nextDigestAt" | "tz">) {
+  const what = "Your overdue and due-soon cards, upcoming events, proposals awaiting you, and new shares. Never sent when there is nothing to say.";
+  if (prefs.digest === "off" || !prefs.nextDigestAt) return what;
+  const next = new Date(prefs.nextDigestAt).toLocaleString(undefined, { timeZone: prefs.tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return `${what} Next: ${next} (${prefs.tz}).`;
+}
+
+/** What the bounced notice says for each reason (security email keeps coming either way). */
+export function suppressionCopy(settings: Pick<Settings, "address" | "suppression">) {
+  const reason = settings.suppression?.reason ?? "bounce";
+  if (reason === "complaint") return `An email to ${settings.address} was reported as spam, so Nook stopped sending to it. Security emails still go.`;
+  if (reason === "soft") {
+    const until = settings.suppression?.until ? new Date(settings.suppression.until).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
+    return `Email to ${settings.address} kept bouncing, so Nook paused it${until ? ` until ${until}` : ""}. Security emails still go.`;
+  }
+  return `Email to ${settings.address} bounced, so Nook stopped sending to it. Security emails still go. Check the address with your admin, or try again.`;
+}
 
 function Switch({ checked, disabled, labelledBy, describedBy, onChange }: { checked: boolean; disabled?: boolean; labelledBy: string; describedBy?: string; onChange?: (next: boolean) => void }) {
   return <button type="button" role="switch" className="modules-switch" aria-checked={checked} aria-labelledby={labelledBy} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange?.(!checked)}>
@@ -46,6 +75,7 @@ export function EmailSettings() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [cooling, setCooling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const coolTimer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -71,6 +101,22 @@ export function EmailSettings() {
       else setError(reason instanceof Error ? reason.message : "Could not save");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** "Try again" after a bounce (§B.4): clears this address's suppression, once a day. */
+  async function tryAgain() {
+    setRetrying(true);
+    setError(null);
+    setMessage(null);
+    try {
+      setSettings(await clearSuppression());
+      setMessage("Nook will email this address again.");
+    } catch (reason) {
+      const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+      setError(code === "RATE_LIMITED" ? "You can try again once a day." : reason instanceof Error ? reason.message : "Could not try again");
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -118,7 +164,8 @@ export function EmailSettings() {
     {heading}
     {settings.suppressed && <div className="email-notice danger" role="alert">
       <MailWarning aria-hidden="true" />
-      <p>Email to {settings.address} bounced, so Nook stopped sending to it. Ask your admin to check the address.</p>
+      <p>{suppressionCopy(settings)}</p>
+      <button type="button" className="secondary-button email-settings-button" disabled={retrying} onClick={() => { void tryAgain(); }}><RotateCcw aria-hidden="true" />Try again</button>
     </div>}
     {!settings.verified && <div className="email-notice" role="note">
       <Mail aria-hidden="true" />
@@ -152,22 +199,21 @@ export function EmailSettings() {
         <Switch checked={prefs.categories[row.id]} disabled={locked || !prefs.enabled} labelledBy={`email-${row.id}-label`} describedBy={`email-${row.id}-help`}
           onChange={(on) => { void save({ categories: { ...prefs.categories, [row.id]: on } }); }} />
       </li>)}
-      <li className="modules-row email-row off">
-        <span className="modules-row-text"><strong id="email-reminders-label">Reminders by email</strong><small id="email-reminders-help">Coming in a later update. Reminders appear under the bell and as push.</small></span>
-        <Switch checked={false} disabled labelledBy="email-reminders-label" describedBy="email-reminders-help" />
-      </li>
       <li className="modules-row email-row">
         <span className="modules-row-text"><strong id="email-security-label" className="email-label-icon"><ShieldCheck aria-hidden="true" className="email-inline-icon" />Security</strong><small id="email-security-help">Always on. New API keys, role changes, two-factor changes, and account blocks.</small></span>
         <Switch checked disabled labelledBy="email-security-label" describedBy="email-security-help" />
       </li>
     </ul>
 
+    {ready && <EmailMutesList />}
+
     <h4 className="notification-settings-subheading">Summary</h4>
     <div className="email-field-row">
-      <span className="email-field"><span id="email-digest-label">Digest</span><Select value="off" onChange={() => undefined} options={[...DIGEST_OPTIONS]} label="Digest" labelledBy="email-digest-label" disabled /></span>
-      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={() => undefined} options={TIME_OPTIONS} label="Digest time" labelledBy="email-digest-time-label" disabled /></span>
+      <span className="email-field"><span id="email-digest-label">Digest</span><Select value={prefs.digest} onChange={(digest) => { void save({ digest }); }} options={DIGEST_OPTIONS} label="Digest" labelledBy="email-digest-label" disabled={locked || !prefs.enabled} /></span>
+      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={(digestLocalTime) => { void save({ digestLocalTime }); }}
+        options={digestTimeOptions(prefs.digestLocalTime, prefs.quietStart, prefs.quietEnd)} label="Digest time" labelledBy="email-digest-time-label" disabled={locked || !prefs.enabled || prefs.digest === "off"} /></span>
     </div>
-    <p className="email-settings-muted">A daily or weekly summary is coming in a later update.</p>
+    <p className="email-settings-muted">{digestNote(prefs)}</p>
 
     <div className="modules-row email-row">
       <span className="modules-row-text"><strong id="email-quiet-label">Quiet hours</strong><small id="email-quiet-help">Activity email waits until they end. Security email is never held.</small></span>

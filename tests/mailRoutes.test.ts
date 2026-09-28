@@ -81,7 +81,7 @@ describe("email verification", () => {
 });
 
 describe("preferences", () => {
-  test("defaults, save with CAS, and 409 on a stale revision; digests stay off until Wave 29", async () => {
+  test("defaults, save with CAS, and 409 on a stale revision; digest cadence is off, daily, or weekly", async () => {
     const session = await createUser("Prefs user");
     const initial = await call(session, "GET", "/mail/settings");
     expect(initial.body).toMatchObject({ configured: true, address: session.email, verified: false, suppressed: false, prefs: { enabled: true, revision: 0, digest: "off", tz: "UTC" } });
@@ -92,7 +92,7 @@ describe("preferences", () => {
     expect(saved.body.prefs).toMatchObject({ revision: 1, quietStart: "22:00", quietEnd: "07:30", tz: "Europe/Berlin" });
     expect(saved.body.prefs.categories.comments).toBe(false);
     expect((await call(session, "PUT", "/mail/settings", input)).status).toBe(409);
-    for (const bad of [{ ...input, revision: 1, digest: "daily" }, { ...input, revision: 1, tz: "Mars/Olympus" }, { ...input, revision: 1, quietHours: { start: "25:00", end: "07:00" } }, { ...input, revision: 1, categories: { ...input.categories, security: false } }]) {
+    for (const bad of [{ ...input, revision: 1, digest: "monthly" }, { ...input, revision: 1, tz: "Mars/Olympus" }, { ...input, revision: 1, quietHours: { start: "25:00", end: "07:00" } }, { ...input, revision: 1, categories: { ...input.categories, security: false } }]) {
       expect((await call(session, "PUT", "/mail/settings", bad)).status).toBe(400);
     }
   });

@@ -170,6 +170,7 @@
 .team-status-chip.mail-sent { background: #172619; color: #9be3a6; }
 .team-status-chip.mail-skipped { background: #1d1d21; color: #c9c9ce; }
 .team-status-chip.mail-dead, .team-status-chip.mail-failed, .team-status-chip.mail-suppressed { background: #2b181c; color: #f3a3ae; }
+.team-email-suppression { margin-left: 6px; }
 .team-status-chip.mail-queued, .team-status-chip.mail-sending { background: #2b2415; color: #f0c674; }
 .team-email-details { display: grid; gap: 6px; margin: 0; padding: 0 14px 12px; font-size: .82rem; }
 .team-email-details div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; }

@@ -35,6 +35,7 @@ services:
       MAIL_INSTANCE_NAME: ${MAIL_INSTANCE_NAME:-}
       MAIL_DAILY_LIMIT: ${MAIL_DAILY_LIMIT:-500}
       MAIL_ALLOW_HTTP_LINKS: ${MAIL_ALLOW_HTTP_LINKS:-false}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
     volumes:
       - ${MYNOTES_DATA_DIR:-/srv/mynotes}:/data
     read_only: true

@@ -1523,9 +1523,9 @@ type RunSummary = {
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
-## Email (Wave 28)
+## Email (Waves 28–29)
 
-Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1. Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.
+Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1 and Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.
 
 ### Types
 
@@ -1534,14 +1534,17 @@ type EmailCategory = "assignments" | "comments" | "sharing" | "proposals" | "spr
 type EmailPrefs = {
   enabled: boolean;                               // master switch; security and account mail ignore it
   categories: Record<EmailCategory, boolean>;     // defaults: sprints and bin off, the rest on
-  digest: "off" | "daily" | "weekly";             // only "off" is accepted until Wave 29
+  digest: "off" | "daily" | "weekly";             // Wave 29; weekly goes on Mondays
   digestLocalTime: string;                        // "HH:MM"
   quietStart: string | null; quietEnd: string | null; // both or neither; may wrap midnight
   tz: string;                                     // IANA zone the quiet hours use
   revision: number;                               // 0 = never saved (defaults)
   updatedAt: string | null;
+  nextDigestAt: string | null;                    // Wave 29: UTC instant of the next digest, null when off
 };
-type EmailSettings = { configured: boolean; address: string; verified: boolean; suppressed: boolean; prefs: EmailPrefs };
+type Suppression = { reason: "bounce" | "complaint" | "manual" | "soft"; since: string; until: string | null } | null; // until: soft bounces only
+type EmailSettings = { configured: boolean; address: string; verified: boolean; suppressed: boolean; suppression: Suppression; prefs: EmailPrefs };
+type EmailMute = { targetType: "board" | "calendar" | "collection"; targetId: string; name: string; createdAt: string };
 ```
 
 ### Signed-in endpoints
@@ -1551,7 +1554,11 @@ All need the session, CSRF, Origin, and the TOTP gate. Viewers and guests may us
 | Method and path | Body | Result |
 | --- | --- | --- |
 | `GET /api/mail/settings` | — | `EmailSettings` |
-| `PUT /api/mail/settings` | `{ enabled, categories (all seven), digest: "off", digestLocalTime, quietHours: { start, end } \| null, tz, revision }` (strict) | `EmailSettings`; 409 `PREFERENCES_CHANGED` with `prefs` when `revision` is stale; 400 for an unknown zone, a bad time, equal start and end, a digest other than off, or an unknown category |
+| `PUT /api/mail/settings` | `{ enabled, categories (all seven), digest: "off" \| "daily" \| "weekly", digestLocalTime, quietHours: { start, end } \| null, tz, revision }` (strict) | `EmailSettings`; 409 `PREFERENCES_CHANGED` with `prefs` when `revision` is stale; 400 for an unknown zone, a bad time, equal start and end, an unknown digest cadence, or an unknown category. A `digestLocalTime` inside quiet hours is stored as the quiet-hours end; `nextDigestAt` is recomputed when the cadence, time, or zone changes |
+| `GET /api/mail/mutes` | — | `{ mutes: EmailMute[] }`: the caller's mutes on items they can still read, newest first (names read now) |
+| `PUT /api/mail/mutes/:targetType/:targetId` | `{}` | `{ muted: true }` (idempotent); 404 for an unknown type, a malformed id, or an item the caller cannot read; 409 `LIMIT_REACHED` past 500 |
+| `DELETE /api/mail/mutes/:targetType/:targetId` | — | `{ muted: false }` (idempotent; works after access is lost) |
+| `POST /api/mail/suppression/clear` | `{}` | "Try again": `EmailSettings` with the caller's own address un-suppressed (hard or soft); 409 `NOT_SUPPRESSED`; 429 `RATE_LIMITED` (once a day, audited `mail.suppression_cleared`) |
 | `POST /api/mail/verify/send` | `{}` | `{ queued: true }`; 409 `ALREADY_VERIFIED`; 429 `RATE_LIMITED` (3 an hour); 503 `NOT_CONFIGURED` |
 | `POST /api/mail/test` | `{}` | `{ queued: true, id }`; 409 `UNVERIFIED`; 429 `RATE_LIMITED` (3 an hour); 503 `NOT_CONFIGURED` |
 
@@ -1562,6 +1569,7 @@ All need the session, CSRF, Origin, and the TOTP gate. Viewers and guests may us
 | `POST /api/mail/verify` | `{ token }` (43 base64url characters, from the `/verify-email#token=` fragment). Origin and JSON content type required, 20 a minute per client | `{ ok: true }` and `users.email_verified_at` set; 410 `TOKEN_EXPIRED`; 400 `TOKEN_INVALID` (unknown, used, or issued for a different address). Never creates a session |
 | `POST /api/mail/unsubscribe?t=<token>` | any (RFC 8058 sends `List-Unsubscribe=One-Click` form data) | Always 200 with an empty body, valid token or not; a valid one turns its one category off. 429 after 30 a minute per client |
 | `GET /api/mail/unsubscribe` | — | 405. A GET never changes anything (link scanners) |
+| `POST /api/mail/webhook` | Resend's JSON event, **raw**, at most 64 KiB, with `svix-id`, `svix-timestamp`, `svix-signature` | 404 unless `RESEND_WEBHOOK_SECRET` is set. 401 `Invalid signature` (bad or missing signature, a changed body, a timestamp more than 5 minutes off) and nothing stored. `{ ok: true }` for a first delivery, `{ ok: true, duplicate: true }` for a replayed `svix-id`. `email.bounced` (bounce type `Permanent`), `email.complained`, `email.suppressed` suppress the recipient hash; other bounce types count as soft; `email.failed` marks the outbox row `failed`; every other type is ignored. 413 over 64 KiB |
 
 ### Admin endpoints (Team)
 
@@ -1569,14 +1577,14 @@ Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `
 
 | Method and path | Result |
 | --- | --- |
-| `GET /api/team/mail-log?status=all\|sent\|held\|failed\|dead\|skipped&cursor=` | `{ emailEnabled, today: { sent, held, failed, dead, limit }, entries: [{ id, template, class, status, skipReason, attempts, errorCode, providerId, createdAt, sentAt, notBefore, to: { userId, displayName } \| { hash } }], nextCursor }`, 50 a page, newest first. Never an address, subject, or payload |
+| `GET /api/team/mail-log?status=all\|sent\|held\|failed\|dead\|skipped&cursor=` | `{ emailEnabled, today: { sent, held, failed, dead, limit }, entries: [{ id, template, class, status, skipReason, attempts, errorCode, providerId, createdAt, sentAt, notBefore, to: { userId, displayName } \| { hash }, suppression: "bounce" \| "complaint" \| "manual" \| "soft" \| null }], nextCursor }`, 50 a page, newest first. `suppression` is the recipient account's address state now (Wave 29); `errorCode` may be `bounced`, `soft_bounce`, `complained`, `provider_suppressed`, or `provider_failed` after a webhook; `skipReason` adds `muted` and `soft_bounce`. Never an address, subject, or payload |
 | `POST /api/team/mail-log/:id/retry` `{}` | `{ ok: true }` requeues a `dead` row for one more attempt; 409 `NOT_RETRYABLE` otherwise (invites are never queued) |
 
 ### Mail links and headers
 
-- Every link is `APP_ORIGIN` plus a path from `server/mail/links.ts` (ids checked against the router's pattern; no query except the unsubscribe token; no redirect parameters): `/tasks/:b/card/:c`, `/tasks/:b`, `/tasks/my`, `/tasks/views/:v`, `/notes/:n`, `/notes/folder/:f`, `/notes/shared`, `/files/:d`, `/files/shared`, `/collections/:c`, `/calendar`, `/inbox`, `/team/:u`, `/settings/:section`, `/`.
+- Every link is `APP_ORIGIN` plus a path from `server/mail/links.ts` (ids checked against the router's pattern; no query except the unsubscribe token; no redirect parameters): `/tasks/:b/card/:c`, `/tasks/:b`, `/tasks/:b/sprints`, `/tasks/my`, `/tasks/views/:v`, `/notes/:n`, `/notes/folder/:f`, `/notes/shared`, `/files/:d`, `/files/shared`, `/collections/:c`, `/calendar`, `/calendar/event/:e`, `/notifications`, `/bin`, `/inbox`, `/team/:u`, `/settings/:section`, `/`.
 - Credential links keep their token in the fragment: `/register#invite=…`, `/verify-email#token=…`. The SPA reads it once, strips it, and POSTs it.
-- Activity mail: a footer link `/mail/unsubscribe#t=<token>` (the page asks before it POSTs), and the headers `List-Unsubscribe: <APP_ORIGIN/api/mail/unsubscribe?t=<token>>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Security and account mail carry neither.
+- Activity, reminders, and digest mail: a footer link `/mail/unsubscribe#t=<token>` (the page asks before it POSTs; the digest's token turns the digest off), and the headers `List-Unsubscribe: <APP_ORIGIN/api/mail/unsubscribe?t=<token>>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Security and account mail carry neither.
 - `/settings/:section` (`security`, `modules`, `mcp`, `notifications`, `about`) opens the Settings dialog at that section as a history entry of its own: Back closes it, Forward reopens it; a deep link opens it over Home. `/team/email` is the admin Email log.
 
 ### Templates (outbox `template`)
@@ -1594,6 +1602,15 @@ Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `
 | `security.role_changed` | security | A role change | 10 min; a change back to the original role sends nothing |
 | `security.two_factor` | security | Two-factor on, off, reset by the host CLI, recovery codes regenerated, a recovery code used | — |
 | `security.account` | security | Blocked, unblocked, signed out everywhere (never the admin's reason) | — |
+| `calendar.reminder` | reminders / reminders | A reminder with channel `email` or `push_email` fires (queued in the reminders dispatcher's transaction). Never held by quiet hours (D242); "(late)" after 15 min | — (one per fire) |
+| `calendar.event_changed` | reminders / reminders | Someone else changes the time or place of, or bins, an event you have a reminder on, with an occurrence in the next 7 days (D238); not for a muted calendar | 10 min per recipient and event; a change undone within it sends nothing |
+| `tasks.sprint` | activity / sprints (off by default) | A sprint starts or is completed; board readers with cards assigned in it (D235), never the actor; not for a muted board | 10 min per recipient and sprint (the later event wins) |
+| `bin.expiring` | activity / bin (off by default) | Hourly scan: items in your Bin purged within 3 days | At most one per 7 days |
+| `digest.summary` | digest | `next_digest_at` reached (daily, or Mondays, at your local time); content read at send time: your own overdue and due-soon cards, events in the next 7 days, proposals (key names and counts), new shares since the last digest | One per period; skipped when empty (D241) |
+
+### Reminder channels (Wave 29)
+
+`POST /api/reminders` accepts `channels: "push" | "email" | "push_email"` (default `push`) on both the event and standalone forms; 409 `EMAIL_OFF` when email is not configured, 409 `EMAIL_UNVERIFIED` when the caller's address is not verified. `ReminderSummary` gains `channels`. An `email` reminder still writes the bell notification but skips Web Push. MCP reminder tools keep `push` (D255: email is an account setting, session-only).
 
 ## Nook keys, policies, and the key inventory (Wave 31, Access A)
 

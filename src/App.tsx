@@ -240,13 +240,15 @@ function McpSettings({ onPendingChange, totpEnabled, role }: { onPendingChange: 
 
   async function createKey(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // React clears event.currentTarget once the handler yields, so keep the form element for the reset below.
+    const formElement = event.currentTarget;
     setBusy(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
+      const form = new FormData(formElement);
       const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), scopes, ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
+      formElement.reset();
       setNewToken(result.key.token);
-      event.currentTarget.reset();
       setScopes([...DEFAULT_KEY_SCOPES]);
       loadKeys();
     } catch (reason) {

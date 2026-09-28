@@ -59,6 +59,7 @@ import { carriedTasksState } from "./tasksNavigation";
 import { CalendarApp } from "./calendar/CalendarApp";
 import { NotificationsApp } from "./notifications/NotificationsApp";
 import { centerActiveTab } from "./ui/tabStrip";
+import { publishedElsewhere, usePublishWatch } from "./editor/publishWatch";
 import { NotificationsContext } from "./notifications/notificationsApi";
 import { NotificationSettings } from "./notifications/NotificationSettings";
 import { forgetThisDevice } from "./notifications/pushClient";
@@ -973,6 +974,24 @@ export function App() {
   const publishInput = { isOwner: Boolean(note?.isOwner), serverHasDelta: Boolean(note?.hasDelta), hasUnsavedChanges: markdown !== loadedRef.current };
   const hasPublishableDelta = canPublish(publishInput);
   const draftBadge = note?.isOwner && note.hasDraft ? mcpDraftBadge(note.draftMcpKeyName) : null;
+  // Friction 7: notice when the open draft is published elsewhere (an Inbox approval) and refresh the editor.
+  const markdownNowRef = useRef(markdown);
+  markdownNowRef.current = markdown;
+  usePublishWatch(note?.isOwner && note.hasDraft ? note.id : null, async () => {
+    const open = note;
+    if (!open || editorLocked || savingPromiseRef.current) return;
+    const generation = noteLoadGenerationRef.current;
+    const { note: fetched } = await api<{ note: NoteDetail }>(`/notes/${open.id}`);
+    const outcome = publishedElsewhere(open, fetched, markdownNowRef.current !== loadedRef.current);
+    if (!outcome.refresh || generation !== noteLoadGenerationRef.current || markdownNowRef.current !== loadedRef.current) return;
+    setNote(fetched);
+    setMarkdown(fetched.markdown);
+    revisionRef.current = fetched.draft_revision;
+    loadedRef.current = fetched.markdown;
+    setSaveState("saved");
+    void loadNavigation();
+    flash(outcome.toast);
+  });
 
   function cancelPendingAutosave() {
     if (autosaveTimerRef.current !== null) window.clearTimeout(autosaveTimerRef.current);

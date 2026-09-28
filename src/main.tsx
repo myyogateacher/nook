@@ -3,10 +3,13 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 import "./ui/ui.css";
 import { App } from "./App";
+import { ErrorBoundary } from "./ui/ErrorBoundary";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>
 );
 

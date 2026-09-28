@@ -460,3 +460,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .note-prose .selectedCell::after, .note-prose p.is-editor-empty:first-child::before { display: none !important; content: none !important; }
   .note-prose ul[data-type="taskList"] input { accent-color: #000; }
 }
+
+/* Root error boundary card (F1). */
+.crash-detail { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: #0c0c0e; color: #f2b8b5; font-size: .78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.crash-card .primary-button { width: 100%; min-height: 44px; }

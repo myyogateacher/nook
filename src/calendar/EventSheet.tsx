@@ -5,6 +5,7 @@ import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { CalendarSummary, RepeatRule, Weekday } from "./calendarApi";
 import { repeatSummary, WEEKDAYS, weekdayNames, weekdayOf, type EventForm } from "./calendarFormat";
+import { onCheckedChange } from "../ui/checkedChange";
 
 type EventSheetProps = {
   mode: "create" | "edit";
@@ -163,7 +164,7 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
           <legend>On</legend>
           {WEEKDAYS.map((day) => <label key={day} className={byDay.includes(day) || day === startDay ? "active" : undefined}>
             <input type="checkbox" checked={byDay.includes(day) || day === startDay} disabled={day === startDay}
-              onChange={(event) => setByDay((current) => event.target.checked ? [...current, day] : current.filter((item) => item !== day))} />
+              onChange={onCheckedChange((checked) => setByDay((current) => checked ? [...current, day] : current.filter((item) => item !== day)))} />
             <span>{weekdayNames[day]}</span>
           </label>)}
         </fieldset>}

@@ -23,7 +23,7 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "calendar:read", label: "Read calendar", help: "Calendars, events, and their links you can open" },
   { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" },
   { scope: "collections:read", label: "Read collections", help: "Collections you can open, their fields, and their rows; attachments as names only" },
-  { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit: never deletes, and never changes fields or sharing", implies: "collections:read" },
+  { scope: "collections:write", label: "Write collections", help: "Add and change rows where you can edit, and create private collections: never deletes, and never changes fields or sharing", implies: "collections:read" },
   { scope: "bin:write", label: "Move to Bin", help: "Move items to the Bin and restore them, only where this key can also write; never deletes forever." },
   { scope: "team:read", label: "Read team", help: "Names, roles, and status of accounts; never emails. Admins only, and it stops working if you stop being an admin" },
   { scope: "inbox:read", label: "Read inbox", help: "See your routines and this key's own proposals" },

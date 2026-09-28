@@ -81,7 +81,7 @@ const auditRows = (actorId: string, eventType: string) => (db.query("SELECT meta
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
 const READ_TOOLS = ["get_row", "list_collections", "query_rows"];
-const WRITE_TOOLS = ["create_row", "update_row"];
+const WRITE_TOOLS = ["create_collection", "create_row", "update_row"];
 
 describe("MCP collection tools", () => {
   test("appear only for collection scopes, write implies read, the handler re-checks, and nothing deletes or edits schema", async () => {

@@ -2,13 +2,14 @@ import * as z from "zod/v4";
 import type { ZodType } from "zod";
 import { config } from "../config";
 import { withAuditContext } from "../db";
-import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { restoreItem } from "../bin";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { readableEvent } from "./access";
 import { RecurrenceError, rangeFor, zonedToUtc } from "./recurrence";
 import { reminderSchema } from "./reminderRoutes";
 import { createReminder, ReminderError } from "./reminders";
 import { eventCreateSchema, eventPatchSchema } from "./routes";
-import { CalendarError, createEvent, getEvent, listCalendars, listOccurrences, patchEvent, type EventInput, type EventPatch } from "./service";
+import { CalendarError, createEvent, deleteEvent, getEvent, listCalendars, listOccurrences, patchEvent, type EventInput, type EventPatch } from "./service";
 
 /**
  * MCP tools for Calendar (docs/plan/WAVES_10-12.md §4.5, D70, T72–T75).
@@ -16,8 +17,8 @@ import { CalendarError, createEvent, getEvent, listCalendars, listOccurrences, p
  * Tools call the same services as /api/calendars, /api/events, and /api/reminders, as the key's
  * owner, so readable/editable checks, IDOR joins, recurrence limits, and caps live in one place.
  * A calendar or event the user cannot read is NOT_FOUND whether it is missing, private, or
- * binned. Writes are create and update only, with a revision compare-and-swap; there are no
- * delete, exdate, share, or feed tools. Every write is audited with `{via: "mcp", keyId}`, marks
+ * binned. Writes are create and update, with a revision compare-and-swap, plus (Wave 19)
+ * bin_event/restore_event with bin:write; there are no delete-forever, exdate, share, or feed tools. Every write is audited with `{via: "mcp", keyId}`, marks
  * `updated_via_key_id` (the "Changed by key" note, undoable in the app), and counts against the
  * per-key and per-user daily buckets. Reminders are always the key owner's own.
  */
@@ -272,5 +273,33 @@ export const calendarTools: McpToolSpec[] = [
         return { reminderId: reminder.id, nextFireAt: reminder.nextFireAt, eventId: reminder.eventId };
       });
     }
+  }),
+  // Wave 19 (§2.3): the Bin, with bin:write as well (D172, D174).
+  defineTool({
+    name: "bin_event",
+    title: "Move an event to the Bin",
+    description: `Move an event on a calendar the user may edit to the Bin, with all its occurrences. ${BIN_DESCRIPTION} Restore it with restore_event.`,
+    scopes: ["calendar:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    buckets: BIN_BUCKETS,
+    inputSchema: z.object({ eventId: uuid }).strict(),
+    handler: async ({ eventId }, key) => service(key, () => {
+      const { purgeAfter } = deleteEvent(key.userId, eventId.toLowerCase());
+      return { eventId, binned: true, purgeAfter };
+    })
+  }),
+  defineTool({
+    name: "restore_event",
+    title: "Restore an event from the Bin",
+    description: "Restore a binned event. Only the calendar owner, or whoever binned it while they can still edit the calendar, can restore it. An event whose calendar is in the Bin fails with PARENT_IN_BIN.",
+    scopes: ["calendar:write"],
+    alsoRequires: ["bin:write"],
+    write: true,
+    inputSchema: z.object({ eventId: uuid }).strict(),
+    handler: async ({ eventId }, key) => service(key, async () => {
+      const result = restoreResult(await restoreItem("event", eventId.toLowerCase(), key.userId), "Event") as Record<string, unknown>;
+      return { eventId, restored: true, ...(result.alreadyRestored ? { alreadyRestored: true } : {}), calendarId: result.calendarId, url: eventUrl(eventId) };
+    })
   })
 ];

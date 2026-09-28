@@ -3,7 +3,7 @@
 .inbox-intro h1 { margin: 0 0 6px; color: #fafafa; font-size: clamp(1.8rem, 4.5vw, 2.6rem); letter-spacing: -.05em; line-height: 1.05; }
 .inbox-intro p { max-width: 520px; margin: 0; color: #9a9aa1; font-size: .9rem; line-height: 1.5; }
 
-.inbox-segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin: 18px 0 14px; border: 1px solid #28282c; border-radius: 12px; padding: 4px; background: #121214; }
+.inbox-segments { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 18px 0 14px; border: 1px solid #28282c; border-radius: 12px; padding: 4px; background: #121214; }
 .inbox-segments button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 9px; background: transparent; color: #a8a8ae; font-size: .86rem; font-weight: 650; cursor: pointer; }
 .inbox-segments button.active { background: #2b271d; color: #f5cf79; }
 .inbox-segments b { min-width: 20px; border-radius: 999px; padding: 1px 6px; background: rgb(255 255 255 / 8%); font-size: .7rem; }
@@ -118,10 +118,45 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
 .inbox-dialog > p { margin-top: 8px; }
 .inbox-dialog-subject { color: #ededee !important; white-space: pre-wrap; overflow-wrap: anywhere; }
 .inbox-field { display: grid; gap: 6px; color: #b7b7bd; font-size: .8rem; font-weight: 600; }
-.inbox-field textarea { width: 100%; min-height: 44px; border: 1px solid #34343a; border-radius: 10px; padding: 10px 12px; background: #151517; color: #ededee; font: inherit; font-size: .9rem; font-weight: 400; resize: vertical; }
-.inbox-field textarea:focus { border-color: #6f5928; outline: none; }
+.inbox-field textarea, .inbox-field > input { width: 100%; min-height: 44px; border: 1px solid #34343a; border-radius: 10px; padding: 10px 12px; background: #151517; color: #ededee; font: inherit; font-size: .9rem; font-weight: 400; resize: vertical; }
+.inbox-field textarea:focus, .inbox-field > input:focus { border-color: #6f5928; outline: none; }
 .inbox-dialog-actions { display: flex; flex-direction: column-reverse; gap: 8px; margin-top: 12px; }
 .inbox-dialog-actions .inbox-action { width: 100%; }
+
+/* Routines (Wave 22): the list, the editor sheet, and run history. */
+.inbox-layout-single { grid-template-columns: minmax(0, 1fr) !important; }
+.inbox-layout-single .inbox-list-pane { max-width: 760px; }
+.inbox-group-heading { display: grid; gap: 3px; min-width: 0; flex: 1 1 200px; }
+.inbox-run-line { margin: 0; color: #8d8d94; font-size: .76rem; }
+.inbox-run-summary { margin: 0; color: #c9c9ce; font-size: .8rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.inbox-routines { display: grid; gap: 12px; }
+.inbox-routines-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-routines-header h2 { margin: 0; color: #ededee; font-size: 1rem; }
+.inbox-status.due { background: #2b271d; color: #f5cf79; }
+.inbox-status.run-succeeded { background: #172619; color: #9be3a6; }
+.inbox-status.run-failed, .inbox-status.run-abandoned { background: #2b2415; color: #f0c674; }
+.inbox-status.run-running { background: #1d2530; color: #a9c7ef; }
+.inbox-recipe { border: 1px solid #242428; border-radius: 14px; padding: 4px 14px; background: #131315; color: #b7b7bd; font-size: .84rem; line-height: 1.5; }
+.inbox-recipe summary { min-height: 44px; display: flex; align-items: center; color: #d6d6d9; font-weight: 650; cursor: pointer; }
+.inbox-recipe p, .inbox-recipe ol { margin: 0 0 10px; overflow-wrap: anywhere; }
+.inbox-recipe code { color: #f5cf79; }
+.inbox-sheet { max-height: 94dvh; }
+.inbox-sheet fieldset { margin: 0; border: 0; padding: 0; min-width: 0; display: grid; gap: 12px; }
+.routine-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.routine-zone { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.routine-zone .inbox-link-button { min-height: 44px; }
+.routine-check { min-height: 44px; display: flex; align-items: center; gap: 10px; color: #d6d6d9; font-size: .86rem; }
+.routine-check input { width: 20px; height: 20px; accent-color: var(--yellow); }
+.inbox-action.danger-text { color: #ef9aa5; }
+.routine-runs { display: grid; gap: 8px; margin-top: 18px; border-top: 1px solid #28282c; padding-top: 14px; }
+.routine-runs h3 { margin: 0; color: #d6d6d9; font-size: .9rem; }
+.routine-run-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.routine-run { display: grid; gap: 4px; border: 1px solid #242428; border-radius: 12px; padding: 10px 12px; background: #151517; }
+.routine-run-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #b7b7bd; font-size: .8rem; }
+.routine-run-metrics { margin: 0; color: #d6d6d9; font-size: .82rem; }
+.routine-run-error { color: #f0c674 !important; }
+.routine-confirm-scrim { z-index: 42; }
+.routine-confirm { z-index: 43; }
 
 /* The account-row Inbox button (D157) sits next to the bell. */
 .app-account-inbox { position: relative; }
@@ -145,6 +180,7 @@ p.inbox-status { justify-self: start; margin: 8px 0 0; }
   .inbox-detail-footer .inbox-action { flex: 0 0 auto; }
   .inbox-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .inbox-dialog { left: 50%; top: 50%; right: auto; bottom: auto; width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); transform: translate(-50%, -50%); border-bottom: 1px solid #35353a; border-radius: 18px; padding: 18px; }
+  .inbox-dialog.inbox-sheet { width: min(640px, calc(100vw - 32px)); }
   .inbox-dialog-actions { flex-direction: row; justify-content: flex-end; }
   .inbox-dialog-actions .inbox-action { width: auto; }
 }

@@ -3,6 +3,7 @@ import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotoco
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { audit, db, now } from "./db";
 import { registerMcpTools, type McpKeyContext } from "./mcpTools";
+import { registerRoutinePrompts } from "./inbox/prompts";
 import { DEFAULT_MCP_SCOPES, normalizeScopes, parseStoredScopes, type McpScope } from "./mcpScopes";
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
@@ -82,7 +83,11 @@ export function revokeMcpApiKey(userId: string, keyId: string) {
 const mcpHandler = createMcpHandler(({ authInfo }) => {
   const server = new McpServer({ name: "nook", version: config.appVersion });
   const key = authInfo?.extra?.key as McpKeyContext | undefined;
-  if (key) registerMcpTools(server, key);
+  if (key) {
+    registerMcpTools(server, key);
+    // Agent inbox O7: each routine this key may run is also an MCP prompt.
+    registerRoutinePrompts(server, key);
+  }
   return server;
 }, { maxSubscriptions: 0 });
 

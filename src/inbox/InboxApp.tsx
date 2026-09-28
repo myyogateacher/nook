@@ -21,7 +21,8 @@ import {
   type ProposalRef,
   type ProposalSummary
 } from "./inboxApi";
-import { actionLabel, BULK_CONFIRM_OVER, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, rejectedText, rejectEffectText, statusLabel } from "./inboxFormat";
+import { actionLabel, BULK_CONFIRM_OVER, bulkConfirmText, bulkSummary, expiresText, failureText, groupTitle, inboxBackAction, rejectedText, rejectEffectText, runLine, statusLabel } from "./inboxFormat";
+import { RoutinesPane } from "./RoutinesPane";
 import "./inbox.css";
 
 type InboxRoute = Extract<Route, { app: "inbox" }>;
@@ -87,6 +88,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
   const status = route.view === "history" ? "resolved" : "pending";
+  const routinesView = route.view === "routines";
 
   const go = useCallback((next: Omit<InboxRoute, "app">, replace = false) => {
     const target: InboxRoute = { app: "inbox", ...next };
@@ -162,7 +164,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   }, [loadDetail, route.proposalId]);
 
   useEffect(() => {
-    document.title = detail && route.proposalId === detail.id ? `${detail.kindLabel} · Inbox · Nook` : route.view === "history" ? "History · Inbox · Nook" : "Inbox · Nook";
+    document.title = detail && route.proposalId === detail.id ? `${detail.kindLabel} · Inbox · Nook` : route.view === "history" ? "History · Inbox · Nook" : route.view === "routines" ? "Routines · Inbox · Nook" : "Inbox · Nook";
   }, [detail, route.proposalId, route.view]);
 
   const back = useCallback(() => {
@@ -269,7 +271,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   // Desktop keys (§9.3): J/K move, A approves, R rejects, on the open proposal.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (dialog || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (dialog || routeRef.current.view === "routines" || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
       const key = event.key.toLowerCase();
@@ -302,7 +304,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
     </header>
     <ReadOnlyBanner />
 
-    <div className="inbox-layout">
+    <div className={`inbox-layout${routinesView ? " inbox-layout-single" : ""}`}>
       <section className="inbox-list-pane" aria-labelledby="inbox-title">
         <div className="inbox-intro">
           <h1 id="inbox-title">Inbox</h1>
@@ -311,7 +313,10 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
         <div className="inbox-segments" role="group" aria-label="Show">
           <button type="button" className={route.view === "pending" ? "active" : ""} aria-pressed={route.view === "pending"} onClick={() => { if (route.view !== "pending") go({ view: "pending", proposalId: null }); }}>Pending{pendingTotal > 0 && <b>{nextCursor ? `${pendingTotal}+` : pendingTotal}</b>}</button>
           <button type="button" className={route.view === "history" ? "active" : ""} aria-pressed={route.view === "history"} onClick={() => { if (route.view !== "history") go({ view: "history", proposalId: null }); }}>History</button>
+          <button type="button" className={routinesView ? "active" : ""} aria-pressed={routinesView} onClick={() => { if (!routinesView) go({ view: "routines", proposalId: null }); }}>Routines</button>
         </div>
+
+        {routinesView ? <RoutinesPane canWrite={canWrite} flash={flash} /> : <>
 
         {banner && <div className={`inbox-banner ${banner.tone}`} role="status">
           <span>{banner.text}</span>
@@ -339,7 +344,11 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
           const headingId = `inbox-group-${index}`;
           return <section key={`${groupTitle(group)}-${index}`} className="inbox-group" aria-labelledby={headingId}>
             <header className="inbox-group-header">
-              <h2 id={headingId}>{groupTitle(group)}<span className="inbox-group-count"> · {group.items.length}</span></h2>
+              <div className="inbox-group-heading">
+                <h2 id={headingId}>{groupTitle(group)}<span className="inbox-group-count"> · {group.items.length}</span></h2>
+                {group.run && <p className="inbox-run-line">{runLine(group.run)}{group.key ? ` · Key “${group.key.name}”` : ""}</p>}
+                {group.run?.summary && <p className="inbox-run-summary"><span className="inbox-agent-label">Written by the agent</span> {group.run.summary}</p>}
+              </div>
               {status === "pending" && pending.length > 1 && <div className="inbox-group-actions">
                 <button type="button" className="inbox-action" onClick={() => setDialog({ kind: "reject", ids: pending.map((item) => item.id), label: `${pending.length} proposals from ${groupTitle(group)}`, effect: rejectEffectText(pending) })} disabled={busy !== null}>Reject all</button>
                 {canWrite && <button type="button" className="inbox-action primary" onClick={() => requestApproveAll(pending)} disabled={busy !== null}><CheckCheck />Approve all {pending.length}</button>}
@@ -361,9 +370,10 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
           </section>;
         })}
         {nextCursor && <button type="button" className="inbox-action inbox-more" onClick={() => { void loadMore(); }} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button>}
+        </>}
       </section>
 
-      <section className="inbox-detail-pane" aria-label="Proposal">
+      {!routinesView && <section className="inbox-detail-pane" aria-label="Proposal">
         {route.proposalId && detail?.id === route.proposalId
           ? <ProposalView proposal={detail} busy={busy !== null} canApprove={canWrite} onBack={back} onOpenPath={onOpenPath}
             onApprove={() => { void approve(detail, detail.position?.nextId); }}
@@ -372,7 +382,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
             ? detailError ? <div className="inbox-state inbox-error" role="alert"><p>{detailError}</p><button className="inbox-action" onClick={() => { void loadDetail(route.proposalId!); }}><RotateCcw />Try again</button></div>
               : <p className="inbox-loading" role="status">Loading…</p>
             : <div className="inbox-placeholder"><Inbox aria-hidden="true" /><p>Choose a proposal to see exactly what it changes.</p></div>}
-      </section>
+      </section>}
     </div>
 
     {phoneToast && <div className="inbox-toast" role="status">

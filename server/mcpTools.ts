@@ -22,6 +22,7 @@ import { calendarTools } from "./calendar/mcpTools";
 import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { inboxTools } from "./inbox/mcpTools";
+import { countRunToolCall } from "./inbox/routineHooks";
 import { effectiveMcpScopes, type Role } from "./team/roles";
 import { canWriteContent } from "./team/userRole";
 
@@ -75,6 +76,8 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (spec.buckets) buckets.push(...spec.buckets);
   const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, buckets);
   if (retryAfter) return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
+  // Agent inbox D160: an admitted call counts toward the key's open routine run, if it has one.
+  countRunToolCall(key.keyId);
   try {
     const parsed = spec.inputSchema.safeParse(args ?? {});
     if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });

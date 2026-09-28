@@ -6,6 +6,7 @@ import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
+import { sweepRuns } from "./inbox/routines";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -84,6 +85,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (swept.expired || swept.interrupted || swept.purged) console.info(`Proposal sweep: ${swept.expired} expired, ${swept.interrupted} interrupted, ${swept.purged} removed`);
       } catch (error) {
         console.error("Proposal sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Routine runs (D154): abandon runs past their two-hour lease (the routine stays due), drop runs after 180 days.
+        const runs = sweepRuns(options.nowMs);
+        if (runs.abandoned || runs.purged) console.info(`Run sweep: ${runs.abandoned} abandoned, ${runs.purged} removed`);
+      } catch (error) {
+        console.error("Run sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

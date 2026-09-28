@@ -9,8 +9,8 @@ Release history and per-version notes live on the docs site ("What's new") and i
 Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agent inbox & routines](docs/plan/research/2026-09-28-agent-inbox-routines.md) · [whiteboard](docs/plan/research/2026-09-28-whiteboard-module.md) · [password vault](docs/plan/research/2026-09-28-password-vault-module.md).
 
 - [x] Waves 18, 20, 21 — released in **v0.10.0** (`4479949`).
-- [ ] Wave 19 MCP write coverage — built on branch `wave-19-mcp-writes` (1301 tests); merging for v0.11.0.
-- [ ] Wave 22 Routines and runs — built on `worktree-agent-ade650a85f18758fb` (1281 tests); merging for v0.11.0.
+- [x] Wave 19 MCP write coverage — merged into main for v0.11.0.
+- [x] Wave 22 Routines and runs — merged into main for v0.11.0.
 - [ ] **Priority:** Wave 28 email foundation — building (migration 026). Waves 29–30 email, Waves 31–34 access management (migration 025, after 19/22 merge) follow.
 - [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.
 

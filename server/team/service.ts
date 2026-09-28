@@ -12,6 +12,7 @@ import { audit, db, now, type UserRow } from "../db";
 import { joinedWithInvite } from "./invites";
 import { can, type Role } from "./roles";
 import { userRole } from "./userRole";
+import { pauseRoutinesOf } from "../inbox/routineHooks";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -235,6 +236,8 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     const result = db.query("UPDATE users SET role = ? WHERE id = ? AND role = ?").run(input.role, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: userRole(target.id) });
     recordEvent(target.id, actor, options.via, "role_change", { fromRole: target.role, toRole: input.role });
+    // Agent inbox D152: a read-only role cannot use routines, so they pause (resume after a promotion).
+    if (input.role === "viewer" || input.role === "guest") pauseRoutinesOf(target.id);
     audit(actor?.id ?? null, null, "team.role_changed", auditMeta(options.via, { targetId: target.id, fromRole: target.role, toRole: input.role }));
     return { changed: true as const, role: input.role };
   });

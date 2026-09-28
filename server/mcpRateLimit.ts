@@ -10,7 +10,7 @@
  * call costs nothing.
  */
 export type McpLimitBucket = "call" | "write" | "create_note" | "task_write" | "event_write" | "reminder_write" | "row_write" | "proposal_write"
-  | "note_publish" | "bin_action" | "bin_burst" | "sprint_write" | "structure_write" | "file_write";
+  | "note_publish" | "bin_action" | "bin_burst" | "sprint_write" | "structure_write" | "file_write" | "run_start";
 type Limit = { limit: number; windowMs: number };
 
 const MINUTE = 60_000;
@@ -39,7 +39,9 @@ export const MCP_LIMITS: Record<McpLimitBucket, Limit> = {
   // create_folder, rename_file, and move_file.
   structure_write: { limit: 100, windowMs: DAY },
   // create_text_file and begin_upload.
-  file_write: { limit: 100, windowMs: DAY }
+  file_write: { limit: 100, windowMs: DAY },
+  // start_run (agent inbox Wave 22, section 7.3; T133).
+  run_start: { limit: 48, windowMs: DAY }
 };
 
 /** Per user, across every key. Buckets without an entry are limited per key only. */
@@ -57,7 +59,8 @@ export const MCP_USER_LIMITS: Partial<Record<McpLimitBucket, Limit>> = {
   bin_burst: { limit: 20, windowMs: MINUTE },
   sprint_write: { limit: 40, windowMs: DAY },
   structure_write: { limit: 200, windowMs: DAY },
-  file_write: { limit: 200, windowMs: DAY }
+  file_write: { limit: 200, windowMs: DAY },
+  run_start: { limit: 200, windowMs: DAY }
 };
 
 type Window = { count: number; resetAt: number };

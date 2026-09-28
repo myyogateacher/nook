@@ -9,6 +9,8 @@ import { isProposalKind, PROPOSAL_KIND_DEFS, type ProposalKind, type ProposalPre
 import { PROPOSAL_EXPIRE_MS, rejectEffectFor, type NoteDraftPayload, type ProposalBaseRow, type RejectEffect } from "./noteDraftProposals";
 import { cleanLine, cleanText } from "./text";
 import { proposalIsStale } from "./stale";
+import { InboxError } from "./errors";
+import { checkNoteDraftPin, checkRunKind, checkTargetPin, openRunForKey, releaseRunSlot, reserveRunSlot, runHeaders, type OpenRun } from "./routines";
 
 /**
  * The proposal primitive (docs/plan/research/2026-09-28-agent-inbox-routines.md §4, D146–D159).
@@ -37,16 +39,7 @@ export const NOTIFY_COALESCE_MS = 15 * 60_000;
 
 export type ProposalStatus = "pending" | "applying" | "applied" | "rejected" | "expired" | "failed" | "superseded" | "withdrawn";
 
-export class InboxError extends Error {
-  constructor(readonly status: 400 | 403 | 404 | 409, message: string, readonly code?: string, readonly extra: Record<string, unknown> = {}) {
-    super(message);
-    this.name = "InboxError";
-  }
-
-  body() {
-    return { error: this.message, ...(this.code ? { code: this.code } : {}), ...this.extra };
-  }
-}
+export { InboxError };
 
 type ProposalRow = {
   id: string; owner_id: string; key_id: string | null; key_name: string; routine_id: string | null; run_id: string | null;
@@ -70,53 +63,85 @@ const pendingCount = db.query("SELECT COUNT(*) AS count FROM (SELECT 1 FROM prop
 
 /**
  * Submits one proposal for the key's owner. Checks, in order: the kind's module scope (D151), the
- * 500 pending ceiling (D155), the daily `proposal_write` buckets, the title, and then the kind's
- * own payload validation and target read check (NOT_FOUND, the same as missing; T126).
+ * routine's allowed kinds when it belongs to a run, the 500 pending ceiling (D155), the title, the
+ * run's pins and cap, the daily `proposal_write` buckets, and then the kind's own payload validation
+ * and target read check (NOT_FOUND, the same as missing; T126). In a run, the proposal expires after
+ * the routine's `expire_days` and is grouped under the run.
  */
-export async function submitProposal(key: McpKeyContext, item: SubmitItem, timestamp = new Date()): Promise<{ proposalId: string; status: "pending"; expiresAt: string }> {
+export async function submitProposal(key: McpKeyContext, item: SubmitItem, timestamp = new Date(), open: OpenRun | null = null): Promise<{ proposalId: string; status: "pending"; expiresAt: string }> {
   if (!isProposalKind(item.kind)) throw new McpToolError("INVALID", "Unknown proposal kind");
   const kind = PROPOSAL_KIND_DEFS[item.kind];
   if (!hasScope(key.scopes, kind.scope)) throw new McpToolError("SCOPE_REQUIRED", `This API key needs the ${kind.scope} scope to suggest ${item.kind} changes`);
   if (!canWriteContent(key.userId)) throw new McpToolError("READ_ONLY", "Your team role is read-only");
+  if (open) checkRunKind(open, item.kind);
   if ((pendingCount.get(key.userId, PENDING_CEILING) as { count: number }).count >= PENDING_CEILING) {
     throw new McpToolError("LIMIT_REACHED", `The inbox already holds ${PENDING_CEILING} pending proposals. Ask the user to review them first.`);
   }
-  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, ["proposal_write"], timestamp.getTime());
-  if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many proposals from this key today. Try again later.", { retryAfterSeconds: retryAfter });
   const title = cleanLine(item.title ?? "");
   if (!title || title.length > TITLE_MAX) throw new McpToolError("INVALID", `title must be 1 to ${TITLE_MAX} characters`);
   const rationale = item.rationale === undefined ? null : cleanText(item.rationale) || null;
   if (rationale && rationale.length > RATIONALE_MAX) throw new McpToolError("INVALID", `rationale must be at most ${RATIONALE_MAX} characters`);
   if (Buffer.byteLength(JSON.stringify(item.payload ?? null), "utf8") > MAX_PAYLOAD_BYTES) throw new McpToolError("TOO_LARGE", "A proposal payload is limited to 64 KiB of JSON");
+  // A note draft is written as soon as it is validated, so its folder pin is checked first.
+  if (open && item.kind === "note_draft") checkNoteDraftPin(open, key.userId, item.payload);
+  if (open) reserveRunSlot(open);
+  let saved = false;
+  try {
+    const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, ["proposal_write"], timestamp.getTime());
+    if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many proposals from this key today. Try again later.", { retryAfterSeconds: retryAfter });
+    const result = await kind.submit(key, item.payload);
+    // Other kinds validate without side effects, so their pins are checked before anything is stored.
+    if (open && item.kind !== "note_draft") checkTargetPin(open, result.targetType, result.targetId);
+    const outcome = store(key, item.kind, title, rationale, result, timestamp, open);
+    saved = true;
+    return outcome;
+  } finally {
+    if (open && !saved) releaseRunSlot(open);
+  }
+}
 
-  const result = await kind.submit(key, item.payload);
+type KindSubmitResult = Awaited<ReturnType<typeof PROPOSAL_KIND_DEFS[ProposalKind]["submit"]>>;
+
+function store(key: McpKeyContext, kindName: ProposalKind, title: string, rationale: string | null, result: KindSubmitResult, timestamp: Date, open: OpenRun | null) {
   const payload = JSON.stringify(result.payload);
   if (Buffer.byteLength(payload, "utf8") > MAX_PAYLOAD_BYTES) throw new McpToolError("TOO_LARGE", "A proposal payload is limited to 64 KiB of JSON");
   const createdAt = timestamp.toISOString();
-  const expiresAt = new Date(timestamp.getTime() + PROPOSAL_EXPIRE_MS).toISOString();
+  const expiresAt = new Date(timestamp.getTime() + (open ? open.routine.expire_days * 86_400_000 : PROPOSAL_EXPIRE_MS)).toISOString();
+  const runId = open?.run.id ?? null;
+  const routineId = open?.routine.id ?? null;
   if (result.proposalId) {
-    // A note draft recorded its own proposal row when it was written (D149); give it the agent's words.
-    db.query("UPDATE proposals SET title = ?, rationale = ? WHERE id = ? AND owner_id = ?").run(title, rationale, result.proposalId, key.userId);
-    audit(key.userId, null, "proposal.submitted", { keyId: key.keyId, kind: item.kind, runId: null, proposalId: result.proposalId });
+    // A note draft recorded its own proposal row when it was written (D149); give it the agent's words, and its run.
+    if (open) {
+      db.query("UPDATE proposals SET title = ?, rationale = ?, routine_id = ?, run_id = ?, expires_at = ? WHERE id = ? AND owner_id = ?")
+        .run(title, rationale, routineId, runId, expiresAt, result.proposalId, key.userId);
+    } else {
+      db.query("UPDATE proposals SET title = ?, rationale = ? WHERE id = ? AND owner_id = ?").run(title, rationale, result.proposalId, key.userId);
+    }
+    audit(key.userId, null, "proposal.submitted", { keyId: key.keyId, kind: kindName, runId, proposalId: result.proposalId });
     const row = db.query("SELECT expires_at FROM proposals WHERE id = ?").get(result.proposalId) as { expires_at: string };
-    return { proposalId: result.proposalId, status: "pending", expiresAt: row.expires_at };
+    return { proposalId: result.proposalId, status: "pending" as const, expiresAt: row.expires_at };
   }
   const id = crypto.randomUUID();
   db.transaction(() => {
-    db.query(`INSERT INTO proposals (id, owner_id, key_id, key_name, kind, target_type, target_id, title, rationale, payload, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, key.userId, key.keyId, key.name.slice(0, 120) || "MCP key", item.kind, result.targetType, result.targetId, title, rationale, payload, createdAt, expiresAt);
-    audit(key.userId, null, "proposal.submitted", { keyId: key.keyId, kind: item.kind, runId: null, proposalId: id });
+    db.query(`INSERT INTO proposals (id, owner_id, key_id, key_name, routine_id, run_id, kind, target_type, target_id, title, rationale, payload, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, key.userId, key.keyId, key.name.slice(0, 120) || "MCP key", routineId, runId, kindName, result.targetType, result.targetId, title, rationale, payload, createdAt, expiresAt);
+    audit(key.userId, null, "proposal.submitted", { keyId: key.keyId, kind: kindName, runId, proposalId: id });
   })();
-  return { proposalId: id, status: "pending", expiresAt };
+  return { proposalId: id, status: "pending" as const, expiresAt };
 }
 
-/** Up to 20 items, validated and inserted one at a time with per-item results; one notification for the batch. */
-export async function submitProposals(key: McpKeyContext, items: readonly SubmitItem[]) {
+/**
+ * Up to 20 items, validated and inserted one at a time with per-item results. Without a run, one
+ * notification for the batch; in a run (the key's own open run, Wave 22) the notification waits
+ * for finish_run, so a whole run is one bell entry (D159).
+ */
+export async function submitProposals(key: McpKeyContext, items: readonly SubmitItem[], runId?: string) {
+  const open = runId ? openRunForKey(key, runId) : null;
   const results: SubmitOutcome[] = [];
   for (const item of items) {
     try {
-      results.push(await submitProposal(key, item));
+      results.push(await submitProposal(key, item, new Date(), open));
     } catch (error) {
       if (error instanceof McpToolError) results.push({ error: error.message, code: error.code, ...(error.details ? { details: error.details } : {}) });
       else {
@@ -126,8 +151,8 @@ export async function submitProposals(key: McpKeyContext, items: readonly Submit
     }
   }
   const created = results.filter((result) => "proposalId" in result).length;
-  if (created) notifyProposals(key.userId, key.keyId, created);
-  return { results, submitted: created };
+  if (created && !open) notifyProposals(key.userId, key.keyId, created);
+  return { results, submitted: created, ...(open ? { runId: open.run.id } : {}) };
 }
 
 /** This key's own proposals, newest first (T131): never another key's, and no payload echo. */
@@ -256,7 +281,7 @@ export type ProposalGroup = {
 
 /**
  * The inbox: pending proposals (or resolved ones, newest resolved first), one page of at most 50,
- * grouped by run, else by key (Wave 21 has no runs yet). Groups are ordered by their newest item;
+ * grouped by run, else by key (a run whose routine was deleted falls back to its key). Groups are ordered by their newest item;
  * items inside a group are in submission order, for top-to-bottom review.
  */
 export function listInbox(ownerId: string, options: { status: "pending" | "resolved"; group: "run" | "none"; cursor?: string; limit?: number }) {
@@ -274,11 +299,13 @@ export function listInbox(ownerId: string, options: { status: "pending" | "resol
   const nextCursor = rows.length > limit && last ? encodeCursor({ at: (pending ? last.created_at : last.resolved_at) ?? last.created_at, seq: last.seq }) : null;
   const groups: ProposalGroup[] = [];
   const byKey = new Map<string, ProposalGroup>();
+  const headers = options.group === "none" ? new Map() : runHeaders(ownerId, [...new Set(page.map((row) => row.run_id).filter((id): id is string => id !== null))]);
   for (const row of page) {
-    const groupKey = options.group === "none" ? "all" : row.run_id ? `run:${row.run_id}` : `key:${row.key_id ?? row.key_name}`;
+    const header = row.run_id ? headers.get(row.run_id) ?? null : null;
+    const groupKey = options.group === "none" ? "all" : header ? `run:${row.run_id}` : `key:${row.key_id ?? row.key_name}`;
     let group = byKey.get(groupKey);
     if (!group) {
-      group = { routine: null, run: null, key: options.group === "none" ? null : { name: row.key_name }, items: [] };
+      group = { routine: header?.routine ?? null, run: header?.run ?? null, key: options.group === "none" ? null : { name: row.key_name }, items: [] };
       byKey.set(groupKey, group);
       groups.push(group);
     }
@@ -286,6 +313,12 @@ export function listInbox(ownerId: string, options: { status: "pending" | "resol
   }
   if (pending) for (const group of groups) group.items.reverse();
   return { groups, nextCursor };
+}
+
+/** A run's proposals for its owner, in submission order (the run detail, §8). */
+export function listRunProposals(ownerId: string, runId: string) {
+  const rows = db.query("SELECT * FROM proposals WHERE owner_id = ? AND run_id = ? ORDER BY created_at, rowid LIMIT 200").all(ownerId, runId.toLowerCase()) as ProposalRow[];
+  return rows.map((row) => summary(row, ownerId));
 }
 
 /** One proposal with its preview, resolved for the viewer now (never stored, §4.2). */

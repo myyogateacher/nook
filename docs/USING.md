@@ -36,6 +36,7 @@ Signing in lands on **Home**, which is also **Today** (below): a row of app link
 | `/team`, `/team/<user-id>` | Team, and one person's page |
 | `/inbox`, `/inbox/history` | Inbox: proposals waiting for you, and resolved ones |
 | `/inbox/p/<proposal-id>` | One proposal with its changes |
+| `/inbox/routines` | Routines: prompts your agents run on a schedule |
 
 Unknown paths open Home. A link to a note or file you cannot read (or that is missing or in the Bin) falls back to the list with a message. On phones, Back steps from the editor or preview to the list, then to the folders, then to Home, without leaving the site; in Tasks it steps from a card to its board, to the board list, then to Home. With a dialog or sheet open, Back only closes it.
 
@@ -262,6 +263,50 @@ Proposals expire after **14 days** without a decision (an expired note draft sta
 
 Viewers can reject proposals that were waiting when their role changed, but not approve them; guests have no Inbox.
 
+## Routines
+
+A **routine** is a prompt you keep in Nook for an agent to run on a schedule: "every weekday at 08:00, look at my boards and suggest cards for anything I forgot". Nook never runs anything itself. Your MCP client (a cron script, Claude Desktop, n8n) asks Nook what is due, runs it, and files what it suggests into the Inbox, where you approve or reject each one as usual.
+
+Open **Inbox → Routines** (`/inbox/routines`) and press **New routine**:
+
+- **Name** and **Instructions**: the prompt the agent runs (up to 16 KiB of Markdown).
+- **Can suggest**: the kinds of change it may propose (create cards, update rows, note drafts, …). Nook refuses anything else from the run.
+- **Only in** (optional): pin it to boards, calendars, collections, or folders. When you pin a module, Nook refuses that module's suggestions anywhere else; modules you do not pin stay open.
+- **Hints for the agent** (optional): guidance such as "only cards tagged #ops". Not enforced.
+- **Runs**: Daily, Weekdays (Mon–Fri), Weekly (pick the day), Hourly (pick the minute), or Manual only, at a time in the routine's time zone (your browser's when you create it; **Use <zone>** switches it). A **Schedule note** ("after the Monday stand-up") is shown to the agent.
+- **Key**: bind the routine to one key (recommended: only that key sees it), or let any of your keys with **Suggest changes** run it.
+- **Max proposals per run** (25 by default, at most 100) and **Expire after** (days its proposals wait, 14 by default).
+- **Enabled**: a paused routine is never due. **Pause** and **Resume** are also on each row.
+
+A new routine is due straight away for its current slot (a daily 08:00 routine created at 10:00 can run now); after a run it is next due at the following slot. A missed slot stays due until a run finishes, and several missed slots count once. A run holds a **two-hour lease**; a run that is never finished is marked **Abandoned** by the hourly sweep, its proposals stay in the Inbox, and the routine stays due.
+
+Each row shows when the routine is next due and how its last run went. Open a routine to edit it and to see its **Last runs**: status, when, how many proposals and tool calls (Nook counts these itself), how long it took, whether it hit its limit, and the agent's summary under **Written by the agent**. In the Inbox, a run's proposals are grouped under the routine with the run's time, status, and summary, and **Approve all** works per run. The bell says "Weekly review suggested 4 changes" once per run. Deleting a routine removes its run history; its proposals stay in the Inbox under their key.
+
+Members and admins can have up to 50 routines. If your role becomes Viewer or Guest, your routines are paused.
+
+### Recipe: run a routine from Claude Desktop or a cron script
+
+1. In **Settings → MCP server**, create a key with **Suggest changes** plus the read permission for what the routine looks at (for example **Read tasks**), and bind the routine to it.
+2. Point the client at `<your origin>/mcp` with the header `Authorization: Bearer <your key>`.
+3. The client runs four calls:
+
+   | Step | Tool | What it does |
+   | --- | --- | --- |
+   | 1 | `list_due_routines` | Lists the routines due now that this key may run. |
+   | 2 | `start_run` `{ routineId }` | Returns the instructions, allowed kinds, pins, limit, and the last run's summary and your recent reject reasons, and opens a two-hour lease (`runId`). |
+   | 3 | `submit_proposals` `{ runId, proposals: [...] }` | Files suggestions into the run (repeat as needed, up to the limit). |
+   | 4 | `finish_run` `{ runId, status: "succeeded", summary }` | Closes the run and moves the routine to its next slot. |
+
+**Claude Desktop.** After adding Nook as an MCP server, each routine you can run appears as a prompt named `routine.<name>` (for example `routine.weekly-review`). Choose it and Claude gets the instructions plus the four-call protocol; say "run it".
+
+**A cron script.** Any MCP-capable agent CLI works. For example, a crontab line that runs a headless agent every weekday at 08:05 (placeholders only):
+
+```sh
+5 8 * * 1-5  claude -p "Use the nook MCP server. Call list_due_routines; for each routine with runsAvailable, call start_run, follow its instructions, submit_proposals with the runId, then finish_run with a short summary." --mcp-config /path/to/nook-mcp.json
+```
+
+where `nook-mcp.json` names the server `nook` with the URL `https://nook.example/mcp` and the header `Authorization: Bearer <your key>`. Nothing the agent suggests applies until you approve it in the Inbox.
+
 ## MCP server
 
 Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes and files, and write drafts for you to review.
@@ -287,8 +332,8 @@ Permissions are fixed when the key is created; to change them, create a new key 
 | Write calendar | `calendar:write` | Create and change events on calendars you own or may edit (`create_event`, `update_event`), and set reminders **for yourself** (`create_reminder`). It never deletes events, skips dates, shares calendars, or creates feed links. A change fails with `EVENT_CHANGED` if the event changed since the client read it. Includes Read calendar. |
 | Read collections | `collections:read` | List your collections with their fields (`list_collections`), query rows with filters, sorting, and search (`query_rows`, up to 50 a page), and read one row (`get_row`). Rows come back keyed by field name; note links as titles or "restricted"; attachments as file names only. |
 | Move to Bin | `bin:write` | Move items to the Bin and restore them, **only together with** the matching write permission (Write drafts for notes, Write tasks for cards, Write calendar for events, Write collections for rows). Nothing is ever deleted forever: items stay in the Bin for 30 days and you can restore them, one by one or with **Review → Restore all** on the key. At most 10 a minute and 50 a day per key. |
-| Read inbox | `inbox:read` | List this key's own proposals and their status, failure code, and your reject reason (`list_my_proposals`). |
-| Suggest changes | `inbox:write` | Suggest changes for you to approve in the Inbox (`submit_proposals`, up to 20 at a time; `withdraw_proposal`). Never applies anything. Each suggestion also needs that module's **read** permission (Read tasks, Read calendar, Read collections), or Write drafts for a note draft. Members and admins only. Includes Read inbox. |
+| Read inbox | `inbox:read` | List this key's own proposals and their status, failure code, and your reject reason (`list_my_proposals`), and the routines this key may run (`list_routines`, `list_due_routines`, and each routine as a `routine.<name>` prompt). |
+| Suggest changes | `inbox:write` | Suggest changes for you to approve in the Inbox (`submit_proposals`, up to 20 at a time; `withdraw_proposal`), and run routines (`start_run`, `submit_proposals` with the run, `finish_run`). Never applies anything. Each suggestion also needs that module's **read** permission (Read tasks, Read calendar, Read collections), or Write drafts for a note draft. Members and admins only. Includes Read inbox. |
 | Write collections | `collections:write` | Add rows and change values in collections you own or may edit (`create_row`, `update_row`, which keeps fields it does not name), and create private collections (`create_collection`, from a template or a field list). It never deletes rows (binning needs Move to Bin), changes fields, views, or sharing, attaches files, or imports. A change fails with `ROW_CHANGED` if the row changed since the client read it. Includes Read collections. |
 
 There are sixteen permissions in all. A key with read permissions plus **Suggest changes** can propose anything it can read and change nothing by itself: a good choice for scheduled agents. Keys created before this release keep exactly what they could do before. Card changes made through a key appear on the board like your own and are recorded in the audit log with the key's id.
@@ -324,6 +369,6 @@ curl -X PUT "$UPLOAD_URL" -H "Authorization: Bearer $NOOK_KEY" \
   -H "Content-Type: application/octet-stream" --data-binary @photo.jpg
 ```
 
-**Limits.** Each key can make 120 tool calls and 30 writes a minute, and per day create 200 notes, make 500 task changes, 200 event changes, 100 reminders, 500 row changes, and 200 proposals, publish 50 drafts, move 50 items to the Bin (10 a minute), make 20 sprint changes, 100 folder and file-move changes, and 100 file uploads (1 GiB of uploads per account a day). All keys of one account together get 1000 calls and 60 writes a minute, and per day 400 new notes, 1000 task changes, 400 event changes, 200 reminders, 1000 row changes, and 400 proposals, with at most 500 proposals waiting at once. Beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
+**Limits.** Each key can make 120 tool calls and 30 writes a minute, and per day create 200 notes, make 500 task changes, 200 event changes, 100 reminders, 500 row changes, 200 proposals, and 48 routine runs; publish 50 drafts, move 50 items to the Bin (10 a minute), make 20 sprint changes, 100 folder and file-move changes, and 100 file uploads (1 GiB of uploads per account a day). All keys of one account together get 1000 calls and 60 writes a minute, and per day 400 new notes, 1000 task changes, 400 event changes, 200 reminders, 1000 row changes, 400 proposals, and 200 routine runs, with at most 500 proposals waiting at once and each run held to its routine's limit (25 by default, at most 100). Beyond that the client gets `RATE_LIMITED`. Writes are recorded in the audit log with the key's id.
 
 Treat API keys like passwords, use a separate key per client, and give each only the permissions it needs. The text of your notes and files is passed to the client as data. A client that follows instructions hidden in that text is the client's risk, which is why writing is opt-in, publishing and the Bin need their own permissions, and everything an agent does can be undone.

@@ -13,7 +13,7 @@ import {
   toSummary,
   type SprintRow
 } from "./sprintData";
-import type { SprintState } from "../../shared/sprintPlan";
+import { SPRINT_DEFAULT_DAYS, sprintEndFor, type SprintState } from "../../shared/sprintPlan";
 
 /**
  * Sprint lifecycle (research 2026-09-26 D124, D131, D132, D135, §6.2, T118).
@@ -109,13 +109,30 @@ export function insertSprint(userId: string, boardId: string, input: { name: str
   return sprintOfBoard(id, boardId)!;
 }
 
-/** Creates a planned sprint at the end (owner only; the board has sprints on; at most 50 open). */
-export function createSprint(userId: string, boardId: string, input: SprintInput & { name: string }) {
+/**
+ * Omitted dates for a sprint an agent adds (1l): the start is `today`, the end the board's default
+ * length later (sprint defaults, else two weeks), so a sprint started over MCP always has dates. An
+ * explicit null keeps that date empty; a given end before today leaves the start empty.
+ */
+export function defaultedSprintDates(input: { startOn?: string | null; endOn?: string | null }, days: number, today: string) {
+  const startOn = input.startOn !== undefined ? input.startOn : input.endOn && input.endOn < today ? null : today;
+  const endOn = input.endOn !== undefined ? input.endOn : startOn ? sprintEndFor(startOn, days) : null;
+  return { startOn, endOn };
+}
+
+/**
+ * Creates a planned sprint at the end (owner only; the board has sprints on; at most 50 open).
+ * `defaultDates` (MCP create_sprint) fills omitted dates with defaultedSprintDates.
+ */
+export function createSprint(userId: string, boardId: string, input: SprintInput & { name: string }, options: { defaultDates?: boolean; today?: string } = {}) {
   return withBoardLock(boardId, () => {
     const board = requireReadableBoard(boardId, userId);
     if (board.owner_id !== userId) throw ownerOnly();
     requireSprintsOn(boardId);
     if (openCount(boardId) >= SPRINT_LIMITS.openPerBoard) throw limitReached(`A board can have up to ${SPRINT_LIMITS.openPerBoard} planned or active sprints`);
+    if (options.defaultDates) {
+      input = { ...input, ...defaultedSprintDates(input, boardStructure(boardId).sprintDefaults?.days ?? SPRINT_DEFAULT_DAYS, options.today ?? now().slice(0, 10)) };
+    }
     requireDateOrder(input.startOn ?? null, input.endOn ?? null);
     const sprint = db.transaction(() => insertSprint(userId, boardId, { name: input.name, goal: input.goal ?? "", startOn: input.startOn ?? null, endOn: input.endOn ?? null }))();
     return { sprint: summaryOf(sprint) };

@@ -104,6 +104,12 @@ describe("tasks: tags, WIP limits, sprints, and attachments", () => {
     expect(await errorCode(makeKey(member, ["tasks:write"]), "create_sprint", { boardId, name: "Mine" })).toBe("OWNER_ONLY");
     const first = (await ok(key, "create_sprint", { boardId, name: "Sprint 1", startOn: "2026-10-01", endOn: "2026-10-14" })).sprint;
     const second = (await ok(key, "create_sprint", { boardId, name: "Sprint 2" })).sprint;
+    // 1l: no dates means today plus the board's default length (two weeks without sprint defaults).
+    const today = new Date().toISOString().slice(0, 10);
+    const { addSprintDays } = await import("../shared/sprintPlan");
+    expect(second).toMatchObject({ start_on: today, end_on: addSprintDays(today, 13) });
+    const undated = (await ok(key, "create_sprint", { boardId, name: "Sprint 3", startOn: null, endOn: null })).sprint;
+    expect(undated).toMatchObject({ start_on: null, end_on: null });
     expect(first.state).toBe("planned");
     expect((await ok(key, "start_sprint", { sprintId: first.id })).sprint.is_active).toBe(true);
     expect((await call(key, "start_sprint", { sprintId: second.id })).value).toMatchObject({ code: "SPRINT_ACTIVE", activeSprintId: first.id });

@@ -562,7 +562,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "create_sprint",
     title: "Add a sprint",
-    description: "Add a planned sprint at the end of a board's sprints. Board owner only (OWNER_ONLY otherwise), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD.",
+    description: "Add a planned sprint at the end of a board's sprints. Board owner only (OWNER_ONLY otherwise), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD; an omitted startOn is today and an omitted endOn is the board's default sprint length after the start (null keeps a date empty).",
     scopes: ["tasks:write"],
     write: true,
     buckets: ["sprint_write"],
@@ -576,7 +576,7 @@ export const taskTools: McpToolSpec[] = [
     handler: async ({ boardId, ...fields }, key) => {
       const input = routeInput(sprintCreateSchema, fields);
       return service(key, async () => {
-        const { sprint } = await createSprint(key.userId, boardId, input);
+        const { sprint } = await createSprint(key.userId, boardId, input, { defaultDates: true });
         return { sprint: { id: sprint.id, name: sprint.name, goal: sprint.goal, state: sprint.state, start_on: sprint.start_on, end_on: sprint.end_on } };
       });
     }

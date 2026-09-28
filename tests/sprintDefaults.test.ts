@@ -9,6 +9,18 @@ const BASE = { levels: [{ name: "Task", plural: "Tasks" }], workLevel: 0, sprint
 const plan = (name: string, state: "planned" | "active" | "completed", start_on: string | null, end_on: string | null, created_at = "2026-09-01") =>
   ({ name, state, start_on, end_on, position: 1024, created_at });
 
+describe("MCP create_sprint dates (1l)", () => {
+  test("omitted dates start today and last the board's default length; nulls and given dates are kept", async () => {
+    const { defaultedSprintDates } = await import("../server/tasks/sprints");
+    expect(defaultedSprintDates({}, 14, "2026-09-28")).toEqual({ startOn: "2026-09-28", endOn: "2026-10-11" });
+    expect(defaultedSprintDates({}, 7, "2026-09-28")).toEqual({ startOn: "2026-09-28", endOn: "2026-10-04" });
+    expect(defaultedSprintDates({ startOn: "2026-10-05" }, 7, "2026-09-28")).toEqual({ startOn: "2026-10-05", endOn: "2026-10-11" });
+    expect(defaultedSprintDates({ endOn: "2026-10-02" }, 14, "2026-09-28")).toEqual({ startOn: "2026-09-28", endOn: "2026-10-02" });
+    expect(defaultedSprintDates({ endOn: "2026-09-20" }, 14, "2026-09-28")).toEqual({ startOn: null, endOn: "2026-09-20" });
+    expect(defaultedSprintDates({ startOn: null, endOn: null }, 14, "2026-09-28")).toEqual({ startOn: null, endOn: null });
+  });
+});
+
 describe("validation", () => {
   test("sprint defaults are optional and bounded: days 1–60, a start rule, a pattern with one {n}", () => {
     expect(validateStructure(BASE)).toEqual({ ok: true, structure: BASE });

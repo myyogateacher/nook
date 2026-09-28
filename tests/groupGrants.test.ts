@@ -262,6 +262,14 @@ describe("group grants in every access predicate (D270)", () => {
     grant("board", board, group.id, "edit");
     db.query("DELETE FROM boards WHERE id = ?").run(board);
     expect(db.query("SELECT COUNT(*) AS count FROM group_grants WHERE resource_id = ?").get(board)).toEqual({ count: 0 });
+    // The sweeper's self-check reports a grant that points at nothing (ids only), should one ever appear.
+    const { orphanGrantReport } = await import("../server/access/groups");
+    const ghost = crypto.randomUUID();
+    grant("calendar", ghost, group.id, "view");
+    const report = orphanGrantReport();
+    expect(report).toContainEqual(expect.objectContaining({ source: "group_grants", kind: "calendar", sample: expect.arrayContaining([ghost]) }));
+    db.query("DELETE FROM group_grants WHERE resource_id = ?").run(ghost);
+    expect(orphanGrantReport().some((row) => row.sample.includes(ghost))).toBe(false);
     await send(admin, "DELETE", `/team/groups/${group.id}`, {});
   });
 });

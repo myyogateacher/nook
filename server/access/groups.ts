@@ -29,14 +29,24 @@ export function groupLevels(kind: GroupGrantKind, id: string, userId: string): L
   return (levelsQuery.all(kind, id, userId) as Array<{ level: Level }>).map((row) => row.level);
 }
 
-/** The users a group grant on an item reaches (for mail and audience comparisons), ids only. */
-export function groupGrantUserIds(kind: GroupGrantKind, id: string): string[] {
-  return (db.query(`SELECT DISTINCT gm.user_id FROM group_grants gg JOIN group_members gm ON gm.group_id = gg.group_id
-    WHERE gg.resource_kind = ? AND gg.resource_id = ? ORDER BY gm.user_id`).all(kind, id) as Array<{ user_id: string }>).map((row) => row.user_id);
-}
+const RESOURCE_TABLES: Record<string, string> = {
+  note: "notes", folder: "folders", document: "documents", board: "boards", task_view: "task_views", collection: "collections", calendar: "calendars", routine: "routines"
+};
 
-/** The group ids granted on an item, sorted (the file-move audience comparison). */
-export function groupGrantIds(kind: GroupGrantKind, id: string): string[] {
-  return (db.query("SELECT group_id FROM group_grants WHERE resource_kind = ? AND resource_id = ? ORDER BY group_id").all(kind, id) as Array<{ group_id: string }>)
-    .map((row) => row.group_id);
+/**
+ * T206 self-check (the sweeper, hourly): grant rows whose item no longer exists. The purge triggers
+ * of migration 025 should leave none; any found are reported by kind with at most five resource ids
+ * (never titles) and left in place for an operator to look at. Vault grants wait for the vault waves.
+ */
+export function orphanGrantReport() {
+  const found: Array<{ source: "group_grants" | "api_key_grants"; kind: string; count: number; sample: string[] }> = [];
+  for (const [kind, table] of Object.entries(RESOURCE_TABLES)) {
+    for (const source of ["group_grants", "api_key_grants"] as const) {
+      if (source === "group_grants" && kind === "routine") continue;
+      const rows = db.query(`SELECT g.resource_id FROM ${source} g WHERE g.resource_kind = ? AND g.resource_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM ${table} t WHERE t.id = g.resource_id) LIMIT 1000`).all(kind) as Array<{ resource_id: string }>;
+      if (rows.length) found.push({ source, kind, count: rows.length, sample: rows.slice(0, 5).map((row) => row.resource_id) });
+    }
+  }
+  return found;
 }

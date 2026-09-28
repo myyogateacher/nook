@@ -292,7 +292,7 @@ type RowSearchHit = { rowId: string; collectionId: string; collectionName: strin
 
 Task Boards ([WAVES_7-9.md](WAVES_7-9.md) §3). Every endpoint is under `/api/tasks`, takes and returns JSON, and inherits the global session, Origin, CSRF, `Content-Type: application/json`, and TOTP rules. Path ids are UUIDs (400 otherwise) and are always joined to a board the caller can read.
 
-**Roles (D38, D39).** A board's readers are its owner, its members when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. Readers create, edit, move, and bin cards. Only the owner renames the board, manages columns and sharing, and deletes it. A caller who cannot read the board gets **404**; a reader calling an owner-only endpoint gets **403** `{ error, code: "OWNER_ONLY" }`. Binned boards are unreadable for everyone.
+**Roles (D38, D39; levels since Wave 32).** A board's readers are its owner, its members and groups when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. Readers at `edit` (every member before Wave 32, and the default) create, edit, move, and bin cards; `comment` comments and reacts; `view` reads; managers also rename the board and change its columns, tags, and sprints (see "Groups, levels, and item access"). Only the owner deletes it and uses the `/sharing` route. A caller who cannot read the board gets **404**; a reader below the level an endpoint needs gets **403** `{ error, code: "READ_ONLY" | "MANAGER_REQUIRED" | "OWNER_ONLY" }`. Binned boards are unreadable for everyone.
 
 **Caps** (409 `{ error, code: "LIMIT_REACHED" }`): 50 live boards per owner, 20 columns per board, 1000 live cards per board.
 
@@ -955,7 +955,7 @@ A row's values JSON is at most 16,384 bytes. Required fields must be set on crea
 
 ### Roles
 
-A collection's readers are its owner, its members when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. The audience has one role, `share_role` (`viewer` or `editor`, D54): editors create, edit, undo, and bin rows. Only the owner edits the name, icon, schema, views, and sharing, and deletes. A caller who cannot read the collection gets **404** on every route (path ids are always joined to their collection); a viewer writing a row gets **403** `READ_ONLY`; a non-owner calling an owner-only route gets **403** `OWNER_ONLY`. Binned collections and rows are unreadable for everyone.
+A collection's readers are its owner, its members and groups when `visibility = 'selected'`, and every user when `visibility = 'all_users'`. Since Wave 32 each member and group has its own level (view, edit, manage), and `share_role` (`viewer` or `editor`, D54) is the level of the `all_users` audience; editors create, edit, undo, and bin rows, and managers edit the name, icon, schema, and views (see "Groups, levels, and item access"). Only the owner uses the `/sharing` route and deletes. A caller who cannot read the collection gets **404** on every route (path ids are always joined to their collection); a viewer writing a row gets **403** `READ_ONLY`; a non-manager changing the structure gets **403** `MANAGER_REQUIRED`, and a non-owner calling an owner-only route **403** `OWNER_ONLY`. Binned collections and rows are unreadable for everyone.
 
 **Caps** (409 `LIMIT_REACHED`): 100 live collections per owner, 10,000 live rows per collection, 20 views per collection, 20 attachments per row.
 
@@ -1641,7 +1641,7 @@ type Policies = {
   keyMaxDays: number /* 1–365, default 365 */; keyDefaultDays: number /* ≤ keyMaxDays, default 90 */; keyRequireExpiry: boolean /* default false */;
   keysPerUser: number /* 1–50, default 10 */; keyModulesByRole: Record<"admin" | "member" | "viewer", GrantModule[]> /* default: every module */;
   mcpRoles: ("admin" | "member" | "viewer")[] /* default all three */; restRoles: (…)[] /* default admin, member */;
-  groupsMemberCreate: boolean; shareWithGuests: boolean;                          // stored now, enforced from Wave 32
+  groupsMemberCreate: boolean /* stored only: groups stay admin-managed (O-A2) */; shareWithGuests: boolean /* enforced since Wave 32 */;
 };
 ```
 
@@ -1669,6 +1669,79 @@ type Policies = {
 **Write gate.** `POST /api/keys`, `PATCH /api/keys/:id`, `POST /api/keys/:id/rotate`, and `DELETE /api/keys/:id` are allowlisted for viewers and guests; the handlers cap grants by role (viewers read only, guests none). `/api/team/*` stays self-gated.
 
 **Usage (D283).** Tool calls, writes, and refusals are counted per key per day in memory and flushed to `api_key_usage` every minute (and before any listing); the sweeper trims rows older than 90 days and turns ended rotation graces into revocations (`key.grace_ended`).
+
+## Groups, levels, and item access (Wave 32, Access B)
+
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.5, §C.7, §C.9, §D.2–§D.3 (D266–D275). No migration: 025 created `user_groups`, `group_members`, `group_grants`, the per-person `level` columns, `boards.share_role`, and `team_settings`.
+
+**Levels (D266, §D.3).** `view < comment < edit < manage < owner`, allow-only: a person's level on an item is the highest of their direct share, their groups' grants, and the `all_users` audience level, **capped by the Team role** (viewers and guests read at most; owners stay `owner`). Group grants count only under `selected`. Levels are resolved live on every request (`itemLevel()` in `server/access/effective.ts`).
+
+| Kind | Levels offered | Audience level (`all_users`) | Default for new people |
+| --- | --- | --- | --- |
+| note, folder | view, edit | view | view |
+| document (Files) | view | view | view |
+| board | view, comment, edit, manage | `boards.share_role`: view, comment, edit (default edit) | edit (D38) |
+| task_view | view | view | view |
+| collection, calendar | view, edit, manage | `share_role` viewer/editor | the item's `share_role` |
+
+What each level does: **view** reads; **comment** (boards) also comments and reacts; **edit** changes content (cards and board tags, rows, events; a note's draft and publishing, D274); **manage** (boards, collections, calendars, D273) also changes structure (board name, structure, columns, WIP limits, tag rename and delete, sprints; collection name, icon, fields, and saved views; calendar name and colour) and shares up to `edit`. Deleting, the Bin, and the older audience-wide `/sharing` routes stay the owner's. Refusals: 403 `READ_ONLY` (below `edit`/`comment`), 403 `MANAGER_REQUIRED` (structure without `manage`; MCP reports `OWNER_ONLY`), 403 `OWNER_ONLY` (owner-only actions), 404 for no access.
+
+**Responses gain levels.** `BoardSummary` gains `share_role` and `level`; collection and calendar summaries gain `level` next to the old `role` word (`owner`, `editor` for edit or manage, `viewer`); `GET /api/notes/:id` gains `level`, `canEdit`, and `owner_name`.
+
+**Note editors (D274).** Someone at `edit` on the note (or on its immediate folder when the note inherits) opens the shared draft, `PUT /api/notes/:id/draft` with the same `revision` CAS as the owner, and `POST /api/notes/:id/publish` (the version's `author_id` is the editor). Sharing, moving, discarding the draft, restoring versions, and deleting stay owner-only (404 to editors). MCP note tools stay owner-only.
+
+### Groups
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET /api/groups` | members and admins (the share picker) | | 200 `{ groups: [{ id, name, memberCount, guestCount }], shareWithGuests }`, names and counts only | 403 `ROLE_READ_ONLY` (viewers, guests) |
+| `GET /api/team/groups` | admin | | 200 `{ groups: GroupSummary[], limit: 200 }` | 403 `ADMIN_ONLY`, 404 (guests) |
+| `POST /api/team/groups` | admin | `{ name 1–60, description? ≤ 200 }` | 201 `{ group: GroupDetail }` | 400, 409 `NAME_TAKEN` (case-insensitive), 409 `LIMIT_REACHED` (200 groups), 429 |
+| `GET /api/team/groups/:groupId` | admin | | 200 `{ group: GroupDetail }` | 404 |
+| `PATCH /api/team/groups/:groupId` | admin | `{ name?, description?, revision }` | 200 `{ group }` | 400, 404, 409 `GROUP_CHANGED` (CAS), 409 `NAME_TAKEN` |
+| `DELETE /api/team/groups/:groupId` | admin | `{ revision? }` | 200 `{ ok, removedGrants, removedMembers }`: its grants and memberships go with it | 404, 409 `GROUP_CHANGED` |
+| `PUT /api/team/groups/:groupId/members` | admin | `{ userIds: uuid[] ≤ 500, revision }` | 200 `{ added, removed, selfAdded, group }` | 400 `INVALID_MEMBERS` (unknown or blocked accounts), 404, 409 `GROUP_CHANGED` |
+
+```ts
+type GroupSummary = { id; name; description: string | null; memberCount; guestCount; grantCount; revision; createdAt; updatedAt };
+type GroupDetail = GroupSummary & {
+  members: { id; displayName; role; status: "active" | "blocked"; addedAt; addedBy: { id; displayName } | null; selfAdded: boolean }[];
+  items: { kind: AccessKind; title: string; titleHidden: boolean; owner: { id; displayName }; id?: string; level }[];  // ≤ 200; title and id only when the admin can open the item (D269)
+  truncated: boolean;
+  history: { id; action; createdAt; actor; target; self: boolean }[];                                                  // newest 50 access_events
+};
+```
+
+An admin adding themselves is allowed (O-A1) and flagged: `selfAdded` on the member, `self: true` on the history row and in `access_events` meta. Every change writes `access_events` (`group.created`, `group.updated`, `group.deleted`, `group.member_added`, `group.member_removed`; ids only) and an audit row. Writes use the Team write limit (30 a minute). Groups are admin-only: the `groups_member_create` policy stays stored only (O-A2, off). There are no group-management MCP tools.
+
+### Item access (the Access sheet)
+
+`GET` and `PUT` on `/api/notes/:id/access`, `/api/folders/:id/access`, `/api/files/:id/access`, `/api/tasks/boards/:boardId/access`, `/api/tasks/views/:viewId/access`, `/api/collections/:collectionId/access`, `/api/calendars/:calendarId/access`.
+
+```ts
+type ItemAccess = {
+  etag: string;                       // also the ETag header; a hash of the audience and every grant row
+  kind: AccessKind; title: string; owner: { id; displayName };
+  audience: "private" | "selected" | "all_users" | "inherit";   // inherit: notes and files only
+  audienceLevel?: Level | null; audienceLevels?: Level[];       // boards, collections, calendars
+  people: { id; displayName; teamRole: Role; kind: "person" | "service"; level: Level; via: "direct"; blocked: boolean }[];
+  groups: { id; name; memberCount; guestCount; selfAddedCount; level: Level }[];
+  levels: Level[];                    // what the caller may give: managers never see manage
+  yourLevel: "owner" | "manage";
+  shareWithGuests: boolean; inheritable: boolean;
+};
+type AccessPut = { audience; audienceLevel?: Level; people: { id; level }[] ≤ 100; groups: { id; level }[] ≤ 20 };
+```
+
+- **Who.** The owner, and managers on boards, collections, and calendars. Other readers get 403 `OWNER_ONLY`; everyone else, and binned, purged, or non-Files documents, 404 (T204). `Cache-Control: no-store`.
+- **PUT** needs `If-Match` with the ETag from GET (quoted or not): 428 `ETAG_REQUIRED` without it, 409 `ACCESS_CHANGED` with `{ access }` (the current state) when it is stale. The direct rows and the group grants are replaced in one transaction and the audience written; people and groups apply only to `selected` (400 otherwise), and `selected` needs at least one of them.
+- **400**: `LEVEL_NOT_OFFERED` (a level the kind does not offer, or an audience level outside `audienceLevels`), `INVALID` (`inherit` on a kind without folders, an audience level on a kind without one, the owner as a recipient, unknown or blocked new people, unknown groups, more than 100 people or 20 groups), `GUEST_SHARE_DISABLED` (policy `share_with_guests` off and a guest named directly or in a named group, D.2, T213).
+- **Managers (D273, T207)**: 403 `MANAGER_CAP` for any change to the audience or its level, or to the set of `manage` rows (they cannot grant, change, or remove a manager, themselves included).
+- **Mail and audit.** People newly added by name get the "shared with you" mail (groups are not mailed). `access_events` `item.access_changed` and audit `item.access_changed` carry `{ kind, audience, peopleCount, groupCount, asManager? }`, never titles or user ids.
+
+**Older sharing routes.** `GET/PUT …/sharing` keep working: they keep each existing person's level (new people get the module default; the collection and calendar route's one `role` still applies to everyone it names, except managers), leave group grants untouched, and honour `share_with_guests`. With the policy off, `GET /api/users` leaves guests out.
+
+**Write gate.** `PUT …/access` is not allowlisted: viewers and guests get 403 `ROLE_READ_ONLY`.
 
 ## Changes to existing note endpoints (Wave 4)
 

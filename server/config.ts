@@ -158,7 +158,7 @@ export const config = {
   /** Live plus binned document bytes per user; 0 means unlimited. */
   userStorageQuotaBytes: integerEnv("USER_STORAGE_QUOTA_BYTES", 10_737_418_240, 0, Number.MAX_SAFE_INTEGER),
   minFreeDiskBytes: integerEnv("MIN_FREE_DISK_BYTES", 1_073_741_824, 0, Number.MAX_SAFE_INTEGER),
-  appVersion: process.env.APP_VERSION ?? "0.11.0",
+  appVersion: process.env.APP_VERSION ?? "0.12.0",
   gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40),
   pushEnabled: pushEnabledValue as "auto" | "true" | "false",
   pushSubject,

@@ -90,7 +90,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.11.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.12.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -99,6 +99,15 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.12.0
+
+- **API keys**: Settings → API keys replaces Settings → MCP. Build a key one permission at a time (module, permission, and all or chosen boards, collections, or calendars) with an expiry within your team's policy. The token is shown once. Edits only narrow a key (rename, remove permissions, lower Write to Read, choose fewer items, bring the expiry closer); **Rotate** issues a new secret and lets the old one stop now or keep working for 1 hour, 24 hours, or 7 days. Each key shows its 14-day usage. A key limited to chosen items sees nothing outside them, including through relations, event links, and collection note fields. Existing MCP keys keep exactly the reach they had.
+- **Team keys and policies**: **Team → Keys** (`/team/keys`) lists every live key for admins, never its secret, with **Revoke** and a reason the owner sees. **Team → Policies** (`/team/policies`) sets the longest and default key lifetime, keys per person, and which surfaces and modules each role's keys may use, with a preview of how many keys a change would block.
+- **Email digests, reminders, and mutes**: a daily or weekly digest at your local time; calendar reminders by notification, email, or both; an email when an event you set a reminder on is changed or cancelled; optional sprint started and completed and Bin clean-up emails (off by default); and **Mute emails** per board or calendar, listed under **Muted** in Settings → Notifications → Email.
+- **Bounces and complaints**: an optional Resend webhook (`RESEND_WEBHOOK_SECRET`) stops mail to addresses that bounce or report spam, with **Try again** once a day in Settings, and **Team → Email log** tags recipients whose mail is held back.
+- **Fixes**: focus returns to the opener when Calendar and API keys dialogs close, phone Forward reopens a sheet that Back closed with no dead history step, deleting a note confirms in the app's own dialog, the header Bin badge refreshes after a restore or delete, reminder rows say how each reminder is sent, and mail subjects stay within their length cap after defanging.
+- Migrations 025 and 028 run on the first boot, so back up first. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.11.0
 

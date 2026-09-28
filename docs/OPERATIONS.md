@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.11.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.12.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -134,7 +134,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_ALLOW_HTTP_LINKS` | `false` | `true` lets mail go out when `APP_ORIGIN` is a non-localhost `http://` address (LAN or Tailscale without HTTPS). Links in mail are then unencrypted. |
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
-| `APP_VERSION` | `0.11.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.12.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -210,9 +210,9 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-**Upgrading to 0.11.0:** back up first with `./scripts/backup.sh --force`. Migration 026 (outbound email) runs once on the first boot and can only be undone by restoring that backup; migration 027 (proposal base) was already applied by 0.10.0. Email is optional: set `RESEND_API_KEY` and `MAIL_FROM` in `.env` (see [Email (Resend)](#email-resend) above); without them, all email stays off and the app behaves as before. Pull, rebuild with `APP_VERSION=0.11.0`, and restart as above.
+**Upgrading to 0.12.0:** back up first with `./scripts/backup.sh --force`. Migrations 025 (access keys, grants and policies) and 028 (email digests, bounce tracking and share log) run once on the first boot and can only be undone by restoring that backup. Existing MCP keys are converted to grants with the same reach; nothing widens. They have no expiry and show **No expiry**; a team policy that requires an expiry blocks them until they get one or the rule is loosened. Migration 025 also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing, and `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`. Bounce and complaint handling is optional: add `RESEND_WEBHOOK_SECRET` to `.env` and point a Resend webhook at `/api/mail/webhook` (see [Bounces and complaints](#bounces-and-complaints-optional-resend-webhook) above); without it the endpoint returns 404. Pull, rebuild with `APP_VERSION=0.12.0`, and restart as above.
 
-**Upgrading to the Nook keys release (Wave 31):** back up first with `./scripts/backup.sh --force`. Migration 025 (access keys) runs once on the first boot and can only be undone by restoring that backup. It gives every existing MCP key one grant per permission it had over all items, so no key gains or loses power; existing keys have no expiry and show **No expiry**. It also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing. `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`.
+**Upgrading to 0.11.0:** back up first with `./scripts/backup.sh --force`. Migration 026 (outbound email) runs once on the first boot and can only be undone by restoring that backup; migration 027 (proposal base) was already applied by 0.10.0. Email is optional: set `RESEND_API_KEY` and `MAIL_FROM` in `.env` (see [Email (Resend)](#email-resend) above); without them, all email stays off and the app behaves as before. Pull, rebuild with `APP_VERSION=0.11.0`, and restart as above.
 
 **Upgrading to 0.10.0:** back up first with `./scripts/backup.sh --force`. Migrations 018 (team invites), 021 (agent inbox), 022 (comment reactions), and 027 (proposal base) run once on the first boot and can only be undone by restoring that backup. Existing MCP-written note drafts are backfilled as proposals in the Inbox, so review them there. Email is optional: invite emails need `RESEND_API_KEY` and `MAIL_FROM` in `.env` (see [Email (Resend)](#email-resend) above); without them, share invite links yourself. Pull, rebuild with `APP_VERSION=0.10.0`, and restart as above.
 

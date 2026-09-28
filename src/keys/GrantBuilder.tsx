@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
 import { Select, type Option } from "../ui/Select";
 import {
-  moduleChoices, MODULE_LABELS, permissionChoices, permissionHelp, permissionLabel, SELECTOR_KINDS, grantSummary,
+  MODULE_LABELS, permissionHelp, permissionLabel, rowModuleChoices, rowPermissionChoices, SELECTOR_KINDS, grantSummary,
   type GrantModule, type GrantRow, type KeyPermission, type PolicySummary
 } from "./keyGrants";
 import { loadResources, type ResourceOption } from "./keysApi";
@@ -29,7 +29,6 @@ export function GrantBuilder({ rows, onChange, role, policy, disabled = false, c
 }) {
   const [resources, setResources] = useState<Partial<Record<GrantModule, ResourceOption[] | "error">>>({});
   const narrowing = ceiling !== undefined;
-  const modules = moduleChoices(role, policy);
   const needed = [...new Set(rows.filter((row) => row.applies === "chosen" || narrowing).map((row) => row.module).filter((module) => SELECTOR_KINDS[module]))];
 
   useEffect(() => {
@@ -45,27 +44,27 @@ export function GrantBuilder({ rows, onChange, role, policy, disabled = false, c
   const update = (key: string, patch: Partial<GrantRow>) => onChange(rows.map((row) => row.key === key ? { ...row, ...patch } : row));
   const remove = (key: string) => onChange(rows.filter((row) => row.key !== key));
   const add = () => {
-    const used = new Set(rows.map((row) => `${row.module}:${row.permission}`));
-    const choice = modules.find((module) => !module.disabled && module.firstPermission && !used.has(`${module.value}:${module.firstPermission}`));
+    const choice = rowModuleChoices(role, policy, rows, null).find((module) => !module.disabled && module.firstPermission);
     if (!choice) return;
     onChange([...rows, { key: newRowKey(), module: choice.value, permission: choice.firstPermission!, applies: "all", resourceIds: [] }]);
   };
 
   return <div className="grant-builder">
     <ul className="grant-rows" aria-label="Permissions">
-      {rows.map((row, index) => <GrantRowEditor key={row.key} row={row} index={index} role={role} policy={policy} disabled={disabled}
+      {rows.map((row, index) => <GrantRowEditor key={row.key} row={row} index={index} role={role} policy={policy} disabled={disabled} rows={rows}
         ceiling={ceiling?.find((item) => item.key === row.key)} narrowing={narrowing} resources={resources[row.module]}
-        moduleOptions={modules.map((module) => ({ value: module.value, label: module.label, disabled: module.disabled, description: module.description }))}
+        moduleOptions={rowModuleChoices(role, policy, rows, row.key).map((module) => ({ value: module.value, label: module.label, disabled: module.disabled && module.value !== row.module, description: module.description }))}
         onChange={(patch) => update(row.key, patch)} onRemove={() => remove(row.key)} canRemove={rows.length > 1 || !narrowing} />)}
     </ul>
     {!rows.length && <p className="grant-empty">No permissions yet.</p>}
-    {!narrowing && <button type="button" className="secondary-button grant-add" onClick={add} disabled={disabled || !modules.some((module) => !module.disabled)}><Plus aria-hidden="true" />Add permission</button>}
+    {!narrowing && <button type="button" className="secondary-button grant-add" onClick={add} disabled={disabled || !rowModuleChoices(role, policy, rows, null).some((module) => !module.disabled)}><Plus aria-hidden="true" />Add permission</button>}
     <p className="grant-summary" aria-live="polite">{grantSummary(rows)}</p>
   </div>;
 }
 
-function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing, resources, moduleOptions, onChange, onRemove, canRemove }: {
+function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, narrowing, resources, moduleOptions, onChange, onRemove, canRemove }: {
   row: GrantRow;
+  rows: readonly GrantRow[];
   index: number;
   role: string | undefined;
   policy: PolicySummary | null;
@@ -80,7 +79,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing
 }) {
   const id = useId();
   const selector = SELECTOR_KINDS[row.module];
-  let permissions: Option<KeyPermission>[] = permissionChoices(row.module, role, policy).map((choice) => ({ value: choice.value, label: choice.label, description: choice.description, disabled: choice.disabled }));
+  let permissions: Option<KeyPermission>[] = rowPermissionChoices(row.module, role, policy, rows, row.key).map((choice) => ({ value: choice.value, label: choice.label, description: choice.description, disabled: choice.disabled && choice.value !== row.permission }));
   if (narrowing && ceiling) {
     // Narrowing keeps the permission or lowers it to read (D278).
     permissions = permissions.filter((option) => option.value === ceiling.permission || option.value === "read").map((option) => ({ ...option, disabled: false }));
@@ -94,6 +93,8 @@ function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing
     value: option.value, label: option.label, description: option.description ?? (writable && !option.writable ? "You can only view this one" : undefined), disabled: writable && !option.writable
   }));
   if (narrowing && ceiling?.applies === "chosen") resourceOptions = resourceOptions.filter((option) => ceiling.resourceIds.includes(option.value));
+  // Chosen items leave the list (their chips hold them, with ×), so a pick never reads as a no-op (Friction 3).
+  const unchosen = resourceOptions.filter((option) => !row.resourceIds.includes(option.value));
   const labels = { module: `${id}-module`, permission: `${id}-permission`, applies: `${id}-applies` };
 
   return <li className="grant-row">
@@ -105,7 +106,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing
       <div className="grant-field"><span id={labels.module}>Module</span>
         <Select<GrantModule> labelledBy={labels.module} label="Module" value={row.module} options={moduleOptions} disabled={disabled || narrowing}
           onChange={(module) => {
-            const first = permissionChoices(module, role, policy).find((choice) => !choice.disabled)?.value ?? "read";
+            const first = rowPermissionChoices(module, role, policy, rows, row.key).find((choice) => !choice.disabled)?.value ?? "read";
             onChange({ module, permission: first, applies: "all", resourceIds: [] });
           }} />
       </div>
@@ -120,9 +121,9 @@ function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing
     </div>
     {selector && row.applies === "chosen" && <div className="grant-resources">
       {resources === "error" ? <p className="form-error" role="alert">Could not load your {selector.many}.</p>
-        : <Combobox multiple label={`Chosen ${selector.many}`} placeholder={`Find ${selector.many}…`} value={row.resourceIds} options={resourceOptions}
+        : <Combobox multiple label={`Chosen ${selector.many}`} placeholder={`Choose ${selector.many}…`} placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}
           selectedOptions={row.resourceIds.map((value) => resourceOptions.find((option) => option.value === value) ?? { value, label: "An item you cannot open now" })}
-          emptyText={resources && resources.length === 0 ? `You have no ${selector.many} to choose` : "No matches"} disabled={disabled}
+          emptyText={resources && resources.length === 0 ? `You have no ${selector.many} to choose` : resourceOptions.length && !unchosen.length ? `Every ${selector.one} is chosen` : "No matches"} disabled={disabled}
           onChange={(resourceIds) => onChange({ resourceIds })} maxSelected={100} />}
     </div>}
     <p className="grant-help">{permissionHelp(row.module, row.permission)}</p>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarDays, FileText, LayoutList, RotateCcw, Table2, X } from "lucide-react";
 import { api } from "./api";
+import { notifyBinChanged } from "./bin/binApi";
 import { formatDateTime, relativeTime } from "./files/format";
 import { Select, type Option } from "./ui/Select";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
@@ -54,6 +55,14 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
     return () => globalThis.removeEventListener("keydown", onKey);
   }, [busy, onClose]);
   useEffect(() => closeRef.current?.focus(), []);
+  // Restore all disables every button while it runs (and empties the list after), so focus would
+  // fall to the page body: once it settles, Close takes focus.
+  const refocusRef = useRef(false);
+  useEffect(() => {
+    if (busy || !refocusRef.current) return;
+    refocusRef.current = false;
+    closeRef.current?.focus();
+  }, [busy]);
 
   const load = useCallback(() => {
     setItems(null);
@@ -71,10 +80,13 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
     try {
       const result = await api<{ restored: number; skipped: unknown[] }>(`/mcp/keys/${keyId}/restore-binned`, { method: "POST", body: JSON.stringify({ window: range }) });
       setMessage(restoreSummary(result));
+      // The header's Bin badge counts again (Friction 8).
+      if (result.restored > 0) notifyBinChanged();
       load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not restore the items");
     } finally {
+      refocusRef.current = true;
       setBusy(false);
     }
   }

@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GENERAL_KEY_MODULES, SCOPE_GRANTS, SELECTOR_KINDS as SERVER_SELECTORS } from "../server/keyGrants";
 import {
-  expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
+  expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowModuleChoices, rowPermissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
   type GrantRow, type KeyGrantView
 } from "../src/keys/keyGrants";
-import { KeyRow, keyToRows } from "../src/keys/KeysSettings";
+import { keyAfterRevoke, KeyRow, keyToRows, revokeCopy } from "../src/keys/KeysSettings";
 import type { ApiKey } from "../src/keys/keysApi";
 
 /** Settings → API keys (access plan §E, §G "UI"): the client vocabulary, the builder's rules, and a key row. */
@@ -42,6 +42,32 @@ describe("key grants on the client", () => {
     const modules = moduleChoices("viewer", policy);
     expect(modules.find((module) => module.value === "bin")).toMatchObject({ disabled: true });
     expect(modules.find((module) => module.value === "tasks")).toMatchObject({ disabled: false, firstPermission: "read" });
+  });
+
+  test("the builder never offers a module and permission another row holds (Friction 4)", () => {
+    const rows = [row({ key: "a", module: "today", permission: "read" }), row({ key: "b", module: "tasks", permission: "read" }), row({ key: "c", module: "notes", permission: "read" })];
+    // Today has one permission, held by row 1: another row cannot pick Today; row 1 itself can.
+    expect(rowModuleChoices("member", policy, rows, "b").find((module) => module.value === "today")).toMatchObject({ disabled: true, description: "Already in permission 1" });
+    expect(rowModuleChoices("member", policy, rows, "a").find((module) => module.value === "today")).toMatchObject({ disabled: false, firstPermission: "read" });
+    // Tasks still has write free: open, and a switch to it starts on the free permission.
+    expect(rowModuleChoices("member", policy, rows, "c").find((module) => module.value === "tasks")).toMatchObject({ disabled: false, firstPermission: "write" });
+    expect(rowPermissionChoices("tasks", "member", policy, rows, "c").map((choice) => [choice.value, choice.disabled, choice.reason])).toEqual([["read", true, "Already in permission 2"], ["write", false, null]]);
+    // Add permission (no row of its own) skips modules whose permissions are all taken.
+    expect(rowModuleChoices("member", policy, rows, null).find((module) => !module.disabled)?.value).toBe("notes");
+  });
+
+  test("the board picker hides chosen boards, keeps a placeholder, and its chip × is 28 px on desktop, 44 px on phones (Friction 3)", async () => {
+    const builder = await Bun.file(new URL("../src/keys/GrantBuilder.tsx", import.meta.url)).text();
+    expect(builder).toContain("const unchosen = resourceOptions.filter((option) => !row.resourceIds.includes(option.value));");
+    expect(builder).toContain("placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}");
+    const combobox = await Bun.file(new URL("../src/ui/Combobox.tsx", import.meta.url)).text();
+    expect(combobox).toContain("placeholder={value.length && !inSheet ? placeholderWithValues : placeholder}");
+    const css = await Bun.file(new URL("../src/keys/keys.css", import.meta.url)).text();
+    const desktop = css.indexOf(".grant-resources .ui-chip-remove { width: 28px; height: 28px; }");
+    const phone = css.indexOf(".grant-resources .ui-chip-remove, .policies-role .ui-chip-remove { width: 44px; height: 44px; }");
+    expect(desktop).toBeGreaterThan(-1);
+    // The phone rule comes later, so it wins inside its media query.
+    expect(phone).toBeGreaterThan(desktop);
   });
 
   test("rows become the request's grants, with chosen items only where a module has them", () => {
@@ -106,6 +132,36 @@ describe("key grants on the client", () => {
     expect(grace).not.toContain("Rotate");
     const admin = renderToStaticMarkup(<KeyRow apiKey={apiKey({ state: "revoked", revokedBy: "admin", revokeReason: "Leaked" })} />);
     expect(admin).toContain("An admin revoked this key: “Leaked”");
+  });
+
+  test("the revoke confirm names the old key and its prefix during a grace, and the Inbox only when it has suggestions (Friction 7)", () => {
+    const grace = revokeCopy(apiKey({ state: "grace", pendingProposals: 0 }));
+    expect(grace.title).toBe("Revoke the old key for Claude Code now?");
+    expect(grace.description).toContain("The old key (mynotes_Ab3fXyZ…) stops working at once");
+    expect(grace.description).toContain("The new key keeps working.");
+    expect(grace.description).not.toContain("Inbox");
+    expect(revokeCopy(apiKey({ state: "grace", pendingProposals: 1 })).description).toContain("Its pending suggestion in the Inbox is withdrawn.");
+    const plain = revokeCopy(apiKey({ pendingProposals: 3 }));
+    expect(plain.title).toBe("Revoke Claude Code?");
+    expect(plain.description).toBe("Clients using this key (mynotes_Ab3fXyZ…) stop working at once. Its 3 pending suggestions in the Inbox are withdrawn. This cannot be undone.");
+    expect(revokeCopy(apiKey()).description).not.toContain("Inbox");
+  });
+
+  test("after Revoke, Revoke now, Review, or Restore all, focus lands on a control, never the body (QA 0.12 item 2)", async () => {
+    // The next live key down, else the one above, else none (New key, else the list heading).
+    expect(keyAfterRevoke(["a", "b", "c"], "b")).toBe("c");
+    expect(keyAfterRevoke(["a", "b", "c"], "c")).toBe("b");
+    expect(keyAfterRevoke(["a"], "a")).toBeNull();
+    expect(keyAfterRevoke(["a", "b"], "gone")).toBe("a");
+    expect(renderToStaticMarkup(<KeyRow apiKey={apiKey()} />)).toContain('data-key-id="k1"');
+    const source = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+    expect(source).toContain("onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id));");
+    expect(source).toContain("onClose={() => closeDialogAfterReload(dialog.key.id)}");
+    expect(source).toMatch(/\?\? \(newKeyRef\.current && !newKeyRef\.current\.disabled \? newKeyRef\.current : null\)\s+\?\? headingRef\.current;/);
+    expect(source).toContain('<h4 ref={headingRef} tabIndex={-1}>Your keys</h4>');
+    const review = await Bun.file(new URL("../src/McpBinnedReview.tsx", import.meta.url)).text();
+    expect(review).toMatch(/refocusRef\.current = true;\s+setBusy\(false\);/);
+    expect(review).toMatch(/if \(busy \|\| !refocusRef\.current\) return;\s+refocusRef\.current = false;\s+closeRef\.current\?\.focus\(\);/);
   });
 });
 

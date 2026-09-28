@@ -14,15 +14,25 @@ const timed = (startLocal: string, repeat: unknown = null) => ({
   all_day: false, start_date: null, end_date: null, start_local: startLocal, tz: "UTC", duration_minutes: 30, repeat, exdates: []
 }) as never;
 const picker = (event: unknown, existing: number[] = []) => renderToStaticMarkup(<ReminderPicker allDay={false} existing={existing} event={event as never} timeZone="UTC" nowMs={NOW} onPick={pick} onClose={noop} />);
-const rows = (html: string) => [...html.matchAll(/<button role="listitem" class="move-option( calendar-reminder-passed)?"( disabled="")?[^>]*>.*?<span>([^<]+)(?:<small>([^<]+)<\/small>)?<\/span>/g)]
+const rows = (html: string) => [...html.matchAll(/<li><button type="button" class="move-option( calendar-reminder-passed)?"( disabled="")?[^>]*>.*?<span>([^<]+)(?:<small>([^<]+)<\/small>)?<\/span>/g)]
   .map((match) => `${match[3]}${match[2] ? " [disabled]" : ""}${match[4] ? ` (${match[4]})` : ""}`);
+
+test("the offsets are a list of items that each hold a button, not buttons posing as items (Friction 10)", () => {
+  const html = picker(timed("2026-09-27T12:00"));
+  expect(html).toContain('<ul class="move-list calendar-reminder-offsets" aria-label="When"><li><button type="button" class="move-option"');
+  expect(html).not.toContain('role="listitem"');
+  expect(html).not.toContain('role="list"');
+  expect(rows(html)).toHaveLength(9);
+  const css = readFileSync(new URL("../src/calendar/calendar.css", import.meta.url), "utf8");
+  expect(css).toContain(".calendar-reminder-offsets { margin: 0; list-style: none; }");
+});
 
 test("a past one-off event: a notice and Close instead of the list", () => {
   const html = picker(timed("2026-09-10T09:00"));
   expect(html).toContain(EVENT_OVER_MESSAGE);
   expect(html).toContain("This event has already happened, so there is nothing to remind you about.");
   expect(html).toContain(">Close</button>");
-  expect(html).not.toContain('role="list"');
+  expect(html).not.toContain('aria-label="When"');
   expect(html).toContain("calendar-reminder-dialog");
 });
 
@@ -55,7 +65,7 @@ test("a repeating event: a passed lead moves to the next occurrence; an ended se
   const ended = picker(timed("2026-09-06T10:30", { freq: "weekly", interval: 1, count: 3 }));
   expect(ended).toContain(SERIES_OVER_MESSAGE);
   expect(ended).toContain("This series has ended.");
-  expect(ended).not.toContain('role="list"');
+  expect(ended).not.toContain('aria-label="When"');
 });
 
 test("the server's refusal reads the same way, and the sheet is wider on desktop", () => {

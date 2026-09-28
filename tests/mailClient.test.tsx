@@ -23,6 +23,13 @@ describe("email off (3a/6)", () => {
     expect(verifyErrorText("error", "Boom", false)).toBe("Boom");
   });
 
+  test("the Muted list, with Unmute, shows under the email-off line and whatever the address state (Friction 1)", async () => {
+    const source = await Bun.file(new URL("../src/notifications/EmailSettings.tsx", import.meta.url)).text();
+    expect(source).toMatch(/\{emailOffText\(role\)\}<\/p>\n(?:.*\n)?\s+<EmailMutesList \/>\n\s+<\/section>;/);
+    expect(source).not.toContain("{ready && <EmailMutesList />}");
+    expect(source.match(/<EmailMutesList \/>/g)).toHaveLength(2);
+  });
+
   test("the mail link card's Open Nook text button is a 44 px target", async () => {
     const css = await Bun.file(new URL("../src/notifications/notifications.css", import.meta.url)).text();
     expect(css).toContain(".mail-link-card .text-button { min-height: 44px; }");

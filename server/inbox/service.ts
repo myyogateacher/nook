@@ -354,6 +354,13 @@ export function countPending(ownerId: string) {
   return { pending: (pendingCount.get(ownerId, COUNT_CAP) as { count: number }).count };
 }
 
+/** Pending proposals per key of this owner, for the key row's revoke confirm (Friction 7). */
+export function pendingProposalsByKey(ownerId: string) {
+  const rows = db.query("SELECT key_id, COUNT(*) AS count FROM proposals WHERE owner_id = ? AND status = 'pending' AND key_id IS NOT NULL GROUP BY key_id")
+    .all(ownerId) as Array<{ key_id: string; count: number }>;
+  return new Map(rows.map((row) => [row.key_id, row.count]));
+}
+
 // --- Approve and reject (web only, D146) --------------------------------------
 
 export type ApproveOutcome = { id: string; status: "applied"; ref: ProposalRef } | { id: string; status: "failed"; code: string; error: string };

@@ -3,6 +3,7 @@ import { Copy, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { relativeTime } from "../files/format";
 import { binnedTodayLine, McpBinnedReview } from "../McpBinnedReview";
 import { Select } from "../ui/Select";
+import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
 import {
@@ -58,6 +59,33 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     setDialog(null);
     window.requestAnimationFrame(() => { if (dialogTriggerRef.current?.isConnected) dialogTriggerRef.current.focus(); });
   }, []);
+  // After a revoke (the row moves to "Revoked") or a Review that may drop the row's Review link, the
+  // list reloads first; then focus goes to the opener if it is still there, else the key's row, else
+  // the next live key, else New key, else the list heading. Never the page body.
+  const liveListRef = useRef<HTMLUListElement>(null);
+  const newKeyRef = useRef<HTMLButtonElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const pendingFocusRef = useRef<{ keyId: string | null } | null>(null);
+  const closeDialogAfterReload = useCallback((keyId: string | null) => {
+    pendingFocusRef.current = { keyId };
+    setDialog(null);
+    load();
+  }, [load]);
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending || (!data && !error)) return;
+    pendingFocusRef.current = null;
+    window.requestAnimationFrame(() => {
+      const trigger = dialogTriggerRef.current;
+      if (trigger?.isConnected && !trigger.hasAttribute("disabled")) return trigger.focus();
+      const rows = Array.from(liveListRef.current?.querySelectorAll<HTMLElement>(":scope > li[data-key-id]") ?? []);
+      const row = pending.keyId ? rows.find((item) => item.dataset.keyId === pending.keyId) : undefined;
+      const target = row?.querySelector<HTMLElement>("button:not([disabled])")
+        ?? (newKeyRef.current && !newKeyRef.current.disabled ? newKeyRef.current : null)
+        ?? headingRef.current;
+      target?.focus();
+    });
+  }, [data, error]);
 
   async function copy(value: string, label: string) {
     try {
@@ -72,6 +100,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const live = data?.keys.filter((key) => key.state !== "revoked") ?? [];
   const revoked = data?.keys.filter((key) => key.state === "revoked") ?? [];
   const atLimit = data ? data.liveCount >= data.policy.keysPerUser : false;
+  const revokedFocusKey = (revokedId: string) => keyAfterRevoke(live.map((key) => key.id), revokedId);
 
   return <section className="settings-content mcp-settings keys-settings" aria-labelledby="keys-heading">
     <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
@@ -83,14 +112,14 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
-        <div><h4>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
-        {!guest && <button type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken)}><Plus aria-hidden="true" />New key</button>}
+        <div><h4 ref={headingRef} tabIndex={-1}>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
+        {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken)}><Plus aria-hidden="true" />New key</button>}
       </div>
       {guest && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
       {role === "viewer" && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
       {data && !data.policy.mcpAllowed && <p className="mcp-role-note" role="note">Team policy does not allow your team role to use MCP keys.</p>}
       {atLimit && <p className="mcp-role-note" role="note">You have {data!.liveCount} live keys, the most team policy allows. Revoke one to create another.</p>}
-      <ul className="keys-list" aria-label="API keys">
+      <ul ref={liveListRef} className="keys-list" aria-label="API keys">
         {live.map((key) => <KeyRow key={key.id} apiKey={key} onRotate={() => openDialog({ kind: "rotate", key })} onEdit={() => openDialog({ kind: "edit", key })} onRevoke={() => openDialog({ kind: "revoke", key })} onReview={() => openDialog({ kind: "review", key })} />)}
       </ul>
       {data && !live.length && <p className="keys-empty">No active API keys.</p>}
@@ -99,12 +128,24 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
 
+    {/* Back off the phone sentinel closes a key dialog; Forward shows the same one again (Friction 12). */}
+    <HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>
     {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
     {dialog?.kind === "rotate" && <RotateKeyDialog apiKey={dialog.key} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
-    {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialog(); setStatus(`${dialog.key.name} was revoked.`); load(); }} />}
-    {dialog?.kind === "review" && <McpBinnedReview keyId={dialog.key.id} keyName={dialog.key.name} onClose={() => { closeDialog(); load(); }} onRevoke={() => setDialog({ kind: "revoke", key: dialog.key })} />}
+    {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id)); setStatus(`${dialog.key.name} was revoked.`); }} />}
+    {dialog?.kind === "review" && <McpBinnedReview keyId={dialog.key.id} keyName={dialog.key.name} onClose={() => closeDialogAfterReload(dialog.key.id)} onRevoke={() => setDialog({ kind: "revoke", key: dialog.key })} />}
+    </HistoryDialogReopen.Provider>
   </section>;
+}
+
+/** The live key to focus after one is revoked: the next one down, else the one above, else none. */
+export function keyAfterRevoke(liveIds: readonly string[], revokedId: string): string | null {
+  const index = liveIds.indexOf(revokedId);
+  const rest = liveIds.filter((id) => id !== revokedId);
+  if (!rest.length) return null;
+  if (index < 0) return rest[0]!;
+  return rest[Math.min(index, rest.length - 1)]!;
 }
 
 function keyPolicyLine(policy: PolicySummary, liveCount: number) {
@@ -125,7 +166,7 @@ export function UsageBars({ usage }: { usage: readonly number[] }) {
 export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: { apiKey: ApiKey; owner?: string; onRotate?: () => void; onEdit?: () => void; onRevoke?: () => void; onReview?: () => void }) {
   const state = keyStateLabel(apiKey);
   const binned = binnedTodayLine(apiKey.binnedToday);
-  return <li className={`keys-row state-${apiKey.state}`}>
+  return <li className={`keys-row state-${apiKey.state}`} data-key-id={apiKey.id}>
     <span className="key-icon" aria-hidden="true"><KeyRound /></span>
     <div className="keys-row-main">
       <div className="keys-row-title"><strong>{apiKey.name}</strong><span className="keys-chip">{SURFACE_LABELS[apiKey.surfaces]}</span>{apiKey.kind === "vault" && <span className="keys-chip">Vault</span>}<span className={`keys-chip tone-${state.tone}`}>{state.label}</span></div>
@@ -305,6 +346,23 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
   </KeysDialog>;
 }
 
+/**
+ * The revoke confirm's words (Friction 7). During a rotation grace the old and new keys share a name,
+ * so it names the old key and its prefix; the Inbox line appears only when the key has pending suggestions.
+ */
+export function revokeCopy(key: Pick<ApiKey, "name" | "prefix" | "state" | "pendingProposals">) {
+  const pending = key.pendingProposals ?? 0;
+  const inbox = pending > 0 ? ` Its ${pending === 1 ? "pending suggestion" : `${pending} pending suggestions`} in the Inbox ${pending === 1 ? "is" : "are"} withdrawn.` : "";
+  if (key.state === "grace") return {
+    title: `Revoke the old key for ${key.name} now?`,
+    description: `The old key (${key.prefix}…) stops working at once instead of at the end of its grace. The new key keeps working.${inbox} This cannot be undone.`
+  };
+  return {
+    title: `Revoke ${key.name}?`,
+    description: `Clients using this key (${key.prefix}…) stop working at once.${inbox} This cannot be undone.`
+  };
+}
+
 function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClose: () => void; onRevoked: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -319,8 +377,9 @@ function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClo
       setBusy(false);
     }
   }
-  return <KeysDialog title={`Revoke ${apiKey.name}?`} description="Clients using this key stop working at once, and its pending suggestions in the Inbox are withdrawn. This cannot be undone." onClose={onClose} busy={busy}
-    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirm} disabled={busy}>{busy ? "Revoking…" : "Revoke key"}</button></>}>
+  const copy = revokeCopy(apiKey);
+  return <KeysDialog title={copy.title} description={copy.description} onClose={onClose} busy={busy}
+    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirm} disabled={busy}>{busy ? "Revoking…" : apiKey.state === "grace" ? "Revoke old key" : "Revoke key"}</button></>}>
     {error && <p className="form-error" role="alert">{error}</p>}
   </KeysDialog>;
 }

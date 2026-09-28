@@ -85,6 +85,9 @@
 @media (min-width: 761px) { .grant-row-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .grant-field { display: grid; gap: 5px; min-width: 0; color: #b9b9be; font-size: .74rem; }
 .grant-resources { min-width: 0; }
+/* The chosen items' × is at least 28 px on desktop and 44 px on phones (Friction 3). */
+.grant-resources .ui-chip { min-height: 28px; }
+.grant-resources .ui-chip-remove { width: 28px; height: 28px; }
 .grant-help { margin: 0; color: #85858c; font-size: .72rem; line-height: 1.45; }
 .grant-add { justify-self: start; display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 14px; }
 .grant-add svg { width: 15px; }

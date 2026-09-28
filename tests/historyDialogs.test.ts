@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { createDialogGuard } from "../src/ui/useHistoryDialogGuard";
 
 test("a desktop-layered dialog holds the depth-0 sentinel at every width (2i)", () => {
   const holder = globalThis as { window?: unknown };
@@ -308,4 +309,154 @@ test("whenHistorySettled runs at once with no ignored move in flight; a cancelle
   cancel();
   expect(popStateClosedDialog({ state: null })).toBe(true);
   expect(ran).toBe(1);
+});
+
+// Like a browser with a forward stack: back() and forward() move when their popstate is delivered.
+function twoWayHistory(initial: unknown) {
+  const entries: unknown[] = [initial];
+  let index = 0;
+  const moves: number[] = [];
+  const history = {
+    get state() { return entries[index]; },
+    pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    back() { moves.push(-1); },
+    forward() { moves.push(1); }
+  };
+  const deliver = () => {
+    const delta = moves.shift();
+    expect(delta).toBeDefined();
+    index += delta!;
+    return popStateClosedDialog({ state: entries[index] });
+  };
+  return { history, deliver, index: () => index, entries, pending: () => moves.length, env: { history: history as unknown as History, href: () => "https://nook.test/calendar", phone: () => true } };
+}
+
+test("phone Forward after Back closed a sheet off the sentinel reopens it, and Back closes it again (Friction 12)", async () => {
+  const base = { route: "calendar", "mynotes.depth": 0 };
+  const { history, deliver, index, entries, pending, env } = twoWayHistory(base);
+  let open = false;
+  let release: (() => void) | null = null;
+  const show = () => { open = true; release = acquireDialogSentinel(env); };
+  const unregister = registerHistoryDialogGuard(createDialogGuard({
+    isOpen: () => open,
+    markClosed: () => undefined,
+    close: () => { open = false; release?.(); },
+    openDepth: () => 1,
+    reopen: () => show
+  }));
+  show();
+  expect(entries).toEqual([base, dialogSentinelState(base)]);
+  // Back pops the sentinel and closes the sheet in place.
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(open).toBe(false);
+  await Bun.sleep(5);
+  expect(pending()).toBe(0);
+  // Forward lands on the sentinel again: the sheet reopens on it, and no second sentinel is pushed.
+  history.forward();
+  expect(deliver()).toBe(true);
+  expect(open).toBe(true);
+  expect(index()).toBe(1);
+  expect(entries).toHaveLength(2);
+  // The next Back is not a dead step: it closes the sheet again, still in Calendar.
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(open).toBe(false);
+  expect(index()).toBe(0);
+  await Bun.sleep(5);
+  expect(pending()).toBe(0);
+  unregister();
+  // A real navigation later goes through.
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("Forward onto a sentinel with nothing to reopen steps back off it, so Back is never dead (Friction 12)", async () => {
+  const base = { route: "settings", "mynotes.depth": 0 };
+  const { history, deliver, index, pending, env } = twoWayHistory(base);
+  // Closed with Escape: the release pops the sentinel (ignored), leaving it as the forward entry.
+  const release = acquireDialogSentinel(env);
+  release();
+  await Bun.sleep(5);
+  expect(deliver()).toBe(true);
+  expect(index()).toBe(0);
+  history.forward();
+  expect(deliver()).toBe(true);
+  // Stepped straight back, and that move is ignored too.
+  expect(pending()).toBe(1);
+  expect(deliver()).toBe(true);
+  expect(index()).toBe(0);
+  // An offer outside a Back off the sentinel is ignored.
+  offerDialogReopen(() => { throw new Error("never"); });
+  history.forward();
+  expect(deliver()).toBe(true);
+  expect(deliver()).toBe(true);
+  expect(index()).toBe(0);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("a reopen whose owner shows nothing steps back off the sentinel after a moment", async () => {
+  const base = { route: "calendar", "mynotes.depth": 0 };
+  const { history, deliver, index, pending, env } = twoWayHistory(base);
+  let open = true;
+  let release: (() => void) | null = acquireDialogSentinel(env);
+  const unregister = registerHistoryDialogGuard(createDialogGuard({
+    isOpen: () => open, markClosed: () => undefined, close: () => { open = false; release?.(); release = null; }, openDepth: () => 1,
+    reopen: () => () => undefined
+  }));
+  history.back();
+  expect(deliver()).toBe(true);
+  await Bun.sleep(5);
+  history.forward();
+  expect(deliver()).toBe(true);
+  expect(index()).toBe(1);
+  expect(pending()).toBe(0);
+  await Bun.sleep(350);
+  expect(pending()).toBe(1);
+  expect(deliver()).toBe(true);
+  expect(index()).toBe(0);
+  unregister();
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("the Calendar and the key dialogs offer their layer back to Forward (Friction 12)", async () => {
+  const calendar = await Bun.file(new URL("../src/calendar/CalendarApp.tsx", import.meta.url)).text();
+  expect(calendar).toMatch(/if \(calendarsOpen \|\| sharing \|\| feeds \|\| picker \|\| reminderPicker\) offerDialogReopen\(/);
+  const keys = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+  expect(keys).toContain("<HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>");
+  const hook = await Bun.file(new URL("../src/ui/useHistoryDialogGuard.ts", import.meta.url)).text();
+  expect(hook).toContain("reopenRef.current = options.reopen ?? ownerReopen;");
+});
+
+test("phone Back off the sentinel while a dialog is busy keeps it open, puts the sentinel back, and offers no reopen", async () => {
+  const base = { route: "settings", "mynotes.depth": 0 };
+  const { history, deliver, index, entries, pending, env } = twoWayHistory(base);
+  let open = true;
+  let busy = true;
+  let reopened = 0;
+  let release: (() => void) | null = acquireDialogSentinel(env);
+  const unregister = registerHistoryDialogGuard(createDialogGuard({
+    isOpen: () => open, markClosed: () => undefined, close: () => { open = false; release?.(); release = null; }, openDepth: () => 0,
+    blocked: () => busy,
+    reopen: () => () => { reopened += 1; }
+  }));
+  history.back();
+  expect(deliver()).toBe(true);
+  // Still open, and the sentinel is pushed again under it.
+  expect(open).toBe(true);
+  expect(index()).toBe(1);
+  expect(entries).toEqual([base, dialogSentinelState(base)]);
+  expect(pending()).toBe(0);
+  // Once idle, Back closes it and Forward reopens it.
+  busy = false;
+  history.back();
+  expect(deliver()).toBe(true);
+  expect(open).toBe(false);
+  await Bun.sleep(5);
+  history.forward();
+  expect(deliver()).toBe(true);
+  expect(reopened).toBe(1);
+  unregister();
+  await Bun.sleep(350);
+  while (pending() > 0) deliver();
+  expect(popStateClosedDialog({ state: base })).toBe(false);
 });

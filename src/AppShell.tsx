@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { Inbox, LogOut, Settings, Trash2, Users } from "lucide-react";
 import "./appShell.css";
-import { listBin } from "./bin/binApi";
+import { listBin, onBinChanged } from "./bin/binApi";
 import { INBOX_CHANGED, pendingCount } from "./inbox/inboxApi";
 import { useModuleEnabled } from "./modules";
 import { NotificationBell } from "./notifications/NotificationBell";
@@ -113,16 +113,23 @@ export function AccountActions({ displayName, onSettings, onSignOut, onBin, binC
 }
 
 /**
- * The Bin badge count: one lazy look on mount (no polling); a failure leaves the plain Bin button.
- * `enabled` false skips the request where the header has no Bin button.
+ * The Bin badge count: a lazy look on mount (no polling), and again whenever the app restores or
+ * deletes from the Bin (notifyBinChanged: Restore all in a key's Review, the Bin page); a failure
+ * leaves the plain Bin button. `enabled` false skips the request where the header has no Bin button.
  */
 export function useBinCount(enabled = true) {
   const [binCount, setBinCount] = useState(0);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
-    listBin().then(({ items }) => { if (live) setBinCount(items.length); }, () => undefined);
-    return () => { live = false; };
+    let request = 0;
+    const count = () => {
+      const current = ++request;
+      listBin().then(({ items }) => { if (live && current === request) setBinCount(items.length); }, () => undefined);
+    };
+    count();
+    const stop = onBinChanged(count);
+    return () => { live = false; stop(); };
   }, [enabled]);
   return binCount;
 }

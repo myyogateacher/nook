@@ -72,6 +72,9 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
+import { ConfirmDialog } from "./files/Dialog";
+import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
+import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -537,6 +540,14 @@ function FolderSharePanel({ folder, onClose, onChanged }: { folder: Folder; onCl
 
 // Files entries carry their own panel hint. Without an explicit one, a matching hint on the current
 // entry is kept (reloads, URL normalisation), otherwise the panel follows the selection.
+/** The notes list's "Move to the Bin?" (Friction 14, D91): the app's confirm, closed by Back or Forward. */
+export function NoteDeleteConfirm({ title, onConfirm, onCancel }: { title: string; onConfirm: () => void; onCancel: () => void }) {
+  useHistoryDialogGuard(true, onCancel);
+  return <ConfirmDialog title="Move to the Bin?" message={noteDeleteMessage(title)} confirmLabel="Move to Bin" danger onConfirm={onConfirm} onCancel={onCancel} />;
+}
+
+export const noteDeleteMessage = (title: string) => `Move “${title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
+
 function filesSnapshotFor(userId: string, route: Extract<Route, { app: "files" }>, filesPanel?: FilesPanel) {
   const selection = { folder: route.folder, documentId: route.documentId };
   return { ...selection, panel: filesPanel ?? resolveFilesPanel(selection, readFilesHistorySnapshot(window.history.state, userId)) };
@@ -606,6 +617,9 @@ export function App() {
   const [panel, setPanel] = useState<"history" | "share" | null>(null);
   const [mobileActions, setMobileActions] = useState(false);
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
+  // The note whose Move to the Bin is being confirmed, and the trash button that asked (focus returns to it).
+  const [deletingNote, setDeletingNote] = useState<{ id: string; title: string } | null>(null);
+  const deleteOpenerRef = useRef<HTMLElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("security");
   // A /settings/:section deep link, applied once the workspace is ready (outbound email §E.1).
@@ -992,9 +1006,24 @@ export function App() {
     navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
   }
 
-  async function deleteNote(noteId: string, title: string) {
+  function askDeleteNote(noteId: string, title: string, opener: HTMLElement) {
     if (switchingRef.current) return;
-    if (!window.confirm(`Move “${title}” to the Bin? You can restore it for 30 days.`)) return;
+    deleteOpenerRef.current = opener;
+    setDeletingNote({ id: noteId, title });
+  }
+
+  /** After the confirm closes: the trash button when the note is still listed, else the list's first note. */
+  function focusAfterDeleteConfirm() {
+    window.requestAnimationFrame(() => {
+      const opener = deleteOpenerRef.current;
+      deleteOpenerRef.current = null;
+      if (opener?.isConnected && !opener.hasAttribute("disabled")) opener.focus();
+      else document.querySelector<HTMLElement>(".note-card .note-card-select")?.focus();
+    });
+  }
+
+  async function deleteNote(noteId: string) {
+    if (switchingRef.current) return;
     // Lock the editor and note switching for the whole save + delete, like a note switch,
     // so no keystrokes land after the saved copy and no other note is cleared by mistake.
     switchingRef.current = true;
@@ -1010,6 +1039,7 @@ export function App() {
       if (deletingOpenNote) closeRemovedNote(noteId);
       await loadNavigation();
       flash(result.purged ? "Empty note removed" : "Moved to the Bin");
+      if (!result.purged) notifyBinChanged();
     } finally {
       switchingRef.current = false;
       setSwitchingNote(false);
@@ -1801,7 +1831,7 @@ export function App() {
               <span className="note-meta"><time>{relativeTime(item.updated_at)}</time>{item.draft_revision !== null && item.is_owner === 1 ? (item.draft_mcp_key_name ? <em className="mcp-draft-badge"><Bot aria-hidden="true" />{mcpDraftBadge(item.draft_mcp_key_name)}</em> : <em>Draft</em>) : item.visibility !== "private" ? <em><Users /> Shared</em> : null}</span>
               {item.is_owner === 0 && <span className="note-owner">by {item.owner_name}</span>}
             </button>
-            {item.is_owner === 1 && canWrite && <button className="note-delete-button" disabled={editorLocked} onClick={() => { void deleteNote(item.id, item.title).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")); }} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
+            {item.is_owner === 1 && canWrite && <button className="note-delete-button" disabled={editorLocked} onClick={(event) => askDeleteNote(item.id, item.title, event.currentTarget)} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
           {!showingSearchResults && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
         </div>
@@ -1838,6 +1868,13 @@ export function App() {
 
       {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <SharePanel note={note} onClose={() => setPanel(null)} onChanged={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Sharing updated"); }} />}
+      {deletingNote && <NoteDeleteConfirm title={deletingNote.title}
+        onCancel={() => { setDeletingNote(null); focusAfterDeleteConfirm(); }}
+        onConfirm={() => {
+          const target = deletingNote;
+          setDeletingNote(null);
+          void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
+        }} />}
       {sharingFolder && <FolderSharePanel folder={sharingFolder} onClose={() => setSharingFolder(null)} onChanged={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder sharing updated"); }} />}
       {settingsDialog}
       {(panel || sharingFolder || settingsOpen) && (settingsOpen && session.totp.setupRequired

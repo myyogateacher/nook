@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel, whenHistorySettled } from "../historyDialogs";
+import { dialogPopDirection, holdDialogSentinel, offerDialogReopen, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel, whenHistorySettled } from "../historyDialogs";
 
 type Guard = (poppedState: unknown) => boolean;
 
@@ -14,18 +14,23 @@ type Guard = (poppedState: unknown) => boolean;
  * The guard for one open dialog: it runs `close` once, then undoes the browser's move back to the
  * entry at `openDepth`. `isOpen` and `markClosed` let a stale guard (already closed) pass the event on.
  * While `blocked` returns true (a request in flight) Back and Forward are undone and the dialog stays
- * open, as Escape does then; the guard stays armed for the next press.
+ * open, as Escape does then; the guard stays armed for the next press and no reopen is offered.
  */
-export function createDialogGuard(options: { isOpen: () => boolean; markClosed: () => void; close: () => void; openDepth: () => number; undo?: typeof undoDialogPop; blocked?: () => boolean }): Guard {
+export function createDialogGuard(options: { isOpen: () => boolean; markClosed: () => void; close: () => void; openDepth: () => number; undo?: typeof undoDialogPop; blocked?: () => boolean; reopen?: () => (() => void) | null }): Guard {
   return (poppedState) => {
     if (!options.isOpen()) return false;
     if (options.blocked?.()) {
       const direction = dialogPopDirection(options.openDepth(), readHistoryDepth(poppedState));
       if (direction) (options.undo ?? undoDialogPop)(direction);
+      // Back off the phone sentinel: the layer stays open, so the sentinel goes back under it.
+      holdDialogSentinel();
       return true;
     }
     options.markClosed();
     options.close();
+    // Back off the phone sentinel: Forward onto it shows this layer again (historyDialogs.ts).
+    const reopen = options.reopen?.();
+    if (reopen) offerDialogReopen(reopen);
     const direction = dialogPopDirection(options.openDepth(), readHistoryDepth(poppedState));
     // Direction unknown: let the route handlers follow the browser instead of leaving a stale URL.
     if (!direction) return false;
@@ -47,8 +52,18 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  */
 export const DesktopHistoryLayers = createContext(false);
 
-export function useHistoryDialogGuard(open: boolean, close: () => void, options: { desktop?: boolean; blocked?: boolean } = {}) {
+/**
+ * How the owner of a layer shows it again, for guarded layers rendered inside (the key dialogs): after
+ * Back closed the layer off the phone sentinel, Forward calls it instead of landing on a dead entry.
+ * The `reopen` option of useHistoryDialogGuard wins over it.
+ */
+export const HistoryDialogReopen = createContext<(() => void) | null>(null);
+
+export function useHistoryDialogGuard(open: boolean, close: () => void, options: { desktop?: boolean; blocked?: boolean; reopen?: () => void } = {}) {
   const inLayers = useContext(DesktopHistoryLayers);
+  const ownerReopen = useContext(HistoryDialogReopen);
+  const reopenRef = useRef<(() => void) | null>(null);
+  reopenRef.current = options.reopen ?? ownerReopen;
   const desktop = options.desktop ?? inLayers;
   const openRef = useRef(open);
   openRef.current = open;
@@ -72,7 +87,8 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
       markClosed: () => { openRef.current = false; },
       close: () => closeRef.current(),
       openDepth: () => depthRef.current,
-      blocked: () => blockedRef.current
+      blocked: () => blockedRef.current,
+      reopen: () => reopenRef.current
     }));
   }, [open]);
 }

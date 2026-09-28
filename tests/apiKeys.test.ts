@@ -291,16 +291,33 @@ describe("/api/keys", () => {
     expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.revoked"]);
   });
 
+  test("the list counts each key's pending Inbox suggestions, for the revoke confirm (Friction 7)", async () => {
+    const owner = await createUser("Keys pending");
+    const { key } = (await createKey(owner)).body;
+    const { key: quiet } = (await createKey(owner, { name: "Quiet" })).body;
+    const insert = (status: string) => db.query(`INSERT INTO proposals (id, owner_id, key_id, key_name, kind, target_type, target_id, title, payload, created_at, expires_at, status)
+      VALUES (?, ?, ?, 'Laptop', 'card_create', 'board', 'b', 'Card', '{}', ?, ?, ?)`).run(crypto.randomUUID(), owner.userId, key.id, new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), status);
+    insert("pending");
+    insert("pending");
+    insert("rejected");
+    const listed = (await api(owner, "GET", "/keys")).body.keys as Array<{ id: string; pendingProposals: number }>;
+    expect(listed.find((item) => item.id === key.id)!.pendingProposals).toBe(2);
+    expect(listed.find((item) => item.id === quiet.id)!.pendingProposals).toBe(0);
+  });
+
   test("counts calls per key per day (D283)", async () => {
     const owner = await createUser("Keys usage");
     const { key } = (await createKey(owner)).body;
     for (let index = 0; index < 3; index += 1) await invokeMcpToolForTests("list_notes", {}, key.id);
     await invokeMcpToolForTests("list_documents", {}, key.id);
+    // An admitted write is recorded as a write (the handler's own not-found does not undo that).
+    await invokeMcpToolForTests("create_card", { boardId: crypto.randomUUID(), columnId: crypto.randomUUID(), title: "x" }, key.id);
     flushKeyUsage();
     const usage = db.query("SELECT calls, writes, denied FROM api_key_usage WHERE key_id = ?").get(key.id);
-    expect(usage).toEqual({ calls: 3, writes: 0, denied: 1 });
+    expect(usage).toEqual({ calls: 3, writes: 1, denied: 1 });
+    // The row's 14-day count is every admitted call, reads and writes.
     const listed = await api(owner, "GET", "/keys");
-    expect(listed.body.keys.find((item: { id: string }) => item.id === key.id).usage14d.at(-1)).toBe(3);
+    expect(listed.body.keys.find((item: { id: string }) => item.id === key.id).usage14d.at(-1)).toBe(4);
   });
 });
 

@@ -11,6 +11,8 @@ export type ApiKey = {
   revokedBy: "self" | "admin" | "rotation" | null; revokeReason: string | null;
   grants: KeyGrantView[]; scopes: McpScope[]; effectiveScopes: McpScope[];
   limits: { callsPerMinute?: number; writesPerMinute?: number }; usage14d: number[]; binnedToday?: number;
+  /** Pending Inbox suggestions from this key (GET /api/keys only). */
+  pendingProposals?: number;
 };
 
 export type KeyList = { keys: ApiKey[]; policy: PolicySummary; liveCount: number };

@@ -6,7 +6,7 @@ import { readHistoryDepth } from "../appShellNavigation";
 import { createCalendarHistoryState, readCalendarHint, type CalendarHint } from "../calendarNavigation";
 import { agendaRoute, calendarBackAction, eventRoute, localDate, monthOf, monthRoute, resolveMonth, shiftMonth, type CalendarRoute } from "../calendarRoute";
 import { ConfirmDialog } from "../files/Dialog";
-import { popStateClosedDialog } from "../historyDialogs";
+import { offerDialogReopen, popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
 import { AgendaView } from "./AgendaView";
 import {
@@ -35,7 +35,7 @@ import { DiscardEventPrompt, EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderChannels, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
-import { PHONE_QUERY, useDialogBackGuard, useMediaQuery } from "./hooks";
+import { PHONE_QUERY, useDialogBackGuard, useMediaQuery, useReturnFocus } from "./hooks";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
 import "../files/files.css";
@@ -193,6 +193,14 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   // The event sheet, its Repeat sheet, and the Discard prompt guard themselves, one layer at a time (EventSheet.tsx).
   const dialogOpen = (confirm !== null && confirm.kind !== "discard") || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
+  // Each layer hands focus back to what opened it: the Calendars button, the Add reminder button,
+  // and, for the Share, Subscribe, and Move-to-Bin layers that replace the Calendars sheet, that
+  // calendar's button in the sheet once it is back (QA 0.12 item 3).
+  useReturnFocus(calendarsOpen);
+  useReturnFocus(reminderPicker !== null, ".calendar-link-add");
+  useReturnFocus(sharing !== null);
+  useReturnFocus(feeds !== null);
+  useReturnFocus(confirm?.kind === "deleteCalendar", ".calendar-list .calendar-visibility");
 
   function closeSheet() {
     setSheet(null);
@@ -207,6 +215,16 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   // Back or Forward while a dialog is open closes the top one (D69).
   useDialogBackGuard(dialogOpen, (forced) => {
     if (forced) {
+      // Back off the phone sentinel lands here (the depths match): Forward onto the sentinel shows
+      // the same layers again instead of a dead entry (Friction 12). A confirm is not reopened.
+      const shown = { calendarsOpen, sharing, feeds, picker, reminderPicker };
+      if (calendarsOpen || sharing || feeds || picker || reminderPicker) offerDialogReopen(() => {
+        setCalendarsOpen(shown.calendarsOpen);
+        setSharing(shown.sharing);
+        setFeeds(shown.feeds);
+        setPicker(shown.picker);
+        setReminderPicker(shown.reminderPicker);
+      });
       setConfirm(null);
       closeSheet();
       setSharing(null);

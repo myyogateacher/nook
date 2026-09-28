@@ -67,3 +67,53 @@ export function useDialogBackGuard(active: boolean, onBack: OnBack) {
     });
   }), []);
 }
+
+/** What had focus when a layer opened, so it gets focus back when the layer closes (the routine sheet's pattern, 2j). */
+export type Opener = { element: HTMLElement | null; label: string | null; fallback: string | null };
+
+type FocusTarget = Pick<HTMLElement, "isConnected" | "focus">;
+
+export function captureOpener(active: Element | null, fallback: string | null = null): Opener {
+  const element = active && typeof HTMLElement !== "undefined" && active instanceof HTMLElement && active !== document.body ? active : null;
+  return { element, label: element?.getAttribute("aria-label") ?? null, fallback };
+}
+
+/**
+ * Where focus goes back to: the opener while it is still on the page; else a control with its
+ * accessible name (the Share button in the Calendars sheet, which re-mounts once the Share panel
+ * that replaced it closes); else the layer's fallback selector.
+ */
+export function openerTarget<T extends FocusTarget>(opener: { element: T | null; label: string | null; fallback: string | null } | null, find: (selector: string) => T | null): T | null {
+  if (!opener) return null;
+  if (opener.element?.isConnected) return opener.element;
+  if (opener.label) {
+    const byLabel = find(`[aria-label="${opener.label.replace(/["\\]/g, "\\$&")}"]`);
+    if (byLabel) return byLabel;
+  }
+  return opener.fallback ? find(opener.fallback) : null;
+}
+
+/**
+ * Hands focus back to the layer's opener when `open` turns false (Escape, Close, Back, or a pick),
+ * after the layer has unmounted and any layer under it has taken its first focus, so focus never
+ * falls to the page body. `fallback` names a control to use when the opener is gone.
+ */
+export function useReturnFocus(open: boolean, fallback: string | null = null) {
+  const openerRef = useRef<Opener | null>(null);
+  const capturedRef = useRef(false);
+  if (open && !capturedRef.current && typeof document !== "undefined") openerRef.current = captureOpener(document.activeElement, fallback);
+  capturedRef.current = open;
+  const shownRef = useRef(false);
+  useEffect(() => {
+    if (open) {
+      shownRef.current = true;
+      return;
+    }
+    if (!shownRef.current) return;
+    shownRef.current = false;
+    const opener = openerRef.current;
+    window.requestAnimationFrame(() => {
+      openerTarget(opener, (selector) => document.querySelector<HTMLElement>(selector))?.focus();
+    });
+  }, [open]);
+}

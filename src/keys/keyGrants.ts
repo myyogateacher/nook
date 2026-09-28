@@ -86,6 +86,41 @@ export function moduleChoices(role: string | undefined, policy: Pick<PolicySumma
 /** One row of the grant builder. `resourceIds` is used when `applies` is "chosen". */
 export type GrantRow = { key: string; module: GrantModule; permission: KeyPermission; applies: "all" | "chosen"; resourceIds: string[] };
 
+/** Where each module and permission is already used, by row number (1-based), leaving out `rowKey`. */
+function usedElsewhere(rows: readonly GrantRow[], rowKey: string | null) {
+  const used = new Map<string, number>();
+  rows.forEach((row, index) => { if (row.key !== rowKey && !used.has(`${row.module}:${row.permission}`)) used.set(`${row.module}:${row.permission}`, index + 1); });
+  return used;
+}
+
+/**
+ * The permission options for one row (Friction 4): one another row already holds is disabled and
+ * says which row, so a module and permission is never listed twice.
+ */
+export function rowPermissionChoices(module: GrantModule, role: string | undefined, policy: Pick<PolicySummary, "modules"> | null, rows: readonly GrantRow[], rowKey: string | null): PermissionChoice[] {
+  const used = usedElsewhere(rows, rowKey);
+  return permissionChoices(module, role, policy).map((choice) => {
+    const row = used.get(`${module}:${choice.value}`);
+    return !choice.disabled && row ? { ...choice, disabled: true, reason: `Already in permission ${row}`, description: `Already in permission ${row}` } : choice;
+  });
+}
+
+/**
+ * The Module options for one row (Friction 4): a module whose every open permission other rows
+ * already hold is disabled and says which row; `firstPermission` is the first one still free. A
+ * module with a free permission stays open (read all boards in one row, write chosen boards in another).
+ */
+export function rowModuleChoices(role: string | undefined, policy: Pick<PolicySummary, "modules"> | null, rows: readonly GrantRow[], rowKey: string | null) {
+  const used = usedElsewhere(rows, rowKey);
+  return moduleChoices(role, policy).map((module) => {
+    if (module.disabled) return module;
+    const free = rowPermissionChoices(module.value, role, policy, rows, rowKey).find((choice) => !choice.disabled) ?? null;
+    if (free) return { ...module, firstPermission: free.value };
+    const row = Math.min(...[...used].filter(([id]) => id.startsWith(`${module.value}:`)).map(([, index]) => index));
+    return { ...module, disabled: true, description: `Already in permission ${row}`, firstPermission: null };
+  });
+}
+
 export type GrantPayload = { module: GrantModule; permission: KeyPermission; resourceIds?: string[] };
 
 /** The request body's grants, or an error to show next to Create. */

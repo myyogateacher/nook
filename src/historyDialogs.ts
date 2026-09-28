@@ -26,6 +26,30 @@ let ignoreTimer: ReturnType<typeof setTimeout> | null = null;
 const consumed = new WeakSet<object>();
 // While a popstate left the depth-0 sentinel, guards close their dialog but must not undo the move.
 let suppressUndo = 0;
+// Friction 12: Back from the sentinel leaves it as the forward entry. Forward onto it reopens the layer
+// Back closed when that layer's owner offered a way to (offerDialogReopen); otherwise the move is
+// undone, so the sentinel is never a dead entry that the next Back has to step through.
+let closingFromSentinel = false;
+let offeredReopen: (() => void) | null = null;
+let reopenOnForward: (() => void) | null = null;
+const REOPEN_CHECK_MS = 300;
+
+/**
+ * Called by a guard as it closes its layer: when that close came from Back off the sentinel, Forward
+ * onto the sentinel calls `reopen` to show the layer again. Any other close ignores the offer.
+ */
+export function offerDialogReopen(reopen: () => void) {
+  if (closingFromSentinel) offeredReopen = reopen;
+}
+
+// Set when a busy (blocked) layer refused a Back off the sentinel: it stays open, so it needs the
+// sentinel back, or the next Back would leave the dialog's entry.
+let heldFromSentinel = false;
+
+/** Called by a blocked guard that kept its layer open: a Back off the sentinel pushes the sentinel again. */
+export function holdDialogSentinel() {
+  if (closingFromSentinel) heldFromSentinel = true;
+}
 
 /** Registers a guard for the dialogs of the app on screen (or shared chrome). Returns the unregister function. */
 export function registerHistoryDialogGuard(next: DialogGuard) {
@@ -55,10 +79,43 @@ export function popStateClosedDialog(event: { state?: unknown }) {
     // Back from the sentinel onto the dialog's own entry: close the dialog and stay there.
     sentinelActive = false;
     suppressUndo += 1;
-    try { runGuards(event.state); } finally { suppressUndo -= 1; }
+    closingFromSentinel = true;
+    offeredReopen = null;
+    heldFromSentinel = false;
+    try { runGuards(event.state); } finally { suppressUndo -= 1; closingFromSentinel = false; }
+    reopenOnForward = offeredReopen;
+    offeredReopen = null;
+    if (heldFromSentinel) {
+      heldFromSentinel = false;
+      reopenOnForward = null;
+      if (lastSentinelEnv) pushSentinelIfNeeded(lastSentinelEnv);
+    }
     consumed.add(event);
     return true;
   }
+  if (!sentinelActive && openDialogs === 0 && isDialogSentinelState(event.state)) {
+    // Forward onto a sentinel whose layer is closed: reopen that layer on it, or step back off it.
+    consumed.add(event);
+    const reopen = reopenOnForward;
+    reopenOnForward = null;
+    const history = lastSentinelEnv?.history ?? window.history;
+    if (reopen) {
+      sentinelActive = true;
+      reopen();
+      // The owner is gone (or showed nothing): step back off the sentinel after all.
+      setTimeout(() => {
+        if (!sentinelActive || openDialogs > 0 || !isDialogSentinelState(history.state)) return;
+        sentinelActive = false;
+        ignoreNextPop();
+        history.back();
+      }, REOPEN_CHECK_MS);
+    } else {
+      ignoreNextPop();
+      history.back();
+    }
+    return true;
+  }
+  reopenOnForward = null;
   if (!runGuards(event.state)) return false;
   consumed.add(event);
   return true;
@@ -142,11 +199,15 @@ let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 // Set while the history.back() that pops the sentinel has not fired its popstate yet: the env of the
 // release, and whether a dialog opened meanwhile and still wants a sentinel.
 let pendingSentinelPop: { env: SentinelEnv } | null = null;
+// The env the last sentinel was pushed on (the window's history, or a test's).
+let lastSentinelEnv: SentinelEnv | null = null;
 
 function pushSentinelIfNeeded(env: SentinelEnv) {
   if (openDialogs > 0 && needsDialogSentinel(env.history.state, { phone: env.phone(), active: sentinelActive })) {
     env.history.pushState(dialogSentinelState(env.history.state), "", env.href());
     sentinelActive = true;
+    lastSentinelEnv = env;
+    reopenOnForward = null;
   }
 }
 

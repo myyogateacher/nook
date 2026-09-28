@@ -19,6 +19,8 @@ export type ComboboxProps<V extends string> = {
   maxSelected?: number;
   label: string;
   placeholder?: string;
+  /** The field's placeholder once chips are shown (none by default): "Add another board…". */
+  placeholderWithValues?: string;
   emptyText?: string;
   disabled?: boolean;
   id?: string;
@@ -76,7 +78,7 @@ export function pickFocusTarget(sheet: boolean, focusInside: boolean): "field" |
  * values (D91). Desktop: a popup under the field. Phones: a bottom sheet with a sticky search box
  * that Back closes (D69).
  */
-export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose, openOnFocus = false, handleRef }: ComboboxProps<V>) {
+export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", placeholderWithValues = "", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose, openOnFocus = false, handleRef }: ComboboxProps<V>) {
   const autoId = useId();
   const inputId = id ?? `${autoId}-input`;
   const listId = `${autoId}-listbox`;
@@ -229,7 +231,7 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
   const input = (ref: typeof inputRef, inSheet: boolean) => <input ref={ref} id={inSheet ? undefined : inputId} className="ui-combobox-input" type="text" role="combobox"
     aria-autocomplete="list" aria-expanded={open && (inSheet || !sheet)} aria-controls={listId} aria-label={label}
     aria-activedescendant={open && active >= 0 && (inSheet || !sheet) ? optionDomId(listId, active) : undefined}
-    value={query} placeholder={value.length && !inSheet ? "" : placeholder} disabled={disabled} autoComplete="off" spellCheck={false}
+    value={query} placeholder={value.length && !inSheet ? placeholderWithValues : placeholder} disabled={disabled} autoComplete="off" spellCheck={false}
     // On phones the field only opens the sheet, which has its own search box.
     readOnly={sheet && !inSheet} inputMode={sheet && !inSheet ? "none" : undefined}
     onChange={(event) => {

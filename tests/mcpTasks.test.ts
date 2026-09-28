@@ -70,7 +70,7 @@ const auditRows = (actorId: string, eventType: string) => (db.query("SELECT meta
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
 const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_children", "list_sprints", "list_views", "query_cards", "search_cards"];
-const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "link_cards", "move_card", "update_card"];
+const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "create_sprint", "link_attachment", "link_cards", "manage_tags", "move_card", "set_wip_limit", "start_sprint", "update_card"];
 
 describe("MCP task tools", () => {
   test("task tools appear only for task scopes, write implies read, and there is nothing that deletes", async () => {
@@ -572,8 +572,8 @@ describe("MCP task tools: sprints (17B, D139, T119)", () => {
     const queried = (await callTool(key, "query_cards", { filter: `board:${boardId} sprint:next` })).value;
     expect(queried.cards.map((card: { title: string }) => card.title).sort()).toEqual(["Checkout", "Form"]);
     expect(queried.cards.find((card: { title: string }) => card.title === "Form")).toMatchObject({ sprint_id: next, sprint_name: "Sprint 2" });
-    // No sprint lifecycle tools (D139): agents plan cards, the owner runs the sprints.
-    expect((await toolNames(key)).filter((name) => /sprint/.test(name))).toEqual(["list_sprints"]);
+    // Wave 19 adds create_sprint and start_sprint (owner only); completing a sprint stays in the app (D178 dropped).
+    expect((await toolNames(key)).filter((name) => /sprint/.test(name))).toEqual(["create_sprint", "list_sprints", "start_sprint"]);
   });
 
   test("get_card comments carry reactions with glyphs and without names; no reaction tool exists (Wave 20, D189)", async () => {

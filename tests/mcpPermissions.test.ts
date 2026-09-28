@@ -8,7 +8,7 @@ test("the Settings permissions mirror the server scopes and their implied reads"
   for (const permission of MCP_PERMISSIONS) expect(permission.implies).toBe(IMPLIED_READ_SCOPE[permission.scope]);
   expect(MCP_PERMISSIONS.find((permission) => permission.scope === "notes:write-draft")!.help).toContain("never publishes");
   expect(OFFERED_MCP_PERMISSIONS.map((permission) => permission.scope)).toEqual([...MCP_SCOPES]);
-  expect(MCP_PERMISSIONS.find((permission) => permission.scope === "tasks:write")!.help).toBe("Create, move, and comment on cards: never deletes");
+  expect(MCP_PERMISSIONS.find((permission) => permission.scope === "tasks:write")!.help).toBe("Create, move, and comment on cards, and manage tags, WIP limits, sprints (owner only), and attachments: never deletes");
 });
 
 test("checking a write scope checks and locks its read scope", () => {

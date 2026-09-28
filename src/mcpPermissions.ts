@@ -18,7 +18,7 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "files:read", label: "Read files", help: "File details and the text of text files up to 1 MiB." },
   { scope: "files:write", label: "Write files", help: "Upload, rename, and move your files and create folders; never shares or deletes.", implies: "files:read" },
   { scope: "tasks:read", label: "Read tasks", help: "Read boards and cards" },
-  { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards: never deletes", implies: "tasks:read" },
+  { scope: "tasks:write", label: "Write tasks", help: "Create, move, and comment on cards, and manage tags, WIP limits, sprints (owner only), and attachments: never deletes", implies: "tasks:read" },
   { scope: "today:read", label: "Read Today", help: "The Today summary, limited to the other read permissions this key has" },
   { scope: "calendar:read", label: "Read calendar", help: "Calendars, events, and their links you can open" },
   { scope: "calendar:write", label: "Write calendar", help: "Create and change events, and set your own reminders: never deletes", implies: "calendar:read" },

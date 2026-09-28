@@ -9,7 +9,7 @@ import {
 import { hasScope, type McpScope } from "./mcpScopes";
 import { MCP_LIMITS } from "./mcpRateLimit";
 import { recoveryCode, totpCode } from "./validation";
-import { activeModules, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, type PolicyBlock, type Policies } from "./team/policies";
+import { activeModules, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, surfaceBlocks, type PolicyBlock, type Policies } from "./team/policies";
 import { can, mcpScopesForRole, type Role } from "./team/roles";
 import { readableBoardPredicate } from "./tasks/access";
 import { editableCollectionPredicate, readableCollectionPredicate } from "./collections/access";
@@ -131,8 +131,8 @@ function keyState(row: KeyRow, policies: Policies, time = Date.now()): { state: 
   if (row.revoke_after !== null && isoMs(row.revoke_after)! <= time) return { state: "revoked", blockedBy: null };
   if (row.expires_at !== null && isoMs(row.expires_at)! <= time) return { state: "expired", blockedBy: null };
   if (row.disabled_at !== null) return { state: "paused", blockedBy: null };
-  const surface = row.surfaces === "rest" ? "rest" : "mcp";
-  const blockedBy = policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies);
+  // Listed as blocked when policy blocks it on every surface it may use (the preview counts the same).
+  const blockedBy = surfaceBlocks({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, row.surfaces, policies).block;
   if (blockedBy) return { state: "blocked", blockedBy };
   return { state: row.revoke_after !== null ? "grace" : "active", blockedBy: null };
 }

@@ -84,6 +84,33 @@ describe("team key policies", () => {
     expect(mine.body.policy).toMatchObject({ keyMaxDays: 365, modules: DEFAULT_POLICIES.keyModulesByRole.member, mcpAllowed: true, restAllowed: true });
   });
 
+  test("the preview skips expired and grace-ended keys and checks each key on its own surfaces (review L2)", async () => {
+    resetPoliciesForTests();
+    const admin = await user("Policies surfaces", "admin");
+    const member = await user("Policies surfaces member");
+    const noMcp = { ...DEFAULT_POLICIES, mcpRoles: ["admin" as const, "viewer" as const] };
+    const noRest = { ...DEFAULT_POLICIES, restRoles: ["admin" as const] };
+    const neither = { ...noMcp, restRoles: ["admin" as const] };
+    const impact = async (policies: typeof DEFAULT_POLICIES) => (await api(admin, "POST", "/team/policies/preview", { policies })).body.impact as Record<string, number>;
+    const before = { noMcp: await impact(noMcp), noRest: await impact(noRest), neither: await impact(neither) };
+    const grant = [{ module: "notes" as const, permission: "read" as const, resourceKind: null, resourceId: null }];
+    const make = (name: string, surfaces: "mcp" | "rest" | "both") => createApiKey(member.userId, { name, surfaces, grants: grant, expiresInDays: 30 }).id;
+    make("MCP", "mcp");
+    make("REST", "rest");
+    make("Both", "both");
+    const expired = make("Expired", "mcp");
+    const graceEnded = make("Grace ended", "rest");
+    db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), expired);
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), graceEnded);
+    const delta = (after: Record<string, number>, base: Record<string, number>) => Object.fromEntries(Object.entries(after).map(([name, value]) => [name, value - base[name]!]));
+    // Only the three usable keys count. MCP off: the MCP key is blocked, the both key loses a surface.
+    expect(delta(await impact(noMcp), before.noMcp)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1 });
+    // REST off: the REST key is blocked (it was checked against mcpRoles before), the both key narrowed.
+    expect(delta(await impact(noRest), before.noRest)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1 });
+    // Both off: all three blocked.
+    expect(delta(await impact(neither), before.neither)).toEqual({ liveKeys: 3, blocked: 3, newlyBlocked: 3, narrowed: 0 });
+  });
+
   test("a stored value that no longer validates falls back to its default, field by field", () => {
     db.query("INSERT INTO team_settings (key, value_json, updated_at) VALUES ('key_max_days', '9999', ?)").run(new Date().toISOString());
     db.query("INSERT INTO team_settings (key, value_json, updated_at) VALUES ('keys_per_user', '3', ?)").run(new Date().toISOString());

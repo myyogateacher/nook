@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { audit, db, now } from "../db";
 import { recordAccessEvent } from "../access/events";
-import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
+import { GENERAL_KEY_MODULES, type GrantModule, type KeySurfaces } from "../keyGrants";
 import type { Role } from "./roles";
 
 /**
@@ -193,13 +193,24 @@ export function activeModules(role: Role, policies: Policies = readPolicies()): 
   return role === "guest" ? [] : policies.keyModulesByRole[role];
 }
 
+/** Why a key is blocked on every surface it may use (null when one still works), and whether one of two is blocked. */
+export function surfaceBlocks(key: { createdAt: string; expiresAt: string | null }, role: Role, surfaces: KeySurfaces, policies: Policies) {
+  const each = (surfaces === "both" ? ["mcp", "rest"] as const : [surfaces]).map((surface) => policyBlock(key, role, surface, policies));
+  return { block: each.every((block) => block !== null) ? each[0]! : null, partly: each.some((block) => block !== null) };
+}
+
 /**
  * The impact of proposed policies (the preview line above Save): how many live keys would be
- * blocked, and how many would lose at least one module.
+ * blocked, and how many would lose something without being blocked (a module, or one of the two
+ * surfaces of a `both` key). Live means usable now: not revoked, not expired, and not past a
+ * rotation grace (review L2). Each key is checked on its own surfaces: `mcpRoles` for MCP keys,
+ * `restRoles` for REST keys, and both for `both` keys (blocked only when both are).
  */
-export function policyImpact(proposed: Policies) {
-  const keys = db.query(`SELECT k.id, k.created_at, k.expires_at, u.role FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE k.revoked_at IS NULL AND u.disabled_at IS NULL`).all() as Array<{ id: string; created_at: string; expires_at: string | null; role: Role }>;
+export function policyImpact(proposed: Policies, time = Date.now()) {
+  const at = new Date(time).toISOString();
+  const keys = db.query(`SELECT k.id, k.created_at, k.expires_at, k.surfaces, u.role FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
+    WHERE k.revoked_at IS NULL AND u.disabled_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?) AND (k.revoke_after IS NULL OR k.revoke_after > ?)`)
+    .all(at, at) as Array<{ id: string; created_at: string; expires_at: string | null; surfaces: KeySurfaces; role: Role }>;
   const grants = db.query("SELECT key_id, module FROM api_key_grants").all() as Array<{ key_id: string; module: GrantModule }>;
   const modulesByKey = new Map<string, Set<GrantModule>>();
   for (const grant of grants) {
@@ -213,14 +224,14 @@ export function policyImpact(proposed: Policies) {
   let narrowed = 0;
   for (const key of keys) {
     const input = { createdAt: key.created_at, expiresAt: key.expires_at };
-    const block = policyBlock(input, key.role, "mcp", proposed);
-    if (block) {
+    const next = surfaceBlocks(input, key.role, key.surfaces, proposed);
+    if (next.block) {
       blocked += 1;
-      if (!policyBlock(input, key.role, "mcp", current)) newlyBlocked += 1;
+      if (!surfaceBlocks(input, key.role, key.surfaces, current).block) newlyBlocked += 1;
       continue;
     }
     const allowed = activeModules(key.role, proposed);
-    if ([...(modulesByKey.get(key.id) ?? [])].some((module) => !allowed.includes(module))) narrowed += 1;
+    if (next.partly || [...(modulesByKey.get(key.id) ?? [])].some((module) => !allowed.includes(module))) narrowed += 1;
   }
   return { liveKeys: keys.length, blocked, newlyBlocked, narrowed };
 }

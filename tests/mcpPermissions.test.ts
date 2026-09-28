@@ -8,7 +8,7 @@ test("the Settings permissions mirror the server scopes and their implied reads"
   for (const permission of MCP_PERMISSIONS) expect(permission.implies).toBe(IMPLIED_READ_SCOPE[permission.scope]);
   expect(MCP_PERMISSIONS.find((permission) => permission.scope === "notes:write-draft")!.help).toContain("never publishes");
   expect(OFFERED_MCP_PERMISSIONS.map((permission) => permission.scope)).toEqual([...MCP_SCOPES]);
-  expect(MCP_PERMISSIONS.find((permission) => permission.scope === "tasks:write")!.help).toBe("Create, move, and comment on cards, and manage tags, WIP limits, sprints (owner only), and attachments: never deletes");
+  expect(MCP_PERMISSIONS.find((permission) => permission.scope === "tasks:write")!.help).toBe("Create, move, and comment on cards, and manage tags, WIP limits, sprints (owner only), and attachments; never deletes.");
 });
 
 test("checking a write scope checks and locks its read scope", () => {
@@ -49,4 +49,11 @@ test("the client write list mirrors the server's, so viewers are never offered b
   expect(toggleScope([], "notes:publish", true)).toEqual(["notes:read", "notes:publish"]);
   expect(toggleScope([], "files:write", true)).toEqual(["files:read", "files:write"]);
   expect(toggleScope([], "bin:write", true)).toEqual(["bin:write"]);
+});
+
+test("every permission description ends with a full stop, so \"Included with write access.\" reads as its own sentence (1c)", () => {
+  for (const permission of MCP_PERMISSIONS) {
+    expect({ scope: permission.scope, help: permission.help.endsWith(".") }).toEqual({ scope: permission.scope, help: true });
+    if (permission.warning) expect(permission.warning.endsWith(".")).toBe(true);
+  }
 });

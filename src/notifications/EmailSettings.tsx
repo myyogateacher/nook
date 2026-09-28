@@ -3,7 +3,7 @@ import { CheckCircle2, Mail, MailWarning, RotateCcw, Send, ShieldCheck } from "l
 import { ApiError } from "../api";
 import { Select } from "../ui/Select";
 import { EmailMutesList } from "./emailMutes";
-import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
+import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, insideQuietHours, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
 
 /**
  * Settings → Notifications → Email (Wave 28, outbound email §E.2–E.3). Preferences gate sending
@@ -22,12 +22,26 @@ const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> =
   { id: "bin", title: "Bin clean-up", help: "Items in your Bin are deleted for good within 3 days. At most once a week. Off by default." }
 ];
 
-const DIGEST_OPTIONS = [
+const DIGEST_OPTIONS: Array<{ value: "off" | "daily" | "weekly"; label: string }> = [
   { value: "off", label: "Off" },
-  { value: "daily", label: "Daily", disabled: true },
-  { value: "weekly", label: "Weekly (Mondays)", disabled: true }
-] as const;
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly (Mondays)" }
+];
 const TIME_OPTIONS = HALF_HOURS.map((value) => ({ value, label: value }));
+
+/** Half hours, plus a stored time between them; times inside quiet hours are disabled (the server moves them to the end). */
+export function digestTimeOptions(current: string, quietStart: string | null, quietEnd: string | null) {
+  const times = HALF_HOURS.includes(current) ? HALF_HOURS : [...HALF_HOURS, current].sort();
+  return times.map((value) => ({ value, label: value, disabled: value !== current && insideQuietHours(value, quietStart, quietEnd) }));
+}
+
+/** "Overdue and due-soon cards…" plus when the next one goes. */
+export function digestNote(prefs: Pick<Settings["prefs"], "digest" | "nextDigestAt" | "tz">) {
+  const what = "Your overdue and due-soon cards, upcoming events, proposals awaiting you, and new shares. Never sent when there is nothing to say.";
+  if (prefs.digest === "off" || !prefs.nextDigestAt) return what;
+  const next = new Date(prefs.nextDigestAt).toLocaleString(undefined, { timeZone: prefs.tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return `${what} Next: ${next} (${prefs.tz}).`;
+}
 
 /** What the bounced notice says for each reason (security email keeps coming either way). */
 export function suppressionCopy(settings: Pick<Settings, "address" | "suppression">) {
@@ -188,10 +202,11 @@ export function EmailSettings() {
 
     <h4 className="notification-settings-subheading">Summary</h4>
     <div className="email-field-row">
-      <span className="email-field"><span id="email-digest-label">Digest</span><Select value="off" onChange={() => undefined} options={[...DIGEST_OPTIONS]} label="Digest" labelledBy="email-digest-label" disabled /></span>
-      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={() => undefined} options={TIME_OPTIONS} label="Digest time" labelledBy="email-digest-time-label" disabled /></span>
+      <span className="email-field"><span id="email-digest-label">Digest</span><Select value={prefs.digest} onChange={(digest) => { void save({ digest }); }} options={DIGEST_OPTIONS} label="Digest" labelledBy="email-digest-label" disabled={locked || !prefs.enabled} /></span>
+      <span className="email-field"><span id="email-digest-time-label">At</span><Select value={prefs.digestLocalTime} onChange={(digestLocalTime) => { void save({ digestLocalTime }); }}
+        options={digestTimeOptions(prefs.digestLocalTime, prefs.quietStart, prefs.quietEnd)} label="Digest time" labelledBy="email-digest-time-label" disabled={locked || !prefs.enabled || prefs.digest === "off"} /></span>
     </div>
-    <p className="email-settings-muted">A daily or weekly summary is coming in a later update.</p>
+    <p className="email-settings-muted">{digestNote(prefs)}</p>
 
     <div className="modules-row email-row">
       <span className="modules-row-text"><strong id="email-quiet-label">Quiet hours</strong><small id="email-quiet-help">Activity email waits until they end. Security email is never held.</small></span>

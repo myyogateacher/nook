@@ -14,6 +14,8 @@ export type EmailPrefs = {
   tz: string;
   revision: number;
   updatedAt: string | null;
+  /** When the next digest goes (Wave 29), or null when it is off. */
+  nextDigestAt?: string | null;
 };
 
 /** Why Nook holds mail back from this address (Wave 29 webhooks): a bounce, a spam report, or a run of soft bounces. */
@@ -23,7 +25,7 @@ export type EmailSettings = { configured: boolean; address: string; verified: bo
 export type EmailPrefsInput = {
   enabled: boolean;
   categories: Record<EmailCategory, boolean>;
-  digest: "off";
+  digest: "off" | "daily" | "weekly";
   digestLocalTime: string;
   quietHours: { start: string; end: string } | null;
   tz: string;
@@ -50,7 +52,7 @@ export function prefsInput(prefs: EmailPrefs, change: Partial<EmailPrefsInput> =
   return {
     enabled: prefs.enabled,
     categories: prefs.categories,
-    digest: "off",
+    digest: prefs.digest,
     digestLocalTime: prefs.digestLocalTime,
     quietHours: prefs.quietStart && prefs.quietEnd ? { start: prefs.quietStart, end: prefs.quietEnd } : null,
     // The first save records this device's zone (§B.1); later saves keep the stored one.
@@ -58,6 +60,14 @@ export function prefsInput(prefs: EmailPrefs, change: Partial<EmailPrefsInput> =
     revision: prefs.revision,
     ...change
   };
+}
+
+/** Whether a local HH:MM falls inside quiet hours (which may wrap midnight). */
+export function insideQuietHours(time: string, start: string | null, end: string | null) {
+  if (!start || !end) return false;
+  const minutes = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5));
+  const at = minutes(time);
+  return minutes(start) < minutes(end) ? at >= minutes(start) && at < minutes(end) : at >= minutes(start) || at < minutes(end);
 }
 
 /** Half-hour steps for the quiet-hours pickers. */

@@ -9,6 +9,7 @@ import { resolvePayload, type Recipient } from "./resolve";
 import type { MailCategory, MailClass } from "./templates/types";
 import { createUnsubscribeToken } from "./unsubscribe";
 import { scheduleBinExpiry } from "./laterMail";
+import { scheduleDigests } from "./digest";
 
 /**
  * The mail dispatcher (docs/plan/research/2026-09-28-outbound-email.md §D.1–D.3), on the reminders
@@ -136,7 +137,8 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
 
   // Activity and reminders mail can be switched off by category from the mail itself (B.2).
   const switchable = (row.class === "activity" || row.class === "reminders") && row.category !== null;
-  const token = switchable ? await createUnsubscribeToken(user.id, row.category!) : null;
+  // The digest's link turns the digest off (B.2).
+  const token = switchable ? await createUnsubscribeToken(user.id, row.category!) : row.class === "digest" ? await createUnsubscribeToken(user.id, "digest") : null;
   const rendered = renderTemplate(template, data, {
     instanceName: config.mail.instanceName,
     tz: prefs.tz,
@@ -190,6 +192,7 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
     const nowMs = options.nowMs ?? Date.now();
     // Scheduled mail is queued first, so a due digest or Bin reminder goes out in the same tick.
     try {
+      scheduleDigests(nowMs);
       scheduleBinExpiry(nowMs);
     } catch (error) {
       console.error(`Mail scheduling failed: error=${error instanceof Error ? error.name : "Unknown"}`);

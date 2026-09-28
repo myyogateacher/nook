@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { isMuted } from "./mutes";
+import { logShare } from "./digest";
 import { enqueueMail, mergeIds, PROPOSALS_MIN_GAP_MS, WINDOW_MS, type Payload } from "./outbox";
 import type { SharedKind } from "./templates/activity";
 import type { AccountEvent, TwoFactorEvent } from "./templates/security";
@@ -66,6 +67,8 @@ export function mailShared(actorId: string, kind: SharedKind, itemId: string, be
   const had = new Set(before);
   for (const userId of unique(after)) {
     if (userId === actorId || had.has(userId)) continue;
+    // The digest's "Shared with you" reads this log (ids only), whatever the sharing switch says.
+    safely("digest.share_log", () => logShare(userId, kind, itemId, actorId));
     safely("sharing.shared", () => enqueueMail({
       userId, template: "sharing.shared", payload: { items: [{ kind, id: itemId }], actorIds: [actorId] },
       coalesceKey: `sharing.shared:${userId}`, windowMs: WINDOW_MS.activity,

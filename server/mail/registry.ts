@@ -2,6 +2,7 @@ import { inviteTemplate, testTemplate, verifyTemplate } from "./templates/accoun
 import { assignedTemplate, commentTemplate, proposalsTemplate, sharedTemplate } from "./templates/activity";
 import { eventChangedTemplate, reminderTemplate } from "./templates/calendar";
 import { binExpiringTemplate, sprintTemplate } from "./templates/later";
+import { digestTemplate } from "./templates/digest";
 import { accountEventTemplate, apiKeyCreatedTemplate, roleChangedTemplate, twoFactorTemplate } from "./templates/security";
 import type { TemplateDef } from "./templates/types";
 
@@ -26,7 +27,8 @@ export const TEMPLATES = {
   "calendar.reminder": reminderTemplate,
   "calendar.event_changed": eventChangedTemplate,
   "tasks.sprint": sprintTemplate,
-  "bin.expiring": binExpiringTemplate
+  "bin.expiring": binExpiringTemplate,
+  "digest.summary": digestTemplate
 } as const;
 
 export type TemplateName = keyof typeof TEMPLATES;
@@ -49,6 +51,9 @@ export function previewFixtures(): Array<{ id: string; template: TemplateName; d
     { id: "calendar.reminder.all_day", template: "calendar.reminder", data: { ...reminderTemplate.fixture(), time: { allDay: true, start: "2026-10-02" }, location: null } },
     { id: "calendar.event_changed.cancelled", template: "calendar.event_changed", data: { ...eventChangedTemplate.fixture(), change: "cancelled", after: null } },
     { id: "tasks.sprint.completed", template: "tasks.sprint", data: { ...sprintTemplate.fixture(), event: "completed", total: 14, done: 11, carried: 3, yours: { total: 3, done: 2, carried: 1 } } },
+    { id: "digest.summary.weekly", template: "digest.summary", data: { ...digestTemplate.fixture(), period: "weekly", date: "2026-09-28", proposals: null,
+      cards: Array.from({ length: 7 }, (_, index) => ({ ...digestTemplate.fixture().cards[1]!, cardId: `6a1d6b7f-2c3e-4d4f-9a5b-${String(index).padStart(12, "0")}`, title: `Card ${index + 1}`, dueAt: null, dueOn: "2026-10-01" })), cardsTotal: 9,
+      shared: [], sharedTotal: 0 } },
     { id: "security.account.sessions_revoked", template: "security.account", data: { event: "sessions_revoked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" } }
   ];
 }

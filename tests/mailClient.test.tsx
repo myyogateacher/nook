@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { formatRoute, parseRoute, parseSettingsPath, settingsPath } from "../src/router";
 import { takeMailLinkFromLocation, unsubscribeCategory } from "../src/auth/mailPages";
 import { HALF_HOURS, prefsInput, type EmailPrefs } from "../src/notifications/emailApi";
-import { suppressionCopy } from "../src/notifications/EmailSettings";
+import { digestNote, digestTimeOptions, suppressionCopy } from "../src/notifications/EmailSettings";
 
 /** Client pieces of Wave 28: routes, mail link pages, and the email settings request body. */
 
@@ -49,11 +49,22 @@ describe("mail link pages", () => {
 
 describe("email settings body", () => {
   const prefs: EmailPrefs = { enabled: true, categories: { assignments: true, comments: true, sharing: true, proposals: true, sprints: false, bin: false, reminders: true }, digest: "off", digestLocalTime: "08:00", quietStart: "22:00", quietEnd: "07:30", tz: "Europe/Berlin", revision: 3, updatedAt: null };
-  test("keeps the stored zone and quiet hours, and never asks for a digest yet", () => {
+  test("keeps the stored zone, quiet hours, and digest cadence", () => {
     expect(prefsInput(prefs, { enabled: false })).toEqual({ enabled: false, categories: prefs.categories, digest: "off", digestLocalTime: "08:00", quietHours: { start: "22:00", end: "07:30" }, tz: "Europe/Berlin", revision: 3 });
     expect(prefsInput({ ...prefs, quietStart: null, quietEnd: null }).quietHours).toBeNull();
     expect(HALF_HOURS).toHaveLength(48);
     expect(HALF_HOURS.slice(0, 3)).toEqual(["00:00", "00:30", "01:00"]);
+    expect(prefsInput({ ...prefs, digest: "weekly", digestLocalTime: "07:30" }).digest).toBe("weekly");
+  });
+
+  test("digest times: a stored off-grid time is kept, and times inside quiet hours are disabled", () => {
+    const options = digestTimeOptions("08:10", "22:00", "07:30");
+    expect(options.find((option) => option.value === "08:10")).toEqual({ value: "08:10", label: "08:10", disabled: false });
+    expect(options.find((option) => option.value === "23:00")!.disabled).toBe(true);
+    expect(options.find((option) => option.value === "07:30")!.disabled).toBe(false);
+    expect(options).toHaveLength(49);
+    expect(digestNote({ digest: "off", nextDigestAt: null, tz: "UTC" })).not.toContain("Next:");
+    expect(digestNote({ digest: "daily", nextDigestAt: "2026-09-29T08:00:00.000Z", tz: "UTC" })).toContain("Next:");
   });
 });
 

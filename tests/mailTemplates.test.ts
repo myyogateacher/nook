@@ -86,7 +86,7 @@ describe("the design contract", () => {
       "inbox.proposals": "inbox", "security.api_key_created": "home", "security.role_changed": "team", "account.test": "home",
       "calendar.reminder": "calendar", "calendar.reminder.all_day": "calendar", "calendar.reminder.standalone": "notifications",
       "calendar.event_changed": "calendar", "calendar.event_changed.cancelled": "calendar",
-      "tasks.sprint": "tasks", "tasks.sprint.completed": "tasks", "bin.expiring": "bin", "digest.summary": "home", "digest.summary.weekly": "home"
+      "tasks.sprint": "tasks", "tasks.sprint.completed": "tasks", "bin.expiring": "bin", "digest.summary": "tasks", "digest.summary.weekly": "tasks"
     };
     for (const fixture of previewFixtures()) {
       const links = hrefs(render(fixture.id).html);

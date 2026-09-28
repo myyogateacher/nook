@@ -11,6 +11,7 @@ import { stripMarkdown } from "./html";
 import { isMuted } from "./mutes";
 import { resolveEventChanged, resolveReminder } from "./calendarMail";
 import { resolveBinExpiring, resolveSprint } from "./laterMail";
+import { resolveDigest } from "./digest";
 import type { TemplateName } from "./registry";
 import type { AssignedCard, CommentExcerpt, SharedItem, SharedKind } from "./templates/activity";
 import type { AccountEvent, TwoFactorEvent } from "./templates/security";
@@ -65,7 +66,8 @@ function resolveComment(payload: Payload, recipient: Recipient): Resolution {
   return { data: { boardId: found.board.id, cardId, cardTitle: found.card.title, boardName: found.board.name, comments, total: rows.length } };
 }
 
-function sharedItem(kind: SharedKind, id: string, userId: string): SharedItem | null {
+/** One shared item as the recipient can read it now, or null (also the digest's "Shared with you"). */
+export function sharedItem(kind: SharedKind, id: string, userId: string): SharedItem | null {
   switch (kind) {
     case "note": {
       const note = readableNote(id, userId);
@@ -190,6 +192,7 @@ export function resolvePayload(template: TemplateName, payload: Payload, recipie
     case "calendar.event_changed": return resolveEventChanged(payload, recipient, nowMs);
     case "tasks.sprint": return resolveSprint(payload, recipient);
     case "bin.expiring": return resolveBinExpiring(recipient, nowMs);
+    case "digest.summary": return resolveDigest(payload, recipient, nowMs);
     // Invites are sent synchronously and never queued (D254).
     case "team.invite": return { skip: "empty" };
   }

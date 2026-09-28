@@ -44,7 +44,8 @@ export const CATEGORY_LABELS: Record<string, string> = {
   proposals: "Proposals awaiting you",
   sprints: "Sprints",
   bin: "Bin clean-up",
-  reminders: "Reminders by email"
+  reminders: "Reminders by email",
+  digest: "Digest"
 };
 
 /** The category an unsubscribe token names, for the confirmation text only (the server verifies it). */

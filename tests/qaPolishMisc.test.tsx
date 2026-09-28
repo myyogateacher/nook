@@ -13,6 +13,10 @@ test("/team/invites is replaced with /team for anyone but admins (QA note 10)", 
   expect(replacesInvitesRoute({ userId: null, invites: true, email: false }, "viewer")).toBe(true);
   expect(replacesInvitesRoute({ userId: null, invites: true, email: false }, "admin")).toBe(false);
   expect(replacesInvitesRoute({ userId: null, invites: false, email: false }, "member")).toBe(false);
+  // 3f: the admin Email log too.
+  expect(replacesInvitesRoute({ userId: null, invites: false, email: true }, "member")).toBe(true);
+  expect(replacesInvitesRoute({ userId: null, invites: false, email: true }, "guest")).toBe(true);
+  expect(replacesInvitesRoute({ userId: null, invites: false, email: true }, "admin")).toBe(false);
 });
 
 test("the card drawer title wraps instead of being cut off (QA note 12)", async () => {

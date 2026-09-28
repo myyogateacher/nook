@@ -57,3 +57,11 @@ test("every permission description ends with a full stop, so \"Included with wri
     if (permission.warning) expect(permission.warning.endsWith(".")).toBe(true);
   }
 });
+
+test("Settings → MCP server controls are 44 px targets on phones (5b)", async () => {
+  const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+  const phone = css.slice(css.indexOf("/* 5b: 44 px phone targets"));
+  expect(phone).toContain(".settings-header .icon-button, .mcp-endpoint .icon-button { width: 44px; height: 44px; }");
+  expect(phone).toContain(".mcp-key-list .text-danger { min-height: 44px;");
+  expect(phone).toContain(".mcp-key-form .primary-button { min-height: 44px; }");
+});

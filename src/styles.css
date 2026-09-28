@@ -440,6 +440,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mcp-endpoint { grid-template-columns: 1fr; }
   .mcp-endpoint > div + div { border-left: 0; border-top: 1px solid #2b2b2f; }
   .mcp-key-form { grid-template-columns: 1fr; }
+  /* 5b: 44 px phone targets in Settings (Close, Copy endpoint, Revoke, Create API key). */
+  .settings-header .icon-button, .mcp-endpoint .icon-button { width: 44px; height: 44px; }
+  .mcp-key-list .text-danger { min-height: 44px; padding: 0 10px; }
+  .mcp-key-form .primary-button { min-height: 44px; }
   .enrollment-grid { grid-template-columns: 1fr; }
   .qr-frame { margin: auto; }
   .verify-totp-form, .disable-totp-form > div, .view-recovery-form > div, .regenerate-recovery form > div { grid-template-columns: 1fr; }

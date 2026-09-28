@@ -21,13 +21,15 @@ import { taskHierarchyMigration } from "./019_task_hierarchy";
 import { taskViewsMigration } from "./020_task_views";
 import { agentInboxMigration } from "./021_agent_inbox";
 import { reactionsMigration } from "./022_reactions";
+import { emailMigration } from "./026_email";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
   teamInvitesMigration, taskHierarchyMigration, taskViewsMigration,
   // 021 (agent inbox) needs only 005, 010, 013, and 016; 022 (reactions) needs only 001 and 009.
-  agentInboxMigration, reactionsMigration
-  // 023 and 024 belong to other parallel plans.
+  agentInboxMigration, reactionsMigration,
+  // 023, 024, 025, and 027 belong to other parallel plans. 026 (email) needs only 001, 013, 017, and 018.
+  emailMigration
 ];
 
 /**

@@ -191,18 +191,19 @@ export function ReminderPicker({ allDay, existing, onPick, onClose, event = null
       {emailHint && <small className="calendar-note" id="calendar-reminder-channel-hint">{emailHint}</small>}
       {!emailHint && channel !== "push" && <small className="calendar-note">Emails go to your address even during quiet hours, since reminders are time-bound.</small>}
     </div>
-    <div className="move-list" role="list" aria-label="When">
+    {/* A list of buttons, each in its own item (Friction 10). */}
+    <ul className="move-list calendar-reminder-offsets" aria-label="When">
       {options.map((offset) => {
         const taken = existing.includes(offset);
         const gone = !taken && passed(offset);
-        return <button key={offset} role="listitem" className={`move-option${gone ? " calendar-reminder-passed" : ""}`} disabled={taken || gone || busy}
+        return <li key={offset}><button type="button" className={`move-option${gone ? " calendar-reminder-passed" : ""}`} disabled={taken || gone || busy}
           autoFocus={offset === options.find(available)} onClick={() => { void pick(offset); }}>
           <Bell aria-hidden="true" />
           <span>{reminderLabel(offset, allDay)}{taken ? <small>Already set</small> : gone ? <small>Already passed</small> : null}</span>
           {taken && <Check aria-hidden="true" />}
-        </button>;
+        </button></li>;
       })}
-    </div>
+    </ul>
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
   </ModalDialog>;
 }

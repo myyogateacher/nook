@@ -628,13 +628,14 @@ export function startKeyUsageFlusher() {
   usageTimer.unref();
 }
 
-/** Calls per day for the last 14 days, oldest first, for each key. */
+/** Admitted calls per day (reads + writes) for the last 14 days, oldest first, for each key.
+ *  The table keeps the split in its `calls` (reads) and `writes` columns. */
 function usage14d(keyIds: readonly string[]) {
   flushKeyUsage();
   const days = Array.from({ length: 14 }, (_, index) => new Date(Date.now() - (13 - index) * DAY_MS).toISOString().slice(0, 10));
   const result = new Map<string, number[]>();
   if (!keyIds.length) return result;
-  const rows = db.query(`SELECT key_id, day, calls FROM api_key_usage WHERE day >= ? AND key_id IN (${keyIds.map(() => "?").join(",")})`)
+  const rows = db.query(`SELECT key_id, day, calls + writes AS calls FROM api_key_usage WHERE day >= ? AND key_id IN (${keyIds.map(() => "?").join(",")})`)
     .all(days[0]!, ...keyIds) as Array<{ key_id: string; day: string; calls: number }>;
   for (const id of keyIds) result.set(id, days.map(() => 0));
   for (const row of rows) {

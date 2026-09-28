@@ -231,11 +231,14 @@ describe("/api/keys", () => {
     const { key } = (await createKey(owner)).body;
     for (let index = 0; index < 3; index += 1) await invokeMcpToolForTests("list_notes", {}, key.id);
     await invokeMcpToolForTests("list_documents", {}, key.id);
+    // An admitted write is recorded as a write (the handler's own not-found does not undo that).
+    await invokeMcpToolForTests("create_card", { boardId: crypto.randomUUID(), columnId: crypto.randomUUID(), title: "x" }, key.id);
     flushKeyUsage();
     const usage = db.query("SELECT calls, writes, denied FROM api_key_usage WHERE key_id = ?").get(key.id);
-    expect(usage).toEqual({ calls: 3, writes: 0, denied: 1 });
+    expect(usage).toEqual({ calls: 3, writes: 1, denied: 1 });
+    // The row's 14-day count is every admitted call, reads and writes.
     const listed = await api(owner, "GET", "/keys");
-    expect(listed.body.keys.find((item: { id: string }) => item.id === key.id).usage14d.at(-1)).toBe(3);
+    expect(listed.body.keys.find((item: { id: string }) => item.id === key.id).usage14d.at(-1)).toBe(4);
   });
 });
 

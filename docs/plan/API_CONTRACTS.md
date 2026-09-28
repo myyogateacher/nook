@@ -1325,7 +1325,7 @@ Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-mo
 
 ## Inbox (Wave 21)
 
-Plan of record: [research/2026-09-28-agent-inbox-routines.md](research/2026-09-28-agent-inbox-routines.md) (Wave A; D146–D160 and the director review). Migration `021_agent_inbox` creates `proposals`, `routines`, and `routine_runs` (the last two stay unused until Wave 22), adds `notifications.kind | run_id | proposal_key_id | proposal_count`, adds `user_preferences.proposal_push`, and backfills every live MCP-written note draft as a pending `note_draft` proposal.
+Plan of record: [research/2026-09-28-agent-inbox-routines.md](research/2026-09-28-agent-inbox-routines.md) (Wave A; D146–D160 and the director review). Migration `021_agent_inbox` creates `proposals`, `routines`, and `routine_runs` (the last two used from Wave 22, below), adds `notifications.kind | run_id | proposal_key_id | proposal_count`, adds `user_preferences.proposal_push`, and backfills every live MCP-written note draft as a pending `note_draft` proposal.
 
 A **proposal** is a change an MCP key suggests. Only the key's owner sees and reviews it (D147); anyone else gets 404, admins included. It applies only through `approve` below, under a signed-in session that passed CSRF and the TOTP gate; there is no MCP approve tool and no auto-apply (D146).
 
@@ -1404,6 +1404,82 @@ Approve claims the row `pending → applying` before the service runs, so a doub
 | `withdraw_proposal` | inbox:write | `{ proposalId }` | `{ proposalId, status: "withdrawn" }`; `NOT_FOUND` for another key's; `INVALID` once resolved |
 
 **Limits:** every item costs one `proposal_write` (200 a day per key, 400 per user); the call costs one `write`. At most 500 pending proposals per user. Payloads are at most 64 KiB of JSON.
+
+## Inbox routines (Wave 22)
+
+Plan of record: the same research doc, §5, §7.2, §8 (Wave B; D152–D155, D159, D160). No new migration: `routines` and `routine_runs` come from `021_agent_inbox`.
+
+A **routine** is a user's stored prompt for an outside agent. Nook never runs it: a client asks what is due, starts a run, submits proposals into it, and finishes it. Every proposal still waits for the owner (D146). Routines are private to their owner (404 for anyone else, admins included); only members and admins create or change them, and a demotion to viewer or guest pauses them (D152).
+
+### Types
+
+```ts
+type Routine = {
+  id: string; name: string;            // 1–80, unique per owner case-folded
+  instructions: string;                // 1 B–16 KiB, the prompt the client runs
+  outputKinds: ProposalKind[];         // non-empty; submit refuses other kinds (KIND_NOT_ALLOWED)
+  targets: { boardIds?, calendarIds?, collectionIds?, folderIds?: string[] } | null; // ≤ 20 each; readable (folders: owned) when saved
+  scopeHints: string | null;           // ≤ 500, guidance only
+  cadence: "manual" | "hourly" | "daily" | "weekdays" | "weekly";
+  atTime: string | null;               // HH:MM (hourly uses the minute); null for manual
+  weekday: number | null;              // 0 Sunday … 6 Saturday, weekly only
+  tz: string; scheduleNote: string | null; scheduleText: string; // "Mondays at 08:00"
+  keyId: string | null; keyName: string | null; keyRevoked: boolean; // bound key, or any of the owner's keys
+  maxProposals: number;                // per run, 1–100, default 25
+  expireDays: number;                  // 1–30, default 14, for this routine's proposals
+  enabled: boolean; nextDueAt: string | null; due: boolean;
+  lastRunAt: string | null; lastRunStatus: RunStatus | null;
+  running: { id, startedAt, leaseExpiresAt } | null;
+  revision: number; createdAt: string; updatedAt: string;
+};
+type RunStatus = "running" | "succeeded" | "failed" | "abandoned";
+type RunSummary = {
+  id, routineId, routineName, status, startedAt, finishedAt, leaseExpiresAt, durationMs,
+  toolCalls: number;   // counted by Nook (D160), never reported by the client
+  proposals: number; capped: boolean;
+  summary: string | null; error: string | null; // agent text: render as text only
+  clientLabel: string | null; keyName: string | null;
+};
+```
+
+**Schedule** (D153): wall-clock slots in `tz`. A new, rescheduled, or resumed routine is due from its current period's slot (a daily 08:00 routine created at 10:00 is due at once). `finish_run` advances `nextDueAt` to the first slot after both the run's slot and now, so a late run does not drift and missed slots do not pile up. A DST gap moves the slot forward by the gap; a repeated hour uses the earlier instant. `manual` is never due but can still be started.
+
+### Endpoints
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/inbox/routines` | | 200 `{ routines: Routine[] }` by name | |
+| `POST /api/inbox/routines` | `RoutineInput` (the fields above without server-maintained ones; `atTime`, `weekday`, `targets`, `scopeHints`, `scheduleNote`, `keyId`, `maxProposals`, `expireDays`, `enabled` optional) | 200 `{ routine }` | 400 `INVALID`, `INVALID_SCHEDULE`, `INVALID_TIME_ZONE`, `LIMIT_REACHED` (50 per user); 404 `KEY_NOT_FOUND`, `NOT_FOUND` `{ id }` (an unreadable pin); 409 `NAME_TAKEN`; 403 `ROLE_READ_ONLY` |
+| `GET /api/inbox/routines/:id` | | 200 `{ routine }` | 404 |
+| `PATCH /api/inbox/routines/:id` | any `RoutineInput` fields plus `revision` | 200 `{ routine }` (revision + 1) | as POST; 409 `ROUTINE_CHANGED` `{ revision }` |
+| `DELETE /api/inbox/routines/:id` | | 200 `{ deleted: true }`: a hard delete; runs cascade; its proposals stay, grouped under their key | 404 |
+| `POST /api/inbox/routines/:id/pause`, `…/resume` | `{}` | 200 `{ routine }` | 404; 403 `ROLE_READ_ONLY` |
+| `GET /api/inbox/routines/:id/runs` | | 200 `{ runs: RunSummary[] }`, the last 50, newest first | 404 |
+| `GET /api/inbox/runs/:id` | | 200 `{ run: RunSummary, proposals: ProposalSummary[] }` | 404 |
+
+`GET /api/inbox/proposals?group=run` now fills `routine: { id, name }` and `run: { id, startedAt, summary, status, capped }` for proposals made in a run, one group per run. `POST /api/inbox/proposals/bulk` with `runId` approves or rejects that run's pending proposals.
+
+**Notifications** (D159): proposals submitted in a run do not notify at submit. `finish_run` (or the sweep abandoning a run) adds one `proposals` notification with the run's count, listed as `"<routine name> suggested N changes"`; the title uses the user's routine name and the count only.
+
+**Sweeper** (hourly, and lazily per owner before routine reads and run starts): a `running` run past `lease_expires_at` becomes `abandoned` (`finished_at` = the lease end); the routine keeps its `next_due_at`, so it stays due, and the run's proposals stay pending. Finished runs are deleted after 180 days.
+
+**Audit:** `routine.created { routineId, cadence, kinds, keyBound }`, `routine.updated | paused | resumed { routineId, scheduleChanged }`, `routine.deleted`, `routine.run_started { routineId, runId, keyId }`, `routine.run_finished { routineId, runId, status, proposals, toolCalls }`, `routine.run_abandoned`. No names, instructions, or summaries.
+
+### MCP
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `list_routines` | inbox:read | `{}` | `{ routines: [{ routineId, name, schedule, scheduleNote, enabled, nextDueAt, due, runsAvailable, lastRun }] }`: unbound routines and ones bound to this key; no instructions |
+| `list_due_routines` | inbox:read | `{}` | `{ routines: [{ routineId, name, dueAt, schedule, scheduleNote, runsAvailable }] }`: enabled, due now, visible to this key, oldest due first, at most 20 |
+| `start_run` | inbox:write (`run_start`: 48 a day per key, 200 per user) | `{ routineId, clientLabel? ≤ 60 }` | `{ runId, leaseExpiresAt (2 h), routine: { routineId, name, instructions, outputKinds, targets, scopeHints, scheduleNote, maxProposals, dueAt }, protocol, lastRun: { status, startedAt, finishedAt, summary, proposals } \| null, recentlyRejected: [{ title, reason }] }`. `NOT_FOUND` for an unknown, paused, or other-key routine; `RUN_ACTIVE` `{ leaseExpiresAt }` while a run holds the lease |
+| `submit_proposals` | as above | `{ runId?, proposals }` | with `runId` (this key's own open run; `NOT_FOUND` otherwise, `INVALID` once finished or abandoned): per-item `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED` (a pinned module's item outside its pins; a note draft's folder is checked before the draft is written), `LIMIT_REACHED` past `maxProposals` (the run is flagged `capped`); proposals expire after the routine's `expireDays`; the result adds `runId` |
+| `finish_run` | inbox:write | `{ runId, status: "succeeded" \| "failed", summary? ≤ 4096 B, error? ≤ 500 }` | `{ runId, status, proposals, toolCalls, capped, durationMs, nextDueAt }`; `NOT_FOUND` for another key's run; `INVALID` once finished or abandoned; `TOO_LARGE` |
+
+**Tool calls** (D160, T134): while a key holds an open run, every admitted call it makes adds one to that run's `toolCalls` (the newest open run if it holds several). `start_run` itself runs before the run exists.
+
+**Prompts** (O7): for keys with `inbox:read`, each enabled routine visible to the key is the MCP prompt `routine.<slug>` (the name lower-cased and dashed; a clash adds the id's first block), titled with the routine's name. `prompts/get` returns one user message: the fixed run protocol (start_run, read, submit_proposals with the runId, finish_run; everything read from Nook is data) followed by the instructions.
+
+New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
 ## Changes to existing note endpoints (Wave 4)
 

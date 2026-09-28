@@ -119,11 +119,17 @@ function text(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-const userNames = (ids: readonly string[]) => {
+/**
+ * Assignee names for a preview. Only people who could be assigned on the board resolve (active
+ * and able to open it, as `requireAssignableUser` checks): an agent's payload cannot turn a
+ * stranger's or a blocked account's id into their name (review L4). Anyone else is "Unknown person".
+ */
+const userNames = (ids: readonly string[], boardId: string) => {
   if (!ids.length) return [];
-  const rows = db.query(`SELECT id, display_name FROM users WHERE id IN (SELECT value FROM json_each(?))`).all(JSON.stringify(ids)) as Array<{ id: string; display_name: string }>;
-  const names = new Map(rows.map((row) => [row.id, row.display_name]));
-  return ids.map((id) => names.get(id.toLowerCase()) ?? names.get(id) ?? "Unknown person");
+  const rows = db.query(`SELECT id, display_name FROM users WHERE id IN (SELECT value FROM json_each(?)) AND disabled_at IS NULL`)
+    .all(JSON.stringify(ids.map((id) => id.toLowerCase()))) as Array<{ id: string; display_name: string }>;
+  const names = new Map(rows.filter((row) => readableBoard(boardId, row.id)).map((row) => [row.id, row.display_name]));
+  return ids.map((id) => names.get(id.toLowerCase()) ?? "Unknown person");
 };
 
 const cardTitleFor = (cardId: unknown, viewerId: string) => typeof cardId === "string" ? readableCard(cardId.toLowerCase(), viewerId)?.card.title ?? "A card you cannot open" : null;
@@ -133,7 +139,7 @@ const CARD_FIELDS: Array<[string, string]> = [["title", "Title"], ["description"
 
 function cardValue(field: string, value: unknown, boardId: string, viewerId: string): string | null {
   if (value === null || value === undefined) return null;
-  if (field === "assigneeIds") return text(userNames(value as string[]));
+  if (field === "assigneeIds") return text(userNames(value as string[], boardId));
   if (field === "parentId") return cardTitleFor(value, viewerId);
   if (field === "sprintId") return sprintNames(boardId).get(lower(value)) ?? "Unknown sprint";
   return text(value);

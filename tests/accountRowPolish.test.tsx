@@ -30,4 +30,8 @@ test("the Files header gets the Inbox button with the account row's rules (QA no
   expect(render(null)).toBe("");
   const files = await Bun.file(join(root, "files", "FilesApp.tsx")).text();
   expect(files).toMatch(/<HeaderInboxButton \/>\s*<NotificationBell \/>/);
+  // The extra button leaves no room for the Upload label on phones; it stays the button's name.
+  expect(files).toContain('<Upload /><span className="files-upload-label">Upload</span>');
+  const css = await Bun.file(join(root, "files", "files.css")).text();
+  expect(css).toMatch(/@media \(max-width: 760px\) \{ \.files-upload-button \{ width: 44px;[^}]*\} \.files-upload-label \{ position: absolute;/);
 });

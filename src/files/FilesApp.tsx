@@ -672,7 +672,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
           </div>
           <HeaderInboxButton />
           <NotificationBell />
-          {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload />Upload</button>}
+          {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload /><span className="files-upload-label">Upload</span></button>}
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
         <ReadOnlyBanner />

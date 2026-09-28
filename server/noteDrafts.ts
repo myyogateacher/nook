@@ -142,13 +142,16 @@ export class DraftActionError extends Error {
  * Publishes the owner's draft of `noteId` as the next version (docs/plan/WAVES_7-9.md §2.2). The
  * caller publishes the draft revision it last saw (T38): without `revision`, an older client may
  * still publish its own draft, but never one an MCP key wrote. Shared by POST
- * /api/notes/:id/publish and an approved note_draft proposal (agent inbox D149).
+ * /api/notes/:id/publish, an approved note_draft proposal (agent inbox D149), and MCP
+ * publish_note_draft (Wave 19), whose `verify` checks the key's seen-revision ledger under the note
+ * lock, after the draft exists and before the revision compare (D173).
  */
-export async function publishDraft(userId: string, noteId: string, revision: number | undefined) {
+export async function publishDraft(userId: string, noteId: string, revision: number | undefined, options: { verify?: (note: NoteRow) => void } = {}) {
   return withNoteLock(noteId, async () => {
     const note = ownedNote(noteId, userId);
     if (!note) throw new DraftActionError(404, "Note not found", { error: "Note not found" });
     if (note.draft_revision === null) throw new DraftActionError(409, "There is no draft to publish", { error: "There is no draft to publish", code: "NO_DRAFT" });
+    options.verify?.(note);
     if (revision === undefined && note.draft_mcp_key_id !== null) {
       throw new DraftActionError(400, "Invalid request", { error: "Invalid request", details: ["revision is required to publish a draft written through MCP"] });
     }

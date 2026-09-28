@@ -54,7 +54,12 @@ describe("inbox MCP tools", () => {
   test("no tool approves, applies, or publishes (T125)", () => {
     const inbox = mcpToolSpecs.filter((spec) => spec.scopes.some((scope) => scope.startsWith("inbox:")));
     expect(inbox.map((spec) => spec.name).sort()).toEqual(["list_my_proposals", "submit_proposals", "withdraw_proposal"]);
-    for (const spec of mcpToolSpecs) expect({ name: spec.name, approveLike: /approve|apply|publish/i.test(spec.name) }).toEqual({ name: spec.name, approveLike: false });
+    // Wave 19 adds exactly one publishing tool, publish_note_draft, under its own opt-in notes:publish
+    // scope (D170, T143); no inbox scope reaches it, and nothing approves or applies proposals.
+    for (const spec of mcpToolSpecs) {
+      const approveLike = /approve|apply/i.test(spec.name) || (/publish/i.test(spec.name) && !(spec.name === "publish_note_draft" && spec.scopes.join() === "notes:publish"));
+      expect({ name: spec.name, approveLike }).toEqual({ name: spec.name, approveLike: false });
+    }
   });
 
   test("inbox tools follow the scopes: inbox:write implies inbox:read", async () => {

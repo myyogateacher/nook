@@ -11,6 +11,8 @@ import { hasAllScopes, hasAnyScope, parseStoredScopes } from "./mcpScopes";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
+import { noteManageTools } from "./mcpNoteTools";
+import { rememberSeenDraft } from "./mcpSeenDrafts";
 import { checksum, storage, withNoteLock } from "./storage";
 import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
 import { taskTools } from "./tasks/mcpTools";
@@ -201,24 +203,28 @@ const noteWriteTools: McpToolSpec[] = [
       assertMarkdownSize(markdown);
       if (folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, key.userId)) throw notFound("Folder");
       const created = await createDraftNote(key.userId, folderId ?? null, markdown, { keyId: key.keyId });
+      rememberSeenDraft(key.keyId, created.id, created.revision, checksum(markdown));
       return { noteId: created.id, revision: created.revision, title: created.title, folderId: created.folderId, url: noteUrl(created.id) };
     }
   }),
   defineTool({
     name: "get_note_draft",
     title: "Get a note's draft",
-    description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft. When there is no draft, returns the published text and a null revision.",
-    scopes: ["notes:write-draft"],
+    description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft or publish_note_draft. When there is no draft, returns the published text and a null revision.",
+    scopes: ["notes:write-draft", "notes:publish"],
     write: false,
     inputSchema: z.object({ noteId: z.string().uuid() }),
     handler: async ({ noteId }, key) => withNoteLock(noteId, async () => {
       const note = ownedNote(noteId, key.userId);
       if (!note) throw notFound();
+      const markdown = await currentOwnerText(note);
+      // The revision this key was shown, for publish_note_draft (D173). The checksum was verified above.
+      if (note.draft_revision !== null && note.draft_checksum) rememberSeenDraft(key.keyId, noteId, note.draft_revision, note.draft_checksum);
       return {
         noteId,
         revision: note.draft_revision,
         hasDraft: note.draft_revision !== null,
-        markdown: await currentOwnerText(note),
+        markdown,
         publishedVersion: note.current_version,
         url: noteUrl(noteId)
       };
@@ -248,6 +254,7 @@ const noteWriteTools: McpToolSpec[] = [
         const saved = await writeDraftLocked(note, key.userId, next, key.keyId);
         if (!saved) throw changed();
         audit(key.userId, noteId, "mcp.note_draft_update", { via: "mcp", keyId: key.keyId, mode, revision: saved.revision });
+        rememberSeenDraft(key.keyId, noteId, saved.revision, checksum(next));
         return { noteId, revision: saved.revision, title: saved.title, hasDelta: saved.hasDelta, url: noteUrl(noteId) };
       });
     }
@@ -330,6 +337,7 @@ const fileTools: McpToolSpec[] = [
 export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...noteReadTools,
   ...noteWriteTools,
+  ...noteManageTools,
   ...fileTools,
   ...taskTools,
   ...calendarTools,

@@ -14,6 +14,7 @@ import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
 import { registerBinRoutes } from "./binRoutes";
+import { createFolder, FolderError } from "./folders";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { createDraftNote, discardDraft, DraftActionError, hasDraftDelta, isBlankNote, moveNoteToBin, publishDraft, purgeBlankNote, writeDraftLocked } from "./noteDrafts";
 import { resolveNoteDraftProposals } from "./inbox/noteDraftProposals";
@@ -473,16 +474,12 @@ app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user
 
 app.post("/api/folders", async (c) => {
   const body = await parseJson(c.req.raw, folderSchema);
-  const userId = c.get("user").id;
-  if (body.name.toLowerCase() === "default") return c.json({ error: "The Default folder already exists" }, 409);
-  if (body.parentId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.parentId, userId)) {
-    return c.json({ error: "Parent folder not found" }, 404);
+  try {
+    return c.json({ folder: createFolder(c.get("user").id, body.name, body.parentId ?? null) }, 201);
+  } catch (error) {
+    if (error instanceof FolderError) return c.json({ error: error.message }, error.status);
+    throw error;
   }
-  const id = crypto.randomUUID();
-  const timestamp = now();
-  db.query("INSERT INTO folders (id, owner_id, parent_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(id, userId, body.parentId ?? null, body.name, timestamp, timestamp);
-  return c.json({ folder: { id, parent_id: body.parentId ?? null, name: body.name, created_at: timestamp, updated_at: timestamp } }, 201);
 });
 
 app.patch("/api/folders/:id", async (c) => {

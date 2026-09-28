@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import type { McpLimitBucket } from "./mcpRateLimit";
 import type { McpScope } from "./mcpScopes";
+import type { RestoreOutcome } from "./bin";
 
 /**
  * Building blocks shared by every module's MCP tools (server/mcpTools.ts and
@@ -63,6 +64,28 @@ export function errorResult(code: McpErrorCode, error: string, details?: Record<
 }
 
 export const notFound = (what = "Note") => new McpToolError("NOT_FOUND", `${what} not found`);
+
+/** Buckets every bin_* tool counts against (D174, T142): 50 a day and 10 a minute per key. Restores count only against write. */
+export const BIN_BUCKETS = ["bin_action", "bin_burst"] as const;
+
+/** What every bin_* tool description says, since agents read it (§2.3a). */
+export const BIN_DESCRIPTION = "Moves it to the Bin for 30 days; the person can restore it. Nothing is ever deleted forever over MCP.";
+
+/**
+ * Maps a Bin restore outcome (server/bin.ts restoreItem) to a tool result or error: missing,
+ * forbidden, and never binned by someone who may restore it all look the same (T148).
+ */
+export function restoreResult(outcome: RestoreOutcome, what: string) {
+  switch (outcome.status) {
+    case "restored": return { restored: true, folderId: outcome.folderId, folderName: outcome.folderName, visibility: outcome.visibility };
+    case "already_restored": return { restored: true, alreadyRestored: true };
+    case "calendar_restored": return { restored: true, ...(outcome.alreadyRestored ? { alreadyRestored: true } : {}), calendarId: outcome.calendarId, calendarName: outcome.calendarName };
+    case "purging": throw new McpToolError("PURGING", `This ${what.toLowerCase()} is being permanently deleted`);
+    case "parent_in_bin": throw new McpToolError("PARENT_IN_BIN", outcome.message ?? "Restore its parent from the Bin first");
+    case "limit_reached": throw new McpToolError("LIMIT_REACHED", outcome.message);
+    default: throw notFound(what);
+  }
+}
 
 export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   name: string;

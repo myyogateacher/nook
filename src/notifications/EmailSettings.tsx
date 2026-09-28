@@ -17,7 +17,9 @@ const CATEGORY_ROWS: Array<{ id: EmailCategory; title: string; help: string }> =
   { id: "comments", title: "Comments on your cards", help: "New comments on cards you created or are assigned to." },
   { id: "sharing", title: "Shared with you", help: "Notes, files, boards, calendars, and collections shared with you by name." },
   { id: "proposals", title: "Proposals awaiting you", help: "Your MCP keys suggested changes. At most one email every few hours." },
-  { id: "reminders", title: "Reminders by email", help: "Reminders you set to email (choose per reminder in Calendar), and changes to events you set a reminder on. Sent even in quiet hours." }
+  { id: "reminders", title: "Reminders by email", help: "Reminders you set to email (choose per reminder in Calendar), and changes to events you set a reminder on. Sent even in quiet hours." },
+  { id: "sprints", title: "Sprints", help: "A sprint with your cards in it started or was completed. Off by default." },
+  { id: "bin", title: "Bin clean-up", help: "Items in your Bin are deleted for good within 3 days. At most once a week. Off by default." }
 ];
 
 const DIGEST_OPTIONS = [

@@ -8,6 +8,7 @@ import { isTemplateName, renderTemplate, TEMPLATES, type TemplateName } from "./
 import { resolvePayload, type Recipient } from "./resolve";
 import type { MailCategory, MailClass } from "./templates/types";
 import { createUnsubscribeToken } from "./unsubscribe";
+import { scheduleBinExpiry } from "./laterMail";
 
 /**
  * The mail dispatcher (docs/plan/research/2026-09-28-outbound-email.md §D.1–D.3), on the reminders
@@ -187,6 +188,12 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
   const counts: TickCounts = { sent: 0, skipped: 0, held: 0, retried: 0, dead: 0, suppressed: 0 };
   try {
     const nowMs = options.nowMs ?? Date.now();
+    // Scheduled mail is queued first, so a due digest or Bin reminder goes out in the same tick.
+    try {
+      scheduleBinExpiry(nowMs);
+    } catch (error) {
+      console.error(`Mail scheduling failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+    }
     const due = db.query("SELECT * FROM mail_outbox WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, created_at LIMIT ?").all(iso(nowMs), MAIL_BATCH) as Row[];
     for (const row of due) {
       const claimed = db.query("UPDATE mail_outbox SET status = 'sending', claimed_at = ? WHERE id = ? AND status = 'queued'").run(iso(nowMs), row.id);

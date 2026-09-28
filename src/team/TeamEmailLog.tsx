@@ -27,7 +27,8 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
 export const TEMPLATE_LABELS: Record<string, string> = {
   "team.invite": "Invite", "account.verify": "Verify email", "account.test": "Test email", "tasks.assigned": "Assigned to you",
   "tasks.comment": "Card comments", "sharing.shared": "Shared with you", "inbox.proposals": "Proposals",
-  "security.api_key_created": "New API key", "security.role_changed": "Role changed", "security.two_factor": "Two-factor", "security.account": "Account"
+  "security.api_key_created": "New API key", "security.role_changed": "Role changed", "security.two_factor": "Two-factor", "security.account": "Account",
+  "calendar.reminder": "Reminder", "calendar.event_changed": "Event changed", "tasks.sprint": "Sprint", "bin.expiring": "Bin clean-up", "digest.summary": "Digest"
 };
 const STATUS_LABELS: Record<string, string> = { queued: "Held", sending: "Sending", sent: "Sent", failed: "Failed", suppressed: "Bounced", skipped: "Skipped", dead: "Dead" };
 const SKIP_LABELS: Record<string, string> = {

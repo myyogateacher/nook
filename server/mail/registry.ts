@@ -1,6 +1,7 @@
 import { inviteTemplate, testTemplate, verifyTemplate } from "./templates/account";
 import { assignedTemplate, commentTemplate, proposalsTemplate, sharedTemplate } from "./templates/activity";
 import { eventChangedTemplate, reminderTemplate } from "./templates/calendar";
+import { binExpiringTemplate, sprintTemplate } from "./templates/later";
 import { accountEventTemplate, apiKeyCreatedTemplate, roleChangedTemplate, twoFactorTemplate } from "./templates/security";
 import type { TemplateDef } from "./templates/types";
 
@@ -23,7 +24,9 @@ export const TEMPLATES = {
   "security.account": accountEventTemplate,
   // Wave 29 (E2).
   "calendar.reminder": reminderTemplate,
-  "calendar.event_changed": eventChangedTemplate
+  "calendar.event_changed": eventChangedTemplate,
+  "tasks.sprint": sprintTemplate,
+  "bin.expiring": binExpiringTemplate
 } as const;
 
 export type TemplateName = keyof typeof TEMPLATES;
@@ -45,6 +48,7 @@ export function previewFixtures(): Array<{ id: string; template: TemplateName; d
     { id: "calendar.reminder.standalone", template: "calendar.reminder", data: { kind: "standalone", title: "Call the bank", eventId: null, time: { allDay: false, start: "2026-10-01T07:00:00.000Z" }, location: null, calendarName: null, tz: "Europe/Berlin", late: true } },
     { id: "calendar.reminder.all_day", template: "calendar.reminder", data: { ...reminderTemplate.fixture(), time: { allDay: true, start: "2026-10-02" }, location: null } },
     { id: "calendar.event_changed.cancelled", template: "calendar.event_changed", data: { ...eventChangedTemplate.fixture(), change: "cancelled", after: null } },
+    { id: "tasks.sprint.completed", template: "tasks.sprint", data: { ...sprintTemplate.fixture(), event: "completed", total: 14, done: 11, carried: 3, yours: { total: 3, done: 2, carried: 1 } } },
     { id: "security.account.sessions_revoked", template: "security.account", data: { event: "sessions_revoked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" } }
   ];
 }

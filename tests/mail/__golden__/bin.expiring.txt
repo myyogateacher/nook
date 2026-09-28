@@ -1,0 +1,28 @@
+Subject: 3 items leave your Bin within 3 days
+
+Nook · nook.test
+
+BIN · CLEAN-UP
+3 items will be deleted for good
+
+The first is deleted on Thu 1 Oct 2026, 09:00 (UTC). Restore anything you still need from the Bin.
+
+> Old meeting notes
+  Note
+> draft-v1.pdf
+  File
+> Try the old parser
+  Card
+
+Nook deletes Bin items 30 days after they were moved there. This email comes at most once a week.
+
+Open the Bin:
+https://nook.test/bin
+
+--
+You got this because you turned on Bin clean-up emails.
+Turn off “Bin clean-up” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

@@ -1,4 +1,5 @@
 import { audit, db, now } from "../db";
+import { mailSprint, sprintAssignees } from "../mail/laterMail";
 import { readableBoardPredicate } from "./access";
 import { planInsert } from "./boardOrder";
 import { boardStructure } from "./hierarchy";
@@ -161,7 +162,11 @@ export async function patchSprint(userId: string, sprintId: string, input: Sprin
       }
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
       if (fields.length || plan) audit(userId, null, "task.sprint_update", { boardId: board.id, sprintId: sprint.id, fields: [...fields, ...(plan ? ["position"] : [])] });
-      if (start) audit(userId, null, "task.sprint_start", { boardId: board.id, sprintId: sprint.id });
+      if (start) {
+        audit(userId, null, "task.sprint_start", { boardId: board.id, sprintId: sprint.id });
+        // "Sprint started" mail to assignees in it (outbound email #20; off by default, D236).
+        mailSprint(userId, board.id, sprint.id, "started", sprintAssignees(sprint.id, board.id));
+      }
     })();
     return { sprint: summaryOf(sprintById(sprint.id)!) };
   });

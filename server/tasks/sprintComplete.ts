@@ -1,4 +1,5 @@
 import { audit, db, now } from "../db";
+import { mailSprint, sprintAssignees } from "../mail/laterMail";
 import { limitReached, TaskError, withBoardLock } from "./service";
 import { insertSprint, openCount, ownedSprint, requireDateOrder, sprintNotFound } from "./sprints";
 import { openSprintRows, SPRINT_LIMITS, sprintById, sprintCounts, sprintNames, sprintOfBoard, toSummary, type SprintRow, type SprintSummary } from "./sprintData";
@@ -52,6 +53,8 @@ export async function completeSprint(userId: string, sprintId: string, input: Co
       const destination = created ?? target;
       const params = { sprintId: sprint.id, boardId: board.id };
       const inSprint = "sprint_id = $sprintId AND deleted_at IS NULL AND board_id = $boardId";
+      // Read before the unfinished cards move: who had cards in it, and how many were done (outbound email #20).
+      const assignees = sprintAssignees(sprint.id, board.id);
       const doneCount = (db.query(`SELECT COUNT(*) AS count FROM cards WHERE ${inSprint}
         AND column_id IN (SELECT id FROM board_columns WHERE board_id = $boardId AND is_done = 1)`).get(params) as { count: number }).count;
       // Unfinished: live, stored in this sprint, in a column that is not done at this moment.
@@ -60,6 +63,7 @@ export async function completeSprint(userId: string, sprintId: string, input: Co
         .run({ ...params, target: destination?.id ?? null, timestamp }).changes;
       db.query("UPDATE board_sprints SET state = 'closed', closed_at = ?, updated_at = ? WHERE id = ?").run(timestamp, timestamp, sprint.id);
       db.query("UPDATE boards SET updated_at = ? WHERE id = ?").run(timestamp, board.id);
+      mailSprint(userId, board.id, sprint.id, "completed", assignees, { done: doneCount, carried });
       audit(userId, null, "task.sprint_complete", {
         boardId: board.id, sprintId: sprint.id, carried, doneCount,
         carryTo: keyword ? carryTo : "sprint",

@@ -47,6 +47,8 @@ import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./
 import { initialInvite } from "./auth/inviteLink";
 import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
+import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takePasswordLinkFromLocation } from "./auth/passwordPages";
+import { ChangePasswordCard } from "./auth/ChangePassword";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
@@ -113,7 +115,7 @@ function relativeTime(value: string) {
   return formatter.format(Math.round(hours / 24), "day");
 }
 
-function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionResponse) => void }) {
+function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (session: SessionResponse) => void; onForgotPassword: () => void }) {
   const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -195,6 +197,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
             ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
             : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small></label>)}
           {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
+          {!registering && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
@@ -365,6 +368,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       <div className="settings-body">
         <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
+          {!state.setupRequired && <ChangePasswordCard totpEnabled={state.enabled} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
           {error && <p className="form-error" role="alert">{error}</p>}
@@ -593,6 +597,8 @@ export function App() {
   const [invite, setInvite] = useState(initialInvite);
   // Wave 28: /verify-email#token= and /mail/unsubscribe#t= (fragments stripped at once, T220).
   const [mailLink, setMailLink] = useState(initialMailLink);
+  // Wave 30: /forgot-password and /reset-password#token= (the fragment is stripped at once, T220).
+  const [passwordLink, setPasswordLink] = useState(initialPasswordLink);
   const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -710,6 +716,17 @@ export function App() {
       .catch(() => undefined)
       .finally(() => setChecking(false));
   }, []);
+
+  // Signed out, Back and Forward move between sign in and /forgot-password (Wave 30).
+  useEffect(() => {
+    if (session) return;
+    const onPopState = () => {
+      const link = takePasswordLinkFromLocation();
+      setPasswordLink(link?.kind === "forgot" ? link : null);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -1645,11 +1662,35 @@ export function App() {
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
+  // Sign in → Forgot password? is a history entry of its own: Back returns to sign in, Forward reopens it.
+  const openForgotPassword = () => {
+    window.history.pushState({ nookPasswordPage: "forgot" }, "", FORGOT_PATH);
+    setPasswordLink({ kind: "forgot" });
+  };
+  const leaveForgotPassword = () => {
+    if ((window.history.state as { nookPasswordPage?: string } | null)?.nookPasswordPage === "forgot") {
+      window.history.back();
+      return;
+    }
+    setPasswordLink(null);
+    window.history.replaceState(null, "", "/");
+  };
+  const openForgotFromReset = () => {
+    window.history.replaceState({ nookPasswordPage: "forgot-landing" }, "", FORGOT_PATH);
+    setPasswordLink({ kind: "forgot" });
+  };
+  // A reset signs every session out, this browser's too: reload onto the sign-in page.
+  const leavePasswordReset = () => {
+    setPasswordLink(null);
+    window.location.replace("/");
+  };
   const leaveMailLink = () => {
     setMailLink(null);
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
+  if (passwordLink?.kind === "forgot") return <ForgotPasswordPage onBack={leaveForgotPassword} />;
+  if (passwordLink?.kind === "reset") return <ResetPasswordPage token={passwordLink.token} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;
@@ -1663,7 +1704,7 @@ export function App() {
   if (invite.onRegister && session) return <InviteWhileSignedIn displayName={session.user.displayName} onContinue={leaveInvite} onSignOut={() => {
     logout().then(() => window.history.replaceState(null, "", "/register"), (reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }} />;
-  if (!session) return <AuthScreen onAuthenticated={acceptSession} />;
+  if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} />;
 
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate

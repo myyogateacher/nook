@@ -59,9 +59,9 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       </div>
     </header>
     <div className="team-keys-filters" role="group" aria-label="Filter keys">
-      <div className="keys-select-field"><span id="team-keys-owner">Owner</span><Select labelledBy="team-keys-owner" value={owner} options={ownerOptions} onChange={setOwner} /></div>
-      <div className="keys-select-field"><span id="team-keys-module">Module</span><Select<"all" | GrantModule> labelledBy="team-keys-module" value={module} options={moduleOptions} onChange={setModule} /></div>
-      <div className="keys-select-field"><span id="team-keys-state">State</span><Select<"all" | InventoryState> labelledBy="team-keys-state" value={state} options={STATE_OPTIONS} onChange={setState} /></div>
+      <div className="keys-select-field"><span id="team-keys-owner">Owner</span><Select labelledBy="team-keys-owner" label="Owner" value={owner} options={ownerOptions} onChange={setOwner} /></div>
+      <div className="keys-select-field"><span id="team-keys-module">Module</span><Select<"all" | GrantModule> labelledBy="team-keys-module" label="Module" value={module} options={moduleOptions} onChange={setModule} /></div>
+      <div className="keys-select-field"><span id="team-keys-state">State</span><Select<"all" | InventoryState> labelledBy="team-keys-state" label="State" value={state} options={STATE_OPTIONS} onChange={setState} /></div>
     </div>
     {error && <div className="team-state team-error" role="alert">
       <span className="team-state-icon"><TriangleAlert /></span>

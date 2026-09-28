@@ -130,7 +130,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
           <NumberField label="Longest lifetime (days, up to 365)" value={draft.keyMaxDays} min={1} max={365} onChange={(value) => set("keyMaxDays", value)} />
           <NumberField label="Default for new keys (days)" value={draft.keyDefaultDays} min={1} max={365} onChange={(value) => set("keyDefaultDays", value)} />
         </div>
-        <label className="policies-switch"><span>Require an expiry on every key (keys made before Nook keys have none)</span><input type="checkbox" checked={draft.keyRequireExpiry} onChange={onCheckedChange((checked) => set("keyRequireExpiry", checked))} /></label>
+        <label className="policies-switch"><span>Require an expiry on every key (older keys without one stop working)</span><input type="checkbox" checked={draft.keyRequireExpiry} onChange={onCheckedChange((checked) => set("keyRequireExpiry", checked))} /></label>
         <NumberField label="Live keys per person (up to 50)" value={draft.keysPerUser} min={1} max={50} onChange={(value) => set("keysPerUser", value)} />
       </fieldset>
 

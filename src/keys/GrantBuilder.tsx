@@ -103,18 +103,18 @@ function GrantRowEditor({ row, index, role, policy, disabled, ceiling, narrowing
     </div>
     <div className="grant-row-fields">
       <div className="grant-field"><span id={labels.module}>Module</span>
-        <Select<GrantModule> labelledBy={labels.module} value={row.module} options={moduleOptions} disabled={disabled || narrowing}
+        <Select<GrantModule> labelledBy={labels.module} label="Module" value={row.module} options={moduleOptions} disabled={disabled || narrowing}
           onChange={(module) => {
             const first = permissionChoices(module, role, policy).find((choice) => !choice.disabled)?.value ?? "read";
             onChange({ module, permission: first, applies: "all", resourceIds: [] });
           }} />
       </div>
       <div className="grant-field"><span id={labels.permission}>Permission</span>
-        <Select<KeyPermission> labelledBy={labels.permission} value={row.permission} options={permissions} disabled={disabled || (narrowing && permissions.length < 2)}
+        <Select<KeyPermission> labelledBy={labels.permission} label="Permission" value={row.permission} options={permissions} disabled={disabled || (narrowing && permissions.length < 2)}
           onChange={(permission) => onChange({ permission })} />
       </div>
       {selector && <div className="grant-field"><span id={labels.applies}>Applies to</span>
-        <Select<"all" | "chosen"> labelledBy={labels.applies} value={row.applies} options={appliesOptions} disabled={disabled}
+        <Select<"all" | "chosen"> labelledBy={labels.applies} label="Applies to" value={row.applies} options={appliesOptions} disabled={disabled}
           onChange={(applies) => onChange({ applies, resourceIds: applies === "all" ? [] : narrowing && ceiling?.applies === "chosen" ? ceiling.resourceIds : row.resourceIds })} />
       </div>}
     </div>

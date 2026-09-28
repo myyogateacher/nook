@@ -111,3 +111,13 @@
 .policies-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .policies-actions button { min-height: 44px; padding: 0 16px; }
 @media (max-width: 760px) { .policies-actions { flex-direction: column-reverse; } .policies-actions button { width: 100%; } }
+
+/* 44 px targets at 390 px for the shared Combobox inside the builder and the policies form. */
+@media (max-width: 760px) {
+  .grant-resources .ui-combobox-field, .policies-role .ui-combobox-field { min-height: 48px; gap: 6px; }
+  .grant-resources .ui-combobox-input, .policies-role .ui-combobox-input { min-height: 44px; }
+  .grant-resources .ui-chip, .policies-role .ui-chip { min-height: 44px; padding-left: 12px; }
+  .grant-resources .ui-chip-remove, .policies-role .ui-chip-remove { width: 44px; height: 44px; }
+  .keys-settings .mcp-endpoint .icon-button { width: 44px; height: 44px; }
+  .keys-settings .mcp-config .secondary-button { min-height: 44px; }
+}

@@ -167,9 +167,10 @@
 .team-email-row { width: 100%; min-height: 56px; display: grid; gap: 4px; padding: 10px 14px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .team-email-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .team-email-top strong { color: #ededee; font-size: .92rem; }
-.team-status-chip.mail-sent { color: #b9e6c9; border-color: #28503a; }
-.team-status-chip.mail-dead, .team-status-chip.mail-failed, .team-status-chip.mail-suppressed { color: #fda4af; border-color: #6b2a36; }
-.team-status-chip.mail-queued, .team-status-chip.mail-sending { color: #f3ce79; border-color: #624c21; }
+.team-status-chip.mail-sent { background: #172619; color: #9be3a6; }
+.team-status-chip.mail-skipped { background: #1d1d21; color: #c9c9ce; }
+.team-status-chip.mail-dead, .team-status-chip.mail-failed, .team-status-chip.mail-suppressed { background: #2b181c; color: #f3a3ae; }
+.team-status-chip.mail-queued, .team-status-chip.mail-sending { background: #2b2415; color: #f0c674; }
 .team-email-details { display: grid; gap: 6px; margin: 0; padding: 0 14px 12px; font-size: .82rem; }
 .team-email-details div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 8px; }
 .team-email-details dt { color: #8b8b92; }

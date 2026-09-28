@@ -9,6 +9,7 @@ import { searchCards } from "./cardSearch";
 import { parseCardSearchQuery, relationCreateSchema } from "./relationRoutes";
 import { RELATION_TYPES, type RelationType } from "./relations";
 import { createComment, listComments } from "./comments";
+import { reactionGlyph } from "../../shared/reactions";
 import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
 import { filterBoardCardIds } from "./cardQuery";
 import { cardCreateSchema, cardMoveSchema, cardPatchSchema, commentCreateSchema, isCalendarDate } from "./routes";
@@ -289,7 +290,9 @@ export const taskTools: McpToolSpec[] = [
           updated_at: card.updated_at
         },
         children: hierarchy.children.map((child) => mcpChild(child, boardStructure(board.id))),
-        comments: page.comments.map((comment) => ({ id: comment.id, author_name: comment.author_name, body: comment.body, created_at: comment.created_at, edited_at: comment.edited_at })),
+        // Reactions without names, to keep the output small (D189). There is no reaction write tool.
+        comments: page.comments.map((comment) => ({ id: comment.id, author_name: comment.author_name, body: comment.body, created_at: comment.created_at, edited_at: comment.edited_at,
+          reactions: comment.reactions.map((reaction) => ({ emoji: reaction.emoji, glyph: reactionGlyph(reaction.emoji), count: reaction.count, reacted: reaction.reacted })) })),
         hasMoreComments: page.hasMore,
         attachments: attachmentNames(cardId),
         relations: listRelations(key.userId, cardId).map(mcpRelation)

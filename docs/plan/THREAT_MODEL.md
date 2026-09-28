@@ -230,6 +230,17 @@ Row T118 of [research/2026-09-26-task-hierarchy-workflows.md](research/2026-09-2
 | T122 | **Members reshape the plan** (a reader starts, completes, or deletes sprints) | Sprint create, edit, start, complete, and delete are owner-only (D132, 403 `OWNER_ONLY` for other readers); readers only plan cards, a card field under the revision CAS. At most 50 open sprints per board, one active (a partial unique index backs the service check), and completed sprints are paged. | Done (17B) |
 | T119 (sprints) | **MCP bulk replanning** (sprint storms through `update_card`, or an agent closing sprints) | `sprintId` is an `update_card`/`create_card` field under the per-card revision CAS, in the `task_write` daily buckets, audited with `{ via: "mcp", keyId }`, with the REST rules (`SPRINT_LEVEL`, `SPRINT_COMPLETED`, a sprint of another board `NOT_FOUND`). The only sprint tool is the read `list_sprints` (`NOT_FOUND` for a board the key's user cannot read); there is no sprint create, start, complete, or delete tool, so the ceremony that moves many cards stays with a person (D139). | Done (17B) |
 
+### Reactions (Wave 20)
+
+Rows T150–T153 of [WAVES_18-20_SMALL.md](WAVES_18-20_SMALL.md) §3.6.
+
+| # | Threat | Mitigation | Status |
+| --- | --- | --- | --- |
+| T150 | **Reaction spam or storage abuse** | A fixed set of 12 keys; the primary key allows one row per user × target × emoji, so at most 12 per user per target; 60 writes a minute per user (429 `RATE_LIMITED`); the role write gate refuses viewers and guests (403 `ROLE_READ_ONLY`, with the same check in the service); no notifications, so nothing to amplify. Tested: idempotent PUT and DELETE, the 61st write, both roles on both routes. | Done (W20) |
+| T151 | **Reacting to or probing unreadable targets** (a private board's comment id, a binned card) | Every write resolves the target through the kind registry (a live comment on a live card of a board the caller can read) and re-checks it under the board lock; missing, forbidden, binned, and malformed are all the same 404. Aggregates are only embedded in comment payloads the caller can already read. Tested: stranger, revoked member, binned card (and restored), unknown kind and id. | Done (W20) |
+| T152 | **Orphaned reactions revealing activity** after a comment or card purge | An `AFTER DELETE ON card_comments` trigger removes the comment's reactions, and it fires for the cascade from a card or board purge; `user_id` cascades on account deletion. Tests delete a comment, purge a card, and purge a board (through the API and straight against the schema) and find no rows left. | Done (W20) |
+| T153 | **Injection through emoji or names** | Emoji keys are validated against the shared table on the server; glyphs come only from that table; names render as React text; the GLOB CHECKs refuse anything outside `[a-z_]` for kinds and keys, and target ids must be 36 characters. | Done (W20) |
+
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)
 
 Deliberate deviations and accepted low findings from the Wave 3–5 reviews. The mitigations above still hold.

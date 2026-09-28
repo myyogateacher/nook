@@ -23,7 +23,8 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not 018 is present yet, and pins 1–17, 019, and 020.
+ * holds whether or not 018, 021, 023, or 024 are present yet (parallel waves), and pins 1–17, 019,
+ * 020, and 022.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
@@ -32,6 +33,7 @@ function expectAllMigrations(ids: number[]) {
   expect(ids.slice(17).every((id) => id >= 18)).toBe(true);
   expect(ids).toContain(19);
   expect(ids).toContain(20);
+  expect(ids).toContain(22);
 }
 
 function openDb() {
@@ -606,6 +608,74 @@ describe("database migrations", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM task_view_members").get() as { count: number }).count).toBe(0);
     expect(db.query("SELECT id FROM task_views ORDER BY id").all()).toEqual([{ id: "v1" }, { id: "v2" }]);
     db.query("DELETE FROM task_views WHERE id = 'v2'").run();
+    db.close();
+  });
+
+  test("migration 022 adds reactions with shape CHECKs, one row per user × target × emoji, and cleanup on every comment delete path", () => {
+    // A 016-shaped database: 022 needs only 001 (users) and 009 (card_comments), not 017–021.
+    const db = openDb();
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
+      taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration]) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, "2026-01-01T00:00:00.000Z");
+    }
+    runMigrations(db);
+    const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
+    expectAllMigrations(ids);
+    expect((db.query("SELECT name FROM schema_migrations WHERE id = 22").get() as { name: string }).name).toBe("reactions");
+
+    const old = "2025-01-01T00:00:00.000Z";
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'owner@example.test', 'Owner', 'x', ?)").run(old);
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u2', 'member@example.test', 'Member', 'x', ?)").run(old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b1', 'u1', 'Plan', ?, ?)").run(old, old);
+    db.query("INSERT INTO boards (id, owner_id, name, created_at, updated_at) VALUES ('b2', 'u1', 'Other', ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c1', 'b1', 'To do', 1024, ?, ?)").run(old, old);
+    db.query("INSERT INTO board_columns (id, board_id, name, position, created_at, updated_at) VALUES ('c2', 'b2', 'To do', 1024, ?, ?)").run(old, old);
+    const card = db.query("INSERT INTO cards (id, board_id, column_id, position, title, created_by, created_at, updated_at) VALUES (?, ?, ?, 1024, 'Card', 'u1', ?, ?)");
+    card.run("k1", "b1", "c1", old, old);
+    card.run("k2", "b1", "c1", old, old);
+    card.run("k3", "b2", "c2", old, old);
+    const ids36 = Array.from({ length: 4 }, () => crypto.randomUUID());
+    const [m1, m2, m3, m4] = ids36 as [string, string, string, string];
+    const comment = db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, 'u1', 'Hi', ?)");
+    comment.run(m1, "k1", old);
+    comment.run(m2, "k1", old);
+    comment.run(m3, "k2", old);
+    comment.run(m4, "k3", old);
+    const react = db.query("INSERT INTO reactions (target_kind, target_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)");
+    const count = () => (db.query("SELECT COUNT(*) AS count FROM reactions").get() as { count: number }).count;
+    for (const id of ids36) { react.run("card_comment", id, "u1", "thumbs_up", old); react.run("card_comment", id, "u2", "heart", old); }
+    expect(count()).toBe(8);
+    // The primary key refuses a duplicate; another emoji or another user is a new row.
+    expect(() => react.run("card_comment", m1, "u1", "thumbs_up", old)).toThrow();
+    react.run("card_comment", m1, "u1", "tada", old);
+    expect(count()).toBe(9);
+    // Shape CHECKs: keys only, never glyphs, capitals, or spaces; a 36-character target id.
+    for (const [kind, target, emoji] of [["card_comment", m1, "👍"], ["card_comment", m1, "Thumbs"], ["card_comment", m1, "thumbs up"], ["card_comment", m1, ""],
+      ["card_comment", m1, "x".repeat(25)], ["Card", m1, "heart"], ["", m1, "heart"], ["card-comment", m1, "heart"], ["card_comment", "short", "heart"]] as const) {
+      expect(() => react.run(kind, target, "u1", emoji, old)).toThrow();
+    }
+    expect(() => react.run("card_comment", m1, "missing", "eyes", old)).toThrow();
+    // Another kind's row with the same id is not touched by the card comment trigger.
+    react.run("message", m1, "u1", "heart", old);
+    // A direct comment delete removes its reactions only.
+    db.query("DELETE FROM card_comments WHERE id = ?").run(m2);
+    expect(db.query("SELECT COUNT(*) AS count FROM reactions WHERE target_id = ?").get(m2)).toEqual({ count: 0 });
+    expect(count()).toBe(8);
+    // A card purge cascades to its comments, and the trigger fires for the cascade.
+    db.query("DELETE FROM cards WHERE id = 'k2'").run();
+    expect(db.query("SELECT COUNT(*) AS count FROM reactions WHERE target_id = ?").get(m3)).toEqual({ count: 0 });
+    // A board purge cascades through cards and comments too.
+    db.query("DELETE FROM boards WHERE id = 'b2'").run();
+    expect(db.query("SELECT COUNT(*) AS count FROM reactions WHERE target_id = ?").get(m4)).toEqual({ count: 0 });
+    // Deleting a user removes their reactions (u1 is the last admin since 017, so u2 goes).
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect(db.query("SELECT target_kind, target_id, user_id, emoji FROM reactions ORDER BY target_kind, emoji").all()).toEqual([
+      { target_kind: "card_comment", target_id: m1, user_id: "u1", emoji: "tada" },
+      { target_kind: "card_comment", target_id: m1, user_id: "u1", emoji: "thumbs_up" },
+      { target_kind: "message", target_id: m1, user_id: "u1", emoji: "heart" }
+    ]);
     db.close();
   });
 });

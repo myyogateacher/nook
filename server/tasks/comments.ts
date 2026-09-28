@@ -2,6 +2,8 @@ import { audit, db, now } from "../db";
 import { readableBoardPredicate } from "./access";
 import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
 import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
+import { withReactions } from "../reactions/service";
+import type { ReactionAggregate } from "../../shared/reactions";
 
 /**
  * Card comments (WAVES_7-9.md §3.3, D38). Any reader comments; only the author edits; the author
@@ -20,6 +22,8 @@ export type CardComment = {
   body: string;
   created_at: string;
   edited_at: string | null;
+  /** Aggregated reactions as the caller sees them (migration 022, D186). */
+  reactions: ReactionAggregate[];
 };
 
 type CommentRow = { id: string; card_id: string; author_id: string | null; body: string; created_at: string; edited_at: string | null; board_id: string; owner_id: string };
@@ -47,12 +51,14 @@ export function listComments(userId: string, cardId: string, options: { before?:
   const rows = db.query(`${commentSelect} WHERE m.card_id = $cardId
       AND ($cursorAt IS NULL OR m.created_at < $cursorAt OR (m.created_at = $cursorAt AND m.id < $cursorId))
     ORDER BY m.created_at DESC, m.id DESC LIMIT $limit`)
-    .all({ userId, cardId, cursorAt: cursor?.created_at ?? null, cursorId: cursor?.id ?? null, limit: limit + 1 }) as CardComment[];
-  return { comments: rows.slice(0, limit).reverse(), hasMore: rows.length > limit };
+    .all({ userId, cardId, cursorAt: cursor?.created_at ?? null, cursorId: cursor?.id ?? null, limit: limit + 1 }) as Array<Omit<CardComment, "reactions">>;
+  // One aggregate query for the whole page (D186).
+  return { comments: withReactions("card_comment", userId, rows.slice(0, limit).reverse()), hasMore: rows.length > limit };
 }
 
-function commentById(userId: string, commentId: string) {
-  return db.query(`${commentSelect} WHERE m.id = $commentId`).get({ userId, commentId }) as CardComment | null;
+function commentById(userId: string, commentId: string): CardComment | null {
+  const row = db.query(`${commentSelect} WHERE m.id = $commentId`).get({ userId, commentId }) as Omit<CardComment, "reactions"> | null;
+  return row ? withReactions("card_comment", userId, [row])[0]! : null;
 }
 
 /** A comment on a live card of a board the caller can read, with the board's id and owner. */

@@ -2,6 +2,7 @@ import { api, ApiError, getCsrfToken } from "../api";
 import { uploadErrorMessage } from "../files/filesApi";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import type { BoardStructure, BoardTemplateId } from "../../shared/boardStructure";
+import type { ReactionAggregate, ReactionKey } from "../../shared/reactions";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -195,6 +196,8 @@ export type CardComment = {
   body: string;
   created_at: string;
   edited_at: string | null;
+  /** Aggregated reactions as this viewer sees them (Wave 20, D186). */
+  reactions?: ReactionAggregate[];
 };
 export type CardView = { card: CardDetail; comments: CardComment[]; hasMoreComments: boolean; attachments: CardAttachment[]; relations?: CardRelation[] };
 
@@ -234,6 +237,9 @@ export const listComments = (cardId: string, before: string) =>
   api<{ comments: CardComment[]; hasMore: boolean }>(`/tasks/cards/${cardId}/comments?before=${encodeURIComponent(before)}`);
 export const createComment = (cardId: string, body: string) => api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", { body }));
 export const updateComment = (commentId: string, body: string) => api<{ comment: CardComment }>(`/tasks/comments/${commentId}`, json("PATCH", { body }));
+/** Idempotent set-state (D184): `on` sends PUT, off sends DELETE. The body is empty, so the JSON type is set explicitly. */
+export const setCommentReaction = (commentId: string, emoji: ReactionKey, on: boolean) =>
+  api<{ reactions: ReactionAggregate[] }>(`/tasks/comments/${commentId}/reactions/${emoji}`, { method: on ? "PUT" : "DELETE", headers: { "Content-Type": "application/json" } });
 export const deleteComment = (commentId: string) => api<{ ok: true }>(`/tasks/comments/${commentId}`, json("DELETE", {}));
 
 export type CardAttachment = {

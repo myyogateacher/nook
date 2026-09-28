@@ -35,6 +35,7 @@ Database changes live in ordered files under `server/migrations`. Startup runs e
 | 013 | `calendar` | calendars, members, events (local time plus IANA zone, or dates; JSON recurrence), event links, reminders, notifications, push subscriptions, and feed tokens (see [Calendar](#calendar)) |
 | 014 | `event_next_occurrence` | a cheap "anything in this range?" bound per event for the calendar range API |
 | 017 | `team_roles` | `users.role` (admin, member, viewer, guest), `blocked_by`, `block_reason`, the append-only `team_events` log, and the last-active-admin triggers; backfills the oldest enabled account as admin (see [Team](#team)). Ids 015 and 016 are reserved for Wave 13. |
+| 022 | `reactions` | the generic `reactions` table (kind, target, user, emoji key), its per-user index, and the cleanup trigger on `card_comments` (Wave 20; see Tasks) |
 
 Notes and documents share one folder tree and one access rule. An item is readable when it is live (`deleted_at IS NULL`) and one of these holds:
 
@@ -165,6 +166,7 @@ Kanban boards (WAVES_7-9.md §3 with the director's §7 review), migration 009: 
 - `service.ts`: boards, sharing, columns, and cards. `routes.ts` is a thin JSON adapter, so Wave 8 MCP tools can call the same functions.
 - `boardOrder.ts`: pure ordering. The server computes `position REAL` from an anchor: the neighbours' midpoint, last + 1024 at the bottom, or half the first at the top, and renumbers the column (or the column list) to 1024, 2048, … when a gap would drop below 1e-6. Clients never send positions.
 - `comments.ts`, `attachments.ts`, `bin.ts`: comments, attachment links, and the Bin adapters.
+- Reactions (Wave 20, migration 022) live in `server/reactions/`: one generic `reactions` table keyed by `(target_kind, target_id, user_id, emoji)`, a code-level kind registry (`targets.ts`, v1 `card_comment`; a later module registers its own kind and cleanup trigger), the service with aggregates and the 60-a-minute limit, and the routes. The 12 emoji keys are in `shared/reactions.ts`. `comments.ts` embeds the aggregates in every comment payload.
 
 **Roles (D38, D39).** Readers of a board create, edit, move, comment on, and bin cards and attach their own files. The owner alone renames the board, manages columns and sharing, deletes it, and purges. Non-readers get 404; readers calling an owner-only action get 403 `OWNER_ONLY`.
 

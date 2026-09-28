@@ -41,6 +41,6 @@ Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09
 - [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve.
 - [ ] Whiteboard/canvas stored as files — next in line if wanted. Rejected: password vault, scanning/OCR, photo gallery, transcription, RSS (reasons in the report), and Journal and Bookmarks/read-later (operator, 2026-09-28); chat is re-opened as the Messages research item above.
 - [ ] Light theme / theme toggle (the app is dark-only; noted by QA).
-- [ ] Nice-to-haves seen in QA: emoji reactions? (decide with Messages); "+N"-only tag footer on very narrow cards; comment box pins late at 761–1099 px in the card drawer.
+- [ ] Nice-to-haves seen in QA: "+N"-only tag footer on very narrow cards; comment box pins late at 761–1099 px in the card drawer.
 
 **Enhancements to existing modules (not chosen yet):** tags, wikilinks/backlinks, daily notes and templates, cross-note task list, Markdown export and Obsidian/Notion/Joplin import, passkeys, installable offline app with share target, web clipper, document OCR, encrypted vault notes.

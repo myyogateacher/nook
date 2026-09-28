@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { formatRoute, parseRoute } from "../src/router";
 import { dueText, durationText, groupTitle, KIND_OPTIONS, runLine, runMetrics, runStatusLabel } from "../src/inbox/inboxFormat";
-import { RoutinesPane } from "../src/inbox/RoutinesPane";
+import { boardPinLabels, RoutinesPane } from "../src/inbox/RoutinesPane";
 import type { Routine } from "../src/inbox/inboxApi";
 
 /** The Routines segment of the Inbox (agent inbox Wave 22, §9.1, §9.2 C). */
@@ -50,6 +50,21 @@ describe("routines UI", () => {
     expect(writer).not.toContain("<select");
     const viewer = renderToStaticMarkup(<RoutinesPane canWrite={false} flash={() => undefined} />);
     expect(viewer).not.toContain("New routine");
+  });
+
+  test("\"Only in\" tells same-name boards apart by owner, else by created date (Friction 8)", () => {
+    const labels = boardPinLabels([
+      { id: "a", name: "Roadmap", owner_name: "Asha", created_at: "2026-01-05T10:00:00.000Z" },
+      { id: "b", name: "Roadmap", owner_name: "Ben", created_at: "2026-02-05T10:00:00.000Z" },
+      { id: "c", name: "Ops", owner_name: "Asha", created_at: "2026-03-05T10:00:00.000Z" },
+      { id: "d", name: "Ops", owner_name: "Asha", created_at: "2026-04-05T10:00:00.000Z" },
+      { id: "e", name: "Solo", owner_name: "Asha", created_at: "2026-04-05T10:00:00.000Z" }
+    ]);
+    expect(labels.get("a")).toBe("Roadmap (Asha)");
+    expect(labels.get("b")).toBe("Roadmap (Ben)");
+    expect(labels.get("c")).toStartWith("Ops (Asha, created ");
+    expect(labels.get("c")).not.toBe(labels.get("d"));
+    expect(labels.get("e")).toBe("Solo");
   });
 
   test("new controls keep 44 px touch targets", async () => {

@@ -59,6 +59,18 @@ describe("Review and Restore all for a key (D175)", () => {
     expect((await api(owner, "GET", `/mcp/keys/${key.id}/binned?window=7d`)).body.items).toEqual([]);
   });
 
+  test("the key row counts distinct items: one card binned twice is one item (Friction 8)", async () => {
+    const owner = await createUser("Undo twice owner");
+    const key = makeKey(owner, ["tasks:write", "bin:write"], "Twice");
+    const board = await api(owner, "POST", "/tasks/boards", { name: "Twice board" });
+    const cardId = (await api(owner, "POST", `/tasks/boards/${board.body.board.id}/cards`, { columnId: board.body.columns[0].id, title: "Twice card" })).body.card.id as string;
+    await ok(key, "bin_card", { cardId });
+    await ok(key, "restore_card", { cardId });
+    await ok(key, "bin_card", { cardId });
+    const keys = (await api(owner, "GET", "/mcp/keys")).body.keys as Array<{ id: string; binnedToday: number }>;
+    expect(keys.find((row) => row.id === key.id)!.binnedToday).toBe(1);
+  });
+
   test("only the key's owner may review or restore; a bad window is 400", async () => {
     const owner = await createUser("Undo key owner");
     const stranger = await createUser("Undo stranger");
@@ -82,6 +94,14 @@ describe("Review and Restore all for a key (D175)", () => {
     expect(markup).toContain("Last 24 hours");
     expect(markup).toContain("Revoke this key");
     expect(markup).not.toContain("<select");
+  });
+
+  test("Restore all is an inline icon and label button (1h)", async () => {
+    const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+    const selector = ".mcp-review-actions .primary-button {";
+    const rule = css.slice(css.indexOf(selector), css.indexOf("}", css.indexOf(selector)));
+    expect(rule).toContain("display: inline-flex");
+    expect(rule).toContain("align-items: center");
   });
 });
 

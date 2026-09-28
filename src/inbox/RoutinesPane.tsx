@@ -190,6 +190,27 @@ function inputOf(form: Form): RoutineInput {
 const moduleOfKind = (kind: ProposalKind) => kind.startsWith("card") ? "board" : kind.startsWith("event") ? "calendar" : kind.startsWith("row") ? "collection" : "folder";
 
 /** Boards, calendars, collections, and owned folders the routine may be pinned to, loaded when the sheet opens. */
+type PinnableBoard = { id: string; name: string; owner_name?: string; created_at?: string };
+
+/**
+ * Board labels for "Only in" (Friction 8): a name shared by several boards gets the owner's name, or
+ * the created date when the same person owns both, so the chips and options can be told apart.
+ */
+export function boardPinLabels(boards: PinnableBoard[]) {
+  const byName = new Map<string, PinnableBoard[]>();
+  for (const board of boards) byName.set(board.name, [...(byName.get(board.name) ?? []), board]);
+  return new Map(boards.map((board) => {
+    const twins = byName.get(board.name)!;
+    if (twins.length === 1) return [board.id, board.name];
+    const ownerIsUnique = board.owner_name && twins.filter((twin) => twin.owner_name === board.owner_name).length === 1;
+    if (ownerIsUnique) return [board.id, `${board.name} (${board.owner_name})`];
+    const created = board.created_at ? new Date(board.created_at) : null;
+    const day = created && !Number.isNaN(created.getTime()) ? created.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+    const who = board.owner_name ? `${board.owner_name}, ` : "";
+    return [board.id, day ? `${board.name} (${who}created ${day})` : board.name];
+  }));
+}
+
 function usePinOptions(open: boolean) {
   const [options, setOptions] = useState<Option[]>([]);
   useEffect(() => {
@@ -197,14 +218,15 @@ function usePinOptions(open: boolean) {
     let live = true;
     const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
     void Promise.all([
-      safe(api<{ boards: Array<{ id: string; name: string }> }>("/tasks/boards"), { boards: [] }),
+      safe(api<{ boards: PinnableBoard[] }>("/tasks/boards"), { boards: [] }),
       safe(api<{ calendars: Array<{ id: string; name: string }> }>("/calendars"), { calendars: [] }),
       safe(api<{ collections: Array<{ id: string; name: string }> }>("/collections"), { collections: [] }),
       safe(api<{ folders: Array<{ id: string; name: string; is_owner: number }> }>("/folders"), { folders: [] })
     ]).then(([boards, calendars, collections, folders]) => {
       if (!live) return;
+      const boardLabels = boardPinLabels(boards.boards);
       setOptions([
-        ...boards.boards.map((item) => ({ value: `board:${item.id}`, label: item.name, group: "Boards" })),
+        ...boards.boards.map((item) => ({ value: `board:${item.id}`, label: boardLabels.get(item.id) ?? item.name, group: "Boards" })),
         ...calendars.calendars.map((item) => ({ value: `calendar:${item.id}`, label: item.name, group: "Calendars" })),
         ...collections.collections.map((item) => ({ value: `collection:${item.id}`, label: item.name, group: "Collections" })),
         ...folders.folders.filter((item) => item.is_owner === 1).map((item) => ({ value: `folder:${item.id}`, label: item.name, group: "Folders" }))

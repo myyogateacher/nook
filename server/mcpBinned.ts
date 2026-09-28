@@ -69,7 +69,10 @@ export function listKeyBinned(userId: string, keyId: string, window: BinnedWindo
 
 /** How many items each of the caller's keys binned since `since` (the Settings key row line). */
 export function binnedCountsByKey(userId: string, since: string) {
-  const rows = db.query(`SELECT json_extract(metadata_json, '$.keyId') AS key_id, COUNT(*) AS count FROM audit_log
+  // Distinct items: a card binned, restored, and binned again by the same key counts once.
+  const rows = db.query(`SELECT json_extract(metadata_json, '$.keyId') AS key_id, COUNT(DISTINCT event_type || ':' || CASE event_type
+      WHEN 'note.delete' THEN note_id WHEN 'task.card_delete' THEN json_extract(metadata_json, '$.cardId')
+      WHEN 'event.delete' THEN json_extract(metadata_json, '$.eventId') ELSE json_extract(metadata_json, '$.rowId') END) AS count FROM audit_log
     WHERE actor_id = ? AND event_type IN (SELECT value FROM json_each(?)) AND created_at >= ? AND json_extract(metadata_json, '$.via') = 'mcp'
     GROUP BY key_id`).all(userId, EVENT_TYPES, since) as Array<{ key_id: string | null; count: number }>;
   return new Map(rows.filter((row) => row.key_id).map((row) => [row.key_id!, row.count]));

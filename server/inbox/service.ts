@@ -328,6 +328,9 @@ async function withProposalLock<T>(proposalId: string, operation: () => Promise<
   }
 }
 
+const revokedKey = db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND revoked_at IS NOT NULL");
+const keyRevoked = (keyId: string) => revokedKey.get(keyId) !== null;
+
 const notPending = (row: Pick<ProposalRow, "status">) => new InboxError(409, `This proposal is already ${row.status}`, "NOT_PENDING", { status: row.status });
 
 /**
@@ -344,7 +347,12 @@ export async function approveProposal(approverId: string, proposalId: string): P
     if (!canWriteContent(approverId)) throw new InboxError(403, "Your team role is read-only", "ROLE_READ_ONLY");
     if (row.status !== "pending") throw notPending(row);
     const timestamp = now();
-    const claimed = db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending'").run(timestamp, id, approverId);
+    if (row.key_id && keyRevoked(row.key_id)) {
+      // Revoking a key supersedes its pending proposals; this catches any left pending (M1).
+      db.query("UPDATE proposals SET status = 'superseded', result_code = 'KEY_REVOKED', resolved_at = ?, base_draft_markdown = NULL WHERE id = ? AND status = 'pending'").run(timestamp, id);
+      throw new InboxError(409, "The key that suggested this change was revoked", "KEY_REVOKED", { status: "superseded" });
+    }
+    const claimed =db.query("UPDATE proposals SET status = 'applying', claimed_at = ? WHERE id = ? AND owner_id = ? AND status = 'pending'").run(timestamp, id, approverId);
     if (claimed.changes !== 1) throw notPending(ownedProposal(approverId, id));
     const kind = PROPOSAL_KIND_DEFS[row.kind];
     try {

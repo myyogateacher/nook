@@ -16,7 +16,8 @@ const FAILURE_COPY: Record<string, string> = {
   LIMIT_REACHED: "A limit was reached",
   INVALID: "The change is no longer valid",
   INTERRUPTED: "Approving was interrupted",
-  STALE_POSITION: "The board changed since the agent read it"
+  STALE_POSITION: "The board changed since the agent read it",
+  KEY_REVOKED: "The key that suggested this was revoked"
 };
 
 export function failureText(code: string | null) {
@@ -32,7 +33,8 @@ const STATUS_LABEL: Record<ProposalStatus, string> = {
 export const statusLabel = (status: ProposalStatus, resultCode: string | null) =>
   status === "applied" && resultCode === "PUBLISHED_IN_EDITOR" ? "Published in the editor"
     : status === "rejected" && resultCode === "DISCARDED_IN_EDITOR" ? "Discarded in the editor"
-      : STATUS_LABEL[status];
+      : status === "superseded" && resultCode === "KEY_REVOKED" ? "Key revoked"
+        : STATUS_LABEL[status];
 
 const KIND_VERB: Record<ProposalKind, string> = {
   note_draft: "note draft", card_create: "create card", card_update: "update card", card_comment: "comment on card",
@@ -58,7 +60,8 @@ export function groupTitle(group: Pick<ProposalGroup, "routine" | "key">) {
 
 const SHORT_FAILURE: Record<string, string> = {
   CARD_CHANGED: "card changed", EVENT_CHANGED: "event changed", ROW_CHANGED: "row changed", SCHEMA_CHANGED: "fields changed",
-  DRAFT_CHANGED: "draft changed", NOT_FOUND: "no longer available", NOT_PENDING: "already resolved", READ_ONLY: "read-only", COLUMN_FULL: "column full"
+  DRAFT_CHANGED: "draft changed", NOT_FOUND: "no longer available", NOT_PENDING: "already resolved", READ_ONLY: "read-only", COLUMN_FULL: "column full",
+  KEY_REVOKED: "key revoked"
 };
 
 /** "7 applied · 1 failed (card changed)" for a bulk result. */

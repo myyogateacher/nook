@@ -61,11 +61,22 @@ export function listMcpApiKeys(userId: string) {
   });
 }
 
+/**
+ * Revokes a key. Its pending proposals are withdrawn with it (review M1): they become
+ * `superseded` with KEY_REVOKED, so nothing a revoked key suggested can be approved. A note draft
+ * the key wrote stays in the note, as after any resolved proposal; only the proposal changes.
+ */
 export function revokeMcpApiKey(userId: string, keyId: string) {
-  const result = db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
-    .run(now(), keyId, userId);
-  if (result.changes) audit(userId, null, "mcp.key_revoked", { keyId });
-  return result.changes === 1;
+  return db.transaction(() => {
+    const timestamp = now();
+    const result = db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
+      .run(timestamp, keyId, userId);
+    if (!result.changes) return false;
+    const superseded = db.query(`UPDATE proposals SET status = 'superseded', result_code = 'KEY_REVOKED', resolved_at = ?, base_draft_markdown = NULL
+      WHERE key_id = ? AND owner_id = ? AND status = 'pending'`).run(timestamp, keyId, userId).changes;
+    audit(userId, null, "mcp.key_revoked", { keyId, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
+    return true;
+  })();
 }
 
 const mcpHandler = createMcpHandler(({ authInfo }) => {

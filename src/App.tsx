@@ -58,6 +58,7 @@ import { carriedCollectionsState } from "./collectionsRoute";
 import { carriedTasksState } from "./tasksNavigation";
 import { CalendarApp } from "./calendar/CalendarApp";
 import { NotificationsApp } from "./notifications/NotificationsApp";
+import { centerActiveTab } from "./ui/tabStrip";
 import { NotificationsContext } from "./notifications/notificationsApi";
 import { NotificationSettings } from "./notifications/NotificationSettings";
 import { forgetThisDevice } from "./notifications/pushClient";
@@ -346,6 +347,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     return () => { titleScope.current = null; scope.restore(); };
   }, []);
   useEffect(() => { titleScope.current?.show(section); }, [section]);
+  // Phones scroll the section strip sideways: keep the active tab in view on a deep link and on change (3c).
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => { centerActiveTab(navRef.current); }, [section]);
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
@@ -465,7 +469,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
+        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}

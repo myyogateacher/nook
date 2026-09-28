@@ -76,11 +76,14 @@ function sweep(time: number) {
  * Returns 0 when admitted, otherwise the seconds until the fullest blocking
  * bucket resets (fixed windows).
  */
-export function consumeMcpLimits(subject: { keyId: string; userId?: string }, buckets: readonly McpLimitBucket[], time = Date.now()) {
+export function consumeMcpLimits(subject: { keyId: string; userId?: string; limits?: { callsPerMinute?: number; writesPerMinute?: number } }, buckets: readonly McpLimitBucket[], time = Date.now()) {
   sweep(time);
   const charges: Array<{ key: string; limit: Limit }> = [];
   for (const bucket of buckets) {
-    charges.push({ key: `key:${subject.keyId}:${bucket}`, limit: MCP_LIMITS[bucket] });
+    // A key's own limits (access plan D282, T216) may only be lower than the global ones.
+    const own = bucket === "call" ? subject.limits?.callsPerMinute : bucket === "write" ? subject.limits?.writesPerMinute : undefined;
+    const base = MCP_LIMITS[bucket];
+    charges.push({ key: `key:${subject.keyId}:${bucket}`, limit: own !== undefined && own < base.limit ? { limit: own, windowMs: base.windowMs } : base });
     const userLimit = MCP_USER_LIMITS[bucket];
     if (subject.userId && userLimit) charges.push({ key: `user:${subject.userId}:${bucket}`, limit: userLimit });
   }

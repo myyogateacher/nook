@@ -5,6 +5,9 @@ import { config, isOriginAllowed } from "../config";
 import { email, parseJson, uuid } from "../validation";
 import { createInvite, emailInvite, INVITE_MAX_DAYS, INVITE_NOTE_MAX, INVITE_ROLES, InviteError, listInvites, resendInviteEmail, revokeInvite } from "./invites";
 import { can, ROLES } from "./roles";
+import { adminRevokeKey, adminRevokeSchema, listInventory } from "../apiKeys";
+import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
+import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPoliciesSchema, writePolicies } from "./policies";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
@@ -126,8 +129,93 @@ function registerInviteRoutes(app: Hono<AppEnv>) {
   });
 }
 
+/**
+ * Team → Keys and Team → Policies (Wave 31, access plan §C.6, §C.7): admins only (guests 404,
+ * everyone else 403 ADMIN_ONLY). The inventory is metadata only (T215): prefix, name, owner, grant
+ * summary, expiry, last use, state; never a hash or token, never an item title (T204). Registered
+ * before `/api/team/:userId` so "keys" and "policies" are never read as user ids.
+ */
+function registerAccessRoutes(app: Hono<AppEnv>) {
+  const readGate = (c: Context<AppEnv>) => {
+    const user = c.get("user");
+    if (!can(user.role, "team.read")) return notFound(c);
+    if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage keys and policies", code: "ADMIN_ONLY" }, 403);
+    return null;
+  };
+  const accessError = (c: Context<AppEnv>, error: unknown) => {
+    if (error instanceof PolicyError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  };
+
+  app.get("/api/team/policies", (c) => {
+    const refused = readGate(c);
+    if (refused) return refused;
+    const state = policiesState();
+    return c.json({ ...state, impact: policyImpact(state.policies) });
+  });
+
+  app.post("/api/team/policies/preview", async (c) => {
+    const refused = readGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, previewPoliciesSchema);
+    return c.json({ impact: policyImpact(body.policies) });
+  });
+
+  app.put("/api/team/policies", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, putPoliciesSchema);
+    try {
+      const { changed } = writePolicies(c.get("user").id, body.policies, body.revision);
+      const state = policiesState();
+      return c.json({ ...state, changed, impact: policyImpact(state.policies) });
+    } catch (error) {
+      return accessError(c, error);
+    }
+  });
+
+  app.get("/api/team/keys", (c) => {
+    const refused = readGate(c);
+    if (refused) return refused;
+    const query = inventoryQuerySchema.safeParse({
+      owner: c.req.query("owner") || undefined, module: c.req.query("module") || undefined,
+      state: c.req.query("state") || undefined, cursor: c.req.query("cursor") || undefined
+    });
+    if (!query.success) return c.json({ error: "Invalid request", details: query.error.issues.map((issue) => issue.message) }, 400);
+    return c.json(listInventory(query.data));
+  });
+
+  app.post("/api/team/keys/revoke", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, bulkRevokeSchema);
+    const actor = c.get("user");
+    const revoked = body.keyIds.map((id) => adminRevokeKey(actor.id, id.toLowerCase(), body.reason)).filter((result) => result !== null);
+    return c.json({ revoked: revoked.length, keyIds: revoked.map((result) => result!.keyId) });
+  });
+
+  app.post("/api/team/keys/:keyId/revoke", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const id = uuid.safeParse(c.req.param("keyId")?.toLowerCase()).data;
+    if (!id) return notFound(c);
+    const body = await parseJson(c.req.raw, adminRevokeSchema);
+    const result = adminRevokeKey(c.get("user").id, id, body.reason);
+    return result ? c.json({ ok: true, ...result }) : c.json({ error: "API key not found", code: "NOT_FOUND" }, 404);
+  });
+}
+
+const inventoryQuerySchema = z.object({
+  owner: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
+  module: z.enum(GENERAL_KEY_MODULES as [GrantModule, ...GrantModule[]]).optional(),
+  state: z.enum(["active", "expiring", "no_expiry", "blocked", "grace", "unused", "expired"]).optional(),
+  cursor: z.string().max(120).optional()
+});
+const bulkRevokeSchema = z.object({ keyIds: z.array(z.string().uuid()).min(1).max(50), reason: adminRevokeSchema.shape.reason }).strict();
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerInviteRoutes(app);
+  registerAccessRoutes(app);
 
   app.get("/api/team", (c) => {
     const user = c.get("user");

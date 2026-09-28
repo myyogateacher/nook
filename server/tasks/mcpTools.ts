@@ -223,6 +223,7 @@ export const taskTools: McpToolSpec[] = [
     title: "List task boards",
     description: "List the task boards the user owns or is a member of, with card counts.",
     scopes: ["tasks:read"],
+    listFilter: { field: "boards", kind: "board" },
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => ({ boards: listBoards(key.userId) })
@@ -232,6 +233,7 @@ export const taskTools: McpToolSpec[] = [
     title: "List cards on a board",
     description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, dueBefore/dueAfter/dueNone, text, and sprint; values inside one filter are alternatives, and different filters must all match. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
     scopes: ["tasks:read"],
+    resource: { arg: "boardId", kind: "board" },
     write: false,
     inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column"), ...listFilters }),
     handler: async ({ boardId, columnId, assigneeIds, tags, flags, dueBefore, dueAfter, dueNone, text, sprint }, key) => service(key, () => {
@@ -274,6 +276,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Get a card",
     description: "Read one card: title, plain-text description, column, the latest comments, attachment names, and its relations to other cards (a card the user cannot open shows only as restricted).",
     scopes: ["tasks:read"],
+    resource: { arg: "cardId", kind: "card" },
     write: false,
     inputSchema: z.object({ cardId: uuid }),
     handler: async ({ cardId }, key) => service(key, () => {
@@ -312,6 +315,7 @@ export const taskTools: McpToolSpec[] = [
     title: "List a card's children",
     description: "List the live direct children of a card (its subtasks, or the stories of an epic), in checklist order: by column, then position. At most 100. Children are always on the card's own board.",
     scopes: ["tasks:read"],
+    resource: { arg: "cardId", kind: "card" },
     write: false,
     inputSchema: z.object({ cardId: uuid }),
     handler: async ({ cardId }, key) => service(key, () => {
@@ -325,6 +329,7 @@ export const taskTools: McpToolSpec[] = [
     title: "List a board's sprints",
     description: "List the sprints of a board the user can open: the active sprint first, then planned ones in order, then completed ones newest first (at most 20; pass nextCursor back as cursor for older ones). Counts are cards at the board's work level. The board owner can add and start sprints with create_sprint and start_sprint; completing a sprint happens only in the app. Plan a card into one with create_card or update_card sprintId.",
     scopes: ["tasks:read"],
+    resource: { arg: "boardId", kind: "board" },
     write: false,
     inputSchema: z.object({
       boardId: uuid,
@@ -365,6 +370,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Create a card",
     description: "Add a card to a column of a board the user can use. afterCardId: omit for the bottom, null for the top, or a card in that column to go after it. A column at its WIP limit refuses new cards with COLUMN_FULL.",
     scopes: ["tasks:write"],
+    resource: { arg: "boardId", kind: "board" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({
@@ -398,6 +404,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Update a card",
     description: "Change a card's title, due date, due time, assignees, tags, flags, parent, level, or sprint on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
     scopes: ["tasks:write"],
+    resource: { arg: "cardId", kind: "card" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({
@@ -429,6 +436,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Move a card",
     description: "Move a card to a column on the same board. afterCardId: omit for the bottom, null for the top, or a card in the target column. If the board changed, the call fails with STALE_POSITION and the column's current order. Moving into another column at its WIP limit fails with COLUMN_FULL.",
     scopes: ["tasks:write"],
+    resource: { arg: "cardId", kind: "card" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({ cardId: uuid, columnId: uuid, afterCardId: uuid.nullable().optional() }),
@@ -465,6 +473,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Comment on a card",
     description: "Add a comment, as the user, to a card on a board they can use. Plain text or Markdown, up to 16 KiB.",
     scopes: ["tasks:write"],
+    resource: { arg: "cardId", kind: "card" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({ cardId: uuid, body: z.string().min(1) }),
@@ -482,6 +491,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Move a card to the Bin",
     description: `Move a card on a board the user can use to the Bin, with its subtasks. ${BIN_DESCRIPTION} Restore it with restore_card.`,
     scopes: ["tasks:write"],
+    resource: { arg: "cardId", kind: "card" },
     alsoRequires: ["bin:write"],
     write: true,
     buckets: BIN_BUCKETS,
@@ -496,6 +506,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Restore a card from the Bin",
     description: "Restore a binned card, with the subtasks binned with it, to its column. Only the board owner or whoever binned it can restore it. A card whose parent is still in the Bin comes back without a parent (detached).",
     scopes: ["tasks:write"],
+    resource: { arg: "cardId", kind: "card" },
     alsoRequires: ["bin:write"],
     write: true,
     inputSchema: z.object({ cardId: uuid }).strict(),
@@ -520,6 +531,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Create, rename, or recolour a tag",
     description: `Manage a board's tags. action "create" (any board reader; a name that exists in any case is NAME_TAKEN), or "rename" / "recolour" an existing tag (board owner only, OWNER_ONLY otherwise). Colours: ${TAG_COLORS.join(", ")}. Tags cannot be deleted here.`,
     scopes: ["tasks:write"],
+    resource: { arg: "boardId", kind: "board" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({
@@ -548,6 +560,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Set a column's WIP limit",
     description: "Set or clear (null) the work-in-progress limit of a column, 1 to 1000 cards. Board owner only (OWNER_ONLY otherwise). A limit below the current count only blocks new cards coming in.",
     scopes: ["tasks:write"],
+    resource: { arg: "columnId", kind: "column" },
     write: true,
     dailyBucket: "task_write",
     inputSchema: z.object({ columnId: uuid, wipLimit: z.number().int().min(1).max(1000).nullable() }).strict(),
@@ -564,6 +577,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Add a sprint",
     description: "Add a planned sprint at the end of a board's sprints. Board owner only (OWNER_ONLY otherwise), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD; an omitted startOn is today and an omitted endOn is the board's default sprint length after the start (null keeps a date empty).",
     scopes: ["tasks:write"],
+    resource: { arg: "boardId", kind: "board" },
     write: true,
     buckets: ["sprint_write"],
     inputSchema: z.object({
@@ -586,6 +600,7 @@ export const taskTools: McpToolSpec[] = [
     title: "Start a sprint",
     description: "Start a planned sprint. Board owner only. Only one sprint is active at a time: while another is active this fails with SPRINT_ACTIVE and its activeSprintId. Completing a sprint is not possible over MCP.",
     scopes: ["tasks:write"],
+    resource: { arg: "sprintId", kind: "sprint" },
     write: true,
     buckets: ["sprint_write"],
     inputSchema: z.object({ sprintId: uuid }).strict(),

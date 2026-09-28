@@ -146,6 +146,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "List calendars",
     description: "List the calendars the user owns or that are shared with them, with the user's role on each (owner, editor, or viewer).",
     scopes: ["calendar:read"],
+    listFilter: { field: "calendars", kind: "calendar" },
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => ({
@@ -181,6 +182,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Get an event",
     description: "Read one event: timing, repeat rule, skipped dates, plain-text description, links (titles, or restricted when the user cannot open them), and the revision update_event needs.",
     scopes: ["calendar:read"],
+    resource: { arg: "eventId", kind: "event" },
     write: false,
     inputSchema: z.object({ eventId: uuid }),
     handler: async ({ eventId }, key) => service(key, () => eventOutput(getEvent(key.userId, eventId.toLowerCase())))
@@ -190,6 +192,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Create an event",
     description: "Add an event to a calendar the user owns or may edit. All-day: start and end are dates (end exclusive). Timed: start is a local time in tz, with durationMinutes or a local end.",
     scopes: ["calendar:write"],
+    resource: { arg: "calendarId", kind: "calendar" },
     write: true,
     dailyBucket: "event_write",
     inputSchema: z.object({ calendarId: uuid, ...eventFields }),
@@ -206,6 +209,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Update an event",
     description: "Change fields of an event on a calendar the user owns or may edit. baseRevision must be the revision from get_event; if the event changed since, the call fails with EVENT_CHANGED and the current revision. The change can be undone in Nook.",
     scopes: ["calendar:write"],
+    resource: { arg: "eventId", kind: "event" },
     write: true,
     dailyBucket: "event_write",
     inputSchema: z.object({
@@ -251,6 +255,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Create a reminder",
     description: "Set a reminder for the user who owns this key (never anyone else): either offsetMinutes before each occurrence of an event they can read (negative is after the start; 09:00 on an all-day event is -540), or a standalone title at a local fireAt time in tz.",
     scopes: ["calendar:write"],
+    resource: { arg: "eventId", kind: "event" },
     write: true,
     dailyBucket: "reminder_write",
     inputSchema: z.object({
@@ -280,6 +285,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Move an event to the Bin",
     description: `Move an event on a calendar the user may edit to the Bin, with all its occurrences. ${BIN_DESCRIPTION} Restore it with restore_event.`,
     scopes: ["calendar:write"],
+    resource: { arg: "eventId", kind: "event" },
     alsoRequires: ["bin:write"],
     write: true,
     buckets: BIN_BUCKETS,
@@ -294,6 +300,7 @@ export const calendarTools: McpToolSpec[] = [
     title: "Restore an event from the Bin",
     description: "Restore a binned event. Only the calendar owner, or whoever binned it while they can still edit the calendar, can restore it. An event whose calendar is in the Bin fails with PARENT_IN_BIN.",
     scopes: ["calendar:write"],
+    resource: { arg: "eventId", kind: "event" },
     alsoRequires: ["bin:write"],
     write: true,
     inputSchema: z.object({ eventId: uuid }).strict(),

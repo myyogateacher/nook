@@ -21,6 +21,7 @@ import { taskHierarchyMigration } from "./019_task_hierarchy";
 import { taskViewsMigration } from "./020_task_views";
 import { agentInboxMigration } from "./021_agent_inbox";
 import { reactionsMigration } from "./022_reactions";
+import { accessKeysMigration } from "./025_access_keys";
 import { emailMigration } from "./026_email";
 import { proposalBaseMigration } from "./027_proposal_base";
 
@@ -29,8 +30,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   teamInvitesMigration, taskHierarchyMigration, taskViewsMigration,
   // 021 (agent inbox) needs only 005, 010, 013, and 016; 022 (reactions) needs only 001 and 009.
   agentInboxMigration, reactionsMigration,
-  // 023, 024, and 025 belong to other parallel plans. 026 (email) needs only 001, 013, 017, and 018; 027 (proposal base) needs only 021.
-  emailMigration, proposalBaseMigration
+  // 023 and 024 belong to other parallel plans. 025 (access keys) needs 005, 009, 010, 012, 013, 017, 018,
+  // 020, and 021; 026 (email) needs only 001, 013, 017, and 018; 027 (proposal base) needs only 021.
+  accessKeysMigration, emailMigration, proposalBaseMigration
 ];
 
 /**

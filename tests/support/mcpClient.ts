@@ -7,6 +7,7 @@ import { expect } from "bun:test";
 import { db, origin, request, type Session } from "./harness";
 
 const { createMcpApiKey } = await import("../../server/mcp");
+const { setKeyScopesForTests } = await import("../../server/apiKeys");
 const { invokeMcpToolForTests } = await import("../../server/mcpTools");
 type McpScope = import("../../server/mcpScopes").McpScope;
 
@@ -15,7 +16,7 @@ export type Key = { id: string; token: string; userId: string };
 /** A key storing exactly `scopes` (implied reads are added when the key is read, as for real keys). */
 export function makeKey(session: Session, scopes: McpScope[], name = "Agent"): Key {
   const key = createMcpApiKey(session.userId, name);
-  db.query("UPDATE mcp_api_keys SET scopes = ? WHERE id = ?").run(JSON.stringify(scopes), key.id);
+  setKeyScopesForTests(key.id, scopes);
   return { id: key.id, token: key.token, userId: session.userId };
 }
 

@@ -26,7 +26,6 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
-  Plug,
   Search,
   Settings,
   ShieldCheck,
@@ -71,10 +70,8 @@ import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
-import { canCreateMcpKeys, DEFAULT_KEY_SCOPES, lockedScopes, offeredMcpPermissions, toggleScope, type McpScope } from "./mcpPermissions";
-import { McpKeyScopeChips } from "./McpKeyScopes";
-import { onCheckedChange } from "./ui/checkedChange";
-import { binnedTodayLine, McpBinnedReview } from "./McpBinnedReview";
+// Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
+import { KeysSettings } from "./keys/KeysSettings";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -92,7 +89,6 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
-type McpApiKey = { id: string; name: string; key_prefix: string; scopes: McpScope[]; effectiveScopes?: McpScope[]; created_at: string; last_used_at: string | null; binnedToday?: number };
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "updated-desc", label: "Recently edited" },
@@ -206,112 +202,6 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
       </section>
     </main>
   );
-}
-
-function McpSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange: (open: boolean) => void; totpEnabled: boolean; role: User["role"] }) {
-  const [keys, setKeys] = useState<McpApiKey[]>([]);
-  const [newToken, setNewToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState("");
-  const [scopes, setScopes] = useState<McpScope[]>([...DEFAULT_KEY_SCOPES]);
-  const [reviewKey, setReviewKey] = useState<McpApiKey | null>(null);
-  const reviewTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const closeReview = useCallback(() => {
-    setReviewKey(null);
-    // Focus goes back to the Review button that opened the dialog (it is gone after a revoke).
-    window.requestAnimationFrame(() => { if (reviewTriggerRef.current?.isConnected) reviewTriggerRef.current.focus(); });
-  }, []);
-  const locked = lockedScopes(scopes);
-  const endpoint = `${window.location.origin}/mcp`;
-  const displayToken = newToken || "<YOUR_API_KEY>";
-  const configText = JSON.stringify({
-    mcpServers: {
-      nook: {
-        type: "streamable-http",
-        url: endpoint,
-        headers: { Authorization: `Bearer ${displayToken}` }
-      }
-    }
-  }, null, 2);
-
-  const loadKeys = useCallback(() => {
-    api<{ keys: McpApiKey[] }>("/mcp/keys").then(({ keys: items }) => setKeys(items)).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load API keys"));
-  }, []);
-
-  useEffect(loadKeys, [loadKeys]);
-  useEffect(() => {
-    onPendingChange(Boolean(newToken));
-    return () => onPendingChange(false);
-  }, [newToken, onPendingChange]);
-  // Settings leaves Escape to the Review dialog while it is open (1i).
-  useEffect(() => {
-    onNestedDialogChange(reviewKey !== null);
-    return () => onNestedDialogChange(false);
-  }, [reviewKey, onNestedDialogChange]);
-
-  async function createKey(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    // React clears event.currentTarget once the handler yields, so keep the form element for the reset below.
-    const formElement = event.currentTarget;
-    setBusy(true);
-    setError("");
-    try {
-      const form = new FormData(formElement);
-      const result = await api<{ key: McpApiKey & { token: string } }>("/mcp/keys", { method: "POST", body: JSON.stringify({ name: form.get("name"), password: form.get("password"), scopes, ...(totpEnabled ? { totpCode: form.get("totpCode") } : {}) }) });
-      formElement.reset();
-      setNewToken(result.key.token);
-      setScopes([...DEFAULT_KEY_SCOPES]);
-      loadKeys();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not create API key");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function revokeKey(key: McpApiKey) {
-    if (!window.confirm(`Revoke “${key.name}”? Connected MCP clients using it will stop working.`)) return;
-    setBusy(true);
-    setError("");
-    try {
-      await api(`/mcp/keys/${key.id}`, { method: "DELETE", body: "{}" });
-      loadKeys();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not revoke API key");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function copy(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(label);
-      window.setTimeout(() => setCopied(""), 1800);
-    } catch {
-      setError("Automatic copy is unavailable here. Select the value and copy it manually.");
-    }
-  }
-
-  return <section className="settings-content mcp-settings" aria-labelledby="mcp-heading">
-    <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="mcp-heading">MCP server</h3><p>Connect trusted AI clients over Streamable HTTP. Each key can do only what you allow below, and only with notes and files you can already open. Publishing, file changes, and the Bin each need their own permission, and nothing a key does deletes forever.</p></div></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
-    <div className="mcp-card">
-      <div><h4>API keys</h4><p>Create a separate key for each client. The full key is shown once and stored only as a SHA-256 hash.</p></div>
-      {!canCreateMcpKeys(role) && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
-      {role === "viewer" && !newToken && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
-      {!newToken && canCreateMcpKeys(role) && <form className="mcp-key-form" onSubmit={createKey}><label>Key name<input name="name" maxLength={80} placeholder="Personal laptop" required /></label><label>Confirm password<input name="password" type="password" autoComplete="current-password" required /></label>{totpEnabled && <label>Fresh six-digit code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required /></label>}<fieldset className="mcp-permissions"><legend>Permissions</legend>{offeredMcpPermissions(role).map((permission) => {
-        const isLocked = locked.includes(permission.scope);
-        return <label key={permission.scope} className={isLocked ? "locked" : undefined}><input type="checkbox" checked={scopes.includes(permission.scope)} disabled={busy || isLocked} onChange={onCheckedChange((checked) => setScopes((current) => toggleScope(current, permission.scope, checked)))} /><span><strong>{permission.label}</strong><small>{permission.help}{isLocked ? " Included with write access." : ""}</small>{permission.warning && <small className="mcp-permission-warning">{permission.warning}</small>}</span></label>;
-      })}</fieldset><button className="primary-button" disabled={busy || scopes.length === 0}>{busy ? "Creating…" : "Create API key"}</button></form>}
-      {newToken && <div className="new-api-key" role="status"><strong>Copy this key now</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken} aria-label="New MCP API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken("")}>I saved this key</button></div></div>}
-      <div className="mcp-key-list">{keys.map((key) => <div key={key.id}><span className="key-icon"><KeyRound /></span><div><strong>{key.name}</strong><small><code>{key.key_prefix}…</code> · Created {relativeTime(key.created_at)}{key.last_used_at ? ` · Used ${relativeTime(key.last_used_at)}` : " · Never used"}</small><McpKeyScopeChips name={key.name} scopes={key.scopes ?? []} effectiveScopes={key.effectiveScopes} />{binnedTodayLine(key.binnedToday) && <small className="mcp-key-binned">{binnedTodayLine(key.binnedToday)} · <button type="button" className="text-button" onClick={(event) => { reviewTriggerRef.current = event.currentTarget; setReviewKey(key); }}>Review</button></small>}</div><button type="button" className="text-danger" disabled={busy} onClick={() => revokeKey(key)}>Revoke</button></div>)}{!keys.length && <p>No active API keys.</p>}</div>
-    </div>
-    {reviewKey && <McpBinnedReview keyId={reviewKey.id} keyName={reviewKey.name} onClose={() => { closeReview(); loadKeys(); }} onRevoke={() => { const key = reviewKey; closeReview(); void revokeKey(key); }} />}
-    <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
-  </section>;
 }
 
 function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean> }) {
@@ -470,7 +360,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><Plug />MCP server</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
+        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -495,7 +385,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <McpSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
   );

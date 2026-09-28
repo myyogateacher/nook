@@ -32,6 +32,9 @@ import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { handleMcpUpload } from "./mcpUploads";
+import { aliasKeyRefusal, registerKeyRoutes } from "./keyRoutes";
+import { liveKeyCount, startKeyUsageFlusher } from "./apiKeys";
+import { readPolicies } from "./team/policies";
 import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
 import { z } from "zod";
 
@@ -337,6 +340,9 @@ app.use("/api/*", async (c, next) => {
 // Viewers and guests read; every other write is refused unless allowlisted (D75, T87).
 app.use("/api/*", roleWriteGate);
 
+// Nook keys (Wave 31): /api/keys; /api/mcp/keys below stays as an alias for one release.
+registerKeyRoutes(app);
+
 app.get("/api/mcp/keys", (c) => {
   const userId = c.get("user").id;
   // What each key moved to the Bin in the last 24 hours, for the key row's Review line (D175).
@@ -372,6 +378,9 @@ app.post("/api/mcp/keys", async (c) => {
   if (body.scopes?.some((scope) => !allowedScopes.includes(scope))) {
     return c.json({ error: "Your team role cannot create a key with these permissions", code: "SCOPE_NOT_ALLOWED" }, 403);
   }
+  // Nook keys (Wave 31): the alias obeys team policy (modules, MCP per role, key count) like /api/keys.
+  const aliasRefusal = aliasKeyRefusal(c.get("user"), body.scopes ?? ["notes:read"]);
+  if (aliasRefusal) return c.json({ error: aliasRefusal.message, code: aliasRefusal.code, ...aliasRefusal.details }, aliasRefusal.status);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
   const passwordValid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
   if (!user || !passwordValid) {
@@ -389,8 +398,8 @@ app.post("/api/mcp/keys", async (c) => {
       mailTwoFactor(userId, "recovery_used");
     }
   }
-  const activeCount = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(userId) as { count: number }).count;
-  if (activeCount >= 10) return c.json({ error: "Revoke an existing API key before creating another" }, 409);
+  const activeCount = liveKeyCount(userId);
+  if (activeCount >= readPolicies().keysPerUser) return c.json({ error: "Revoke an existing API key before creating another", code: "KEY_LIMIT" }, 409);
   const key = createMcpApiKey(userId, body.name, body.scopes);
   // Security mail (outbound email #5): the key's name and scopes, read at send time.
   mailApiKeyCreated(userId, key.id);
@@ -912,6 +921,8 @@ try {
   console.error("Card excerpt reconcile failed", errorClass(error));
 }
 startSweeper();
+// Nook key usage counts (D283) are kept in memory and written once a minute.
+startKeyUsageFlusher();
 try {
   await initPush();
 } catch (error) {

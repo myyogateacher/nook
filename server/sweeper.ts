@@ -7,6 +7,7 @@ import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
 import { sweepRuns } from "./inbox/routines";
+import { sweepKeyGraces } from "./apiKeys";
 import { sweepMail } from "./mail/dispatcher";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
@@ -93,6 +94,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (runs.abandoned || runs.purged) console.info(`Run sweep: ${runs.abandoned} abandoned, ${runs.purged} removed`);
       } catch (error) {
         console.error("Run sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Nook keys (D277, D283): rotation graces that ended become revocations; usage older than 90 days goes.
+        const keys = sweepKeyGraces(options.nowMs);
+        if (keys.gracesEnded || keys.usageTrimmed) console.info(`Key sweep: ${keys.gracesEnded} rotation graces ended, ${keys.usageTrimmed} usage rows removed`);
+      } catch (error) {
+        console.error("Key sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       try {
         // Mail history (outbound email §B.3): delivered rows after 30 days, failures after 90.

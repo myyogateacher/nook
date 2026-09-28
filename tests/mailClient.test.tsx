@@ -70,7 +70,7 @@ describe("mail link pages", () => {
 
   test("Settings names its section in the document title and restores the title on close", () => {
     expect(settingsDocumentTitle("notifications")).toBe("Settings · Notifications · Nook");
-    expect(settingsDocumentTitle("mcp")).toBe("Settings · MCP server · Nook");
+    expect(settingsDocumentTitle("mcp")).toBe("Settings · API keys · Nook");
     const doc = { title: "Home · Nook" };
     const scope = settingsTitleScope(doc);
     scope.show("notifications");

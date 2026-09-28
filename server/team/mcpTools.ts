@@ -1,6 +1,7 @@
 import * as z from "zod/v4";
 import { defineTool, McpToolError, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { can, ROLES } from "./roles";
+import { listInvites } from "./invites";
 import { listTeam, teamEvents, teamMember, userRole, type AdminTeamMember } from "./service";
 
 /**
@@ -66,6 +67,34 @@ export const teamTools: McpToolSpec[] = [
           toRole: event.toRole,
           createdAt: event.createdAt,
           actor: event.actor?.displayName ?? null
+        }))
+      };
+    }
+  }),
+  defineTool({
+    name: "list_invites",
+    title: "List team invites",
+    description: "List this Nook's invite links with their team role, status (live, used, expired, or revoked), dates, and who created or used them. Tokens, token prefixes, emails, and labels are never returned; invites are created and revoked in the web app only.",
+    scopes: ["team:read"],
+    write: false,
+    inputSchema: z.object({
+      status: z.enum(["live", "all"]).optional().describe("Only live invites, or all (the default: live ones plus the latest 100 others)")
+    }),
+    handler: ({ status }, key) => {
+      // D168: read-only, and no emails, tokens, prefixes, or admin notes (an agent cannot mint accounts).
+      const viewer = requireAdmin(key);
+      const { invites, liveCount, liveLimit } = listInvites(viewer, { status: status ?? "all" });
+      return {
+        liveCount,
+        liveLimit,
+        invites: invites.map((invite) => ({
+          id: invite.id,
+          role: invite.role,
+          status: invite.status,
+          createdAt: invite.createdAt,
+          expiresAt: invite.expiresAt,
+          createdBy: invite.createdBy?.displayName ?? null,
+          usedBy: invite.usedBy?.displayName ?? null
         }))
       };
     }

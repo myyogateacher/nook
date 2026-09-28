@@ -4,6 +4,7 @@ import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
+import { sweepInvites } from "./team/invites";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -68,6 +69,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (removed.notifications || removed.reminders) console.info(`Notification sweep: ${removed.notifications} notifications and ${removed.reminders} fired reminders removed`);
       } catch (error) {
         console.error("Notification sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Team invites dead (used, revoked, or expired) for 90 days are deleted (D169).
+        const invites = sweepInvites(options.nowMs);
+        if (invites) console.info(`Invite sweep: ${invites} old invites removed`);
+      } catch (error) {
+        console.error("Invite sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

@@ -144,4 +144,37 @@ describe("Team MCP", () => {
     expect(readableNote(noteId, viewer.userId)?.id).toBe(noteId);
     expect((await request(`/notes/${noteId}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "private", userIds: [] }) }, owner)).status).toBe(200);
   });
+
+  test("list_invites is team:read only, read-only, and never returns tokens, prefixes, emails, or labels (D168)", async () => {
+    const { resetInviteRateLimits } = await import("../server/team/invites");
+    resetInviteRateLimits();
+    db.query("DELETE FROM team_invites").run();
+    const admin = await user("MCP invites admin", "admin");
+    const created = await (await call(admin, "POST", "/invites", { role: "viewer", note: "Secret label", email: "allowed-1000@example.test" })).json() as { token: string; invite: { id: string; tokenPrefix: string } };
+    const revoked = await (await call(admin, "POST", "/invites", { role: "guest" })).json() as { invite: { id: string } };
+    await call(admin, "POST", `/invites/${revoked.invite.id}/revoke`, {});
+
+    const noTeam = createMcpApiKey(admin.userId, "No team", ["notes:read"]);
+    expect(await toolNames(noTeam.token)).not.toContain("list_invites");
+    const key = createMcpApiKey(admin.userId, "Invites", ["team:read"]);
+    expect(await toolNames(key.token)).toContain("list_invites");
+    expect((await toolNames(key.token)).some((name) => /invite/.test(name) && name !== "list_invites")).toBe(false);
+
+    const all = await callTool(key.token, "list_invites");
+    expect(all.isError).toBe(false);
+    expect(all.value.liveCount).toBe(1);
+    expect(all.value.invites.map((row: { id: string; status: string }) => [row.id, row.status])).toEqual([[revoked.invite.id, "revoked"], [created.invite.id, "live"]]);
+    expect(Object.keys(all.value.invites[1]).sort()).toEqual(["createdAt", "createdBy", "expiresAt", "id", "role", "status", "usedBy"]);
+    expect(all.value.invites[1]).toMatchObject({ role: "viewer", createdBy: "MCP invites admin", usedBy: null });
+    const text = JSON.stringify(all.value);
+    for (const secret of [created.token, created.invite.tokenPrefix, "Secret label", "@example.test"]) expect(text).not.toContain(secret);
+    expect((await callTool(key.token, "list_invites", { status: "live" })).value.invites.map((row: { id: string }) => row.id)).toEqual([created.invite.id]);
+
+    // A demoted admin's key loses the tool, and the handler refuses a direct call.
+    setRoleSql(admin, "member");
+    expect(await toolNames(key.token)).not.toContain("list_invites");
+    expect(JSON.parse((await invokeMcpToolForTests("list_invites", {}, key.id)).content[0]!.text).code).toBe("SCOPE_REQUIRED");
+    setRoleSql(admin, "admin");
+    db.query("DELETE FROM team_invites").run();
+  });
 });

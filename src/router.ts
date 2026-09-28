@@ -15,7 +15,8 @@ export type Route =
   | { app: "calendar"; view: "agenda" | "month"; month: string | null; eventId: string | null }
   | { app: "notifications" }
   | { app: "bin" }
-  | { app: "team"; userId: string | null };
+  // `invites` (Wave 18): the admin Invites panel at /team/invites, in the detail pane. Never with a user.
+  | { app: "team"; userId: string | null; invites?: true };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -123,6 +124,8 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "notifications" && rest.length === 0) return { app: "notifications" };
   if (app === "bin" && rest.length === 0) return { app: "bin" };
   // /team and /team/:userId. A malformed id, or anything after it, opens the list.
+  // /team/invites is matched before the id rule (D167).
+  if (app === "team" && rest.length === 1 && rest[0] === "invites") return { app: "team", userId: null, invites: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   return { app: "home" };
 }
@@ -160,7 +163,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : "/team";
   return "/";
 }
 

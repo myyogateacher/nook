@@ -139,10 +139,9 @@ describe("search index sync", () => {
     const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
-    // 1–17 are on main; 018 (Team invites) and 019 (task hierarchy) may land later than 020 (task views).
-    expect(registeredMigrationIds.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
-    expect(registeredMigrationIds.slice(17).every((id) => id >= 18)).toBe(true);
-    expect(registeredMigrationIds).toContain(20);
+    // 1–20 are on main; later waves (021 and up) may or may not be registered yet.
+    expect(registeredMigrationIds.slice(0, 20)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+    expect(registeredMigrationIds.slice(20).every((id) => id >= 21)).toBe(true);
     expect(result).toMatchObject({
       migrations: [...registeredMigrationIds],
       rows: ["binned:published", "both:draft", "both:published", "draftOnly:draft", "published:published"],

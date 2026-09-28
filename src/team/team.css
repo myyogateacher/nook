@@ -113,3 +113,47 @@
   .team-dialog-actions .team-action { width: 100%; }
   .team-app .app-home-button { min-height: 44px; }
 }
+
+/* Invites (Wave 18) */
+.team-invites-row { width: 100%; min-height: 56px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 18px; align-items: center; gap: 12px; margin: 0 0 12px; border: 1px solid #2d2a22; border-radius: 14px; padding: 8px 12px; background: #16150f; color: inherit; text-align: left; cursor: pointer; }
+.team-invites-row:hover { border-color: #4a4230; }
+.team-invites-row.selected { border-color: #6f5928; background: #1c1a15; }
+.team-invites-row strong { color: #ededee; font-size: .92rem; }
+.team-invites-row > svg { width: 18px; height: 18px; color: #7c7c83; }
+.team-invites-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: #2b271d; color: #f5cf79; }
+.team-invites-icon svg { width: 18px; height: 18px; }
+.team-invites-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.team-invites-header h2 { margin: 0 0 6px; color: #fafafa; font-size: 1.35rem; letter-spacing: -.02em; }
+.team-invites-header .team-action { flex: none; }
+.team-invites-limit { color: #f0c674; }
+.team-invite-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.team-invite { display: grid; gap: 8px; border: 1px solid #242428; border-radius: 14px; padding: 12px 14px; background: #131315; }
+.team-invite:not(.live) { opacity: .78; }
+.team-invite-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.team-invite-prefix { margin-left: auto; color: #7c7c83; font-size: .74rem; }
+.team-status-chip.invite-live { background: #172619; color: #9be3a6; }
+.team-status-chip.invite-used { background: #1d1d21; color: #c9c9ce; }
+.team-status-chip.invite-expired, .team-status-chip.invite-revoked { background: #2b181c; color: #f3a3ae; }
+.team-invite-label { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; color: #d6d6d9; font-size: .86rem; overflow-wrap: anywhere; }
+.team-invite-note { color: #b7b7bd; }
+.team-invite-meta { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 12px; color: #8d8d94; font-size: .78rem; }
+.team-invite-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.team-invite-dialog .team-field small { font-weight: 400; }
+.team-invite-created { display: grid; gap: 14px; margin-top: 8px; }
+.team-invite-created input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+.team-invite-warning { display: flex; align-items: flex-start; gap: 8px; color: #f0c674 !important; }
+.team-invite-warning svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.team-invite-mail { display: flex; align-items: flex-start; gap: 8px; }
+.team-invite-mail.sent { color: #9be3a6 !important; }
+.team-invite-mail svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.team-check { min-height: 44px; display: flex; align-items: center; gap: 10px; color: #d6d6d9; font-size: .84rem; cursor: pointer; }
+.team-check input { width: 20px; height: 20px; flex: none; accent-color: var(--yellow); }
+.team-check span { display: grid; gap: 2px; overflow-wrap: anywhere; }
+.team-check small { color: #8d8d94; font-size: .76rem; }
+.team-check.disabled { cursor: not-allowed; opacity: .75; }
+
+@media (max-width: 760px) {
+  .team-invites-header { flex-direction: column; }
+  .team-invites-header .team-action { width: 100%; }
+  .team-invite-actions .team-action { flex: 1 1 auto; }
+}

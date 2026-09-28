@@ -1,7 +1,9 @@
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
-import { parseJson, uuid } from "../validation";
+import { config, isOriginAllowed } from "../config";
+import { email, parseJson, uuid } from "../validation";
+import { createInvite, emailInvite, INVITE_MAX_DAYS, INVITE_NOTE_MAX, INVITE_ROLES, InviteError, listInvites, resendInviteEmail, revokeInvite } from "./invites";
 import { can, ROLES } from "./roles";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
@@ -16,6 +18,15 @@ import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamErr
 export const roleChangeSchema = z.object({ role: z.enum(ROLES), expectedRole: z.enum(ROLES) }).strict();
 export const blockSchema = z.object({ reason: z.string().max(BLOCK_REASON_MAX).optional() }).strict();
 const emptySchema = z.object({}).strict();
+/** `POST /api/team/invites` (D161–D164). The role can never be admin (D163, T138). */
+export const createInviteSchema = z.object({
+  role: z.enum(INVITE_ROLES),
+  email: email.nullish(),
+  expiresInDays: z.number().int().min(1).max(INVITE_MAX_DAYS).optional(),
+  note: z.string().max(INVITE_NOTE_MAX).nullish(),
+  /** Also email the link to the bound address (only there, never elsewhere). */
+  sendEmail: z.boolean().optional()
+}).strict();
 
 /** 30 Team writes a minute per admin (§5.5). In memory, like the auth limits. */
 const WRITE_LIMIT = 30;
@@ -55,16 +66,69 @@ function writeGate(c: Context<AppEnv>) {
   return null;
 }
 
-async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>) {
+async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>, status: 200 | 201 = 200) {
   try {
-    return c.json(await operation() as object);
+    return c.json(await operation() as object, status);
   } catch (error) {
     if (error instanceof TeamError) return teamError(c, error);
+    if (error instanceof InviteError) return c.json({ error: error.message, code: error.code }, error.status);
     throw error;
   }
 }
 
+/** The origin the admin is using, for the invite link (any configured origin), else APP_ORIGIN. */
+function linkOrigin(c: Context<AppEnv>) {
+  const origin = c.req.header("Origin");
+  return origin && isOriginAllowed(origin) ? origin : config.appOrigin;
+}
+
+/**
+ * Invites (docs/plan/WAVES_18-20_SMALL.md §1.4). Registered before `/api/team/:userId` so
+ * "invites" is never read as a user id. Admins only: guests 404, members and viewers 403.
+ */
+function registerInviteRoutes(app: Hono<AppEnv>) {
+  app.get("/api/team/invites", (c) => {
+    const user = c.get("user");
+    if (!can(user.role, "team.read")) return notFound(c);
+    if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage invites", code: "ADMIN_ONLY" }, 403);
+    return c.json(listInvites(user));
+  });
+
+  app.post("/api/team/invites", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const body = await parseJson(c.req.raw, createInviteSchema);
+    const actor = c.get("user");
+    return run(c, async () => {
+      const { row, ...created } = createInvite(actor, body, linkOrigin(c));
+      // The invite stands even when the email cannot go out; the outcome says why.
+      return body.sendEmail ? { ...created, email: await emailInvite(actor, row, created.url) } : created;
+    }, 201);
+  });
+
+  app.post("/api/team/invites/:inviteId/email", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const id = uuid.safeParse(c.req.param("inviteId")?.toLowerCase()).data;
+    if (!id) return notFound(c);
+    await parseJson(c.req.raw, emptySchema);
+    const actor = c.get("user");
+    return run(c, () => resendInviteEmail(actor, id, linkOrigin(c)));
+  });
+
+  app.post("/api/team/invites/:inviteId/revoke", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const id = uuid.safeParse(c.req.param("inviteId")?.toLowerCase()).data;
+    if (!id) return notFound(c);
+    await parseJson(c.req.raw, emptySchema);
+    return run(c, () => revokeInvite(c.get("user"), id));
+  });
+}
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
+  registerInviteRoutes(app);
+
   app.get("/api/team", (c) => {
     const user = c.get("user");
     if (!can(user.role, "team.read")) return notFound(c);

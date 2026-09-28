@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, House, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, House, Link2, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
@@ -9,8 +9,9 @@ import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { blockTeamMember, getTeamMember, listTeam, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamMember, type TeamMemberDetail } from "./teamApi";
-import { eventLabel, filterTeam, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
+import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
+import { TeamInvites } from "./TeamInvites";
+import { eventLabel, filterTeam, joinedLabel, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 
@@ -34,9 +35,11 @@ type Dialog =
   | { kind: "unblock" }
   | { kind: "revoke" };
 
-const currentUserId = () => {
+type TeamView = { userId: string | null; invites: boolean };
+
+const currentView = (): TeamView => {
   const route = parseRoute(window.location.pathname);
-  return route.app === "team" ? route.userId : null;
+  return route.app === "team" ? { userId: route.userId, invites: route.invites === true } : { userId: null, invites: false };
 };
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -68,7 +71,12 @@ function roleChangeBody(member: { displayName: string; role: Role; isYou: boolea
 export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onSettings, onSignOut }: TeamAppProps) {
   const admin = canManageTeam(role);
   const binCount = useBinCount(Boolean(onBin));
-  const [routeUserId, setRouteUserId] = useState<string | null>(currentUserId);
+  const [view, setView] = useState<TeamView>(currentView);
+  const routeUserId = view.userId;
+  // Wave 18: /team/invites (admins); anyone else who lands there sees the list.
+  const routeInvites = view.invites && admin;
+  const [invites, setInvites] = useState<TeamInviteList | null>(null);
+  const [invitesError, setInvitesError] = useState<string | null>(null);
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<TeamFilter>("all");
@@ -77,8 +85,9 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
-  const routeRef = useRef(routeUserId);
-  routeRef.current = routeUserId;
+  const routeRef = useRef<string | null>(routeUserId);
+  // The Back rule treats the Invites panel like an open member (deep link → list).
+  routeRef.current = routeUserId ?? (routeInvites ? "invites" : null);
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
 
@@ -96,9 +105,26 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const visibleToRole = canSeeTeam(role);
   useEffect(() => { if (visibleToRole) void loadList(); }, [loadList, visibleToRole]);
 
+  const invitesGeneration = useRef(0);
+  const loadInvites = useCallback(async () => {
+    const generation = ++invitesGeneration.current;
+    setInvitesError(null);
+    try {
+      const result = await listTeamInvites();
+      if (generation === invitesGeneration.current) setInvites(result);
+    } catch (reason) {
+      if (generation === invitesGeneration.current) setInvitesError(messageOf(reason, "Could not load invites"));
+    }
+  }, []);
+  useEffect(() => { if (admin) void loadInvites(); }, [admin, loadInvites]);
+
   const go = useCallback((userId: string | null, replace = false) => {
-    setRouteUserId(userId);
+    setView({ userId, invites: false });
     navigateRef.current({ app: "team", userId }, { replace });
+  }, []);
+  const openInvites = useCallback(() => {
+    setView({ userId: null, invites: true });
+    navigateRef.current({ app: "team", userId: null, invites: true });
   }, []);
 
   // Back/Forward between the list and a member (a dialog open at the time only closes).
@@ -106,7 +132,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
     const onPopState = (event: PopStateEvent) => {
       if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
-      if (route.app === "team") setRouteUserId(route.userId);
+      if (route.app === "team") setView({ userId: route.userId, invites: route.invites === true });
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -131,8 +157,8 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   }, [flash, go, routeUserId, visibleToRole]);
 
   useEffect(() => {
-    document.title = detail && routeUserId === detail.id ? `${detail.displayName} · Team · Nook` : "Team · Nook";
-  }, [detail, routeUserId]);
+    document.title = detail && routeUserId === detail.id ? `${detail.displayName} · Team · Nook` : routeInvites ? "Invites · Team · Nook" : "Team · Nook";
+  }, [detail, routeInvites, routeUserId]);
 
   const back = useCallback(() => {
     const action = teamBackAction(routeRef.current, readHistoryDepth(window.history.state));
@@ -153,7 +179,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const visible = useMemo(() => filterTeam(all, filter, query), [all, filter, query]);
   const chips = useMemo(() => teamFilters(all, admin), [all, admin]);
 
-  return <main className={`app-page team-app${routeUserId ? " team-detail-open" : ""}`}>
+  return <main className={`app-page team-app${routeUserId || routeInvites ? " team-detail-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span>
@@ -184,6 +210,12 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
             {label}{members && <b>{count}</b>}
           </button>)}
         </div>
+
+        {admin && <button type="button" className={`team-invites-row${routeInvites ? " selected" : ""}`} aria-current={routeInvites ? "page" : undefined} onClick={() => { if (!routeInvites) openInvites(); }}>
+          <span className="team-invites-icon" aria-hidden="true"><Link2 /></span>
+          <span className="team-row-copy"><strong>Invites</strong><span className="team-row-meta">{invites ? `${invites.liveCount} live` : "Links to add people"}</span></span>
+          <ChevronRight aria-hidden="true" />
+        </button>}
 
         {loadError && <div className="team-state team-error" role="alert">
           <span className="team-state-icon"><TriangleAlert /></span>
@@ -221,8 +253,10 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         </ul>}
       </section>
 
-      <section className="team-detail-pane" aria-label="Team member">
-        {routeUserId && detail?.id === routeUserId
+      <section className="team-detail-pane" aria-label={routeInvites ? "Invites" : "Team member"}>
+        {routeInvites
+          ? <TeamInvites data={invites} error={invitesError} onBack={back} onReload={() => { void loadInvites(); void loadList(); }} onOpenMember={(userId) => go(userId)} flash={flash} />
+          : routeUserId && detail?.id === routeUserId
           ? <MemberDetail member={detail} members={all} admin={admin} onBack={back} onAction={setDialog} onRoleChosen={(to) => setDialog({ kind: "role", to })} />
           : routeUserId
             ? <p className="team-loading" role="status">Loading…</p>
@@ -318,7 +352,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen }
 
     {admin && member.events && <section className="team-card" aria-labelledby="team-activity-heading">
       <h3 id="team-activity-heading">Activity</h3>
-      {member.events.length === 0
+      {member.events.length === 0 && !member.joinedWithInvite
         ? <p className="team-muted">No team changes yet.</p>
         : <ol className="team-activity">
           {member.events.map((event) => <li key={event.id}>
@@ -326,6 +360,10 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen }
             {event.reason && <small className="team-reason">“{event.reason}”</small>}
             <time dateTime={event.createdAt} title={new Date(event.createdAt).toLocaleString()}>{relativeTime(event.createdAt)}</time>
           </li>)}
+          {member.joinedWithInvite && <li>
+            <span>{joinedLabel(member.joinedWithInvite)}</span>
+            <time dateTime={member.joinedWithInvite.usedAt} title={new Date(member.joinedWithInvite.usedAt).toLocaleString()}>{relativeTime(member.joinedWithInvite.usedAt)}</time>
+          </li>}
         </ol>}
     </section>}
   </article>;

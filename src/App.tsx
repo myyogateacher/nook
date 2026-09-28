@@ -42,6 +42,8 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
 import { TeamApp } from "./team/TeamApp";
+import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
+import { initialInvite } from "./auth/inviteLink";
 import { TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
@@ -662,6 +664,9 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
+  // Wave 18: /register#invite=<token>. Read once, and the fragment is stripped at once (T136); the
+  // token then lives only in this state until the account is created or the visitor leaves.
+  const [invite, setInvite] = useState(initialInvite);
   const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -1582,7 +1587,7 @@ export function App() {
   }
 
   if (checking) return <main className="loading-page"><div className="brand-mark"><Sparkles /></div><span>Opening Nook…</span></main>;
-  if (!session) return <AuthScreen onAuthenticated={(result) => {
+  const acceptSession = (result: SessionResponse) => {
     sessionUserRef.current = result.user.id;
     noteLoadGenerationRef.current += 1;
     cancelPendingAutosave();
@@ -1601,7 +1606,23 @@ export function App() {
     setActiveApp((pendingRouteRef.current ?? routeFromLocation(window.location)).app);
     setSession(result);
     setChecking(false);
+  };
+  const leaveInvite = () => {
+    setInvite({ onRegister: false, token: null });
+    pendingRouteRef.current = { app: "home" };
+    window.history.replaceState(null, "", "/");
+  };
+  if (invite.onRegister && !session) return <InviteRegister token={invite.token} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
+    const result = await api<SessionResponse>("/auth/register", { method: "POST", body: JSON.stringify(body) });
+    setCsrfToken(result.csrfToken);
+    // After registering, replace /register with Today (§1.6): Back never returns to the used link.
+    leaveInvite();
+    acceptSession(result);
   }} />;
+  if (invite.onRegister && session) return <InviteWhileSignedIn displayName={session.user.displayName} onContinue={leaveInvite} onSignOut={() => {
+    logout().then(() => window.history.replaceState(null, "", "/register"), (reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+  }} />;
+  if (!session) return <AuthScreen onAuthenticated={acceptSession} />;
 
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate

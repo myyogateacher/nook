@@ -23,16 +23,12 @@ const legacyMigrations = [initialMigration, folderSharingMigration, totpMigratio
 
 /**
  * Every registered migration ran. Reads the registered list so the assertion
- * holds whether or not 018, 021, 023, or 024 are present yet (parallel waves), and pins 1–17, 019,
- * 020, and 022.
+ * holds whether or not 021, 023, or 024 are present yet (parallel waves), and pins 1–20 and 022.
  */
 function expectAllMigrations(ids: number[]) {
   expect(ids).toEqual([...registeredMigrationIds]);
-  // 1–17 are on main; 018 (Team invites) may land later than 019 (task hierarchy) and 020 (task views).
-  expect(ids.slice(0, 17)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
-  expect(ids.slice(17).every((id) => id >= 18)).toBe(true);
-  expect(ids).toContain(19);
-  expect(ids).toContain(20);
+  expect(ids.slice(0, 20)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+  expect(ids.slice(20).every((id) => id >= 21)).toBe(true);
   expect(ids).toContain(22);
 }
 
@@ -476,7 +472,7 @@ describe("database migrations", () => {
   test("migration 019 adds the hierarchy and sprint schema on a database that already has 020, with its invariants", () => {
     const db = openDb();
     db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
-    // 1–16 and 020 applied (17C landed before 17A); 017 and 019 are missing, 018 is absent by design.
+    // 1–16 and 020 applied (17C landed before 17A); 017, 018, and 019 are missing.
     for (const migration of [...legacyMigrations, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration,
       taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, taskViewsMigration]) {
       migration.up(db);
@@ -494,7 +490,6 @@ describe("database migrations", () => {
 
     const ids = (db.query("SELECT id FROM schema_migrations ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id);
     expectAllMigrations(ids);
-    expect(ids).not.toContain(18);
     expect((db.query("SELECT name FROM schema_migrations WHERE id = 19").get() as { name: string }).name).toBe("task_hierarchy");
     // No backfill: existing cards are level 0 with no parent, and boards are Flat.
     expect(db.query("SELECT parent_card_id, level, sprint_id, bin_root_id FROM cards WHERE id = 'k1'").get()).toEqual({ parent_card_id: null, level: 0, sprint_id: null, bin_root_id: null });

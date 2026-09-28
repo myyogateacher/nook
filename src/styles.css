@@ -54,6 +54,14 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .security-note svg { width: 14px; }
 .form-error { margin: 0; color: #fda4af; font-size: .84rem; }
 .inline-auth-switch { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--yellow); font-size: .8rem; cursor: pointer; }
+.invite-register-status { margin: 28px 0 0; color: var(--muted); }
+.invite-register .auth-heading p + p { margin-top: 8px; }
+.invite-register-role, .invite-register-expiry { font-size: .84rem; }
+.invite-register .auth-heading h1 { display: flex; align-items: center; gap: 10px; font-size: 1.6rem; }
+.invite-register-icon { width: 24px; height: 24px; flex: none; color: #f3a3ae; }
+.invite-register-signout { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.invite-register-signout svg { width: 16px; }
+.invite-register .text-button { min-height: 44px; }
 
 .workspace { height: 100dvh; display: grid; grid-template-columns: 230px 320px minmax(0, 1fr); background: var(--bg); overflow: hidden; }
 .folder-pane, .note-pane, .editor-pane { min-width: 0; min-height: 0; }

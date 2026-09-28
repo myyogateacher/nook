@@ -68,6 +68,19 @@ const pushEndpointHosts = (process.env.PUSH_ENDPOINT_HOSTS ?? "")
     return value;
   });
 
+// Outbound email through Resend (server/mail.ts). Off unless both are set; never logged.
+const resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
+if (resendApiKey && !/^\S{8,200}$/.test(resendApiKey)) throw new Error("RESEND_API_KEY must be a single token without spaces");
+const mailFrom = process.env.MAIL_FROM?.trim() || null;
+if (mailFrom && !isMailFrom(mailFrom)) throw new Error('MAIL_FROM must be an address or "Display Name <address@example.com>"');
+
+/** `nook@example.com` or `Nook <nook@example.com>`: one address, no line breaks or extra brackets. */
+export function isMailFrom(value: string) {
+  const address = "[^\\s@<>\"]+@[^\\s@<>\"]+\\.[^\\s@<>\"]+";
+  return value.length <= 200 && !/[\r\n]/.test(value)
+    && (new RegExp(`^${address}$`).test(value) || new RegExp(`^[^<>\"\\r\\n]{1,80} <${address}>$`).test(value));
+}
+
 export const config = {
   port,
   dataDir,
@@ -91,7 +104,9 @@ export const config = {
   pushEnabled: pushEnabledValue as "auto" | "true" | "false",
   pushSubject,
   /** Push service hosts allowed besides the built-in list; "*.example.com" matches subdomains. */
-  pushEndpointHosts
+  pushEndpointHosts,
+  /** Email is on only when both RESEND_API_KEY and MAIL_FROM are set (server/mail.ts). */
+  mail: { enabled: Boolean(resendApiKey && mailFrom), apiKey: resendApiKey, from: mailFrom, partial: Boolean(resendApiKey) !== Boolean(mailFrom) }
 };
 
 export function isEmailAllowed(email: string) {

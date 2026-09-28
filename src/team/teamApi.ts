@@ -31,7 +31,35 @@ export type TeamEvent = {
   actor: { id: string; displayName: string } | null;
 };
 
-export type TeamMemberDetail = TeamMember & { events?: TeamEvent[] };
+/** Admin detail only (D165): how the account joined, derived from team_invites. */
+export type JoinedWithInvite = { role: InviteRole; usedAt: string; invitedBy: { id: string; displayName: string } | null };
+
+export type TeamMemberDetail = TeamMember & { events?: TeamEvent[]; joinedWithInvite?: JoinedWithInvite | null };
+
+/** Invite roles (D163): never admin. */
+export type InviteRole = Exclude<Role, "admin">;
+export type InviteStatus = "live" | "used" | "expired" | "revoked";
+
+/** GET /api/team/invites rows (docs/plan/API_CONTRACTS.md, Team → Invites). Never carries the token. */
+export type TeamInvite = {
+  id: string;
+  tokenPrefix: string;
+  role: InviteRole;
+  email: string | null;
+  note: string | null;
+  status: InviteStatus;
+  createdAt: string;
+  expiresAt: string;
+  createdBy: { id: string; displayName: string } | null;
+  usedBy: { id: string; displayName: string } | null;
+  usedAt: string | null;
+  revokedAt: string | null;
+};
+
+/** `emailEnabled`: whether mail is configured on the server (RESEND_API_KEY and MAIL_FROM). */
+export type TeamInviteList = { invites: TeamInvite[]; liveCount: number; liveLimit: number; emailEnabled?: boolean };
+export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string; sendEmail?: boolean };
+export type MailOutcome = { sent: true; id: string } | { sent: false; reason: "not_configured" | "rate_limited" | "failed" };
 
 const memberPath = (userId: string) => `/team/${encodeURIComponent(userId)}`;
 
@@ -45,3 +73,13 @@ export const unblockTeamMember = (userId: string) =>
   api<{ ok: true; member: TeamMemberDetail }>(`${memberPath(userId)}/unblock`, { method: "POST", body: "{}" });
 export const revokeTeamSessions = (userId: string) =>
   api<{ sessionsRevoked: number; member: TeamMemberDetail }>(`${memberPath(userId)}/sessions/revoke`, { method: "POST", body: "{}" });
+
+export const listTeamInvites = () => api<TeamInviteList>("/team/invites");
+/** The token and link come back from this call only (D161). */
+export const createTeamInvite = (body: CreateInviteBody) =>
+  api<{ invite: TeamInvite; token: string; url: string; email?: MailOutcome }>("/team/invites", { method: "POST", body: JSON.stringify(body) });
+/** Mails a fresh link to the invite's bound address; the old link stops working once it is sent. */
+export const emailTeamInvite = (inviteId: string) =>
+  api<{ invite: TeamInvite; email: MailOutcome }>(`/team/invites/${encodeURIComponent(inviteId)}/email`, { method: "POST", body: "{}" });
+export const revokeTeamInvite = (inviteId: string) =>
+  api<{ invite: TeamInvite }>(`/team/invites/${encodeURIComponent(inviteId)}/revoke`, { method: "POST", body: "{}" });

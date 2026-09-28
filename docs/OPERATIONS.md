@@ -13,7 +13,13 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 ### Accounts
 
-The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. Temporarily set `ALLOW_REGISTRATION=true` only while adding trusted local users, then turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. "Everyone here" sharing includes all current and future registered users on that allowlist, except accounts with the guest team role.
+The first account can always be created from the login screen while the database is empty. Later registrations are disabled by default. To add people, an admin creates an invite link in **Team → Invites** (below); `ALLOW_REGISTRATION` can stay `false`. Setting it to `true` temporarily still works for trusted local users, but turn it off again. Set `ALLOWED_EMAILS` to a comma-separated allowlist; when present, only those addresses may register, sign in, or keep an existing session. "Everyone here" sharing includes all current and future registered users on that allowlist, except accounts with the guest team role.
+
+### Invites instead of ALLOW_REGISTRATION
+
+Admins add people with single-use invite links from **Team → Invites** (see [USING.md](USING.md#inviting-people)). Keep `ALLOW_REGISTRATION=false`: a valid invite bypasses only that switch. It fixes the team role (member, viewer, or guest), works once, lasts at most 7 days, and stops working when the admin who made it is no longer an active admin. `ALLOWED_EMAILS` still applies to invitees, and an invite bound to an address works only for that address. No environment change is needed.
+
+The link carries its token in the URL fragment (`/register#invite=…`), which browsers never send to the server, so reverse-proxy access logs and `Referer` headers do not see it; the app removes it from the address bar on arrival. Treat a copied link like a password until it is used or expires, and revoke it if it went to the wrong place. Migration `018_team_invites` adds the table; back up before upgrading.
 
 ### Team admins and blocking
 
@@ -62,6 +68,16 @@ APP_ORIGINS=http://localhost:2026,http://192.168.10.20:2026,https://your-device.
 
 Docker publishes port `2026` on all host interfaces for LAN access. Prefer Tailscale Serve or a TLS reverse proxy and keep `COOKIE_SECURE=true`. Direct plain-HTTP access such as `http://192.168.10.20:2026` requires `COOKIE_SECURE=false`; this is less safe for notes containing credentials, even on a trusted home network. Never use a wildcard origin.
 
+### Email (Resend)
+
+Nook can send email through [Resend](https://resend.com). Invites are the first use; the module (`server/mail.ts`) is generic so reminders and notifications can use it later. Email is **off** unless both variables are set; while it is off every "send" action says **Email is not configured** and the main action (creating the invite) still works.
+
+1. Verify a sending domain in Resend and create an API key with sending access only.
+2. In `.env`, set `RESEND_API_KEY` and `MAIL_FROM` (an address on that domain, or `Nook <nook@your-domain>`). Compose passes both through. Restart the container.
+3. In the Resend dashboard, keep **click tracking off** for the domain. Tracked links would send the invite link through Resend's redirector. Nook's messages contain no images and no tracking of their own.
+
+Limits: 5 messages an hour per recipient, 20 an hour per admin, 200 a day per instance, and a 10 second timeout per send. Logs show a hashed recipient and Resend's message id, never the address, subject, body, or key. A provider outage never blocks the main action; the admin can still copy the link. An invite email goes only to the address the invite is bound to.
+
 ## Configuration
 
 Compose passes these variables from `.env` (see `.env.example`). Invalid values stop the server at startup with a message naming the variable.
@@ -74,7 +90,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `APP_ORIGIN` | `http://localhost:2026` | Primary browser origin; the fallback for `APP_ORIGINS`. |
 | `APP_ORIGINS` | `APP_ORIGIN` | Comma-separated exact `http(s)` origins accepted for sign-in, mutations, and MCP host checks. Entries with a path, credentials, query, or fragment are rejected. |
 | `COOKIE_SECURE` | `true` (Compose and production) | `true` or `false`. Plain-HTTP access needs `false`. |
-| `ALLOW_REGISTRATION` | `false` | `true` allows additional accounts; the first account is always allowed on an empty database. |
+| `ALLOW_REGISTRATION` | `false` | `true` allows additional accounts; the first account is always allowed on an empty database. Team invites work with `false` (see *Invites instead of ALLOW_REGISTRATION*). |
 | `ALLOWED_EMAILS` | empty | Comma-separated allowlist for registration, sign-in, and existing sessions. Empty allows any address. |
 | `SIGNUP_ROLE` | `guest` | Team role of accounts registered after the first: `guest`, `viewer`, or `member` (never `admin`). |
 | `TOTP_POLICY` | `optional` | `optional` or `required`. |
@@ -87,6 +103,8 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `PUSH_ENABLED` | `auto` | Web Push for calendar reminders: `auto` (on only when `APP_ORIGIN` is `https:`), `true`, or `false`. Browsers allow push only on a secure origin, so on `http://localhost` or a LAN address reminders appear in the bell and the notifications list only. |
 | `PUSH_SUBJECT` | `APP_ORIGIN` | The VAPID contact push services may use: an `http(s)` URL or a `mailto:` address. |
 | `PUSH_ENDPOINT_HOSTS` | empty | Extra push-service hosts, comma-separated (`push.example.com` or `*.push.example.com`), besides the built-in `*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, and `*.notify.windows.com`. |
+| `RESEND_API_KEY` | empty | Resend API key for outbound email (a single token without spaces). Email is on only when this and `MAIL_FROM` are both set. Never logged. |
+| `MAIL_FROM` | empty | Sender, `nook@example.com` or `Nook <nook@example.com>`, on a domain verified in Resend. Anything else stops the server at startup. |
 | `APP_VERSION` | `0.9.3` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 

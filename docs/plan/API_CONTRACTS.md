@@ -1185,7 +1185,7 @@ type CalendarFeed = { id: string; calendarId: string; prefix: string; detail: "b
 
 Plan of record: [research/2026-09-26-team-module.md](research/2026-09-26-team-module.md) (§11 overrides the earlier text). Migration `017_team_roles`.
 
-**Roles.** `users.role` is `admin | member | viewer | guest` (D71). All four are assignable since Wave 15 (see *Viewer and guest enforcement* below). The first account registered on an empty database is `admin` (D76, inside the register transaction), and so is one registered while no active admin exists (`role = 'admin' AND disabled_at IS NULL`), with a `team_events` row `via = 'bootstrap'`; every later registration gets `SIGNUP_ROLE` (`guest` by default, or `viewer` or `member`; never `admin`, D80); the server also logs a warning at boot in that state. On upgrade every account becomes `member` and the oldest enabled one `admin` (O8). `role` is returned on `user` by `POST /api/auth/register`, `POST /api/auth/login`, and `GET /api/auth/me`; no request body accepts it except the Team role route.
+**Roles.** `users.role` is `admin | member | viewer | guest` (D71). All four are assignable since Wave 15 (see *Viewer and guest enforcement* below). The first account registered on an empty database is `admin` (D76, inside the register transaction), and so is one registered while no active admin exists (`role = 'admin' AND disabled_at IS NULL`), with a `team_events` row `via = 'bootstrap'`; every later registration gets `SIGNUP_ROLE` (`guest` by default, or `viewer` or `member`; never `admin`, D80), or the role of the invite it used (see *Invites* below); the server also logs a warning at boot in that state. On upgrade every account becomes `member` and the oldest enabled one `admin` (O8). `role` is returned on `user` by `POST /api/auth/register`, `POST /api/auth/login`, and `GET /api/auth/me`; no request body accepts it except the Team role route.
 
 **Always one active admin.** "Active admin" means `role = 'admin' AND disabled_at IS NULL`. Every write that would leave none returns 409 `LAST_ADMIN`; the `users_keep_one_admin` triggers refuse it in SQL too (T78).
 
@@ -1230,6 +1230,53 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 - **Unblock** clears the three columns. The account signs in again with its existing password and second factor; push must be re-enabled per device; the role is unchanged.
 - **Audit and activity** (T83): each write adds one `team_events` row (append-only through triggers) and one `audit_log` row with ids and roles only: `team.role_changed { targetId, fromRole, toRole, via }`, `team.user_blocked { targetId, sessions, via }`, `team.user_unblocked { targetId, via }`, `team.sessions_revoked { targetId, sessions, via }`, `team.bootstrap_admin { targetId }`, and . The block reason lives only in `users.block_reason` and the `block` event. Blocked sign-in attempts are audited as `auth.login_blocked`.
 
+### Invites (Wave 18)
+
+Plan of record: [WAVES_18-20_SMALL.md](WAVES_18-20_SMALL.md) §1 and its Director review. Migration `018_team_invites`. Decisions D161–D169.
+
+An admin creates a **single-use link with a fixed team role** (`member`, `viewer`, or `guest`; never `admin`, which the migration's CHECK also refuses). The link is `<origin>/register#invite=<token>`: the token sits in the URL **fragment**, which browsers never send to the server, so it stays out of access logs, proxies, and `Referer`. The SPA reads it once, strips it from the address bar with `history.replaceState`, and posts it in JSON bodies only. The token is 32 random bytes in base64url (43 characters); only its SHA-256 and a 6-character prefix are stored, and it is returned once, by the create call.
+
+```ts
+type TeamInvite = {
+  id: string; tokenPrefix: string; role: "member" | "viewer" | "guest";
+  email: string | null;          // bound address: only it can register with the link
+  note: string | null;           // admin-only label, at most 80 characters
+  status: "live" | "used" | "expired" | "revoked";
+  createdAt: string; expiresAt: string;
+  createdBy: { id: string; displayName: string } | null;
+  usedBy: { id: string; displayName: string } | null;
+  usedAt: string | null; revokedAt: string | null;
+};
+type MailOutcome = { sent: true; id: string } | { sent: false; reason: "not_configured" | "rate_limited" | "failed" };
+```
+
+An invite is **usable** only while it is unused, unrevoked, unexpired, and its creator is still an **active admin** (`role = 'admin' AND disabled_at IS NULL`, checked at use time): a demoted or blocked admin's links stop working, and work again if the privilege is restored.
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET /api/team/invites` | admin | | 200 `{ invites: TeamInvite[], liveCount, liveLimit: 20, emailEnabled }`: every live invite plus the latest 100 others, newest first | 404 (guest), 403 `ADMIN_ONLY` |
+| `POST /api/team/invites` | admin | `{ role, email?, expiresInDays?: 1..7 (default 7), note?, sendEmail? }` (strict) | 201 `{ invite, token, url, email?: MailOutcome }`; `email` only with `sendEmail` | 400 `EMAIL_NOT_ALLOWED` (bound email not on `ALLOWED_EMAILS`), 400 `EMAIL_REQUIRED` (`sendEmail` without `email`), 409 `ACCOUNT_EXISTS`, 409 `INVITE_LIMIT` (20 live on the instance), 429 `RATE_LIMITED` (10 creations an hour per admin) |
+| `POST /api/team/invites/:inviteId/revoke` | admin | `{}` | 200 `{ invite }`; repeating on a revoked invite answers the same | 404, 409 `INVITE_NOT_LIVE` (used or expired) |
+| `POST /api/team/invites/:inviteId/email` | admin | `{}` | 200 `{ invite, email: MailOutcome }`. A fresh token is mailed to the bound address; once the mail is accepted it replaces the old one, so the earlier link stops working. The new token is never returned. | 400 `EMAIL_REQUIRED` (no bound email), 404, 409 `INVITE_NOT_LIVE` |
+| `POST /api/auth/invite` | anyone (pre-auth: Origin and JSON checks, no session) | `{ token }` | 200 `{ role, emailHint, expiresAt, inviterName }`; `emailHint` is masked (`p•••@example.com`) or null | 400 (malformed), 404 `INVITE_INVALID` (unknown, used, revoked, or creator no longer an active admin), 410 `INVITE_EXPIRED`, 429 (30 a minute, instance-wide) |
+
+The invite writes also count against the 30 Team writes a minute per admin. `/api/team/invites` is matched before `/api/team/:userId`.
+
+**Register with an invite.** `POST /api/auth/register` accepts an optional `inviteToken` (the body stays strict, so `role` is still refused with 400). With a token:
+
+- the body is read before the `ALLOW_REGISTRATION` check, and a usable invite **bypasses only** `ALLOW_REGISTRATION`; `ALLOWED_EMAILS` still applies (403);
+- the invite is checked before the "account exists" lookup, so a made-up token cannot probe which emails are registered;
+- a bound email must match case-insensitively (403 `INVITE_EMAIL_MISMATCH`);
+- 404 `INVITE_INVALID` or 410 `INVITE_EXPIRED` otherwise. An invalid token is **never silently ignored**, even while registration is open;
+- the account gets the invite's role, and the invite is claimed inside the user-insert transaction by one guarded `UPDATE … WHERE used_at IS NULL AND revoked_at IS NULL AND expires_at > now`; a lost race rolls the new account back and answers `INVITE_INVALID` (T141);
+- an **empty instance ignores the token**: its first account is the admin (D76, D163). On an instance whose accounts exist but have no active admin, no invite is usable (its creator is not an active admin), so the call fails instead of creating an admin.
+
+**Audit.** `team.invite_create`, `team.invite_revoke`, `team.invite_accept` (actor: the new account), and `team.invite_emailed`, each with `{ inviteId, role }` only: never the token, its hash, or an email. `team_events` is unchanged; the admin member detail gets `joinedWithInvite: { role, usedAt, invitedBy } | null`, derived from `team_invites.used_by`, shown in Activity as "Joined with an invite from <admin>, as <role>".
+
+**Sweeper.** Invites dead (used, revoked, or expired) for 90 days are deleted hourly. Live invites are never swept.
+
+**Email.** `sendEmail` and the email route go through `server/mail.ts` (Resend, see OPERATIONS.md "Email (Resend)"). Mail goes only to the invite's bound address. When email is off (`RESEND_API_KEY` or `MAIL_FROM` unset) the invite is still created and the outcome is `{ sent: false, reason: "not_configured" }`; the UI shows "Email is not configured". The message is plain text plus minimal inline-styled HTML with the link, the role, the expiry (UTC), and the inviter's display name; no images, remote content, or tracking.
+
 ### Host CLI
 
 `bun server/team-admin.ts list | set-role <email> admin|member|viewer|guest | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
@@ -1242,6 +1289,7 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 | --- | --- | --- | --- |
 | `list_team_members` | team:read | `{ role?, status?: "active" \| "blocked" }` | `{ members: [{ id, displayName, role, status, createdAt, lastSeenAt }] }` |
 | `get_team_member` | team:read | `{ userId }` | the same fields plus `blockedAt` and `events` (latest 20: `{ action, fromRole, toRole, createdAt, actor }` with the actor's display name) |
+| `list_invites` | team:read | `{ status?: "live" \| "all" }` (default all) | `{ liveCount, liveLimit, invites: [{ id, role, status, createdAt, expiresAt, createdBy, usedBy }] }` with display names; never a token, prefix, email, or label. There is no create, revoke, or email tool (D168). |
 
 ## Viewer and guest enforcement (Wave 15)
 

@@ -9,6 +9,7 @@
 import { revokeUserPushSubscriptions } from "../calendar/push";
 import { isEmailAllowed } from "../config";
 import { audit, db, now, type UserRow } from "../db";
+import { joinedWithInvite } from "./invites";
 import { can, type Role } from "./roles";
 import { userRole } from "./userRole";
 
@@ -139,7 +140,8 @@ export function teamMember(viewer: { id: string; role: Role }, userId: string) {
   const row = db.query(`${memberSelect} WHERE u.id = ?`).get(userId) as MemberRow | null;
   if (!row) return null;
   const member = present(row, viewer);
-  return can(viewer.role, "team.manage") ? { ...member, events: teamEvents(userId) } : member;
+  // D165: "Joined with an invite from <admin>, as <role>" comes from team_invites, not team_events.
+  return can(viewer.role, "team.manage") ? { ...member, events: teamEvents(userId), joinedWithInvite: joinedWithInvite(userId) } : member;
 }
 
 export function teamEvents(userId: string, limit = TEAM_EVENTS_LIMIT): TeamEvent[] {

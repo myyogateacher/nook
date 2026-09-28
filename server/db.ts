@@ -40,6 +40,23 @@ export type UserRow = {
   block_reason: string | null;
 };
 
+/** A row of `team_invites` (migration 018, D161–D169). The token itself is never stored. */
+export type TeamInviteRow = {
+  id: string;
+  token_hash: string;
+  token_prefix: string;
+  email: string | null;
+  role: "member" | "viewer" | "guest";
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  used_by: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+};
+
 export type NoteRow = {
   id: string;
   owner_id: string;

@@ -95,6 +95,26 @@ describe("row attachments", () => {
     expect(await content(member, documentId)).toBe(200);
   });
 
+  test("files linked in the same millisecond list, and snapshot for Undo, in linking order whatever their random ids", async () => {
+    const { owner, row, receipt } = await setup("Link ties");
+    const timestamp = new Date().toISOString();
+    const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
+      VALUES (?, ?, NULL, 'f.txt', 'text/plain', 'text', 1, ?, ?, ?, 'collection_attachment')`);
+    const link = db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)");
+    // Each later link gets a smaller document id, so a document-id tie-break would reverse them.
+    const ids = Array.from({ length: 3 }, () => crypto.randomUUID()).sort().reverse();
+    for (const id of ids) {
+      insert.run(id, owner.userId, "d".repeat(64), timestamp, timestamp);
+      link.run(row.id, id, receipt.id, owner.userId, timestamp);
+    }
+    const read = await call(owner, "GET", `/rows/${row.id}`);
+    expect(read.body.row.files[receipt.id].map((file: { id: string }) => file.id)).toEqual(ids);
+    // The next link change stores the links before it for Undo, in the same order.
+    expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: await upload(owner, "collection_attachment"), fieldId: receipt.id })).status).toBe(201);
+    const stored = db.query("SELECT prev_values_json FROM collection_rows WHERE id = ?").get(row.id) as { prev_values_json: string };
+    expect((JSON.parse(stored.prev_values_json).$attachments as string[][]).map((snapshot) => snapshot[0])).toEqual(ids);
+  });
+
   test("linking and unlinking bump the row revision, and Undo reverts them", async () => {
     const { owner, row, receipt, item } = await setup("Link undo");
     const documentId = await upload(owner, "collection_attachment", "undo.txt");

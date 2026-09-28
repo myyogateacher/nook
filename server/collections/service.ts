@@ -431,7 +431,10 @@ function resolveNotes(noteIds: string[], viewerId: string) {
 
 export type AttachmentSummary = { id: string; name: string; mime_type: string; preview_kind: string; size_bytes: number; linked_by: string | null; created_at: string };
 
-/** Live linked documents per row and file field. Links under removed or retyped fields are not shown. */
+/**
+ * Live linked documents per row and file field, oldest first (same-millisecond links by rowid, insertion
+ * order). Links under removed or retyped fields are not shown.
+ */
 function attachmentsFor(schema: CollectionSchema, rowIds: string[]) {
   const fileFields = new Set(schema.fields.filter((field) => field.type === "file").map((field) => field.id));
   const byRow = new Map<string, Record<string, AttachmentSummary[]>>();
@@ -440,7 +443,7 @@ function attachmentsFor(schema: CollectionSchema, rowIds: string[]) {
     const batch = rowIds.slice(start, start + 200);
     const rows = db.query(`SELECT a.row_id, a.field_id, d.id, d.name, d.mime_type, d.preview_kind, d.size_bytes, a.linked_by, a.created_at
       FROM collection_row_attachments a JOIN documents d ON d.id = a.document_id AND d.deleted_at IS NULL
-      WHERE a.row_id IN (${batch.map(() => "?").join(", ")}) ORDER BY a.created_at, d.id`).all(...batch) as Array<AttachmentSummary & { row_id: string; field_id: string }>;
+      WHERE a.row_id IN (${batch.map(() => "?").join(", ")}) ORDER BY a.created_at, a.rowid`).all(...batch) as Array<AttachmentSummary & { row_id: string; field_id: string }>;
     for (const { row_id, field_id, ...attachment } of rows) {
       if (!fileFields.has(field_id)) continue;
       const files = byRow.get(row_id) ?? {};
@@ -771,7 +774,7 @@ const PREV_VALUES_MAX_BYTES = 16384;
 type LinkSnapshot = [documentId: string, fieldId: string, linkedBy: string | null, createdAt: string];
 
 function rowLinks(rowId: string): LinkSnapshot[] {
-  return (db.query("SELECT document_id, field_id, linked_by, created_at FROM collection_row_attachments WHERE row_id = ? ORDER BY created_at, document_id").all(rowId) as Array<{ document_id: string; field_id: string; linked_by: string | null; created_at: string }>)
+  return (db.query("SELECT document_id, field_id, linked_by, created_at FROM collection_row_attachments WHERE row_id = ? ORDER BY created_at, rowid").all(rowId) as Array<{ document_id: string; field_id: string; linked_by: string | null; created_at: string }>)
     .map((link) => [link.document_id, link.field_id, link.linked_by, link.created_at]);
 }
 

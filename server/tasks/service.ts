@@ -16,6 +16,7 @@ import { SPRINT_DEFAULT_DAYS, sprintEndFor } from "../../shared/sprintPlan";
 import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCardTags, requireCardTags, tagIdsForBoard, tagIdsForCard, type CardFlag } from "./tags";
 import { audienceAllUsersFor } from "../team/roles";
 import { dateInZone, validTimeZone } from "../today/registry";
+import { mailShared, shareMembers } from "../mail/triggers";
 
 /**
  * Task Boards services (WAVES_7-9.md §3). Routes are thin adapters over these
@@ -351,10 +352,13 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
   return withBoardLock(boardId, () => {
     requireOwnedBoard(boardId, userId);
     db.transaction(() => {
+      const before = shareMembers("board_members", "board_id", boardId);
       db.query("DELETE FROM board_members WHERE board_id = ?").run(boardId);
       if (visibility === "selected") {
         const statement = db.query("INSERT INTO board_members (board_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) statement.run(boardId, recipientId, now());
+        // "Shared with you" mail (outbound email #25).
+        mailShared(userId, "board", boardId, before, uniqueIds);
       }
       db.query("UPDATE boards SET visibility = ?, updated_at = ? WHERE id = ?").run(visibility, now(), boardId);
       audit(userId, null, "task.board_sharing_changed", { boardId, visibility, recipientCount: visibility === "selected" ? uniqueIds.length : 0 });

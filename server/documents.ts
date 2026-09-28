@@ -14,6 +14,7 @@ import { SNIFF_BYTES, sniff } from "./mimeSniff";
 import { withResourceLock } from "./storage";
 import { purgeAfterFrom } from "./bin";
 import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
+import { mailShared, shareMembers } from "./mail/triggers";
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
@@ -625,10 +626,13 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
     return withDocumentLock(id, async () => {
       if (!ownedFileDocument(id, userId)) return notFound(c);
       db.transaction(() => {
+        const before = shareMembers("document_shares", "document_id", id);
         db.query("DELETE FROM document_shares WHERE document_id = ?").run(id);
         if (body.visibility === "selected") {
           const statement = db.query("INSERT INTO document_shares (document_id, user_id, created_at) VALUES (?, ?, ?)");
           for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+          // "Shared with you" mail (outbound email #25).
+          mailShared(userId, "file", id, before, uniqueIds);
         }
         const visibility = body.visibility === "inherit" ? "private" : body.visibility;
         db.query("UPDATE documents SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ? AND owner_id = ?")

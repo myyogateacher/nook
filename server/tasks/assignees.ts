@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { audienceAllUsersFor } from "../team/roles";
+import { mailAssigned } from "../mail/triggers";
 
 /**
  * Card assignees (WAVE_13_TASK_CARD_UX.md D102, D103; migration 015).
@@ -77,6 +78,8 @@ export function replaceAssignees(cardId: string, userIds: readonly string[], act
   for (const id of added) insert.run(cardId, id, actorId, timestamp);
   db.query("UPDATE cards SET assignee_id = (SELECT user_id FROM card_assignees WHERE card_id = $cardId ORDER BY created_at, rowid LIMIT 1) WHERE id = $cardId")
     .run({ cardId });
+  // "Assigned to you" mail, in the card's transaction (outbound email #16); never for self-assigning.
+  if (added.length) mailAssigned(actorId, cardId, added);
   return { added, removed };
 }
 

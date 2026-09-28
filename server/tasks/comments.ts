@@ -3,6 +3,7 @@ import { readableBoardPredicate } from "./access";
 import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
 import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
+import { mailComment } from "../mail/triggers";
 import type { ReactionAggregate } from "../../shared/reactions";
 
 /**
@@ -86,6 +87,8 @@ export async function createComment(userId: string, cardId: string, input: { bod
       }
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(timestamp, cardId);
       audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id });
+      // "New comment on your card" mail for its assignees and creator (outbound email #17).
+      mailComment(userId, cardId, id);
     })();
     return { comment: commentById(userId, id)! };
   });

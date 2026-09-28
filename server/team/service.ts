@@ -13,6 +13,7 @@ import { joinedWithInvite } from "./invites";
 import { can, type Role } from "./roles";
 import { userRole } from "./userRole";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
+import { mailAccountEvent, mailRoleChanged } from "../mail/triggers";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -239,6 +240,8 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     // Agent inbox D152: a read-only role cannot use routines, so they pause (resume after a promotion).
     if (input.role === "viewer" || input.role === "guest") pauseRoutinesOf(target.id);
     audit(actor?.id ?? null, null, "team.role_changed", auditMeta(options.via, { targetId: target.id, fromRole: target.role, toRole: input.role }));
+    // Security mail (outbound email #2), coalesced 10 min; a toggle back sends nothing.
+    mailRoleChanged(target.id, target.role, actor?.id ?? null);
     return { changed: true as const, role: input.role };
   });
 }
@@ -265,6 +268,8 @@ export function blockUser(actor: TeamActor, targetId: string, reason: string | n
     revokeUserPushSubscriptions(target.id, "user_blocked");
     recordEvent(target.id, actor, options.via, "block", { reason: cleanReason }, timestamp);
     audit(actor?.id ?? null, null, "team.user_blocked", auditMeta(options.via, { targetId: target.id, sessions }));
+    // Security mail (#3), without the admin's reason (O11).
+    mailAccountEvent(target.id, "blocked", actor?.id ?? null);
     const pausedKeys = (db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(target.id) as { count: number }).count;
     return { blockedAt: timestamp, sessionsRevoked: sessions, mcpKeysPaused: pausedKeys };
   });
@@ -281,6 +286,7 @@ export function unblockUser(actor: TeamActor, targetId: string, options: { via: 
     if (result.changes !== 1) throw new TeamError(409, "NOT_BLOCKED", "This account is not blocked");
     recordEvent(target.id, actor, options.via, "unblock");
     audit(actor?.id ?? null, null, "team.user_unblocked", auditMeta(options.via, { targetId: target.id }));
+    mailAccountEvent(target.id, "unblocked", actor?.id ?? null);
     return { ok: true as const };
   });
 }
@@ -296,6 +302,7 @@ export function revokeSessions(actor: TeamActor, targetId: string, options: { vi
     revokeUserPushSubscriptions(target.id, "sessions_revoked");
     recordEvent(target.id, actor, options.via, "sessions_revoked");
     audit(actor?.id ?? null, null, "team.sessions_revoked", auditMeta(options.via, { targetId: target.id, sessions }));
+    mailAccountEvent(target.id, "sessions_revoked", actor?.id ?? null);
     return { sessionsRevoked: sessions };
   });
 }

@@ -1,0 +1,23 @@
+Subject: New recovery codes for your Nook account
+
+Nook · nook.test
+
+SECURITY · TWO-FACTOR
+New recovery codes were made
+
+Your old recovery codes no longer work.
+
+> Mon 28 Sep 2026, 09:00 (UTC)
+  10 recovery codes left
+
+If this wasn't you, change your password and ask your admin.
+
+Review in Settings:
+https://nook.test/settings/security
+
+--
+You got this because it is about your own Nook account.
+Security emails can't be turned off. They tell you about changes to your account.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

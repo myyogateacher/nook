@@ -7,6 +7,7 @@ import { filterError, QUERY_GROUPS, QUERY_SORTS, runQuery, type QueryGroup, type
 import { applyRenumber, limitReached, TaskError } from "./service";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { canWriteContent } from "../team/userRole";
+import { mailShared, shareMembers } from "../mail/triggers";
 
 /**
  * Saved cross-board task views (research 2026-09-26 §10.2, D140, Q12, Q13;
@@ -249,10 +250,13 @@ export function putViewSharing(userId: string, viewId: string, visibility: Board
   return withViewsLock(userId, () => {
     requireOwnedView(viewId, userId);
     db.transaction(() => {
+      const before = shareMembers("task_view_members", "view_id", viewId);
       db.query("DELETE FROM task_view_members WHERE view_id = ?").run(viewId);
       if (visibility === "selected") {
         const insert = db.query("INSERT INTO task_view_members (view_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) insert.run(viewId, recipientId, now());
+        // "Shared with you" mail (outbound email #25).
+        mailShared(userId, "view", viewId, before, uniqueIds);
       }
       // Sharing is part of the view: bump the revision so an editor holding the old one gets 409 VIEW_CHANGED.
       db.query("UPDATE task_views SET visibility = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(visibility, now(), viewId);

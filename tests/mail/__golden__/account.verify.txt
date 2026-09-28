@@ -1,0 +1,19 @@
+Subject: Verify your email for Nook
+
+Nook · nook.test
+
+ACCOUNT · VERIFY
+Confirm your email address
+
+Confirm that priya@example.com is yours, so Nook can send you assignments, shares, and other updates.
+
+The link works once, until Tue 29 Sep 2026, 09:00 (UTC). If you did not ask for this, ignore it.
+
+Verify email:
+https://nook.test/verify-email#token=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+--
+You got this because someone asked Nook to verify this address.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

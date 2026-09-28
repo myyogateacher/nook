@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Bell, BellRing, Send, Smartphone, Trash2 } from "lucide-react";
 import { getInboxSettings, setInboxPush } from "../inbox/inboxApi";
 import { useRole } from "../team/roleAccess";
+import { EmailSettings } from "./EmailSettings";
 import {
   currentEndpoint,
   enablePushOnThisDevice,
@@ -115,6 +116,7 @@ export function NotificationSettings() {
     {message && <p className="notification-settings-message" role="status">{message}</p>}
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
     <ProposalPushSetting />
+    <EmailSettings />
   </section>;
 }
 

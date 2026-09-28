@@ -1,0 +1,24 @@
+Subject: 2 new comments on ‘Fix login redirect’
+
+Nook · nook.test
+
+TASKS · COMMENTS
+2 new comments on your card
+
+Fix login redirect, on the board Launch.
+
+> Sam Lee
+  "The redirect loses the query string after sign in. I pushed a fix for review."
+> Priya Shah
+  "Looks good, merging after lunch."
+
+Open card:
+https://nook.test/tasks/5f0c5a6e-1b2d-4c3e-8f4a-111111111111/card/6a1d6b7f-2c3e-4d4f-9a5b-222222222222
+
+--
+You got this because you are assigned to this card or created it.
+Turn off “Comments on your cards” emails:
+https://nook.test/mail/unsubscribe#t=cHJldmlldy1vbmx5LW5vdC1hLXRva2Vu.cHJldmlldzAw
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

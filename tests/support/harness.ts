@@ -27,7 +27,12 @@ export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 export const port = Number(process.env.MYNOTES_TEST_PORT ?? 22026);
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
-export const allowedTestEmails = Array.from({ length: 1200 }, (_, index) => `allowed-${index + 1}@example.test`);
+/**
+ * The first SEQUENTIAL_TEST_EMAILS go to register()/createUser() in order (the whole suite shares one
+ * process and counter); the rest are spares for tests that need an address no account uses.
+ */
+export const SEQUENTIAL_TEST_EMAILS = 2000;
+export const allowedTestEmails = Array.from({ length: 3000 }, (_, index) => `allowed-${index + 1}@example.test`);
 
 process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;
@@ -63,7 +68,7 @@ export type Session = { cookie: string; setCookie: string; csrf: string; userId:
 let emailIndex = 0;
 
 function nextEmail() {
-  const email = allowedTestEmails[emailIndex++];
+  const email = emailIndex < SEQUENTIAL_TEST_EMAILS ? allowedTestEmails[emailIndex++] : undefined;
   if (!email) throw new Error("Test email allowlist exhausted");
   return email;
 }

@@ -7,6 +7,7 @@ import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
 import { sweepRuns } from "./inbox/routines";
+import { sweepMail } from "./mail/dispatcher";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -92,6 +93,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (runs.abandoned || runs.purged) console.info(`Run sweep: ${runs.abandoned} abandoned, ${runs.purged} removed`);
       } catch (error) {
         console.error("Run sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Mail history (outbound email §B.3): delivered rows after 30 days, failures after 90.
+        const mail = sweepMail(options.nowMs);
+        if (mail.outbox || mail.tokens) console.info(`Mail sweep: ${mail.outbox} outbox rows and ${mail.tokens} tokens removed`);
+      } catch (error) {
+        console.error("Mail sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

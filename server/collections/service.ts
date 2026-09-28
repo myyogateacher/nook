@@ -32,6 +32,7 @@ import {
 import { indexRow, reindexCollection } from "./search";
 import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates";
 import { canWriteContent } from "../team/userRole";
+import { mailShared, shareMembers } from "../mail/triggers";
 
 /**
  * Collections services (WAVES_10-12.md §3). Routes are thin adapters over
@@ -244,10 +245,13 @@ export async function putSharing(userId: string, collectionId: string, input: { 
   return withCollectionLock(collectionId, () => {
     requireOwnedCollection(collectionId, userId);
     db.transaction(() => {
+      const before = shareMembers("collection_members", "collection_id", collectionId);
       db.query("DELETE FROM collection_members WHERE collection_id = ?").run(collectionId);
       if (input.visibility === "selected") {
         const statement = db.query("INSERT INTO collection_members (collection_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) statement.run(collectionId, recipientId, now());
+        // "Shared with you" mail (outbound email #25).
+        mailShared(userId, "collection", collectionId, before, uniqueIds);
       }
       db.query("UPDATE collections SET visibility = ?, share_role = ?, updated_at = ? WHERE id = ?").run(input.visibility, input.role, now(), collectionId);
       audit(userId, null, "collection.sharing_changed", {

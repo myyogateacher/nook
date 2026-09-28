@@ -32,6 +32,9 @@ services:
       PUSH_ENDPOINT_HOSTS: ${PUSH_ENDPOINT_HOSTS:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_INSTANCE_NAME: ${MAIL_INSTANCE_NAME:-}
+      MAIL_DAILY_LIMIT: ${MAIL_DAILY_LIMIT:-500}
+      MAIL_ALLOW_HTTP_LINKS: ${MAIL_ALLOW_HTTP_LINKS:-false}
     volumes:
       - ${MYNOTES_DATA_DIR:-/srv/mynotes}:/data
     read_only: true

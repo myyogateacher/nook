@@ -8,6 +8,7 @@ import {
 } from "./keyGrants";
 import { hasScope, type McpScope } from "./mcpScopes";
 import { MCP_LIMITS } from "./mcpRateLimit";
+import { recoveryCode, totpCode } from "./validation";
 import { activeModules, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, type PolicyBlock, type Policies } from "./team/policies";
 import { can, mcpScopesForRole, type Role } from "./team/roles";
 import { readableBoardPredicate } from "./tasks/access";
@@ -53,8 +54,8 @@ export type GrantInput = z.infer<typeof grantInput>;
 
 const reauthFields = {
   password: z.string().min(1).max(256),
-  totpCode: z.string().regex(/^\d{6}$/).optional(),
-  recoveryCode: z.string().min(8).max(64).optional()
+  totpCode: totpCode.optional(),
+  recoveryCode: recoveryCode.optional()
 };
 
 export const createKeySchema = z.object({

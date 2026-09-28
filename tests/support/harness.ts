@@ -27,7 +27,7 @@ export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 export const port = Number(process.env.MYNOTES_TEST_PORT ?? 22026);
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
-export const allowedTestEmails = Array.from({ length: 1200 }, (_, index) => `allowed-${index + 1}@example.test`);
+export const allowedTestEmails = Array.from({ length: 2000 }, (_, index) => `allowed-${index + 1}@example.test`);
 
 process.env.DATA_DIR = dataDir;
 process.env.APP_ORIGIN = origin;
@@ -62,7 +62,15 @@ export const server = Bun.serve(serverOptions);
 export type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
 let emailIndex = 0;
 
+/**
+ * Indices 999–1149 (allowed-1000 … allowed-1150) are fixed addresses some tests bind invites to
+ * (tests/teamMcp.test.ts, tests/mail.test.ts), so sequential accounts skip them; teamInvites.test.ts
+ * takes spares from the top of the list.
+ */
+const RESERVED_EMAILS = { from: 999, to: 1150 };
+
 function nextEmail() {
+  if (emailIndex >= RESERVED_EMAILS.from && emailIndex < RESERVED_EMAILS.to) emailIndex = RESERVED_EMAILS.to;
   const email = allowedTestEmails[emailIndex++];
   if (!email) throw new Error("Test email allowlist exhausted");
   return email;

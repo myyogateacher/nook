@@ -37,6 +37,11 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "PUT", path: "/api/preferences", why: "own Modules preference (UI only, D92)" },
   { method: "POST", path: "/api/mcp/keys", why: "own MCP keys; the handler limits scopes by role and refuses guests (O6)" },
   { method: "DELETE", path: "/api/mcp/keys/:id", why: "revoke own MCP keys" },
+  // Nook keys (Wave 31, access plan §C.7): viewers keep read-only keys; the handlers cap grants by role.
+  { method: "POST", path: "/api/keys", why: "own API keys; the handler limits grants by role and policy and refuses guests" },
+  { method: "PATCH", path: "/api/keys/:id", why: "narrow own API keys (never widens)" },
+  { method: "POST", path: "/api/keys/:id/rotate", why: "rotate own API keys (same grants, re-authenticated)" },
+  { method: "DELETE", path: "/api/keys/:id", why: "revoke own API keys" },
   { method: "POST", path: "/api/collections/:collectionId/query", why: "a read sent as POST" },
   { method: "POST", path: "/api/tasks/query", why: "a read sent as POST; guests only with assignee:me (isGuestTaskQuery)" },
   // Personal task views (task hierarchy plan Q12): viewers keep private views; sharing stays refused

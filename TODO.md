@@ -8,11 +8,12 @@ Release history and per-version notes live on the docs site ("What's new") and i
 
 Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agent inbox & routines](docs/plan/research/2026-09-28-agent-inbox-routines.md) · [whiteboard](docs/plan/research/2026-09-28-whiteboard-module.md) · [password vault](docs/plan/research/2026-09-28-password-vault-module.md).
 
-- [ ] Wave 18 Team invites + outbound email wrapper (Resend, D93) — merged. → v0.10.0 with Wave 20 (merged `b85b1d2`).
-- [ ] Wave 21 Agent inbox: proposals — merged. → v0.12.0.
-- [ ] Wave 19 MCP write coverage — after Wave 21 merges. → v0.11.0.
-- [ ] Wave 22 Routines and runs — after Wave 21.
-- [ ] Wave 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — awaiting the operator's pick.
+- [ ] Wave 18 Team invites + outbound email wrapper (Resend, D93) — merged. → v0.10.0 with Wave 20 (merged `b85b1d2`) and Wave 21 (merged `e33015a`) — review + QA in progress.
+- [ ] Wave 21 Agent inbox: proposals — merged `e33015a`, ships in v0.10.0.
+- [ ] Wave 19 MCP write coverage — building. → v0.11.0.
+- [ ] Wave 22 Routines and runs — building. → v0.11.0.
+- [ ] **Priority (operator, 2026-09-28):** access management & API keys, and outbound email — research running now, then waves. Migration ids 025 (access) and 026 (email prefs).
+- [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.
 - [ ] Email consumers after Wave 18: Calendar reminders, notification digests, per-user "email me" preference (folded into the email research below).
 
 ## Research queue — after Waves 18–22 ship (operator, 2026-09-28): research, then drive development

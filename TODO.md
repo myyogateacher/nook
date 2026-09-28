@@ -4,14 +4,16 @@
 
 Release history and per-version notes live on the docs site ("What's new") and in `git log`; plans of record are in `DEVELOPMENT_PLAN.md`, `docs/plan/WAVE_13_TASK_CARD_UX.md`, `docs/plan/WAVES_7-9.md`, `docs/plan/WAVES_10-12.md`, and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-## Open
+## In flight (2026-09-28)
 
-- [ ] Email: reminders and notification digests over the `server/mail.ts` (Resend) wrapper once Wave 18 lands it; per-user "email me" preference in Settings → Notifications.
+Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agent inbox & routines](docs/plan/research/2026-09-28-agent-inbox-routines.md) · [whiteboard](docs/plan/research/2026-09-28-whiteboard-module.md) · [password vault](docs/plan/research/2026-09-28-password-vault-module.md).
 
-- [ ] Wave 16 (Team C): invite links (`team_invites`, migration `018`), per `docs/plan/research/2026-09-26-team-module.md` §8 — unscheduled.
-- [ ] MCP write-coverage wave: publish notes, bin/restore cards and events, file upload, tag and sprint management, collection creation — proposed, awaiting go-ahead.
-- [ ] Real-device checks only the operator can run on the HTTPS origin: a push notification to a phone; a phone calendar feed subscription (TEST_PLAN manual rows).
-- [ ] QA instance `nook-qa` (port 22126) holds throwaway `qa*-`/`rev*-` accounts and data only; rebuild from `main` before each QA round.
+- [ ] Wave 18 Team invites + outbound email wrapper (Resend, D93) — building. → v0.10.0 with Wave 20 (merged `b85b1d2`).
+- [ ] Wave 21 Agent inbox: proposals — building. → v0.12.0.
+- [ ] Wave 19 MCP write coverage — after Wave 21 merges. → v0.11.0.
+- [ ] Wave 22 Routines and runs — after Wave 21.
+- [ ] Wave 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — awaiting the operator's pick.
+- [ ] Email consumers after Wave 18: Calendar reminders, notification digests, per-user "email me" preference (folded into the email research below).
 
 ## Research queue — after Waves 18–22 ship (operator, 2026-09-28): research, then drive development
 
@@ -45,14 +47,3 @@ Release history and per-version notes live on the docs site ("What's new") and i
 - [ ] Chat UI: rich Markdown rendering (bullets, tables, links); private chats; share a chat with a user, all users, or make it public.
 - [ ] FAQ knowledge base via text embeddings over text documents, exposed as an MCP tool selectable in the agent's tool picker.
 - [ ] UI/UX research: how ChatGPT, Claude, Open WebUI, LibreChat, LobeChat, Dify lay out threads/settings/tool config; audit-log UX; best fit for Nook.
-
-## Backlog — unscheduled
-
-Research reports (2026-09-25): [feature enhancements](docs/plan/research/2026-09-25-feature-enhancements.md) · [new modules](docs/plan/research/2026-09-25-new-modules.md).
-
-- [ ] Agent inbox and routines (M) — stored routines run by outside AI clients over MCP; results return as proposals to approve.
-- [ ] Whiteboard/canvas stored as files — next in line if wanted. Rejected: password vault, scanning/OCR, photo gallery, transcription, RSS (reasons in the report), and Journal and Bookmarks/read-later (operator, 2026-09-28); chat is re-opened as the Messages research item above.
-- [ ] Light theme / theme toggle (the app is dark-only; noted by QA).
-- [ ] Nice-to-haves seen in QA: "+N"-only tag footer on very narrow cards; comment box pins late at 761–1099 px in the card drawer.
-
-**Enhancements to existing modules (not chosen yet):** tags, wikilinks/backlinks, daily notes and templates, cross-note task list, Markdown export and Obsidian/Notion/Joplin import, passkeys, installable offline app with share target, web clipper, document OCR, encrypted vault notes.

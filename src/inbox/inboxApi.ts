@@ -65,3 +65,43 @@ export const bulkProposals = (action: "approve" | "reject", ids: string[], reaso
 export const pendingCount = () => api<{ pending: number }>("/inbox/count");
 export const getInboxSettings = () => api<{ push: boolean }>("/inbox/settings");
 export const setInboxPush = (push: boolean) => api<{ push: boolean }>("/inbox/settings", { method: "PUT", body: JSON.stringify({ push }) });
+
+// --- Routines (Wave 22, docs/plan/API_CONTRACTS.md § Inbox routines) -------------------------
+
+export type RoutineCadence = "manual" | "hourly" | "daily" | "weekdays" | "weekly";
+export type RunStatus = "running" | "succeeded" | "failed" | "abandoned";
+export type RoutineTargets = { boardIds?: string[]; calendarIds?: string[]; collectionIds?: string[]; folderIds?: string[] };
+
+export type Routine = {
+  id: string; name: string; instructions: string; outputKinds: ProposalKind[]; targets: RoutineTargets | null; scopeHints: string | null;
+  cadence: RoutineCadence; atTime: string | null; weekday: number | null; tz: string; scheduleNote: string | null; scheduleText: string;
+  keyId: string | null; keyName: string | null; keyRevoked: boolean; maxProposals: number; expireDays: number; enabled: boolean;
+  nextDueAt: string | null; due: boolean; lastRunAt: string | null; lastRunStatus: RunStatus | null;
+  running: { id: string; startedAt: string; leaseExpiresAt: string } | null;
+  revision: number; createdAt: string; updatedAt: string;
+};
+
+export type RoutineInput = {
+  name: string; instructions: string; outputKinds: ProposalKind[]; targets: RoutineTargets | null; scopeHints: string | null;
+  cadence: RoutineCadence; atTime: string | null; weekday: number | null; tz: string; scheduleNote: string | null; keyId: string | null;
+  maxProposals: number; expireDays: number; enabled: boolean;
+};
+
+export type RunSummary = {
+  id: string; routineId: string; routineName: string | null; status: RunStatus; startedAt: string; finishedAt: string | null; leaseExpiresAt: string;
+  durationMs: number | null; toolCalls: number; proposals: number; capped: boolean;
+  /** Agent text: render as text only (T127). */
+  summary: string | null; error: string | null; clientLabel: string | null; keyName: string | null;
+};
+
+export const listRoutines = () => api<{ routines: Routine[] }>("/inbox/routines");
+export const createRoutine = (input: RoutineInput) => api<{ routine: Routine }>("/inbox/routines", { method: "POST", body: JSON.stringify(input) });
+export const updateRoutine = (id: string, patch: Partial<RoutineInput> & { revision: number }) =>
+  api<{ routine: Routine }>(`/inbox/routines/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const deleteRoutine = (id: string) => api<{ deleted: true }>(`/inbox/routines/${id}`, { method: "DELETE", body: "{}" });
+export const setRoutineEnabled = (id: string, enabled: boolean) => api<{ routine: Routine }>(`/inbox/routines/${id}/${enabled ? "resume" : "pause"}`, { method: "POST", body: "{}" });
+export const listRuns = (routineId: string) => api<{ runs: RunSummary[] }>(`/inbox/routines/${routineId}/runs`);
+
+/** The caller's MCP keys, for binding a routine to one (the Settings list). */
+export type InboxKey = { id: string; name: string; scopes: string[]; effectiveScopes?: string[] };
+export const listInboxKeys = () => api<{ keys: InboxKey[] }>("/mcp/keys");

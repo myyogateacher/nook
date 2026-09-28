@@ -1,4 +1,4 @@
-import type { BulkResult, ProposalGroup, ProposalKind, ProposalStatus, ProposalSummary } from "./inboxApi";
+import type { BulkResult, ProposalGroup, ProposalKind, ProposalStatus, ProposalSummary, Routine, RunStatus, RunSummary } from "./inboxApi";
 
 /** Pure copy and helpers for the Inbox (agent inbox §9), unit-tested in tests/inboxApp.test.tsx. */
 
@@ -90,6 +90,52 @@ export function bulkConfirmText(items: readonly Pick<ProposalSummary, "kind">[])
 
 /** Bulk approve asks for confirmation above this many items (§9.3). */
 export const BULK_CONFIRM_OVER = 10;
+
+// --- Routines (Wave 22) ---------------------------------------------------------
+
+const RUN_STATUS_LABEL: Record<RunStatus, string> = { running: "Running", succeeded: "Finished", failed: "Failed", abandoned: "Abandoned" };
+export const runStatusLabel = (status: RunStatus) => RUN_STATUS_LABEL[status] ?? status;
+
+/** "Due now", "Next Mon 5 Oct, 08:00", "Paused", "Manual only" for the routine list. */
+export function dueText(routine: Pick<Routine, "enabled" | "cadence" | "nextDueAt" | "running">, nowMs = Date.now()) {
+  if (!routine.enabled) return "Paused";
+  if (routine.running) return "Running now";
+  if (routine.cadence === "manual" || !routine.nextDueAt) return "Manual only";
+  const due = Date.parse(routine.nextDueAt);
+  if (due <= nowMs) return "Due now";
+  return `Next ${new Date(due).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+}
+
+/** "45 s", "2 min", "1 h 5 min". */
+export function durationText(ms: number | null) {
+  if (ms === null || !Number.isFinite(ms)) return "";
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+/** "4 proposals · 31 tool calls · 2 min" for one run. */
+export function runMetrics(run: Pick<RunSummary, "proposals" | "toolCalls" | "durationMs" | "capped">) {
+  const parts = [`${run.proposals} proposal${run.proposals === 1 ? "" : "s"}`, `${run.toolCalls} tool call${run.toolCalls === 1 ? "" : "s"}`];
+  const duration = durationText(run.durationMs);
+  if (duration) parts.push(duration);
+  if (run.capped) parts.push("hit the per-run limit");
+  return parts.join(" · ");
+}
+
+export const KIND_OPTIONS: Array<{ value: ProposalKind; label: string }> = [
+  { value: "card_create", label: "Create cards" }, { value: "card_update", label: "Update cards" }, { value: "card_comment", label: "Comment on cards" },
+  { value: "event_create", label: "Create events" }, { value: "event_update", label: "Update events" },
+  { value: "row_create", label: "Create rows" }, { value: "row_update", label: "Update rows" }, { value: "note_draft", label: "Note drafts" }
+];
+
+/** The run line under a group heading: "Run 28 Sep, 08:02 · Finished" (plus "limit reached"). */
+export function runLine(run: NonNullable<ProposalGroup["run"]>) {
+  const time = new Date(run.startedAt).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return `Run ${time} · ${runStatusLabel(run.status as RunStatus)}${run.capped ? " · limit reached" : ""}`;
+}
 
 /** Where the phone's Back goes from a proposal: history when Nook pushed the entry, else the list. */
 export function inboxBackAction(proposalId: string | null, depth: number): { kind: "history" } | { kind: "list" } | { kind: "home" } {

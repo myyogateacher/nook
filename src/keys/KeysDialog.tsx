@@ -1,12 +1,14 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { trapTabKey } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 
 /**
  * The dialog shell of Settings → API keys and Team → Keys / Policies (Wave 31): a centred dialog on
  * desktop and a full-height sheet at 390 px. Back or Forward closes it (and only it: a Select sheet
  * open inside closes first, D69), Escape closes it unless a popup handled the key, and focus starts
- * on the close button.
+ * on the close button. Tab stays inside. While `busy` (a request in flight) nothing closes it: Escape
+ * is ignored and Back or Forward is undone, so a token the request returns is never lost (review L5).
  */
 export function KeysDialog({ title, description, onClose, busy = false, children, footer, wide = false }: {
   title: string;
@@ -20,7 +22,7 @@ export function KeysDialog({ title, description, onClose, busy = false, children
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const guardedClose = () => { if (!busy) onClose(); };
-  useHistoryDialogGuard(true, onClose);
+  useHistoryDialogGuard(true, onClose, { blocked: busy });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !event.defaultPrevented && !busy) onClose();
@@ -31,7 +33,7 @@ export function KeysDialog({ title, description, onClose, busy = false, children
   useEffect(() => closeRef.current?.focus(), []);
   return <>
     <div className="keys-dialog-scrim" onClick={guardedClose} />
-    <div className={`keys-dialog${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+    <div className={`keys-dialog${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={trapTabKey}>
       <header>
         <div><h2 id={titleId}>{title}</h2>{description && <p>{description}</p>}</div>
         <button ref={closeRef} type="button" className="icon-button" aria-label="Close" onClick={guardedClose} disabled={busy}><X /></button>

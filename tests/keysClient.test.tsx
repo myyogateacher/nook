@@ -108,3 +108,33 @@ describe("key grants on the client", () => {
     expect(admin).toContain("An admin revoked this key: “Leaked”");
   });
 });
+
+describe("KeysDialog while busy (review L5)", () => {
+  test("Back while a request is in flight is undone and keeps the dialog open; afterwards it closes", async () => {
+    const { createDialogGuard } = await import("../src/ui/useHistoryDialogGuard");
+    const { withHistoryDepth } = await import("../src/appShellNavigation");
+    let busy = true;
+    let open = true;
+    const closed: string[] = [];
+    const undone: string[] = [];
+    const guard = createDialogGuard({
+      isOpen: () => open, markClosed: () => { open = false; }, close: () => closed.push("close"), openDepth: () => 2,
+      undo: (direction) => { undone.push(direction); }, blocked: () => busy
+    });
+    // Back and Forward during the request: the browser's move is undone, nothing closes, the guard stays armed.
+    expect(guard(withHistoryDepth({}, 1))).toBe(true);
+    expect(guard(withHistoryDepth({}, 3))).toBe(true);
+    expect({ closed, undone, open }).toEqual({ closed: [], undone: ["back", "forward"], open: true });
+    // Once the response is in (the token is on screen), Back closes as usual.
+    busy = false;
+    expect(guard(withHistoryDepth({}, 1))).toBe(true);
+    expect({ closed, open }).toEqual({ closed: ["close"], open: false });
+  });
+
+  test("the dialog traps Tab and hands busy to its history guard", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("../src/keys/KeysDialog.tsx", import.meta.url), "utf8");
+    expect(source).toContain("onKeyDown={trapTabKey}");
+    expect(source).toContain("useHistoryDialogGuard(true, onClose, { blocked: busy })");
+  });
+});

@@ -13,10 +13,17 @@ type Guard = (poppedState: unknown) => boolean;
 /**
  * The guard for one open dialog: it runs `close` once, then undoes the browser's move back to the
  * entry at `openDepth`. `isOpen` and `markClosed` let a stale guard (already closed) pass the event on.
+ * While `blocked` returns true (a request in flight) Back and Forward are undone and the dialog stays
+ * open, as Escape does then; the guard stays armed for the next press.
  */
-export function createDialogGuard(options: { isOpen: () => boolean; markClosed: () => void; close: () => void; openDepth: () => number; undo?: typeof undoDialogPop }): Guard {
+export function createDialogGuard(options: { isOpen: () => boolean; markClosed: () => void; close: () => void; openDepth: () => number; undo?: typeof undoDialogPop; blocked?: () => boolean }): Guard {
   return (poppedState) => {
     if (!options.isOpen()) return false;
+    if (options.blocked?.()) {
+      const direction = dialogPopDirection(options.openDepth(), readHistoryDepth(poppedState));
+      if (direction) (options.undo ?? undoDialogPop)(direction);
+      return true;
+    }
     options.markClosed();
     options.close();
     const direction = dialogPopDirection(options.openDepth(), readHistoryDepth(poppedState));
@@ -40,13 +47,15 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  */
 export const DesktopHistoryLayers = createContext(false);
 
-export function useHistoryDialogGuard(open: boolean, close: () => void, options: { desktop?: boolean } = {}) {
+export function useHistoryDialogGuard(open: boolean, close: () => void, options: { desktop?: boolean; blocked?: boolean } = {}) {
   const inLayers = useContext(DesktopHistoryLayers);
   const desktop = options.desktop ?? inLayers;
   const openRef = useRef(open);
   openRef.current = open;
   const closeRef = useRef(close);
   closeRef.current = close;
+  const blockedRef = useRef(options.blocked ?? false);
+  blockedRef.current = options.blocked ?? false;
   // The depth of the entry the dialog was opened on, to tell Back from Forward.
   const depthRef = useRef(0);
   const wasOpenRef = useRef(false);
@@ -62,7 +71,8 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
       isOpen: () => openRef.current,
       markClosed: () => { openRef.current = false; },
       close: () => closeRef.current(),
-      openDepth: () => depthRef.current
+      openDepth: () => depthRef.current,
+      blocked: () => blockedRef.current
     }));
   }, [open]);
 }

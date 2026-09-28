@@ -30,6 +30,10 @@ export type McpErrorCode =
   | "REMINDER_EXISTS"
   | "ROW_CHANGED"
   | "SCHEMA_CHANGED"
+  // Routines (agent inbox Wave 22, §7.2): a kind or target outside the routine, or a run already open.
+  | "KIND_NOT_ALLOWED"
+  | "TARGET_NOT_ALLOWED"
+  | "RUN_ACTIVE"
   | "INTERNAL";
 
 export class McpToolError extends Error {

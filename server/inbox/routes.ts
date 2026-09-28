@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
 import { parseJson, uuid } from "../validation";
-import { approveProposal, BULK_MAX, bulkProposals, countPending, getProposal, InboxError, listInbox, proposalPushEnabled, REJECT_REASON_MAX, rejectProposal, setProposalPush } from "./service";
+import { approveProposal, BULK_MAX, bulkProposals, countPending, getProposal, InboxError, listInbox, listRunProposals, proposalPushEnabled, REJECT_REASON_MAX, rejectProposal, setProposalPush } from "./service";
+import { createRoutine, deleteRoutine, getRoutine, getRunForOwner, listRoutines, listRuns, routineCreateSchema, routinePatchSchema, setRoutineEnabled, updateRoutine } from "./routines";
 import "./today";
 
 /**
@@ -71,7 +72,37 @@ export function registerInboxRoutes(app: Hono<AppEnv>) {
     return bulkProposals(userId, { action: body.action, ids, reason: body.reason });
   }));
 
-  app.get("/api/inbox/settings", (c) => answer(c, () => ({ push: proposalPushEnabled(c.get("user").id) })));
+  // Routines (Wave 22, §8): owner only, 404 otherwise. Writes are member+ (the write gate refuses
+  // read-only roles with ROLE_READ_ONLY; the service checks again).
+  app.get("/api/inbox/routines", (c) => answer(c, () => listRoutines(c.get("user").id)));
+
+  app.post("/api/inbox/routines", (c) => answer(c, async () => {
+    const body = await parseJson(c.req.raw, routineCreateSchema);
+    return createRoutine(c.get("user").id, body);
+  }));
+
+  app.get("/api/inbox/routines/:id", (c) => answer(c, () => getRoutine(c.get("user").id, uuid.parse(c.req.param("id")))));
+
+  app.patch("/api/inbox/routines/:id", (c) => answer(c, async () => {
+    const id = uuid.parse(c.req.param("id"));
+    const body = await parseJson(c.req.raw, routinePatchSchema);
+    return updateRoutine(c.get("user").id, id, body);
+  }));
+
+  app.delete("/api/inbox/routines/:id", (c) => answer(c, () => deleteRoutine(c.get("user").id, uuid.parse(c.req.param("id")))));
+
+  app.post("/api/inbox/routines/:id/pause", (c) => answer(c, () => setRoutineEnabled(c.get("user").id, uuid.parse(c.req.param("id")), false)));
+  app.post("/api/inbox/routines/:id/resume", (c) => answer(c, () => setRoutineEnabled(c.get("user").id, uuid.parse(c.req.param("id")), true)));
+
+  app.get("/api/inbox/routines/:id/runs", (c) => answer(c, () => listRuns(c.get("user").id, uuid.parse(c.req.param("id")))));
+
+  app.get("/api/inbox/runs/:id", (c) => answer(c, () => {
+    const userId = c.get("user").id;
+    const run = getRunForOwner(userId, uuid.parse(c.req.param("id")));
+    return { run, proposals: listRunProposals(userId, run.id) };
+  }));
+
+  app.get("/api/inbox/settings",(c) => answer(c, () => ({ push: proposalPushEnabled(c.get("user").id) })));
 
   app.put("/api/inbox/settings", (c) => answer(c, async () => {
     const body = await parseJson(c.req.raw, settingsSchema);

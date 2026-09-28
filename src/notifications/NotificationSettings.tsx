@@ -145,8 +145,8 @@ function ProposalPushSetting() {
   return <>
     <h4 className="notification-settings-subheading" id="proposal-push-label">Agent proposals</h4>
     <div className="modules-row notification-proposals-row">
-      <span className="modules-row-text"><strong>Push new proposals</strong><small id="proposal-push-help">Changes your MCP keys suggest always appear under the bell and in the Inbox. Turn this on to get a push too, named only by the key and how many.</small></span>
-      <button type="button" role="switch" className="modules-switch" aria-checked={push === true} aria-labelledby="proposal-push-label" aria-describedby="proposal-push-help" disabled={push === null} onClick={() => { void toggle(); }}>
+      <span className="modules-row-text"><strong id="proposal-push-name">Push new proposals</strong><small id="proposal-push-help">Changes your MCP keys suggest always appear under the bell and in the Inbox. Turn this on to get a push too, named only by the key and how many.</small></span>
+      <button type="button" role="switch" className="modules-switch" aria-checked={push === true} aria-labelledby="proposal-push-name" aria-describedby="proposal-push-help" disabled={push === null} onClick={() => { void toggle(); }}>
         <span className="modules-switch-track" aria-hidden="true"><span className="modules-switch-thumb" /></span>
         <span className="modules-switch-state" aria-hidden="true">{push ? "On" : "Off"}</span>
       </button>

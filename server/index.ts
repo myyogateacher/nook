@@ -118,7 +118,12 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
-app.get("/api/about", (c) => c.json({ version: config.appVersion, gitSha: config.gitSha }));
+// hasUsers and openRegistration let the login screen offer "Create the first account" only on a
+// fresh instance (QA note 13): a yes/no, never a count.
+app.get("/api/about", (c) => c.json({
+  version: config.appVersion, gitSha: config.gitSha,
+  hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration
+}));
 
 app.use("/api/auth/login", async (c, next) => {
   if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);

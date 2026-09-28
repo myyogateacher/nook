@@ -42,6 +42,9 @@ const currentView = (): TeamView => {
   return route.app === "team" ? { userId: route.userId, invites: route.invites === true } : { userId: null, invites: false };
 };
 
+/** /team/invites is for admins; anyone else who lands there has the URL replaced with /team (QA note 10). */
+export const replacesInvitesRoute = (view: TeamView, role: Role) => view.invites && !canManageTeam(role);
+
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
   : undefined;
@@ -126,6 +129,12 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
     setView({ userId: null, invites: true });
     navigateRef.current({ app: "team", userId: null, invites: true });
   }, []);
+
+  useEffect(() => {
+    if (!replacesInvitesRoute(view, role)) return;
+    setView({ userId: null, invites: false });
+    navigateRef.current({ app: "team", userId: null }, { replace: true });
+  }, [role, view]);
 
   // Back/Forward between the list and a member (a dialog open at the time only closes).
   useEffect(() => {

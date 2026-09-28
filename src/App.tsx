@@ -46,6 +46,7 @@ import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
+import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { InboxNavContext, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
@@ -118,6 +119,14 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
+  const signUpPrompt = registrationPrompt(registration);
+
+  useEffect(() => {
+    let live = true;
+    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => undefined);
+    return () => { live = false; };
+  }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,9 +197,9 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
-          {registering ? "Already have an account? Sign in" : "Setting up Nook? Create the first account"}
-        </button>
+        {(registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
+          {registering ? "Already have an account? Sign in" : signUpPrompt}
+        </button>}
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
     </main>

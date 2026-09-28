@@ -31,7 +31,33 @@ export type TeamEvent = {
   actor: { id: string; displayName: string } | null;
 };
 
-export type TeamMemberDetail = TeamMember & { events?: TeamEvent[] };
+/** Admin detail only (D165): how the account joined, derived from team_invites. */
+export type JoinedWithInvite = { role: InviteRole; usedAt: string; invitedBy: { id: string; displayName: string } | null };
+
+export type TeamMemberDetail = TeamMember & { events?: TeamEvent[]; joinedWithInvite?: JoinedWithInvite | null };
+
+/** Invite roles (D163): never admin. */
+export type InviteRole = Exclude<Role, "admin">;
+export type InviteStatus = "live" | "used" | "expired" | "revoked";
+
+/** GET /api/team/invites rows (docs/plan/API_CONTRACTS.md, Team → Invites). Never carries the token. */
+export type TeamInvite = {
+  id: string;
+  tokenPrefix: string;
+  role: InviteRole;
+  email: string | null;
+  note: string | null;
+  status: InviteStatus;
+  createdAt: string;
+  expiresAt: string;
+  createdBy: { id: string; displayName: string } | null;
+  usedBy: { id: string; displayName: string } | null;
+  usedAt: string | null;
+  revokedAt: string | null;
+};
+
+export type TeamInviteList = { invites: TeamInvite[]; liveCount: number; liveLimit: number };
+export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string };
 
 const memberPath = (userId: string) => `/team/${encodeURIComponent(userId)}`;
 
@@ -45,3 +71,10 @@ export const unblockTeamMember = (userId: string) =>
   api<{ ok: true; member: TeamMemberDetail }>(`${memberPath(userId)}/unblock`, { method: "POST", body: "{}" });
 export const revokeTeamSessions = (userId: string) =>
   api<{ sessionsRevoked: number; member: TeamMemberDetail }>(`${memberPath(userId)}/sessions/revoke`, { method: "POST", body: "{}" });
+
+export const listTeamInvites = () => api<TeamInviteList>("/team/invites");
+/** The token and link come back from this call only (D161). */
+export const createTeamInvite = (body: CreateInviteBody) =>
+  api<{ invite: TeamInvite; token: string; url: string }>("/team/invites", { method: "POST", body: JSON.stringify(body) });
+export const revokeTeamInvite = (inviteId: string) =>
+  api<{ invite: TeamInvite }>(`/team/invites/${encodeURIComponent(inviteId)}/revoke`, { method: "POST", body: "{}" });

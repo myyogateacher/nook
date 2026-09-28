@@ -100,6 +100,12 @@ test("Team routes: /team, /team/:userId (lowercased), and malformed ids open the
   expect(formatRoute({ app: "team", userId: null })).toBe("/team");
   expect(formatRoute({ app: "team", userId: userId.toUpperCase() })).toBe(`/team/${userId}`);
   expect(formatRoute({ app: "team", userId: "garbage" })).toBe("/team");
+  // Wave 18: the Invites panel, parsed before the id rule, and round-tripped.
+  expect(parseRoute("/team/invites")).toEqual({ app: "team", userId: null, invites: true });
+  expect(formatRoute({ app: "team", userId: null, invites: true })).toBe("/team/invites");
+  expect(formatRoute(parseRoute("/team/invites"))).toBe("/team/invites");
+  expect(parseRoute("/team/invites/extra")).toEqual({ app: "team", userId: null });
+  expect(parseRoute("/team/INVITES")).toEqual({ app: "team", userId: null });
   expect(formatRoute(parseRoute(`/team/${userId}`))).toBe(`/team/${userId}`);
   expect(sameRoute({ app: "team", userId: null }, { app: "team", userId })).toBe(false);
 });

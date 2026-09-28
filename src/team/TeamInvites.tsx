@@ -1,0 +1,233 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Ban, Check, ChevronLeft, Copy, Link2, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
+import { ApiError } from "../api";
+import { relativeTime } from "../files/format";
+import { Select } from "../ui/Select";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
+import { createTeamInvite, revokeTeamInvite, type InviteRole, type TeamInvite, type TeamInviteList } from "./teamApi";
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
+
+type Props = {
+  data: TeamInviteList | null;
+  error: string | null;
+  onBack: () => void;
+  onReload: () => void;
+  onOpenMember: (userId: string) => void;
+  flash: (message: string) => void;
+};
+
+type Dialog = { kind: "create" } | { kind: "revoke"; invite: TeamInvite };
+
+const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+
+/**
+ * The admin Invites panel at /team/invites (docs/plan/WAVES_18-20_SMALL.md §1.6, D167): in the
+ * Team detail pane on desktop, a full panel at ≤760 px. Dialogs push no history entry; Back closes
+ * them first (useHistoryDialogGuard). Focus returns to the control that opened a dialog.
+ */
+export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash }: Props) {
+  const [dialog, setDialog] = useState<Dialog | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const limitHint = data ? inviteLimitHint(data.liveCount, data.liveLimit) : null;
+
+  const open = (next: Dialog) => {
+    triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDialog(next);
+  };
+  const close = useCallback(() => {
+    setDialog(null);
+    const trigger = triggerRef.current;
+    triggerRef.current = null;
+    if (trigger?.isConnected) window.setTimeout(() => trigger.focus(), 0);
+  }, []);
+
+  return <article className="team-detail team-invites" aria-labelledby="team-invites-title">
+    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
+    <header className="team-invites-header">
+      <div>
+        <h2 id="team-invites-title">Invites</h2>
+        <p className="team-muted">Single-use links that let someone create an account with a team role you choose, even while registration is closed. The email allowlist still applies.</p>
+      </div>
+      <button type="button" className="team-action primary" onClick={() => open({ kind: "create" })} disabled={!data || Boolean(limitHint)}><Plus />New invite</button>
+    </header>
+    {limitHint && <p className="team-muted team-invites-limit" role="note">{limitHint}</p>}
+
+    {error && <div className="team-state team-error" role="alert">
+      <span className="team-state-icon"><TriangleAlert /></span>
+      <h2>Could not load invites</h2>
+      <p>{error}</p>
+      <button className="primary-button" onClick={onReload}><RotateCcw />Try again</button>
+    </div>}
+    {!error && !data && <p className="team-loading" role="status">Loading invites…</p>}
+    {!error && data && data.invites.length === 0 && <div className="team-state">
+      <span className="team-state-icon"><Link2 /></span>
+      <h2>No invites yet.</h2>
+      <p>Create a link to add someone without opening registration.</p>
+    </div>}
+    {!error && data && data.invites.length > 0 && <ul className="team-invite-list" aria-label="Invites">
+      {data.invites.map((invite) => <li key={invite.id} className={`team-invite ${invite.status}`}>
+        <div className="team-invite-top">
+          <span className={`team-role-chip ${invite.role}`}><span className="sr-only">Team role: </span>{ROLE_LABELS[invite.role]}</span>
+          <span className={`team-status-chip invite-${invite.status}`}>{INVITE_STATUS_LABELS[invite.status]}</span>
+          <code className="team-invite-prefix" title="The first characters of the link's token">{invite.tokenPrefix}…</code>
+        </div>
+        {(invite.email || invite.note) && <p className="team-invite-label">
+          {invite.email && <span>Only {invite.email}</span>}
+          {invite.note && <span className="team-invite-note">{invite.note}</span>}
+        </p>}
+        <p className="team-invite-meta">
+          <span>{inviteTimeLabel(invite)}</span>
+          <span>Created {relativeTime(invite.createdAt)}{invite.createdBy ? ` by ${invite.createdBy.displayName}` : ""}</span>
+        </p>
+        {(invite.status === "live" || (invite.status === "used" && invite.usedBy)) && <div className="team-invite-actions">
+          {invite.status === "live" && <button type="button" className="team-action danger" onClick={() => open({ kind: "revoke", invite })}><Ban />Revoke</button>}
+          {invite.status === "used" && invite.usedBy && <button type="button" className="team-action" onClick={() => onOpenMember(invite.usedBy!.id)}>Open {invite.usedBy.displayName}</button>}
+        </div>}
+      </li>)}
+    </ul>}
+
+    {dialog?.kind === "create" && <InviteCreateDialog onClose={close} onCreated={onReload} />}
+    {dialog?.kind === "revoke" && <InviteRevokeDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); flash(message); onReload(); }} />}
+  </article>;
+}
+
+function useDialogChrome(busy: boolean, onClose: () => void) {
+  useHistoryDialogGuard(true, onClose);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // A Select's popup handles its own Escape first.
+      if (event.key === "Escape" && !busy && !event.defaultPrevented) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [busy, onClose]);
+}
+
+type Created = { url: string; role: InviteRole; expiresAt: string };
+
+/**
+ * The create dialog, then the shown-once state: the link lives only in this component's state, so
+ * closing the dialog drops it (D161).
+ */
+function InviteCreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [role, setRole] = useState<InviteRole>(DEFAULT_INVITE_ROLE);
+  const [expiry, setExpiry] = useState<ExpiryDays>(DEFAULT_EXPIRY);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<Created | null>(null);
+  const [copied, setCopied] = useState(false);
+  const linkRef = useRef<HTMLInputElement>(null);
+  useDialogChrome(busy, onClose);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "").trim();
+    const note = String(form.get("note") ?? "").trim();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(email ? { email } : {}), ...(note ? { note } : {}) });
+      setCreated({ url: result.url, role: result.invite.role, expiresAt: result.invite.expiresAt });
+      onCreated();
+    } catch (reason) {
+      setError(messageOf(reason, "Could not create the invite"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    if (!created) return;
+    try {
+      await navigator.clipboard.writeText(created.url);
+      setCopied(true);
+    } catch {
+      // No clipboard permission: select the link so the admin can copy it by hand.
+      linkRef.current?.focus();
+      linkRef.current?.select();
+      setCopied(false);
+    }
+  }
+
+  return <>
+    <button type="button" className="panel-scrim team-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close" tabIndex={-1} />
+    <div className="team-dialog team-invite-dialog" role="dialog" aria-modal="true" aria-labelledby="team-invite-dialog-title">
+      <header>
+        <h2 id="team-invite-dialog-title">{created ? "Invite link ready" : "New invite"}</h2>
+        <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
+      </header>
+      {created ? <div className="team-invite-created">
+        <label className="team-field">Invite link
+          <input ref={linkRef} readOnly value={created.url} onFocus={(event) => event.currentTarget.select()} aria-describedby="team-invite-warning" />
+        </label>
+        <p id="team-invite-warning" className="team-invite-warning"><TriangleAlert aria-hidden="true" />{shownOnceWarning(created.role, created.expiresAt)}</p>
+        <p className="sr-only" aria-live="polite">{copied ? "Link copied" : ""}</p>
+        <div className="team-dialog-actions">
+          <button type="button" className="team-action" onClick={onClose}>Done</button>
+          <button type="button" className="team-action primary" onClick={() => { void copy(); }} autoFocus>{copied ? <><Check />Link copied</> : <><Copy />Copy link</>}</button>
+        </div>
+      </div> : <form onSubmit={submit}>
+        <div className="team-field">
+          <span id="team-invite-role-label">Team role</span>
+          <Select labelledBy="team-invite-role-label" label="Team role" value={role} options={inviteRoleOptions()} onChange={setRole} disabled={busy} />
+          <small className="team-muted">{ROLE_DESCRIPTIONS[role]}. Admins are promoted after sign-up.</small>
+        </div>
+        <div className="team-field">
+          <span id="team-invite-expiry-label">Expires</span>
+          <Select labelledBy="team-invite-expiry-label" label="Expires" value={expiry} options={expiryOptions()} onChange={setExpiry} disabled={busy} />
+        </div>
+        <label className="team-field">Email (optional)
+          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} />
+        </label>
+        <label className="team-field">Label (optional, only admins see it)
+          <input name="note" maxLength={80} placeholder="For the design contractor" disabled={busy} />
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="team-dialog-actions">
+          <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="team-action primary" disabled={busy}>{busy ? "Creating…" : "Create link"}</button>
+        </div>
+      </form>}
+    </div>
+  </>;
+}
+
+function InviteRevokeDialog({ invite, onClose, onDone }: { invite: TeamInvite; onClose: () => void; onDone: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useDialogChrome(busy, onClose);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      await revokeTeamInvite(invite.id);
+      onDone("Invite revoked");
+    } catch (reason) {
+      if (reason instanceof ApiError && (reason.payload as { code?: string } | undefined)?.code === "INVITE_NOT_LIVE") onDone(messageOf(reason, "This invite is no longer live"));
+      else setError(messageOf(reason, "Could not revoke the invite"));
+      setBusy(false);
+    }
+  }
+
+  return <>
+    <button type="button" className="panel-scrim team-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close" tabIndex={-1} />
+    <div className="team-dialog" role="dialog" aria-modal="true" aria-labelledby="team-revoke-dialog-title">
+      <header>
+        <h2 id="team-revoke-dialog-title">Revoke this {ROLE_LABELS[invite.role]} invite?</h2>
+        <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
+      </header>
+      <form onSubmit={submit}>
+        <p>The link stops working at once{invite.email ? ` for ${invite.email}` : ""}. Nobody has used it yet. You can create a new one at any time.</p>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="team-dialog-actions">
+          <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" className="team-action primary danger" disabled={busy} autoFocus>{busy ? "Working…" : "Revoke"}</button>
+        </div>
+      </form>
+    </div>
+  </>;
+}

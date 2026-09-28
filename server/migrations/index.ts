@@ -23,6 +23,7 @@ import { agentInboxMigration } from "./021_agent_inbox";
 import { reactionsMigration } from "./022_reactions";
 import { emailMigration } from "./026_email";
 import { proposalBaseMigration } from "./027_proposal_base";
+import { emailDigestsMigration } from "./028_email_digests";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -30,7 +31,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // 021 (agent inbox) needs only 005, 010, 013, and 016; 022 (reactions) needs only 001 and 009.
   agentInboxMigration, reactionsMigration,
   // 023, 024, and 025 belong to other parallel plans. 026 (email) needs only 001, 013, 017, and 018; 027 (proposal base) needs only 021.
-  emailMigration, proposalBaseMigration
+  emailMigration, proposalBaseMigration,
+  // 028 (email digests: soft bounces and the share log) needs only 001.
+  emailDigestsMigration
 ];
 
 /**

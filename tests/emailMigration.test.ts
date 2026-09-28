@@ -84,3 +84,24 @@ describe("migration 026_email", () => {
     db.close();
   });
 });
+
+describe("migration 028_email_digests", () => {
+  test("registered as 28 with the soft-bounce counter and the share log; constraints hold", () => {
+    expect(registeredMigrationIds).toContain(28);
+    const db = new Database(":memory:", { strict: true });
+    db.exec("PRAGMA foreign_keys = ON");
+    runMigrations(db);
+    const at = "2026-09-28T00:00:00.000Z";
+    user(db, "u1", "u1@example.test");
+    db.query("INSERT INTO mail_soft_bounces (address_hash, count, first_at, last_at) VALUES (?, 1, ?, ?)").run("a".repeat(64), at, at);
+    expect(() => db.query("INSERT INTO mail_soft_bounces (address_hash, count, first_at, last_at) VALUES ('short', 1, ?, ?)").run(at, at)).toThrow();
+    const share = (kind: string, itemId: string) => db.query("INSERT INTO mail_share_log (id, user_id, kind, item_id, actor_id, created_at) VALUES (?, 'u1', ?, ?, NULL, ?)").run(crypto.randomUUID(), kind, itemId, at);
+    share("board", "5f0c5a6e-1b2d-4c3e-8f4a-111111111111");
+    expect(() => share("secret", "5f0c5a6e-1b2d-4c3e-8f4a-111111111111")).toThrow();
+    expect(() => share("note", "x")).toThrow();
+    // Deleting the account removes its log rows.
+    db.query("DELETE FROM users WHERE id = 'u1'").run();
+    expect(db.query("SELECT COUNT(*) AS count FROM mail_share_log").get()).toEqual({ count: 0 });
+    db.close();
+  });
+});

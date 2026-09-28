@@ -1,0 +1,19 @@
+Subject: Priya Admin invited you to Nook
+
+Nook · nook.test
+
+TEAM · INVITE
+Priya Admin invited you to Nook
+
+You're invited as a Member. Members create, edit, and share notes, files, tasks, collections, and events.
+
+The link works once and expires on Mon 5 Oct 2026, 10:00 (UTC). It only works for dana@example.com.
+
+If you did not expect this email, ignore it: nothing happens until someone opens the link. Do not forward it; anyone with the link can use it.
+
+Create your account:
+https://nook.test/register#invite=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+--
+You got this because an admin of this Nook invited dana@example.com.
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, House, KeyRound, Link2, LogOut, RotateCcw, Scale, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, House, KeyRound, Link2, LogOut, Mail, RotateCcw, Scale, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
@@ -11,6 +11,7 @@ import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
+import { TeamEmailLog } from "./TeamEmailLog";
 import { TeamKeys } from "./TeamKeys";
 import { TeamPolicies } from "./TeamPolicies";
 import { eventLabel, filterTeam, joinedLabel, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
@@ -37,16 +38,16 @@ type Dialog =
   | { kind: "unblock" }
   | { kind: "revoke" };
 
-/** Which pane the detail side shows: a member, Invites, Keys, or Policies (the last three admins only). */
-type TeamView = { userId: string | null; invites: boolean; keys?: boolean; policies?: boolean };
+/** Which pane the detail side shows: a member, Invites, the Email log, Keys, or Policies (the last four admins only). */
+type TeamView = { userId: string | null; invites: boolean; email?: boolean; keys?: boolean; policies?: boolean };
 
 const currentView = (): TeamView => {
   const route = parseRoute(window.location.pathname);
-  return route.app === "team" ? { userId: route.userId, invites: route.invites === true, keys: route.keys === true, policies: route.policies === true } : { userId: null, invites: false };
+  return route.app === "team" ? { userId: route.userId, invites: route.invites === true, email: route.email === true, keys: route.keys === true, policies: route.policies === true } : { userId: null, invites: false, email: false };
 };
 
 /** /team/invites, /team/keys, and /team/policies are for admins; anyone else has the URL replaced with /team (QA note 10). */
-export const replacesInvitesRoute = (view: TeamView, role: Role) => (view.invites || view.keys === true || view.policies === true) && !canManageTeam(role);
+export const replacesInvitesRoute = (view: TeamView, role: Role) => (view.invites || view.email === true || view.keys === true || view.policies === true) && !canManageTeam(role);
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
@@ -81,6 +82,8 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const routeUserId = view.userId;
   // Wave 18: /team/invites (admins); anyone else who lands there sees the list.
   const routeInvites = view.invites && admin;
+  // Wave 28: /team/email, the admin Email log, in the same pane.
+  const routeEmail = view.email === true && admin;
   // Wave 31: /team/keys and /team/policies (admins), in the same pane.
   const routeKeys = view.keys === true && admin;
   const routePolicies = view.policies === true && admin;
@@ -96,7 +99,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   navigateRef.current = navigate;
   const routeRef = useRef<string | null>(routeUserId);
   // The Back rule treats the Invites panel like an open member (deep link → list).
-  routeRef.current = routeUserId ?? (routeInvites ? "invites" : routeKeys ? "keys" : routePolicies ? "policies" : null);
+  routeRef.current = routeUserId ?? (routeInvites ? "invites" : routeEmail ? "email" : routeKeys ? "keys" : routePolicies ? "policies" : null);
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
 
@@ -128,12 +131,16 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   useEffect(() => { if (admin) void loadInvites(); }, [admin, loadInvites]);
 
   const go = useCallback((userId: string | null, replace = false) => {
-    setView({ userId, invites: false });
+    setView({ userId, invites: false, email: false });
     navigateRef.current({ app: "team", userId }, { replace });
   }, []);
   const openInvites = useCallback(() => {
-    setView({ userId: null, invites: true });
+    setView({ userId: null, invites: true, email: false });
     navigateRef.current({ app: "team", userId: null, invites: true });
+  }, []);
+  const openEmailLog = useCallback(() => {
+    setView({ userId: null, invites: false, email: true });
+    navigateRef.current({ app: "team", userId: null, email: true });
   }, []);
   const openKeys = useCallback(() => {
     setView({ userId: null, invites: false, keys: true });
@@ -146,7 +153,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
 
   useEffect(() => {
     if (!replacesInvitesRoute(view, role)) return;
-    setView({ userId: null, invites: false });
+    setView({ userId: null, invites: false, email: false });
     navigateRef.current({ app: "team", userId: null }, { replace: true });
   }, [role, view]);
 
@@ -155,7 +162,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
     const onPopState = (event: PopStateEvent) => {
       if (popStateClosedDialog(event)) return;
       const route = parseRoute(window.location.pathname);
-      if (route.app === "team") setView({ userId: route.userId, invites: route.invites === true, keys: route.keys === true, policies: route.policies === true });
+      if (route.app === "team") setView({ userId: route.userId, invites: route.invites === true, email: route.email === true, keys: route.keys === true, policies: route.policies === true });
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -180,9 +187,9 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   }, [flash, go, routeUserId, visibleToRole]);
 
   useEffect(() => {
-    if (routeKeys || routePolicies) return;
+    if (routeEmail || routeKeys || routePolicies) return;
     document.title = detail && routeUserId === detail.id ? `${detail.displayName} · Team · Nook` : routeInvites ? "Invites · Team · Nook" : "Team · Nook";
-  }, [detail, routeInvites, routeKeys, routePolicies, routeUserId]);
+  }, [detail, routeEmail, routeInvites, routeKeys, routePolicies, routeUserId]);
 
   const back = useCallback(() => {
     const action = teamBackAction(routeRef.current, readHistoryDepth(window.history.state));
@@ -203,7 +210,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const visible = useMemo(() => filterTeam(all, filter, query), [all, filter, query]);
   const chips = useMemo(() => teamFilters(all, admin), [all, admin]);
 
-  return <main className={`app-page team-app${routeUserId || routeInvites || routeKeys || routePolicies ? " team-detail-open" : ""}`}>
+  return <main className={`app-page team-app${routeUserId || routeInvites || routeEmail || routeKeys || routePolicies ? " team-detail-open" : ""}`}>
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span><AppPageName name="Team" />
@@ -238,6 +245,11 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         {admin && <button type="button" className={`team-invites-row${routeInvites ? " selected" : ""}`} aria-current={routeInvites ? "page" : undefined} onClick={() => { if (!routeInvites) openInvites(); }}>
           <span className="team-invites-icon" aria-hidden="true"><Link2 /></span>
           <span className="team-row-copy"><strong>Invites</strong><span className="team-row-meta">{invites ? `${invites.liveCount} live` : "Links to add people"}</span></span>
+          <ChevronRight aria-hidden="true" />
+        </button>}
+        {admin && <button type="button" className={`team-invites-row${routeEmail ? " selected" : ""}`} aria-current={routeEmail ? "page" : undefined} onClick={() => { if (!routeEmail) openEmailLog(); }}>
+          <span className="team-invites-icon" aria-hidden="true"><Mail /></span>
+          <span className="team-row-copy"><strong>Email log</strong><span className="team-row-meta">What Nook emailed, and how it went</span></span>
           <ChevronRight aria-hidden="true" />
         </button>}
         {admin && <button type="button" className={`team-invites-row${routeKeys ? " selected" : ""}`} aria-current={routeKeys ? "page" : undefined} onClick={() => { if (!routeKeys) openKeys(); }}>
@@ -287,8 +299,10 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         </ul>}
       </section>
 
-      <section className="team-detail-pane" aria-label={routeInvites ? "Invites" : routeKeys ? "Keys" : routePolicies ? "Policies" : "Team member"}>
-        {routeKeys
+      <section className="team-detail-pane" aria-label={routeInvites ? "Invites" : routeEmail ? "Email log" : routeKeys ? "Keys" : routePolicies ? "Policies" : "Team member"}>
+        {routeEmail
+          ? <TeamEmailLog onBack={back} flash={flash} />
+          : routeKeys
           ? <TeamKeys members={all} onBack={back} flash={flash} />
           : routePolicies
           ? <TeamPolicies onBack={back} flash={flash} />

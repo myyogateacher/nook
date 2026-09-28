@@ -46,6 +46,7 @@ import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
 import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
+import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
@@ -70,7 +71,7 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, locationUrl, parseRoute, routeFromLocation, type Route } from "./router";
+import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -80,12 +81,10 @@ import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
 import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
-import { useHistoryDialogGuard } from "./tasks/useHistoryDialogGuard";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
-type SettingsSection = "security" | "modules" | "mcp" | "notifications" | "about";
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 
@@ -203,7 +202,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (session: SessionRes
   );
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security" }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection }) {
+function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean> }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [appInfo, setAppInfo] = useState({ version: "0.10.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
@@ -223,7 +222,19 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   function selectSection(next: SettingsSection) {
     if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
     setSection(next);
+    onSectionChange?.(next);
   }
+  // The app asks before Back leaves Settings while a new key is still on screen.
+  useEffect(() => { if (pendingRef) pendingRef.current = mcpKeyPending; }, [mcpKeyPending, pendingRef]);
+
+  // "Settings · Notifications · Nook" while open; the title from before comes back on close.
+  const titleScope = useRef<ReturnType<typeof settingsTitleScope> | null>(null);
+  useEffect(() => {
+    const scope = settingsTitleScope(document);
+    titleScope.current = scope;
+    return () => { titleScope.current = null; scope.restore(); };
+  }, []);
+  useEffect(() => { titleScope.current?.show(section); }, [section]);
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
@@ -238,8 +249,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }, [guardedClose, state.setupRequired]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
-  // D69: browser Back or Forward while Settings is open only closes it (not while setup is required).
-  useHistoryDialogGuard(!state.setupRequired, guardedClose);
+  // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
+  // Forward reopens it; the app's popstate handler does both (no dialog guard here).
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -563,6 +574,8 @@ export function App() {
   // Wave 18: /register#invite=<token>. Read once, and the fragment is stripped at once (T136); the
   // token then lives only in this state until the account is created or the visitor leaves.
   const [invite, setInvite] = useState(initialInvite);
+  // Wave 28: /verify-email#token= and /mail/unsubscribe#t= (fragments stripped at once, T220).
+  const [mailLink, setMailLink] = useState(initialMailLink);
   const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -589,6 +602,12 @@ export function App() {
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("security");
+  // A /settings/:section deep link, applied once the workspace is ready (outbound email §E.1).
+  const initialSettingsRef = useRef<SettingsSection | null>(parseSettingsPath(window.location.pathname));
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
+  // True while Settings shows a new MCP key that is shown only once.
+  const settingsPendingRef = useRef(false);
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
@@ -715,6 +734,12 @@ export function App() {
         setActiveApp(route.app);
         const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
         writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
+        historyDepthRef.current = readHistoryDepth(window.history.state);
+        // A /settings/:section link: the entry below is Home, and Settings gets an entry of its own,
+        // so Back closes it without leaving Nook and Forward reopens it.
+        const deepSettings = initialSettingsRef.current;
+        initialSettingsRef.current = null;
+        if (deepSettings) openSettings(deepSettings);
       }).catch((reason) => {
         if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
         flash(reason instanceof Error ? reason.message : "Could not open your notes");
@@ -722,10 +747,12 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
+    // The Settings dialog owns the title while it is open, and restores it on close.
+    if (settingsOpen) return;
     const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
-  }, [activeApp, note, selectedNoteId, session]);
+  }, [activeApp, note, selectedNoteId, session, settingsOpen]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
@@ -1354,8 +1381,27 @@ export function App() {
       const previousDepth = recordPopDepth(historyDepthRef, poppedDepth);
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
       if (popStateClosedDialog(event)) return;
-      const route = routeFromLocation(window.location);
       if (session.totp.setupRequired) return;
+      // Settings entries (/settings/:section): Forward onto one reopens the dialog over the app that
+      // is on screen; Back off one closes it, then the entry below is restored as usual.
+      const poppedSettings = parseSettingsPath(window.location.pathname);
+      if (poppedSettings) {
+        setPanel(null);
+        setSharingFolder(null);
+        setSettingsSection(poppedSettings);
+        setSettingsOpen(true);
+        return;
+      }
+      if (settingsOpenRef.current) {
+        if (settingsPendingRef.current && !window.confirm("This API key is shown only once. Close settings without saving it?")) {
+          historyDepthRef.current = previousDepth;
+          undoDialogPop(dialogPopDirection(previousDepth, poppedDepth) ?? "back");
+          return;
+        }
+        settingsPendingRef.current = false;
+        setSettingsOpen(false);
+      }
+      const route = routeFromLocation(window.location);
       // D92: Back or Forward onto a module that is off skips that entry instead of replacing it
       // with a second Home entry. Depth 0 still falls through to the gate below, which replaces it.
       const hiddenRoute = route.app === "team" && teamGateOpen ? null : hiddenModuleForApp(disabledModules, route.app);
@@ -1446,6 +1492,41 @@ export function App() {
     setSharingFolder(null);
     setSettingsSection(section);
     setSettingsOpen(true);
+    if (!session || session.totp.setupRequired) return;
+    const state = window.history.state as Record<string, unknown> | null;
+    if (parseSettingsPath(window.location.pathname)) {
+      window.history.replaceState(state, "", settingsPath(section));
+      return;
+    }
+    // Settings pushes an entry (Wave 28), remembering the URL it opened over.
+    const depth = readHistoryDepth(state);
+    window.history.pushState(withHistoryDepth({ ...(state ?? {}), "mynotes.settings-over": locationUrl(window.location) }, depth + 1), "", settingsPath(section));
+    historyDepthRef.current = depth + 1;
+  }
+
+  /** The dialog moved to another section: the URL follows in place (no new entry). */
+  function settingsSectionChanged(section: SettingsSection) {
+    setSettingsSection(section);
+    if (parseSettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, "", settingsPath(section));
+  }
+
+  /**
+   * Closes Settings. From its own entry, "back" steps back onto the entry it opened over (so Forward
+   * reopens it); "replace" rewrites the entry to that URL, for a navigation that follows at once.
+   * A deep link at depth 0 has nothing below, so it is replaced with Home.
+   */
+  function closeSettings(mode: "back" | "replace" = "back") {
+    setSettingsOpen(false);
+    settingsPendingRef.current = false;
+    if (!parseSettingsPath(window.location.pathname)) return;
+    const state = window.history.state as Record<string, unknown> | null;
+    const over = typeof state?.["mynotes.settings-over"] === "string" ? state["mynotes.settings-over"] as string : "/";
+    if (mode === "back" && readHistoryDepth(state) > 0) {
+      window.history.back();
+      return;
+    }
+    const { ["mynotes.settings-over"]: _over, ...rest } = state ?? {};
+    window.history.replaceState(rest, "", over);
   }
 
   function signOut() {
@@ -1476,6 +1557,7 @@ export function App() {
     routeAppliedUserRef.current = null;
     startupFailedUserRef.current = null;
     pendingRouteRef.current = { app: "home" };
+    initialSettingsRef.current = null;
     // A bare entry: drops the search hint (the query text) and every other hint from the current
     // entry. Older entries keep theirs, but each is tied to the user id and ignored while signed out.
     window.history.replaceState(null, "", "/");
@@ -1509,6 +1591,14 @@ export function App() {
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
+  const leaveMailLink = () => {
+    setMailLink(null);
+    pendingRouteRef.current = { app: "home" };
+    window.history.replaceState(null, "", "/");
+  };
+  if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
+  // "Manage all email settings" loads the Settings deep link (signing in first when needed).
+  if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;
   if (invite.onRegister && !session) return <InviteRegister token={invite.token} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
     const result = await api<SessionResponse>("/auth/register", { method: "POST", body: JSON.stringify(body) });
     setCsrfToken(result.csrfToken);
@@ -1524,9 +1614,9 @@ export function App() {
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
   // lets that one visit through; Back, Forward, and links still follow the toggle.
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onManageTeam={() => { setSettingsOpen(false); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) setSettingsOpen(false); }} onSecurityChanged={(totp) => {
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp) => {
     setSession((current) => current ? { ...current, totp } : current);
-    if (!totp.setupRequired) setSettingsOpen(false);
+    if (!totp.setupRequired) closeSettings();
   }} />;
   const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
@@ -1560,7 +1650,7 @@ export function App() {
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
-    {settingsOpen && <button className="panel-scrim" onClick={() => setSettingsOpen(false)} aria-label="Close panel" />}
+    {settingsOpen && <button className="panel-scrim" onClick={() => closeSettings()} aria-label="Close panel" />}
     {toastStatus}
   </InboxNavContext.Provider></TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
@@ -1728,7 +1818,7 @@ export function App() {
       {settingsDialog}
       {(panel || sharingFolder || settingsOpen) && (settingsOpen && session.totp.setupRequired
         ? <div className="panel-scrim" aria-hidden="true" />
-        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); setSettingsOpen(false); }} aria-label="Close panel" />)}
+        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) closeSettings(); }} aria-label="Close panel" />)}
       {toastStatus}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>

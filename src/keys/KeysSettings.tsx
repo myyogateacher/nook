@@ -39,7 +39,10 @@ export function KeysSettings({ onPendingChange, totpEnabled, role }: { onPending
     listKeys().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
   }, []);
   useEffect(load, [load]);
-  useEffect(() => onPendingChange(Boolean(newToken)), [newToken, onPendingChange]);
+  useEffect(() => {
+    onPendingChange(Boolean(newToken));
+    return () => onPendingChange(false);
+  }, [newToken, onPendingChange]);
   const closeDialog = useCallback(() => setDialog(null), []);
 
   async function copy(value: string, label: string) {

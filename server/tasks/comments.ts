@@ -3,6 +3,7 @@ import { readableBoardPredicate } from "./access";
 import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
 import { LIMITS, limitReached, requireReadableCard, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
+import { mailComment } from "../mail/triggers";
 import type { ReactionAggregate } from "../../shared/reactions";
 
 /**
@@ -39,19 +40,21 @@ const commentNotFound = () => new TaskError(404, "Comment not found");
 
 /**
  * A page of a card's comments in chronological order: the newest `limit`, or the `limit` before
- * the comment `before`. `hasMore` says older comments exist.
+ * the comment `before`. `hasMore` says older comments exist. Comments posted in the same millisecond
+ * share `created_at`; rowid (insertion order) breaks the tie in the order and the keyset, never the
+ * random id.
  */
 export function listComments(userId: string, cardId: string, options: { before?: string; limit?: number } = {}) {
   const limit = options.limit ?? COMMENT_PAGE_SIZE;
-  type Cursor = { created_at: string; id: string };
+  type Cursor = { created_at: string; seq: number };
   const cursor = options.before
-    ? db.query("SELECT created_at, id FROM card_comments WHERE id = ? AND card_id = ?").get(options.before, cardId) as Cursor | null
+    ? db.query("SELECT created_at, rowid AS seq FROM card_comments WHERE id = ? AND card_id = ?").get(options.before, cardId) as Cursor | null
     : null;
   if (options.before && !cursor) throw commentNotFound();
   const rows = db.query(`${commentSelect} WHERE m.card_id = $cardId
-      AND ($cursorAt IS NULL OR m.created_at < $cursorAt OR (m.created_at = $cursorAt AND m.id < $cursorId))
-    ORDER BY m.created_at DESC, m.id DESC LIMIT $limit`)
-    .all({ userId, cardId, cursorAt: cursor?.created_at ?? null, cursorId: cursor?.id ?? null, limit: limit + 1 }) as Array<Omit<CardComment, "reactions">>;
+      AND ($cursorAt IS NULL OR m.created_at < $cursorAt OR (m.created_at = $cursorAt AND m.rowid < $cursorSeq))
+    ORDER BY m.created_at DESC, m.rowid DESC LIMIT $limit`)
+    .all({ userId, cardId, cursorAt: cursor?.created_at ?? null, cursorSeq: cursor?.seq ?? null, limit: limit + 1 }) as Array<Omit<CardComment, "reactions">>;
   // One aggregate query for the whole page (D186).
   return { comments: withReactions("card_comment", userId, rows.slice(0, limit).reverse()), hasMore: rows.length > limit };
 }
@@ -86,6 +89,8 @@ export async function createComment(userId: string, cardId: string, input: { bod
       }
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(timestamp, cardId);
       audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id });
+      // "New comment on your card" mail for its assignees and creator (outbound email #17).
+      mailComment(userId, cardId, id);
     })();
     return { comment: commentById(userId, id)! };
   });

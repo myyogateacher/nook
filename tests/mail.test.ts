@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowedTestEmails, createUser, db, request, type Session } from "./support/harness";
+import { createUser, db, request, spareEmail, type Session } from "./support/harness";
 
 const mail = await import("../server/mail");
 const { inviteEmail, formatExpiry } = await import("../server/team/inviteEmail");
@@ -49,7 +49,7 @@ describe("mail wrapper", () => {
     const load = (env: Record<string, string>) => {
       const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); await import(${JSON.stringify(mailPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled, from: config.mail.from }));`], {
         cwd: tmpdir(),
-        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-mail-config-test"), ...env },
+        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-mail-config-test"), APP_ORIGIN: "https://nook.example.com", ...env },
         stdout: "pipe",
         stderr: "pipe"
       });
@@ -67,7 +67,24 @@ describe("mail wrapper", () => {
     expect(bad.err).toContain("MAIL_FROM must be");
     expect(load({ RESEND_API_KEY: "has space", MAIL_FROM: "nook@example.com" }).ok).toBe(false);
     for (const run of [both, keyOnly, bad]) expect(run.out + run.err).not.toContain(key);
-  }, 30_000);
+    // Links must work for recipients (§D.7): never localhost, http only when allowed.
+    const mailOn = { RESEND_API_KEY: key, MAIL_FROM: "nook@example.com" };
+    const enabled = (run: { out: string }) => (JSON.parse(run.out.trim().split("\n").at(-1)!) as { enabled: boolean }).enabled;
+    expect(enabled(load({ ...mailOn, APP_ORIGIN: "http://localhost:2026" }))).toBe(false);
+    expect(enabled(load({ ...mailOn, APP_ORIGIN: "http://localhost:2026", MAIL_ALLOW_HTTP_LINKS: "true" }))).toBe(false);
+    expect(enabled(load({ ...mailOn, APP_ORIGIN: "http://nook.lan:2026" }))).toBe(false);
+    expect(enabled(load({ ...mailOn, APP_ORIGIN: "http://nook.lan:2026", MAIL_ALLOW_HTTP_LINKS: "true" }))).toBe(true);
+    // The development file transport, and the new settings' validation.
+    expect(enabled(load({ MAIL_TRANSPORT: "file", MAIL_FILE_PATH: join(tmpdir(), "mynotes-mail-file-test.json"), APP_ORIGIN: "http://localhost:2026" }))).toBe(true);
+    expect(load({ MAIL_TRANSPORT: "file", MAIL_FILE_PATH: "/tmp/x.json", NODE_ENV: "production" }).ok).toBe(false);
+    expect(load({ MAIL_TRANSPORT: "file" }).ok).toBe(false);
+    expect(load({ MAIL_TRANSPORT: "smtp" }).ok).toBe(false);
+    expect(load({ MAIL_DAILY_LIMIT: "0" }).ok).toBe(false);
+    expect(load({ MAIL_DAILY_LIMIT: "100" }).ok).toBe(true);
+    expect(load({ MAIL_INSTANCE_NAME: "x".repeat(41) }).ok).toBe(false);
+    expect(load({ MAIL_ALLOW_HTTP_LINKS: "yes" }).ok).toBe(false);
+    expect(load({ ...mailOn, MAIL_FROM: "a@b.c <nook@example.com>" }).ok).toBe(false);
+  }, 60_000);
 
   test("MAIL_FROM accepts an address or a display name with an address, and nothing else", () => {
     expect(isMailFrom("nook@example.com")).toBe(true);
@@ -97,11 +114,11 @@ describe("mail wrapper", () => {
     mail.setMailTransportForTests(failing.transport);
     const logs = captureLogs();
     try {
-      expect(await mail.sendMail({ to: "fail@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null })).toEqual({ sent: false, reason: "failed" });
+      expect(await mail.sendMail({ to: "fail@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null })).toEqual({ sent: false, reason: "failed", code: "validation_error", retryable: false });
       const hanging = fakeTransport("hang");
       mail.setMailTransportForTests(hanging.transport);
       const started = Date.now();
-      expect(await mail.sendMail({ to: "slow@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null, timeoutMs: 50 })).toEqual({ sent: false, reason: "failed" });
+      expect(await mail.sendMail({ to: "slow@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null, timeoutMs: 50 })).toEqual({ sent: false, reason: "failed", code: "timeout", retryable: true });
       expect(Date.now() - started).toBeLessThan(2000);
     } finally {
       logs.restore();
@@ -123,7 +140,7 @@ describe("mail wrapper", () => {
     expect(process.env.NODE_ENV).not.toBe("production");
     const logs = captureLogs();
     try {
-      expect(await mail.sendMail({ to: "leak@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null })).toEqual({ sent: false, reason: "failed" });
+      expect(await mail.sendMail({ to: "leak@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null })).toEqual({ sent: false, reason: "failed", code: "validation_error", retryable: false });
     } finally {
       logs.restore();
       provider.stop(true);
@@ -132,26 +149,53 @@ describe("mail wrapper", () => {
     for (const secret of ["leak@example.test", "Resend API Error", "re_placeholder"]) expect(logs.lines.join("\n")).not.toContain(secret);
   });
 
-  test("rate limits: 5 an hour per recipient, 20 an hour per sender, 200 a day per instance", async () => {
+  test("rate limits: 5 an hour per bare address, 20 per account address, 20 per sender, MAIL_DAILY_LIMIT per instance", async () => {
     const { sent, transport } = fakeTransport();
     mail.setMailTransportForTests(transport);
     const logs = captureLogs();
-    const send = (to: string, senderId: string | null) => mail.sendMail({ to, subject: "S", text: "T" }, { purpose: "test", senderId });
+    const send = (to: string, senderId: string | null, recipient: "user" | "address" = "address") => mail.sendMail({ to, subject: "S", text: "T" }, { purpose: "test", senderId, recipient });
     try {
       for (let index = 0; index < 5; index += 1) expect((await send("same@example.test", "s1")).sent).toBe(true);
       expect(await send("SAME@example.test", "s2")).toEqual({ sent: false, reason: "rate_limited" });
+      for (let index = 0; index < 20; index += 1) expect((await send("member@example.test", null, "user")).sent).toBe(true);
+      expect(await send("member@example.test", null, "user")).toEqual({ sent: false, reason: "rate_limited" });
       for (let index = 5; index < 20; index += 1) expect((await send(`r${index}@example.test`, "s1")).sent).toBe(true);
       expect(await send("fresh@example.test", "s1")).toEqual({ sent: false, reason: "rate_limited" });
       expect((await send("fresh@example.test", "s2")).sent).toBe(true);
       // A refused attempt takes no slot from the other limits.
       mail.resetMailLimits();
-      for (let index = 0; index < 200; index += 1) expect((await send(`bulk${index}@example.test`, null)).sent).toBe(true);
+      expect(mail.MAIL_LIMITS.perInstanceDay).toBe(config.mail.dailyLimit);
+      for (let index = 0; index < config.mail.dailyLimit; index += 1) expect((await send(`bulk${index}@example.test`, null)).sent).toBe(true);
       expect(await send("last@example.test", null)).toEqual({ sent: false, reason: "rate_limited" });
     } finally {
       logs.restore();
     }
-    expect(sent).toHaveLength(221);
+    expect(sent).toHaveLength(41 + config.mail.dailyLimit);
     expect(logs.lines.filter((line) => line.includes("rate_limited")).every((line) => !line.includes("@"))).toBe(true);
+  });
+
+  test("the idempotency key is the caller's, so a retry reuses it; headers pass through", async () => {
+    const { sent, transport } = fakeTransport();
+    mail.setMailTransportForTests(transport);
+    const logs = captureLogs();
+    try {
+      await mail.sendMail({ to: "k@example.test", subject: "S", text: "T", headers: { "List-Unsubscribe": "<https://nook.test/x>" } }, { purpose: "test", senderId: null, idempotencyKey: "row-1" });
+      await mail.sendMail({ to: "k@example.test", subject: "S", text: "T" }, { purpose: "test", senderId: null, idempotencyKey: "row-1" });
+    } finally {
+      logs.restore();
+    }
+    expect(sent.map((item) => item.idempotencyKey)).toEqual(["row-1", "row-1"]);
+    expect(sent[0]!.headers).toEqual({ "List-Unsubscribe": "<https://nook.test/x>" });
+  });
+
+  test("the file transport appends each message to a JSON array", async () => {
+    const path = join(tmpdir(), `mynotes-mail-file-${crypto.randomUUID()}.json`);
+    const transport = mail.fileTransport(path);
+    await transport({ to: "a@example.test", from: "Nook <n@example.test>", subject: "One", text: "T", idempotencyKey: "k1" }, new AbortController().signal);
+    await transport({ to: "b@example.test", from: "Nook <n@example.test>", subject: "Two", text: "T", idempotencyKey: "k2" }, new AbortController().signal);
+    const list = JSON.parse(await Bun.file(path).text()) as Array<{ subject: string; idempotencyKey: string }>;
+    expect(list.map((item) => item.subject)).toEqual(["One", "Two"]);
+    await Bun.file(path).delete();
   });
 
   test("the invite template: link in fragment form, role, expiry, inviter name only, escaped, no tracking", () => {
@@ -162,13 +206,14 @@ describe("mail wrapper", () => {
     expect(message.subject).not.toMatch(/[\r\n]/);
     expect(message.text).toContain(url);
     expect(message.text).toContain("as a Viewer");
-    expect(message.text).toContain(`expires on ${formatExpiry("2026-10-05T10:00:00.000Z")}`);
+    expect(message.text).toContain("expires on Mon 5 Oct 2026, 10:00 (UTC)");
     expect(formatExpiry("2026-10-05T10:00:00.000Z")).toBe("5 October 2026 at 10:00 UTC");
     expect(message.html).toContain(`href="${url}"`);
     expect(message.html).toContain("Asha &lt;script&gt;");
     expect(message.html).not.toContain("<script>");
-    expect(message.html).not.toMatch(/<img|<link|<style|src=|\?invite=/i);
-    expect((message.html!.match(/https?:\/\//g) ?? []).length).toBe(2);
+    expect(message.html).not.toMatch(/<img|<link|src=|\?invite=/i);
+    // The invite link is the only link (the invitee has no settings to open).
+    expect([...message.html!.matchAll(/href="([^"]+)"/g)].map((match) => match[1])).toEqual([url, url, url]);
   });
 });
 
@@ -182,7 +227,8 @@ async function call(session: Session, method: string, path: string, body: unknow
   const response = await request(path, method === "GET" ? {} : { method, body: JSON.stringify(body) }, session);
   return { status: response.status, body: await response.json() as Record<string, any> };
 }
-const bound = () => allowedTestEmails[1100 + Math.floor(Math.random() * 50)]!;
+// Never a registered address: spares come from the end of the list, past the sequential block.
+const bound = spareEmail;
 
 describe("emailing invites", () => {
   beforeEach(() => { db.query("DELETE FROM team_invites").run(); });
@@ -239,7 +285,7 @@ describe("emailing invites", () => {
     const logs = captureLogs();
     try {
       const failed = await call(admin, "POST", `/team/invites/${id}/email`, {});
-      expect(failed.body.email).toEqual({ sent: false, reason: "failed" });
+      expect(failed.body.email).toEqual({ sent: false, reason: "failed", code: "validation_error", retryable: false });
       expect((db.query("SELECT token_hash FROM team_invites WHERE id = ?").get(id) as { token_hash: string }).token_hash).toBe(oldHash);
 
       const { sent, transport } = fakeTransport();

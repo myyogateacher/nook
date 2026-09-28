@@ -32,8 +32,9 @@ const attachmentSelect = `
 
 const attachmentNotFound = () => new TaskError(404, "Attachment not found");
 
+/** A card's attachments, oldest first; links made in the same millisecond keep insertion order (rowid). */
 export function listAttachments(cardId: string) {
-  return db.query(`${attachmentSelect} WHERE ca.card_id = ? ORDER BY ca.created_at, ca.document_id`).all(cardId) as CardAttachment[];
+  return db.query(`${attachmentSelect} WHERE ca.card_id = ? ORDER BY ca.created_at, ca.rowid`).all(cardId) as CardAttachment[];
 }
 
 function attachment(cardId: string, documentId: string) {

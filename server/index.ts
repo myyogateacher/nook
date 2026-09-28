@@ -10,6 +10,7 @@ import { listReadableFolders, ownedNote, readableNote, readableNotePredicate, vi
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startDispatcher } from "./calendar/reminders";
+import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
 import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
@@ -40,6 +41,9 @@ import { z } from "zod";
 const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 import { registerTeamRoutes } from "./team/routes";
 import { registerInboxRoutes } from "./inbox/routes";
+import { registerMailPreviewRoutes } from "./mail/preview";
+import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./mail/triggers";
+import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -189,6 +193,9 @@ app.post("/api/auth/invite", async (c) => {
   }
 });
 
+// Email verification and one-click unsubscribe work without a session (outbound email §A.4, §B.2).
+registerPublicMailRoutes(app);
+
 app.post("/api/auth/register", async (c) => {
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
   // The body is read first: only it can say whether an invite (D162) opens a closed instance.
@@ -230,6 +237,8 @@ app.post("/api/auth/register", async (c) => {
       if (invite) {
         // Single use (T141): a lost race throws INVITE_INVALID and rolls the new account back.
         claimInvite(invite.id, id, timestamp);
+        // An invite bound to this address proved control of the inbox (D244).
+        if (invite.email !== null) db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(timestamp, id);
         audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
       }
     })();
@@ -241,6 +250,8 @@ app.post("/api/auth/register", async (c) => {
   }
   const csrfToken = await createSession(c, id);
   audit(id, null, "auth.register");
+  // Everyone else verifies their address before Nook sends them anything but security mail.
+  enqueueVerifyMail(id);
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role },
     csrfToken,
@@ -275,7 +286,10 @@ app.post("/api/auth/login", async (c) => {
       audit(user.id, null, "auth.totp_failed");
       return c.json({ error: "Invalid or already-used authentication or recovery code", requiresTotp: true }, 401);
     }
-    if (usedRecoveryCode) audit(user.id, null, "auth.recovery_code_used");
+    if (usedRecoveryCode) {
+      audit(user.id, null, "auth.recovery_code_used");
+      mailTwoFactor(user.id, "recovery_used");
+    }
   }
   const csrfToken = await createSession(c, user.id);
   audit(user.id, null, "auth.login");
@@ -379,11 +393,17 @@ app.post("/api/mcp/keys", async (c) => {
       audit(userId, null, "mcp.key_create_failed");
       return c.json({ error: "Invalid password or authentication code" }, 401);
     }
-    if (body.recoveryCode) audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
+    if (body.recoveryCode) {
+      audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
+      mailTwoFactor(userId, "recovery_used");
+    }
   }
   const activeCount = liveKeyCount(userId);
   if (activeCount >= readPolicies().keysPerUser) return c.json({ error: "Revoke an existing API key before creating another", code: "KEY_LIMIT" }, 409);
-  return c.json({ key: createMcpApiKey(userId, body.name, body.scopes) }, 201);
+  const key = createMcpApiKey(userId, body.name, body.scopes);
+  // Security mail (outbound email #5): the key's name and scopes, read at send time.
+  mailApiKeyCreated(userId, key.id);
+  return c.json({ key }, 201);
 });
 
 app.delete("/api/mcp/keys/:id", (c) => {
@@ -440,6 +460,7 @@ app.post("/api/auth/totp/enable", async (c) => {
       .run(timestamp, encryptedRecoveryCodes, user.id, user.totp_secret, acceptedCounter);
     if (result.changes !== 1) return false;
     db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+    mailTwoFactor(user.id, "enabled");
     return true;
   })();
   if (!enabled) return c.json({ error: "Authenticator setup changed. Start setup again." }, 409);
@@ -479,6 +500,7 @@ app.post("/api/auth/totp/recovery-codes/regenerate", async (c) => {
   const encrypted = encryptRecoveryCodes(recoveryCodes, config.totpEncryptionKey, user.id);
   db.query("UPDATE users SET totp_recovery_codes = ? WHERE id = ?").run(encrypted, user.id);
   audit(user.id, null, "auth.totp_recovery_regenerated", { count: recoveryCodes.length });
+  mailTwoFactor(user.id, "recovery_regenerated", recoveryCodes.length);
   return c.json({ recoveryCodes });
 });
 
@@ -495,6 +517,7 @@ app.delete("/api/auth/totp", async (c) => {
       .run(user.id, user.totp_secret, acceptedCounter);
     if (result.changes !== 1) throw new Error("Concurrent authenticator update detected");
     db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
+    mailTwoFactor(user.id, "disabled");
   })();
   audit(user.id, null, "auth.totp_disabled");
   return c.json({ enabled: false, required: false, setupRequired: false });
@@ -569,10 +592,13 @@ app.put("/api/folders/:id/sharing", async (c) => {
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
   db.transaction(() => {
+    const before = shareMembers("folder_shares", "folder_id", id);
     db.query("DELETE FROM folder_shares WHERE folder_id = ?").run(id);
     if (body.visibility === "selected") {
       const statement = db.query("INSERT INTO folder_shares (folder_id, user_id, created_at) VALUES (?, ?, ?)");
       for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+      // "Shared with you" mail for people newly added by name (outbound email #25, D239).
+      mailShared(userId, "folder", id, before, uniqueIds);
     }
     db.query("UPDATE folders SET visibility = ?, updated_at = ? WHERE id = ? AND owner_id = ?").run(body.visibility, now(), id, userId);
   })();
@@ -785,10 +811,12 @@ app.put("/api/notes/:id/sharing", async (c) => {
   return withNoteLock(id, async () => {
     if (!ownedNote(id, userId)) return c.json({ error: "Note not found" }, 404);
     db.transaction(() => {
+      const before = shareMembers("note_shares", "note_id", id);
       db.query("DELETE FROM note_shares WHERE note_id = ?").run(id);
       if (body.visibility === "selected") {
         const statement = db.query("INSERT INTO note_shares (note_id, user_id, created_at) VALUES (?, ?, ?)");
         for (const recipientId of uniqueIds) statement.run(id, recipientId, now());
+        mailShared(userId, "note", id, before, uniqueIds);
       }
       const visibility = body.visibility === "inherit" ? "private" : body.visibility;
       db.query("UPDATE notes SET visibility = ?, sharing_override = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
@@ -820,6 +848,8 @@ registerTodayRoutes(app);
 registerCollectionRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
+registerMailRoutes(app);
+registerMailLogRoutes(app);
 registerTeamRoutes(app);
 registerInboxRoutes(app);
 
@@ -836,6 +866,9 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
 // Ticketed MCP uploads (Wave 19, D176): the same Bearer key that called begin_upload.
 app.put("/mcp/uploads/:uploadId", (c) => handleMcpUpload(c.req.raw, c.req.param("uploadId")));
+
+// Dev-only mail preview (D253); in production every /dev path answers 404 (T232).
+registerMailPreviewRoutes(app);
 
 // The service worker must be revalidated on every registration check (T69).
 app.use("/sw.js", async (c, next) => {
@@ -896,6 +929,7 @@ try {
   console.error("Web Push setup failed; reminders still appear in the app", errorClass(error));
 }
 startDispatcher();
+startMailDispatcher();
 
 export default {
   port: config.port,

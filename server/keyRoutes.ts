@@ -10,6 +10,7 @@ import { keyEvents } from "./access/events";
 import { grantsForScopes } from "./keyGrants";
 import type { McpScope } from "./mcpScopes";
 import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
+import { mailApiKeyCreated, mailTwoFactor } from "./mail/triggers";
 import { verifyReauth } from "./reauth";
 import { readPolicies } from "./team/policies";
 import type { Role } from "./team/roles";
@@ -86,7 +87,7 @@ export function aliasKeyRefusal(user: { id: string; role: Role }, scopes: readon
   }
 }
 
-const restoreBinnedSchema =z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
+const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 
 export function registerKeyRoutes(app: Hono<AppEnv>) {
   app.get("/api/keys", (c) => {
@@ -113,9 +114,12 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
         audit(user.id, null, "mcp.key_create_failed");
         return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
       }
+      if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
       // Counted again after the password check, which awaits: two parallel requests cannot both pass.
       checkKeyCount(user.id, readPolicies());
       const created = createApiKey(user.id, { name: body.name, description: body.description ?? null, surfaces: body.surfaces, grants, expiresInDays: days, limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null) });
+      // Security mail (outbound email #5): the key's name and permissions, read at send time.
+      mailApiKeyCreated(user.id, created.id);
       return c.json({ key: { ...ownApiKey(user.id, created.id), token: created.token } }, 201);
     } catch (error) {
       if (error instanceof KeyError) return keyError(c, error);
@@ -148,8 +152,11 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
       audit(user.id, null, "key.rotate_failed", { keyId: id });
       return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
     }
+    if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
     return run(c, () => {
       const rotated = rotateApiKey(user.id, id, body.graceHours);
+      // A rotation makes a new secret, so it gets the same security mail as a new key.
+      mailApiKeyCreated(user.id, rotated.id);
       return { key: { ...ownApiKey(user.id, rotated.id), token: rotated.token }, oldKey: ownApiKey(user.id, id) };
     }, 201);
   });

@@ -15,6 +15,7 @@ import { isEmailAllowed } from "../config";
 import { audit, db, now, type TeamInviteRow } from "../db";
 import { mailEnabled, sendMail, type MailOutcome } from "../mail";
 import { inviteEmail } from "./inviteEmail";
+import { logSentMail } from "../mail/outbox";
 import { can, type Role } from "./roles";
 
 export const INVITE_ROLES = ["member", "viewer", "guest"] as const;
@@ -88,10 +89,10 @@ export type TeamInvite = {
   revokedAt: string | null;
 };
 
-type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null };
+type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number };
 
 const listSelect = `
-  SELECT i.*, c.display_name AS created_by_name, u.display_name AS used_by_name
+  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name
   FROM team_invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by`;
 
 function present(row: ListedRow, at: string): TeamInvite {
@@ -120,13 +121,16 @@ function requireAdmin(actor: Actor) {
   if (!can(actor.role, "team.manage")) throw new InviteError(403, "ADMIN_ONLY", "Only admins can manage invites");
 }
 
-/** Every live invite plus the latest dead ones, newest first (admins only). */
+/**
+ * Every live invite plus the latest dead ones, newest first (admins only). Invites made in the same
+ * millisecond share `created_at`; rowid (insertion order) breaks the tie, never the random id.
+ */
 export function listInvites(actor: Actor, options: { status?: "live" | "all" } = {}) {
   requireAdmin(actor);
   const at = now();
-  const live = db.query(`${listSelect} WHERE i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC, i.id`).all(at) as ListedRow[];
-  const dead = options.status === "live" ? [] : db.query(`${listSelect} WHERE NOT (i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?) ORDER BY i.created_at DESC, i.id LIMIT ?`).all(at, DEAD_LIST_LIMIT) as ListedRow[];
-  const invites = [...live, ...dead].sort((left, right) => right.created_at.localeCompare(left.created_at) || left.id.localeCompare(right.id)).map((row) => present(row, at));
+  const live = db.query(`${listSelect} WHERE i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC, i.rowid DESC`).all(at) as ListedRow[];
+  const dead = options.status === "live" ? [] : db.query(`${listSelect} WHERE NOT (i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?) ORDER BY i.created_at DESC, i.rowid DESC LIMIT ?`).all(at, DEAD_LIST_LIMIT) as ListedRow[];
+  const invites = [...live, ...dead].sort((left, right) => right.created_at.localeCompare(left.created_at) || right.seq - left.seq).map((row) => present(row, at));
   return { invites, liveCount: live.length, liveLimit: LIVE_INVITE_LIMIT, emailEnabled: mailEnabled() };
 }
 
@@ -188,9 +192,11 @@ export const inviteUrl = (origin: string, token: string) => `${origin}/register#
  * happened, and the invite itself stands either way.
  */
 export async function emailInvite(actor: Actor, invite: Pick<TeamInviteRow, "id" | "role" | "email" | "expires_at">, url: string): Promise<MailOutcome> {
-  if (!invite.email) return { sent: false, reason: "failed" };
+  if (!invite.email) return { sent: false, reason: "failed", code: "no_address", retryable: false };
   const inviter = (db.query("SELECT display_name FROM users WHERE id = ?").get(actor.id) as { display_name: string } | null)?.display_name ?? "An admin";
-  const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team_invite", senderId: actor.id });
+  const outcome = await sendMail(inviteEmail({ to: invite.email, url, role: invite.role, expiresAt: invite.expires_at, inviterName: inviter }), { purpose: "team.invite", senderId: actor.id, recipient: "address" });
+  // Sent at once for the admin's feedback, and logged in the outbox for the Email log (D254).
+  if (outcome.sent || outcome.reason !== "not_configured") logSentMail({ template: "team.invite", to: invite.email, outcome });
   if (outcome.sent) audit(actor.id, null, "team.invite_emailed", { inviteId: invite.id, role: invite.role });
   return outcome;
 }

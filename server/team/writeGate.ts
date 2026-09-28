@@ -35,6 +35,9 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "POST", path: "/api/reminders", why: "own reminders on readable events (O4)" },
   { method: "DELETE", path: "/api/reminders/:reminderId", why: "own reminders" },
   { method: "PUT", path: "/api/preferences", why: "own Modules preference (UI only, D92)" },
+  { method: "PUT", path: "/api/mail/settings", why: "own email preferences (outbound email §B.1)" },
+  { method: "POST", path: "/api/mail/verify/send", why: "verify own address (D244)" },
+  { method: "POST", path: "/api/mail/test", why: "own test email" },
   { method: "POST", path: "/api/mcp/keys", why: "own MCP keys; the handler limits scopes by role and refuses guests (O6)" },
   { method: "DELETE", path: "/api/mcp/keys/:id", why: "revoke own MCP keys" },
   // Nook keys (Wave 31, access plan §C.7): viewers keep read-only keys; the handlers cap grants by role.

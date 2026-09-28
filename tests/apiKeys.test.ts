@@ -54,7 +54,10 @@ const events = (keyId: string) => (db.query("SELECT action, via, meta_json FROM 
 describe("/api/keys", () => {
   test("creates a key from grants, shows the token once, and lists grants, expiry, and state", async () => {
     const owner = await createUser("Keys create");
-    const created = await createKey(owner);
+    // Mail on (a fake transport) so the Wave 28 security mail is queued.
+    const mail = await import("../server/mail");
+    mail.setMailTransportForTests(async () => ({ id: "msg_1" }));
+    const created = await createKey(owner).finally(() => mail.setMailTransportForTests(null));
     expect(created.status).toBe(201);
     const key = created.body.key;
     expect(key.token).toMatch(/^mynotes_[A-Za-z0-9_-]{43}$/);
@@ -81,6 +84,9 @@ describe("/api/keys", () => {
     expect(tools.tools).not.toContain("bin_card");
 
     expect(events(key.id).map((event) => event.action)).toEqual(["key.created"]);
+    // The Wave 28 security mail for a new key, with ids only in its payload.
+    const mails = db.query("SELECT payload FROM mail_outbox WHERE user_id = ? AND template = 'security.api_key_created'").all(owner.userId) as Array<{ payload: string }>;
+    expect(mails.map((mail) => JSON.parse(mail.payload))).toEqual([{ keyId: key.id }]);
     const auditRow = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'mcp.key_created'").get(owner.userId) as { metadata_json: string };
     expect(JSON.parse(auditRow.metadata_json)).toMatchObject({ keyId: key.id, name: "Laptop" });
     // The key's own page carries its history.

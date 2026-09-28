@@ -4,7 +4,7 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 import { api, auditRows, call, errorCode, makeKey, ok, toolNames, type Key } from "./support/mcpClient";
 
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
-const { expireUploadTicketForTests, resetUploadTickets } = await import("../server/mcpFileTools");
+const { chargeUploadBytes, DAILY_UPLOAD_BYTES_PER_USER, expireUploadTicketForTests, resetUploadTickets } = await import("../server/mcpFileTools");
 
 beforeEach(() => {
   resetMcpLimits();
@@ -123,6 +123,31 @@ describe("ticketed uploads (D176b, T146)", () => {
     for (let index = 0; index < 3; index += 1) await ok(key, "begin_upload", { name: `f${index}.png`, sizeBytes: 10, sha256: sha(PNG) });
     expect(await errorCode(key, "begin_upload", { name: "f4.png", sizeBytes: 10, sha256: sha(PNG) })).toBe("LIMIT_REACHED");
     expect(await errorCode(makeKey(owner, ["files:write"]), "begin_upload", { name: "huge.bin", sizeBytes: 64 * 1024 * 1024, sha256: sha(PNG) })).toBe("TOO_LARGE");
+  });
+
+  test("open tickets reserve the daily byte budget; failure and expiry release it; commit re-checks (L3)", async () => {
+    const owner = await createUser("Upload budget");
+    const key = makeKey(owner, ["files:write"]);
+    chargeUploadBytes(owner.userId, DAILY_UPLOAD_BYTES_PER_USER - 100);
+    const body = new Uint8Array(90).fill(7);
+    const first = await ok(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: "0".repeat(64) });
+    expect(await errorCode(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: "0".repeat(64) })).toBe("RATE_LIMITED");
+    expect(await errorCode(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: "0".repeat(64) })).toBe("RATE_LIMITED");
+    // The first fails (hash mismatch): its reservation is released.
+    expect((await put(key, first.uploadId, body)).status).toBe(400);
+    const second = await ok(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: "0".repeat(64) });
+    expect(await errorCode(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: "0".repeat(64) })).toBe("RATE_LIMITED");
+    // Expiry releases it too.
+    expireUploadTicketForTests(second.uploadId);
+    const third = await ok(key, "begin_upload", { name: "blob.bin", sizeBytes: 90, sha256: sha(body) });
+    // Commit re-checks: charged bytes that grew meanwhile refuse the PUT, and nothing is stored.
+    chargeUploadBytes(owner.userId, 20);
+    const refused = await put(key, third.uploadId, body);
+    expect(refused.status).toBe(429);
+    expect(await refused.json()).toMatchObject({ code: "RATE_LIMITED" });
+    expect(db.query("SELECT 1 FROM documents WHERE upload_key = ?").get(third.uploadId)).toBeNull();
+    // The refused ticket stays open (retryable) and still holds its reservation.
+    expect(await errorCode(key, "begin_upload", { name: "blob.bin", sizeBytes: 1, sha256: "0".repeat(64) })).toBe("RATE_LIMITED");
   });
 
   test("quota: refused at begin when it cannot fit, and 507 at commit when it filled up meanwhile", async () => {

@@ -16,8 +16,9 @@ export type Route =
   | { app: "notifications" }
   | { app: "bin" }
   // `invites` (Wave 18): the admin Invites panel at /team/invites, in the detail pane. Never with a user.
+  // `email` (Wave 28): the admin Email log at /team/email, the same way.
   // `keys` and `policies` (Wave 31): Team → Keys at /team/keys and Team → Policies at /team/policies, the same way.
-  | { app: "team"; userId: string | null; invites?: true; keys?: true; policies?: true }
+  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
@@ -131,6 +132,7 @@ export function parseRoute(pathname: string, search = ""): Route {
   // /team and /team/:userId. A malformed id, or anything after it, opens the list.
   // /team/invites is matched before the id rule (D167).
   if (app === "team" && rest.length === 1 && rest[0] === "invites") return { app: "team", userId: null, invites: true };
+  if (app === "team" && rest.length === 1 && rest[0] === "email") return { app: "team", userId: null, email: true };
   if (app === "team" && rest.length === 1 && rest[0] === "keys") return { app: "team", userId: null, keys: true };
   if (app === "team" && rest.length === 1 && rest[0] === "policies") return { app: "team", userId: null, policies: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
@@ -180,7 +182,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : "/team";
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
     const base = route.view === "history" ? "/inbox/history" : "/inbox";
@@ -193,6 +195,39 @@ function formatTasksHome(home: TasksHome) {
   if (home.section === "my") return `/tasks/my${formatHomeSearch(home)}`;
   if (home.section === "view" && (home.viewId === NEW_VIEW || isRouteId(home.viewId))) return `/tasks/views/${home.viewId.toLowerCase()}${formatHomeSearch(home)}`;
   return "/tasks/views";
+}
+
+/**
+ * Settings deep links (Wave 28, outbound email §E.1): `/settings/:section` opens the Settings dialog
+ * at that section over the app. They are not a Route: the app under the dialog stays what it was
+ * (Home for a deep link), and `parseRoute` reads the path as Home. Back closes the dialog and
+ * Forward reopens it, because opening it pushes this entry.
+ */
+export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "notifications", "about"] as const;
+export type SettingsSection = typeof SETTINGS_SECTIONS[number];
+
+export function parseSettingsPath(pathname: string): SettingsSection | null {
+  const match = /^\/settings\/([a-z]+)\/?$/.exec(pathname);
+  return match && (SETTINGS_SECTIONS as readonly string[]).includes(match[1]!) ? match[1] as SettingsSection : null;
+}
+
+export const settingsPath = (section: SettingsSection) => `/settings/${section}`;
+
+const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", notifications: "Notifications", about: "About" };
+
+/** The document title while Settings is open: "Settings · Notifications · Nook". */
+export const settingsDocumentTitle = (section: SettingsSection) => `Settings · ${SETTINGS_SECTION_NAMES[section]} · Nook`;
+
+/**
+ * The Settings dialog's hold on the document title: `show` names the open section, and `restore`
+ * (on close) puts back the title from before the dialog opened.
+ */
+export function settingsTitleScope(doc: { title: string }) {
+  const previous = doc.title;
+  return {
+    show(section: SettingsSection) { doc.title = settingsDocumentTitle(section); },
+    restore() { doc.title = previous; }
+  };
 }
 
 /** A location's route, with its query (the one way DOM callers should parse the current URL). */

@@ -1,0 +1,19 @@
+Subject: Test email from Nook
+
+Nook · nook.test
+
+ACCOUNT · TEST
+Email from Nook works
+
+You asked for a test email, and here it is. Nothing else to do.
+
+Sent Mon 28 Sep 2026, 09:00 (UTC).
+
+Open email settings:
+https://nook.test/settings/notifications
+
+--
+You got this because you pressed “Send me a test email” in Settings.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

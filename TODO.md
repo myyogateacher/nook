@@ -11,7 +11,8 @@ Plans of record: [WAVES_18-20_SMALL.md](docs/plan/WAVES_18-20_SMALL.md) · [agen
 - [x] Waves 18, 20, 21 — released in **v0.10.0** (`4479949`).
 - [x] Wave 19 MCP write coverage — merged into main for v0.11.0.
 - [x] Wave 22 Routines and runs — merged into main for v0.11.0.
-- [ ] **Priority:** Wave 28 email foundation — building (migration 026). Waves 29–30 email, Waves 31–34 access management (migration 025, after 19/22 merge) follow.
+- [x] Wave 28 email foundation (migration 026) — merged into main for v0.11.0.
+- [ ] **Priority:** Waves 29–30 email, Waves 31–34 access management (migration 025) follow.
 - [ ] Waves 23–24 Whiteboard (Excalidraw; spike passed, parked on its branch) and Waves 25–27 Password vault — after the two priority items; awaiting the operator's pick.
 
 - [ ] Reliability: two flakes seen once each in full runs — `tests/teamMcp.test.ts` list_invites ordering (same-millisecond invites) and `tests/reactions.test.ts` "one aggregate query per page"; hunt after v0.11.0.

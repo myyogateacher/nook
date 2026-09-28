@@ -9,10 +9,10 @@ import { replacesInvitesRoute } from "../src/team/TeamApp";
 const root = join(import.meta.dir, "..", "src");
 
 test("/team/invites is replaced with /team for anyone but admins (QA note 10)", () => {
-  expect(replacesInvitesRoute({ userId: null, invites: true }, "member")).toBe(true);
-  expect(replacesInvitesRoute({ userId: null, invites: true }, "viewer")).toBe(true);
-  expect(replacesInvitesRoute({ userId: null, invites: true }, "admin")).toBe(false);
-  expect(replacesInvitesRoute({ userId: null, invites: false }, "member")).toBe(false);
+  expect(replacesInvitesRoute({ userId: null, invites: true, email: false }, "member")).toBe(true);
+  expect(replacesInvitesRoute({ userId: null, invites: true, email: false }, "viewer")).toBe(true);
+  expect(replacesInvitesRoute({ userId: null, invites: true, email: false }, "admin")).toBe(false);
+  expect(replacesInvitesRoute({ userId: null, invites: false, email: false }, "member")).toBe(false);
 });
 
 test("the card drawer title wraps instead of being cut off (QA note 12)", async () => {

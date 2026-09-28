@@ -35,6 +35,7 @@ import {
   type RecurrenceRule,
   type SeriesInput
 } from "./recurrence";
+import { mailShared, shareMembers } from "../mail/triggers";
 
 export const MAX_CALENDARS_PER_OWNER = 20;
 export const MAX_EVENTS_PER_CALENDAR = 20_000;
@@ -185,10 +186,13 @@ export function putCalendarSharing(userId: string, calendarId: string, input: { 
     if (valid.length !== uniqueIds.length) throw invalid("One or more users were not found");
   }
   db.transaction(() => {
+    const before = shareMembers("calendar_members", "calendar_id", calendarId);
     db.query("DELETE FROM calendar_members WHERE calendar_id = ?").run(calendarId);
     if (input.visibility === "selected") {
       const insert = db.query("INSERT INTO calendar_members (calendar_id, user_id, created_at) VALUES (?, ?, ?)");
       for (const recipientId of uniqueIds) insert.run(calendarId, recipientId, now());
+      // "Shared with you" mail (outbound email #23/#25).
+      mailShared(userId, "calendar", calendarId, before, uniqueIds);
     }
     const updated = db.query("UPDATE calendars SET visibility = ?, share_role = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
       .run(input.visibility, input.shareRole, now(), calendarId, userId);

@@ -74,12 +74,68 @@ if (resendApiKey && !/^\S{8,200}$/.test(resendApiKey)) throw new Error("RESEND_A
 const mailFrom = process.env.MAIL_FROM?.trim() || null;
 if (mailFrom && !isMailFrom(mailFrom)) throw new Error('MAIL_FROM must be an address or "Display Name <address@example.com>"');
 
-/** `nook@example.com` or `Nook <nook@example.com>`: one address, no line breaks or extra brackets. */
+/**
+ * `nook@example.com` or `Nook <nook@example.com>`: one address, no line breaks or extra brackets, and
+ * a display name without `@`, so it cannot pose as another address (T228).
+ */
 export function isMailFrom(value: string) {
   const address = "[^\\s@<>\"]+@[^\\s@<>\"]+\\.[^\\s@<>\"]+";
   return value.length <= 200 && !/[\r\n]/.test(value)
-    && (new RegExp(`^${address}$`).test(value) || new RegExp(`^[^<>\"\\r\\n]{1,80} <${address}>$`).test(value));
+    && (new RegExp(`^${address}$`).test(value) || new RegExp(`^[^<>@\"\\r\\n]{1,80} <${address}>$`).test(value));
 }
+
+// Email delivery (docs/plan/research/2026-09-28-outbound-email.md §C.2, §D.2, §D.7).
+// MAIL_TRANSPORT=file writes every message to MAIL_FILE_PATH instead of sending it: development only.
+const mailTransportValue = process.env.MAIL_TRANSPORT?.trim() || "resend";
+if (!(["resend", "file"] as const).includes(mailTransportValue as "resend")) throw new Error("MAIL_TRANSPORT must be resend or file");
+if (mailTransportValue === "file" && process.env.NODE_ENV === "production") throw new Error("MAIL_TRANSPORT=file is for development and tests only");
+const mailFilePath = process.env.MAIL_FILE_PATH?.trim() || null;
+if (mailTransportValue === "file" && (!mailFilePath || !mailFilePath.startsWith("/"))) throw new Error("MAIL_TRANSPORT=file needs an absolute MAIL_FILE_PATH");
+const mailDailyLimit = integerEnv("MAIL_DAILY_LIMIT", 500, 1, 10_000);
+const mailAllowHttpValue = process.env.MAIL_ALLOW_HTTP_LINKS?.trim() || "false";
+if (!(mailAllowHttpValue === "true" || mailAllowHttpValue === "false")) throw new Error("MAIL_ALLOW_HTTP_LINKS must be true or false");
+const appOriginUrl = new URL(appOrigin);
+const mailInstanceName = process.env.MAIL_INSTANCE_NAME?.trim() || appOriginUrl.hostname;
+if (!isInstanceName(mailInstanceName)) throw new Error("MAIL_INSTANCE_NAME must be one line of at most 40 characters");
+
+/** One printable line of at most 40 characters (it appears in every mail's band and footer, T228). */
+export function isInstanceName(value: string) {
+  return value.length >= 1 && value.length <= 40 && !/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069<>]/.test(value);
+}
+
+/**
+ * A URL hostname that only reaches this machine: localhost and *.localhost, the whole 127.0.0.0/8
+ * loopback block, 0.0.0.0, and the IPv6 loopback, unspecified, and IPv4-mapped loopback forms
+ * (WHATWG URL writes [::ffff:127.0.0.1] as [::ffff:7f00:1]).
+ */
+export function isLocalHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  const loopbackV4 = (value: string) => /^127(?:\.\d{1,3}){3}$/.test(value) || value === "0.0.0.0";
+  if (loopbackV4(host)) return true;
+  const v6 = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (v6 === "::1" || v6 === "::") return true;
+  const mapped = /^(?:0{0,4}:){0,5}:?ffff:(.+)$/.exec(v6)?.[1];
+  if (!mapped) return false;
+  if (loopbackV4(mapped)) return true;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(mapped);
+  if (!hex) return false;
+  const high = Number.parseInt(hex[1]!, 16);
+  return high >> 8 === 127 || (high === 0 && Number.parseInt(hex[2]!, 16) === 0);
+}
+/**
+ * Why links in mail could not work for a recipient (§D.7), or null when they can: an https
+ * APP_ORIGIN, or an http one the operator allowed with MAIL_ALLOW_HTTP_LINKS (a LAN or Tailscale
+ * host). Mail sent through Resend never links to localhost. The file transport accepts any origin.
+ */
+function mailLinksBlocked() {
+  if (mailTransportValue === "file" || appOriginUrl.protocol === "https:") return null;
+  if (isLocalHost(appOriginUrl.hostname)) return "APP_ORIGIN is a localhost address, so links in mail would not work for anyone else";
+  if (mailAllowHttpValue !== "true") return "APP_ORIGIN is not https; set MAIL_ALLOW_HTTP_LINKS=true to send mail with http links";
+  return null;
+}
+const mailBlockedReason = resendApiKey && mailFrom ? mailLinksBlocked() : null;
+const mailEnabled = mailTransportValue === "file" || Boolean(resendApiKey && mailFrom && !mailBlockedReason);
 
 export const config = {
   port,
@@ -105,8 +161,26 @@ export const config = {
   pushSubject,
   /** Push service hosts allowed besides the built-in list; "*.example.com" matches subdomains. */
   pushEndpointHosts,
-  /** Email is on only when both RESEND_API_KEY and MAIL_FROM are set (server/mail.ts). */
-  mail: { enabled: Boolean(resendApiKey && mailFrom), apiKey: resendApiKey, from: mailFrom, partial: Boolean(resendApiKey) !== Boolean(mailFrom) }
+  /**
+   * Email is on only when both RESEND_API_KEY and MAIL_FROM are set and links in mail can work
+   * (server/mail.ts), or with the development file transport.
+   */
+  mail: {
+    enabled: mailEnabled,
+    apiKey: resendApiKey,
+    from: mailFrom,
+    partial: mailTransportValue === "resend" && Boolean(resendApiKey) !== Boolean(mailFrom),
+    /** Why configured mail stays off (its links would not work), for the startup warning. */
+    blockedReason: mailBlockedReason,
+    /** True when mail goes out with http links (MAIL_ALLOW_HTTP_LINKS=true), for the startup warning. */
+    httpLinks: mailEnabled && mailTransportValue === "resend" && appOriginUrl.protocol === "http:",
+    transport: mailTransportValue as "resend" | "file",
+    filePath: mailFilePath,
+    /** Shown in the brand band and footer, so people with two Nooks can tell them apart. */
+    instanceName: mailInstanceName,
+    /** Messages a day for the whole instance (§D.2); 10% of it is kept for security and account mail. */
+    dailyLimit: mailDailyLimit
+  }
 };
 
 export function isEmailAllowed(email: string) {

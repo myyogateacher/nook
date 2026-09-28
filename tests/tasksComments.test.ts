@@ -96,6 +96,21 @@ describe("card comments", () => {
     expect((await call(owner, "GET", `/cards/${cardId}/comments?before=${crypto.randomUUID()}`)).status).toBe(404);
   });
 
+  test("comments posted in the same millisecond keep posting order across pages, whatever their random ids", async () => {
+    const { owner, cardId } = await setup("Comment ties");
+    const insert = db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)");
+    const createdAt = new Date().toISOString();
+    // Each later comment gets a smaller id, so an id tie-break would reverse them and page wrongly.
+    const ids = Array.from({ length: 3 }, () => crypto.randomUUID()).sort().reverse();
+    ids.forEach((id, index) => insert.run(id, cardId, owner.userId, `t${index}`, createdAt));
+    const bodies = (page: { body: Record<string, any> }) => page.body.comments.map((comment: { body: string }) => comment.body);
+    expect(bodies(await call(owner, "GET", `/cards/${cardId}`))).toEqual(["t0", "t1", "t2"]);
+    const newest = await call(owner, "GET", `/cards/${cardId}/comments?limit=2`);
+    expect([bodies(newest), newest.body.hasMore]).toEqual([["t1", "t2"], true]);
+    const older = await call(owner, "GET", `/cards/${cardId}/comments?limit=2&before=${ids[1]}`);
+    expect([bodies(older), older.body.hasMore]).toEqual([["t0"], false]);
+  });
+
   test("a card holds at most 500 comments", async () => {
     const { owner, member, cardId } = await setup("Comment cap");
     const insert = db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, 'x', ?)");

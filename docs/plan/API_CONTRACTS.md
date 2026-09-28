@@ -1521,6 +1521,78 @@ type RunSummary = {
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
+## Email (Wave 28)
+
+Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1. Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.
+
+### Types
+
+```ts
+type EmailCategory = "assignments" | "comments" | "sharing" | "proposals" | "sprints" | "bin" | "reminders";
+type EmailPrefs = {
+  enabled: boolean;                               // master switch; security and account mail ignore it
+  categories: Record<EmailCategory, boolean>;     // defaults: sprints and bin off, the rest on
+  digest: "off" | "daily" | "weekly";             // only "off" is accepted until Wave 29
+  digestLocalTime: string;                        // "HH:MM"
+  quietStart: string | null; quietEnd: string | null; // both or neither; may wrap midnight
+  tz: string;                                     // IANA zone the quiet hours use
+  revision: number;                               // 0 = never saved (defaults)
+  updatedAt: string | null;
+};
+type EmailSettings = { configured: boolean; address: string; verified: boolean; suppressed: boolean; prefs: EmailPrefs };
+```
+
+### Signed-in endpoints
+
+All need the session, CSRF, Origin, and the TOTP gate. Viewers and guests may use them (write-gate allowlist): they are personal settings.
+
+| Method and path | Body | Result |
+| --- | --- | --- |
+| `GET /api/mail/settings` | — | `EmailSettings` |
+| `PUT /api/mail/settings` | `{ enabled, categories (all seven), digest: "off", digestLocalTime, quietHours: { start, end } \| null, tz, revision }` (strict) | `EmailSettings`; 409 `PREFERENCES_CHANGED` with `prefs` when `revision` is stale; 400 for an unknown zone, a bad time, equal start and end, a digest other than off, or an unknown category |
+| `POST /api/mail/verify/send` | `{}` | `{ queued: true }`; 409 `ALREADY_VERIFIED`; 429 `RATE_LIMITED` (3 an hour); 503 `NOT_CONFIGURED` |
+| `POST /api/mail/test` | `{}` | `{ queued: true, id }`; 409 `UNVERIFIED`; 429 `RATE_LIMITED` (3 an hour); 503 `NOT_CONFIGURED` |
+
+### Public endpoints (no session)
+
+| Method and path | Body | Result |
+| --- | --- | --- |
+| `POST /api/mail/verify` | `{ token }` (43 base64url characters, from the `/verify-email#token=` fragment). Origin and JSON content type required, 20 a minute per client | `{ ok: true }` and `users.email_verified_at` set; 410 `TOKEN_EXPIRED`; 400 `TOKEN_INVALID` (unknown, used, or issued for a different address). Never creates a session |
+| `POST /api/mail/unsubscribe?t=<token>` | any (RFC 8058 sends `List-Unsubscribe=One-Click` form data) | Always 200 with an empty body, valid token or not; a valid one turns its one category off. 429 after 30 a minute per client |
+| `GET /api/mail/unsubscribe` | — | 405. A GET never changes anything (link scanners) |
+
+### Admin endpoints (Team)
+
+Registered before `/api/team/:userId`. Guests get 404, members and viewers 403 `ADMIN_ONLY`.
+
+| Method and path | Result |
+| --- | --- |
+| `GET /api/team/mail-log?status=all\|sent\|held\|failed\|dead\|skipped&cursor=` | `{ emailEnabled, today: { sent, held, failed, dead, limit }, entries: [{ id, template, class, status, skipReason, attempts, errorCode, providerId, createdAt, sentAt, notBefore, to: { userId, displayName } \| { hash } }], nextCursor }`, 50 a page, newest first. Never an address, subject, or payload |
+| `POST /api/team/mail-log/:id/retry` `{}` | `{ ok: true }` requeues a `dead` row for one more attempt; 409 `NOT_RETRYABLE` otherwise (invites are never queued) |
+
+### Mail links and headers
+
+- Every link is `APP_ORIGIN` plus a path from `server/mail/links.ts` (ids checked against the router's pattern; no query except the unsubscribe token; no redirect parameters): `/tasks/:b/card/:c`, `/tasks/:b`, `/tasks/my`, `/tasks/views/:v`, `/notes/:n`, `/notes/folder/:f`, `/notes/shared`, `/files/:d`, `/files/shared`, `/collections/:c`, `/calendar`, `/inbox`, `/team/:u`, `/settings/:section`, `/`.
+- Credential links keep their token in the fragment: `/register#invite=…`, `/verify-email#token=…`. The SPA reads it once, strips it, and POSTs it.
+- Activity mail: a footer link `/mail/unsubscribe#t=<token>` (the page asks before it POSTs), and the headers `List-Unsubscribe: <APP_ORIGIN/api/mail/unsubscribe?t=<token>>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Security and account mail carry neither.
+- `/settings/:section` (`security`, `modules`, `mcp`, `notifications`, `about`) opens the Settings dialog at that section as a history entry of its own: Back closes it, Forward reopens it; a deep link opens it over Home. `/team/email` is the admin Email log.
+
+### Templates (outbox `template`)
+
+| Template | Class / category | Trigger | Grouping |
+| --- | --- | --- | --- |
+| `team.invite` | account | Admin sends an invite (sent at once, logged in the outbox) | — |
+| `account.verify` | account | Registration without an email-bound invite; Settings → Send verification email | — |
+| `account.test` | account | Settings → Send me a test email | — |
+| `tasks.assigned` | activity / assignments | Someone else adds you to a card's assignees (web or MCP) | 10 min per recipient |
+| `tasks.comment` | activity / comments | A comment on a card you created or are assigned to, by someone else | 10 min per recipient and card |
+| `sharing.shared` | activity / sharing | You are added by name to a note, folder, file, board, calendar, collection, or task view (never `all_users`) | 10 min per recipient |
+| `inbox.proposals` | activity / proposals | New pending proposals from your keys | 60 min, at most one per 3 h; skipped when none are pending at send time |
+| `security.api_key_created` | security | `POST /api/mcp/keys` | — |
+| `security.role_changed` | security | A role change | 10 min; a change back to the original role sends nothing |
+| `security.two_factor` | security | Two-factor on, off, reset by the host CLI, recovery codes regenerated, a recovery code used | — |
+| `security.account` | security | Blocked, unblocked, signed out everywhere (never the admin's reason) | — |
+
 ## Nook keys, policies, and the key inventory (Wave 31, Access A)
 
 Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` (D261–D288, T200–T218). Migration **025** (`access_keys`) adds every access table Waves 32–34 need; Wave 31 uses the key columns, `api_key_grants`, `api_key_usage`, `team_settings`, and `access_events`.

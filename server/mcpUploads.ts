@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { authenticateMcpRequest, mcpJsonError, mcpResponse, withMcpRequestSlot } from "./mcp";
-import { storeForKey, ticketExpired, uploadTicket } from "./mcpFileTools";
+import { storeForKey, ticketBudgetError, ticketExpired, uploadTicket } from "./mcpFileTools";
 import { hasScope } from "./mcpScopes";
 import { loadLiveKey } from "./mcpTools";
 import { canWriteContent } from "./team/userRole";
@@ -42,6 +42,9 @@ export async function handleMcpUpload(request: Request, uploadId: string) {
 
   return withMcpRequestSlot(async () => {
     const committedBefore = ticket.state === "committed";
+    // L3: the ticket's reservation must still fit the daily byte budget at commit.
+    const overBudget = committedBefore ? null : ticketBudgetError(ticket);
+    if (overBudget) return json(429, { error: overBudget.message, code: "RATE_LIMITED" });
     if (!committedBefore) ticket.state = "receiving";
     const source = request.body ? Readable.fromWeb(request.body as unknown as NodeWebReadableStream<Uint8Array>) : Readable.from([]);
     let result: { status: number; body: Record<string, unknown> };

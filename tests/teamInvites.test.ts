@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { allowedTestEmails, createUser, db, origin, request, type Session } from "./support/harness";
+import { createUser, db, origin, request, spareEmail, type Session } from "./support/harness";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
-const { resetInviteRateLimits, sweepInvites, inviteStatus, maskEmail, hashInviteToken } = await import("../server/team/invites");
+const { resetInviteRateLimits, listInvites, sweepInvites, inviteStatus, maskEmail, hashInviteToken } = await import("../server/team/invites");
 const { resetRegistrationRateLimit } = await import("../server/index");
 
 /**
@@ -37,8 +37,7 @@ async function call(session: Session | undefined, method: string, path: string, 
 const createInvite = (admin: Session, body: Record<string, unknown> = { role: "viewer" }) => call(admin, "POST", "/team/invites", body);
 
 /** Emails from the end of the harness allowlist, which createUser() (from the start) never reaches. */
-let spareEmail = allowedTestEmails.length;
-const freshEmail = () => allowedTestEmails[--spareEmail]!;
+const freshEmail = spareEmail;
 
 function registerWith(body: Record<string, unknown>) {
   resetRegistrationRateLimit();
@@ -49,6 +48,23 @@ const inviteRow = (id: string) => db.query("SELECT * FROM team_invites WHERE id 
 const auditRows = (type: string) => db.query("SELECT actor_id, metadata_json FROM audit_log WHERE event_type = ? ORDER BY created_at").all(type) as Array<{ actor_id: string | null; metadata_json: string }>;
 
 describe("Team invites: create, list, revoke", () => {
+  test("invites made in the same millisecond list newest first, live and dead merged, whatever their random ids", async () => {
+    const admin = await user("Invite tie admin", "admin");
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+    // Each newer invite gets a larger id than the one before it, so an ascending-id tie-break lists them oldest first.
+    const ids = ["00000000-0000-4000-8000-000000000000", "88888888-0000-4000-8000-000000000000", "cccccccc-0000-4000-8000-000000000000", "ffffffff-0000-4000-8000-000000000000"];
+    const insert = db.query(`INSERT INTO team_invites (id, token_hash, token_prefix, role, created_by, created_at, expires_at, revoked_at)
+      VALUES (?, ?, 'tietie', 'viewer', ?, ?, ?, ?)`);
+    ids.forEach((id, index) => insert.run(id, String(index).repeat(64), admin.userId, createdAt, expiresAt, index % 2 ? createdAt : null));
+    const listed = await call(admin, "GET", "/team/invites");
+    expect(listed.body.invites.map((item: { id: string; status: string }) => [item.id, item.status])).toEqual([
+      [ids[3], "revoked"], [ids[2], "live"], [ids[1], "revoked"], [ids[0], "live"]
+    ]);
+    // The MCP list_invites path asks for live invites only.
+    expect(listInvites({ id: admin.userId, role: "admin" }, { status: "live" }).invites.map((item) => item.id)).toEqual([ids[2], ids[0]]);
+  });
+
   test("an admin creates an invite; the token is returned once and only its hash is stored", async () => {
     const admin = await user("Invite admin", "admin");
     const created = await createInvite(admin, { role: "viewer", note: "Design contractor", expiresInDays: 3 });

@@ -46,7 +46,7 @@ import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
-import { InboxNavContext, TeamNavContext } from "./AppShell";
+import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext, ShareRoleHint } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
@@ -1692,6 +1692,7 @@ export function App() {
             <span><Settings />Settings</span>
           </button>
           {openBin && <button className="footer-bin" onClick={openBin}><Trash2 />Bin</button>}
+          <SidebarInboxRow nav={inboxNav} />
           <button className="footer-signout" onClick={signOut}><LogOut />Sign out</button>
         </footer>
       </aside>

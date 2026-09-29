@@ -14,6 +14,12 @@ const makeKey = (session: Session, scopes: McpScope[], name = "Calendar agent"):
   return { id: key.id, token: key.token, userId: session.userId };
 };
 
+/**
+ * Events that get reminders fall in a later calendar year (the fixture is next year's 5 October), so a reminder never lies in the past. Berlin is
+ * on summer time that day in every year (it ends on the last Sunday of October): UTC+2.
+ */
+const Y = new Date().getUTCFullYear() + 1;
+
 let rpcId = 0;
 async function rpc(key: Key, method: string, params: unknown = {}) {
   const response = await fetch(`${origin}/mcp`, {
@@ -56,8 +62,8 @@ async function setup(label: string) {
   expect((await api(owner, "PUT", `/calendars/${readOnly}/sharing`, { visibility: "selected", shareRole: "viewer", userIds: [editor.userId, viewer.userId] })).status).toBe(200);
   // The viewer only views the club calendar, and is not on a third private one.
   const privateId = (await api(owner, "POST", "/calendars", { name: `${label} private`, color: "red" })).body.calendar.id as string;
-  const event = (await api(owner, "POST", `/calendars/${readOnly}/events`, { title: "Club night", allDay: false, startLocal: "2026-10-05T19:00", tz: "Europe/Berlin", durationMinutes: 120, description: "Bring snacks" })).body.event as { id: string; revision: number };
-  const privateEvent = (await api(owner, "POST", `/calendars/${privateId}/events`, { title: "Secret", allDay: true, startDate: "2026-10-06", endDate: "2026-10-07" })).body.event as { id: string };
+  const event = (await api(owner, "POST", `/calendars/${readOnly}/events`, { title: "Club night", allDay: false, startLocal: `${Y}-10-05T19:00`, tz: "Europe/Berlin", durationMinutes: 120, description: "Bring snacks" })).body.event as { id: string; revision: number };
+  const privateEvent = (await api(owner, "POST", `/calendars/${privateId}/events`, { title: "Secret", allDay: true, startDate: `${Y}-10-06`, endDate: `${Y}-10-07` })).body.event as { id: string };
   return { owner, editor, viewer, stranger, editable, readOnly, privateId, eventId: event.id, privateEventId: privateEvent.id };
 }
 
@@ -103,7 +109,7 @@ describe("MCP calendar tools", () => {
     expect([viewerRoles[s.editable], viewerRoles[s.readOnly], viewerRoles[s.privateId]]).toEqual(["editor", "viewer", undefined]);
     expect(roles((await callTool(stranger, "list_calendars")).value)[s.readOnly]).toBeUndefined();
 
-    const range = { from: "2026-10-01", to: "2026-10-10" };
+    const range = { from: `${Y}-10-01`, to: `${Y}-10-10` };
     const titles = async (key: Key) => ((await callTool(key, "list_events", range)).value.occurrences as Array<{ title: string }>).map((item) => item.title).sort();
     expect(await titles(owner)).toEqual(["Club night", "Secret"]);
     expect(await titles(viewer)).toEqual(["Club night"]);
@@ -112,7 +118,7 @@ describe("MCP calendar tools", () => {
 
     const got = await callTool(viewer, "get_event", { eventId: s.eventId });
     expect(got.isError).toBe(false);
-    expect(got.value).toMatchObject({ revision: 1, role: "viewer", event: { title: "Club night", description: "Bring snacks", start: "2026-10-05T19:00", tz: "Europe/Berlin", durationMinutes: 120 } });
+    expect(got.value).toMatchObject({ revision: 1, role: "viewer", event: { title: "Club night", description: "Bring snacks", start: `${Y}-10-05T19:00`, tz: "Europe/Berlin", durationMinutes: 120 } });
     for (const [key, eventId] of [[stranger, s.eventId], [viewer, s.privateEventId], [owner, crypto.randomUUID()]] as const) {
       const missing = await callTool(key, "get_event", { eventId });
       expect(missing.isError).toBe(true);
@@ -210,7 +216,7 @@ describe("MCP calendar tools", () => {
     const created = await callTool(viewer, "create_reminder", { eventId: s.eventId, offsetMinutes: 30, tz: "Europe/Berlin" });
     expect(created.isError).toBe(false);
     const reminderId = created.value.reminderId as string;
-    expect(created.value).toMatchObject({ reminderId: expect.any(String), nextFireAt: "2026-10-05T16:30:00.000Z", eventId: s.eventId });
+    expect(created.value).toMatchObject({ reminderId: expect.any(String), nextFireAt: `${Y}-10-05T16:30:00.000Z`, eventId: s.eventId });
     expect(db.query("SELECT user_id, created_via_key_id FROM reminders WHERE id = ?").get(reminderId)).toEqual({ user_id: s.viewer.userId, created_via_key_id: viewer.id });
     // Nobody else sees it, including the calendar owner.
     expect((await api(s.owner, "GET", `/reminders?eventId=${s.eventId}`)).body.reminders).toEqual([]);
@@ -235,7 +241,7 @@ describe("MCP calendar tools", () => {
     const before = (db.query("SELECT COUNT(*) AS count FROM audit_log WHERE actor_id = ?").get(user.userId) as { count: number }).count;
     await callTool(key, "list_events", { from: "2026-10-01", to: "2026-10-02" });
     expect((db.query("SELECT COUNT(*) AS count FROM audit_log WHERE actor_id = ?").get(user.userId) as { count: number }).count).toBe(before);
-    const { eventId } = (await callTool(key, "create_event", { calendarId, title: "Audited", allDay: true, start: "2027-01-01" })).value;
+    const { eventId } = (await callTool(key, "create_event", { calendarId, title: "Audited", allDay: true, start: `${Y + 1}-01-01` })).value;
     await callTool(key, "update_event", { eventId, baseRevision: 1, title: "Audited again" });
     await callTool(key, "create_reminder", { eventId, offsetMinutes: -540 });
     expect(auditRows(user.userId, "event.create").at(-1)).toMatchObject({ eventId, via: "mcp", keyId: key.id });
@@ -253,10 +259,10 @@ describe("MCP calendar tools", () => {
     expect(MCP_LIMITS.event_write.limit).toBe(200);
     expect(MCP_LIMITS.reminder_write.limit).toBe(100);
     for (let index = 0; index < 200; index += 1) expect(consumeMcpLimits({ keyId: key.id }, ["event_write"])).toBe(0);
-    const capped = await callTool(key, "create_event", { calendarId, title: "One too many", allDay: true, start: "2027-02-01" });
+    const capped = await callTool(key, "create_event", { calendarId, title: "One too many", allDay: true, start: `${Y + 1}-02-01` });
     expect(capped.value.code).toBe("RATE_LIMITED");
     // Reminders have their own bucket.
-    const { eventId } = (await callTool(makeKey(user, ["calendar:write"], "Second"), "create_event", { calendarId, title: "Other key", allDay: true, start: "2027-02-01" })).value;
+    const { eventId } = (await callTool(makeKey(user, ["calendar:write"], "Second"), "create_event", { calendarId, title: "Other key", allDay: true, start: `${Y + 1}-02-01` })).value;
     expect((await callTool(key, "create_reminder", { eventId, offsetMinutes: 60 })).isError).toBe(false);
     for (let index = 0; index < 99; index += 1) consumeMcpLimits({ keyId: key.id }, ["reminder_write"]);
     expect((await callTool(key, "create_reminder", { eventId, offsetMinutes: 120 })).value.code).toBe("RATE_LIMITED");
@@ -264,7 +270,7 @@ describe("MCP calendar tools", () => {
     expect((await callTool(key, "list_calendars")).isError).toBe(false);
     // Per user, across keys.
     for (let index = 0; index < 400; index += 1) consumeMcpLimits({ keyId: `other-${index}`, userId: user.userId }, ["event_write"]);
-    expect((await callTool(makeKey(user, ["calendar:write"], "Fresh"), "create_event", { calendarId, title: "User cap", allDay: true, start: "2027-02-02" })).value.code).toBe("RATE_LIMITED");
+    expect((await callTool(makeKey(user, ["calendar:write"], "Fresh"), "create_event", { calendarId, title: "User cap", allDay: true, start: `${Y + 1}-02-02` })).value.code).toBe("RATE_LIMITED");
   });
 
   test("links come back as titles, or restricted when the user cannot open them", async () => {

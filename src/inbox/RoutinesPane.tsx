@@ -258,7 +258,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
   const readOnly = !canWrite;
   const sheetRef = useRef<HTMLDivElement>(null);
   // D69 at every width (2i): a deep link's Back closes an open dropdown, then a confirm, then the sheet.
-  useHistoryDialogGuard(true, onClose, { desktop: true });
+  useHistoryDialogGuard(true, onClose);
   useDialogFocus(sheetRef);
   useEffect(() => { setForm(formOf(routine)); setError(""); }, [routine]);
   useEffect(() => {

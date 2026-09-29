@@ -25,7 +25,21 @@ export type AccessSummary = {
   pageSize: number;
 };
 
-/** One row. `titleHidden`: the viewer cannot open the item, so the title is "Board owned by Carol" and there is no id (D269). */
+/** One way a person reaches an item: their direct share, or one of their groups. */
+export type AccessSource = {
+  via: "direct" | "group";
+  level: AccessLevel;
+  group: { id: string; name: string } | null;
+  lowerTo: AccessLevel[];
+  /** Admin page only: the opaque handle the reductions take. */
+  handle?: string;
+};
+
+/**
+ * One item. `titleHidden`: the viewer cannot open the item, so the title is "Board owned by Carol"
+ * and there is no id (D269). `level` is the best of the sources; rows are ordered by owner, then by
+ * a keyed hash of the id, never by the id.
+ */
 export type AccessRow = {
   kind: AccessKind;
   title: string;
@@ -33,12 +47,8 @@ export type AccessRow = {
   owner: { id: string; displayName: string };
   id?: string;
   level: AccessLevel;
-  via: "direct" | "group";
-  group: { id: string; name: string } | null;
   active: boolean;
-  lowerTo: AccessLevel[];
-  /** Admin page only: the opaque handle the reductions take. */
-  handle?: string;
+  sources: AccessSource[];
 };
 
 export type AccessPage = { kind: AccessKind; items: AccessRow[]; nextCursor: string | null };
@@ -108,7 +118,7 @@ export const MODULE_TITLES: Record<KindCount["module"], string> = { notes: "Note
 export const LEVEL_WORDS: Record<AccessLevel, string> = { view: "Can view", comment: "Can comment", edit: "Can edit", manage: "Manager" };
 
 /** "Can edit (direct)" or "Can view (via Ops)". */
-export const viaLabel = (row: Pick<AccessRow, "level" | "via" | "group">) => `${LEVEL_WORDS[row.level]} ${row.via === "direct" ? "(direct)" : `(via ${row.group?.name ?? "a group"})`}`;
+export const viaLabel = (row: Pick<AccessSource, "level" | "via" | "group">) => `${LEVEL_WORDS[row.level]} ${row.via === "direct" ? "(direct)" : `(via ${row.group?.name ?? "a group"})`}`;
 
 /** The confirm copy for Reset access: what goes, what stays. */
 export function resetSummary(counts: ResetCounts) {

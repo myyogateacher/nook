@@ -9,6 +9,8 @@ import { withNoteLock, withResourceLock } from "../storage";
 import { readPolicies } from "../team/policies";
 import type { Role } from "../team/roles";
 import { parseJson, uuid } from "../validation";
+import { keysReachingItem } from "../apiKeys";
+import type { GrantModule } from "../keyGrants";
 import { itemLevel } from "./effective";
 import { recordAccessEvent } from "./events";
 import { AUDIENCE_LEVELS, KIND_LEVELS, LEVELS, isLevel, levelToShareRole, shareRoleToLevel, type AccessKind, type ItemLevel, type Level } from "./levels";
@@ -202,21 +204,10 @@ function authorize(kind: AccessKind, id: string, userId: string) {
 
 export type ItemAccess = ReturnType<typeof readAccess>;
 
-const KEY_MODULE: Record<AccessKind, string> = { note: "notes", folder: "notes", document: "files", board: "tasks", task_view: "tasks", collection: "collections", calendar: "calendar" };
+const KEY_MODULE: Record<AccessKind, GrantModule> = { note: "notes", folder: "notes", document: "files", board: "tasks", task_view: "tasks", collection: "collections", calendar: "calendar" };
 
-/**
- * How many of the owner's usable keys (live, not expired, not past a rotation grace) hold a grant
- * on this item's module over "all" or on this item. The owner's live access always covers their
- * own items, so this is what the keys can reach today (role and policy blocks aside).
- */
-function keysReaching(kind: AccessKind, id: string, ownerId: string) {
-  const at = now();
-  return (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys k WHERE k.user_id = $ownerId AND k.revoked_at IS NULL
-      AND (k.expires_at IS NULL OR k.expires_at > $at) AND (k.revoke_after IS NULL OR k.revoke_after > $at)
-      AND EXISTS (SELECT 1 FROM api_key_grants g WHERE g.key_id = k.id AND g.module = $module
-        AND (g.resource_id IS NULL OR (g.resource_kind = $kind AND g.resource_id = $id)))`)
-    .get({ ownerId, at, module: KEY_MODULE[kind], kind, id }) as { count: number }).count;
-}
+/** How many of the owner's keys reach this item right now (`keysReachingItem`: usable, not blocked by policy, an active grant). */
+const keysReaching = (kind: AccessKind, id: string, ownerId: string) => keysReachingItem(ownerId, KEY_MODULE[kind], kind, id);
 
 export function readAccess(kind: AccessKind, id: string, userId: string) {
   const { state, yourLevel } = authorize(kind, id, userId);

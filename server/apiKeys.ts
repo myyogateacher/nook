@@ -737,6 +737,29 @@ export function listApiKeys(userId: string) {
 const userRole = (userId: string) => (db.query("SELECT role FROM users WHERE id = ?").get(userId) as { role: Role } | null)?.role ?? null;
 
 /** One of the caller's keys (any state), or null. */
+/**
+ * The Access sheet's "N of your API keys can reach this" (Wave 33, §C.5): the owner's keys that
+ * reach the item right now, by the same rules a call uses. A key counts when it is usable (active,
+ * or still in its rotation grace; never revoked, expired, paused, or blocked by policy) and holds an
+ * active grant (allowed by the owner's role and the policy's modules) on the module over "all" or
+ * on this very item.
+ */
+export function keysReachingItem(ownerId: string, module: GrantModule, resourceKind: string, resourceId: string) {
+  const rows = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.user_id = ? AND k.revoked_at IS NULL`).all(ownerId) as KeyRow[];
+  const policies = readPolicies();
+  let count = 0;
+  for (const row of rows) {
+    const { state } = keyState(row, policies);
+    if (state !== "active" && state !== "grace") continue;
+    const modules = activeModules(row.role, policies);
+    const reaches = loadGrants(row.id).some((grant) => grant.module === module
+      && (grant.resourceId === null || (grant.resourceKind === resourceKind && grant.resourceId === resourceId))
+      && grantInactiveReason(grant, row.role, modules, row.user_id) === null);
+    if (reaches) count += 1;
+  }
+  return count;
+}
+
 export function ownApiKey(userId: string, keyId: string) {
   const row = ownKey(userId, keyId);
   if (!row) return null;

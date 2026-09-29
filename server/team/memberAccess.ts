@@ -1,9 +1,9 @@
 import { audit, db, now } from "../db";
 import { adminRevokeKey, listApiKeys, listInventory } from "../apiKeys";
 import { folderLevel } from "../access";
-import { itemLevel, presentItem, readabilityChecker } from "../access/effective";
+import { ITEM_TABLES, itemLevel, presentItem, readabilityChecker } from "../access/effective";
 import { recordAccessEvent } from "../access/events";
-import { openCursor, openItemHandle, sealCursor, sealItemHandle } from "../access/handles";
+import { itemSortKey, openCursor, openItemHandle, sealCursor, sealItemHandle, type PageCursor } from "../access/handles";
 import { ACCESS_KINDS, KIND_LEVELS, LEVEL_RANK, isLevel, type AccessKind, type ItemLevel, type Level } from "../access/levels";
 import { notifyAccess } from "../access/notices";
 import { SHARE_TABLES } from "../access/shares";
@@ -142,7 +142,7 @@ export function accessSummary(viewerId: string, userId: string) {
   };
 }
 
-type GrantRow = { via: "direct" | "group"; resource_id: string; level: string; group_id: string; group_name: string | null };
+type GrantRow = { via: "direct" | "group"; resource_id: string; level: string; group_id: string; group_name: string | null; owner_name: string };
 
 /** The person's live level on an item (folders without the viewer-wide folder list, T218). */
 function liveLevel(kind: AccessKind, id: string, userId: string): ItemLevel {
@@ -150,52 +150,72 @@ function liveLevel(kind: AccessKind, id: string, userId: string): ItemLevel {
   return db.query("SELECT 1 FROM folders WHERE id = ?").get(id) ? folderLevel(id, userId) : "none";
 }
 
+const compareKeys = (left: PageCursor, right: PageCursor) => left.owner < right.owner ? -1 : left.owner > right.owner ? 1 : left.key < right.key ? -1 : left.key > right.key ? 1 : 0;
+
 /**
- * One page (200) of the grants `userId` holds on `kind`: direct share rows and group grants, ordered
- * by (via, item, group). `withHandles` (the admin page) seals a handle on each row; the self view
- * has none. `active` says whether the grant is in effect now (the item may be private, binned, or
- * the person blocked); the grant is listed either way, because Reset and Remove clean it up.
+ * One page (200) of the items `userId` reaches on `kind` through a direct share or a group. One
+ * row per item, with every way they reach it (`sources`), so a hidden item never shows as two
+ * adjacent rows (T204). Rows are ordered by owner name, then by a keyed hash of the id
+ * (`itemSortKey`), never by the id itself; the cursor carries that sort key, sealed. The grants are
+ * read with two indexed queries (the share table's `user_id` index and `group_members_user`), ids
+ * only, and only the page is presented (T218). `withHandles` (the admin page) seals a handle on
+ * each source; the self view has none. `active` says whether the person reaches the item now (it
+ * may be private, binned, or the person blocked); grants are listed either way, because Reset and
+ * Remove clean them up.
  */
 export function accessItems(viewerId: string, userId: string, kind: AccessKind, cursorToken: string | undefined, withHandles: boolean) {
   person(userId);
   const cursor = cursorToken ? openCursor(cursorToken, viewerId, userId, kind) : null;
   if (cursorToken && !cursor) throw new MemberAccessError(400, "INVALID_CURSOR", "This page is out of date. Reload to see the latest.");
   const { table, column, hasLevel } = SHARE_TABLES[kind];
-  const rows = db.query(`SELECT via, resource_id, level, group_id, group_name FROM (
+  const itemTable = ITEM_TABLES[kind].table;
+  const rows = db.query(`SELECT x.via, x.resource_id, x.level, x.group_id, x.group_name, u.display_name AS owner_name FROM (
       SELECT 'direct' AS via, s.${column} AS resource_id, ${hasLevel ? "s.level" : "'view'"} AS level, '' AS group_id, NULL AS group_name
         FROM ${table} s WHERE s.user_id = $userId
       UNION ALL
       SELECT 'group', gg.resource_id, gg.level, gg.group_id, g.name
         FROM group_members gm JOIN group_grants gg ON gg.group_id = gm.group_id JOIN user_groups g ON g.id = gg.group_id
         WHERE gm.user_id = $userId AND gg.resource_kind = $kind AND gg.env_id IS NULL
-    ) WHERE ($cursorVia IS NULL OR (via, resource_id, group_id) > ($cursorVia, $cursorId, $cursorGroup))
-    ORDER BY via, resource_id, group_id LIMIT $limit`)
-    .all({ userId, kind, cursorVia: cursor?.via ?? null, cursorId: cursor?.id ?? "", cursorGroup: cursor?.groupId ?? "", limit: ACCESS_PAGE + 1 }) as GrantRow[];
-  const page = rows.slice(0, ACCESS_PAGE);
+    ) x JOIN ${itemTable} t ON t.id = x.resource_id JOIN users u ON u.id = t.owner_id`)
+    .all({ userId, kind }) as GrantRow[];
+  const byItem = new Map<string, { id: string; sort: PageCursor; grants: GrantRow[] }>();
+  for (const row of rows) {
+    const entry = byItem.get(row.resource_id) ?? { id: row.resource_id, sort: { owner: row.owner_name.toLocaleLowerCase("en"), key: itemSortKey(row.resource_id) }, grants: [] };
+    entry.grants.push(row);
+    byItem.set(row.resource_id, entry);
+  }
+  const ordered = [...byItem.values()].sort((left, right) => compareKeys(left.sort, right.sort))
+    .filter((entry) => !cursor || compareKeys(entry.sort, cursor) > 0);
+  const page = ordered.slice(0, ACCESS_PAGE);
   const readable = readabilityChecker(viewerId);
   const offered = KIND_LEVELS[kind];
-  const items = page.flatMap((row) => {
-    const item = presentItem(kind, row.resource_id, viewerId, readable);
-    if (!item || !isLevel(row.level)) return [];
-    const level = row.level;
-    const via = row.via;
-    const groupId = via === "group" ? row.group_id : null;
-    return [{
-      ...item,
-      level,
-      via,
-      group: groupId ? { id: groupId, name: row.group_name ?? "" } : null,
-      active: liveLevel(kind, row.resource_id, userId) !== "none",
-      /** Levels an admin may lower a direct share to (D268: never up). */
-      lowerTo: via === "direct" && hasLevel ? offered.filter((option) => LEVEL_RANK[option] < LEVEL_RANK[level]) : [],
-      ...(withHandles ? { handle: sealItemHandle(viewerId, userId, { kind, id: row.resource_id, via, groupId }) } : {})
-    }];
+  const items = page.flatMap((entry) => {
+    const item = presentItem(kind, entry.id, viewerId, readable);
+    if (!item) return [];
+    // Direct first, then groups by name.
+    const grants = entry.grants.filter((grant) => isLevel(grant.level))
+      .sort((left, right) => left.via === right.via ? (left.group_name ?? "").localeCompare(right.group_name ?? "") : left.via === "direct" ? -1 : 1);
+    if (!grants.length) return [];
+    const sources = grants.map((grant) => {
+      const level = grant.level as Level;
+      const groupId = grant.via === "group" ? grant.group_id : null;
+      return {
+        via: grant.via,
+        level,
+        group: groupId ? { id: groupId, name: grant.group_name ?? "" } : null,
+        /** Levels an admin may lower a direct share to (D268: never up). */
+        lowerTo: grant.via === "direct" && hasLevel ? offered.filter((option) => LEVEL_RANK[option] < LEVEL_RANK[level]) : [],
+        ...(withHandles ? { handle: sealItemHandle(viewerId, userId, { kind, id: entry.id, via: grant.via, groupId }) } : {})
+      };
+    });
+    const best = sources.reduce((top, source) => LEVEL_RANK[source.level] > LEVEL_RANK[top] ? source.level : top, sources[0]!.level);
+    return [{ ...item, level: best, active: liveLevel(kind, entry.id, userId) !== "none", sources }];
   });
   const last = page.at(-1);
   return {
     kind,
     items,
-    nextCursor: rows.length > ACCESS_PAGE && last ? sealCursor(viewerId, userId, kind, { via: last.via, id: last.resource_id, groupId: last.group_id }) : null
+    nextCursor: ordered.length > ACCESS_PAGE && last ? sealCursor(viewerId, userId, kind, last.sort) : null
   };
 }
 
@@ -254,7 +274,7 @@ export function lowerAccess(actorId: string, userId: string, token: string, leve
     const ownerId = ownerOf(handle.kind, handle.id);
     recordAccessEvent({ actorId, via: "web", action: "access.share_lowered", targetUserId: userId, resource: { kind: handle.kind, id: handle.id }, meta: { from: row.level, to: level } }, timestamp);
     audit(actorId, null, "team.access_lowered", { targetId: userId, kind: handle.kind, from: row.level, to: level });
-    if (ownerId) notifyAccess({ userId: ownerId, kind: "share_lowered", actorId, targetUserId: userId, resource: { kind: handle.kind, id: handle.id } }, timestamp);
+    if (ownerId) notifyAccess({ userId: ownerId, kind: "share_lowered", actorId, targetUserId: userId, resource: { kind: handle.kind, id: handle.id }, level }, timestamp);
     return { lowered: true as const, kind: handle.kind, from: row.level, to: level };
   })();
 }

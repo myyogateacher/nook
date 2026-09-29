@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, EyeOff, UserMinus, X } from "lucide-react";
 import { Select, type Option } from "../ui/Select";
 import { KIND_LABELS } from "../team/groupsApi";
-import { kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSummary, type KindCount } from "./memberAccessApi";
+import { kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount } from "./memberAccessApi";
 import "./memberAccess.css";
 
 /**
@@ -14,8 +14,8 @@ import "./memberAccess.css";
  */
 
 export type AccessRowActions = {
-  onRemove: (row: AccessRow) => void;
-  onLower: (row: AccessRow, level: AccessLevel) => void;
+  onRemove: (row: AccessRow, source: AccessSource) => void;
+  onLower: (row: AccessRow, source: AccessSource, level: AccessLevel) => void;
 };
 
 const MODULE_ORDER: Array<KindCount["module"]> = ["notes", "files", "tasks", "collections", "calendar"];
@@ -86,30 +86,39 @@ function KindSection({ counts, loadPage, actions, reloadKey, busy }: { counts: K
       {error && <p className="form-error" role="alert">{error}</p>}
       {!rows && loading && <p className="team-loading" role="status">Loading…</p>}
       {rows && <ul className="group-item-list" aria-label={`${KIND_LABELS[counts.kind]} access`}>
-        {rows.map((row, index) => <AccessRowItem key={row.handle ?? `${row.via}-${row.id ?? index}-${row.group?.id ?? ""}`} row={row} actions={actions} busy={busy} />)}
+        {rows.map((row, index) => <AccessRowItem key={row.sources[0]?.handle ?? `${row.id ?? index}`} row={row} actions={actions} busy={busy} />)}
       </ul>}
       {cursor && <button type="button" className="team-action ma-more" disabled={loading} onClick={() => { void load(cursor); }}>{loading ? "Loading…" : "Show more"}</button>}
     </div>}
   </div>;
 }
 
+/** One item, with one line per way the person reaches it (direct, or each group), each with its own actions. */
 function AccessRowItem({ row, actions, busy }: { row: AccessRow; actions?: AccessRowActions; busy: boolean }) {
-  const lowerOptions: Option<AccessLevel>[] = row.lowerTo.map((level) => ({ value: level, label: LEVEL_WORDS[level] }));
   return <li className="group-item-row ma-row">
     <span className="team-row-copy">
       <span className="team-row-title">{row.titleHidden && <EyeOff aria-hidden="true" className="group-item-hidden" />}<strong>{row.title}</strong></span>
       <span className="team-row-meta">
         {!row.titleHidden && <span>Owned by {row.owner.displayName}</span>}
         {row.titleHidden && <span>Title hidden: you cannot open it</span>}
-        <span>{viaLabel(row)}</span>
         {!row.active && <span className="team-status-chip">Not in effect now</span>}
       </span>
     </span>
-    {actions && row.handle && <span className="ma-row-actions">
-      {lowerOptions.length > 0 && <Select<AccessLevel> variant="chip" label={`Lower ${row.title}`} placeholder="Lower…" value={null} options={lowerOptions} disabled={busy} onChange={(level) => actions.onLower(row, level)} />}
-      {row.via === "direct"
-        ? <button type="button" className="icon-button group-member-remove" disabled={busy} aria-label={`Remove access to ${row.title}`} title="Remove access" onClick={() => actions.onRemove(row)}><X /></button>
-        : <button type="button" className="icon-button group-member-remove" disabled={busy} aria-label={`Remove from ${row.group?.name ?? "the group"}`} title={`Remove from ${row.group?.name ?? "the group"}`} onClick={() => actions.onRemove(row)}><UserMinus /></button>}
+    <ul className="ma-sources" aria-label={`How they reach ${row.title}`}>
+      {row.sources.map((source, index) => <SourceLine key={source.handle ?? `${source.via}-${source.group?.id ?? index}`} row={row} source={source} actions={actions} busy={busy} />)}
+    </ul>
+  </li>;
+}
+
+function SourceLine({ row, source, actions, busy }: { row: AccessRow; source: AccessSource; actions?: AccessRowActions; busy: boolean }) {
+  const lowerOptions: Option<AccessLevel>[] = source.lowerTo.map((level) => ({ value: level, label: LEVEL_WORDS[level] }));
+  return <li className="ma-source">
+    <span className="ma-source-label">{viaLabel(source)}</span>
+    {actions && source.handle && <span className="ma-row-actions">
+      {lowerOptions.length > 0 && <Select<AccessLevel> variant="chip" label={`Lower ${row.title}`} placeholder="Lower…" value={null} options={lowerOptions} disabled={busy} onChange={(level) => actions.onLower(row, source, level)} />}
+      {source.via === "direct"
+        ? <button type="button" className="icon-button group-member-remove" disabled={busy} aria-label={`Remove access to ${row.title}`} title="Remove access" onClick={() => actions.onRemove(row, source)}><X /></button>
+        : <button type="button" className="icon-button group-member-remove" disabled={busy} aria-label={`Remove from ${source.group?.name ?? "the group"}`} title={`Remove from ${source.group?.name ?? "the group"}`} onClick={() => actions.onRemove(row, source)}><UserMinus /></button>}
     </span>}
   </li>;
 }

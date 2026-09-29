@@ -12,6 +12,9 @@
 .ma-kind-rows { display: grid; gap: 8px; min-width: 0; }
 .ma-row { min-width: 0; flex-wrap: wrap; padding-right: 6px; }
 .ma-row .team-row-copy { flex: 1 1 200px; min-width: 0; overflow-wrap: break-word; }
+.ma-sources { display: grid; gap: 4px; width: 100%; margin: 0; padding: 0; list-style: none; }
+.ma-source { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; min-height: 40px; }
+.ma-source-label { color: #b7b7bd; font-size: .78rem; }
 .ma-row-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
 .ma-row-actions .select-trigger { min-height: 40px; }
 .ma-more { justify-self: start; }

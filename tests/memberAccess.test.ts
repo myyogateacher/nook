@@ -1,10 +1,10 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { newCollection } from "./support/collections";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
-const { createApiKey } = await import("../server/apiKeys");
-const { sealItemHandle } = await import("../server/access/handles");
+const { createApiKey, keysReachingItem } = await import("../server/apiKeys");
+const { itemSortKey, sealItemHandle } = await import("../server/access/handles");
 
 /**
  * Central access management (Wave 33, access plan §C.6, §C.7, D268, D269, T204, T214, T218): the
@@ -13,6 +13,13 @@ const { sealItemHandle } = await import("../server/access/handles");
  */
 
 beforeEach(() => resetTeamRateLimits());
+
+/**
+ * The suite shares one database: an item shared with everyone would show up in other files' lists,
+ * so each test registers its undo here, and it runs even when the test fails.
+ */
+const cleanups: Array<() => void> = [];
+afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
 type Role = "admin" | "member" | "viewer" | "guest";
 async function user(label: string, role: Role = "member") {
@@ -90,6 +97,7 @@ describe("the member access page", () => {
     await putAccess(admin, `/tasks/boards/${own}/access`, { audience: "selected", people: [{ id: target.userId, level: "manage" }], groups: [] });
     // An everyone calendar is an audience-wide count, never a row.
     const everyone = (await send(owner, "POST", "/calendars", { name: `Everyone ${tag()}`, color: "blue" })).body.calendar.id as string;
+    cleanups.push(() => { db.query("UPDATE calendars SET visibility = 'private' WHERE id = ?").run(everyone); });
     await putAccess(owner, `/calendars/${everyone}/access`, { audience: "all_users", people: [], groups: [] });
 
     const summary = await send(admin, "GET", `/team/members/${target.userId}/access`);
@@ -105,30 +113,28 @@ describe("the member access page", () => {
     const boards = await items(admin, target.userId, "board");
     expect(boards.status).toBe(200);
     const hidden = boards.body.items.find((item: { titleHidden: boolean }) => item.titleHidden);
-    expect(hidden).toMatchObject({ kind: "board", title: "Board owned by Central list owner", titleHidden: true, level: "edit", via: "direct", active: true, lowerTo: ["view", "comment"] });
+    expect(hidden).toMatchObject({ kind: "board", title: "Board owned by Central list owner", titleHidden: true, level: "edit", active: true, sources: [{ via: "direct", level: "edit", lowerTo: ["view", "comment"] }] });
     expect(hidden.id).toBeUndefined();
-    expect(typeof hidden.handle).toBe("string");
+    expect(typeof hidden.sources[0].handle).toBe("string");
     expect(boards.text).not.toContain(secret);
     expect(boards.text).not.toContain(secretName);
     const visible = boards.body.items.find((item: { titleHidden: boolean }) => !item.titleHidden);
-    expect(visible).toMatchObject({ id: own, title: ownName, level: "manage", lowerTo: ["view", "comment", "edit"] });
+    expect(visible).toMatchObject({ id: own, title: ownName, level: "manage", sources: [{ via: "direct", lowerTo: ["view", "comment", "edit"] }] });
     const collections = await items(admin, target.userId, "collection");
     expect(collections.body.items).toHaveLength(1);
-    expect(collections.body.items[0]).toMatchObject({ via: "group", group: { id: groupId }, title: "Collection owned by Central list owner", lowerTo: [] });
+    expect(collections.body.items[0]).toMatchObject({ title: "Collection owned by Central list owner", sources: [{ via: "group", group: { id: groupId }, lowerTo: [] }] });
     expect(collections.text).not.toContain(collection);
     expect(collections.text).not.toContain(collectionName);
 
     // The self view shows the person's own titles and carries no handles.
     const self = await send(target, "GET", "/me/access?kind=board");
     expect(self.body.items.map((item: { title: string }) => item.title).sort()).toEqual([ownName, secretName].sort());
-    expect(self.body.items.every((item: { handle?: string }) => item.handle === undefined)).toBe(true);
+    expect(self.body.items.every((item: { sources: Array<{ handle?: string }> }) => item.sources.every((source) => source.handle === undefined))).toBe(true);
 
     // A guest never counts audience-wide items.
     const guest = await user("Central list guest", "guest");
     const guestSummary = await send(admin, "GET", `/team/members/${guest.userId}/access`);
     expect(guestSummary.body.kinds.every((row: { audience: number }) => row.audience === 0)).toBe(true);
-    // The suite shares one database: an everyone calendar would show up in other files' lists.
-    db.query("UPDATE calendars SET visibility = 'private' WHERE id = ?").run(everyone);
   });
 
   test("handles are opaque, bound to the admin and the person, and refused when tampered with", async () => {
@@ -139,7 +145,7 @@ describe("the member access page", () => {
     const second = await user("Handle second");
     const id = await board(owner, "Handle board");
     await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }, { id: second.userId, level: "edit" }], groups: [] });
-    const handle = (await items(admin, target.userId, "board")).body.items[0].handle as string;
+    const handle = (await items(admin, target.userId, "board")).body.items[0].sources[0].handle as string;
     expect(handle).not.toContain(id);
     expect(Buffer.from(handle, "base64url").toString("latin1")).not.toContain(id);
     // Another admin, another person, or a changed byte: the same 404.
@@ -164,7 +170,7 @@ describe("admin reductions (D268)", () => {
     const id = await board(owner, name);
     await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [] });
     expect((await send(target, "GET", `/tasks/boards/${id}`)).status).toBe(200);
-    const handle = (await items(admin, target.userId, "board")).body.items[0].handle as string;
+    const handle = (await items(admin, target.userId, "board")).body.items[0].sources[0].handle as string;
 
     const removed = await send(admin, "DELETE", `/team/members/${target.userId}/access/${handle}`);
     expect(removed.status).toBe(200);
@@ -190,7 +196,7 @@ describe("admin reductions (D268)", () => {
     const id = await board(owner, "Lower board");
     await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [] });
     const row = (await items(admin, target.userId, "board")).body.items[0];
-    const path = `/team/members/${target.userId}/access/${row.handle}`;
+    const path = `/team/members/${target.userId}/access/${row.sources[0].handle}`;
     expect((await send(admin, "PATCH", path, { level: "manage" })).body.code).toBe("NOT_A_REDUCTION");
     expect((await send(admin, "PATCH", path, { level: "edit" })).body.code).toBe("NOT_A_REDUCTION");
     expect((await send(admin, "PATCH", path, { level: "view", extra: 1 })).status).toBe(400);
@@ -201,6 +207,14 @@ describe("admin reductions (D268)", () => {
     // The same handle cannot raise it back.
     expect((await send(admin, "PATCH", path, { level: "edit" })).body.code).toBe("NOT_A_REDUCTION");
     expect(db.query("SELECT COUNT(*) AS count FROM access_events WHERE action = 'access.share_lowered' AND target_user_id = ?").get(target.userId)).toEqual({ count: 1 });
+    // The owner's bell names the new level (review R2).
+    expect((await send(owner, "GET", "/notifications")).body.items[0].title).toBe("Lower admin lowered Lower target's access to “Lower board” to Can comment");
+    // Manager → edit says "Can edit", not "Can view or less".
+    const managed = await board(owner, "Managed board");
+    await putAccess(owner, `/tasks/boards/${managed}/access`, { audience: "selected", people: [{ id: target.userId, level: "manage" }], groups: [] });
+    const managedRow = (await items(admin, target.userId, "board")).body.items.find((item: { title: string }) => item.title === "Board owned by Lower owner" && item.level === "manage");
+    expect((await send(admin, "PATCH", `/team/members/${target.userId}/access/${managedRow.sources[0].handle}`, { level: "edit" })).status).toBe(200);
+    expect((await send(owner, "GET", "/notifications")).body.items[0].title).toBe("Lower admin lowered Lower target's access to “Managed board” to Can edit");
 
     // A file share is view-only: nothing to lower to.
     const form = new FormData();
@@ -208,8 +222,8 @@ describe("admin reductions (D268)", () => {
     const document = ((await (await request("/files", { method: "POST", body: form }, owner)).json()) as { document: { id: string } }).document.id;
     await putAccess(owner, `/files/${document}/access`, { audience: "selected", people: [{ id: target.userId, level: "view" }], groups: [] });
     const file = (await items(admin, target.userId, "document")).body.items[0];
-    expect(file.lowerTo).toEqual([]);
-    expect((await send(admin, "PATCH", `/team/members/${target.userId}/access/${file.handle}`, { level: "view" })).body.code).toBe("NOT_A_REDUCTION");
+    expect(file.sources[0].lowerTo).toEqual([]);
+    expect((await send(admin, "PATCH", `/team/members/${target.userId}/access/${file.sources[0].handle}`, { level: "view" })).body.code).toBe("NOT_A_REDUCTION");
   });
 
   test("a group row removes the person from the group; the member hears about it, and the group page moves on", async () => {
@@ -221,8 +235,8 @@ describe("admin reductions (D268)", () => {
     const id = await board(owner, "Group row board");
     await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [], groups: [{ id: groupId, level: "view" }] });
     const row = (await items(admin, target.userId, "board")).body.items[0];
-    expect(row).toMatchObject({ via: "group", group: { id: groupId, name: groupName } });
-    const removed = await send(admin, "DELETE", `/team/members/${target.userId}/access/${row.handle}`);
+    expect(row.sources).toMatchObject([{ via: "group", group: { id: groupId, name: groupName } }]);
+    const removed = await send(admin, "DELETE", `/team/members/${target.userId}/access/${row.sources[0].handle}`);
     expect(removed.body).toMatchObject({ removed: "group", groupId });
     expect((await send(target, "GET", `/tasks/boards/${id}`)).status).toBe(404);
     expect((await send(admin, "GET", `/team/groups/${groupId}`)).body.group).toMatchObject({ memberCount: 0, revision: 3 });
@@ -248,6 +262,7 @@ describe("admin reductions (D268)", () => {
       await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [] });
     }
     const everyone = await board(ownerB, "Reset everyone");
+    cleanups.push(() => { db.query("UPDATE boards SET visibility = 'private' WHERE id = ?").run(everyone); });
     await putAccess(ownerB, `/tasks/boards/${everyone}/access`, { audience: "all_users", people: [], groups: [] });
     const key = createApiKey(target.userId, { name: "Reset key", surfaces: "mcp", grants: [{ module: "tasks", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 30 });
     const calendar = (await send(target, "POST", "/calendars", { name: "Own calendar", color: "blue" })).body.calendar.id as string;
@@ -275,8 +290,6 @@ describe("admin reductions (D268)", () => {
     expect(own.some((title: string) => title.includes("revoked your API key"))).toBe(false);
     const event = db.query("SELECT meta_json FROM access_events WHERE action = 'access.reset' AND target_user_id = ?").get(target.userId) as { meta_json: string };
     expect(JSON.parse(event.meta_json)).toEqual({ directShares: 3, groups: 1, keys: 1, feeds: 1, routines: 0 });
-    // The suite shares one database: an everyone board would show up in other files' lists.
-    db.query("UPDATE boards SET visibility = 'private' WHERE id = ?").run(everyone);
   });
 
   test("an admin revoking a key from Team → Keys puts a notice on the owner's bell", async () => {
@@ -318,7 +331,7 @@ describe("paging and the activity log (T218, D288)", () => {
     const name = `Activity board ${tag()}`;
     const id = await board(owner, name);
     await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [] });
-    const handle = (await items(admin, target.userId, "board")).body.items[0].handle as string;
+    const handle = (await items(admin, target.userId, "board")).body.items[0].sources[0].handle as string;
     await send(admin, "DELETE", `/team/members/${target.userId}/access/${handle}`);
 
     const member = await user("Activity member");
@@ -347,5 +360,59 @@ describe("the Access sheet's key line (§C.5)", () => {
     createApiKey(owner.userId, { name: "Notes key", surfaces: "mcp", grants: [{ module: "notes", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 30 });
     expect((await send(owner, "GET", `/tasks/boards/${id}/access`)).body.keysWithAccess).toBe(1);
     expect((await send(manager, "GET", `/tasks/boards/${id}/access`)).body.keysWithAccess).toBeUndefined();
+  });
+});
+
+describe("review fixes (Wave 33)", () => {
+  test("the key line counts only keys that reach the item now: not revoked, expired, or policy-blocked; a key in its rotation grace still counts (R6)", async () => {
+    const owner = await user("Key states owner");
+    const id = await board(owner, "Key states board");
+    const tasks = (name: string, expiresInDays: number | null = 30) => createApiKey(owner.userId, { name, surfaces: "mcp", grants: [{ module: "tasks", permission: "read", resourceKind: null, resourceId: null }], expiresInDays });
+    const count = async () => (await send(owner, "GET", `/tasks/boards/${id}/access`)).body.keysWithAccess as number;
+    tasks("Active");
+    const expired = tasks("Expired");
+    db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 60_000).toISOString(), expired.id);
+    const revoked = tasks("Revoked");
+    db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ?").run(new Date().toISOString(), revoked.id);
+    const grace = tasks("In grace");
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() + 3_600_000).toISOString(), grace.id);
+    const graceEnded = tasks("Grace ended");
+    db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 60_000).toISOString(), graceEnded.id);
+    tasks("No expiry", null);
+    expect(await count()).toBe(3);
+    // A policy that requires an expiry blocks the key without one.
+    cleanups.push(() => { db.query("DELETE FROM team_settings WHERE key = 'key_require_expiry'").run(); });
+    db.query("INSERT OR REPLACE INTO team_settings (key, value_json, updated_at) VALUES ('key_require_expiry', 'true', ?)").run(new Date().toISOString());
+    expect(await count()).toBe(2);
+    // A guest's role allows no key scopes: nothing reaches the item.
+    db.query("UPDATE users SET role = 'guest' WHERE id = ?").run(owner.userId);
+    expect(keysReachingItem(owner.userId, "tasks", "board", id)).toBe(0);
+  });
+
+  test("one row per item with every way the person reaches it, ordered by owner then a keyed hash, never by id (R3)", async () => {
+    const admin = await user("Order admin", "admin");
+    const zed = await user("Zed order owner");
+    const amy = await user("Amy order owner");
+    const target = await user("Order target");
+    const groupId = await groupWith(admin, [target]);
+    const both = await board(zed, "Both ways");
+    await putAccess(zed, `/tasks/boards/${both}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [{ id: groupId, level: "view" }] });
+    const amyBoards: string[] = [];
+    for (const name of ["A1", "A2", "A3", "A4"]) {
+      const id = await board(amy, name);
+      amyBoards.push(id);
+      await putAccess(amy, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "view" }], groups: [] });
+    }
+    const page = await items(admin, target.userId, "board");
+    expect(page.body.items).toHaveLength(5);
+    // Amy's boards first, among themselves in keyed-hash order; then Zed's one row with both sources.
+    expect(page.body.items.slice(0, 4).map((item: { owner: { displayName: string } }) => item.owner.displayName)).toEqual(Array(4).fill("Amy order owner"));
+    const expectedAmy = [...amyBoards].sort((left, right) => itemSortKey(left) < itemSortKey(right) ? -1 : 1);
+    const selfPage = await send(target, "GET", "/me/access?kind=board");
+    expect(selfPage.body.items.slice(0, 4).map((item: { id: string }) => item.id)).toEqual(expectedAmy);
+    const last = page.body.items[4];
+    expect(last).toMatchObject({ title: "Board owned by Zed order owner", titleHidden: true, level: "edit" });
+    expect(last.sources.map((source: { via: string }) => source.via)).toEqual(["direct", "group"]);
+    expect(page.text).not.toContain(both);
   });
 });

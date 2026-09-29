@@ -8,7 +8,7 @@ import { Select, type Option } from "../ui/Select";
 import { AccessOverview } from "../access/AccessOverview";
 import {
   applyTemplateToMember, getMemberAccess, getMemberAccessPage, LEVEL_WORDS, listTemplates, lowerMemberAccess, removeMemberAccess, removeMemberFromGroup,
-  resetMemberAccess, resetSummary, type AccessKind, type AccessLevel, type AccessRow, type AccessSummary, type AccessTemplate, type ResetCounts
+  resetMemberAccess, resetSummary, type AccessKind, type AccessLevel, type AccessRow, type AccessSource, type AccessSummary, type AccessTemplate, type ResetCounts
 } from "../access/memberAccessApi";
 import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
@@ -22,8 +22,8 @@ import "../keys/keys.css";
  */
 
 type Dialog =
-  | { kind: "remove"; row: AccessRow }
-  | { kind: "lower"; row: AccessRow; level: AccessLevel }
+  | { kind: "remove"; row: AccessRow; source: AccessSource }
+  | { kind: "lower"; row: AccessRow; source: AccessSource; level: AccessLevel }
   | { kind: "group"; group: { id: string; name: string } }
   | { kind: "key"; key: AccessSummary["keys"][number] }
   | { kind: "template"; template: AccessTemplate }
@@ -116,7 +116,7 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
     </section>
 
     <AccessOverview summary={summary} loadPage={loadPage} reloadKey={reloadKey} busy={dialog !== null}
-      actions={{ onRemove: (row) => setDialog({ kind: "remove", row }), onLower: (row, level) => setDialog({ kind: "lower", row, level }) }} />
+      actions={{ onRemove: (row, source) => setDialog({ kind: "remove", row, source }), onLower: (row, source, level) => setDialog({ kind: "lower", row, source, level }) }} />
 
     {dialog && <ActionDialog dialog={dialog} summary={summary} onClose={() => setDialog(null)} onDone={changed} onStale={() => { setDialog(null); flash("That access changed meanwhile. The page now shows the latest."); setReloadKey((value) => value + 1); void load(); }} />}
   </article>;
@@ -151,25 +151,25 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
   let danger = true;
   switch (dialog.kind) {
     case "remove": {
-      const { row } = dialog;
-      const viaGroup = row.via === "group";
-      title = viaGroup ? `Remove ${name} from ${row.group?.name ?? "the group"}?` : `Remove ${name}'s access?`;
+      const { row, source } = dialog;
+      const viaGroup = source.via === "group";
+      title = viaGroup ? `Remove ${name} from ${source.group?.name ?? "the group"}?` : `Remove ${name}'s access?`;
       body = viaGroup
-        ? <p>{name} loses everything owners shared with {row.group?.name ?? "this group"}, not only “{row.title}”. Their own items and direct shares stay. They are told.</p>
-        : <p>{name} can no longer open {row.titleHidden ? row.title.replace(/^\w/, (letter) => `the ${letter.toLowerCase()}`) : `“${row.title}”`} unless it is shared with them another way. The owner is told and can share it again.</p>;
+        ? <p>{name} loses everything owners shared with {source.group?.name ?? "this group"}, not only “{row.title}”. Their own items and direct shares stay. They are told.</p>
+        : <p>{name} can no longer open {row.titleHidden ? row.title.replace(/^\w/, (letter) => `the ${letter.toLowerCase()}`) : `“${row.title}”`} {row.sources.some((other) => other.via === "group") ? `through a direct share; they keep what ${row.sources.filter((other) => other.via === "group").map((other) => other.group?.name ?? "a group").join(", ")} gives them` : "unless it is shared with them another way"}. The owner is told and can share it again.</p>;
       confirm = viaGroup ? "Remove from group" : "Remove access";
       action = async () => {
-        const removed = await removeMemberAccess(userId, row.handle!);
-        return removed.removed === "group" ? `${name} was removed from ${row.group?.name ?? "the group"}` : `${name}'s access was removed`;
+        const removed = await removeMemberAccess(userId, source.handle!);
+        return removed.removed === "group" ? `${name} was removed from ${source.group?.name ?? "the group"}` : `${name}'s direct share was removed`;
       };
       break;
     }
     case "lower":
       title = `Lower ${name} to ${LEVEL_WORDS[dialog.level]}?`;
-      body = <p>{name} keeps access to {dialog.row.titleHidden ? "this item" : `“${dialog.row.title}”`}, at {LEVEL_WORDS[dialog.level]} instead of {LEVEL_WORDS[dialog.row.level]}. The owner is told and can change it back.</p>;
+      body = <p>{name} keeps access to {dialog.row.titleHidden ? "this item" : `“${dialog.row.title}”`}, at {LEVEL_WORDS[dialog.level]} instead of {LEVEL_WORDS[dialog.source.level]} through their direct share. The owner is told and can change it back.</p>;
       confirm = "Lower access";
       action = async () => {
-        await lowerMemberAccess(userId, dialog.row.handle!, dialog.level);
+        await lowerMemberAccess(userId, dialog.source.handle!, dialog.level);
         return `${name} now has ${LEVEL_WORDS[dialog.level]}`;
       };
       break;

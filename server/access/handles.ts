@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 
 /**
  * Opaque handles for the member access page (access plan §C.7, D269, T204). A row the admin cannot
@@ -47,13 +47,21 @@ export function openItemHandle(token: string, viewer: string, target: string, no
   return { kind: payload.kind, id: payload.id, via: payload.via, groupId: typeof payload.groupId === "string" ? payload.groupId : null };
 }
 
-export type PageCursor = { via: string; id: string; groupId: string };
+/**
+ * The order of rows on the member access page (T204): by owner name, then by a keyed hash of the
+ * item id, so neither the order nor a page break says anything about ids. The key lives only in
+ * this process, like the handle key; a cursor made with it is sealed with that key too, so the
+ * order a cursor relies on never changes while the cursor is valid (a restart ends both).
+ */
+export const itemSortKey = (id: string) => createHmac("sha256", KEY).update(`order:${id}`).digest("hex");
+
+export type PageCursor = { owner: string; key: string };
 
 export const sealCursor = (viewer: string, target: string, kind: string, cursor: PageCursor) =>
-  seal({ viewer, target, purpose: "cursor", kind, via: cursor.via, id: cursor.id, groupId: cursor.groupId });
+  seal({ viewer, target, purpose: "cursor", kind, owner: cursor.owner, key: cursor.key });
 
 export function openCursor(token: string, viewer: string, target: string, kind: string): PageCursor | null {
   const payload = open(token, viewer, target, "cursor");
-  if (!payload || payload.kind !== kind || typeof payload.via !== "string" || typeof payload.id !== "string" || typeof payload.groupId !== "string") return null;
-  return { via: payload.via, id: payload.id, groupId: payload.groupId };
+  if (!payload || payload.kind !== kind || typeof payload.owner !== "string" || typeof payload.key !== "string") return null;
+  return { owner: payload.owner, key: payload.key };
 }

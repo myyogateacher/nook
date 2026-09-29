@@ -56,7 +56,7 @@ import { Avatar } from "../ui/Avatar";
 import { useSelfAvatar } from "../ui/selfAvatar";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
-export type FilesNavigate = (route: Route, options?: { replace?: boolean; filesPanel?: FilesPanel }) => void;
+export type FilesNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean; filesPanel?: FilesPanel }) => void;
 
 type FilesAppProps = {
   userId: string;
@@ -96,6 +96,16 @@ function browserStorage(): Storage | null {
 }
 
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
+
+/** The confirm for leaving Files while uploads run (Home, Bin, Sign out, and browser Back or Forward). */
+export function leaveUploadsRequest(pending: number) {
+  return {
+    title: "Leave Files?",
+    message: `${pending === 1 ? "An upload is" : `${pending} uploads are`} still in progress and will be canceled if you leave.`,
+    confirmLabel: "Leave and cancel",
+    danger: true
+  };
+}
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut }: FilesAppProps) {
   const selfAvatar = useSelfAvatar();
@@ -264,6 +274,30 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
   const { ask: askLeave, confirmElement: leaveConfirm } = useConfirm();
+
+  // Q1: browser Back or Forward that would leave Files while uploads run asks first, as Home, Bin,
+  // and Sign out do. The move is undone at once; Cancel keeps the uploads and the page; "Leave and
+  // cancel" stops the uploads and repeats the move exactly once. Moves within Files, and Back with a
+  // Files dialog open (it closes the dialog), are left alone.
+  const uploadsRef = useRef(0);
+  uploadsRef.current = pendingUploads;
+  const entryDepthRef = useRef(0);
+  useEffect(() => { entryDepthRef.current = readHistoryDepth(window.history.state); });
+  const leavingRef = useRef(false);
+  useEffect(() => registerHistoryDialogGuard((poppedState) => {
+    if (!uploadsRef.current || leavingRef.current || dialogOpenRef.current) return false;
+    if (parseRoute(window.location.pathname).app === "files") return false;
+    const direction = dialogPopDirection(entryDepthRef.current, readHistoryDepth(poppedState));
+    if (!direction) return false;
+    undoDialogPop(direction);
+    void askLeave(leaveUploadsRequest(uploadsRef.current)).then((leave) => {
+      if (!leave) return;
+      for (const controller of controllersRef.current.values()) controller.abort();
+      leavingRef.current = true;
+      window.history.go(direction === "back" ? -1 : 1);
+    });
+    return true;
+  }), [askLeave]);
   const summary = uploadQueueSummary(queue);
   const emptyCopy = filesEmptyState(folder === "all" ? { kind: "all" } : folder === "shared" ? { kind: "shared" } : { kind: "folder", name: currentFolder?.name ?? "this folder", owned: currentFolder?.is_owner === 1, ownerName: currentFolder?.owner_name ?? "Its owner" });
 
@@ -381,7 +415,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
       if (documentId === document.id) {
         setDocumentId(null);
         setPanel("files");
-        navigate(filesRoute(folder, null), { replace: true, filesPanel: "files" });
+        navigate(filesRoute(folder, null), { replace: true, removed: true, filesPanel: "files" });
       }
       setDialog(null);
       returnFocusRef.current = null;
@@ -568,12 +602,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
 
   // Leaving Files in the app while uploads run asks first (C1). Closing the browser tab is not guarded.
   async function leaveFiles(action: () => void) {
-    if (pendingUploads && !await askLeave({
-      title: "Leave Files?",
-      message: `${pendingUploads === 1 ? "An upload is" : `${pendingUploads} uploads are`} still in progress and will be canceled if you leave.`,
-      confirmLabel: "Leave and cancel",
-      danger: true
-    })) return;
+    if (pendingUploads && !await askLeave(leaveUploadsRequest(pendingUploads))) return;
     action();
   }
 

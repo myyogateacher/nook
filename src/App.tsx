@@ -622,6 +622,21 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
 // The URL carries the app, folder, and item; the state payload adds the phone panel hint (and the
 // folder a note was opened from). A change that keeps the URL is a pure panel step: phones get a Back
 // entry for it, desktops just update the current entry.
+/** The URL an entry was pushed over, so leaving a removed item can step back instead of duplicating it (Q2). */
+export const PUSHED_OVER_KEY = "mynotes.pushed-over";
+
+/**
+ * Q2: the item on screen was deleted or moved away. When its entry was pushed over `targetUrl` (the
+ * list it was opened from), step back onto that entry instead of rewriting this one into a second
+ * copy of it, which made Back repeat a step. Returns false when the caller should replace in place.
+ */
+export function stepBackIfPushedOver(targetUrl: string, history: Pick<History, "state" | "back"> = window.history) {
+  const state = history.state as Record<string, unknown> | null;
+  if (!state || state[PUSHED_OVER_KEY] !== targetUrl || readHistoryDepth(state) <= 0) return false;
+  history.back();
+  return true;
+}
+
 function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel, search: SearchHint | null = null) {
   const url = formatRoute(route);
   const current: unknown = window.history.state;
@@ -636,7 +651,7 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const depth = readHistoryDepth(current);
   const state = historyStateFor(userId, route, panel, filesPanel, search);
   // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
-  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
+  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location) }, depth + 1), "", url);
   else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
 
@@ -1002,8 +1017,10 @@ export function App() {
     autosaveTimerRef.current = null;
   }
 
-  function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
+  function navigate(route: Route, options: { replace?: boolean; removed?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
+    // The item on screen is gone: Back onto the list it was opened from rather than a duplicate of it (Q2).
+    if (options.removed && stepBackIfPushedOver(formatRoute(route))) return;
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
@@ -1133,7 +1150,7 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     setMobilePanel("notes");
-    navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
+    navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true, removed: true });
   }
 
   function askDeleteNote(noteId: string, title: string, opener: HTMLElement) {

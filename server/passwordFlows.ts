@@ -10,6 +10,7 @@ import { kickMailDispatch } from "./mail/dispatcher";
 import { enqueueMail } from "./mail/outbox";
 import { hashAuthToken } from "./mail/resolve";
 import { mailPasswordChanged, mailTwoFactor } from "./mail/triggers";
+import { bumpUnsubscribeEpoch } from "./mail/unsubscribe";
 import { consumeRecoveryCode, consumeTotp, verifyReauth } from "./reauth";
 import { email, parseJson, password, recoveryCode, totpCode } from "./validation";
 
@@ -26,8 +27,9 @@ import { email, parseJson, password, recoveryCode, totpCode } from "./validation
  *   second-factor code will be needed (§E.6). Nothing changes.
  * - POST /api/auth/password-reset/complete {token, newPassword, totpCode? | recoveryCode?}: sets the
  *   password. When two-factor is on, a code or recovery code is required (T225); five wrong codes
- *   burn the link. Revokes every session and push subscription, never signs in, sends security
- *   mail #12, and audits `auth.password_reset`. API keys are not revoked; the mail links to them.
+ *   burn the link. Revokes every session and push subscription and every unsubscribe link (the
+ *   epoch bump, §B.2), never signs in, sends security mail #12, and audits `auth.password_reset`.
+ *   API keys are not revoked; the mail links to them.
  *
  * Signed in: POST /api/auth/password/change {currentPassword, newPassword, totpCode? | recoveryCode?}
  * keeps the current session, signs out every other one, voids pending reset links, sends #12, and
@@ -211,6 +213,8 @@ export function registerPasswordResetRoutes(app: Hono<AppEnv>) {
       db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(user.id);
       const sessions = db.query("DELETE FROM sessions WHERE user_id = ?").run(user.id).changes;
       revokeUserPushSubscriptions(user.id, "password_reset");
+      // Outbound email §B.2: a reset also voids every unsubscribe link mailed so far (T221).
+      bumpUnsubscribeEpoch(user.id);
       audit(user.id, null, "auth.password_reset", { sessions });
       mailPasswordChanged(user.id, "reset");
       return sessions;

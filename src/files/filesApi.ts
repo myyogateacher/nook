@@ -1,5 +1,5 @@
 import { api, getCsrfToken } from "../api";
-import type { DocumentSummary, Visibility } from "../types";
+import type { DocumentSummary } from "../types";
 
 export const TEXT_PREVIEW_BYTES = 1024 * 1024;
 
@@ -108,9 +108,6 @@ export function uploadFile(file: File, folderId: string | null, idempotencyKey: 
   });
 }
 
-export type FileSharingVisibility = "inherit" | Visibility;
-export type FileSharing = { visibility: FileSharingVisibility; users: Array<{ id: string; display_name: string }> };
-
 const filePath = (id: string) => `/files/${encodeURIComponent(id)}`;
 
 export function renameFile(id: string, name: string) {
@@ -119,14 +116,6 @@ export function renameFile(id: string, name: string) {
 
 export function moveFile(id: string, folderId: string | null) {
   return api<{ document: DocumentSummary }>(filePath(id), { method: "PATCH", body: JSON.stringify({ folderId }) });
-}
-
-export function getFileSharing(id: string) {
-  return api<FileSharing>(`${filePath(id)}/sharing`);
-}
-
-export function saveFileSharing(id: string, visibility: FileSharingVisibility, userIds: string[]) {
-  return api<{ ok: true }>(`${filePath(id)}/sharing`, { method: "PUT", body: JSON.stringify({ visibility, userIds: visibility === "selected" ? userIds : [] }) });
 }
 
 export function deleteFile(id: string) {

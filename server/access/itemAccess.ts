@@ -241,6 +241,8 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     yourLevel,
     // "N of your API keys can reach this" (§C.5, §E): the owner's own usable keys only (Wave 33).
     ...(yourLevel === "owner" ? { keysWithAccess: keysReaching(kind, id, userId) } : {}),
+    // The caller's id, so the sheet can tell a manager's own row apart (they cannot change it, MANAGER_CAP).
+    youId: userId,
     shareWithGuests: readPolicies().shareWithGuests,
     inheritable: CONFIG[kind].inherit
   };

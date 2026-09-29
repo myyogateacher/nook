@@ -164,15 +164,17 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
               })}
               {draft.people.map((person) => {
                 const locked = lockedForYou(access, person.level);
+                // A manager cannot lower or remove their own manage row (403 MANAGER_CAP): say who can.
+                const yours = person.id === access.youId;
                 const cap = roleCapHint(person.teamRole);
                 return <li key={`p-${person.id}`} className="access-row">
                   <span className="access-avatar" aria-hidden="true">{person.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
                   <span className="access-row-copy">
                     <strong>{person.displayName}</strong>
-                    <small>Team role: {ROLE_LABELS[person.teamRole]}{person.blocked ? " · Blocked" : ""}</small>
+                    <small>Team role: {ROLE_LABELS[person.teamRole]}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>
                   </span>
                   <LevelSelect kind={kind} levels={access.levels} value={person.level} label={`What ${person.displayName} can do`}
-                    lockedReason={locked ? "Only the owner changes managers" : cap}
+                    lockedReason={locked ? yours ? "Ask the owner to change your access" : "Only the owner changes managers" : cap}
                     onChange={(level) => update((current) => ({ ...current, people: current.people.map((item) => item.id === person.id ? { ...item, level } : item) }))} />
                   {!locked && <button type="button" className="icon-button access-remove" aria-label={`Remove ${person.displayName}`} disabled={busy}
                     onClick={() => update((current) => ({ ...current, people: current.people.filter((item) => item.id !== person.id) }))}><X /></button>}

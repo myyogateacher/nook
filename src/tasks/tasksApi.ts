@@ -141,9 +141,6 @@ export function getBoardReaders(boardId: string, options: { q?: string; limit?: 
   const query = params.toString();
   return api<{ users: BoardReader[]; truncated?: boolean }>(`/tasks/boards/${boardId}/readers${query ? `?${query}` : ""}`, options.signal ? { signal: options.signal } : {});
 }
-export const getBoardSharing = (boardId: string) => api<{ visibility: BoardVisibility; users: Array<{ id: string; display_name: string }> }>(`/tasks/boards/${boardId}/sharing`);
-export const saveBoardSharing = (boardId: string, visibility: BoardVisibility, userIds: string[]) =>
-  api<{ ok: true }>(`/tasks/boards/${boardId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [] }));
 
 export const createColumn = (boardId: string, name: string, afterColumnId?: string | null) =>
   api<{ column: BoardColumn; columns: BoardColumn[] }>(`/tasks/boards/${boardId}/columns`, json("POST", afterColumnId === undefined ? { name } : { name, afterColumnId }));

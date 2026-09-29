@@ -21,6 +21,8 @@ export type ItemAccess = {
   /** The levels the caller may give (managers never see Manager, D273). */
   levels: Level[];
   yourLevel: "owner" | "manage";
+  /** The caller's id: a manager's own row says to ask the owner (MANAGER_CAP). */
+  youId?: string;
   shareWithGuests: boolean;
   /** Notes and files can use their folder's access. */
   inheritable: boolean;

@@ -334,7 +334,14 @@ describe("group branch guard (D270)", () => {
     expect(check(inside.userId, itemId, "collection")).toBe(0);
     expect(check(inside.userId, itemId, "board", ["edit", "manage"])).toBe(0);
     expect(check(inside.userId, itemId, "board", ["comment"])).toBe(1);
-    db.query("DELETE FROM group_grants WHERE resource_id = ?").run(itemId);
+    // An environment-scoped vault row is not a grant on the vault itself (as in groupLevels).
+    const vaultId = crypto.randomUUID();
+    db.query("INSERT INTO group_grants (resource_kind, resource_id, group_id, level, env_id, created_at) VALUES ('vault', ?, ?, 'view', 'env-1', ?)").run(vaultId, group.id, new Date().toISOString());
+    const vault = () => (db.query(`SELECT ${groupGrantExists("vault", "$itemId")} AS ok`).get({ userId: inside.userId, itemId: vaultId }) as { ok: number }).ok;
+    expect(vault()).toBe(0);
+    grant("vault", vaultId, group.id);
+    expect(vault()).toBe(1);
+    db.query("DELETE FROM group_grants WHERE resource_id IN (?, ?)").run(itemId, vaultId);
     await send(admin, "DELETE", `/team/groups/${group.id}`, {});
   });
 });

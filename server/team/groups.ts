@@ -9,6 +9,7 @@ import { isLevel, type AccessKind } from "../access/levels";
 import { parseJson, uuid } from "../validation";
 import { can, type Role } from "./roles";
 import { readPolicies } from "./policies";
+import { GUEST_SHARE_DISABLED } from "../access/shares";
 
 /**
  * Groups (access plan D267, §C.6, O-A1, T200). Admins create groups and decide who is in them;
@@ -27,7 +28,7 @@ export const GROUP_DESCRIPTION_MAX = 200;
 const HISTORY_LIMIT = 50;
 const ITEMS_LIMIT = 200;
 
-export type GroupErrorCode = "NOT_FOUND" | "GROUP_CHANGED" | "NAME_TAKEN" | "LIMIT_REACHED" | "INVALID_MEMBERS";
+export type GroupErrorCode = "NOT_FOUND" | "GROUP_CHANGED" | "NAME_TAKEN" | "LIMIT_REACHED" | "INVALID_MEMBERS" | "GUEST_SHARE_DISABLED";
 
 export class GroupError extends Error {
   constructor(readonly status: 400 | 404 | 409, readonly code: GroupErrorCode, message: string, readonly details: Record<string, unknown> = {}) {
@@ -120,7 +121,9 @@ function groupItems(groupId: string, viewerId: string) {
 export function getGroup(viewerId: string, groupId: string) {
   const row = groupRow(groupId);
   if (!row) throw notFound();
-  return { group: { ...summary(row), members: groupMembers(groupId), ...groupItems(groupId, viewerId), history: groupHistory(groupId) } };
+  // With share_with_guests off, guests cannot join a group that has a grant (T213); the page disables them.
+  const guestAddRefused = row.grant_count > 0 && !readPolicies().shareWithGuests;
+  return { group: { ...summary(row), members: groupMembers(groupId), ...groupItems(groupId, viewerId), history: groupHistory(groupId), guestAddRefused } };
 }
 
 const isUniqueViolation = (error: unknown) => error instanceof Error && /UNIQUE constraint failed: user_groups\.name/.test(error.message);
@@ -180,6 +183,11 @@ export function deleteGroup(actorId: string, groupId: string, revision?: number)
 /**
  * Replaces a group's members (≤ 500 enabled accounts). Additions and removals are each one
  * `access_events` row; an admin adding themselves is recorded with `self: true` (O-A1, T200).
+ *
+ * With `share_with_guests` off, adding a guest to a group that already has a grant is refused
+ * (400 GUEST_SHARE_DISABLED, T213): it would reach a guest as surely as sharing with them. Guests
+ * already in the group stay and can be removed, and a group without grants takes guests (sharing
+ * it later is refused by the sharing routes). The policy is not retroactive.
  */
 export function putGroupMembers(actorId: string, groupId: string, input: { userIds: string[]; revision: number }) {
   const wanted = [...new Set(input.userIds.map((id) => id.toLowerCase()))];
@@ -195,6 +203,10 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       const placeholders = added.map(() => "?").join(",");
       const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...added) as Array<{ id: string }>;
       if (valid.length !== added.length) throw new GroupError(400, "INVALID_MEMBERS", "One or more people were not found");
+      if (row.grant_count > 0 && !readPolicies().shareWithGuests
+        && db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${placeholders}) LIMIT 1`).get(...added)) {
+        throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
+      }
     }
     const timestamp = now();
     const insert = db.query("INSERT INTO group_members (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)");

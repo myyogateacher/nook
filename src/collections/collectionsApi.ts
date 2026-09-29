@@ -132,10 +132,6 @@ export const searchRows = (q: string, signal?: AbortSignal, collection = "all") 
   api<{ results: RowSearchHit[]; truncated: boolean }>(`/search?scope=collections&collection=${encodeURIComponent(collection)}&q=${encodeURIComponent(q)}&limit=30`, { signal });
 
 export type ShareRole = "viewer" | "editor";
-export type CollectionSharing = { visibility: Visibility; role: ShareRole; users: Array<{ id: string; display_name: string }> };
-export const getSharing = (collectionId: string) => api<CollectionSharing>(`/collections/${collectionId}/sharing`);
-export const saveSharing = (collectionId: string, visibility: Visibility, userIds: string[], role: ShareRole) =>
-  api<{ ok: true }>(`/collections/${collectionId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [], role }));
 
 export const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code

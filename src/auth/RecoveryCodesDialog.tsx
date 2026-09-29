@@ -37,9 +37,9 @@ export function RecoveryCodesDialog({ codes, onSaved, onClose }: { codes: readon
     setDownloaded(true);
   };
   const footer = <>
-    <button key="copy" type="button" className="secondary-button" onClick={() => { void copy(); }}><Copy aria-hidden="true" />{copied ? "Copied" : "Copy all"}</button>
-    <button key="download" type="button" className="secondary-button" onClick={download}><Download aria-hidden="true" />{downloaded ? "Downloaded" : "Download"}</button>
-    <button key="saved" type="button" className="primary-button" onClick={onSaved}><Check aria-hidden="true" />I saved them</button>
+    <button key="copy" type="button" className="secondary-button recovery-action" onClick={() => { void copy(); }}><Copy aria-hidden="true" />{copied ? "Copied" : "Copy all"}</button>
+    <button key="download" type="button" className="secondary-button recovery-action" onClick={download}><Download aria-hidden="true" />{downloaded ? "Downloaded" : "Download"}</button>
+    <button key="saved" type="button" className="primary-button recovery-action" onClick={onSaved}><Check aria-hidden="true" />I saved them</button>
   </>;
   return <KeysDialog title="Save your recovery codes" description="Two-factor authentication is on. Keep these codes somewhere safe: each one signs you in once if you lose your authenticator app. They are shown again only after you confirm with a fresh code." onClose={onClose} footer={footer}>
     <div className="recovery-codes recovery-codes-dialog">

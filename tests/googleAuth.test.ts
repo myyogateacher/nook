@@ -574,6 +574,8 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     expect((await me(oldSession)).status).toBe(401);
     expect((await me(person.cookie)).status).toBe(401);
     expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(person.userId)).toEqual({ count: 0 });
+    // Access activity says the re-link revoked the key; nobody "revoked it themselves".
+    expect(db.query("SELECT actor_id, meta_json FROM access_events WHERE action = 'key.revoked' AND target_user_id = ?").get(person.userId)).toEqual({ actor_id: null, meta_json: JSON.stringify({ by: "google_relink" }) });
     expect(db.query("SELECT COUNT(*) AS count FROM calendar_feeds WHERE user_id = ? AND revoked_at IS NULL").get(person.userId)).toEqual({ count: 0 });
     expect(db.query("SELECT COUNT(*) AS count FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").get(person.userId)).toEqual({ count: 0 });
     // Default on: the password is gone too.
@@ -1040,6 +1042,12 @@ describe("review LOW fixes", () => {
     const created = await send(`/cards/${cardId}/comments`, { body: "Hello" });
     expect(created.comment.author_avatar_url).toBe((await me(cookie)).body.user.avatarUrl);
     expect(created.comment.author_avatar_url).toBeTruthy();
+    // Q7: a card answer carries each assignee's picture too, so a new assignee never shows initials first.
+    const me_ = await me(cookie);
+    const patched = await fetch(`${origin}/api/tasks/cards/${cardId}`, { method: "PATCH", headers: { Origin: origin, "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf }, body: JSON.stringify({ assigneeIds: [me_.body.user.id], revision: (card.card ?? card).revision }) }).then((response) => response.json() as Promise<Record<string, any>>);
+    expect(patched.card.assignees[0].avatar_url).toBe(me_.body.user.avatarUrl);
+    const readers = await (await fetch(`${origin}/api/tasks/boards/${boardId}/readers`, { headers: { Cookie: cookie } })).json() as { users: Array<{ avatarUrl: string | null }> };
+    expect(readers.users[0]!.avatarUrl).toBe(me_.body.user.avatarUrl);
     const loaded = await (await fetch(`${origin}/api/tasks/cards/${cardId}`, { headers: { Cookie: cookie } })).json() as { comments: Array<{ author_avatar_url: string | null }> };
     expect(loaded.comments[0]!.author_avatar_url).toBe((await me(cookie)).body.user.avatarUrl);
   });

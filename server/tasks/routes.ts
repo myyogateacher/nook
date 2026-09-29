@@ -20,6 +20,11 @@ function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]
   return comments.map((comment) => ({ ...comment, author_avatar_url: comment.author_id ? urls.get(comment.author_id) ?? null : null }));
 }
 const withAuthorAvatar = <T extends { author_id: string | null }>(result: { comment: T }) => ({ ...result, comment: withAuthorAvatars([result.comment])[0]! });
+/** Q7: a card in a web answer carries each assignee's picture, as the board payload does. */
+function withAssigneeAvatars<T extends { card: { assignees: Array<{ id: string }> } }>(result: T): T {
+  const urls = avatarUrlsFor(result.card.assignees.map((assignee) => assignee.id));
+  return { ...result, card: { ...result.card, assignees: result.card.assignees.map((assignee) => ({ ...assignee, avatar_url: urls.get(assignee.id) ?? null })) } };
+}
 import {
   createBoard,
   createCard,
@@ -307,14 +312,14 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.post("/api/tasks/boards/:boardId/cards", async (c) => {
     const boardId = id(c, "boardId");
     const body = await parseJson(c.req.raw, cardCreateSchema);
-    return respond(c, () => createCard(c.get("user").id, boardId, body), 201);
+    return respond(c, async () => withAssigneeAvatars(await createCard(c.get("user").id, boardId, body)), 201);
   });
 
   app.get("/api/tasks/cards/:cardId", (c) => {
     const cardId = id(c, "cardId");
     const userId = c.get("user").id;
     return respond(c, () => {
-      const { card } = getCard(userId, cardId);
+      const { card } = withAssigneeAvatars(getCard(userId, cardId));
       const page = listComments(userId, cardId);
       // Parent, ancestors, and children are on the card's own board (D133, T112).
       return { card: { ...card, ...cardHierarchy(cardId) }, comments: withAuthorAvatars(page.comments), hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
@@ -385,7 +390,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.patch("/api/tasks/cards/:cardId", async (c) => {
     const cardId = id(c, "cardId");
     const body = await parseJson(c.req.raw, cardPatchSchema);
-    return respond(c, () => patchCard(c.get("user").id, cardId, body));
+    return respond(c, async () => withAssigneeAvatars(await patchCard(c.get("user").id, cardId, body)));
   });
 
   app.post("/api/tasks/cards/:cardId/move", async (c) => {

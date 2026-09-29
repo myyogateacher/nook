@@ -59,6 +59,10 @@
 .team-google-copy { display: flex; gap: 8px; margin: 0 0 10px; color: #c9c9ce; font-size: .88rem; line-height: 1.5; }
 .team-google-copy svg { width: 16px; height: 16px; flex: none; margin-top: 3px; }
 .team-google-counts { margin: 0 0 10px; padding-left: 20px; color: #d6d6d9; font-size: .88rem; line-height: 1.6; }
+/* Q4: the recovery codes shown right after turning two-factor on. */
+.recovery-codes.recovery-codes-dialog { margin: 0; padding: 0; border: 0; }
+.keys-dialog-actions .recovery-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.keys-dialog-actions .recovery-action svg { width: 16px; height: 16px; flex: none; }
 .team-google-warning { color: #f0c46b; font-weight: 600; }
 .team-google-refusal { color: #e8d3a2; }
 .team-google-option { display: flex; gap: 12px; align-items: flex-start; min-height: 44px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #3a3a40; border-radius: 10px; color: #d6d6d9; font-size: .88rem; line-height: 1.5; cursor: pointer; }

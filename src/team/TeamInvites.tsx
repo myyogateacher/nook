@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Ban, Check, ChevronLeft, Copy, Link2, Mail, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
-import { Select } from "../ui/Select";
+import { Select, type Option } from "../ui/Select";
+import { listTemplates, type AccessTemplate } from "../access/memberAccessApi";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
@@ -20,6 +21,7 @@ type Props = {
 type Dialog = { kind: "create" } | { kind: "revoke"; invite: TeamInvite } | { kind: "email"; invite: TeamInvite };
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+const NO_TEMPLATE = "none";
 
 /**
  * The admin Invites panel at /team/invites (docs/plan/WAVES_18-20_SMALL.md §1.6, D167): in the
@@ -73,9 +75,10 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
           <span className={`team-status-chip invite-${invite.status}`}>{INVITE_STATUS_LABELS[invite.status]}</span>
           <code className="team-invite-prefix" title="The first characters of the link's token">{invite.tokenPrefix}…</code>
         </div>
-        {(invite.email || invite.note) && <p className="team-invite-label">
+        {(invite.email || invite.note || invite.template) && <p className="team-invite-label">
           {invite.email && <span>Only {invite.email}</span>}
           {invite.note && <span className="team-invite-note">{invite.note}</span>}
+          {invite.template && <span>Template: {invite.template.name}</span>}
         </p>}
         <p className="team-invite-meta">
           <span>{inviteTimeLabel(invite)}</span>
@@ -123,8 +126,24 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
   const [error, setError] = useState("");
   const [created, setCreated] = useState<Created | null>(null);
   const [copied, setCopied] = useState(false);
+  // Wave 33 (D286): an optional access template; its role becomes the invite's role.
+  const [templates, setTemplates] = useState<AccessTemplate[]>([]);
+  const [templateId, setTemplateId] = useState<string>(NO_TEMPLATE);
   const linkRef = useRef<HTMLInputElement>(null);
   useDialogChrome(busy, onClose);
+  useEffect(() => { listTemplates().then((result) => setTemplates(result.templates), () => setTemplates([])); }, []);
+  const template = templates.find((entry) => entry.id === templateId) ?? null;
+  const templateOptions: Option[] = [{ value: NO_TEMPLATE, label: "No template" }, ...templates.map((entry) => ({ value: entry.id, label: entry.name, description: `${ROLE_LABELS[entry.role]} · ${entry.groups.length ? entry.groups.map((group) => group.name).join(", ") : "no groups"}` }))];
+  const chooseTemplate = (id: string) => {
+    setTemplateId(id);
+    const picked = templates.find((entry) => entry.id === id);
+    if (picked) setRole(picked.role);
+  };
+  const chooseRole = (next: InviteRole) => {
+    setRole(next);
+    // A template's role must match the invite's (the server refuses otherwise), so a different role drops it.
+    if (template && template.role !== next) setTemplateId(NO_TEMPLATE);
+  };
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -134,7 +153,7 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
     setError("");
     try {
       const mailIt = Boolean(boundEmail) && sendEmail && emailEnabled;
-      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(boundEmail ? { email: boundEmail } : {}), ...(note ? { note } : {}), ...(mailIt ? { sendEmail: true } : {}) });
+      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(boundEmail ? { email: boundEmail } : {}), ...(note ? { note } : {}), ...(mailIt ? { sendEmail: true } : {}), ...(template ? { templateId: template.id } : {}) });
       setCreated({ url: result.url, role: result.invite.role, expiresAt: result.invite.expiresAt, email: result.invite.email, ...(result.email ? { mail: result.email } : {}) });
       onCreated();
     } catch (reason) {
@@ -176,9 +195,14 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
           <button type="button" className="team-action primary" onClick={() => { void copy(); }} autoFocus>{copied ? <><Check />Link copied</> : <><Copy />Copy link</>}</button>
         </div>
       </div> : <form onSubmit={submit}>
+        {templates.length > 0 && <div className="team-field">
+          <span id="team-invite-template-label">Template (optional)</span>
+          <Select labelledBy="team-invite-template-label" label="Template" value={templateId} options={templateOptions} onChange={chooseTemplate} disabled={busy} />
+          <small className="team-muted">{template ? `They join ${template.groups.length ? template.groups.map((group) => group.name).join(", ") : "no groups"} when they register.` : "A template adds groups when they register."}</small>
+        </div>}
         <div className="team-field">
           <span id="team-invite-role-label">Team role</span>
-          <Select labelledBy="team-invite-role-label" label="Team role" value={role} options={inviteRoleOptions()} onChange={setRole} disabled={busy} />
+          <Select labelledBy="team-invite-role-label" label="Team role" value={role} options={inviteRoleOptions()} onChange={chooseRole} disabled={busy} />
           <small className="team-muted">{ROLE_DESCRIPTIONS[role]}. Admins are promoted after sign-up.</small>
         </div>
         <div className="team-field">

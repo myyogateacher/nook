@@ -6,6 +6,8 @@ import { addRow, newCollection, shareCollection } from "./support/collections";
 
 const { ROLE_READ_ONLY_ALLOWED_WRITES, SELF_GATED_WRITE_PREFIXES, isAllowedReadOnlyWrite } = await import("../server/team/writeGate");
 const { requireEditableCollection, CollectionError } = await import("../server/collections/service");
+// Fixture dates sit five years ahead of the current year (C12), so they never fall into the past.
+const Y = new Date().getUTCFullYear() + 5;
 
 /**
  * T87 (Team plan §5.2, D75): viewers and guests write nothing except an exact allowlist of personal
@@ -158,7 +160,7 @@ describe("read-only roles and item share roles (§2.4)", () => {
     const guest = await user("Cal cap guest", "guest");
     const calendar = (await send(owner, "POST", "/calendars", { name: "Shared", color: "green" })).body.calendar.id as string;
     expect((await send(owner, "PUT", `/calendars/${calendar}/sharing`, { visibility: "selected", shareRole: "editor", userIds: [viewer.userId, guest.userId] })).status).toBe(200);
-    const eventId = (await send(owner, "POST", `/calendars/${calendar}/events`, { title: "Standup", allDay: false, startLocal: "2030-05-04T09:00", tz: "UTC", durationMinutes: 15 })).body.event.id as string;
+    const eventId = (await send(owner, "POST", `/calendars/${calendar}/events`, { title: "Standup", allDay: false, startLocal: `${Y - 1}-05-04T09:00`, tz: "UTC", durationMinutes: 15 })).body.event.id as string;
     for (const session of [viewer, guest]) {
       const listed = (await send(session, "GET", "/calendars")).body.calendars as Array<{ id: string; role: string; is_owner: number }>;
       expect(listed.filter((item) => item.is_owner === 1)).toEqual([]);

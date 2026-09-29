@@ -5,8 +5,9 @@ const reminders = await import("../server/calendar/reminders");
 const { listUpcoming } = await import("../server/calendar/service");
 const { runSweep } = await import("../server/sweeper");
 
-// Everything is scheduled in 2031 and dispatched with a fake clock, so the server's real 30 s
-// dispatcher (running on today's clock) never touches these rows.
+// Everything is scheduled five years ahead of the current year (Y, C12) and dispatched with a fake
+// clock, so the server's real 30 s dispatcher (running on today's clock) never touches these rows.
+const Y = new Date().getUTCFullYear() + 5;
 const at = (value: string) => Date.parse(value);
 const MINUTE = 60_000;
 
@@ -24,7 +25,7 @@ async function newCalendar(session: Session, name = "Reminders") {
 }
 
 async function newEvent(session: Session, calendarId: string, body: Record<string, unknown> = {}) {
-  const response = await send(session, "POST", `/calendars/${calendarId}/events`, { title: "Checkup", allDay: false, startLocal: "2031-03-10T09:00", tz: "UTC", durationMinutes: 30, ...body });
+  const response = await send(session, "POST", `/calendars/${calendarId}/events`, { title: "Checkup", allDay: false, startLocal: `${Y}-03-10T09:00`, tz: "UTC", durationMinutes: 30, ...body });
   expect(response.status).toBe(201);
   return (await json<{ event: { id: string; revision: number } }>(response)).event;
 }
@@ -56,7 +57,7 @@ describe("reminders API", () => {
     const event = await newEvent(owner, calendarId);
 
     const mine = await reminderId(owner, { eventId: event.id, offsetMinutes: 15 });
-    expect(mine.nextFireAt).toBe("2031-03-10T08:45:00.000Z");
+    expect(mine.nextFireAt).toBe(`${Y}-03-10T08:45:00.000Z`);
     // Viewers may set their own reminders on events they can read.
     const theirs = await reminderId(viewer, { eventId: event.id, offsetMinutes: 15 });
     expect((await addReminder(stranger, { eventId: event.id, offsetMinutes: 15 })).status).toBe(404);
@@ -68,11 +69,11 @@ describe("reminders API", () => {
       { eventId: event.id, offsetMinutes: 1.5 },
       { eventId: event.id, offsetMinutes: 10, tz: "Mars/Olympus" },
       { eventId: "nope", offsetMinutes: 10 },
-      { title: "", fireAt: "2031-01-01T09:00" },
-      { title: "Call", fireAt: "2031-02-30T09:00" },
+      { title: "", fireAt: `${Y}-01-01T09:00` },
+      { title: "Call", fireAt: `${Y}-02-30T09:00` },
       { title: "Call", fireAt: "2020-01-01T09:00" },
-      { title: "Bad\u0007", fireAt: "2031-01-01T09:00" },
-      { title: "Both", fireAt: "2031-01-01T09:00", eventId: event.id, offsetMinutes: 5 }
+      { title: "Bad\u0007", fireAt: `${Y}-01-01T09:00` },
+      { title: "Both", fireAt: `${Y}-01-01T09:00`, eventId: event.id, offsetMinutes: 5 }
     ]) {
       expect((await addReminder(owner, body)).status).toBe(400);
     }
@@ -103,14 +104,14 @@ describe("reminders API", () => {
     expect(over.status).toBe(409);
     expect((await json<{ code: string }>(over)).code).toBe("LIMIT_REACHED");
 
-    const insert = db.query("INSERT INTO reminders (id, user_id, title, tz, next_fire_at, created_at) VALUES (?, ?, 'Bulk', 'UTC', '2031-06-01T00:00:00.000Z', ?)");
+    const insert = db.query(`INSERT INTO reminders (id, user_id, title, tz, next_fire_at, created_at) VALUES (?, ?, 'Bulk', 'UTC', '${Y}-06-01T00:00:00.000Z', ?)`);
     db.transaction(() => { for (let index = 0; index < 500; index += 1) insert.run(crypto.randomUUID(), user.userId, new Date().toISOString()); })();
-    const standalone = await addReminder(user, { title: "One more", fireAt: "2031-06-02T09:00" });
+    const standalone = await addReminder(user, { title: "One more", fireAt: `${Y}-06-02T09:00` });
     expect(standalone.status).toBe(409);
     expect((await json<{ code: string }>(standalone)).code).toBe("LIMIT_REACHED");
     // Fired ones no longer count.
     db.query("UPDATE reminders SET next_fire_at = NULL WHERE user_id = ? AND title = 'Bulk' AND rowid IN (SELECT rowid FROM reminders WHERE user_id = ? AND title = 'Bulk' LIMIT 1)").run(user.userId, user.userId);
-    expect((await addReminder(user, { title: "One more", fireAt: "2031-06-02T09:00" })).status).toBe(201);
+    expect((await addReminder(user, { title: "One more", fireAt: `${Y}-06-02T09:00` })).status).toBe(201);
     db.query("DELETE FROM reminders WHERE user_id = ?").run(user.userId);
   });
 });
@@ -122,14 +123,14 @@ describe("the dispatcher", () => {
     const event = await newEvent(user, calendarId, { title: "Standup", repeat: { freq: "daily", interval: 1 } });
     const reminder = await reminderId(user, { eventId: event.id, offsetMinutes: 15 });
 
-    expect(reminders.runDispatch({ nowMs: at("2031-03-10T08:44:00Z") })?.notified ?? 0).toBe(0);
+    expect(reminders.runDispatch({ nowMs: at(`${Y}-03-10T08:44:00Z`) })?.notified ?? 0).toBe(0);
     expect(notificationsFor(user.userId)).toEqual([]);
-    reminders.runDispatch({ nowMs: at("2031-03-10T08:45:10Z") });
-    reminders.runDispatch({ nowMs: at("2031-03-10T08:45:40Z") });
+    reminders.runDispatch({ nowMs: at(`${Y}-03-10T08:45:10Z`) });
+    reminders.runDispatch({ nowMs: at(`${Y}-03-10T08:45:40Z`) });
     const fired = notificationsFor(user.userId);
     expect(fired.length).toBe(1);
-    expect(fired[0]).toMatchObject({ reminder_id: reminder.id, event_id: event.id, late: 0, occurrence_start: "2031-03-10T09:00:00.000Z" });
-    expect(reminderRow(reminder.id)).toMatchObject({ next_fire_at: "2031-03-11T08:45:00.000Z", claimed_at: null, last_fired_at: "2031-03-10T08:45:10.000Z" });
+    expect(fired[0]).toMatchObject({ reminder_id: reminder.id, event_id: event.id, late: 0, occurrence_start: `${Y}-03-10T09:00:00.000Z` });
+    expect(reminderRow(reminder.id)).toMatchObject({ next_fire_at: `${Y}-03-11T08:45:00.000Z`, claimed_at: null, last_fired_at: `${Y}-03-10T08:45:10.000Z` });
 
     const listed = await json<{ items: Array<{ id: string; title: string; href: string; late: boolean; read: boolean }>; unreadCount: number }>(await send(user, "GET", "/notifications?unread=1"));
     expect(listed.unreadCount).toBe(1);
@@ -142,22 +143,22 @@ describe("the dispatcher", () => {
   test("a reminder missed while down fires once, marked late, when under 24 hours late; over 24 hours it is skipped", async () => {
     const user = await createUser("Dispatch late");
     const calendarId = await newCalendar(user);
-    const daily = await newEvent(user, calendarId, { title: "Pills", startLocal: "2031-04-01T08:00", repeat: { freq: "daily", interval: 1 } });
+    const daily = await newEvent(user, calendarId, { title: "Pills", startLocal: `${Y}-04-01T08:00`, repeat: { freq: "daily", interval: 1 } });
     const lateReminder = await reminderId(user, { eventId: daily.id, offsetMinutes: 0 });
     // Down for 3 days minus a bit: the 04-01 occurrence is 70 h late and skipped; nothing piles up.
-    const counts = reminders.runDispatch({ nowMs: at("2031-04-04T06:00:00Z") });
+    const counts = reminders.runDispatch({ nowMs: at(`${Y}-04-04T06:00:00Z`) });
     expect(counts?.skipped).toBeGreaterThanOrEqual(1);
     expect(notificationsFor(user.userId)).toEqual([]);
     // It advanced past now, to the next occurrence that has not started.
-    expect(reminderRow(lateReminder.id)?.next_fire_at).toBe("2031-04-04T08:00:00.000Z");
+    expect(reminderRow(lateReminder.id)?.next_fire_at).toBe(`${Y}-04-04T08:00:00.000Z`);
 
     // 3 hours late: fires once, marked late, and advances.
-    reminders.runDispatch({ nowMs: at("2031-04-04T11:00:00Z") });
-    reminders.runDispatch({ nowMs: at("2031-04-04T11:00:30Z") });
+    reminders.runDispatch({ nowMs: at(`${Y}-04-04T11:00:00Z`) });
+    reminders.runDispatch({ nowMs: at(`${Y}-04-04T11:00:30Z`) });
     const fired = notificationsFor(user.userId);
     expect(fired.length).toBe(1);
     expect(fired[0]!.late).toBe(1);
-    expect(reminderRow(lateReminder.id)?.next_fire_at).toBe("2031-04-05T08:00:00.000Z");
+    expect(reminderRow(lateReminder.id)?.next_fire_at).toBe(`${Y}-04-05T08:00:00.000Z`);
     expect((await json<{ items: Array<{ late: boolean }> }>(await send(user, "GET", "/notifications"))).items[0]!.late).toBe(true);
   });
 
@@ -166,13 +167,13 @@ describe("the dispatcher", () => {
     const viewer = await createUser("Dispatch access viewer");
     const calendarId = await newCalendar(owner);
     await share(owner, calendarId, "viewer", [viewer]);
-    const event = await newEvent(owner, calendarId, { startLocal: "2031-05-01T09:00" });
+    const event = await newEvent(owner, calendarId, { startLocal: `${Y}-05-01T09:00` });
     const viewerReminder = await reminderId(viewer, { eventId: event.id, offsetMinutes: 30 });
     const ownerReminder = await reminderId(owner, { eventId: event.id, offsetMinutes: 30 });
     await share(owner, calendarId, "viewer", []);
 
     expect((await send(owner, "DELETE", `/events/${event.id}`)).status).toBe(200);
-    reminders.runDispatch({ nowMs: at("2031-05-01T08:30:05Z") });
+    reminders.runDispatch({ nowMs: at(`${Y}-05-01T08:30:05Z`) });
     expect(reminderRow(viewerReminder.id)).toBeNull();
     expect(notificationsFor(viewer.userId)).toEqual([]);
     expect(reminderRow(ownerReminder.id)?.next_fire_at).toBeNull();
@@ -181,27 +182,27 @@ describe("the dispatcher", () => {
     expect(JSON.parse(audit.metadata_json)).toEqual({ reminderId: viewerReminder.id, eventId: event.id });
 
     expect((await send(owner, "POST", `/bin/event/${event.id}/restore`)).status).toBe(200);
-    expect(reminderRow(ownerReminder.id)?.next_fire_at).toBe("2031-05-01T08:30:00.000Z");
+    expect(reminderRow(ownerReminder.id)?.next_fire_at).toBe(`${Y}-05-01T08:30:00.000Z`);
   });
 
   test("editing an event reschedules its reminders", async () => {
     const user = await createUser("Dispatch reschedule");
     const calendarId = await newCalendar(user);
-    const event = await newEvent(user, calendarId, { startLocal: "2031-06-01T09:00" });
+    const event = await newEvent(user, calendarId, { startLocal: `${Y}-06-01T09:00` });
     const reminder = await reminderId(user, { eventId: event.id, offsetMinutes: 60 });
-    expect((await send(user, "PATCH", `/events/${event.id}`, { startLocal: "2031-06-02T14:00", revision: event.revision })).status).toBe(200);
-    expect(reminderRow(reminder.id)?.next_fire_at).toBe("2031-06-02T13:00:00.000Z");
+    expect((await send(user, "PATCH", `/events/${event.id}`, { startLocal: `${Y}-06-02T14:00`, revision: event.revision })).status).toBe(200);
+    expect(reminderRow(reminder.id)?.next_fire_at).toBe(`${Y}-06-02T13:00:00.000Z`);
     // All-day events use the reminder's zone: 09:00 on the day is -540.
-    const allDay = await newEvent(user, calendarId, { allDay: true, startLocal: undefined, tz: undefined, durationMinutes: undefined, startDate: "2031-06-10", endDate: "2031-06-11" });
+    const allDay = await newEvent(user, calendarId, { allDay: true, startLocal: undefined, tz: undefined, durationMinutes: undefined, startDate: `${Y}-06-10`, endDate: `${Y}-06-11` });
     const morning = await reminderId(user, { eventId: allDay.id, offsetMinutes: -540, tz: "Asia/Kolkata" });
-    expect(morning.nextFireAt).toBe("2031-06-10T03:30:00.000Z");
+    expect(morning.nextFireAt).toBe(`${Y}-06-10T03:30:00.000Z`);
   });
 
   test("standalone reminders fire with their own title and then stop", async () => {
     const user = await createUser("Dispatch standalone");
-    const reminder = await reminderId(user, { title: "Call the plumber", fireAt: "2031-07-01T10:00", tz: "Europe/Berlin" });
-    expect(reminder.nextFireAt).toBe("2031-07-01T08:00:00.000Z");
-    reminders.runDispatch({ nowMs: at("2031-07-01T08:00:20Z") });
+    const reminder = await reminderId(user, { title: "Call the plumber", fireAt: `${Y}-07-01T10:00`, tz: "Europe/Berlin" });
+    expect(reminder.nextFireAt).toBe(`${Y}-07-01T08:00:00.000Z`);
+    reminders.runDispatch({ nowMs: at(`${Y}-07-01T08:00:20Z`) });
     const listed = await json<{ items: Array<{ title: string; href: string }> }>(await send(user, "GET", "/notifications"));
     expect(listed.items).toMatchObject([{ title: "Call the plumber", href: "/notifications" }]);
     expect(reminderRow(reminder.id)?.next_fire_at).toBeNull();
@@ -211,21 +212,21 @@ describe("the dispatcher", () => {
   test("at most 60 notifications per user per hour", async () => {
     const user = await createUser("Dispatch hourly");
     const insert = db.query("INSERT INTO notifications (id, user_id, created_at) VALUES (?, ?, ?)");
-    for (let index = 0; index < 60; index += 1) insert.run(crypto.randomUUID(), user.userId, new Date(at("2031-08-01T09:30:00Z") + index * MINUTE / 2).toISOString());
-    const reminder = await reminderId(user, { title: "Over the limit", fireAt: "2031-08-01T10:00", tz: "UTC" });
-    const counts = reminders.runDispatch({ nowMs: at("2031-08-01T10:00:05Z") });
+    for (let index = 0; index < 60; index += 1) insert.run(crypto.randomUUID(), user.userId, new Date(at(`${Y}-08-01T09:30:00Z`) + index * MINUTE / 2).toISOString());
+    const reminder = await reminderId(user, { title: "Over the limit", fireAt: `${Y}-08-01T10:00`, tz: "UTC" });
+    const counts = reminders.runDispatch({ nowMs: at(`${Y}-08-01T10:00:05Z`) });
     expect(counts?.limited).toBeGreaterThanOrEqual(1);
     expect(notificationsFor(user.userId).length).toBe(60);
     // L1: deferred, not dropped: next_fire_at is kept and the claim released.
-    expect(reminderRow(reminder.id)).toMatchObject({ next_fire_at: "2031-08-01T10:00:00.000Z", claimed_at: null, last_fired_at: null });
+    expect(reminderRow(reminder.id)).toMatchObject({ next_fire_at: `${Y}-08-01T10:00:00.000Z`, claimed_at: null, last_fired_at: null });
     const audits = db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = 'reminder.rate_limited'").all(user.userId) as Array<{ metadata_json: string }>;
     expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual([{ deferred: 1, limit: 60 }]);
     // Still full a tick later: left out of the due query until the oldest notification ages out.
-    reminders.runDispatch({ nowMs: at("2031-08-01T10:00:35Z") });
+    reminders.runDispatch({ nowMs: at(`${Y}-08-01T10:00:35Z`) });
     expect(notificationsFor(user.userId).length).toBe(60);
-    expect(reminderRow(reminder.id)?.next_fire_at).toBe("2031-08-01T10:00:00.000Z");
+    expect(reminderRow(reminder.id)?.next_fire_at).toBe(`${Y}-08-01T10:00:00.000Z`);
     // 09:30 + 1 h: the window has room again, and the reminder fires (late).
-    reminders.runDispatch({ nowMs: at("2031-08-01T10:30:05Z") });
+    reminders.runDispatch({ nowMs: at(`${Y}-08-01T10:30:05Z`) });
     expect(notificationsFor(user.userId).filter((row) => row.reminder_id === reminder.id)).toMatchObject([{ late: 1 }]);
     expect(reminderRow(reminder.id)?.next_fire_at).toBeNull();
   });
@@ -236,7 +237,7 @@ describe("notifications API", () => {
     const alice = await createUser("Notify Alice");
     const bob = await createUser("Notify Bob");
     const calendarId = await newCalendar(alice);
-    const event = await newEvent(alice, calendarId, { startLocal: "2031-09-01T09:00" });
+    const event = await newEvent(alice, calendarId, { startLocal: `${Y}-09-01T09:00` });
     const insert = db.query("INSERT INTO notifications (id, user_id, event_id, created_at) VALUES (?, ?, ?, ?)");
     const ids = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
     ids.forEach((id, index) => insert.run(id, alice.userId, event.id, new Date(Date.now() - (3 - index) * MINUTE).toISOString()));
@@ -293,13 +294,13 @@ describe("notifications API", () => {
 test("listUpcoming returns the next unfinished occurrences, at most 10 with a more flag", async () => {
   const user = await createUser("Upcoming user");
   const calendarId = await newCalendar(user);
-  await newEvent(user, calendarId, { title: "Hourly-ish", startLocal: "2031-10-01T08:00", repeat: { freq: "daily", interval: 1 } });
-  await newEvent(user, calendarId, { title: "Finished", startLocal: "2031-10-01T06:00" });
-  const now = at("2031-10-01T07:00:00Z");
+  await newEvent(user, calendarId, { title: "Hourly-ish", startLocal: `${Y}-10-01T08:00`, repeat: { freq: "daily", interval: 1 } });
+  await newEvent(user, calendarId, { title: "Finished", startLocal: `${Y}-10-01T06:00` });
+  const now = at(`${Y}-10-01T07:00:00Z`);
   const upcoming = listUpcoming(user.userId, "UTC", 14, now);
   expect(upcoming.items.length).toBe(10);
   expect(upcoming.more).toBe(true);
-  expect(upcoming.items[0]).toMatchObject({ title: "Hourly-ish", start: "2031-10-01T08:00:00.000Z" });
+  expect(upcoming.items[0]).toMatchObject({ title: "Hourly-ish", start: `${Y}-10-01T08:00:00.000Z` });
   expect(upcoming.items.some((item) => item.title === "Finished")).toBe(false);
   expect(listUpcoming(user.userId, "UTC", 2, now)).toMatchObject({ more: false });
   expect(() => listUpcoming(user.userId, "Nowhere/City", 7, now)).toThrow();

@@ -27,7 +27,7 @@ Every account has a team role: **admin**, **member**, **viewer** (reads what is 
 
 Blocking an account signs it out on every device at once and removes its push subscriptions. Its MCP keys and calendar feeds pause and resume when it is unblocked; its content stays where it is and stays shared as before. A blocked user who enters the right password is told the account is blocked; a wrong password still gets the usual error.
 
-The host CLI is the way out of a lockout, for example when the only admin forgot their password or is no longer on `ALLOWED_EMAILS`. Each change is recorded in the Team activity log as made from the command line:
+The host CLI is the way out of an admin lockout, for example when the only admin was blocked or is no longer on `ALLOWED_EMAILS`: it lists accounts, promotes another account to admin (`set-role`), or unblocks one. It cannot set a password: a forgotten password needs **Forgot password?** on the sign-in page (with email on) or another admin account. Each change is recorded in the Team activity log as made from the command line:
 
 ```sh
 docker compose exec mynotes bun server/team-admin.ts list
@@ -66,7 +66,7 @@ docker compose exec mynotes bun server/reset-totp.ts user@example.com
 
 People change their own password in **Settings → Security** (current password plus a two-factor code when they use one; other sessions are signed out). With email on, **Forgot password?** on the sign-in page mails a 30-minute, single-use link to an existing, unblocked, **verified** address; the answer is the same whether or not an account exists, and a reset on a two-factor account still needs a code or recovery code. A reset signs the account out everywhere and removes its push subscriptions; API keys are not revoked (the security email links to them). Requests are limited in memory like sign-in: 3 an hour per address and 10 an hour per client address. The link is built from `APP_ORIGIN`, never the request's Host header, so set it correctly behind a proxy.
 
-Admins cannot trigger a reset email for someone else (D246: it would be a phishing surface). With email off, or for an address that was never verified, there is no self-service reset; the host CLI above stays the way out of admin lockouts (roles, unblocking) and `server/reset-totp.ts` of a lost authenticator. Nook has no CLI that sets a password.
+Admins cannot trigger a reset email for someone else (D246: it would be a phishing surface). With email off, or for an address that was never verified, there is no self-service reset; an admin who forgot their password keeps administering through another admin account (promote one with the host CLI above if there is none). The host CLI only lists accounts, sets roles, and unblocks; `server/reset-totp.ts` clears a lost authenticator. Nook has no CLI that sets a password.
 
 ### LAN and Tailscale access
 

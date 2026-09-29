@@ -26,6 +26,9 @@ export function excalidrawLayerOpen(appState: ExcalidrawLayers | null | undefine
  */
 export const EXCALIDRAW_LAYER_SELECTOR = ".dropdown-menu, .Modal, .context-menu, .sidebar, .popover, [data-radix-popper-content-wrapper]";
 
+/** The one message for every refused image (paste, drop, the image shortcut, a Mermaid diagram drawn as an image; QA Q5). */
+export const IMAGES_REFUSED_MESSAGE = "Images can't be added to whiteboards yet.";
+
 /** The appState patch that closes every Excalidraw layer, applied with updateScene. */
 export const closedExcalidrawLayers = () => ({ openDialog: null, openMenu: null, openPopup: null, openSidebar: null, contextMenu: null });
 

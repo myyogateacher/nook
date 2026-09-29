@@ -7,7 +7,7 @@ import type { CanonicalScene } from "../../shared/whiteboardScene";
  * net, never the board.
  */
 
-export type PendingEntry = { scene: CanonicalScene; baseRevision: number; savedAt: string };
+export type PendingEntry = { scene: CanonicalScene; baseRevision: number; savedAt: string; live?: number };
 
 const DB_NAME = "nook-whiteboards";
 const STORE = "pending";

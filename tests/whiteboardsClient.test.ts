@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, pendingCopyAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState } from "../src/whiteboards/autosave";
+import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, leaveFlushAllowed, mayWritePending, nextSaveDelay, pendingCopyAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState } from "../src/whiteboards/autosave";
 import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
 import { pendingKey } from "../src/whiteboards/pendingStore";
 import { formatRoute, parseRoute } from "../src/router";
@@ -11,72 +11,117 @@ const run = (events: AutosaveEvent[], start: AutosaveState = initialAutosave(1))
 
 describe("whiteboard autosave state machine", () => {
   test("an edit makes it dirty; the save confirms it and goes idle with the new revision", () => {
-    const dirty = run([{ type: "edited" }]);
+    const dirty = run([{ type: "edited", at: 0 }]);
     expect(dirty.status).toBe("dirty");
     expect(shouldSave(dirty)).toBe(true);
     expect(hasPendingWork(dirty)).toBe(true);
     const saving = autosaveReducer(dirty, { type: "saveStarted" });
     expect(saving).toMatchObject({ status: "saving", savingVersion: 1 });
-    const saved = autosaveReducer(saving, { type: "saved", revision: 2 });
+    const saved = autosaveReducer(saving, { type: "saved", revision: 2, at: 0, live: 1 });
     expect(saved).toMatchObject({ status: "idle", baseRevision: 2, savedVersion: 1, savingVersion: null });
     expect(hasPendingWork(saved)).toBe(false);
     expect(autosaveLabel(saved)).toBe("Saved");
   });
 
   test("only one save in flight: an edit while saving waits and goes dirty again with the new base", () => {
-    const saving = run([{ type: "edited" }, { type: "saveStarted" }]);
-    const editedMeanwhile = autosaveReducer(saving, { type: "edited" });
+    const saving = run([{ type: "edited", at: 0 }, { type: "saveStarted" }]);
+    const editedMeanwhile = autosaveReducer(saving, { type: "edited", at: 0 });
     expect(editedMeanwhile.status).toBe("saving");
     expect(autosaveReducer(editedMeanwhile, { type: "saveStarted" })).toBe(editedMeanwhile);
-    const back = autosaveReducer(editedMeanwhile, { type: "saved", revision: 7 });
+    const back = autosaveReducer(editedMeanwhile, { type: "saved", revision: 7, at: 0, live: 1 });
     expect(back).toMatchObject({ status: "dirty", baseRevision: 7, savedVersion: 1, editVersion: 2 });
   });
 
   test("409 goes to conflict and stays there through edits; reset starts over from the server's revision", () => {
-    const conflict = run([{ type: "edited" }, { type: "saveStarted" }, { type: "conflict", revision: 5 }]);
+    const conflict = run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "conflict", revision: 5 }]);
     expect(conflict).toMatchObject({ status: "conflict", serverRevision: 5 });
     expect(shouldSave(conflict)).toBe(false);
-    const stillConflict = autosaveReducer(conflict, { type: "edited" });
+    const stillConflict = autosaveReducer(conflict, { type: "edited", at: 0 });
     expect(stillConflict.status).toBe("conflict");
     expect(autosaveLabel(stillConflict)).toBe("Conflict");
-    const reset = autosaveReducer(stillConflict, { type: "reset", revision: 5 });
+    const reset = autosaveReducer(stillConflict, { type: "reset", revision: 5, live: 1 });
     expect(reset).toMatchObject({ status: "idle", baseRevision: 5 });
     expect(hasPendingWork(reset)).toBe(false);
   });
 
   test("a network error goes offline with backoff from 2 s to 30 s, keeping the edit; a later save recovers", () => {
-    let state = run([{ type: "edited" }, { type: "saveStarted" }, { type: "failed" }]);
+    let state = run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "failed" }]);
     expect(state).toMatchObject({ status: "offline", retryMs: RETRY_MIN_MS });
     expect(shouldSave(state)).toBe(true);
     expect(autosaveLabel(state)).toBe("Offline, kept on this device");
     for (let attempt = 0; attempt < 8; attempt += 1) state = run([{ type: "saveStarted" }, { type: "failed" }], state);
     expect(state.retryMs).toBe(RETRY_MAX_MS);
-    state = run([{ type: "saveStarted" }, { type: "saved", revision: 3 }], state);
+    state = run([{ type: "saveStarted" }, { type: "saved", revision: 3, at: 0, live: 1 }], state);
     expect(state).toMatchObject({ status: "idle", retryMs: 0, baseRevision: 3 });
   });
 
   test("429 waits as long as the server says, with its own label, and keeps the edit (review L11)", () => {
-    const throttled = run([{ type: "edited" }, { type: "saveStarted" }, { type: "failed", retryAfterMs: 45_000, message: "Saving paused for a moment, kept on this device" }]);
+    const throttled = run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "failed", retryAfterMs: 45_000, message: "Saving paused for a moment, kept on this device" }]);
     expect(throttled).toMatchObject({ status: "offline", retryMs: 45_000 });
     expect(autosaveLabel(throttled)).toBe("Saving paused for a moment, kept on this device");
     expect(hasPendingWork(throttled)).toBe(true);
-    const recovered = run([{ type: "saveStarted" }, { type: "saved", revision: 2 }], throttled);
+    const recovered = run([{ type: "saveStarted" }, { type: "saved", revision: 2, at: 0, live: 1 }], throttled);
     expect(recovered).toMatchObject({ status: "idle", message: null });
   });
 
   test("400 or 413 is rejected with the reason and no retry, until the next edit", () => {
-    const rejected = run([{ type: "edited" }, { type: "saveStarted" }, { type: "rejected", message: "Too many elements" }]);
+    const rejected = run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "rejected", message: "Too many elements" }]);
     expect(rejected).toMatchObject({ status: "rejected", message: "Too many elements" });
     expect(shouldSave(rejected)).toBe(false);
     expect(hasPendingWork(rejected)).toBe(true);
-    expect(autosaveReducer(rejected, { type: "edited" }).status).toBe("dirty");
+    expect(autosaveReducer(rejected, { type: "edited", at: 0 }).status).toBe("dirty");
   });
 
-  test("the pending copy (D210): same base applies silently, another base is offered, none is nothing", () => {
-    expect(pendingCopyAction(null, 4)).toBe("none");
-    expect(pendingCopyAction({ baseRevision: 4, savedAt: "x" }, 4)).toBe("apply");
-    expect(pendingCopyAction({ baseRevision: 3, savedAt: "x" }, 4)).toBe("offer");
+  test("the pending copy (D210, QA D2, Q8): same content is discarded, same base applies, empty over elements or another base is offered", () => {
+    const server = { revision: 4, live: 3, content: "server" };
+    expect(pendingCopyAction(null, server)).toBe("none");
+    expect(pendingCopyAction({ baseRevision: 4, live: 4, content: "mine" }, server)).toBe("apply");
+    expect(pendingCopyAction({ baseRevision: 3, live: 4, content: "mine" }, server)).toBe("offer");
+    // Saved after all (the same bytes as the server's): nothing to restore.
+    expect(pendingCopyAction({ baseRevision: 3, live: 3, content: "server" }, server)).toBe("discard");
+    // An empty copy over a board with elements is never applied silently.
+    expect(pendingCopyAction({ baseRevision: 4, live: 0, content: "empty" }, server)).toBe("offer");
+    expect(pendingCopyAction({ baseRevision: 4, live: 0, content: "empty" }, { ...server, live: 0 })).toBe("apply");
     expect(pendingKey("u1", "b1")).toBe("nook.whiteboard.pending.u1.b1");
+  });
+
+  test("QA D4: a save starts 1.5 s after the last edit, but never later than 5 s after the oldest unsaved one", () => {
+    let state = run([{ type: "edited", at: 1000 }]);
+    expect(state.firstUnsavedAt).toBe(1000);
+    expect(nextSaveDelay(state, 1000)).toBe(AUTOSAVE_DEBOUNCE_MS);
+    // An edit every 1.1 s keeps the oldest time, so the delay shrinks to 0 by 6 s.
+    for (let at = 2100; at <= 5500; at += 1100) state = autosaveReducer(state, { type: "edited", at });
+    expect(state.firstUnsavedAt).toBe(1000);
+    expect(nextSaveDelay(state, 5500)).toBe(500);
+    expect(nextSaveDelay(state, 1000 + AUTOSAVE_MAX_WAIT_MS)).toBe(0);
+    // Saved with an edit in flight: that edit is the new oldest one.
+    state = run([{ type: "saveStarted" }, { type: "edited", at: 6100 }, { type: "saved", revision: 2, at: 6200, live: 5 }], state);
+    expect(state).toMatchObject({ status: "dirty", firstUnsavedAt: 6200 });
+    state = run([{ type: "saveStarted" }, { type: "saved", revision: 3, at: 7000, live: 6 }], state);
+    expect(state).toMatchObject({ status: "idle", firstUnsavedAt: null });
+    expect(nextSaveDelay(state, 7000)).toBeNull();
+    // Offline, the retry backoff decides.
+    expect(nextSaveDelay(run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "failed" }]), 0)).toBe(RETRY_MIN_MS);
+  });
+
+  test("QA D1–D3: only an unsaved edit may become pending, and a leave flush never sends an empty scene over elements", () => {
+    const loaded = autosaveReducer(initialAutosave(1), { type: "reset", revision: 2, live: 3 });
+    expect(loaded.savedLive).toBe(3);
+    // Nothing edited: nothing may be written or flushed, whatever the editor reports.
+    expect(mayWritePending(loaded)).toBe(false);
+    expect(leaveFlushAllowed(loaded, 0)).toBe(false);
+    expect(leaveFlushAllowed(loaded, 3)).toBe(false);
+    const edited = autosaveReducer(loaded, { type: "edited", at: 0 });
+    expect(mayWritePending(edited)).toBe(true);
+    expect(leaveFlushAllowed(edited, 4)).toBe(true);
+    // An empty scene over a board with 3 saved elements is never sent from a leave flush.
+    expect(leaveFlushAllowed(edited, 0)).toBe(false);
+    // Once saved, nothing is pending any more (the copy is not rewritten after the save).
+    const saved = run([{ type: "saveStarted" }, { type: "saved", revision: 3, at: 1, live: 4 }], edited);
+    expect(mayWritePending(saved)).toBe(false);
+    // A board that is empty on the server may be saved empty.
+    const emptyBoard = autosaveReducer(autosaveReducer(initialAutosave(1), { type: "reset", revision: 1, live: 0 }), { type: "edited", at: 0 });
+    expect(leaveFlushAllowed(emptyBoard, 0)).toBe(true);
   });
 });
 

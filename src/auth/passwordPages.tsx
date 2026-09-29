@@ -212,6 +212,7 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
     return () => { live = false; };
   }, [about]);
   const offerNewLink = passwordResetOffered(info);
+  const googleOnly = info !== null && info !== "failed" && info.authMethods?.password === false;
   const [state, setState] = useState<ResetState>(token ? { kind: "checking" } : { kind: "dead", reason: "invalid" });
   const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -265,7 +266,8 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
         <span className="eyebrow">Password</span>
         <h1><Link2Off aria-hidden="true" className="invite-register-icon" />{DEAD_COPY[state.reason].title}</h1>
         <p>{state.reason === "error" ? state.message : signedIn || info === null || offerNewLink ? DEAD_COPY[state.reason].body : DEAD_COPY[state.reason].body.replace(" Ask for a new one.", "")}</p>
-        {!signedIn && info !== null && !offerNewLink && state.reason !== "error" && <p>{RESET_OFF_TEXT}</p>}
+        {/* QA G2: in google mode passwords are what is off, whatever email says. */}
+        {!signedIn && info !== null && !offerNewLink && state.reason !== "error" && <p>{googleOnly ? GOOGLE_ONLY_PASSWORD_TEXT : RESET_OFF_TEXT}</p>}
       </div>
       {(signedIn || offerNewLink) && <div className="auth-form">{signedIn
         ? <button type="button" className="primary-button" onClick={onSignIn}>Open Nook</button>

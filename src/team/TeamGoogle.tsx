@@ -44,6 +44,13 @@ export function googleConditionText(domain: string) {
     : `Only a Google account that Google confirms is managed by ${domain} can link it: a Google Workspace account of ${domain}. A personal Google account that merely uses this address cannot.`;
 }
 
+/** G4: the re-link with "Also remove the password and two-factor" off. */
+export function keptCredentialsText(twoFactor: boolean) {
+  return twoFactor
+    ? "The password and two-factor stay. The new Google account will be asked for the existing two-factor code at sign-in."
+    : "The password stays, so whoever knows it can still sign in with it.";
+}
+
 /** What a completed re-link removes (S1), in plain words. */
 export function relinkLines(counts: RelinkCounts) {
   const plural = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`;
@@ -191,6 +198,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
         </label>}
         <p className="team-google-copy">When the new Google account signs in:</p>
         {relinkCounts && <ul className="team-google-counts">{relinkLines(relinkCounts).map((line) => <li key={line}>{line}</li>)}</ul>}
+        {offersCredentials && !removeCredentials && <p className="team-google-copy team-google-note">{keptCredentialsText(Boolean(state.relinkPreview?.twoFactor))}</p>}
         <p className="team-google-copy">Notes, files, other content, and sharing are kept.</p>
       </>}
       {step === "reset" && <>
@@ -198,7 +206,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
         <p className="team-google-copy team-google-note">This is not Reset access (Team → this person → Access), which removes what others share with them. This removes the account's own ways in and what it shares with others, so the person who signs in with Google starts clean.</p>
         <ul className="team-google-counts">{resetLines(state.resetPreview).map((line) => <li key={line}>{line}</li>)}</ul>
       </>}
-      {step === "unlink" && <p className="team-google-copy">They need a password to get back in. For a recreated Google account, use Allow re-linking instead.</p>}
+      {step === "unlink" && <p className="team-google-copy">Every device where {name} is signed in is signed out now, and they sign in again with their password. For a recreated Google account, use Allow re-linking instead.</p>}
       {step !== "done" && <>
         <p className="team-google-copy team-google-note">Confirm it's you to continue.</p>
         <form id={formId} className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
@@ -211,6 +219,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
         {result.relink && result.relinkPreview && <>
           <p className="team-google-copy">When the new Google account signs in:</p>
           <ul className="team-google-counts">{relinkLines(result.relinkPreview).map((line) => <li key={line}>{line}</li>)}</ul>
+          {result.removeCredentials === false && offersCredentials && <p className="team-google-copy team-google-note">{keptCredentialsText(Boolean(state.relinkPreview?.twoFactor))}</p>}
         </>}
       </>}
       {error && <p className="form-error" role="alert">{error}</p>}

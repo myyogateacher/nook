@@ -220,7 +220,8 @@ describe("the round trip (D289, D291, T250–T253, T260)", () => {
     const old = await start();
     db.query("UPDATE google_auth_flows SET expires_at = ? WHERE used_at IS NULL").run(new Date(Date.now() - 1000).toISOString());
     const late = await fetch(fake.authorize(old.location, identityFor(spareEmail())), { redirect: "manual", headers: { Cookie: old.flowCookie! } });
-    expect(late.headers.get("location")).toBe("/login#error=expired");
+    // G1d: an expired round trip says it took too long (a replayed or foreign one still says expired).
+    expect(late.headers.get("location")).toBe("/login#error=flow_expired");
   });
 
   test("ID token checks: signature, foreign key, aud, azp, iss, exp, iat, nonce, alg, and email_verified", async () => {
@@ -424,7 +425,15 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     expect((await googleSignIn(identity)).session).toBeTruthy();
     const unlink = (userId: string, body: Record<string, unknown> = { password: admin.password }) => request(`/team/${userId}/google`, { method: "DELETE", body: JSON.stringify(body) }, admin);
     expect((await unlink(person.userId, {})).status).toBe(401);
-    expect((await unlink(person.userId)).status).toBe(200);
+    const googleSession = (await googleSignIn(identity)).session!;
+    expect((await me(googleSession)).status).toBe(200);
+    const unlinked = await unlink(person.userId);
+    expect(unlinked.status).toBe(200);
+    // G3: an admin unlink ends every session of the member, the Google one included.
+    expect((await unlinked.json() as { sessionsEnded: number }).sessionsEnded).toBeGreaterThanOrEqual(2);
+    expect((await me(googleSession)).status).toBe(401);
+    expect((await me(person.cookie)).status).toBe(401);
+    expect((await passwordLogin(person.email, person.password)).status).toBe(200);
     expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
     // A Google-only account: unlinking would strand it, and the message points at re-linking.
     const oldGoogle = workspace(spareEmail());
@@ -954,10 +963,17 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2,
     expect(userRow(person.email)!.avatar_id).not.toBeNull();
     expect((await request("/auth/google", { method: "DELETE", body: "{}" }, person)).status).toBe(401);
     const mail = await import("../server/mail");
+    const other = await passwordLogin(person.email, person.password);
+    const otherCookie = cookieOf(other, "mynotes_session")!;
+    expect((await me(otherCookie)).status).toBe(200);
     mail.setMailTransportForTests(async () => ({ id: "msg" }));
     const unlink = await request("/auth/google", { method: "DELETE", body: JSON.stringify({ password: person.password }) }, person);
     mail.setMailTransportForTests(null);
     expect(unlink.status).toBe(200);
+    // G3: this session stays; every other session of the account ends.
+    expect(await unlink.json()).toMatchObject({ ok: true });
+    expect((await me(person.cookie)).status).toBe(200);
+    expect((await me(otherCookie)).status).toBe(401);
     // N4: the same security mail as an admin or CLI unlink.
     expect(mailEvents(person.userId, "security.account")).toContain("google_unlinked_self");
     expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
@@ -979,33 +995,97 @@ describe("review LOW fixes", () => {
     expect(userRow(email)).toBeNull();
   });
 
-  test("N1a/c: 60 starts from one address are never refused; at 50 live flows the oldest is evicted and answers expired", async () => {
+  test("N1a/c: 60 starts from one address are never refused; at 50 live flows the oldest is evicted and says it took too long", async () => {
     const first = await start();
     for (let index = 0; index < 59; index += 1) expect((await start()).response.status).toBe(302);
     const live = (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE used_at IS NULL").get() as { count: number }).count;
     expect(live).toBe(50);
     const evicted = await fetch(fake.authorize(first.location, identityFor(spareEmail())), { redirect: "manual", headers: { Cookie: first.flowCookie! } });
-    expect(evicted.headers.get("location")).toBe("/login#error=expired");
+    expect(evicted.headers.get("location")).toBe("/login#error=flow_expired");
   });
 
-  test("S5: eviction takes prepared flows first, then authorize ones, oldest first, and never a second-factor flow", async () => {
-    const { evictOldestFlows } = await import("../server/google/flows");
-    const client = "s5-client";
-    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
-    const insert = (id: string, stage: string, minutesAgo: number) => db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, client_hash, created_at, expires_at)
-      VALUES (?, ?, 'n', 'v', 'signin', ?, '/', ?, ?, ?)`).run(id, crypto.randomUUID(), stage, client, at(minutesAgo), new Date(Date.now() + 600_000).toISOString());
-    insert("s5-factor-old", "second_factor", 9);
-    insert("s5-authorize-old", "authorize", 8);
-    insert("s5-prepared-new", "prepared", 1);
-    insert("s5-authorize-new", "authorize", 2);
-    insert("s5-prepared-old", "prepared", 7);
-    const live = () => (db.query("SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL ORDER BY id").all(client) as Array<{ id: string }>).map((row) => row.id);
-    expect(evictOldestFlows(client, 3)).toBe(1);
-    expect(live()).toEqual(["s5-authorize-new", "s5-authorize-old", "s5-factor-old", "s5-prepared-new"]);
-    expect(evictOldestFlows(client, 1)).toBe(2);
-    expect(live()).toEqual(["s5-authorize-new", "s5-factor-old"]);
-    expect(evictOldestFlows(client, 0)).toBe(1);
-    expect(live()).toEqual(["s5-factor-old"]);
+  test("G1b/c: anonymous sign-ins go first, other authorize flows next; prepared flows have their own cap; second-factor flows are never evicted", async () => {
+    const { makeRoomForFlow, LIVE_FLOWS_PER_CLIENT, PREPARED_FLOWS_PER_CLIENT } = await import("../server/google/flows");
+    const client = "g1-client";
+    const at = (secondsAgo: number) => new Date(Date.now() - secondsAgo * 1000).toISOString();
+    const insert = (id: string, stage: string, intent: string, secondsAgo: number, extra: { session?: string; invite?: string } = {}) => db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, client_hash, session_id, invite_hash, created_at, expires_at)
+      VALUES (?, ?, 'n', 'v', ?, ?, '/', ?, NULL, ?, ?, ?)`).run(id, crypto.randomUUID(), intent, stage, client, extra.invite ?? null, at(secondsAgo), new Date(Date.now() + 600_000).toISOString());
+    const live = (id: string) => (db.query("SELECT used_at IS NULL AS live FROM google_auth_flows WHERE id = ?").get(id) as { live: number }).live === 1;
+    insert("g1-factor", "second_factor", "signin", 900);
+    insert("g1-invite-authorize-old", "authorize", "invite", 800);
+    insert("g1-reauth-authorize", "authorize", "reauth", 700);
+    for (let index = 0; index < LIVE_FLOWS_PER_CLIENT - 2; index += 1) insert(`g1-anon-${index}`, "authorize", "signin", 600 - index);
+    for (let index = 0; index < PREPARED_FLOWS_PER_CLIENT; index += 1) insert(`g1-prepared-${index}`, "prepared", "invite", 650 - index, { invite: `hash-${index}` });
+    // 50 authorize flows: one more anonymous start evicts the oldest anonymous one only.
+    expect(makeRoomForFlow({ stage: "authorize", clientHash: client })).toBe(1);
+    expect(live("g1-anon-0")).toBe(false);
+    expect(live("g1-anon-1")).toBe(true);
+    expect(live("g1-invite-authorize-old")).toBe(true);
+    // No prepared flow is touched by authorize eviction, and vice versa.
+    for (let index = 0; index < PREPARED_FLOWS_PER_CLIENT; index += 1) expect(live(`g1-prepared-${index}`)).toBe(true);
+    expect(makeRoomForFlow({ stage: "prepared", clientHash: client, inviteHash: "hash-new" })).toBe(1);
+    expect(live("g1-prepared-0")).toBe(false);
+    expect(live("g1-anon-1")).toBe(true);
+    // Only when no anonymous sign-in is left do other authorize flows go, oldest first.
+    db.query("UPDATE google_auth_flows SET used_at = ? WHERE id LIKE 'g1-anon-%'").run(at(0));
+    for (let index = 0; index < LIVE_FLOWS_PER_CLIENT - 2; index += 1) insert(`g1-invite-${index}`, "authorize", "invite", 500 - index);
+    expect(makeRoomForFlow({ stage: "authorize", clientHash: client })).toBe(1);
+    expect(live("g1-invite-authorize-old")).toBe(false);
+    expect(live("g1-reauth-authorize")).toBe(true);
+    expect(live("g1-factor")).toBe(true);
+    // G1c: one live prepared flow per invite; a new one replaces the old (not an eviction).
+    expect(makeRoomForFlow({ stage: "prepared", clientHash: client, inviteHash: "hash-5" })).toBe(0);
+    expect((db.query("SELECT used_at IS NOT NULL AS ended, ended_reason FROM google_auth_flows WHERE id = 'g1-prepared-5'").get() as { ended: number; ended_reason: string })).toEqual({ ended: 1, ended_reason: "replaced" });
+  });
+
+  test("G1 repro: 55 anonymous starts from one address, then an invite through Google and Settings → Link Google both work", async () => {
+    const admin = await adminUser();
+    const email = spareEmail();
+    const created = await request("/team/invites", { method: "POST", body: JSON.stringify({ role: "viewer", email }) }, admin);
+    const token = (await created.json() as { token: string }).token;
+    config.allowRegistration = false;
+    const handOff = await request("/auth/google/invite", { method: "POST", body: JSON.stringify({ token }) });
+    const prepared = cookieOf(handOff, "nook_google_flow")!;
+    // The prepared flow waits while 55 anonymous starts arrive from the same address.
+    for (let index = 0; index < 55; index += 1) expect((await start()).response.status).toBe(302);
+    const invited = await start("?intent=invite", { Cookie: prepared });
+    expect(invited.location.startsWith(fake.url)).toBe(true);
+    const joined = await fetch(fake.authorize(invited.location, identityFor(email)), { redirect: "manual", headers: { Cookie: invited.flowCookie! } });
+    expect(joined.headers.get("location")).toBe("/");
+    expect(userRow(email)!.role).toBe("viewer");
+
+    const person = await createUser("G1 linker");
+    const link = await request("/auth/google/link", { method: "POST", body: JSON.stringify({ password: person.password }) }, person);
+    expect(link.status).toBe(200);
+    for (let index = 0; index < 55; index += 1) expect((await start()).response.status).toBe(302);
+    const linked = await googleSignIn(workspace(person.email), { query: "?intent=link", headers: { Cookie: `${person.cookie}; ${cookieOf(link, "nook_google_flow")}` } });
+    expect(linked.location).toBe("/settings/security#google=linked");
+  }, 30_000);
+
+  test("G1d: an invite whose flow ran out says it took too long and stays usable", async () => {
+    const admin = await adminUser();
+    const email = spareEmail();
+    const created = await request("/team/invites", { method: "POST", body: JSON.stringify({ role: "viewer", email }) }, admin);
+    const token = (await created.json() as { token: string }).token;
+    config.allowRegistration = false;
+    const handOff = await request("/auth/google/invite", { method: "POST", body: JSON.stringify({ token }) });
+    db.query("UPDATE google_auth_flows SET expires_at = ? WHERE stage = 'prepared' AND used_at IS NULL").run(new Date(Date.now() - 1000).toISOString());
+    const late = await start("?intent=invite", { Cookie: cookieOf(handOff, "nook_google_flow")! });
+    expect(late.response.headers.get("location")).toBe("/register#google-error=flow_expired");
+    // The invite was prepared again: the same browser continues with Google and joins.
+    const again = await start("?intent=invite", { Cookie: cookieOf(late.response, "nook_google_flow")! });
+    const joined = await fetch(fake.authorize(again.location, identityFor(email)), { redirect: "manual", headers: { Cookie: again.flowCookie! } });
+    expect(joined.headers.get("location")).toBe("/");
+    // An evicted authorize flow of an invite goes back to the invite page too, never "used" or "invalid".
+    const email2 = spareEmail();
+    const token2 = (await (await request("/team/invites", { method: "POST", body: JSON.stringify({ role: "viewer", email: email2 }) }, admin)).json() as { token: string }).token;
+    const handOff2 = await request("/auth/google/invite", { method: "POST", body: JSON.stringify({ token: token2 }) });
+    const started2 = await start("?intent=invite", { Cookie: cookieOf(handOff2, "nook_google_flow")! });
+    db.query("UPDATE google_auth_flows SET used_at = ?, ended_reason = 'evicted' WHERE stage = 'authorize' AND intent = 'invite' AND used_at IS NULL").run(new Date().toISOString());
+    const evicted = await fetch(fake.authorize(started2.location, identityFor(email2)), { redirect: "manual", headers: { Cookie: started2.flowCookie! } });
+    expect(evicted.headers.get("location")).toBe("/register#google-error=flow_expired");
+    expect(cookieOf(evicted, "nook_google_flow")).toBeTruthy();
+    expect(userRow(email2)).toBeNull();
   });
 
   test("L7: /api/about offers no password reset in google mode", async () => {

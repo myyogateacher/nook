@@ -37,7 +37,8 @@ CREATE TABLE google_auth_flows (
   stage TEXT NOT NULL DEFAULT 'authorize' CHECK (stage IN ('prepared','authorize','second_factor')), -- prepared: an invite posted, start not yet called
   return_to TEXT NOT NULL, invite_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,   -- reauth: the session to confirm
-  client_hash TEXT,                  -- hashed client address: at most 50 live flows per client, oldest evicted (N1, S5)
+  client_hash TEXT,                  -- hashed client address: flow caps per client (N1, G1)
+  ended_reason TEXT,                 -- G1: 'evicted' or 'replaced' when a flow ended early
   failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
 ALTER TABLE users ADD COLUMN avatar_id TEXT;       -- UUID of DATA_DIR/avatars/<id>
 ALTER TABLE sessions ADD COLUMN reauth_at TEXT;    -- D297
@@ -73,7 +74,7 @@ Callback error codes (fragment): `denied` (the person cancelled), `expired` (no,
 
 `GET /api/about` adds `authMethods: {password: boolean, google: boolean}`. `user` on `me`, sign-in, and register gains `avatarUrl: string | null`.
 
-## 4. Threats (THREAT_MODEL T250–T267)
+## 4. Threats (THREAT_MODEL T250–T268)
 
 T250 login CSRF, T251 state/nonce/code replay, T252 mix-up and token substitution, T253 open redirect through `return`, T254 pre-hijacking, T255 email change at Google, T256 domain restriction bypass through `hd`, T257 avatar fetch SSRF and content sniffing, T258 account enumeration, T259 Google-only lockout, T260 token and code leakage, T261 re-authentication bypass, T262 avatar visibility. Rows and mitigations are in THREAT_MODEL.md.
 
@@ -151,3 +152,12 @@ Migration 034, final shape: `google_identities` and `google_auth_flows` (with `c
 | --- | --- |
 | F1 (MEDIUM: flooding the attempt map reset a victim's per-email counter) | Every bucket is a registered family with a scope (`BUCKET_FAMILIES`, `server/authLimits.ts`); `hit` takes only a registered family. At the cap the map drops only `client`-scope keys, oldest first, never per-email, per-account, per-admin, or instance-wide keys. Google start and callback go through the same helper as sign-in (`limitedWithin`), so a full instance-wide bucket refuses before any per-client key exists. A map full of protected keys refuses new per-client keys (429) and still stores protected ones. THREAT_MODEL T267 states the bound. |
 | F2 (LOW: the CLI re-link always removed the password and two-factor) | `allow-google-link --keep-credentials` keeps them (the default still removes them). The CLI prints what will happen first, refuses the flag for an account that is not linked, and refuses it together with `--reset`. |
+
+### Final QA (G1–G4)
+
+| Item | Fix |
+| --- | --- |
+| G1 (MEDIUM: a burst of anonymous starts blocked invites and Settings links) | Caps apply inside `createFlow`, after the request claimed its prepared flow, so the flow in use is never evicted. `authorize` flows: 50 per client address, anonymous sign-ins evicted first, other `authorize` flows only when none is left. `prepared` flows: their own cap of 20 per client address, one per invite (replaced), 3 per session. `second_factor`: never. An expired or evicted flow answers `flow_expired` ("That took too long. Continue with Google again."); an invite's is prepared again. This replaces S5's order. Residual in THREAT_MODEL T268. |
+| G2 | In google mode the reset page says passwords are off, whatever email says. |
+| G3 | An admin (or CLI) unlink ends every session of the member; a self unlink keeps this session and ends the others. Both dialogs say so. |
+| G4 | Access activity lists only what a Google reset or re-link removed, as a sentence. The re-link dialog with the option off says the password and two-factor stay and the new Google account will be asked for the existing code. |

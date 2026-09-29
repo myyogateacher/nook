@@ -316,3 +316,33 @@ describe("final fix round (S1, Q1, Q2, Q4, Q6, Q7, section 2)", () => {
     expect(fields).toContain("avatar_url: avatars[index] ?? null");
   });
 });
+
+describe("final QA (G1d, G2, G3, G4)", () => {
+  test("G1d: a round trip that ran out says it took too long", () => {
+    expect(googleErrorMessage("flow_expired")).toBe("That took too long. Continue with Google again.");
+  });
+
+  test("G2: in google mode the reset page says passwords are off, even with email on", async () => {
+    const { ResetPasswordPage, RESET_OFF_TEXT } = await import("../src/auth/passwordPages");
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: false, authMethods: { password: false, google: true } }} onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(markup).toContain(GOOGLE_ONLY_PASSWORD_TEXT);
+    expect(markup).not.toContain(RESET_OFF_TEXT);
+    const emailOff = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: false, authMethods: { password: true, google: false } }} onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(emailOff).toContain(RESET_OFF_TEXT);
+  });
+
+  test("G3: both unlink dialogs say what happens to sessions", () => {
+    expect(readFileSync(join(src, "team", "TeamGoogle.tsx"), "utf8")).toContain("is signed in is signed out now");
+    expect(readFileSync(join(src, "auth", "GoogleAccountCard.tsx"), "utf8")).toContain("This device stays signed in; every other device where you are signed in is signed out.");
+  });
+
+  test("G4: Access activity lists only what a Google reset or re-link removed; the re-link without removal says what stays", async () => {
+    const { googleRemovedLine } = await import("../src/team/AccessActivity");
+    expect(googleRemovedLine({ sessions: 1, keys: 1, feeds: 0, items: 0, shares: 0, groupGrants: 0, invites: 0, routines: 0, password: 1, twoFactor: 0 })).toBe("Removed 1 signed-in session, 1 API key, and the password.");
+    expect(googleRemovedLine({ sessions: 2, keys: 0, feeds: 1 })).toBe("Removed 2 signed-in sessions and 1 calendar feed.");
+    expect(googleRemovedLine({ sessions: 0, keys: 0 })).toBe("Nothing needed removing.");
+    const { keptCredentialsText } = await import("../src/team/TeamGoogle");
+    expect(keptCredentialsText(true)).toBe("The password and two-factor stay. The new Google account will be asked for the existing two-factor code at sign-in.");
+    expect(keptCredentialsText(false)).toContain("The password stays");
+  });
+});

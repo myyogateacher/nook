@@ -95,7 +95,7 @@ People can sign in with Google as well as, or instead of, email and password. `A
 
 Each link, allowance, reset, re-link, and unlink is audited and, with email on, mailed to the account's address. Allowances, resets, admin unlinks, and completed re-links also reach the person's bell (ids and counts only) and **Team → Access activity** (filter **Google sign-in**).
 
-**Passwords and re-authentication.** Accounts created through Google have no password; with the password method on and email set up, they can add one with **Forgot password?**. People unlink Google under **Settings → Security** after confirming their password (unlinking needs a password that works). Where Nook asks for a password to confirm a sensitive change (API keys, two-factor, linking), an account **without a usable password** confirms with Google instead: Google asks for the Google password again, and the confirmation lasts 5 minutes on that device. Accounts that have a password always give it.
+**Passwords and re-authentication.** Accounts created through Google have no password; with the password method on and email set up, they can add one with **Forgot password?**. People unlink Google under **Settings → Security** after confirming their password (unlinking needs a password that works); the device they unlink from stays signed in and every other device is signed out. An admin's unlink (Team or `unlink-google`) signs the person out everywhere: they sign in again with their password. Where Nook asks for a password to confirm a sensitive change (API keys, two-factor, linking), an account **without a usable password** confirms with Google instead: Google asks for the Google password again, and the confirmation lasts 5 minutes on that device. Accounts that have a password always give it.
 
 **Profile pictures.** At each Google sign-in the server downloads the Google profile picture (https from `*.googleusercontent.com` only, 5 seconds, at most 1 MiB, PNG, JPEG, or WebP by content) into `DATA_DIR/avatars/` and serves it from Nook itself; browsers never contact Google, and the Content Security Policy is unchanged. A failed download never blocks sign-in. Backups include `avatars/`; files no account uses are removed by the hourly sweep.
 
@@ -112,7 +112,7 @@ Each link, allowance, reset, re-link, and unlink is audited and, with email on, 
 | Invite link preview (password or Google hand-off) | 10 | none | 60 |
 | Google sign-in starts | 120 | none | 2000 |
 | Google callbacks | 180 | none | 3000 |
-| Unfinished Google sign-ins held | 50 at once (at the cap the oldest one not yet at the code step is dropped; a start is never refused) | none | none |
+| Unfinished Google sign-ins held | 50 started sign-ins at once (at the cap the oldest anonymous sign-in is dropped first; invite, link, and re-auth ones only when none is left; a start is never refused); separately 20 prepared invite or link hand-offs (oldest dropped among themselves) | one prepared hand-off per invite (a new one replaces it); 3 link or re-auth round trips per session | none |
 | Wrong Nook codes after Google | none | 5 per sign-in attempt, then it starts over | none |
 | Settings → Link or Unlink Google | none | 5 per account | none |
 | Team → Google allow or unlink (acting admin) | none | 10 per admin | none |
@@ -140,7 +140,7 @@ services:
       - "127.0.0.1:<host-port>:2026"   # only the proxy on this host can connect
 ```
 
-With the default `0` behind a proxy, every visitor shares the proxy's address: the per-address limits then apply to everyone together (20 password sign-ins a minute for the whole instance, 120 Google starts, 50 unfinished Google sign-ins). With the right setting each visitor gets those numbers alone. **Never set `TRUSTED_PROXY_HOPS` above 0 without that many proxies in front, and never with the port reachable around the proxy:** clients could then choose their own address and dodge the per-address limits. The setting only affects rate limits and log entries, never who can sign in or see what.
+With the default `0` behind a proxy, every visitor shares the proxy's address: the per-address limits then apply to everyone together (20 password sign-ins a minute for the whole instance, 120 Google starts, 50 unfinished Google sign-ins). A burst of anonymous Google starts can then push out other people's sign-ins that are waiting at Google's page (they see "That took too long. Continue with Google again." and try again); invite and Settings link hand-offs have their own cap and are not pushed out by anonymous starts. Set `TRUSTED_PROXY_HOPS` so each visitor counts alone. With the right setting each visitor gets those numbers alone. **Never set `TRUSTED_PROXY_HOPS` above 0 without that many proxies in front, and never with the port reachable around the proxy:** clients could then choose their own address and dodge the per-address limits. The setting only affects rate limits and log entries, never who can sign in or see what.
 
 ### LAN and Tailscale access
 

@@ -97,7 +97,7 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
         : canLink && <GoogleButton label="Link Google" onClick={() => { setDone(""); setDialog("link"); }} />}
     </div>
     {done && <p className="password-change-done" role="status"><Check aria-hidden="true" />{done}</p>}
-    {dialog && <KeysDialog title={dialog === "link" ? "Link Google" : "Unlink Google?"} description={dialog === "link" ? "Confirm it's you, then choose the Google account with this address." : "You will sign in with your email and password only. Your Google profile picture is removed too."} onClose={close} busy={busy}>
+    {dialog && <KeysDialog title={dialog === "link" ? "Link Google" : "Unlink Google?"} description={dialog === "link" ? "Confirm it's you, then choose the Google account with this address." : "You will sign in with your email and password only. This device stays signed in; every other device where you are signed in is signed out. Your Google profile picture is removed too."} onClose={close} busy={busy}>
       <form className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
         <ReauthFields account={account} totpEnabled={totpEnabled} errors={fields.errors} idPrefix={`google-${dialog}`} returnTo="/settings/security" disabled={busy} />
         {error && <p className="form-error" role="alert"><TriangleAlert aria-hidden="true" className="inline-icon" />{error}</p>}

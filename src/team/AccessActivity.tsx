@@ -24,8 +24,28 @@ const CATEGORY_OPTIONS: Option<"all" | ActivityCategory>[] = [
   { value: "accounts", label: "Google sign-in" }
 ];
 
+/** G4: what a Google reset or re-link removed, as a sentence of only what actually went. */
+export function googleRemovedLine(meta: Record<string, unknown>) {
+  const count = (key: string) => typeof meta[key] === "number" ? meta[key] as number : 0;
+  const plural = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`;
+  const parts = [
+    count("sessions") && plural(count("sessions"), "signed-in session", "signed-in sessions"),
+    count("keys") && plural(count("keys"), "API key", "API keys"),
+    count("feeds") && plural(count("feeds"), "calendar feed", "calendar feeds"),
+    count("password") ? "the password" : null,
+    count("twoFactor") ? "two-factor" : null,
+    count("items") && `sharing of ${plural(count("items"), "item", "items")}`,
+    count("invites") && plural(count("invites"), "live invite", "live invites"),
+    count("routines") && `${plural(count("routines"), "routine", "routines")} (paused)`
+  ].filter((part): part is string => Boolean(part));
+  if (!parts.length) return "Nothing needed removing.";
+  const list = parts.length === 1 ? parts[0] : parts.length === 2 ? `${parts[0]} and ${parts[1]}` : `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+  return `Removed ${list}.`;
+}
+
 const metaLine = (event: ActivityEvent) => {
   if (!event.meta) return null;
+  if (event.action === "account.google_reset" || event.action === "account.google_relinked") return googleRemovedLine(event.meta);
   const parts: string[] = [];
   const meta = event.meta;
   if (typeof meta.from === "string" && typeof meta.to === "string") parts.push(`${meta.from} → ${meta.to}`);

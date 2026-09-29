@@ -305,17 +305,22 @@ export async function unlinkGoogleForAccount(actor: Actor, targetId: string, via
   if (via === "web" && !allowed && !(passwordAuthEnabled() && isUsablePasswordHash(user.password_hash))) {
     throw new GoogleLinkError(409, "NO_OTHER_SIGN_IN", "Unlinking would leave this person no way to sign in. If they have a new Google account, use Allow re-linking instead: their next Google sign-in with this address replaces the old one.");
   }
-  db.transaction(() => {
+  // QA G3: an admin (or the CLI) unlinks because that Google account should no longer get in, so
+  // every session of the member ends too (with its push subscription); they sign in again with their
+  // other method.
+  const sessionsEnded = db.transaction(() => {
     db.query("DELETE FROM google_identities WHERE id = ?").run(identity.id);
-    db.query("UPDATE sessions SET reauth_at = NULL WHERE user_id = ?").run(targetId);
-    audit(actor?.id ?? null, null, "team.google_unlinked", { targetId, via });
+    const ended = db.query("DELETE FROM sessions WHERE user_id = ?").run(targetId).changes;
+    revokeUserPushSubscriptions(targetId, "google_unlinked");
+    audit(actor?.id ?? null, null, "team.google_unlinked", { targetId, via, sessionsEnded: ended });
     recordAccessEvent({ actorId: actor?.id ?? null, via, action: "account.google_unlinked", targetUserId: targetId });
     mailAccountEvent(targetId, "google_unlinked", actor?.id ?? null);
     notifyAccess({ userId: targetId, kind: "google_unlinked", actorId: actor?.id ?? null });
+    return ended;
   })();
   kickMailDispatch();
   await clearAvatar(targetId);
-  return { ok: true as const };
+  return { ok: true as const, sessionsEnded };
 }
 
 /** The one-time "an admin reset this account" notice (N2c), or null. */

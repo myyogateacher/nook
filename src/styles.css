@@ -448,7 +448,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .qr-frame { margin: auto; }
   .verify-totp-form, .disable-totp-form > div, .view-recovery-form > div, .regenerate-recovery form > div { grid-template-columns: 1fr; }
   .recovery-code-grid { grid-template-columns: 1fr; }
-  .toast { bottom: calc(74px + env(safe-area-inset-bottom)); max-width: calc(100vw - 28px); white-space: nowrap; }
+  /* Long messages wrap inside the viewport (QA v0.13.0: "Added to the group. You added yourself…" ran past the edge). */
+  .toast { bottom: calc(74px + env(safe-area-inset-bottom)); width: max-content; max-width: calc(100vw - 28px); white-space: normal; overflow-wrap: anywhere; }
   .slash-menu { max-height: 40vh; }
 }
 

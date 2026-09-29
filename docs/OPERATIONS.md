@@ -68,6 +68,25 @@ People change their own password in **Settings → Security** (current password 
 
 Admins cannot trigger a reset email for someone else (D246: it would be a phishing surface). With email off, or for an address that was never verified, there is no self-service reset; an admin who forgot their password keeps administering through another admin account (promote one with the host CLI above if there is none). The host CLI only lists accounts, sets roles, and unblocks; `server/reset-totp.ts` clears a lost authenticator. Nook has no CLI that sets a password.
 
+### Google sign-in
+
+People can sign in with Google as well as, or instead of, email and password. `AUTH_METHODS` chooses: `password` (the default; nothing changes on upgrade), `google`, or `both`. The server enforces it: with `google`, password sign-in, registration, forgot/reset password, and change password all answer `PASSWORD_SIGNIN_DISABLED`; with `password`, every `/api/auth/google/*` route answers 404.
+
+**Create the OAuth client (Google Cloud Console):**
+
+1. Open *APIs & Services → OAuth consent screen*. Choose **Internal** for a Google Workspace organisation (only your domain can sign in) or **External** otherwise; fill in the app name and support address. The scopes Nook asks for are `openid`, `email`, and `profile` (no sensitive scopes, so no verification is needed).
+2. Open *APIs & Services → Credentials → Create credentials → OAuth client ID*, application type **Web application**.
+3. Under **Authorized redirect URIs** add exactly `APP_ORIGIN/api/auth/google/callback`, for example `https://notes.example.com/api/auth/google/callback`. Nook builds this URI from `APP_ORIGIN` only (never from the request's Host), so it must match character for character. No JavaScript origins are needed: the browser never loads a Google script.
+4. Copy the client ID and secret into `.env` as `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, set `AUTH_METHODS=both` (or `google`), and restart. With `google` or `both` and either value missing, the server refuses to start.
+
+**Who can sign in.** A Google sign-in finds its account by Google's stable account id, then by the verified email address (linking the two), and otherwise creates an account only when registration would allow it: the first account on an empty instance (it becomes the admin), a valid invite (the invite page offers **Continue with Google**; an invite bound to an address needs the same Google address), or `ALLOW_REGISTRATION=true` (with `SIGNUP_ROLE`). `ALLOWED_EMAILS` applies to Google exactly as to passwords. For a company deployment set `GOOGLE_ALLOWED_DOMAINS=example.com` (comma-separated): only Google accounts whose verified address is on a listed domain, and whose Workspace `hd` claim matches it, can sign in or be created. Blocked accounts stay blocked, and accounts with two-factor on still enter their Nook code after Google.
+
+**Linking and passwords.** When Google signs in to an existing account whose address was verified, the password keeps working. If the address was **never verified**, someone else may have registered it first, so Nook removes that account's password and two-factor setup, signs out every device, revokes its API keys and calendar feeds, marks the address verified, and mails the owner. Accounts created through Google have no password; with the password method on and email set up, they can add one with **Forgot password?**. People link or unlink Google under **Settings → Security** (unlinking needs a password that works). Where Nook asks for a password to confirm a sensitive change (API keys, two-factor), an account without one confirms with Google instead, valid for 5 minutes on that device.
+
+**Profile pictures.** At each Google sign-in the server downloads the Google profile picture (https from `*.googleusercontent.com` only, 5 seconds, at most 1 MiB, PNG, JPEG, or WebP by content) into `DATA_DIR/avatars/` and serves it from Nook itself; browsers never contact Google, and the Content Security Policy is unchanged. A failed download never blocks sign-in. Backups include `avatars/`; files no account uses are removed by the hourly sweep.
+
+**Switching to Google only.** With `AUTH_METHODS=google`, accounts that only have a password cannot sign in until their owner uses **Continue with Google** with the same, verified address (Google verifies it). Nothing is deleted. If Google sign-in breaks (a wrong secret, a changed redirect URI, Google unavailable), set `AUTH_METHODS=both` or `password` and restart; the host CLIs (`server/team-admin.ts`, `server/reset-totp.ts`) work in every mode.
+
 ### LAN and Tailscale access
 
 `APP_ORIGINS` is a comma-separated allowlist of exact browser origins. Keep localhost and add every trusted LAN or Tailscale HTTPS origin you use, including its port when non-standard:
@@ -123,6 +142,10 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `ALLOWED_EMAILS` | empty | Comma-separated allowlist for registration, sign-in, and existing sessions. Empty allows any address. |
 | `SIGNUP_ROLE` | `guest` | Team role of accounts registered after the first: `guest`, `viewer`, or `member` (never `admin`). |
 | `TOTP_POLICY` | `optional` | `optional` or `required`. |
+| `AUTH_METHODS` | `password` | Sign-in methods: `password`, `google`, or `both`. Enforced on the server (see *Google sign-in*). |
+| `GOOGLE_CLIENT_ID` | empty | OAuth client ID from Google Cloud Console. Required when `AUTH_METHODS` is `google` or `both`. |
+| `GOOGLE_CLIENT_SECRET` | empty | OAuth client secret. Required when `AUTH_METHODS` is `google` or `both`. Never logged. |
+| `GOOGLE_ALLOWED_DOMAINS` | empty | Comma-separated email domains allowed to sign in or be created with Google (the Workspace `hd` claim must match). Empty allows any verified Google address. |
 | `TOTP_ENCRYPTION_KEY` | empty | Base64-encoded 32-byte key. Required when `TOTP_POLICY=required`. |
 | `SESSION_DAYS` | `14` | Session lifetime in days, at least 1. |
 | `MAX_MARKDOWN_BYTES` | `2000000` | Largest note body, at least 1024 bytes. |
@@ -140,6 +163,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_ALLOW_HTTP_LINKS` | `false` | `true` lets mail go out when `APP_ORIGIN` is a non-localhost `http://` address (LAN or Tailscale without HTTPS). Links in mail are then unencrypted. |
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
+| `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `APP_VERSION` | `0.12.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 

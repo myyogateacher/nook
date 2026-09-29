@@ -163,14 +163,14 @@ describe("the assignee picker: GET /boards/:b/readers?q= (T92)", () => {
     const { owner, member, stranger, boardId } = await setup("Picker");
     const all = await call(member, "GET", `/boards/${boardId}/readers`);
     expect(all.status).toBe(200);
-    expect(all.body).toEqual({ users: [{ id: member.userId, displayName: "Picker member" }, { id: owner.userId, displayName: "Picker owner" }], truncated: false });
+    expect(all.body).toEqual({ users: [{ id: member.userId, displayName: "Picker member", avatarUrl: null }, { id: owner.userId, displayName: "Picker owner", avatarUrl: null }], truncated: false });
     const found = await call(member, "GET", `/boards/${boardId}/readers?q=${encodeURIComponent("OWN")}`);
-    expect(found.body).toEqual({ users: [{ id: owner.userId, displayName: "Picker owner" }], truncated: false });
+    expect(found.body).toEqual({ users: [{ id: owner.userId, displayName: "Picker owner", avatarUrl: null }], truncated: false });
     // The stranger's name matches, but they cannot read the board.
     expect((await call(member, "GET", `/boards/${boardId}/readers?q=stranger`)).body.users).toEqual([]);
     expect((await call(member, "GET", `/boards/${boardId}/readers?q=${encodeURIComponent("%")}`)).body.users).toEqual([]);
     const capped = await call(member, "GET", `/boards/${boardId}/readers?q=Picker&limit=1`);
-    expect(capped.body).toEqual({ users: [{ id: member.userId, displayName: "Picker member" }], truncated: true });
+    expect(capped.body).toEqual({ users: [{ id: member.userId, displayName: "Picker member", avatarUrl: null }], truncated: true });
     // Only ids and display names, never emails.
     expect(JSON.stringify(all.body)).not.toContain("@");
     expect((await call(stranger, "GET", `/boards/${boardId}/readers?q=Picker`)).status).toBe(404);
@@ -179,7 +179,7 @@ describe("the assignee picker: GET /boards/:b/readers?q= (T92)", () => {
     }
     // An all_users board lists every enabled user who matches.
     expect((await call(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "all_users", userIds: [] })).status).toBe(200);
-    expect((await call(member, "GET", `/boards/${boardId}/readers?q=Picker%20stranger`)).body.users).toEqual([{ id: stranger.userId, displayName: "Picker stranger" }]);
+    expect((await call(member, "GET", `/boards/${boardId}/readers?q=Picker%20stranger`)).body.users).toEqual([{ id: stranger.userId, displayName: "Picker stranger", avatarUrl: null }]);
   });
 
   test("is rate limited to 60 requests a minute per user", async () => {

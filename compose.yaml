@@ -10,6 +10,8 @@ services:
     restart: unless-stopped
     user: "1000:1000"
     ports:
+      # Behind a reverse proxy on this host, publish on localhost only ("127.0.0.1:<host-port>:2026")
+      # or firewall the port, so nobody reaches Nook around the proxy (docs/OPERATIONS.md, TRUSTED_PROXY_HOPS).
       - "2026:2026"
     environment:
       PORT: "2026"

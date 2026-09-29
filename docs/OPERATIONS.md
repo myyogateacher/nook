@@ -90,10 +90,10 @@ People can sign in with Google as well as, or instead of, email and password. `A
 **Linking existing accounts.** Nook never links Google to an account whose address it has not verified, and never resets an account on its own: someone else may have registered the address first. With email off, no address is ever verified (only accounts made through Google or a bound invite are), so existing password accounts always take one of these ways:
 
 1. **Settings (password sign-in on):** the person signs in with their password, opens **Settings → Security → Link Google**, confirms their password (and two-factor code), and chooses the Google account with the same address. That Google account must be the address's owner too: a Gmail address, or a Google Workspace account on the address's own domain; a personal Google account that only uses a company address is refused. The address becomes verified.
-2. **An admin allows it:** **Team → the person → Allow Google sign-in…**, confirming with the admin's own password (and two-factor code). The next Google sign-in with that address, within 24 hours, links the account, once. For an account whose address was never verified and that is not an admin, when you do not know who created it, choose **Reset this account first…**: at once, it signs the account out everywhere, revokes its API keys and calendar feed links, removes its password and two-factor setup, makes everything it owns private (removing every person and group it shared with), revokes its live invites, and pauses its routines. Content is kept. The counts are shown before you confirm and after, and the person sees a one-time notice at their next sign-in. The app refuses a reset for verified accounts (their owner is known) and for admins; the command line can. Admins cannot do any of this for their own account in the app. For a linked account whose owner recreated their Google account, **Allow re-linking…** lets the next Google sign-in with the same address replace the old Google account (once, within 24 hours; the old one works until then).
+2. **An admin allows it:** **Team → the person → Allow Google sign-in…**, confirming with the admin's own password (and two-factor code). The next Google sign-in with that address, within 24 hours, links the account, once. Only a Google account that Google confirms is managed by the address's domain can use an allowance (a Google Workspace account of that domain, or the Gmail account itself for a Gmail address); a personal Google account that merely uses the address is refused with a message naming the domain, and the allowance stays for the right account. The dialog says so up front and shows the last refused Google sign-in for the account (time and reason only). For an account whose address was never verified and that is not an admin, when you do not know who created it, choose **Reset account for Google sign-in…** (not the same as **Reset access** on the Access page, which removes what others share with the person): at once, it signs the account out everywhere, revokes its API keys and calendar feed links, removes its password and two-factor setup, makes everything it owns private (removing every person and group it shared with), revokes its live invites, and pauses its routines. Content is kept. The counts are shown before you confirm and after, and the person sees a one-time notice at their next sign-in. The app refuses a reset for verified accounts (their owner is known), for admins, and for accounts that were admins at any time in the last 24 hours (demoting first does not get around it); the command line can. Admins cannot do any of this for their own account in the app. For a linked account whose owner recreated their Google account, **Allow re-linking…** lets the next Google sign-in with the same address replace the old Google account (once, within 24 hours; the old one works until then). The dialog warns that whoever next signs in with Google as that address gets the account and everything in it. When that sign-in happens, the previous holder's access ends: every session and push subscription, API keys, calendar feed links, and unused password-reset links. By default (the option **Also remove the password and two-factor**, on unless you turn it off) the password and two-factor go too, since the previous holder may know them. Content and sharing stay. The counts are shown before you confirm and after. The command line's `allow-google-link` on a linked account always removes the password and two-factor at the re-link.
 3. **The host command line:** `docker compose exec mynotes bun server/team-admin.ts allow-google-link <email> [--reset]` does the same as 2, and `unlink-google <email>` removes a linked Google account (for example when the person recreated their Google account: unlink, then allow). These work in every `AUTH_METHODS` mode and are the way out for a lone admin or a Google-only instance.
 
-Each link, allowance, reset, and admin unlink is audited and, with email on, mailed to the account's address.
+Each link, allowance, reset, re-link, and unlink is audited and, with email on, mailed to the account's address. Allowances, resets, admin unlinks, and completed re-links also reach the person's bell (ids and counts only) and **Team → Access activity** (filter **Google sign-in**).
 
 **Passwords and re-authentication.** Accounts created through Google have no password; with the password method on and email set up, they can add one with **Forgot password?**. People unlink Google under **Settings → Security** after confirming their password (unlinking needs a password that works). Where Nook asks for a password to confirm a sensitive change (API keys, two-factor, linking), an account **without a usable password** confirms with Google instead: Google asks for the Google password again, and the confirmation lasts 5 minutes on that device. Accounts that have a password always give it.
 
@@ -103,14 +103,44 @@ Each link, allowance, reset, and admin unlink is audited and, with email on, mai
 
 **Recommended company setup.** `AUTH_METHODS=google`, `GOOGLE_ALLOWED_DOMAINS=<your domain>`, and `ALLOW_REGISTRATION=true` if everyone on the domain may join (or `false` and invites). The first Google account on an empty instance becomes the admin. If the only admin is locked out, use `team-admin.ts set-role`, `unblock`, `allow-google-link`, or `unlink-google` on the host.
 
-**Rate limits and reverse proxies.** Sign-in rate limits and the cap on unfinished Google sign-ins are counted **per client address**: 120 Google starts and 180 callbacks a minute per address, at most 50 unfinished Google sign-ins per address (at the cap the oldest is dropped, and that browser simply starts again; a start is never refused for it), and instance-wide ceilings of 2000 starts and 3000 callbacks a minute. Password reset, email verification, unsubscribe, and calendar feed limits are per address too. Nook reads the address from the connection unless `TRUSTED_PROXY_HOPS` says otherwise:
+**Rate limits and reverse proxies.** Nook limits sign-in attempts in memory (a restart clears them), per minute unless noted. Each limit has a scope: the **client address** (an IPv6 client counts by its /64, and every spelling of one address is one address), the **email** typed, the **account** acting, or the whole **instance**. An attempt refused by a narrower bucket does not count toward the instance-wide one, so one address cannot use up everyone's allowance; once the instance-wide bucket is full, everything is refused until the minute is over.
+
+| What | Per client address | Per email or account | Whole instance |
+| --- | --- | --- | --- |
+| Password sign-in, and the Nook code step after Google | 20 | 10 per email | 120 |
+| Account creation (password or Google) | 5 | none | 20 |
+| Invite link preview (password or Google hand-off) | 10 | none | 60 |
+| Google sign-in starts | 120 | none | 2000 |
+| Google callbacks | 180 | none | 3000 |
+| Unfinished Google sign-ins held | 50 at once (at the cap the oldest one not yet at the code step is dropped; a start is never refused) | none | none |
+| Wrong Nook codes after Google | none | 5 per sign-in attempt, then it starts over | none |
+| Settings → Link or Unlink Google | none | 5 per account | none |
+| Team → Google allow or unlink (acting admin) | none | 10 per admin | none |
+| Password reset: request | 10 an hour | 3 an hour per email | none |
+| Password reset: check or complete a link | 20 | none | none |
+| Password change | none | 5 per 10 minutes per account | none |
+| Email verification link | 20 | none | none |
+| One-click unsubscribe | 30 | none | none |
+| Calendar feed: wrong tokens | 30 | none | none (at most 1000 addresses tracked) |
+| Calendar feed: fetches | none | 60 an hour per feed | none |
+
+Nook reads the client address from the connection unless `TRUSTED_PROXY_HOPS` says otherwise:
 
 - **No proxy (Nook faces the network):** leave `TRUSTED_PROXY_HOPS=0`. Each visitor has their own address.
 - **One reverse proxy (Caddy, nginx, Traefik) that sets `X-Forwarded-For`:** set `TRUSTED_PROXY_HOPS=1`. Nook then takes the right-most `X-Forwarded-For` entry, the one your proxy added; anything a client put further left is ignored.
-- **Tailscale Serve:** it adds `X-Forwarded-For`; set `TRUSTED_PROXY_HOPS=1`. Tailscale Funnel in front of Serve is still one hop.
+- **Tailscale Serve:** whether Serve adds `X-Forwarded-For` has **not been verified** for Nook. Check before you rely on it: with `TRUSTED_PROXY_HOPS=0`, open Nook through Serve once and look at the server log. Nook logs one warning per process, `A request carried X-Forwarded-For but TRUSTED_PROXY_HOPS is 0`, the first time a request carries the header (without the address). If the warning appears, Serve adds the header: set `TRUSTED_PROXY_HOPS=1` and restart. If it never appears, leave `0` (every visitor then shares Serve's address; see below).
 - **Two proxies in a row:** `2`, and so on (at most 5).
 
-With the default `0` behind a proxy, every visitor shares the proxy's address: the per-address limits then apply to everyone together, so at most 120 Google sign-ins can start per minute for the whole instance and 50 can be in progress at once (older unfinished ones are dropped, not refused). With the right setting each visitor gets those numbers alone. **Never set `TRUSTED_PROXY_HOPS` above 0 without that many proxies in front:** clients could then choose their own address and dodge the per-address limits. The setting only affects rate limits and log entries, never who can sign in or see what.
+**Behind a proxy, publish the port on localhost only**, or firewall it, so nobody can reach Nook around the proxy and send their own `X-Forwarded-For`. In `compose.yaml`:
+
+```yaml
+services:
+  app:
+    ports:
+      - "127.0.0.1:<host-port>:2026"   # only the proxy on this host can connect
+```
+
+With the default `0` behind a proxy, every visitor shares the proxy's address: the per-address limits then apply to everyone together (20 password sign-ins a minute for the whole instance, 120 Google starts, 50 unfinished Google sign-ins). With the right setting each visitor gets those numbers alone. **Never set `TRUSTED_PROXY_HOPS` above 0 without that many proxies in front, and never with the port reachable around the proxy:** clients could then choose their own address and dodge the per-address limits. The setting only affects rate limits and log entries, never who can sign in or see what.
 
 ### LAN and Tailscale access
 
@@ -170,7 +200,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `AUTH_METHODS` | `password` | Sign-in methods: `password`, `google`, or `both`. Enforced on the server (see *Google sign-in*). |
 | `GOOGLE_CLIENT_ID` | empty | OAuth client ID from Google Cloud Console. Required when `AUTH_METHODS` is `google` or `both`. |
 | `GOOGLE_CLIENT_SECRET` | empty | OAuth client secret. Required when `AUTH_METHODS` is `google` or `both`. Never logged. |
-| `TRUSTED_PROXY_HOPS` | `0` | Reverse proxies in front of Nook that add `X-Forwarded-For` (integer 0–5). `0` uses the connection's address; `N` takes the N-th entry from the right. Rate limits and logs only. Set `1` for one reverse proxy or Tailscale Serve; never set it without that many proxies in front (see *Rate limits and reverse proxies*). |
+| `TRUSTED_PROXY_HOPS` | `0` | Reverse proxies in front of Nook that add `X-Forwarded-For` (integer 0–5). `0` uses the connection's address; `N` takes the N-th entry from the right. Rate limits and logs only. Set `1` for one reverse proxy (check Tailscale Serve first); never set it without that many proxies in front, and publish the port on localhost behind a proxy (see *Rate limits and reverse proxies*). |
 | `GOOGLE_ALLOWED_DOMAINS` | empty | Comma-separated email domains allowed to sign in or be created with Google (the Workspace `hd` claim must match). Empty allows any verified Google address. |
 | `TOTP_ENCRYPTION_KEY` | empty | Base64-encoded 32-byte key. Required when `TOTP_POLICY=required`. |
 | `SESSION_DAYS` | `14` | Session lifetime in days, at least 1. |

@@ -37,15 +37,18 @@ CREATE TABLE google_auth_flows (
   stage TEXT NOT NULL DEFAULT 'authorize' CHECK (stage IN ('prepared','authorize','second_factor')), -- prepared: an invite posted, start not yet called
   return_to TEXT NOT NULL, invite_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,   -- reauth: the session to confirm
-  client_hash TEXT,                  -- hashed client address: at most 10 live flows per client (L4)
+  client_hash TEXT,                  -- hashed client address: at most 50 live flows per client, oldest evicted (N1, S5)
   failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
 ALTER TABLE users ADD COLUMN avatar_id TEXT;       -- UUID of DATA_DIR/avatars/<id>
 ALTER TABLE sessions ADD COLUMN reauth_at TEXT;    -- D297
 ALTER TABLE users ADD COLUMN google_link_allowed_until TEXT;  -- D293: an admin's one-time, 24-hour allowance (link, or re-link)
 ALTER TABLE users ADD COLUMN google_reset_notice_at TEXT;      -- N2c: shown once after an admin reset
 ALTER TABLE users ADD COLUMN google_reset_notice_json TEXT;    -- N2c: what the reset removed (counts)
--- Every column is added only when missing, and 034 re-applies itself at boot (Migration.repair) so a
--- database that recorded an earlier shape on this branch is repaired (N7).
+ALTER TABLE users ADD COLUMN google_relink_remove_credentials INTEGER; -- S1: the re-link also removes the password and two-factor (1/0)
+ALTER TABLE users ADD COLUMN google_last_refusal_at TEXT;      -- Q1: the last Google sign-in that could not link
+ALTER TABLE users ADD COLUMN google_last_refusal_reason TEXT;  -- Q1: its reason code
+-- Every column is added only when missing; the migration runs once (the boot-time repair of N7 was
+-- removed in the final round, S6: scratch databases from earlier builds are recreated).
 ```
 
 The provider is implied by the table (one provider); a second provider would get its own table or a `provider` column then. One identity per account and one account per `sub`.
@@ -70,7 +73,7 @@ Callback error codes (fragment): `denied` (the person cancelled), `expired` (no,
 
 `GET /api/about` adds `authMethods: {password: boolean, google: boolean}`. `user` on `me`, sign-in, and register gains `avatarUrl: string | null`.
 
-## 4. Threats (THREAT_MODEL T250–T262)
+## 4. Threats (THREAT_MODEL T250–T266)
 
 T250 login CSRF, T251 state/nonce/code replay, T252 mix-up and token substitution, T253 open redirect through `return`, T254 pre-hijacking, T255 email change at Google, T256 domain restriction bypass through `hd`, T257 avatar fetch SSRF and content sniffing, T258 account enumeration, T259 Google-only lockout, T260 token and code leakage, T261 re-authentication bypass, T262 avatar visibility. Rows and mitigations are in THREAT_MODEL.md.
 
@@ -113,5 +116,31 @@ U1 passwords-off notices on `/forgot-password` and `/reset-password`; U2 a place
 | N4 | Self unlink sends `security.account` (`google_unlinked_self`). |
 | N5 | **Allow re-linking** on a linked account: the next authoritative Google sign-in with the same address replaces the identity's `sub` (24 h, single use); `NO_OTHER_SIGN_IN` points at it. |
 | N6 | The reset and the allowance commit in one transaction. |
-| N7 | 034 is idempotent and repairs itself at boot. |
+| N7 | 034 is idempotent (the boot-time repair was later removed, §9 S6). |
 | N8 | OPERATIONS states the per-address limits, the proxy default, and the authoritative-account rule for Settings links. |
+
+## 9. Final fix round (2026-09-29)
+
+After merging main (v0.13.0 and Wave 33's central access management; migration order …029, 032, 034).
+
+| Item | Fix |
+| --- | --- |
+| S1 (MEDIUM: a re-link kept the previous holder's access) | Completing a re-link runs in one transaction (`completeRelink`, `server/google/linkAdmin.ts`). It deletes sessions and push subscriptions (so `reauth_at` goes too), revokes API keys and calendar feeds, deletes unused reset links, and bumps the unsubscribe epoch. By default (`removeCredentials`, stored in `users.google_relink_remove_credentials` at allow time) it also removes the password and two-factor. Content and sharing stay. The dialog warns that whoever next signs in with Google as the address gets the account and everything in it. It offers **Also remove the password and two-factor** (on by default, only when there is one) and shows the counts before and after. |
+| S2 (MEDIUM: `RESET_ADMIN` bypassed by demoting first) | The web reset also refuses an account whose role changed away from admin in the last 24 hours (`team_events`), with `RESET_ADMIN` and a message saying so. The CLI is unchanged. |
+| S3 | `server/clientAddress.ts` canonicalises addresses (RFC 5952 IPv6, IPv4-mapped in any spelling to IPv4, zone ids and brackets dropped) and buckets IPv6 by /64. |
+| S4 | A full instance-wide bucket refuses before any per-client key is added. The attempt map is capped at 20,000 keys: the oldest scoped keys are dropped first, instance-wide keys never. |
+| S5 | Eviction at the live-flow cap takes `prepared` flows first, then `authorize` ones, oldest first. It never takes a `second_factor` flow, and those no longer count toward the cap. |
+| S6 | The migration `repair` hook is removed: released migrations stay immutable. 034 keeps its idempotent add-column shape, and QA databases from earlier builds are recreated. |
+| S7 | Password sign-in: 20 a minute per client address, 10 per email, 120 instance-wide. Registration (password or Google): 5 per client address, 20 instance-wide. Invite preview (password or Google): 10 per client address, 60 instance-wide. Only attempts that pass the narrower buckets count toward the instance-wide one, and Google's Nook code step shares the sign-in buckets. |
+| S8 | OPERATIONS covers publishing the port on localhost behind a proxy, a table of every limit with its scope, and Tailscale Serve's `X-Forwarded-For`: not verified, with how to check it. With `TRUSTED_PROXY_HOPS=0`, the first request that carries `X-Forwarded-For` logs one warning per process, without the address. |
+| S9 | Self unlink kicks the mail dispatcher. |
+| Section 2 | Bell notices (`access_notices`, ids and counts only) for an admin allow (`google_allowed`), a reset (`google_reset`, what went as bits), a re-linking allowance (`google_relink_allowed`), an admin unlink (`google_unlinked`), and a completed re-link (`google_relinked`, as bits). The one-time sign-in notice stays. Team → Access activity labels the `account.google_*` actions (new `account.google_relinked`) and has a **Google sign-in** filter (`action=accounts`). The Team button reads **Reset account for Google sign-in…**, and its dialog says how it differs from Wave 33's **Reset access**. |
+| Q1 (MEDIUM: an admin allow did nothing for a non-authoritative Google account) | New outcome `link_not_authoritative&domain=<domain>`, used for an allowed link and for a Settings link. Its message: Google cannot confirm this Google account is managed by the domain; use a Workspace account of the domain or the Gmail account itself, or (sign-in page, passwords on) the password. The allowance stays for the right account. The Team card and dialogs state the condition up front and show the last refused Google sign-in: `users.google_last_refusal_at` and `_reason`, holding `link_required`, `link_not_authoritative`, or `already_linked`. |
+| Q2 | Google re-auth results show in the Settings section that started the round trip: API keys shows both the error and the "Confirmed with Google" line. An admin's confirmation from Team → member shows on that member's card. |
+| Q3 | Creating or editing a card comment returns `author_avatar_url`. |
+| Q4 | After two-factor is turned on, Settings stays open, and the recovery codes appear in their own dialog (**Copy all**, **Download**, **I saved them**; a history layer, and a sheet at 390 px). Settings closes only on **I saved them**. |
+| Q5 | `/forgot-password` and `/reset-password` show a neutral placeholder until `/api/about` answers. |
+| Q6 | The reset step of the Allow dialog is a history layer: browser Back returns to the first step, as the dialog's Back does. |
+| Q7 | The assignee picker (options and chips) shows each person's picture (`GET /boards/:b/readers` returns `avatarUrl` on the web). The optimistic assignee row carries it too. Nook has no @-mention picker. |
+
+Migration 034, final shape: `google_identities` and `google_auth_flows` (with `client_hash`) created if missing, the two flow indexes, and the added columns `users.avatar_id`, `sessions.reauth_at`, `users.google_link_allowed_until`, `users.google_reset_notice_at`, `users.google_reset_notice_json`, `users.google_relink_remove_credentials`, `users.google_last_refusal_at`, and `users.google_last_refusal_reason`. Each column is added only when missing. The migration runs once, with no repair at boot.

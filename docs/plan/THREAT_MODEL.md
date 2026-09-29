@@ -356,6 +356,17 @@ Plan of record: [research/2026-09-28-access-management-api-keys.md](research/202
 
 Revised after the security review (2026-09-29): see WAVE_35_GOOGLE_SIGNIN.md §6. Rate limits (L4, N1): per client address first (120 starts, 180 callbacks a minute), generous global ceilings, at most 50 live flows per address with the oldest evicted, never a refused start. `TRUSTED_PROXY_HOPS` selects the address from the right of `X-Forwarded-For` (rate limits and logs only). Admin Google actions re-authenticate the acting admin, and the web reset is limited to unverified non-admin accounts (N2).
 
+Final round (2026-09-29, S1–S9): a completed re-link ends the previous holder's access (T263); a web reset is refused for anyone who was an admin in the last 24 hours (T264); client addresses are canonical and IPv6 counts by /64 (T265); password sign-in, registration, and invite preview are limited per client address before the instance-wide bucket (T266). The sign-in limits, per minute and in memory:
+
+| Limit | Per client address | Per email | Instance |
+| --- | --- | --- | --- |
+| Password sign-in and the Nook code step after Google (`login:*`) | 20 | 10 | 120 |
+| Account creation, password or Google (`register:*`) | 5 | none | 20 |
+| Invite preview, password or Google (`invite:*`) | 10 | none | 60 |
+| Google starts / callbacks (`google:*`) | 120 / 180 | none | 2000 / 3000 |
+
+A full instance-wide bucket refuses before any per-client key is added, and only attempts that pass the narrower buckets count toward it. The attempt map holds at most 20,000 keys (oldest scoped keys dropped first; instance-wide keys never). Per-account limits (Settings link or unlink 5, Team admin actions 10 per admin, 5 wrong Nook codes per Google sign-in) are unchanged; OPERATIONS lists every limit with its scope.
+
 Plan of record: [WAVE_35_GOOGLE_SIGNIN.md](WAVE_35_GOOGLE_SIGNIN.md) (D289–D300).
 
 | # | Threat | Mitigation | Status |
@@ -372,6 +383,10 @@ Plan of record: [WAVE_35_GOOGLE_SIGNIN.md](WAVE_35_GOOGLE_SIGNIN.md) (D289–D30
 | T259 | **Google-only lockout** (switching `AUTH_METHODS` to google strands password-only accounts, or Google is down) | Documented in OPERATIONS; accounts link automatically when their owner signs in with the same verified address; the host CLIs (`team-admin`, `reset-totp`) work in every mode and `AUTH_METHODS` can be switched back; blocked and role rules are unchanged. | Accepted (operator choice) |
 | T260 | **Token and code leakage** | Google tokens are never stored or logged; logs carry error classes only; the callback answers with a 303 and the global `Referrer-Policy: no-referrer`, so the code is not sent onwards; errors travel as fragment codes without data. | Done (Wave 35, `tests/googleAuth.test.ts`) |
 | T261 | **Re-authentication bypass through Google** | A reauth flow is started from the signed-in session; Google must ask for the password again (`prompt=login`, `max_age=0`) and `auth_time` must be within 5 minutes; the `sub` must be the account's identity; the confirmation lasts 5 minutes on that session only and counts only for accounts whose re-auth method is Google; TOTP codes are still required; linking and unlinking in Settings re-authenticate. | Done (Wave 35, `tests/googleAuth.test.ts`) |
+| T263 | **Re-linking hands the previous holder's access to the new Google account, or leaves it with the old holder** | "Allow re-linking" says plainly that whoever next signs in with Google as the address gets the account and everything in it, and shows the counts before and after. At the re-link, in one transaction: every session and push subscription (and with them Google confirmations), API keys, calendar feeds, and unused reset links are revoked; by default (the admin can turn it off) the password and two-factor are removed too. Content and sharing stay. The account gets a bell notice and security mail; Team → Access activity records `account.google_relinked`. | Done (Wave 35 final round, `tests/googleAuth.test.ts` S1) |
+| T264 | **Admin reset by demoting first** | The web reset refuses any account whose role changed away from admin in the last 24 hours (`team_events`), with `RESET_ADMIN`; the host CLI is unaffected. | Done (Wave 35 final round, `tests/googleAuth.test.ts` S2) |
+| T265 | **Rate-limit evasion by address spelling** | Addresses are canonical before they become bucket keys: brackets and zone ids dropped, IPv4-mapped IPv6 in any spelling as IPv4, other IPv6 compressed and lower-cased; IPv6 counts by /64. With `TRUSTED_PROXY_HOPS=0`, a request carrying `X-Forwarded-For` logs one warning per process (never the address). | Done (Wave 35 final round, `tests/clientAddress.test.ts`, `tests/authLimits.test.ts`) |
+| T266 | **One address drains the sign-in allowance of everyone** (many emails from one client, or filling the global bucket) | Password sign-in, registration, and invite preview check a per-client-address bucket first; only passing attempts count toward the instance-wide one, and a full instance-wide bucket refuses before any per-client key is stored; the map is capped. Google's Nook code step shares the password buckets. | Done (Wave 35 final round, `tests/authLimits.test.ts`, `tests/googleAuth.test.ts` S7) |
 | T262 | **Avatar visibility and caching** | `avatarUrl` is added only where the person's name is already returned; the image route needs a session and the current unguessable `v` (the file UUID), so an old or guessed URL is 404; `Cache-Control: private`; the file is deleted when replaced and swept when no account points at it. | Done (Wave 35, `tests/googleAuth.test.ts`) |
 
 ## Notes on shipped behaviour (v0.3.0–v0.4.0)

@@ -10,6 +10,7 @@ import { parseJson, uuid } from "../validation";
 import { kickMailDispatch, MAX_ATTEMPTS, runMailDispatch } from "./dispatcher";
 import { enqueueMail } from "./outbox";
 import { emailPrefsPutSchema, readEmailPrefs, turnCategoryOff, writeEmailPrefs } from "./prefs";
+import { answerDigestPrompt, digestPromptSchema, digestPromptVisible } from "./digestPrompt";
 import { hashAuthToken } from "./resolve";
 import { isMuteType, listMutes, MuteError, muteTarget, unmuteTarget } from "./mutes";
 import { clearOwnSuppression, suppressionOf } from "./suppression";
@@ -26,7 +27,7 @@ import { registerMailWebhookRoutes } from "./webhooks";
  *   CSRF) and the landing page's button. It can only turn one category off, and answers 200 with an
  *   empty body for valid and invalid tokens alike (T221). GET never changes anything (405).
  *
- * Signed in: GET/PUT /api/mail/settings, POST /api/mail/verify/send, POST /api/mail/test.
+ * Signed in: GET/PUT /api/mail/settings, GET/POST /api/mail/digest-prompt, POST /api/mail/verify/send, POST /api/mail/test.
  * Admins: GET /api/team/mail-log and POST /api/team/mail-log/:id/retry (ids and statuses only).
  */
 
@@ -146,6 +147,18 @@ export function registerMailRoutes(app: Hono<AppEnv>) {
     const result = writeEmailPrefs(c.get("user").id, body);
     if (!result.ok) return c.json({ error: "Your email settings changed in another window. Reload and try again.", code: "PREFERENCES_CHANGED", prefs: result.current }, 409);
     return c.json(emailSettings(c.get("user").id));
+  });
+
+  // The one-time Today prompt for the digest (D248): whether to show it, and the card's answer.
+  app.get("/api/mail/digest-prompt", (c) => c.json({ show: digestPromptVisible(c.get("user").id) }));
+  app.post("/api/mail/digest-prompt", async (c) => {
+    const body = await parseJson(c.req.raw, digestPromptSchema);
+    const userId = c.get("user").id;
+    // A cadence needs email on and a verified address, as the prompt itself does; dismissing always works.
+    if (body.choice !== "dismiss" && !digestPromptVisible(userId)) return c.json({ error: "The email digest cannot be turned on from here. Use Settings → Notifications.", code: "PROMPT_NOT_AVAILABLE" }, 409);
+    const result = answerDigestPrompt(userId, body);
+    if (!result.ok) return c.json({ error: "Your email settings changed in another window. Reload and try again.", code: "PREFERENCES_CHANGED" }, 409);
+    return c.json({ show: false, digest: result.prefs.digest, digestLocalTime: result.prefs.digestLocalTime, tz: result.prefs.tz });
   });
 
   app.post("/api/mail/verify/send", async (c) => {

@@ -6,6 +6,7 @@ import { ApiError } from "../api";
 import { hiddenTodaySections, isModuleEnabled, useDisabledModules } from "../modules";
 import { formatRoute, type Route } from "../router";
 import { CustomizeSections } from "./CustomizeSections";
+import { DigestPrompt } from "./DigestPrompt";
 import { getToday, type TodayResponse, type TodaySection } from "./todayApi";
 import { enabledTodayApps } from "./todayApps";
 import { readHiddenSections, toggleHidden, writeHiddenSections } from "./todayPreferences";
@@ -270,6 +271,8 @@ export function TodayHome({ userId, displayName, onOpen, onOpenRoute, onSettings
         <button ref={customizeButtonRef} className="secondary-button today-customize" onClick={() => setCustomizing(true)} aria-haspopup="dialog" disabled={!data}><SlidersHorizontal /><span>Customize<span className="today-customize-extra"> sections</span></span></button>
         <p id="today-status" className="sr-only" role="status" aria-live="polite">{announcement}</p>
       </div>
+
+      <DigestPrompt userId={userId} />
 
       {loadError && !data
         ? <div className="today-load-error" role="alert">

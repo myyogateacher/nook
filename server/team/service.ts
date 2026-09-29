@@ -12,6 +12,7 @@ import { audit, db, now, type UserRow } from "../db";
 import { joinedWithInvite } from "./invites";
 import { can, type Role } from "./roles";
 import { userRole } from "./userRole";
+import { readPolicies } from "./policies";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { mailAccountEvent, mailRoleChanged } from "../mail/triggers";
 
@@ -26,7 +27,8 @@ export type TeamErrorCode =
   | "LAST_ADMIN"
   | "SELF_ACTION"
   | "ALREADY_BLOCKED"
-  | "NOT_BLOCKED";
+  | "NOT_BLOCKED"
+  | "GUEST_SHARE_DISABLED";
 
 export class TeamError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, readonly code: TeamErrorCode, message: string, readonly details?: Record<string, unknown>) {
@@ -218,11 +220,20 @@ function write<T>(operation: () => T): T {
   }
 }
 
+/** Whether the user is in a group that has at least one grant. */
+const inGrantedGroup = (userId: string) =>
+  Boolean(db.query("SELECT 1 FROM group_members gm WHERE gm.user_id = ? AND EXISTS (SELECT 1 FROM group_grants gg WHERE gg.group_id = gm.group_id) LIMIT 1").get(userId));
+
 const auditMeta = (via: TeamVia, extra: Record<string, unknown>) => ({ ...extra, via });
 
 /**
  * Changes a role with a compare-and-swap on `expectedRole` (T79). No re-authentication (operator
  * decision 2026-09-27). An admin may demote themselves only while another active admin exists.
+ *
+ * With `share_with_guests` off, making someone a guest while they are in a group that has a grant
+ * is refused (400 GUEST_SHARE_DISABLED, T213), like adding a guest to that group: the admin removes
+ * them from those groups first. Direct shares owners made before are existing shares and stay (the
+ * policy is not retroactive; admins cannot change other people's shares, D73).
  */
 export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia }) {
   requireManager(actor);
@@ -234,6 +245,9 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     }
     if (target.role === input.role) return { changed: false as const, role: target.role };
     if (target.role === "admin" && target.disabled_at === null && otherActiveAdmins(target.id) === 0) throw lastAdmin();
+    if (input.role === "guest" && !readPolicies().shareWithGuests && inGrantedGroup(target.id)) {
+      throw new TeamError(400, "GUEST_SHARE_DISABLED", "Sharing with guests is turned off for this Nook. Remove this person from groups that are shared with items first.");
+    }
     const result = db.query("UPDATE users SET role = ? WHERE id = ? AND role = ?").run(input.role, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: userRole(target.id) });
     recordEvent(target.id, actor, options.via, "role_change", { fromRole: target.role, toRole: input.role });

@@ -223,6 +223,8 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.member_count, guestCount: group.guest_count, selfAddedCount: group.self_added, level: group.level })),
     levels: offered,
     yourLevel,
+    // The caller's id, so the sheet can tell a manager's own row apart (they cannot change it, MANAGER_CAP).
+    youId: userId,
     shareWithGuests: readPolicies().shareWithGuests,
     inheritable: CONFIG[kind].inherit
   };

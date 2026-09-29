@@ -74,7 +74,6 @@ export const updateView = (viewId: string, change: { name?: string; query?: stri
   api<{ view: TaskView }>(`/tasks/views/${viewId}`, json("PATCH", change));
 export const deleteView = (viewId: string) => api<{ ok: true }>(`/tasks/views/${viewId}`, json("DELETE", {}));
 export const duplicateView = (viewId: string) => api<{ view: TaskView }>(`/tasks/views/${viewId}/duplicate`, json("POST", {}));
-export const getViewSharing = (viewId: string) => api<{ visibility: BoardVisibility; users: Array<{ id: string; display_name: string }> }>(`/tasks/views/${viewId}/sharing`);
 export const saveViewSharing = (viewId: string, visibility: BoardVisibility, userIds: string[]) =>
   api<{ ok: true }>(`/tasks/views/${viewId}/sharing`, json("PUT", { visibility, userIds: visibility === "selected" ? userIds : [] }));
 

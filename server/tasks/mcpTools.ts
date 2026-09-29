@@ -1,6 +1,6 @@
 import * as z from "zod/v4";
 import type { ZodType } from "zod";
-import { withAuditContext } from "../db";
+import { db, withAuditContext } from "../db";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { keyMayRead } from "../keyReach";
 import { searchText } from "../search";
@@ -15,13 +15,13 @@ import { reactionGlyph } from "../../shared/reactions";
 import { QUERY_LIMITS, TASK_FLAGS, type CardFilter } from "../../shared/taskQuery";
 import { filterBoardCardIds } from "./cardQuery";
 import { attachmentSchema, cardCreateSchema, cardMoveSchema, cardPatchSchema, columnPatchSchema, commentCreateSchema, isCalendarDate, tagCreateSchema, tagPatchSchema } from "./routes";
-import { cardDetail, createCard, deleteCard, getBoard, getCard, listBoards, moveCard, patchCard, patchColumn, TaskError, type CardSummary } from "./service";
+import { cardDetail, createCard, deleteCard, getBoard, getCard, listBoards, moveCard, patchCard, patchColumn, requireOwnedBoard, TaskError, type CardSummary } from "./service";
 import { createTag, listBoardTags, TAG_COLORS, updateTag, type BoardTag } from "./tags";
 import { taskViewTools } from "./viewMcpTools";
 import { boardStructure, cardHierarchy } from "./hierarchy";
 import { levelName, type BoardStructure } from "../../shared/boardStructure";
 import { SPRINT_STATES } from "../../shared/sprintPlan";
-import { openSprintRows, sprintNames } from "./sprintData";
+import { openSprintRows, sprintById, sprintNames } from "./sprintData";
 import { createSprint, listSprints, patchSprint } from "./sprints";
 import { sprintCreateSchema } from "./sprintRoutes";
 
@@ -36,6 +36,7 @@ import { sprintCreateSchema } from "./sprintRoutes";
  * update (fields other than the description, with a revision compare-and-swap,
  * WAVE_13 §5.5, T99), move, comment, and link_cards, plus (Wave 19) tags, WIP limits, sprint
  * create and start (owner only), attachment links, and bin_card/restore_card (bin:write as well).
+ * Structure stays the board owner's through a key even for managers (requireKeyOwner, D265, T145).
  * Writes are audited through the usual task.* events with `{via: "mcp", keyId}` merged in, and
  * count against the per-key and per-user `task_write` (sprints: `sprint_write`, Bin: `bin_action`
  * and `bin_burst`) buckets.
@@ -92,6 +93,20 @@ async function service<T>(key: McpKeyContext, operation: () => T | Promise<T>): 
     throw error;
   }
 }
+
+/**
+ * Structure through a key (tag rename and recolour, WIP limits, sprints) stays the board owner's:
+ * `manage` is never a key permission (D265, §C.2), and a key must not gain powers when its owner is
+ * made a manager (T145). Managers keep these powers in the web app. Non-readers get NOT_FOUND, other
+ * readers (managers included) OWNER_ONLY. Call inside service() so the TaskError maps.
+ */
+function requireKeyOwner(key: McpKeyContext, boardId: string | null | undefined) {
+  // An unknown column or sprint is left to the service call, which answers NOT_FOUND.
+  if (boardId) requireOwnedBoard(boardId, key.userId);
+}
+
+const columnBoardId = (columnId: string) =>
+  (db.query("SELECT board_id FROM board_columns WHERE id = ?").get(columnId.toLowerCase()) as { board_id: string } | null)?.board_id;
 
 /** Validates with the HTTP route's schema, so MCP accepts exactly what the API accepts. */
 function routeInput<T>(schema: ZodType<T>, value: unknown): T {
@@ -375,7 +390,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "create_card",
     title: "Create a card",
-    description: "Add a card to a column of a board the user can use. afterCardId: omit for the bottom, null for the top, or a card in that column to go after it. A column at its WIP limit refuses new cards with COLUMN_FULL.",
+    description: "Add a card to a column of a board where the user can edit cards (READ_ONLY otherwise). afterCardId: omit for the bottom, null for the top, or a card in that column to go after it. A column at its WIP limit refuses new cards with COLUMN_FULL.",
     scopes: ["tasks:write"],
     resource: { arg: "boardId", kind: "board" },
     write: true,
@@ -409,7 +424,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "update_card",
     title: "Update a card",
-    description: "Change a card's title, due date, due time, assignees, tags, flags, parent, level, or sprint on a board the user can use. The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
+    description: "Change a card's title, due date, due time, assignees, tags, flags, parent, level, or sprint on a board where the user can edit cards (READ_ONLY otherwise). The description cannot be changed here. baseRevision must be the revision from get_card or list_cards; if the card changed since, the call fails with CARD_CHANGED and the current revision. dueOn null clears the date and time; dueTime null clears only the time; assigneeIds, tags, and flags each replace the whole set ([] clears it). Tags must already exist on the board (by name or id).",
     scopes: ["tasks:write"],
     resource: { arg: "cardId", kind: "card" },
     write: true,
@@ -478,7 +493,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "comment_on_card",
     title: "Comment on a card",
-    description: "Add a comment, as the user, to a card on a board they can use. Plain text or Markdown, up to 16 KiB.",
+    description: "Add a comment, as the user, to a card on a board where they can comment (READ_ONLY otherwise). Plain text or Markdown, up to 16 KiB.",
     scopes: ["tasks:write"],
     resource: { arg: "cardId", kind: "card" },
     write: true,
@@ -496,7 +511,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "bin_card",
     title: "Move a card to the Bin",
-    description: `Move a card on a board the user can use to the Bin, with its subtasks. ${BIN_DESCRIPTION} Restore it with restore_card.`,
+    description: `Move a card on a board where the user can edit cards to the Bin, with its subtasks. ${BIN_DESCRIPTION} Restore it with restore_card.`,
     scopes: ["tasks:write"],
     resource: { arg: "cardId", kind: "card" },
     alsoRequires: ["bin:write"],
@@ -536,7 +551,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "manage_tags",
     title: "Create, rename, or recolour a tag",
-    description: `Manage a board's tags. action "create" (any board reader; a name that exists in any case is NAME_TAKEN), or "rename" / "recolour" an existing tag (board owner only, OWNER_ONLY otherwise). Colours: ${TAG_COLORS.join(", ")}. Tags cannot be deleted here.`,
+    description: `Manage a board's tags. action "create" (anyone who can edit cards on the board, READ_ONLY otherwise; a name that exists in any case is NAME_TAKEN), or "rename" / "recolour" an existing tag (through a key, the board's owner only, OWNER_ONLY otherwise, board managers included). Colours: ${TAG_COLORS.join(", ")}. Tags cannot be deleted here.`,
     scopes: ["tasks:write"],
     resource: { arg: "boardId", kind: "board" },
     write: true,
@@ -559,13 +574,14 @@ export const taskTools: McpToolSpec[] = [
       const input = action === "rename" ? routeInput(tagPatchSchema, { name }) : routeInput(tagPatchSchema, { color });
       // The tag must belong to this board, which the caller must be able to read (NOT_FOUND first).
       if (!getBoard(key.userId, boardId).tags.some((tag) => tag.id === tagId.toLowerCase())) throw new McpToolError("NOT_FOUND", "Tag not found");
+      requireKeyOwner(key, boardId);
       return tagOut((await updateTag(key.userId, tagId.toLowerCase(), input)).tag);
     })
   }),
   defineTool({
     name: "set_wip_limit",
     title: "Set a column's WIP limit",
-    description: "Set or clear (null) the work-in-progress limit of a column, 1 to 1000 cards. Board owner only (OWNER_ONLY otherwise). A limit below the current count only blocks new cards coming in.",
+    description: "Set or clear (null) the work-in-progress limit of a column, 1 to 1000 cards. Through a key, the board's owner only (OWNER_ONLY otherwise, board managers included). A limit below the current count only blocks new cards coming in.",
     scopes: ["tasks:write"],
     resource: { arg: "columnId", kind: "column" },
     write: true,
@@ -574,6 +590,7 @@ export const taskTools: McpToolSpec[] = [
     handler: async ({ columnId, wipLimit }, key) => {
       const input = routeInput(columnPatchSchema, { wipLimit });
       return service(key, async () => {
+        requireKeyOwner(key, columnBoardId(columnId));
         const { column } = await patchColumn(key.userId, columnId, input);
         return { column: { id: column.id, name: column.name, wip_limit: column.wip_limit } };
       });
@@ -582,7 +599,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "create_sprint",
     title: "Add a sprint",
-    description: "Add a planned sprint at the end of a board's sprints. Board owner only (OWNER_ONLY otherwise), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD; an omitted startOn is today and an omitted endOn is the board's default sprint length after the start (null keeps a date empty).",
+    description: "Add a planned sprint at the end of a board's sprints. Through a key, the board's owner only (OWNER_ONLY otherwise, board managers included), on boards with sprints turned on (INVALID with reason SPRINTS_OFF). Dates are YYYY-MM-DD; an omitted startOn is today and an omitted endOn is the board's default sprint length after the start (null keeps a date empty).",
     scopes: ["tasks:write"],
     resource: { arg: "boardId", kind: "board" },
     write: true,
@@ -597,6 +614,7 @@ export const taskTools: McpToolSpec[] = [
     handler: async ({ boardId, ...fields }, key) => {
       const input = routeInput(sprintCreateSchema, fields);
       return service(key, async () => {
+        requireKeyOwner(key, boardId);
         const { sprint } = await createSprint(key.userId, boardId, input, { defaultDates: true });
         return { sprint: { id: sprint.id, name: sprint.name, goal: sprint.goal, state: sprint.state, start_on: sprint.start_on, end_on: sprint.end_on } };
       });
@@ -605,13 +623,14 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "start_sprint",
     title: "Start a sprint",
-    description: "Start a planned sprint. Board owner only. Only one sprint is active at a time: while another is active this fails with SPRINT_ACTIVE and its activeSprintId. Completing a sprint is not possible over MCP.",
+    description: "Start a planned sprint. Through a key, the board's owner only (OWNER_ONLY otherwise, board managers included). Only one sprint is active at a time: while another is active this fails with SPRINT_ACTIVE and its activeSprintId. Completing a sprint is not possible over MCP.",
     scopes: ["tasks:write"],
     resource: { arg: "sprintId", kind: "sprint" },
     write: true,
     buckets: ["sprint_write"],
     inputSchema: z.object({ sprintId: uuid }).strict(),
     handler: async ({ sprintId }, key) => service(key, async () => {
+      requireKeyOwner(key, sprintById(sprintId.toLowerCase())?.board_id);
       const { sprint } = await patchSprint(key.userId, sprintId, { state: "active" });
       return { sprint: { id: sprint.id, name: sprint.name, state: sprint.state, is_active: sprint.is_active, start_on: sprint.start_on, end_on: sprint.end_on } };
     })

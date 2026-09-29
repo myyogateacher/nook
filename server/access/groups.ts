@@ -14,11 +14,13 @@ export type GroupGrantKind = AccessKind | "vault";
 /**
  * `EXISTS` a group grant on `kind`/`column` for the user `userExpression` names (default `$userId`),
  * optionally at one of `levels`. Uses `group_grants_unique` (resource) and `group_members` PK.
+ * Environment-scoped vault rows (`env_id` set) never count as a grant on the item itself, as in
+ * groupLevels.
  */
 export function groupGrantExists(kind: GroupGrantKind, column: string, userExpression = "$userId", levels?: readonly Level[]) {
   const levelFilter = levels ? ` AND gg.level IN (${levels.map((level) => `'${level}'`).join(",")})` : "";
   return `EXISTS (SELECT 1 FROM group_grants gg JOIN group_members gm ON gm.group_id = gg.group_id
-    WHERE gg.resource_kind = '${kind}' AND gg.resource_id = ${column} AND gm.user_id = ${userExpression}${levelFilter})`;
+    WHERE gg.resource_kind = '${kind}' AND gg.resource_id = ${column} AND gm.user_id = ${userExpression} AND gg.env_id IS NULL${levelFilter})`;
 }
 
 const levelsQuery = db.query(`SELECT gg.level FROM group_grants gg JOIN group_members gm ON gm.group_id = gg.group_id

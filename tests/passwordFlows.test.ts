@@ -177,6 +177,27 @@ describe("reset link", () => {
     expect(changed.text).toContain(`${origin}/settings/mcp`);
   });
 
+  test("completing a reset voids unsubscribe links mailed before it (§B.2); a password change does not", async () => {
+    const { createUnsubscribeToken, verifyUnsubscribeToken } = await import("../server/mail/unsubscribe");
+    const user = await verifiedUser("Reset unsubscribe");
+    const before = await createUnsubscribeToken(user.userId, "sharing");
+    expect(await verifyUnsubscribeToken(before)).toEqual({ userId: user.userId, category: "sharing" });
+    // A change keeps them: the plan names only "Reset email links" and a reset.
+    expect((await call(user, "/auth/password/change", { currentPassword: user.password, newPassword: NEW_PASSWORD })).status).toBe(200);
+    expect(await verifyUnsubscribeToken(before)).not.toBeNull();
+    const token = (await requestReset(user.email)).token!;
+    expect((await call(null, "/auth/password-reset/complete", { token, newPassword: "the reset long password" })).status).toBe(200);
+    expect(await verifyUnsubscribeToken(before)).toBeNull();
+    // The one-click POST answers the same empty 200 and changes nothing.
+    const oneClick = await fetch(`${origin}/api/mail/unsubscribe?t=${before}`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" });
+    expect(oneClick.status).toBe(200);
+    expect(await oneClick.text()).toBe("");
+    const prefs = db.query("SELECT categories FROM email_prefs WHERE user_id = ?").get(user.userId) as { categories: string };
+    expect(JSON.parse(prefs.categories).sharing).toBe(1);
+    // A link minted afterwards works.
+    expect(await verifyUnsubscribeToken(await createUnsubscribeToken(user.userId, "sharing"))).not.toBeNull();
+  });
+
   test("a newer link supersedes the older one; an expired link says so", async () => {
     const user = await verifiedUser("Reset supersede");
     const first = (await requestReset(user.email)).token!;

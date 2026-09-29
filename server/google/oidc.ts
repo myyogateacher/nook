@@ -28,7 +28,7 @@ export const pkceChallenge = (verifier: string) => createHash("sha256").update(v
 /** Built from APP_ORIGIN only: never from Host or X-Forwarded-Host (T253). */
 export const redirectUri = () => `${new URL(config.appOrigin).origin}/api/auth/google/callback`;
 
-export function authorizationUrl(input: { state: string; nonce: string; verifier: string; loginHint?: string | null }) {
+export function authorizationUrl(input: { state: string; nonce: string; verifier: string; loginHint?: string | null; reauth?: boolean }) {
   const google = config.auth.google;
   const url = new URL(google.endpoints.authorization);
   url.searchParams.set("client_id", google.clientId ?? "");
@@ -39,7 +39,10 @@ export function authorizationUrl(input: { state: string; nonce: string; verifier
   url.searchParams.set("nonce", input.nonce);
   url.searchParams.set("code_challenge", pkceChallenge(input.verifier));
   url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set("prompt", "select_account");
+  // A re-authentication must be a real one (MEDIUM-3): Google asks for the password again and the
+  // token's auth_time is checked at the callback.
+  url.searchParams.set("prompt", input.reauth ? "login" : "select_account");
+  if (input.reauth) url.searchParams.set("max_age", "0");
   if (input.loginHint) url.searchParams.set("login_hint", input.loginHint);
   // A hint only (T256): the signed `hd` claim is what is checked.
   if (google.allowedDomains.length === 1) url.searchParams.set("hd", google.allowedDomains[0]!);
@@ -140,6 +143,8 @@ export type GoogleClaims = {
   name: string | null;
   picture: string | null;
   hd: string | null;
+  /** When the person last authenticated at Google (seconds), or null when the token has none. */
+  authTime: number | null;
 };
 
 /**
@@ -165,6 +170,7 @@ export async function verifyIdToken(idToken: string, expectedNonce: string, nowM
   const nowS = Math.floor(nowMs / 1000);
   if (typeof claims.exp !== "number" || claims.exp + CLOCK_SKEW_S < nowS) throw new OidcError("exp");
   if (typeof claims.iat !== "number" || claims.iat - CLOCK_SKEW_S > nowS) throw new OidcError("iat");
+  if (claims.nbf !== undefined && (typeof claims.nbf !== "number" || claims.nbf - CLOCK_SKEW_S > nowS)) throw new OidcError("nbf");
   if (typeof claims.nonce !== "string" || claims.nonce !== expectedNonce) throw new OidcError("nonce");
   if (typeof claims.sub !== "string" || claims.sub.length < 1 || claims.sub.length > 255) throw new OidcError("sub");
   if (typeof claims.email !== "string" || !/^[^\s@]+@[^\s@]+$/.test(claims.email) || claims.email.length > 254) throw new OidcError("email");
@@ -174,11 +180,31 @@ export async function verifyIdToken(idToken: string, expectedNonce: string, nowM
     emailVerified: claims.email_verified === true,
     name: typeof claims.name === "string" ? claims.name : null,
     picture: typeof claims.picture === "string" ? claims.picture : null,
-    hd: typeof claims.hd === "string" ? claims.hd.toLowerCase() : null
+    hd: typeof claims.hd === "string" ? claims.hd.toLowerCase() : null,
+    authTime: typeof claims.auth_time === "number" && Number.isFinite(claims.auth_time) ? claims.auth_time : null
   };
 }
 
 const CONSUMER_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
+
+/**
+ * Whether Google speaks for this address (MEDIUM-1): a consumer address (gmail.com, googlemail.com)
+ * without an `hd` claim, or a Workspace account whose signed `hd` equals the address's domain. A
+ * consumer Google account registered with a company address is verified by Google but not owned by
+ * it: linking an existing Nook account by email needs this, not just `email_verified`.
+ */
+export function googleAuthoritative(claims: Pick<GoogleClaims, "email" | "hd">) {
+  const domain = claims.email.slice(claims.email.lastIndexOf("@") + 1);
+  return CONSUMER_DOMAINS.has(domain) ? claims.hd === null : claims.hd === domain;
+}
+
+/** A re-authentication's `auth_time` must be within 5 minutes (60 s skew) of now (MEDIUM-3). */
+export const REAUTH_MAX_AGE_S = 300;
+export function freshAuthTime(claims: Pick<GoogleClaims, "authTime">, nowMs = Date.now()) {
+  if (claims.authTime === null) return false;
+  const nowS = Math.floor(nowMs / 1000);
+  return claims.authTime <= nowS + CLOCK_SKEW_S && nowS - claims.authTime <= REAUTH_MAX_AGE_S + CLOCK_SKEW_S;
+}
 
 /**
  * GOOGLE_ALLOWED_DOMAINS (T256): the verified email's domain must be listed, and the signed `hd`
@@ -189,5 +215,5 @@ export function domainAllowed(claims: Pick<GoogleClaims, "email" | "hd">) {
   if (!domains.length) return true;
   const domain = claims.email.slice(claims.email.lastIndexOf("@") + 1);
   if (!domains.includes(domain)) return false;
-  return CONSUMER_DOMAINS.has(domain) ? claims.hd === null : claims.hd === domain;
+  return googleAuthoritative(claims);
 }

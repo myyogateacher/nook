@@ -75,7 +75,9 @@ export function reauthMethod(user: Pick<UserRow, "id" | "password_hash">): "pass
  */
 export async function verifyFirstFactor(user: Pick<UserRow, "id" | "password_hash">, password: string | undefined, sessionId: string | undefined) {
   if (password) return passwordAuthEnabled() && await verifyPassword(password, user.password_hash);
-  return googleReauthUntil(sessionId, user.id) !== null;
+  // MEDIUM-2: Google stands in only where it is the account's re-authentication method (no usable
+  // password, or AUTH_METHODS=google); an account with a password must give it.
+  return reauthMethod(user) === "google" && googleReauthUntil(sessionId, user.id) !== null;
 }
 
 /**

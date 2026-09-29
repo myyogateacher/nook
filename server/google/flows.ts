@@ -30,6 +30,7 @@ export type FlowRow = {
   user_id: string | null;
   session_id: string | null;
   failures: number;
+  client_hash: string | null;
   created_at: string;
   expires_at: string;
   used_at: string | null;
@@ -43,7 +44,13 @@ export function clearFlowCookie(c: Context) {
   deleteCookie(c, FLOW_COOKIE, { path: FLOW_PATH, secure: secureCookie(c), sameSite: "Lax" });
 }
 
-type NewFlow = { intent: FlowIntent; stage: FlowRow["stage"]; returnTo: string; inviteHash?: string | null; userId?: string | null; sessionId?: string | null; ttlMs?: number };
+type NewFlow = { intent: FlowIntent; stage: FlowRow["stage"]; returnTo: string; inviteHash?: string | null; userId?: string | null; sessionId?: string | null; ttlMs?: number; clientHash?: string | null };
+
+/** Live (unused, unexpired) flows one client holds at most (L4): a cap per client, not a global one. */
+export const LIVE_FLOWS_PER_CLIENT = 10;
+export function liveFlowsForClient(clientHash: string, nowMs = Date.now()) {
+  return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ?").get(clientHash, new Date(nowMs).toISOString()) as { count: number }).count;
+}
 
 /**
  * Inserts a flow and sets its cookie (replacing any earlier flow cookie of this browser). For the
@@ -57,10 +64,10 @@ export function createFlow(c: Context, input: NewFlow) {
   const verifier = randomToken(48);
   const ttlMs = input.ttlMs ?? FLOW_TTL_MS;
   const nowMs = Date.now();
-  db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, invite_hash, user_id, session_id, created_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, invite_hash, user_id, session_id, client_hash, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     sha256Hex(token), sha256Hex(state), nonce, verifier, input.intent, input.stage, input.returnTo,
-    input.inviteHash ?? null, input.userId ?? null, input.sessionId ?? null, new Date(nowMs).toISOString(), new Date(nowMs + ttlMs).toISOString()
+    input.inviteHash ?? null, input.userId ?? null, input.sessionId ?? null, input.clientHash ?? null, new Date(nowMs).toISOString(), new Date(nowMs + ttlMs).toISOString()
   );
   setFlowCookie(c, token, ttlMs);
   return { state, nonce, verifier };

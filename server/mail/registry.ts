@@ -58,7 +58,8 @@ export function previewFixtures(): Array<{ id: string; template: TemplateName; d
       cards: Array.from({ length: 7 }, (_, index) => ({ ...digestTemplate.fixture().cards[1]!, cardId: `6a1d6b7f-2c3e-4d4f-9a5b-${String(index).padStart(12, "0")}`, title: `Card ${index + 1}`, dueAt: null, dueOn: "2026-10-01" })), cardsTotal: 9,
       shared: [], sharedTotal: 0 } },
     { id: "security.password_changed.reset", template: "security.password_changed", data: { event: "reset", at: "2026-09-28T09:00:00.000Z" } },
-    { id: "security.password_changed.google_linked_reset", template: "security.password_changed", data: { event: "google_linked_reset", at: "2026-09-28T09:00:00.000Z" } },
+    { id: "security.password_changed.google_linked", template: "security.password_changed", data: { event: "google_linked", at: "2026-09-28T09:00:00.000Z" } },
+    { id: "security.account.google_reset", template: "security.account", data: { event: "google_reset", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z", counts: { sessions: 2, keys: 1, feeds: 0, items: 3, shares: 4, groupGrants: 1, invites: 0, routines: 1, password: 1, twoFactor: 1 } } },
     { id: "security.account.sessions_revoked", template: "security.account", data: { event: "sessions_revoked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" } }
   ];
 }

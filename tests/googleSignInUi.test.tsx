@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Avatar, avatarInitial, AvatarView } from "../src/ui/Avatar";
-import { currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, takeGoogleSettingsResult, takeGoogleSignInResult } from "../src/auth/googleSignIn";
+import { Avatar, avatarInitial, AvatarView, isAvatarPath } from "../src/ui/Avatar";
+import { currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, takeGoogleSettingsResult, takeGoogleSignInResult } from "../src/auth/googleSignIn";
+import { resetLines } from "../src/team/TeamGoogle";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, type AccountAuth } from "../src/auth/accountAuth";
 import { googleSettingsNotice, PasswordStateCard } from "../src/auth/GoogleAccountCard";
 
@@ -25,9 +26,9 @@ function findElement(node: unknown, type: string): ReactElement<Record<string, u
 
 describe("the shared Avatar (D299)", () => {
   test("shows the picture when there is a URL, and the letter otherwise", () => {
-    const withImage = renderToStaticMarkup(<Avatar className="team-avatar" name="Asha Rao" url="/api/users/u/avatar?v=1" />);
+    const withImage = renderToStaticMarkup(<Avatar className="team-avatar" name="Asha Rao" url="/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000" />);
     expect(withImage).toContain('class="team-avatar avatar-has-image"');
-    expect(withImage).toContain('<img src="/api/users/u/avatar?v=1" alt=""');
+    expect(withImage).toContain('<img src="/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000" alt=""');
     expect(withImage).toContain('referrerPolicy="no-referrer"');
     expect(withImage).toContain('aria-hidden="true"');
     expect(withImage).not.toContain(">A<");
@@ -38,14 +39,22 @@ describe("the shared Avatar (D299)", () => {
     expect(avatarInitial("émile")).toBe("É");
   });
 
+  test("only Nook's own avatar route is loaded; anything else shows the letters (L10)", () => {
+    expect(isAvatarPath("/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000")).toBe(true);
+    for (const url of ["https://lh3.googleusercontent.com/a/x", "//evil.test/api/users/x/avatar?v=y", "javascript:alert(1)", "data:image/png;base64,AAAA", "/api/files/abc", "/api/users/x/avatar?v=y", "/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000&x=1", "", null, undefined]) {
+      expect({ url, image: isAvatarPath(url) }).toEqual({ url, image: false });
+      expect(renderToStaticMarkup(<Avatar className="team-avatar" name="Zed" url={url} />)).toBe('<span class="team-avatar" aria-hidden="true">Z</span>');
+    }
+  });
+
   test("a picture that fails to load falls back to the letters", () => {
     let failed = 0;
-    const view = AvatarView({ className: "access-avatar", name: "Bo", url: "/api/users/u/avatar?v=2", failed: false, onError: () => { failed += 1; } });
+    const view = AvatarView({ className: "access-avatar", name: "Bo", url: "/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000", failed: false, onError: () => { failed += 1; } });
     const image = findElement(view, "img")!;
     expect(image).not.toBeNull();
     (image.props.onError as () => void)();
     expect(failed).toBe(1);
-    expect(renderToStaticMarkup(AvatarView({ className: "access-avatar", name: "Bo", url: "/api/users/u/avatar?v=2", failed: true, onError: () => undefined }))).toBe('<span class="access-avatar" aria-hidden="true">B</span>');
+    expect(renderToStaticMarkup(AvatarView({ className: "access-avatar", name: "Bo", url: "/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000", failed: true, onError: () => undefined }))).toBe('<span class="access-avatar" aria-hidden="true">B</span>');
   });
 
   test("every place that drew a letter avatar uses the component", () => {
@@ -82,10 +91,15 @@ describe("Google sign-in helpers (D300)", () => {
   });
 
   test("every server error code has its own message; unknown codes read as a failure", () => {
-    for (const code of ["denied", "expired", "failed", "unverified", "not_allowed", "signup_closed", "blocked", "invite_invalid", "invite_expired", "invite_mismatch", "already_linked", "link_mismatch", "reauth_mismatch", "rate_limited"]) {
+    for (const code of ["denied", "expired", "failed", "unverified", "not_allowed", "signup_closed", "blocked", "invite_invalid", "invite_expired", "invite_mismatch", "already_linked", "link_mismatch", "reauth_mismatch", "reauth_stale", "link_required", "rate_limited"]) {
       expect(googleErrorMessage(code).length).toBeGreaterThan(10);
     }
     expect(googleErrorMessage("something_new")).toBe(googleErrorMessage("failed"));
+    // link_required points at both ways forward while passwords are on, and only at the admin otherwise.
+    expect(linkRequiredText(true)).toContain("Settings → Security → Link Google");
+    expect(linkRequiredText(true)).toContain("admin");
+    expect(linkRequiredText(false)).not.toContain("password");
+    expect(linkRequiredText(false)).toContain("admin");
     expect(googleSettingsNotice({ kind: "reauthed" })?.tone).toBe("ok");
     expect(googleSettingsNotice({ kind: "error", code: "link_mismatch" })).toEqual({ tone: "error", text: googleErrorMessage("link_mismatch") });
   });
@@ -133,9 +147,31 @@ describe("re-authentication and Settings states (D297)", () => {
   });
 
   test("no native select, confirm, alert, or prompt in the new client code (D91)", () => {
-    for (const file of ["auth/googleSignIn.tsx", "auth/accountAuth.tsx", "auth/GoogleAccountCard.tsx", "ui/Avatar.tsx"]) {
+    for (const file of ["auth/googleSignIn.tsx", "auth/accountAuth.tsx", "auth/GoogleAccountCard.tsx", "ui/Avatar.tsx", "team/TeamGoogle.tsx"]) {
       const source = readFileSync(join(src, file), "utf8");
       expect({ file, native: /<select|window\.(confirm|alert|prompt)\(/.test(source) }).toEqual({ file, native: false });
     }
+  });
+});
+
+describe("Team → Google sign-in and the Settings link dialog (review HIGH-1, L3, L6)", () => {
+  test("reset counts read as plain lines, zeros left out", () => {
+    const zero = { sessions: 0, keys: 0, feeds: 0, items: 0, shares: 0, groupGrants: 0, invites: 0, routines: 0, password: 0, twoFactor: 0 };
+    expect(resetLines(zero)).toEqual(["Nothing to remove: no sessions, keys, sharing, or password."]);
+    expect(resetLines({ ...zero, sessions: 1, items: 2, shares: 3, password: 1, twoFactor: 1 })).toEqual(["1 signed-in session ends", "2 shared items become private", "3 people lose access to those items", "The password is removed", "Two-factor authentication is removed"]);
+  });
+
+  test("the dialogs are the app's own history layers, and the forms validate inline", () => {
+    const team = readFileSync(join(src, "team", "TeamGoogle.tsx"), "utf8");
+    expect(team).toContain("<KeysDialog");
+    expect(team).toContain("Reset this account first");
+    const card = readFileSync(join(src, "auth", "GoogleAccountCard.tsx"), "utf8");
+    expect(card).toContain("<KeysDialog");
+    expect(card).toContain("noValidate");
+    expect(card).toContain('"/auth/google/link"');
+    const dialog = readFileSync(join(src, "keys", "KeysDialog.tsx"), "utf8");
+    expect(dialog).toContain("useHistoryDialogGuard(");
+    const teamApp = readFileSync(join(src, "team", "TeamApp.tsx"), "utf8");
+    expect(teamApp).toContain("<TeamGoogleCard");
   });
 });

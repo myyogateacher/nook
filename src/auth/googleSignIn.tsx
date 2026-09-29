@@ -81,10 +81,23 @@ const MESSAGES: Record<string, string> = {
   already_linked: "This Nook account is linked to a different Google account.",
   link_mismatch: "Choose the Google account with the same email address as this Nook account.",
   reauth_mismatch: "Confirm with the Google account that is linked to this Nook account.",
+  reauth_stale: "Google did not ask for your password again, so this does not count as a confirmation. Try again and sign in to Google when asked.",
+  link_required: linkRequiredText(true),
   rate_limited: "Too many attempts. Try again soon."
 };
 
 export const googleErrorMessage = (code: string) => MESSAGES[code] ?? MESSAGES.failed!;
+
+/**
+ * `link_required` (review HIGH-1): a Nook account uses this Google address, but Nook never confirmed
+ * the address (or Google does not manage it), so Google may not link it on its own. It says nothing
+ * the person holding the address does not already know.
+ */
+export function linkRequiredText(passwordOn: boolean) {
+  return passwordOn
+    ? "Google cannot link to it on its own. If you know its password, sign in with it below, then choose Settings → Security → Link Google. Otherwise ask your Nook admin to allow Google sign-in for your account."
+    : "Google cannot link to it on its own. Ask your Nook admin to allow Google sign-in for your account, then continue with Google again.";
+}
 
 /** Google's four-colour "G", inline so nothing is fetched from Google (D300). */
 export function GoogleMark() {

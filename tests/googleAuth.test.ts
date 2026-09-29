@@ -57,6 +57,8 @@ beforeEach(() => {
   config.allowRegistration = true;
   resetJwksCache();
   resetRegistrationRateLimit();
+  // L4 caps live flows per client, and every request here comes from one address.
+  db.query("DELETE FROM google_auth_flows").run();
 });
 afterEach(async () => {
   await avatarWorkSettled();
@@ -66,6 +68,14 @@ const cookieOf = (response: Response, name: string) => response.headers.getSetCo
 const fragmentOf = (location: string | null) => location?.split("#")[1] ?? "";
 const newSub = () => `sub-${crypto.randomUUID()}`;
 const identityFor = (email: string, extra: Partial<FakeIdentity> = {}): FakeIdentity => ({ sub: newSub(), email, name: "Google Person", picture: fake.avatarUrl(`${crypto.randomUUID()}.png`), ...extra });
+/** A Workspace account for an example.test address: Google is authoritative for it (MEDIUM-1). */
+const workspace = (email: string) => identityFor(email, { hd: "example.test" });
+const mailEvents = (userId: string, template: string) => (db.query("SELECT payload FROM mail_outbox WHERE user_id = ? AND template = ?").all(userId, template) as Array<{ payload: string }>).map((row) => JSON.parse(row.payload).event as string);
+async function adminUser() {
+  const admin = await createUser("Google admin");
+  db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+  return admin;
+}
 
 async function start(query = "", headers: Record<string, string> = {}) {
   const response = await fetch(`${origin}/api/auth/google/start${query}`, { redirect: "manual", headers });
@@ -263,65 +273,198 @@ describe("the round trip (D289, D291, T250–T253, T260)", () => {
   });
 });
 
-describe("existing accounts (D292, D293, T254, T255)", () => {
-  test("signing in again by sub reuses the account; a new Google address on the same sub does not move it", async () => {
+describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
+  test("signing in again by sub reuses the account; a new Google address on the same sub does not move it (L8)", async () => {
     const email = spareEmail();
     const identity = identityFor(email);
     const first = await googleSignIn(identity);
     const firstUser = (await me(first.session)).body.user;
-    const again = await googleSignIn({ ...identity, email: spareEmail() });
+    const newAddress = spareEmail();
+    const again = await googleSignIn({ ...identity, email: newAddress });
     expect((await me(again.session)).body.user.id).toBe(firstUser.id);
     expect((await me(again.session)).body.user.email).toBe(email);
+    // The identity's display address follows Google; the Nook email never does.
+    expect((db.query("SELECT email FROM google_identities WHERE user_id = ?").get(firstUser.id) as { email: string }).email).toBe(newAddress);
   });
 
-  test("a verified password account is linked by email and keeps its password and sessions", async () => {
-    const person = await createUser("Verified linker");
-    verify(person);
-    const result = await googleSignIn(identityFor(person.email));
-    expect(result.location).toBe("/");
-    expect((await me(result.session)).body.user.id).toBe(person.userId);
-    expect((await passwordLogin(person.email, person.password)).status).toBe(200);
-    expect((await me(person.cookie)).status).toBe(200);
-    expect(audits(person.userId, "auth.google_linked")).toBe(1);
-    expect(audits(person.userId, "auth.google_link_reset")).toBe(0);
-  });
-
-  test("pre-hijacking: linking to a never-verified account revokes sessions, keys, and two-factor, and voids the password", async () => {
+  test("a verified account is linked when Google is authoritative for the address, keeps its password, and is mailed (L2)", async () => {
     const mail = await import("../server/mail");
     mail.setMailTransportForTests(async () => ({ id: "msg_google" }));
-    const squatter = await createUser("Squatter");
-    const key = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "squat", scopes: ["notes:read"], password: squatter.password }) }, squatter);
-    expect(key.status).toBe(201);
-    const { secret } = await enableTotpFor(squatter);
-    expect(secret).toBeTruthy();
-    const result = await googleSignIn(identityFor(squatter.email));
-    // Two-factor was removed with the password, so the owner is signed in at once.
-    expect(result.location).toBe("/");
-    expect(result.session).toBeTruthy();
-    expect((await me(squatter.cookie)).status).toBe(401);
-    expect((await passwordLogin(squatter.email, squatter.password)).status).toBe(401);
-    const row = userRow(squatter.email)!;
-    expect(row.password_hash).toBe(UNUSABLE_PASSWORD);
-    expect(row.email_verified_at).not.toBeNull();
-    expect(row.totp_enabled_at).toBeNull();
-    expect((db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(squatter.userId) as { count: number }).count).toBe(0);
-    expect(audits(squatter.userId, "auth.google_link_reset")).toBe(1);
-    const queued = db.query("SELECT payload FROM mail_outbox WHERE user_id = ? AND template = 'security.password_changed'").all(squatter.userId) as Array<{ payload: string }>;
-    mail.setMailTransportForTests(null);
-    expect(queued.map((item) => JSON.parse(item.payload).event)).toContain("google_linked_reset");
+    try {
+      const person = await createUser("Verified linker");
+      verify(person);
+      const result = await googleSignIn(workspace(person.email));
+      expect(result.location).toBe("/");
+      expect((await me(result.session)).body.user.id).toBe(person.userId);
+      expect((await passwordLogin(person.email, person.password)).status).toBe(200);
+      expect((await me(person.cookie)).status).toBe(200);
+      expect(audits(person.userId, "auth.google_linked")).toBe(1);
+      expect(mailEvents(person.userId, "security.password_changed")).toContain("google_linked");
+    } finally {
+      mail.setMailTransportForTests(null);
+    }
   });
+
+  test("MEDIUM-1: a consumer Google account with a company address (no hd) never links by email", async () => {
+    const person = await createUser("Company address");
+    verify(person);
+    const result = await googleSignIn(identityFor(person.email));
+    expect(result.location).toBe("/login#error=link_required");
+    expect(result.session).toBeNull();
+    expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
+    // A different Workspace domain is not authoritative either.
+    expect((await googleSignIn(identityFor(person.email, { hd: "other.test" }))).location).toBe("/login#error=link_required");
+    const { googleAuthoritative } = await import("../server/google/oidc");
+    expect(googleAuthoritative({ email: "a@gmail.com", hd: null })).toBe(true);
+    expect(googleAuthoritative({ email: "a@googlemail.com", hd: null })).toBe(true);
+    expect(googleAuthoritative({ email: "a@gmail.com", hd: "gmail.com" })).toBe(false);
+    expect(googleAuthoritative({ email: "a@corp.test", hd: "corp.test" })).toBe(true);
+    expect(googleAuthoritative({ email: "a@corp.test", hd: null })).toBe(false);
+  });
+
+  test("HIGH-1 repro: a never-verified squatter account gets link_required and nothing changes; an admin reset then an allowed link", async () => {
+    const mail = await import("../server/mail");
+    mail.setMailTransportForTests(async () => ({ id: "msg_google" }));
+    try {
+      const squatter = await createUser("Squatter");
+      const friend = await createUser("Squatter friend");
+      const key = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "squat", scopes: ["notes:read"], password: squatter.password }) }, squatter);
+      expect(key.status).toBe(201);
+      await enableTotpFor(squatter);
+      const folder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(squatter.userId) as { id: string }).id;
+      expect((await request(`/folders/${folder}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [friend.userId] }) }, squatter)).status).toBe(200);
+      const before = JSON.stringify(userRow(squatter.email));
+
+      const victim = workspace(squatter.email);
+      const refused = await googleSignIn(victim);
+      expect(refused.location).toBe("/login#error=link_required");
+      expect(refused.session).toBeNull();
+      // Nothing changed: the account, its session, its password, its key, and its share.
+      expect(JSON.stringify(userRow(squatter.email))).toBe(before);
+      expect((await me(squatter.cookie)).status).toBe(200);
+      expect(db.query("SELECT 1 FROM folder_shares WHERE folder_id = ? AND user_id = ?").get(folder, friend.userId)).not.toBeNull();
+      expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(squatter.userId)).toBeNull();
+
+      const admin = await adminUser();
+      const preview = await (await request(`/team/${squatter.userId}/google`, {}, admin)).json() as { linked: unknown; emailVerified: boolean; resetPreview: Record<string, number> };
+      expect(preview).toMatchObject({ linked: null, emailVerified: false, resetPreview: { sessions: 1, keys: 1, items: 1, shares: 1, password: 1, twoFactor: 1 } });
+      const allowed = await request(`/team/${squatter.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: true }) }, admin);
+      expect(allowed.status).toBe(200);
+      const result = await allowed.json() as { allowedUntil: string; reset: Record<string, number> };
+      expect(result.reset).toMatchObject({ sessions: 1, keys: 1, items: 1, shares: 1, password: 1, twoFactor: 1 });
+      expect(Date.parse(result.allowedUntil) - Date.now()).toBeGreaterThan(23 * 3_600_000);
+      // The squatter is out: session, password, key, two-factor, and the share are gone; Default is private.
+      expect((await me(squatter.cookie)).status).toBe(401);
+      expect((await passwordLogin(squatter.email, squatter.password)).status).toBe(401);
+      expect(userRow(squatter.email)!.password_hash).toBe(UNUSABLE_PASSWORD);
+      expect(userRow(squatter.email)!.totp_enabled_at).toBeNull();
+      expect((db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(squatter.userId) as { count: number }).count).toBe(0);
+      expect(db.query("SELECT 1 FROM folder_shares WHERE folder_id = ?").get(folder)).toBeNull();
+      expect((db.query("SELECT visibility FROM folders WHERE id = ?").get(folder) as { visibility: string }).visibility).toBe("private");
+      expect(mailEvents(squatter.userId, "security.account")).toContain("google_reset");
+      expect((db.query("SELECT COUNT(*) AS count FROM access_events WHERE target_user_id = ? AND action IN ('account.google_reset', 'account.google_allowed')").get(squatter.userId) as { count: number }).count).toBe(2);
+      // The owner signs in with Google and is linked; the allowance is used up.
+      const owner = await googleSignIn(victim);
+      expect(owner.location).toBe("/");
+      expect((await me(owner.session)).body.user.id).toBe(squatter.userId);
+      expect(userRow(squatter.email)!.google_link_allowed_until).toBeNull();
+      expect(userRow(squatter.email)!.email_verified_at).not.toBeNull();
+    } finally {
+      mail.setMailTransportForTests(null);
+    }
+  });
+
+  test("an allowance without reset keeps everything; it is single use, expires, never crosses addresses, and never opens a blocked account", async () => {
+    const admin = await adminUser();
+    const person = await createUser("Allowed plain");
+    const allow = async (target: Session) => request(`/team/${target.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false }) }, admin);
+    expect((await allow(person)).status).toBe(200);
+    expect((await me(person.cookie)).status).toBe(200);
+    expect((await passwordLogin(person.email, person.password)).status).toBe(200);
+    // A consumer account with this company address is still not authoritative.
+    expect((await googleSignIn(identityFor(person.email))).location).toBe("/login#error=link_required");
+    const identity = workspace(person.email);
+    expect((await googleSignIn(identity)).location).toBe("/");
+    expect((await me(person.cookie)).status).toBe(200);
+    expect(userRow(person.email)!.google_link_allowed_until).toBeNull();
+    expect((await allow(person)).status).toBe(409);
+
+    // Expired.
+    const late = await createUser("Allowed late");
+    expect((await allow(late)).status).toBe(200);
+    db.query("UPDATE users SET google_link_allowed_until = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), late.userId);
+    expect((await googleSignIn(workspace(late.email))).location).toBe("/login#error=link_required");
+
+    // Another address: account A's allowance does nothing for Google account B.
+    const a = await createUser("Allowed A");
+    const b = await createUser("Not allowed B");
+    expect((await allow(a)).status).toBe(200);
+    expect((await googleSignIn(workspace(b.email))).location).toBe("/login#error=link_required");
+    expect(db.query("SELECT 1 FROM google_identities WHERE user_id IN (?, ?)").get(a.userId, b.userId)).toBeNull();
+
+    // Blocked.
+    const blocked = await createUser("Allowed blocked");
+    expect((await allow(blocked)).status).toBe(200);
+    db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), blocked.userId);
+    expect((await googleSignIn(workspace(blocked.email))).location).toBe("/login#error=blocked");
+    expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(blocked.userId)).toBeNull();
+
+    // Admins cannot use it on themselves through the web; non-admins cannot use it at all.
+    const self = await request(`/team/${admin.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: true }) }, admin);
+    expect(self.status).toBe(403);
+    expect((await self.json() as { code: string }).code).toBe("SELF_ACTION");
+    const member = await createUser("Plain member");
+    expect((await request(`/team/${a.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false }) }, member)).status).toBe(403);
+  });
+
+  test("an admin unlinks a member's Google sign-in only when they keep a way in (L6)", async () => {
+    const admin = await adminUser();
+    const person = await createUser("Unlink by admin");
+    verify(person);
+    const identity = workspace(person.email);
+    expect((await googleSignIn(identity)).session).toBeTruthy();
+    expect((await request(`/team/${person.userId}/google`, { method: "DELETE", body: "{}" }, admin)).status).toBe(200);
+    expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
+    // A Google-only account needs an allowance first, so it can link its (new) Google account.
+    const googleOnly = identityFor(spareEmail());
+    const signedIn = await googleSignIn(googleOnly);
+    const userId = (await me(signedIn.session)).body.user.id;
+    const refused = await request(`/team/${userId}/google`, { method: "DELETE", body: "{}" }, admin);
+    expect(refused.status).toBe(409);
+    expect((await refused.json() as { code: string }).code).toBe("NO_OTHER_SIGN_IN");
+    expect((await request(`/team/${userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false }) }, admin)).status).toBe(409);
+  });
+
+  test("the host CLI allows (with reset) and unlinks", async () => {
+    const person = await createUser("CLI person");
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    const allowed = cli("allow-google-link", person.email, "--reset");
+    expect({ code: allowed.exitCode, err: allowed.stderr.toString() }).toEqual({ code: 0, err: "" });
+    expect(allowed.stdout.toString()).toContain("Reset first");
+    expect(userRow(person.email)!.password_hash).toBe(UNUSABLE_PASSWORD);
+    expect(userRow(person.email)!.google_link_allowed_until).not.toBeNull();
+    expect((await googleSignIn(workspace(person.email))).location).toBe("/");
+    // The Google account was recreated (new sub): unlink, allow, and the new one links.
+    const recreated = workspace(person.email);
+    expect((await googleSignIn(recreated)).location).toBe("/login#error=already_linked");
+    expect(cli("unlink-google", person.email).exitCode).toBe(0);
+    expect(cli("allow-google-link", person.email).exitCode).toBe(0);
+    expect((await googleSignIn(recreated)).location).toBe("/");
+    expect(cli("allow-google-link", "nobody@nook.test").exitCode).not.toBe(0);
+  }, 30_000);
 
   test("a blocked account is refused after Google proves the address, and is not linked", async () => {
     const person = await createUser("Blocked Google");
+    verify(person);
     db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), person.userId);
-    const result = await googleSignIn(identityFor(person.email));
+    const result = await googleSignIn(workspace(person.email));
     expect(result.location).toBe("/login#error=blocked");
     expect(result.session).toBeNull();
     expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
     // A linked account blocked later is refused the same way.
     const linked = await createUser("Blocked later");
     verify(linked);
-    const identity = identityFor(linked.email);
+    const identity = workspace(linked.email);
     expect((await googleSignIn(identity)).session).toBeTruthy();
     db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), linked.userId);
     expect((await googleSignIn(identity)).location).toBe("/login#error=blocked");
@@ -386,7 +529,7 @@ describe("two-factor after Google (D296)", () => {
     const person = await createUser("Google two-factor");
     verify(person);
     const { secret } = await enableTotpFor(person);
-    const identity = identityFor(person.email);
+    const identity = workspace(person.email);
     const result = await googleSignIn(identity, { query: "?return=/calendar" });
     expect(result.location).toBe("/login#google=code");
     expect(result.session).toBeNull();
@@ -466,8 +609,8 @@ describe("invites (D298)", () => {
   });
 });
 
-describe("re-authentication, linking, and unlinking (D297, D300, T261)", () => {
-  test("a Google-only account creates a key after confirming with Google, only on that session", async () => {
+describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2, MEDIUM-3, L3)", () => {
+  test("a Google-only account creates a key after a fresh Google confirmation, only on that session", async () => {
     const email = spareEmail();
     const identity = identityFor(email);
     const signedIn = await googleSignIn(identity);
@@ -477,9 +620,19 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261)", () => {
     expect((await createKey(session, csrf)).status).toBe(401);
     let account = await (await fetch(`${origin}/api/auth/account`, { headers: { Cookie: session } })).json() as { reauth: string; reauthUntil: string | null; hasPassword: boolean; google: { email: string } };
     expect(account).toMatchObject({ reauth: "google", reauthUntil: null, hasPassword: false, google: { email } });
+    // MEDIUM-3: the request forces a new Google login.
+    const started = await start("?intent=reauth&return=/settings/mcp", { Cookie: session });
+    const params = new URL(started.location).searchParams;
+    expect(params.get("prompt")).toBe("login");
+    expect(params.get("max_age")).toBe("0");
     // A reauth with a different Google account is refused.
     const wrong = await googleSignIn(identityFor(spareEmail()), { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session } });
     expect(wrong.location).toBe("/settings/mcp#google-error=reauth_mismatch");
+    // An old or missing auth_time is not a re-authentication.
+    const stale = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session }, tweaks: { claims: { auth_time: Math.floor(Date.now() / 1000) - 600 } } });
+    expect(stale.location).toBe("/settings/mcp#google-error=reauth_stale");
+    const missing = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session }, tweaks: { claims: { auth_time: undefined } } });
+    expect(missing.location).toBe("/settings/mcp#google-error=reauth_stale");
     const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session } });
     expect(confirmed.location).toBe("/settings/mcp#google=reauthed");
     expect(confirmed.session).toBeNull();
@@ -496,20 +649,43 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261)", () => {
     expect((await start("?intent=reauth")).location).toBe("/login#error=expired");
   });
 
-  test("Settings links Google to a password account (same address only) and unlinks it", async () => {
+  test("MEDIUM-2 repro: an account with a password must give it, even right after a Google confirmation", async () => {
+    const person = await createUser("Password and Google");
+    verify(person);
+    const identity = workspace(person.email);
+    expect((await googleSignIn(identity)).session).toBeTruthy();
+    const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/security", headers: { Cookie: person.cookie } });
+    expect(confirmed.location).toBe("/settings/security#google=reauthed");
+    const setup = await request("/auth/totp/setup", { method: "POST", body: "{}" }, person);
+    expect(setup.status).toBe(400);
+    expect((await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "k", scopes: ["notes:read"] }) }, person)).status).toBe(401);
+    expect((await request("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: person.password }) }, person)).status).toBe(200);
+  });
+
+  test("Settings links Google only after re-authentication, for the same address, and unlinks with the password (L3)", async () => {
     const person = await createUser("Settings linker");
-    const mismatch = await googleSignIn(identityFor(spareEmail()), { query: "?intent=link&return=/settings/security", headers: { Cookie: person.cookie } });
-    expect(mismatch.location).toBe("/settings/security#google-error=link_mismatch");
-    const linked = await googleSignIn(identityFor(person.email), { query: "?intent=link&return=/settings/security", headers: { Cookie: person.cookie } });
+    const link = (body: unknown) => request("/auth/google/link", { method: "POST", body: JSON.stringify(body) }, person);
+    expect((await link({})).status).toBe(401);
+    expect((await link({ password: "wrong password here" })).status).toBe(401);
+    // Starting a link without the re-authenticated hand-off goes nowhere.
+    expect((await start("?intent=link", { Cookie: person.cookie })).location).toBe("/settings/security#google-error=expired");
+    const linkWith = async (identity: FakeIdentity) => {
+      const prepared = await link({ password: person.password });
+      expect(prepared.status).toBe(200);
+      expect((await prepared.json() as { start: string }).start).toBe("/api/auth/google/start?intent=link");
+      return googleSignIn(identity, { query: "?intent=link", headers: { Cookie: `${person.cookie}; ${cookieOf(prepared, "nook_google_flow")}` } });
+    };
+    expect((await linkWith(identityFor(spareEmail()))).location).toBe("/settings/security#google-error=link_mismatch");
+    // A consumer Google account for the address is fine here: the signed-in owner proved the password.
+    const linked = await linkWith(identityFor(person.email));
     expect(linked.location).toBe("/settings/security#google=linked");
-    // The signed-in owner proved the password and the address: nothing is reset.
     expect((await me(person.cookie)).status).toBe(200);
     expect(userRow(person.email)!.email_verified_at).not.toBeNull();
-    const again = await start("?intent=link&return=/settings/security", { Cookie: person.cookie });
-    expect(again.location).toBe("/settings/security#google-error=already_linked");
+    expect((await link({ password: person.password })).status).toBe(409);
     await avatarWorkSettled();
     expect(userRow(person.email)!.avatar_id).not.toBeNull();
-    const unlink = await request("/auth/google", { method: "DELETE", body: "{}" }, person);
+    expect((await request("/auth/google", { method: "DELETE", body: "{}" }, person)).status).toBe(401);
+    const unlink = await request("/auth/google", { method: "DELETE", body: JSON.stringify({ password: person.password }) }, person);
     expect(unlink.status).toBe(200);
     expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(person.userId)).toBeNull();
     expect(userRow(person.email)!.avatar_id).toBeNull();
@@ -519,6 +695,41 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261)", () => {
     const refused = await fetch(`${origin}/api/auth/google`, { method: "DELETE", headers: { Origin: origin, "Content-Type": "application/json", Cookie: googleOnly.session!, "X-CSRF-Token": csrf }, body: "{}" });
     expect(refused.status).toBe(409);
     expect((await refused.json() as { code: string }).code).toBe("PASSWORD_REQUIRED");
+  });
+});
+
+describe("review LOW fixes", () => {
+  test("L1: a token that is not valid yet (nbf) is refused", async () => {
+    const email = spareEmail();
+    const result = await googleSignIn(identityFor(email), { tweaks: { claims: { nbf: Math.floor(Date.now() / 1000) + 600 } } });
+    expect(result.location).toBe("/login#error=failed");
+    expect(userRow(email)).toBeNull();
+  });
+
+  test("L4: one client holds at most 10 live flows; the per-client bucket is checked first", async () => {
+    for (let index = 0; index < 10; index += 1) expect((await start()).response.status).toBe(302);
+    expect((await start()).location).toBe("/login#error=rate_limited");
+  });
+
+  test("L7: /api/about offers no password reset in google mode", async () => {
+    const mail = await import("../server/mail");
+    mail.setMailTransportForTests(async () => ({ id: "msg" }));
+    try {
+      expect((await (await request("/about")).json() as { passwordReset: boolean }).passwordReset).toBe(true);
+      config.auth.methods = "google";
+      expect((await (await request("/about")).json() as { passwordReset: boolean }).passwordReset).toBe(false);
+    } finally {
+      mail.setMailTransportForTests(null);
+    }
+  });
+
+  test("L9: a callback with a junk state leaves the in-progress flow alone", async () => {
+    const started = await start();
+    const junk = await fetch(`${origin}/api/auth/google/callback?code=x&state=junk`, { redirect: "manual", headers: { Cookie: started.flowCookie! } });
+    expect(junk.headers.get("location")).toBe("/login#error=expired");
+    expect(junk.headers.getSetCookie().some((value) => value.startsWith("nook_google_flow="))).toBe(false);
+    const real = await fetch(fake.authorize(started.location, identityFor(spareEmail())), { redirect: "manual", headers: { Cookie: started.flowCookie! } });
+    expect(cookieOf(real, "mynotes_session")).toBeTruthy();
   });
 });
 

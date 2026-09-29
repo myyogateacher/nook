@@ -28,7 +28,12 @@ export type TokenTweaks = {
   header?: Record<string, unknown>;
 };
 
-type Grant = { identity: FakeIdentity; nonce: string; challenge: string; redirectUri: string; clientId: string; tweaks: TokenTweaks };
+/**
+ * `maxAge`: the request's `max_age`. Like Google, a request with `max_age=0` (or `prompt=login`) makes
+ * the person sign in again, so `auth_time` is now; otherwise the fake reuses a Google session that
+ * started an hour ago.
+ */
+type Grant = { identity: FakeIdentity; nonce: string; challenge: string; redirectUri: string; clientId: string; tweaks: TokenTweaks; freshLogin: boolean };
 
 const b64 = (value: unknown) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
 
@@ -124,6 +129,7 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
           nonce: grant.nonce,
           iat: nowS,
           exp: nowS + 3600,
+          auth_time: grant.freshLogin ? nowS : nowS - 3600,
           ...grant.tweaks.claims
         };
         for (const [key, value] of Object.entries(payload)) if (value === undefined) delete payload[key];
@@ -145,7 +151,9 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
     pendingTweaks = {};
     const params = new URL(authorizationUrl).searchParams;
     const code = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64url");
-    grants.set(code, { identity, nonce: params.get("nonce") ?? "", challenge: params.get("code_challenge") ?? "", redirectUri: params.get("redirect_uri") ?? "", clientId: params.get("client_id") ?? "", tweaks });
+    const maxAge = params.get("max_age");
+    const freshLogin = params.get("prompt") === "login" || (maxAge !== null && Number(maxAge) < 3600);
+    grants.set(code, { identity, nonce: params.get("nonce") ?? "", challenge: params.get("code_challenge") ?? "", redirectUri: params.get("redirect_uri") ?? "", clientId: params.get("client_id") ?? "", tweaks, freshLogin });
     const callback = new URL(params.get("redirect_uri") ?? "");
     callback.searchParams.set("code", code);
     callback.searchParams.set("state", params.get("state") ?? "");

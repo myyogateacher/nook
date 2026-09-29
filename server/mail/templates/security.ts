@@ -103,15 +103,45 @@ export const twoFactorTemplate = defineTemplate<{ event: TwoFactorEvent; at: str
   fixture: () => ({ event: "disabled", at: "2026-09-28T09:00:00.000Z", remaining: null })
 });
 
-export type AccountEvent = "blocked" | "unblocked" | "sessions_revoked";
+/**
+ * Wave 35: `google_allowed` (an admin allowed the next Google sign-in with this address to link the
+ * account), `google_reset` (the admin reset the account first; `counts` says what was removed), and
+ * `google_unlinked` (an admin removed the Google sign-in).
+ */
+export type AccountEvent = "blocked" | "unblocked" | "sessions_revoked" | "google_allowed" | "google_reset" | "google_unlinked";
 
-export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorName: string | null; at: string; delayed?: boolean }>({
+/** The reset counts, in plain words ("3 sessions", "2 shared items made private"), zeros left out. */
+export function resetCountLines(counts: Record<string, number> | null | undefined) {
+  const labels: Array<[string, string, string]> = [
+    ["sessions", "signed-in session", "signed-in sessions"],
+    ["keys", "API key", "API keys"],
+    ["feeds", "calendar feed link", "calendar feed links"],
+    ["items", "shared item made private", "shared items made private"],
+    ["shares", "person removed from shared items", "people removed from shared items"],
+    ["groupGrants", "group removed from shared items", "groups removed from shared items"],
+    ["invites", "live invite revoked", "live invites revoked"],
+    ["routines", "routine paused", "routines paused"]
+  ];
+  const lines = labels.filter(([key]) => (counts?.[key] ?? 0) > 0).map(([key, one, many]) => `${counts![key]} ${counts![key] === 1 ? one : many}`);
+  if (counts?.password) lines.push("the password");
+  if (counts?.twoFactor) lines.push("two-factor authentication");
+  return lines;
+}
+
+export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorName: string | null; at: string; counts?: Record<string, number> | null; delayed?: boolean }>({
   name: "security.account",
   class: "security",
   render(data, ctx) {
     const actor = personName(data.actorName, "An admin");
     const when = formatInstant(data.at, ctx.tz);
-    const copy = data.event === "blocked"
+    const removed = resetCountLines(data.counts);
+    const copy = data.event === "google_allowed"
+      ? { subject: "Google sign-in was allowed for your Nook account", title: "Google sign-in was allowed", lead: `${actor} allowed the next Google sign-in with this address to be linked to your Nook account. It works once, within 24 hours.`, action: { label: "Sign in", href: appLink(paths.home()) }, extra: "If you did not ask for this, contact your admin." }
+      : data.event === "google_reset"
+        ? { subject: "Your Nook account was reset for Google sign-in", title: "Your account was reset", lead: `${actor} reset your account before allowing Google sign-in. Removed: ${removed.length ? removed.join(", ") : "nothing"}. Your notes, files, and other items are kept, and everything you owned is private now.`, action: { label: "Sign in with Google", href: appLink(paths.home()) }, extra: "Sign in with Google as this address within 24 hours to link it. If you did not expect this, contact your admin." }
+        : data.event === "google_unlinked"
+          ? { subject: "Google sign-in was removed from your Nook account", title: "Google sign-in was removed", lead: `${actor} removed Google sign-in from your Nook account.`, action: { label: "Review in Settings", href: appLink(paths.settings("security")) }, extra: "Contact your admin if you think this is a mistake." }
+          : data.event === "blocked"
       // The admin's reason is never included (O11).
       ? { subject: "Your Nook account was blocked", title: "Your account was blocked", lead: `${actor} blocked your account. You are signed out everywhere and cannot sign in until an admin unblocks it.`, action: null, extra: "Contact your admin if you think this is a mistake." }
       : data.event === "unblocked"
@@ -122,7 +152,7 @@ export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorN
       tone: "security",
       subject: delayed(copy.subject, data.delayed),
       preheader: copy.lead,
-      eyebrow: "Security · Account",
+      eyebrow: data.event.startsWith("google_") ? "Security · Sign-in" : "Security · Account",
       title: copy.title,
       lead: copy.lead,
       blocks: [context([{ title: when }], { tone: "security" }), note(copy.extra)],
@@ -134,11 +164,10 @@ export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorN
 });
 
 /**
- * `google_linked`: Google sign-in was added from Settings (Wave 35, D293). `google_linked_reset`:
- * Google was linked to an address that had never been confirmed, so the old password, sessions, and
- * keys were removed (pre-hijacking, T254).
+ * `google_linked` (Wave 35, D293): Google sign-in was linked to the account, from Settings, by a
+ * sign-in on a verified address, or through an admin's allowance. Nothing else changed.
  */
-export type PasswordEvent = "changed" | "reset" | "google_linked" | "google_linked_reset";
+export type PasswordEvent = "changed" | "reset" | "google_linked";
 
 /**
  * #12: the password was changed in Settings → Security, or reset from a mailed link (Wave 30,
@@ -149,18 +178,15 @@ export const passwordChangedTemplate = defineTemplate<{ event: PasswordEvent; at
   name: "security.password_changed",
   class: "security",
   render(data, ctx) {
-    if (data.event === "google_linked" || data.event === "google_linked_reset") {
-      const replaced = data.event === "google_linked_reset";
-      const lead = replaced
-        ? "Someone signed in to Nook with Google as this address. The address had never been confirmed, so the password and any two-factor setup made before were removed, every device was signed out, and every API key was revoked."
-        : "Google sign-in was added to your Nook account. You can now sign in with Google as this address; your password and devices are unchanged.";
+    if (data.event === "google_linked") {
+      const lead = "Google sign-in was added to your Nook account. You can now sign in with Google as this address; your password and devices are unchanged.";
       return layout({
         instanceName: ctx.instanceName,
         tone: "security",
-        subject: delayed(replaced ? "Your Nook account now signs in with Google" : "Google sign-in was added to your Nook account", data.delayed),
+        subject: delayed("Google sign-in was added to your Nook account", data.delayed),
         preheader: lead,
         eyebrow: "Security · Sign-in",
-        title: replaced ? "Your account now signs in with Google" : "Google sign-in was added",
+        title: "Google sign-in was added",
         lead,
         blocks: [
           context([{ title: formatInstant(data.at, ctx.tz) }], { tone: "security" }),

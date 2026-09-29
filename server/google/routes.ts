@@ -7,20 +7,19 @@ import { createAccount, openRegistrationFor, RegistrationClosedError } from "../
 import { rateLimited } from "../authLimits";
 import { googleMethodRefusal } from "../authMethods";
 import { avatarUrlFor, clearAvatar, storeAvatarFromUrl } from "../avatars";
-import { revokeOwnKey } from "../apiKeys";
-import { revokeUserPushSubscriptions } from "../calendar/push";
 import { config, isEmailAllowed, isOriginAllowed, passwordAuthEnabled } from "../config";
 import { audit, db, now, type UserRow } from "../db";
 import { mailEnabled } from "../mail";
 import { kickMailDispatch } from "../mail/dispatcher";
 import { mailPasswordChanged, mailTwoFactor } from "../mail/triggers";
-import { bumpUnsubscribeEpoch } from "../mail/unsubscribe";
 import { isUsablePasswordHash, UNUSABLE_PASSWORD } from "../passwords";
-import { consumeRecoveryCode, consumeTotp, googleReauthUntil, reauthMethod } from "../reauth";
+import { consumeRecoveryCode, consumeTotp, googleReauthUntil, reauthMethod, verifyReauth } from "../reauth";
+import { can } from "../team/roles";
+import { allowGoogleLink, consumeGoogleLinkAllowance, googleAdminState, googleResetPreview, GoogleLinkError, unlinkGoogleForAccount } from "./linkAdmin";
 import { hashInviteToken, InviteError, previewInvite } from "../team/invites";
-import { invitePreviewSchema, parseJson, recoveryCode, totpCode } from "../validation";
-import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
-import { authorizationUrl, domainAllowed, exchangeCode, OidcError, sha256Hex, verifyIdToken, type GoogleClaims } from "./oidc";
+import { invitePreviewSchema, parseJson, recoveryCode, totpCode, uuid } from "../validation";
+import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, liveFlowsForClient, LIVE_FLOWS_PER_CLIENT, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
+import { authorizationUrl, domainAllowed, exchangeCode, freshAuthTime, googleAuthoritative, OidcError, sha256Hex, verifyIdToken, type GoogleClaims } from "./oidc";
 
 /**
  * Google sign-in routes (Wave 35, docs/plan/WAVE_35_GOOGLE_SIGNIN.md §3).
@@ -92,32 +91,18 @@ function insertIdentity(userId: string, claims: GoogleClaims, at: string) {
 }
 
 /**
- * Links a Google identity to an existing account (D293). When the account's email was never
- * verified (the pre-hijacking case, T254), whoever set its password never proved the address:
- * sessions, push devices, keys, feeds, reset links, the password, and two-factor are all removed,
- * the email becomes verified, and the owner is mailed.
+ * Links a Google identity to an existing account (D293, review HIGH-1). Nothing else about the
+ * account changes: the password, sessions, keys, and sharing stay. It is reached only by a
+ * signed-in, re-authenticated link from Settings, by a sign-in on an address Nook verified and
+ * Google is authoritative for, or by an admin's allowance. The address becomes verified and the
+ * owner is mailed every time (L2).
  */
-function linkIdentity(user: NonNullable<ReturnType<typeof userById>>, claims: GoogleClaims, via: "signin" | "settings") {
-  const reset = via === "signin" && user.email_verified_at === null;
+function linkIdentity(user: NonNullable<ReturnType<typeof userById>>, claims: GoogleClaims, via: "signin" | "settings" | "allowance") {
   const identityId = db.transaction(() => {
     const at = now();
     const id = insertIdentity(user.id, claims, at);
-    if (reset) {
-      const sessions = db.query("DELETE FROM sessions WHERE user_id = ?").run(user.id).changes;
-      revokeUserPushSubscriptions(user.id, "google_link_reset");
-      const keyIds = (db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(user.id) as Array<{ id: string }>).map((row) => row.id);
-      for (const keyId of keyIds) revokeOwnKey(user.id, keyId);
-      const feeds = db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(at, user.id).changes;
-      db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(user.id);
-      db.query(`UPDATE users SET password_hash = ?, email_verified_at = ?, totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL
-        WHERE id = ?`).run(UNUSABLE_PASSWORD, at, user.id);
-      bumpUnsubscribeEpoch(user.id);
-      audit(user.id, null, "auth.google_link_reset", { sessions, keys: keyIds.length, feeds, twoFactorRemoved: user.totp_enabled_at !== null });
-      mailPasswordChanged(user.id, "google_linked_reset");
-    } else {
-      db.query("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?) WHERE id = ?").run(at, user.id);
-      if (via === "settings") mailPasswordChanged(user.id, "google_linked");
-    }
+    db.query("UPDATE users SET email_verified_at = COALESCE(email_verified_at, ?), google_link_allowed_until = NULL WHERE id = ?").run(at, user.id);
+    mailPasswordChanged(user.id, "google_linked");
     audit(user.id, null, "auth.google_linked", { via });
     return id;
   })();
@@ -148,40 +133,55 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
   app.get("/api/auth/google/start", (c) => {
     const off = googleMethodRefusal(c);
     if (off) return off;
-    if (rateLimited(`google:start:${clientAddress(c)}`, 20) || rateLimited("google:start:global", 200)) return toLogin(c, "error=rate_limited");
+    // L4: the per-client bucket first, so one client cannot use up the (generous) global one, and a
+    // cap on the live flows a client holds.
+    const client = clientAddress(c);
+    const clientHash = sha256Hex(`google-client:${client}`);
+    if (rateLimited(`google:start:${client}`, 20) || rateLimited("google:start:global", 2000) || liveFlowsForClient(clientHash) >= LIVE_FLOWS_PER_CLIENT) return toLogin(c, "error=rate_limited");
     const intent = (c.req.query("intent") ?? "signin") as FlowIntent;
     if (!INTENTS.includes(intent)) return toLogin(c, "error=failed");
     if (intent === "invite") {
       // The invite was posted to /invite first; its hash waits in a prepared flow (D298).
       const prepared = readFlow(c);
       if (!prepared || prepared.stage !== "prepared" || prepared.intent !== "invite" || !prepared.invite_hash || !claimFlow(prepared.id)) return toLogin(c, "error=invite_invalid");
-      const flow = createFlow(c, { intent, stage: "authorize", returnTo: prepared.return_to, inviteHash: prepared.invite_hash });
+      const flow = createFlow(c, { intent, stage: "authorize", returnTo: prepared.return_to, inviteHash: prepared.invite_hash, clientHash });
       return c.redirect(authorizationUrl(flow), 302);
     }
-    if (intent === "link" || intent === "reauth") {
-      // Only a same-site navigation carries the Strict session cookie, so a cross-site page cannot start these.
+    if (intent === "link") {
+      // L3: linking was re-authenticated by POST /api/auth/google/link, which prepared this flow for
+      // this session; the Strict session cookie proves it is still the same browser and session.
+      const prepared = readFlow(c);
+      const session = readSession(c);
+      if (!prepared || prepared.stage !== "prepared" || prepared.intent !== "link" || !session || prepared.session_id !== session.sessionId || prepared.user_id !== session.user.id || !claimFlow(prepared.id)) {
+        return c.redirect("/settings/security#google-error=expired", 303);
+      }
+      const flow = createFlow(c, { intent, stage: "authorize", returnTo: prepared.return_to, userId: session.user.id, sessionId: session.sessionId, clientHash });
+      return c.redirect(authorizationUrl({ ...flow, loginHint: session.user.email }), 302);
+    }
+    if (intent === "reauth") {
+      // Only a same-site navigation carries the Strict session cookie, so a cross-site page cannot start this.
       const returnTo = safeReturnPath(c.req.query("return") ?? "/settings/security");
       const session = readSession(c);
       if (!session) return toLogin(c, "error=expired");
       const identity = identityOfUser(session.user.id);
-      if (intent === "link" && identity) return c.redirect(`${returnTo}#google-error=already_linked`, 303);
-      if (intent === "reauth" && !identity) return c.redirect(`${returnTo}#google-error=reauth_mismatch`, 303);
-      const flow = createFlow(c, { intent, stage: "authorize", returnTo, userId: session.user.id, sessionId: session.sessionId });
-      return c.redirect(authorizationUrl({ ...flow, loginHint: identity?.email ?? session.user.email }), 302);
+      if (!identity) return c.redirect(`${returnTo}#google-error=reauth_mismatch`, 303);
+      const flow = createFlow(c, { intent, stage: "authorize", returnTo, userId: session.user.id, sessionId: session.sessionId, clientHash });
+      // MEDIUM-3: a real re-authentication (prompt=login, max_age=0; auth_time checked at the callback).
+      return c.redirect(authorizationUrl({ ...flow, loginHint: identity.email, reauth: true }), 302);
     }
-    const flow = createFlow(c, { intent, stage: "authorize", returnTo: safeReturnPath(c.req.query("return")) });
+    const flow = createFlow(c, { intent, stage: "authorize", returnTo: safeReturnPath(c.req.query("return")), clientHash });
     return c.redirect(authorizationUrl(flow), 302);
   });
 
   app.get("/api/auth/google/callback", async (c) => {
     const off = googleMethodRefusal(c);
     if (off) return off;
-    if (rateLimited(`google:callback:${clientAddress(c)}`, 30) || rateLimited("google:callback:global", 300)) return toLogin(c, "error=rate_limited");
+    if (rateLimited(`google:callback:${clientAddress(c)}`, 30) || rateLimited("google:callback:global", 3000)) return toLogin(c, "error=rate_limited");
     const flow = readFlow(c);
     const state = c.req.query("state") ?? "";
     // T250/T251: this browser's own flow, the matching state, unused and unexpired, claimed once.
+    // L9: a junk or foreign state leaves the browser's own in-progress flow (and its cookie) alone.
     if (!flow || flow.stage !== "authorize" || !safeEqual(sha256Hex(state), flow.state_hash) || !claimFlow(flow.id)) {
-      clearFlowCookie(c);
       return toLogin(c, "error=expired");
     }
     clearFlowCookie(c);
@@ -218,6 +218,8 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       const identity = identityBySub(claims.sub);
       const user = flow.user_id ? userById(flow.user_id) : null;
       if (!identity || !user || identity.user_id !== user.id || user.disabled_at !== null) return failTo(c, flow, "reauth_mismatch");
+      // MEDIUM-3: Google must have asked for the password just now, not reused an old session.
+      if (!freshAuthTime(claims)) return failTo(c, flow, "reauth_stale");
       const confirmed = db.query("UPDATE sessions SET reauth_at = ? WHERE id = ? AND user_id = ? AND expires_at > ?").run(now(), flow.session_id, user.id, now()).changes;
       if (!confirmed) return failTo(c, flow, "expired");
       audit(user.id, null, "auth.google_reauth");
@@ -238,7 +240,18 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
           audit(existing.id, null, "auth.login_blocked", { via: "google" });
           return failTo(c, flow, "blocked");
         }
-        linkIdentity(existing, claims, "signin");
+        // HIGH-1, MEDIUM-1: never link by email to an address Nook has not verified, or one Google is
+        // not authoritative for, and never reset anything here. An admin's allowance (Team or the
+        // host CLI) or a signed-in link from Settings is the way forward.
+        const authoritative = googleAuthoritative(claims);
+        if (authoritative && consumeGoogleLinkAllowance(existing.id)) {
+          linkIdentity(existing, claims, "allowance");
+        } else if (authoritative && existing.email_verified_at !== null) {
+          linkIdentity(existing, claims, "signin");
+        } else {
+          audit(existing.id, null, "auth.google_link_required", { authoritative });
+          return failTo(c, flow, "link_required");
+        }
         user = userById(existing.id);
       } else {
         const inviteHash = flow.intent === "invite" ? flow.invite_hash : null;
@@ -272,7 +285,8 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       audit(user.id, null, "auth.login_blocked", { via: "google" });
       return failTo(c, flow, "blocked");
     }
-    db.query("UPDATE google_identities SET last_login_at = ? WHERE id = ?").run(now(), identity.id);
+    // L8: the Google address shown in Settings follows Google; the Nook email never does.
+    db.query("UPDATE google_identities SET last_login_at = ?, email = ? WHERE id = ?").run(now(), claims.email, identity.id);
     refreshPicture(user.id, identity.id, created ? null : identity.picture_url, claims.picture);
     if (user.totp_enabled_at) {
       // D296: Google is one factor; the session waits for the Nook code.
@@ -344,7 +358,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       throw error;
     }
     // The token itself stays in this JSON body; only its hash waits server side (D298, T136).
-    createFlow(c, { intent: "invite", stage: "prepared", returnTo: "/", inviteHash: hashInviteToken(body.token) });
+    createFlow(c, { intent: "invite", stage: "prepared", returnTo: "/", inviteHash: hashInviteToken(body.token), clientHash: sha256Hex(`google-client:${clientAddress(c)}`) });
     return c.json({ start: "/api/auth/google/start?intent=invite" });
   });
 }
@@ -363,14 +377,34 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
       google: identity ? { email: identity.email } : null,
       reauth: reauthMethod(user),
       reauthUntil: googleReauthUntil(c.get("sessionId"), user.id),
-      passwordReset: mailEnabled()
+      passwordReset: mailEnabled() && passwordAuthEnabled()
     });
+  });
+
+  // Settings → Security → Link Google (L3): re-authenticated here (password, or Google re-auth for
+  // an account without one, plus the code when two-factor is on), then prepared for this session.
+  app.post("/api/auth/google/link", async (c) => {
+    const off = googleMethodRefusal(c);
+    if (off) return off;
+    const current = c.get("user");
+    const body = await parseJson(c.req.raw, reauthBodySchema);
+    if (identityOfUser(current.id)) return c.json({ error: "This account already signs in with Google", code: "ALREADY_LINKED" }, 409);
+    if (rateLimited(`google:link:${current.id}`, 5)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    if (!await verifyReauth(current.id, body, "google_link", c.get("sessionId"))) {
+      audit(current.id, null, "auth.google_link_reauth_failed");
+      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+    }
+    if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
+    createFlow(c, { intent: "link", stage: "prepared", returnTo: "/settings/security", userId: current.id, sessionId: c.get("sessionId"), clientHash: sha256Hex(`google-client:${clientAddress(c)}`) });
+    return c.json({ start: "/api/auth/google/start?intent=link" });
   });
 
   app.delete("/api/auth/google", async (c) => {
     const off = googleMethodRefusal(c);
     if (off) return off;
     const current = c.get("user");
+    const body = await parseJson(c.req.raw, reauthBodySchema);
     const user = userById(current.id);
     const identity = user ? identityOfUser(user.id) : null;
     if (!user || !identity) return c.json({ error: "Google sign-in is not linked", code: "NOT_LINKED" }, 404);
@@ -378,6 +412,14 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
     if (!passwordAuthEnabled() || !isUsablePasswordHash(user.password_hash)) {
       return c.json({ error: "Set a password before you unlink Google, so you can still sign in.", code: "PASSWORD_REQUIRED" }, 409);
     }
+    // L3: re-authenticated like any other sign-in change.
+    if (rateLimited(`google:unlink:${current.id}`, 5)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    if (!await verifyReauth(current.id, body, "google_unlink", c.get("sessionId"))) {
+      audit(current.id, null, "auth.google_unlink_reauth_failed");
+      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+    }
+    if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
     db.transaction(() => {
       db.query("DELETE FROM google_identities WHERE id = ?").run(identity.id);
       db.query("UPDATE sessions SET reauth_at = NULL WHERE user_id = ?").run(user.id);
@@ -386,4 +428,51 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
     await clearAvatar(user.id);
     return c.json({ ok: true });
   });
+
+  // Team → member → Google sign-in (admins only; HIGH-1, L6).
+  const adminRefusal = (c: Context<AppEnv>) => {
+    const off = googleMethodRefusal(c);
+    if (off) return off;
+    return can(c.get("user").role, "team.manage") ? null : c.json({ error: "Only admins can manage Google sign-in for others", code: "ADMIN_ONLY" }, 403);
+  };
+  const linkError = (c: Context<AppEnv>, error: unknown) => {
+    if (error instanceof GoogleLinkError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  };
+
+  app.get("/api/team/:userId/google", (c) => {
+    const refusal = adminRefusal(c);
+    if (refusal) return refusal;
+    const targetId = uuid.parse(c.req.param("userId"));
+    const state = googleAdminState(targetId);
+    if (!state) return c.json({ error: "Team member not found", code: "NOT_FOUND" }, 404);
+    return c.json({ ...state, resetPreview: googleResetPreview(targetId), self: targetId === c.get("user").id });
+  });
+
+  app.post("/api/team/:userId/google/allow", async (c) => {
+    const refusal = adminRefusal(c);
+    if (refusal) return refusal;
+    const targetId = uuid.parse(c.req.param("userId"));
+    const body = await parseJson(c.req.raw, allowSchema);
+    try {
+      return c.json(allowGoogleLink({ id: c.get("user").id }, targetId, { reset: body.reset, via: "web" }));
+    } catch (error) {
+      return linkError(c, error);
+    }
+  });
+
+  app.delete("/api/team/:userId/google", async (c) => {
+    const refusal = adminRefusal(c);
+    if (refusal) return refusal;
+    const targetId = uuid.parse(c.req.param("userId"));
+    try {
+      return c.json(await unlinkGoogleForAccount({ id: c.get("user").id }, targetId, "web"));
+    } catch (error) {
+      return linkError(c, error);
+    }
+  });
 }
+
+const reauthBodySchema = z.object({ password: z.string().min(1).max(256).optional(), totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
+  .refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
+const allowSchema = z.object({ reset: z.boolean() }).strict();

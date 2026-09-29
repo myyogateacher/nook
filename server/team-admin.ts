@@ -7,15 +7,26 @@
  *   bun server/team-admin.ts list
  *   bun server/team-admin.ts set-role user@example.com admin|member|viewer|guest
  *   bun server/team-admin.ts unblock user@example.com
+ *   bun server/team-admin.ts allow-google-link user@example.com [--reset]
+ *   bun server/team-admin.ts unlink-google user@example.com
+ *
+ * Google sign-in (Wave 35): `allow-google-link` lets the next Google sign-in with the account's
+ * address link it (once, 24 hours); `--reset` first removes every credential and makes everything the
+ * account owns private (docs/OPERATIONS.md, Google sign-in). `unlink-google` removes a linked Google
+ * identity, for example after the person recreated their Google account. These work in every
+ * AUTH_METHODS mode and are the way out for a lone admin.
  */
 import { db } from "./db";
 import { isRole, SELECTABLE_ROLES } from "./team/roles";
 import { setRole, TeamError, unblockUser } from "./team/service";
+import { allowGoogleLink, GoogleLinkError, unlinkGoogleForAccount } from "./google/linkAdmin";
 
 const usage = `Usage:
   bun server/team-admin.ts list
   bun server/team-admin.ts set-role user@example.com ${SELECTABLE_ROLES.join("|")}
-  bun server/team-admin.ts unblock user@example.com`;
+  bun server/team-admin.ts unblock user@example.com
+  bun server/team-admin.ts allow-google-link user@example.com [--reset]
+  bun server/team-admin.ts unlink-google user@example.com`;
 
 function fail(message: string, code = 1): never {
   console.error(message);
@@ -34,7 +45,7 @@ function run(operation: () => void, success: string) {
   try {
     operation();
   } catch (error) {
-    if (error instanceof TeamError) fail(`${error.message} (${error.code}).`);
+    if (error instanceof TeamError || error instanceof GoogleLinkError) fail(`${error.message} (${error.code}).`);
     throw error;
   }
   console.log(success);
@@ -65,6 +76,29 @@ if (command === "list") {
   if (args.length !== 1) fail(usage, 2);
   const user = findUser(args[0]);
   run(() => { unblockUser(null, user.id, { via: "cli" }); }, "The account was unblocked. The user signs in again with their existing password and two-factor code.");
+} else if (command === "allow-google-link") {
+  const reset = args.includes("--reset");
+  const rest = args.filter((arg) => arg !== "--reset");
+  if (rest.length !== 1) fail(usage, 2);
+  const user = findUser(rest[0]);
+  let result: ReturnType<typeof allowGoogleLink> | null = null;
+  run(() => { result = allowGoogleLink(null, user.id, { reset, via: "cli" }); }, "Google sign-in is allowed for that account.");
+  const allowed = result as ReturnType<typeof allowGoogleLink> | null;
+  if (allowed?.reset) {
+    const counts = allowed.reset;
+    console.log(`Reset first: ${counts.sessions} sessions, ${counts.keys} API keys, ${counts.feeds} calendar feeds, ${counts.items} shared items made private (${counts.shares} people and ${counts.groupGrants} groups removed), ${counts.invites} invites revoked, ${counts.routines} routines paused${counts.password ? ", the password" : ""}${counts.twoFactor ? ", two-factor" : ""}.`);
+  }
+  console.log(`The next Google sign-in with that address links it, until ${allowed?.allowedUntil ?? "24 hours from now"}.`);
+} else if (command === "unlink-google") {
+  if (args.length !== 1) fail(usage, 2);
+  const user = findUser(args[0]);
+  try {
+    await unlinkGoogleForAccount(null, user.id, "cli");
+  } catch (error) {
+    if (error instanceof GoogleLinkError) fail(`${error.message} (${error.code}).`);
+    throw error;
+  }
+  console.log("Google sign-in was unlinked. Use allow-google-link to let a (new) Google account link it.");
 } else {
   fail(usage, 2);
 }

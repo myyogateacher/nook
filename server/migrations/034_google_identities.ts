@@ -10,6 +10,9 @@ import { addColumn, type Migration } from "./types";
  *   browser's flow cookie; single use, 10 minutes, swept hourly.
  * - `users.avatar_id`: the UUID of the stored avatar file (`DATA_DIR/avatars/<id>`), NULL when none.
  * - `sessions.reauth_at`: when this session last confirmed the account with Google (D297).
+ * - `users.google_link_allowed_until`: an admin allowed the next Google sign-in with this account's
+ *   address to link it (one time, 24 hours); NULL otherwise.
+ * - `google_auth_flows.client_hash`: the hashed client address, to cap live flows per client.
  *
  * Needs only 001 (users, sessions). Independent of 030–033 (parallel waves). Filesystem-free.
  */
@@ -38,14 +41,18 @@ export const googleIdentitiesMigration: Migration = {
         invite_hash TEXT,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
         session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+        client_hash TEXT,
         failures INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         used_at TEXT
       );
       CREATE INDEX IF NOT EXISTS google_auth_flows_expiry ON google_auth_flows(expires_at);
+      CREATE INDEX IF NOT EXISTS google_auth_flows_client ON google_auth_flows(client_hash, expires_at);
     `);
     addColumn(db, "users", "avatar_id", "TEXT");
     addColumn(db, "sessions", "reauth_at", "TEXT");
+    // An admin's one-time, 24-hour permission for the next Google sign-in with this address to link.
+    addColumn(db, "users", "google_link_allowed_until", "TEXT");
   }
 };

@@ -19,9 +19,15 @@ type ViewProps = {
   onError: () => void;
 };
 
-/** Pure: the picture, or the fallback when there is no URL or it failed. */
+/**
+ * Only Nook's own avatar route is ever loaded (review L10): anything else (another origin, a data:
+ * or javascript: URL, another path) shows the letters.
+ */
+export const isAvatarPath = (url: string | null | undefined): url is string => typeof url === "string" && /^\/api\/users\/[0-9a-f-]{36}\/avatar\?v=[0-9a-f-]{36}$/.test(url);
+
+/** Pure: the picture, or the fallback when there is no usable URL or it failed. */
 export function AvatarView({ name, url, className, fallback, failed, onError }: ViewProps) {
-  const showImage = Boolean(url) && !failed;
+  const showImage = isAvatarPath(url) && !failed;
   return <span className={showImage ? `${className} avatar-has-image` : className} aria-hidden="true">
     {showImage ? <img src={url!} alt="" loading="lazy" decoding="async" draggable={false} referrerPolicy="no-referrer" onError={onError} /> : fallback ?? avatarInitial(name)}
   </span>;

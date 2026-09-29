@@ -24,7 +24,11 @@ export type AccessAction =
   | "group.deleted"
   | "group.member_added"
   | "group.member_removed"
-  | "item.access_changed";
+  | "item.access_changed"
+  // Google sign-in (Wave 35): an admin's link allowance, the account reset before it, and unlinking.
+  | "account.google_allowed"
+  | "account.google_reset"
+  | "account.google_unlinked";
 
 export type AccessEvent = {
   actorId: string | null;

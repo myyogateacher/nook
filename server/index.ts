@@ -146,7 +146,7 @@ app.get("/api/about", (c) => c.json({
   version: config.appVersion, gitSha: config.gitSha,
   hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration,
   // Wave 30: whether "Forgot password?" can mail a link (email on); an instance fact, never per account.
-  passwordReset: passwordResetAvailable(),
+  passwordReset: passwordResetAvailable() && passwordAuthEnabled(),
   // v0.13.0 QA (A7): whether two-factor can be set up here (a TOTP key is configured). Only the flag.
   twoFactor: config.totpEncryptionKey !== null,
   // Wave 35 (D295): which sign-in methods this instance offers, so the sign-in page shows the right controls.

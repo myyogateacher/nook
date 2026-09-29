@@ -9,6 +9,7 @@ import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
+import { TeamGoogleCard } from "./TeamGoogle";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
@@ -409,6 +410,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen }
         ? <button type="button" className="team-action" onClick={() => onAction({ kind: "unblock" })}><UserCheck />Unblock</button>
         : <button type="button" className="team-action danger" onClick={() => onAction({ kind: "block" })} disabled={Boolean(lockedByLastAdmin)}><UserX />Block</button>}
     </section>}
+    {admin && <TeamGoogleCard key={member.id} userId={member.id} name={member.displayName} />}
     {admin && member.isYou && <p className="team-self-note">This is your account. Sign out from the account menu; another admin can block or sign out your account.</p>}
 
     {admin && blocked && <section className="team-card team-blocked" aria-label="Block details">

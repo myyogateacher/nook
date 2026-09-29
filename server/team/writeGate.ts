@@ -30,6 +30,7 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "DELETE", path: "/api/auth/totp", why: "turn off own two-factor" },
   { method: "POST", path: "/api/auth/password/change", why: "own password (Wave 30)" },
   { method: "DELETE", path: "/api/auth/google", why: "unlink own Google sign-in (Wave 35)" },
+  { method: "POST", path: "/api/auth/google/link", why: "link own Google sign-in (Wave 35)" },
   { method: "POST", path: "/api/notifications/read", why: "mark own notifications read" },
   { method: "POST", path: "/api/push/subscriptions", why: "own push devices" },
   { method: "DELETE", path: "/api/push/subscriptions", why: "own push devices" },

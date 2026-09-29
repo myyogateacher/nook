@@ -51,7 +51,7 @@ import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { GoogleAccountCard, googleSettingsNotice, PasswordStateCard } from "./auth/GoogleAccountCard";
-import { AuthDivider, currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
+import { AuthDivider, currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
@@ -131,7 +131,9 @@ function relativeTime(value: string) {
 function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: { onAuthenticated: (session: SessionResponse) => void; onForgotPassword: () => void; googleResult?: GoogleSignInResult }) {
   const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(googleResult?.kind === "error" ? googleErrorMessage(googleResult.code) : "");
+  const [error, setError] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code) : "");
+  // Review HIGH-1: an account with this address exists but Google cannot link it on its own.
+  const [linkRequired, setLinkRequired] = useState(googleResult?.kind === "error" && googleResult.code === "link_required");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -236,6 +238,11 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
         </form> : <>
+          {linkRequired && <div className="auth-link-required" role="alert">
+            <strong>This address already has a Nook account</strong>
+            <p>{linkRequiredText(methods.password)}</p>
+            <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setLinkRequired(false)}><X /></button>
+          </div>}
           {googleButton}
           {googleButton && methods.password && <AuthDivider />}
           {!methods.password && error && <p className="form-error" role="alert">{error}</p>}
@@ -442,7 +449,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           {googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>}
           {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} /> : <PasswordStateCard account={account} />)}
-          {!state.setupRequired && account && <GoogleAccountCard account={account} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
+          {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
           {error && <p className="form-error" role="alert">{error}</p>}

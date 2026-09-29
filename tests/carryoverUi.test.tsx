@@ -21,6 +21,16 @@ describe("C6: a muted calendar says Muted in words", () => {
   });
 });
 
+describe("C8: Calendar's header has the Bin button, as the other modules do", () => {
+  test("CalendarApp passes onBin and its count to AccountActions, and the app hands it the Bin", async () => {
+    const calendar = await read("calendar/CalendarApp.tsx");
+    expect(calendar).toContain("const binCount = useBinCount(Boolean(onBin));");
+    expect(calendar).toContain("<AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />");
+    const app = await read("App.tsx");
+    expect(app).toMatch(/<CalendarApp [^\n]*onBin=\{openBin\}/);
+  });
+});
+
 describe("C7: the Files list/grid toggle is a phone-sized target", () => {
   test("each view button is 44 px at phone widths (32 px on desktop)", async () => {
     const css = await read("files/files.css");

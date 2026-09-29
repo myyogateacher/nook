@@ -803,6 +803,7 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 - [x] `tests/docsEnvTables.test.ts` (C5): the docs site's environment table lists the same variables as OPERATIONS.md → Configuration, in the same order (it lacked `RESEND_WEBHOOK_SECRET`, the other email variables, and the push fine-tuning rows), and every variable in `.env.example` and `compose.yaml` is documented.
 - [x] `tests/carryoverUi.test.tsx` (C6): in Calendar → Calendars a muted calendar's line starts with the text **Muted** (tooltip "No activity emails from this calendar"), at every width without hover.
 - [x] `tests/carryoverUi.test.tsx` (C7): the Files **List view** / **Grid view** buttons are 44 × 44 px at 390 px (they were 40 px; 32 px on desktop).
+- [x] `tests/carryoverUi.test.tsx` (C8): Calendar's header shows **Bin** with its count like Tasks, Collections, and Inbox (the label hides at 390 px, the 44 px icon stays), and not when the Bin module is off.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarDays, CalendarRange, House, Layers, List, Plus, Sparkles } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, AppPageName } from "../AppShell";
+import { AccountActions, AppPageName, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { createCalendarHistoryState, readCalendarHint, type CalendarHint } from "../calendarNavigation";
 import { agendaRoute, calendarBackAction, eventRoute, localDate, monthOf, monthRoute, resolveMonth, shiftMonth, type CalendarRoute } from "../calendarRoute";
@@ -53,6 +53,8 @@ type CalendarAppProps = {
   onHome: () => void;
   onSettings: () => void;
   onSignOut: () => void;
+  /** Opens the Bin, as every other module's header does (C8); absent when the Bin module is off. */
+  onBin?: () => void;
   /** Opens a linked note in Notes (a new history entry). */
   onOpenNote: (noteId: string) => void;
 };
@@ -108,7 +110,8 @@ function writeHidden(userId: string, hidden: Set<string>) {
  * Views are history entries; month paging replaces the entry; dialogs and sheets push nothing and
  * are closed by Back through the dialog guard (D69).
  */
-export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSettings, onSignOut, onOpenNote }: CalendarAppProps) {
+export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut, onOpenNote }: CalendarAppProps) {
+  const binCount = useBinCount(Boolean(onBin));
   const { canWrite } = useRole();
   const [route, setRoute] = useState<CalendarRoute>(currentCalendarRoute);
   const routeRef = useRef(route);
@@ -486,7 +489,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     <header className="app-page-header">
       <button className="app-home-button" onClick={onHome}><House />Home</button>
       <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><h1 className="app-page-title">Calendar</h1></span></span><AppPageName name="Calendar" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />
+      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} onBin={onBin} binCount={binCount} />
     </header>
     <ReadOnlyBanner />
 

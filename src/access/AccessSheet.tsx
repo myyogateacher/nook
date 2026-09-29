@@ -8,7 +8,7 @@ import { useRole } from "../team/roleAccess";
 import { ROLE_LABELS } from "../team/teamRoles";
 import { getAccess, keysReachLine, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
 import {
-  accessErrorMessage, addPicked, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
+  accessErrorMessage, addPicked, afterGuestRefusal, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
   KEPT_GUEST_NOTE, KEPT_GUEST_REASON, keptGuestLevel, levelOptions, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft
 } from "./accessModel";
 import { LEVEL_LABELS, type AccessKind, type Level } from "./accessLevels";
@@ -149,6 +149,9 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
       if (guests) {
         // Point at the rows that caused it (B1): the server names them.
         setRefused(guests);
+        // The refusal means sharing with guests is off now, even if it was on when the sheet opened:
+        // mark every kept guest row and cap its levels at once, not only after reopening (C11b).
+        setAccess((current) => current ? afterGuestRefusal(current) : current);
         const names = [...draft.groups.filter((group) => guests.groups.includes(group.id)).map((group) => group.name),
           ...draft.people.filter((person) => guests.people.includes(person.id)).map((person) => person.displayName)];
         setError(guestRefusalMessage(names));

@@ -156,6 +156,21 @@ describe("Access sheet rendering", () => {
     expect(loading).toContain("Loading who has access…");
   });
 
+  test("a guest-share refusal marks every kept row at once, even when the sheet opened with sharing on (C11b)", async () => {
+    const { afterGuestRefusal } = await import("../src/access/accessModel");
+    const opened = access({ people: [...access().people, { id: "u-gina", displayName: "Gina", teamRole: "guest", kind: "person", level: "view", via: "direct", blocked: false }] });
+    expect(keptGuestLevel(opened, { type: "group", id: "g-ops" })).toBeNull();
+    const refused = afterGuestRefusal(opened);
+    expect(refused.etag).toBe(opened.etag);
+    expect(keptGuestLevel(refused, { type: "group", id: "g-ops" })).toBe("edit");
+    expect(keptGuestLevel(refused, { type: "person", id: "u-gina" })).toBe("view");
+    expect(afterGuestRefusal(refused)).toBe(refused);
+    const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops sprint" onClose={() => undefined} onSaved={() => undefined} initial={{ access: refused, people, groups }} />);
+    expect(html.match(/Kept from before guest sharing was turned off/g)?.length).toBe(2);
+    const source = readFileSync(join(import.meta.dir, "..", "src", "access", "AccessSheet.tsx"), "utf8");
+    expect(source).toContain("setAccess((current) => current ? afterGuestRefusal(current) : current);");
+  });
+
   test("with guest sharing off, kept guest rows are marked and cannot be raised (QA v0.13.0 B1)", () => {
     const off = access({ shareWithGuests: false, people: [...access().people, { id: "u-gina", displayName: "Gina", teamRole: "guest", kind: "person", level: "view", via: "direct", blocked: false }],
       groups: [{ id: "g-ops", name: "Ops", memberCount: 6, guestCount: 2, selfAddedCount: 0, level: "comment" }, { id: "g-eng", name: "Engineering", memberCount: 3, guestCount: 0, selfAddedCount: 0, level: "view" }] });

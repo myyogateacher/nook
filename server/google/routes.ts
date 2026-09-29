@@ -4,7 +4,7 @@ import { clientAddress } from "../clientAddress";
 import { z } from "zod";
 import { createSession, readSession, type AppEnv } from "../auth";
 import { createAccount, openRegistrationFor, RegistrationClosedError } from "../accounts";
-import { invitePreviewLimited, rateLimited, registerLimited, signInLimited } from "../authLimits";
+import { googleCallbackLimited, googleStartLimited, hit, invitePreviewLimited, registerLimited, signInLimited } from "../authLimits";
 import { googleMethodRefusal } from "../authMethods";
 import { avatarUrlFor, clearAvatar, storeAvatarFromUrl } from "../avatars";
 import { config, isEmailAllowed, isOriginAllowed, passwordAuthEnabled } from "../config";
@@ -143,11 +143,11 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
   app.get("/api/auth/google/start", (c) => {
     const off = googleMethodRefusal(c);
     if (off) return off;
-    // L4: the per-client bucket first, so one client cannot use up the (generous) global one, and a
-    // cap on the live flows a client holds.
-    const client = clientAddress(c);
-    const clientHash = sha256Hex(`google-client:${client}`);
-    if (rateLimited(`google:start:${client}`, 120) || rateLimited("google:start:global", 2000)) return toLogin(c, "error=rate_limited");
+    // L4, F1b: a full instance-wide bucket refuses first (no per-client key is created then); then the
+    // per-client bucket, so one client cannot use up the (generous) global one; and a cap on the live
+    // flows a client holds.
+    if (googleStartLimited(c)) return toLogin(c, "error=rate_limited");
+    const clientHash = sha256Hex(`google-client:${clientAddress(c)}`);
     // N1: at the per-client cap the client's oldest unfinished flow is evicted (it answers `expired`
     // and that browser starts again); a start is never refused for the live-flow count.
     evictOldestFlows(clientHash, LIVE_FLOWS_PER_CLIENT - 1);
@@ -189,7 +189,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
   app.get("/api/auth/google/callback", async (c) => {
     const off = googleMethodRefusal(c);
     if (off) return off;
-    if (rateLimited(`google:callback:${clientAddress(c)}`, 180) || rateLimited("google:callback:global", 3000)) return toLogin(c, "error=rate_limited");
+    if (googleCallbackLimited(c)) return toLogin(c, "error=rate_limited");
     const flow = readFlow(c);
     const state = c.req.query("state") ?? "";
     // T250/T251: this browser's own flow, the matching state, unused and unexpired, claimed once.
@@ -457,7 +457,7 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
     const current = c.get("user");
     const body = await parseJson(c.req.raw, reauthBodySchema);
     if (identityOfUser(current.id)) return c.json({ error: "This account already signs in with Google", code: "ALREADY_LINKED" }, 409);
-    if (rateLimited(`google:link:${current.id}`, 5)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (hit("google:link:account", current.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
     if (!await verifyReauth(current.id, body, "google_link", c.get("sessionId"))) {
       audit(current.id, null, "auth.google_link_reauth_failed");
@@ -481,7 +481,7 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
       return c.json({ error: "Set a password before you unlink Google, so you can still sign in.", code: "PASSWORD_REQUIRED" }, 409);
     }
     // L3: re-authenticated like any other sign-in change.
-    if (rateLimited(`google:unlink:${current.id}`, 5)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (hit("google:unlink:account", current.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
     if (!await verifyReauth(current.id, body, "google_unlink", c.get("sessionId"))) {
       audit(current.id, null, "auth.google_unlink_reauth_failed");
@@ -516,7 +516,7 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
   /** The acting admin's re-authentication (password, or a Google confirmation where that is their method, plus the code). */
   const adminReauth = async (c: Context<AppEnv>, body: z.infer<typeof reauthBodySchema>, purpose: string) => {
     const admin = c.get("user");
-    if (rateLimited(`google:admin:${admin.id}`, 10)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (hit("google:admin:admin", admin.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     if (admin.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
     if (!await verifyReauth(admin.id, body, purpose, c.get("sessionId"))) {
       audit(admin.id, null, "team.google_reauth_failed", { purpose });

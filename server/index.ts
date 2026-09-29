@@ -9,7 +9,7 @@ import { createAccount, RegistrationClosedError } from "./accounts";
 import { hashPassword, verifyPassword } from "./passwords";
 import { avatarUrlFor, registerAvatarRoute } from "./avatars";
 import { passwordMethodRefusal } from "./authMethods";
-import { invitePreviewLimited, rateLimited, registerLimited, resetRegistrationRateLimit, signInLimited } from "./authLimits";
+import { hit, invitePreviewLimited, registerLimited, resetRegistrationRateLimit, signInLimited } from "./authLimits";
 import { registerGoogleAccountRoutes, registerGoogleRoutes } from "./google/routes";
 import { googleResetNotice } from "./google/linkAdmin";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
@@ -425,7 +425,7 @@ app.post("/api/auth/totp/setup", async (c) => {
   if (!user) return c.json({ error: "Authentication required" }, 401);
   if (user.totp_enabled_at) return c.json({ error: "Two-factor authentication is already enabled" }, 409);
   if (!config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not configured on this service" }, 503);
-  if (rateLimited(`totp-setup:${user.id}`, 5)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
+  if (hit("totp-setup:account", user.id)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
   if (!await verifyFirstFactor(user, body.password, c.get("sessionId"))) {
     audit(user.id, null, "auth.totp_setup_password_failed");
     return c.json({ error: "Invalid password" }, 400);

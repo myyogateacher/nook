@@ -60,7 +60,7 @@ describe("password sign-in limits (S7)", () => {
     }
     expect(limits.attemptsFor("login:global")).toBe(120);
     expect((await login("198.51.100.99")).status).toBe(429);
-    expect(limits.attemptsFor("login:client:198.51.100.99")).toBe(0);
+    expect(limits.attemptsFor("login:client", "198.51.100.99")).toBe(0);
   }, 30_000);
 });
 
@@ -85,13 +85,60 @@ describe("registration and invite preview limits (S7)", () => {
   });
 });
 
-describe("the attempt map (S4)", () => {
-  test("never holds more than its cap, and keeps the instance-wide buckets", () => {
-    limits.rateLimited("probe:global", 5);
-    for (let index = 0; index < limits.AUTH_LIMIT_MAX_KEYS + 50; index += 1) limits.rateLimited(`probe:client:${index}`, 5);
+describe("the attempt map under a flood (S4, review F1)", () => {
+  beforeEach(() => limits.clearAuthLimitsForTests());
+  afterEach(() => limits.clearAuthLimitsForTests());
+  const { Hono } = require("hono") as typeof import("hono");
+  /** A Google start as the route sees it, from `from` (one trusted hop). */
+  function googleStart(from: string) {
+    const app = new Hono();
+    app.get("/", (c) => c.text(String(limits.googleStartLimited(c))));
+    return Promise.resolve(app.fetch(new Request("http://nook.test/", { headers: { "X-Forwarded-For": from } }))).then((response) => response.text());
+  }
+  const flood = (count: number, family: "google:start:client" | "google:callback:client" = "google:start:client") => {
+    for (let index = 0; index < count; index += 1) limits.hit(family, `2001:db8:${(index >> 16).toString(16)}:${(index & 0xffff).toString(16)}::/64`);
+  };
+
+  test("the reviewer's reproduction: 21,000 client buckets do not reset a victim's per-email counter", async () => {
+    const person = await createUser("Flood victim");
+    for (let index = 0; index < 10; index += 1) expect((await login(`203.0.113.${index + 1}`, person.email)).status).toBe(401);
+    expect((await login("203.0.113.40", person.email)).status).toBe(429);
+    flood(21_000);
     expect(limits.authLimitKeyCount()).toBeLessThanOrEqual(limits.AUTH_LIMIT_MAX_KEYS);
-    expect(limits.attemptsFor("probe:global")).toBe(1);
-    expect(limits.attemptsFor(`probe:client:${limits.AUTH_LIMIT_MAX_KEYS + 49}`)).toBe(1);
-    limits.clearAuthLimitsForTests("probe:");
+    expect(limits.attemptsFor("login:email", person.email.toLowerCase())).toBe(11);
+    expect((await login("203.0.113.41", person.email)).status).toBe(429);
+  }, 30_000);
+
+  test("protected families are never evicted; per-client keys go oldest first", () => {
+    const protectedKeys = [["login:email", "victim@example.test"], ["login:global", null], ["google:link:account", "acct"], ["google:unlink:account", "acct"],
+      ["totp-setup:account", "acct"], ["google:admin:admin", "admin"], ["register:global", null], ["invite:global", null]] as const;
+    for (const [family, id] of protectedKeys) { limits.hit(family, id); limits.hit(family, id); }
+    const families = Object.entries(limits.BUCKET_FAMILIES);
+    expect(families.filter(([, spec]) => spec.scope === "client").map(([name]) => name).sort()).toEqual(["google:callback:client", "google:start:client", "invite:client", "login:client", "register:client"]);
+    flood(limits.AUTH_LIMIT_MAX_KEYS + 100);
+    for (const [family, id] of protectedKeys) expect([family, limits.attemptsFor(family, id)]).toEqual([family, 2]);
+    // The oldest client keys went first; the newest are there.
+    expect(limits.attemptsFor("google:start:client", "2001:db8:0:0::/64")).toBe(0);
+    expect(limits.attemptsFor("google:start:client", `2001:db8:0:${(limits.AUTH_LIMIT_MAX_KEYS + 99).toString(16)}::/64`)).toBe(1);
+    expect(limits.authLimitKeyCount()).toBeLessThanOrEqual(limits.AUTH_LIMIT_MAX_KEYS);
+  }, 30_000);
+
+  test("with the instance-wide bucket full, a Google start creates no per-client key", async () => {
+    for (let index = 0; index < limits.BUCKET_FAMILIES["google:start:global"].limit; index += 1) limits.hit("google:start:global");
+    expect(await googleStart("198.51.100.201")).toBe("true");
+    expect(limits.attemptsFor("google:start:client", "198.51.100.201")).toBe(0);
+    limits.clearAuthLimitsForTests();
+    expect(await googleStart("198.51.100.201")).toBe("false");
+    expect(limits.attemptsFor("google:start:client", "198.51.100.201")).toBe(1);
   });
+
+  test("a map full of protected keys refuses new per-client keys (fails closed) and keeps every protected one", () => {
+    for (let index = 0; index < limits.AUTH_LIMIT_MAX_KEYS; index += 1) limits.hit("login:email", `person${index}@example.test`);
+    expect(limits.hit("login:client", "198.51.100.250")).toBe(true);
+    expect(limits.attemptsFor("login:client", "198.51.100.250")).toBe(0);
+    expect(limits.hit("login:email", "late@example.test")).toBe(false);
+    expect(limits.attemptsFor("login:email", "person0@example.test")).toBe(1);
+    expect(limits.attemptsFor("login:email", "late@example.test")).toBe(1);
+    expect(limits.authLimitKeyCount()).toBe(limits.AUTH_LIMIT_MAX_KEYS + 1);
+  }, 30_000);
 });

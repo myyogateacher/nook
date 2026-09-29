@@ -99,7 +99,8 @@ const collectionAttachmentPredicate = `EXISTS (
   JOIN collections c ON c.id = r.collection_id
   WHERE a.document_id = d.id AND ${readableCollectionPredicate}
 )`;
-const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}))`;
+/** Readable by `$userId`: its own sharing, a readable card it is attached to, or a readable collection row (exported for batch checks, C10b). */
+export const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}))`;
 
 export function readableDocument(documentId: string, userId: string) {
   return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentRow | null;

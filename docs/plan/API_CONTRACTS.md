@@ -1296,7 +1296,7 @@ An invite is **usable** only while it is unused, unrevoked, unexpired, and its c
 | Endpoint | Who | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
 | `GET /api/team/invites` | admin | | 200 `{ invites: TeamInvite[], liveCount, liveLimit: 20, emailEnabled }`: every live invite plus the latest 100 others, newest first | 404 (guest), 403 `ADMIN_ONLY` |
-| `POST /api/team/invites` | admin | `{ role, email?, expiresInDays?: 1..7 (default 7), note?, sendEmail? }` (strict) | 201 `{ invite, token, url, email?: MailOutcome }`; `email` only with `sendEmail` | 400 `EMAIL_NOT_ALLOWED` (bound email not on `ALLOWED_EMAILS`), 400 `EMAIL_REQUIRED` (`sendEmail` without `email`), 409 `ACCOUNT_EXISTS`, 409 `INVITE_LIMIT` (20 live on the instance), 429 `RATE_LIMITED` (10 creations an hour per admin) |
+| `POST /api/team/invites` | admin | `{ role, email?, expiresInDays?: 1..7 (default 7), note?, sendEmail?, templateId? }` (strict; `templateId` since Wave 33, see "Central access management") | 201 `{ invite, token, url, email?: MailOutcome }`; `email` only with `sendEmail` | 400 `EMAIL_NOT_ALLOWED` (bound email not on `ALLOWED_EMAILS`), 400 `EMAIL_REQUIRED` (`sendEmail` without `email`), 409 `ACCOUNT_EXISTS`, 409 `INVITE_LIMIT` (20 live on the instance), 429 `RATE_LIMITED` (10 creations an hour per admin) |
 | `POST /api/team/invites/:inviteId/revoke` | admin | `{}` | 200 `{ invite }`; repeating on a revoked invite answers the same | 404, 409 `INVITE_NOT_LIVE` (used or expired) |
 | `POST /api/team/invites/:inviteId/email` | admin | `{}` | 200 `{ invite, email: MailOutcome }`. A fresh token is mailed to the bound address; once the mail is accepted it replaces the old one, so the earlier link stops working. The new token is never returned. | 400 `EMAIL_REQUIRED` (no bound email), 404, 409 `INVITE_NOT_LIVE` |
 | `POST /api/auth/invite` | anyone (pre-auth: Origin and JSON checks, no session) | `{ token }` | 200 `{ role, emailHint, expiresAt, inviterName }`; `emailHint` is masked (`p•••@example.com`) or null | 400 (malformed), 404 `INVITE_INVALID` (unknown, used, revoked, or creator no longer an active admin), 410 `INVITE_EXPIRED`, 429 (30 a minute, instance-wide) |
@@ -1760,6 +1760,82 @@ type AccessPut = { audience; audienceLevel?: Level; people: { id; level }[] ≤ 
 **Older sharing routes.** `GET/PUT …/sharing` keep working: they keep each existing person's level (new people get the module default; the collection and calendar route's one `role` still applies to everyone it names, except managers), leave group grants untouched, and honour `share_with_guests`. With the policy off, `GET /api/users` leaves guests out.
 
 **Write gate.** `PUT …/access` is not allowlisted: viewers and guests get 403 `ROLE_READ_ONLY`.
+
+**Your keys (Wave 33).** For the owner only, `ItemAccess` also carries `keysWithAccess`: how many of the owner's usable keys (live, unexpired, not past a rotation grace) hold a grant on the item's module over "all" or on this item. The sheet shows "N of your API keys can reach this". Managers never get the count.
+
+## Central access management (Wave 33, Access C)
+
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.6, §C.7, §C.11 (D267–D269, D286, D288; T204, T214, T218). Migration **032** (`access_notices`) adds only the bell's access lines; everything else uses tables from 025.
+
+### Member access
+
+```ts
+type AccessKind = "note" | "folder" | "document" | "board" | "task_view" | "collection" | "calendar";
+type ResetCounts = { directShares; groups; keys; feeds; routines };
+type AccessSummary = {
+  member: { id; displayName; role; status: "active" | "blocked"; isYou };
+  groups: { id; name; grantCount; memberCount; addedAt; addedBy: { id; displayName } | null; selfAdded }[];
+  keys: { id; name; prefix; state; surfaces; expiresAt; lastUsedAt; modules: string[] }[];   // live keys, metadata only (T215)
+  feeds: { live: number }; routines: { enabled: number };
+  kinds: { kind: AccessKind; module; direct: number; group: number; audience: number }[];    // audience: all_users items not owned, counts only (0 for guests)
+  resetCounts: ResetCounts; pageSize: 200;
+};
+type AccessRow = {
+  kind: AccessKind; title: string; titleHidden: boolean;   // "Board owned by Carol" when the viewer cannot open the item (D269)
+  owner: { id; displayName }; id?: string;                 // id only when the viewer can open the item
+  level: Level; via: "direct" | "group"; group: { id; name } | null;
+  active: boolean;                                         // the grant is in effect now (the item may be private, binned, or the person blocked)
+  lowerTo: Level[];                                        // levels a direct share can be lowered to; [] for group rows and view-only kinds
+  handle?: string;                                         // admin page only: opaque, sealed (AES-GCM), bound to the admin and the person, 6 h
+};
+```
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET /api/team/members/:userId/access` | admin | | 200 `AccessSummary` | 403 `ADMIN_ONLY`, 404 (guests, unknown person, not a UUID) |
+| `GET /api/team/members/:userId/access?kind=&cursor=` | admin | | 200 `{ kind, items: AccessRow[] ≤ 200, nextCursor }`: direct rows then group rows, ordered by item; the cursor is sealed like a handle | 400 `INVALID` (unknown kind), 400 `INVALID_CURSOR` (another admin's, person's, or kind's cursor, or expired) |
+| `DELETE /api/team/members/:userId/access/:handle` | admin | `{}` | 200 `{ removed: "share", kind }` for a direct row; `{ removed: "group", groupId }` for a group row (the person leaves that group) | 404 (bad, foreign, or expired handle; already gone), 429 |
+| `PATCH /api/team/members/:userId/access/:handle` | admin | `{ level }` | 200 `{ lowered: true, kind, from, to }` | 400 `NOT_A_REDUCTION` (same or higher level), `NOT_LOWERABLE` (group row or task view), `LEVEL_NOT_OFFERED`; 404 |
+| `DELETE /api/team/members/:userId/groups/:groupId` | admin | `{}` | 200 `{ groupId }` | 404 |
+| `POST /api/team/members/:userId/access/reset` | admin | `{}` | 200 `{ removed: ResetCounts, remaining: ResetCounts }` | 400 `SELF_ACTION` (your own account), 404 |
+| `POST /api/team/members/:userId/templates/:templateId/apply` | admin | `{}` | 200 `{ added, skipped, templateName, role }`: adds the template's groups, never changes the role | 404 |
+| `GET /api/me/access[?kind=&cursor=]` | every role but guest | | the same shapes for yourself, without handles | 404 (guests) |
+
+- **Reductions only (D268).** Nothing here adds a share or raises a level. Remove deletes the person's direct share row; Lower sets a strictly lower level the kind offers; a group row's Remove takes the person out of that group (the group's `revision` moves). **Reset access** removes every direct share and group membership, revokes every live key (reason "Access reset by an admin") and calendar feed, and pauses routines, in one transaction; owned items and `all_users` audiences stay.
+- **Audit.** `access_events` `access.share_removed` (meta `{ level }`), `access.share_lowered` (`{ from, to }`), `group.member_removed` (`{ from: "member_access" | "reset" }`), `key.revoked` (`{ by: "admin", reset? }`), and `access.reset` (the removed counts); `audit_log` `team.access_removed`, `team.access_lowered`, `team.access_reset`. Ids and counts only.
+- **Bell (§C.11, migration 032).** The item's owner hears about a removal or lowering, and once per Reset with the count of their items; the person hears about a Reset, about group additions and removals, and about an admin revoking their key (Team → Keys too). Nobody is told about their own action. `GET /api/notifications` merges these lines (built at read time, so titles show only to someone who can open the item) with calendar and proposal notifications; `POST /api/notifications/read` and the 30-day sweep cover both. No email: the plan defines no mail kind for these yet (O-A13).
+- **Write limit.** The writes share the Team write limit (30 a minute per admin, T218).
+
+### Templates (D286)
+
+```ts
+type AccessTemplate = { id; name; role: "member" | "viewer" | "guest"; groups: { id; name }[]; liveInvites: number; revision; createdAt; updatedAt };
+```
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET /api/team/templates` | admin | | 200 `{ templates: AccessTemplate[], limit: 50 }` | 403 `ADMIN_ONLY`, 404 (guests) |
+| `POST /api/team/templates` | admin | `{ name 1–60, role, groupIds?: uuid[] ≤ 20 }` | 201 `{ template }` | 400 `INVALID_GROUPS`, 409 `NAME_TAKEN` (case-insensitive), 409 `LIMIT_REACHED` |
+| `PATCH /api/team/templates/:templateId` | admin | `{ name?, role?, groupIds?, revision }` | 200 `{ template }` | 400, 404, 409 `TEMPLATE_CHANGED` (CAS), 409 `NAME_TAKEN` |
+| `DELETE /api/team/templates/:templateId` | admin | `{ revision? }` | 200 `{ ok, liveInvites }` | 404, 409 `TEMPLATE_CHANGED` |
+
+**On invites.** `POST /api/team/invites` accepts `templateId`; the template's role must equal the invite's (400 `TEMPLATE_ROLE_MISMATCH`, 404 `TEMPLATE_NOT_FOUND`). `TeamInvite` gains `template: { id, name } | null`. When the invite is accepted, the registration transaction adds the new account to the template's groups that still exist and have room (`added_by` = the invite's admin) and records `template.applied` `{ templateId, added, skipped }`. The invite's own role always wins; editing a template later does not change invites already sent. Deleting a template sets `team_invites.template_id` to NULL: the invite still works, with its role and no groups. `access_events`: `template.created`, `template.updated`, `template.deleted`, `template.applied`.
+
+### Access activity
+
+`GET /api/team/activity?user=&group=&key=&action=&cursor=` (admin; 403 `ADMIN_ONLY`, 404 for guests): `access_events` newest first, 50 a page, `{ events, nextCursor }`. `user` matches the actor or the target; `action` is a family: `keys`, `groups`, `items` (`item.*` and `access.*`), `policies`, `templates`.
+
+```ts
+type ActivityEvent = {
+  id; action; via; createdAt;
+  actor: { id; displayName } | null; target: { id; displayName } | null;
+  group: { id; name } | null; key: { id; name; prefix } | null;
+  item: { kind; title; titleHidden; owner; id? } | null;   // redacted for the viewer as in AccessRow
+  meta: Record<string, number | boolean | string | string[]> | null;   // counts and short words; id-like keys and values dropped
+};
+```
+
+**MCP.** None: the plan lists no MCP tool for Access C, and keys never manage access (D265).
 
 ## Changes to existing note endpoints (Wave 4)
 

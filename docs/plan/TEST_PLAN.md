@@ -802,6 +802,7 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 - [x] `tests/digestPrompt.test.tsx` and `tests/todayDigestPromptMigration.test.ts` (C4, D248): `GET /api/mail/digest-prompt` shows the Today card only with email configured and on for the person, a verified address, an account 7+ days old, the digest off, and no earlier answer; **No thanks** (or ×) settles it per person and changes no setting; **Every morning** / **Mondays only** turn the digest on (in the browser's zone when settings were never saved); a cadence changed in Settings settles it too; migration 035 adds the nullable `email_prefs.digest_prompt_at` and re-runs as a no-op.
 - [x] `tests/docsEnvTables.test.ts` (C5): the docs site's environment table lists the same variables as OPERATIONS.md → Configuration, in the same order (it lacked `RESEND_WEBHOOK_SECRET`, the other email variables, and the push fine-tuning rows), and every variable in `.env.example` and `compose.yaml` is documented.
 - [x] `tests/carryoverUi.test.tsx` (C6): in Calendar → Calendars a muted calendar's line starts with the text **Muted** (tooltip "No activity emails from this calendar"), at every width without hover.
+- [x] `tests/carryoverUi.test.tsx` (C7): the Files **List view** / **Grid view** buttons are 44 × 44 px at 390 px (they were 40 px; 32 px on desktop).
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

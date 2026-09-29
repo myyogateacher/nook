@@ -208,7 +208,8 @@
 .file-tile .file-row-meta { gap: 8px; }
 .file-tile .file-row-shared { flex: none; margin-left: auto; }
 @media (max-width: 760px) {
-  .file-view-toggle .icon-button { width: 40px; height: 40px; }
+  /* Each view button is a 44 px phone target (C7), like the other phone controls. */
+  .file-view-toggle .icon-button { width: 44px; height: 44px; }
   .file-list.file-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .file-grid .file-row-item { position: relative; display: block; }
   .file-grid .file-row-more { position: absolute; top: 12px; right: 12px; border-radius: 10px; background: rgb(17 17 19 / 82%); }

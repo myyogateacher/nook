@@ -20,3 +20,12 @@ describe("C6: a muted calendar says Muted in words", () => {
     expect(source).toContain('<small>{mutes.loaded && mutes.isMuted("calendar", calendar.id) && <><MutedTag /> · </>}{roleLabel(calendar)}</small>');
   });
 });
+
+describe("C7: the Files list/grid toggle is a phone-sized target", () => {
+  test("each view button is 44 px at phone widths (32 px on desktop)", async () => {
+    const css = await read("files/files.css");
+    const phone = css.slice(css.indexOf("@media (max-width: 760px)", css.indexOf(".file-view-toggle {")));
+    expect(phone).toContain(".file-view-toggle .icon-button { width: 44px; height: 44px; }");
+    expect(css).toContain(".file-view-toggle .icon-button { width: 32px; height: 32px; border-radius: 8px; }");
+  });
+});

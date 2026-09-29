@@ -3,7 +3,8 @@ import { audit, db, now } from "../db";
 import { recordAccessEvent } from "../access/events";
 import { notifyAccess } from "../access/notices";
 import { uuid } from "../validation";
-import { GROUP_MEMBERS_LIMIT } from "./groups";
+import { GUEST_SHARE_DISABLED } from "../access/shares";
+import { GROUP_MEMBERS_LIMIT, guestJoinRefused } from "./groups";
 
 /**
  * Access templates (access plan D286, §C.6): a name, a team role, and groups. An invite may carry
@@ -135,15 +136,24 @@ export function deleteTemplate(actorId: string, id: string, revision?: number) {
  * transaction (registration, or the admin's apply). `actorId` is who added them: the invite's admin
  * on registration. Returns how many groups were joined and skipped.
  */
-export function applyTemplateGroups(actorId: string | null, userId: string, templateId: string, options: { notify: boolean; timestamp?: string }) {
+export function applyTemplateGroups(actorId: string | null, userId: string, templateId: string, options: { notify: boolean; timestamp?: string; guests: "skip" | "refuse" }) {
   const row = rowById(templateId);
   if (!row) return null;
   const timestamp = options.timestamp ?? now();
   let added = 0;
   let skipped = 0;
-  for (const groupId of groupIdsOf(row)) {
+  let guestRefused = 0;
+  // The same guest rule as Team → Groups (T213): with share_with_guests off a guest never joins a
+  // group that has grants. Registration skips that group (the account is still created); applying
+  // a template to someone refuses as a whole, before anything is added.
+  const groupIds = groupIdsOf(row);
+  if (options.guests === "refuse" && groupIds.some((groupId) => guestJoinRefused(groupId, [userId]))) {
+    throw new TemplateError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
+  }
+  for (const groupId of groupIds) {
     const group = db.query("SELECT (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS members FROM user_groups g WHERE g.id = ?").get(groupId) as { members: number } | null;
     if (!group || group.members >= GROUP_MEMBERS_LIMIT) { skipped += 1; continue; }
+    if (guestJoinRefused(groupId, [userId])) { skipped += 1; guestRefused += 1; continue; }
     const inserted = db.query("INSERT OR IGNORE INTO group_members (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)").run(groupId, userId, actorId, timestamp).changes;
     if (!inserted) continue;
     added += 1;
@@ -151,15 +161,15 @@ export function applyTemplateGroups(actorId: string | null, userId: string, temp
     recordAccessEvent({ actorId, via: "web", action: "group.member_added", groupId, targetUserId: userId, meta: { from: "template", ...(actorId === userId ? { self: true } : {}) } }, timestamp);
     if (options.notify) notifyAccess({ userId, kind: "group_added", actorId, groupId }, timestamp);
   }
-  recordAccessEvent({ actorId, via: "web", action: "template.applied", targetUserId: userId, meta: { templateId, added, skipped } }, timestamp);
-  return { added, skipped, templateName: row.name, role: row.role };
+  recordAccessEvent({ actorId, via: "web", action: "template.applied", targetUserId: userId, meta: { templateId, added, skipped, ...(guestRefused ? { guestRefused } : {}) } }, timestamp);
+  return { added, skipped, guestRefused, templateName: row.name, role: row.role };
 }
 
 /** From the member access page: the template's groups for an existing person (never their role). */
 export function applyTemplateToMember(actorId: string, userId: string, templateId: string) {
   return db.transaction(() => {
     if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw new TemplateError(404, "NOT_FOUND", "Team member not found");
-    const result = applyTemplateGroups(actorId, userId, templateId, { notify: true });
+    const result = applyTemplateGroups(actorId, userId, templateId, { notify: true, guests: "refuse" });
     if (!result) throw notFound();
     audit(actorId, null, "team.template_applied", { templateId, targetId: userId, added: result.added });
     return result;

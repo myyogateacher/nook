@@ -250,7 +250,7 @@ app.post("/api/auth/register", async (c) => {
         audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
         // D286: the invite's access template adds the new account to its groups, in this same
         // transaction (a template deleted since leaves template_id NULL, and the invite still works).
-        if (invite.template_id) applyTemplateGroups(invite.created_by, id, invite.template_id, { notify: false, timestamp });
+        if (invite.template_id) applyTemplateGroups(invite.created_by, id, invite.template_id, { notify: false, timestamp, guests: "skip" });
       }
     })();
   } catch (error) {

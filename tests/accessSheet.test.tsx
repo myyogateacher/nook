@@ -137,6 +137,16 @@ describe("Access sheet rendering", () => {
     expect(html).not.toContain("Only the owner changes managers</small>");
   });
 
+  test("the owner's key line (Wave 33) and the manager's own-row hint render side by side with their sheets", () => {
+    const owner = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops sprint" onClose={() => undefined} onSaved={() => undefined}
+      initial={{ access: access({ youId: "u-owner", keysWithAccess: 2 }), people, groups }} />);
+    expect(owner).toContain("2 of your API keys can reach this");
+    const manager = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops sprint" onClose={() => undefined} onSaved={() => undefined}
+      initial={{ access: access({ yourLevel: "manage", youId: "u-alice", levels: ["view", "comment", "edit"] }), people, groups }} />);
+    expect(manager).toContain("Ask the owner to change your access");
+    expect(manager).not.toContain("of your API keys can reach this");
+  });
+
   test("everyone signed in shows its level picker; loading shows a status", () => {
     const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops" onClose={() => undefined} onSaved={() => undefined}
       initial={{ access: access({ audience: "all_users", people: [], groups: [] }) }} />);

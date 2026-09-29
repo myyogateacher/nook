@@ -203,10 +203,7 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       const placeholders = added.map(() => "?").join(",");
       const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...added) as Array<{ id: string }>;
       if (valid.length !== added.length) throw new GroupError(400, "INVALID_MEMBERS", "One or more people were not found");
-      if (row.grant_count > 0 && !readPolicies().shareWithGuests
-        && db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${placeholders}) LIMIT 1`).get(...added)) {
-        throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
-      }
+      if (guestJoinRefused(groupId, added)) throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
     }
     const timestamp = now();
     const insert = db.query("INSERT INTO group_members (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)");
@@ -226,6 +223,17 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
     if (added.length || removed.length) audit(actorId, null, "group.members_changed", { groupId, added: added.length, removed: removed.length, selfAdded: added.includes(actorId) });
     return { added: added.length, removed: removed.length, selfAdded: added.includes(actorId) };
   })();
+}
+
+/**
+ * The one guest rule for joining a group (T213), shared by Team → Groups, access templates on
+ * invite acceptance, and applying a template to someone (Wave 33): with `share_with_guests` off,
+ * a guest may not join a group that has any grant. Removing people is never refused.
+ */
+export function guestJoinRefused(groupId: string, userIds: readonly string[]) {
+  if (!userIds.length || readPolicies().shareWithGuests) return false;
+  if (!db.query("SELECT 1 FROM group_grants WHERE group_id = ? LIMIT 1").get(groupId)) return false;
+  return Boolean(db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${userIds.map(() => "?").join(",")}) LIMIT 1`).get(...userIds));
 }
 
 /** Whether a group has a guest in it (the `share_with_guests` policy, D.2). */

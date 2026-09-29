@@ -1783,7 +1783,7 @@ type AccessSummary = {
   groups: { id; name; grantCount; memberCount; addedAt; addedBy: { id; displayName } | null; selfAdded }[];
   keys: { id; name; prefix; state; surfaces; expiresAt; lastUsedAt; modules: string[] }[];   // live keys, metadata only (T215)
   feeds: { live: number }; routines: { enabled: number };
-  kinds: { kind: AccessKind; module; direct: number; group: number; audience: number }[];    // audience: all_users items not owned, counts only (0 for guests)
+  kinds: { kind: AccessKind; module; items: number; direct: number; group: number; audience: number }[];  // items: distinct items (the headline); direct/group: grant rows; audience: all_users items not owned (0 for guests)
   resetCounts: ResetCounts; pageSize: 200;
 };
 type AccessRow = {
@@ -1804,7 +1804,7 @@ type AccessRow = {
 | `PATCH /api/team/members/:userId/access/:handle` | admin | `{ level }` | 200 `{ lowered: true, kind, from, to }` | 400 `NOT_A_REDUCTION` (same or higher level), `NOT_LOWERABLE` (group row or task view), `LEVEL_NOT_OFFERED`; 404 |
 | `DELETE /api/team/members/:userId/groups/:groupId` | admin | `{}` | 200 `{ groupId }` | 404 |
 | `POST /api/team/members/:userId/access/reset` | admin | `{}` | 200 `{ removed: ResetCounts, remaining: ResetCounts }` | 400 `SELF_ACTION` (your own account), 404 |
-| `POST /api/team/members/:userId/templates/:templateId/apply` | admin | `{}` | 200 `{ added, skipped, templateName, role }`: adds the template's groups, never changes the role | 404 |
+| `POST /api/team/members/:userId/templates/:templateId/apply` | admin | `{}` | 200 `{ added, skipped, guestRefused, templateName, role }`: adds the template's groups, never changes the role | 400 `GUEST_SHARE_DISABLED`, 404 |
 | `GET /api/me/access[?kind=&cursor=]` | every role but guest | | the same shapes for yourself, without handles | 404 (guests) |
 
 - **Reductions only (D268).** Nothing here adds a share or raises a level. Remove deletes the person's direct share row; Lower sets a strictly lower level the kind offers; a group row's Remove takes the person out of that group (the group's `revision` moves). **Reset access** removes every direct share and group membership, revokes every live key (reason "Access reset by an admin") and calendar feed, and pauses routines, in one transaction; owned items and `all_users` audiences stay.
@@ -1825,7 +1825,7 @@ type AccessTemplate = { id; name; role: "member" | "viewer" | "guest"; groups: {
 | `PATCH /api/team/templates/:templateId` | admin | `{ name?, role?, groupIds?, revision }` | 200 `{ template }` | 400, 404, 409 `TEMPLATE_CHANGED` (CAS), 409 `NAME_TAKEN` |
 | `DELETE /api/team/templates/:templateId` | admin | `{ revision? }` | 200 `{ ok, liveInvites }` | 404, 409 `TEMPLATE_CHANGED` |
 
-**On invites.** `POST /api/team/invites` accepts `templateId`; the template's role must equal the invite's (400 `TEMPLATE_ROLE_MISMATCH`, 404 `TEMPLATE_NOT_FOUND`). `TeamInvite` gains `template: { id, name } | null`. When the invite is accepted, the registration transaction adds the new account to the template's groups that still exist and have room (`added_by` = the invite's admin) and records `template.applied` `{ templateId, added, skipped }`. The invite's own role always wins; editing a template later does not change invites already sent. Deleting a template sets `team_invites.template_id` to NULL: the invite still works, with its role and no groups. `access_events`: `template.created`, `template.updated`, `template.deleted`, `template.applied`.
+**On invites.** `POST /api/team/invites` accepts `templateId`; the template's role must equal the invite's (400 `TEMPLATE_ROLE_MISMATCH`, 404 `TEMPLATE_NOT_FOUND`). `TeamInvite` gains `template: { id, name } | null`. When the invite is accepted, the registration transaction adds the new account to the template's groups that still exist and have room (`added_by` = the invite's admin) and records `template.applied` `{ templateId, added, skipped }`. The invite's own role always wins; editing a template later does not change invites already sent. **Guests (T213):** with `share_with_guests` off, a guest never joins a group that has grants through a template either (the same rule as `PUT /api/team/groups/:id/members`, one helper `guestJoinRefused`): on invite acceptance that group is skipped and counted (`template.applied` meta `guestRefused`), and the account is still created; applying a template to someone is refused as a whole with 400 `GUEST_SHARE_DISABLED`. Removing people (remove from a group, Reset access) is never refused. Deleting a template sets `team_invites.template_id` to NULL: the invite still works, with its role and no groups. `access_events`: `template.created`, `template.updated`, `template.deleted`, `template.applied`.
 
 ### Access activity
 

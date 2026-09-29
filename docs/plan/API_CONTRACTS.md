@@ -1751,6 +1751,7 @@ type ItemAccess = {
   groups: { id; name; memberCount; guestCount; selfAddedCount; level: Level }[];
   levels: Level[];                    // what the caller may give: managers never see manage
   yourLevel: "owner" | "manage";
+  youId: string;                      // the caller: a manager's own row says "Ask the owner to change your access" (MANAGER_CAP)
   shareWithGuests: boolean; inheritable: boolean;
 };
 type AccessPut = { audience; audienceLevel?: Level; people: { id; level }[] ≤ 100; groups: { id; level }[] ≤ 20 };

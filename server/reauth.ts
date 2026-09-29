@@ -1,5 +1,6 @@
-import { config } from "./config";
+import { config, googleAuthEnabled, passwordAuthEnabled } from "./config";
 import { audit, db, type UserRow } from "./db";
+import { isUsablePasswordHash, verifyPassword } from "./passwords";
 import { decryptRecoveryCodes, decryptTotpSecret, encryptRecoveryCodes, recoveryCodeMatches, verifyTotp } from "./totp";
 
 /**
@@ -44,15 +45,49 @@ export function consumeRecoveryCode(user: Pick<UserRow, "id" | "totp_recovery_co
 
 export type ReauthInput = { password?: string; totpCode?: string; recoveryCode?: string };
 
+/** How long a Google confirmation stands in for the password on its session (D297). */
+export const GOOGLE_REAUTH_MS = 5 * 60_000;
+
+/** When this session's Google confirmation stops counting, or null when there is none (D297). */
+export function googleReauthUntil(sessionId: string | undefined, userId: string) {
+  if (!sessionId || !googleAuthEnabled()) return null;
+  const row = db.query(`SELECT s.reauth_at FROM sessions s JOIN google_identities g ON g.user_id = s.user_id
+    WHERE s.id = ? AND s.user_id = ?`).get(sessionId, userId) as { reauth_at: string | null } | null;
+  if (!row?.reauth_at) return null;
+  const until = Date.parse(row.reauth_at) + GOOGLE_REAUTH_MS;
+  return until > Date.now() ? new Date(until).toISOString() : null;
+}
+
 /**
- * Re-authenticates an active user with their password plus, when TOTP is enabled, a fresh
+ * Which proof a re-authentication prompt asks for (D297): the password while the password method is
+ * on and the account has one, else a Google confirmation while Google is on and the account is
+ * linked, else none (nothing can confirm it: the account must set a password or link Google).
+ */
+export function reauthMethod(user: Pick<UserRow, "id" | "password_hash">): "password" | "google" | "none" {
+  if (passwordAuthEnabled() && isUsablePasswordHash(user.password_hash)) return "password";
+  if (googleAuthEnabled() && db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(user.id)) return "google";
+  return "none";
+}
+
+/**
+ * The first factor of a re-authentication: the password (only while the password method is on), or,
+ * when no password is given, this session's Google confirmation from the last 5 minutes.
+ */
+export async function verifyFirstFactor(user: Pick<UserRow, "id" | "password_hash">, password: string | undefined, sessionId: string | undefined) {
+  if (password) return passwordAuthEnabled() && await verifyPassword(password, user.password_hash);
+  // MEDIUM-2: Google stands in only where it is the account's re-authentication method (no usable
+  // password, or AUTH_METHODS=google); an account with a password must give it.
+  return reauthMethod(user) === "google" && googleReauthUntil(sessionId, user.id) !== null;
+}
+
+/**
+ * Re-authenticates an active user with their password (or this session's fresh Google confirmation, D297) plus, when TOTP is enabled, a fresh
  * authentication or recovery code (the MCP key creation rule, index.ts). Codes are consumed only
  * after the password verifies. `purpose` is recorded when a recovery code is used.
  */
-export async function verifyReauth(userId: string, input: ReauthInput, purpose: string) {
-  if (!input.password) return false;
+export async function verifyReauth(userId: string, input: ReauthInput, purpose: string, sessionId?: string) {
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
-  if (!user || !await Bun.password.verify(input.password, user.password_hash)) return false;
+  if (!user || !await verifyFirstFactor(user, input.password, sessionId)) return false;
   if (!user.totp_enabled_at) return true;
   if (input.recoveryCode) {
     if (!consumeRecoveryCode(user, input.recoveryCode)) return false;

@@ -20,13 +20,13 @@ describe("authorization and version workflow", () => {
     expect(registeredMigrationIds.slice(22).every((id) => id >= 23)).toBe(true);
   });
 
-  test("registration is limited to 10 attempts a minute server-wide, refused ones included", async () => {
+  test("registration is limited to 20 attempts a minute server-wide, refused ones included", async () => {
     resetRegistrationRateLimit();
     const attempt = () => request("/auth/register", {
       method: "POST",
       body: JSON.stringify({ email: "blocked@example.test", displayName: "Blocked", password: "correct horse battery staple" })
     });
-    for (let index = 0; index < 10; index += 1) expect((await attempt()).status).toBe(403);
+    for (let index = 0; index < 20; index += 1) expect((await attempt()).status).toBe(403);
     expect((await attempt()).status).toBe(429);
     // The harness clears the bucket before each register(), so this still succeeds.
     await register("After the limit");

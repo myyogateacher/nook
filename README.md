@@ -62,6 +62,8 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - Roles: **admin**, **member**, **viewer** (reads what is shared with them or with everyone, changes nothing), and **guest** (reads only what is shared with them by name). Read-only roles are enforced on the server, not just hidden in the app.
 - Admins block and unblock accounts, sign them out everywhere, and see activity. Admins never see anyone's private content.
 - New accounts get `SIGNUP_ROLE` (default `guest`). A host CLI (`server/team-admin.ts`) recovers from a lockout.
+- **Sign in with Google** (optional): `AUTH_METHODS=password|google|both` chooses the methods, enforced on the server. Google accounts are created automatically when registration would allow it (the first account, an invite, or open registration), `GOOGLE_ALLOWED_DOMAINS` limits them to your company domains, two-factor still applies, and Google profile pictures replace the letter avatars (downloaded and served by Nook itself). Setup: [docs/OPERATIONS.md](docs/OPERATIONS.md#google-sign-in).
+- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
 - **Central access**: Team → a member → **Access** shows everything a person can open, per module and through what (direct, a group, or everyone), with titles hidden for items the admin cannot open. Admins can only take access away (remove, lower, leave a group, revoke keys, or **Reset access**), each confirmed, logged in **Team → Access activity**, and announced on the owner's bell. **Team → Templates** gives invites a role and groups. Everyone but guests sees their own in **Settings → My access**.
 
 ### Everywhere
@@ -95,7 +97,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.15.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -104,6 +106,31 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.15.0
+
+- **Sign in with Google**: the sign-in, register, and invite pages offer **Continue with Google**. A Google address with no account gets one automatically when registration would allow it: open registration, a valid invite, or the first account on an empty instance (which becomes the admin). Accounts with two-factor on still enter their Nook code after Google. `ALLOWED_EMAILS` and blocking apply as for passwords.
+- **Sign-in methods**: `AUTH_METHODS` is `password` (the default), `google`, or `both`, enforced on the server. `password` turns Google sign-in off; `google` turns off password sign-in, registration with a password, forgot and reset password, and password change. Upgrading changes nothing until you set it.
+- **New settings**: `AUTH_METHODS` (default `password`), `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (empty; both required for `google` or `both`, or the server refuses to start), `GOOGLE_ALLOWED_DOMAINS` (empty; optional list of email domains allowed to use Google sign-in; it does not restrict password registration), and `TRUSTED_PROXY_HOPS` (0 to 5, default `0`; the number of reverse proxies in front of Nook).
+- **Profile pictures**: a Google user's picture replaces the letter in the header, Settings, Team, the Access sheet, card assignees and the assignee picker, and comment authors. The server downloads it at sign-in and serves it from your Nook, so browsers never contact Google and the content security policy is unchanged. Without a picture, or if it fails to load, the letter is shown. Pictures are stored in the data directory (`avatars/`) and included in backups.
+- **Linking existing accounts**: a Google sign-in links automatically only to an account whose address Nook has verified, and only when Google is authoritative for that address (a Gmail address, or a Google Workspace account on the address's own domain). Otherwise nothing about the account changes and the person is told what to do. Password users link in **Settings → Security → Link Google** after confirming their password. An admin can allow a link from **Team** (once, within 24 hours), optionally resetting the account first, and can allow re-linking when someone recreated their Google account. The host command line does the same: `allow-google-link <email> [--reset | --keep-credentials]` and `unlink-google <email>`.
+- **New admin powers**: **Allow Google sign-in**; **Reset account for Google sign-in** (signs the account out everywhere, revokes its API keys and calendar feed links, removes its password and two-factor, makes everything it owns private and removes its shares, revokes its open invites, and pauses its routines; content is kept), offered in the app only for accounts whose address was never verified and never for admins or accounts that were admins in the last 24 hours; **Allow re-linking** (when the new Google account signs in, the previous holder's sessions, API keys, calendar feed links, and unused password-reset links end, and by default the password and two-factor too); and **Unlink** (the member is signed out everywhere). Each asks for your own password (or a Google confirmation) and two-factor code, is recorded in **Team → Access activity**, and tells the member on the bell and, with email on, by security mail; a reset is also shown at their next sign-in.
+- **Accounts without a password**: people who sign in only with Google are asked to **Confirm with Google** where others give their password (new API key, rotate, two-factor setup); it needs a fresh Google sign-in.
+- **Rate limits**: password sign-in, account creation, and invite preview are now also limited per client address (20, 5, and 10 a minute), in addition to the per-email and instance-wide limits. Behind a reverse proxy set `TRUSTED_PROXY_HOPS` so each visitor counts alone.
+- **Fixes**: after turning on two-factor, Settings now stays open on the recovery codes (**Copy all**, **Download**, **I saved them**); before, they disappeared at once. No new MCP tools for sign-in or Google accounts, and API keys are unaffected.
+- Migration 034 runs on the first boot, so back up first. Nothing changes for sign-in until you set `AUTH_METHODS`; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades) for the Google Cloud setup and reverse-proxy advice.
+
+## What's new in v0.14.0
+
+- **Member access**: admins open **Team → a member → Access** to see everything that person can reach, per kind, one row per item with each way they reach it (shared directly or through a group), plus how many items are shared with everyone signed in, their groups, and their API keys. Items the admin cannot open are shown without their title, as "Board owned by" and the owner's name.
+- **Reduce only**: from that page admins can lower a level, remove a direct share, or take the person out of a group. Each change asks for confirmation, is recorded, and tells the item's owner or the person on the bell. Nothing on the page grants or raises access.
+- **Reset access**: removes a person's direct shares and group memberships, revokes their API keys and calendar feeds, and pauses their routines, with counts shown before and after. Items the person owns are untouched. It is not offered on your own account.
+- **My access**: **Settings → My access** (`/settings/access`) shows, read-only, what you can reach and through what. Guests do not have it.
+- **Access templates**: **Team → Templates** holds a role and groups. Pick one on an invite and the new account joins those groups when it registers. An invite keeps the template as it was when the invite was made, so later edits do not change invites already sent; deleting a template leaves its invites working with their role and no groups. Applying a template to an existing member adds its groups and never changes their role. With sharing with guests off, a guest skips groups that have items shared with them.
+- **Access activity**: **Team → Access activity** shows who changed whose access, filtered by person, group, key, and kind of change.
+- **Bell**: the bell now tells you when you are added to or removed from a group, when an admin lowers, removes, or resets access (to your items, or yours), and when an admin revokes your API key. The Access sheet tells an owner how many of their API keys can reach the item.
+- **Fixes**: the New group dialog focuses the name and checks it inline; wording fixes. No new MCP tools, and API keys cannot manage access.
+- Migration 032 runs on the first boot, so back up first. Admins gain new powers to see and reduce access; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.13.0
 

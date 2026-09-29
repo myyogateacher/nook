@@ -16,7 +16,8 @@ export type ApiKey = {
 };
 
 export type KeyList = { keys: ApiKey[]; policy: PolicySummary; liveCount: number };
-export type Reauth = { password: string; totpCode?: string };
+/** The password is left out when this session confirmed the account with Google (Wave 35, D297). */
+export type Reauth = { password?: string; totpCode?: string };
 
 export const listKeys = () => api<KeyList>("/keys");
 

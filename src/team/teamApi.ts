@@ -9,6 +9,8 @@ export type TeamMember = {
   status: "active" | "blocked";
   createdAt: string;
   isYou: boolean;
+  /** Wave 35 (D299): a same-origin picture, or null (older servers leave it out) for the letter. */
+  avatarUrl?: string | null;
   email?: string;
   lastSeenAt?: string | null;
   blockedAt?: string | null;

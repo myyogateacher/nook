@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
-import { getConnInfo } from "hono/bun";
+import { clientAddress } from "../clientAddress";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { config, isEmailAllowed, isOriginAllowed } from "../config";
@@ -202,13 +202,7 @@ const tooMany = (retryAfter: number) => new Response(JSON.stringify({ error: "To
 });
 
 /** The socket's peer address (never a forwarded header, which any client can set). */
-function clientAddress(c: Context<AppEnv>) {
-  try {
-    return getConnInfo(c).remote.address ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
+
 
 /** docs/plan/API_CONTRACTS.md § Calendar feeds. */
 export function registerFeedRoutes(app: Hono<AppEnv>) {

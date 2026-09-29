@@ -1,0 +1,22 @@
+Subject: Your Nook account was reset for Google sign-in
+
+Nook · nook.test
+
+SECURITY · SIGN-IN
+Your account was reset
+
+Priya Admin reset your account before allowing Google sign-in. Removed: 2 signed-in sessions, 1 API key, 3 shared items made private, 4 people removed from shared items, 1 group removed from shared items, 1 routine paused, the password, two-factor authentication. Your notes, files, and other items are kept, and everything you owned is private now.
+
+> Mon 28 Sep 2026, 09:00 (UTC)
+
+Sign in with Google as this address within 24 hours to link it. If you did not expect this, contact your admin.
+
+Sign in with Google:
+https://nook.test/
+
+--
+You got this because it is about your own Nook account.
+Security emails can't be turned off. They tell you about changes to your account.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

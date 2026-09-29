@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Avatar } from "../ui/Avatar";
+import { initials } from "./CardFace";
 import { ArrowRightLeft, Copy, Download, File as FileIcon, Maximize2, MessageSquare, Minimize2, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { contentUrl, formatBytes } from "../files/filesApi";
@@ -608,6 +610,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
             <ol className="task-comments">
               {comments.map((comment) => <li key={comment.id} className="task-comment">
                 <header>
+                  <Avatar className="task-avatar task-comment-avatar" name={comment.author_name ?? "?"} url={comment.author_avatar_url} fallback={initials(comment.author_name ?? "?")} />
                   <strong>{comment.author_name ?? "Former member"}</strong>
                   <time dateTime={comment.created_at}>{relativeTime(comment.created_at)}</time>
                   {comment.edited_at && <span className="task-comment-edited">edited</span>}

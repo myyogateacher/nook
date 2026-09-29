@@ -3,6 +3,7 @@ import { CalendarDays } from "lucide-react";
 import { avatarTone, FACE_PEOPLE, FACE_TAGS, initials } from "./CardFace";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
 import { FlagIcon } from "./TagPicker";
+import { Avatar } from "../ui/Avatar";
 import type { BoardCard, BoardData } from "./boardQuery";
 import { dueStatus } from "./taskActions";
 import type { CardAssignee, CardFlag } from "./tasksApi";
@@ -46,7 +47,7 @@ export function Avatars({ card }: { card: BoardCard }) {
   if (!card.assignees.length) return null;
   const { shown, more } = visibleItems<CardAssignee>(card.assignees, FACE_PEOPLE);
   return <span className="task-card-people" aria-hidden="true">
-    {shown.map((person) => <span key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`}>{initials(person.display_name)}</span>)}
+    {shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} />)}
     {more > 0 && <span className="task-avatar task-avatar-more">+{more}</span>}
   </span>;
 }

@@ -113,7 +113,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     try {
       const { grants, days } = precheckKeyCreate(user, body);
       if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
-      if (!await verifyReauth(user.id, body, "api_key")) {
+      if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
         audit(user.id, null, "mcp.key_create_failed");
         return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
       }
@@ -155,7 +155,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
       throw error;
     }
     if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
-    if (!await verifyReauth(user.id, body, "api_key_rotate")) {
+    if (!await verifyReauth(user.id, body, "api_key_rotate", c.get("sessionId"))) {
       audit(user.id, null, "key.rotate_failed", { keyId: id });
       return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
     }

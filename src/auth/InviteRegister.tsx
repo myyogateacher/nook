@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, Link2Off, Lock, LogOut, Sparkles } from "lucide-react";
+import { Eye, EyeOff, Link2Off, Lock, LogOut, Sparkles, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../team/teamRoles";
 import type { InviteRole } from "../team/teamApi";
+import { AuthDivider, GoogleButton, googleErrorMessage } from "./googleSignIn";
+import type { RegistrationInfo } from "./registrationPrompt";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, useFieldErrors } from "./fieldChecks";
 
 export type InvitePreview = { role: InviteRole; emailHint: string | null; expiresAt: string; inviterName: string };
@@ -34,16 +36,56 @@ const DEAD_COPY = {
  * fragment (src/auth/inviteLink.ts) and is posted in JSON bodies only: the preview first, then the
  * registration. The server fixes the role and enforces the email binding and the allowlist.
  */
-export function InviteRegister({ token, onRegister, onSignIn }: {
+export function InviteRegister({ token, onRegister, onSignIn, googleError = null }: {
   token: string | null;
   onRegister: (body: InviteRegisterBody) => Promise<void>;
   onSignIn: () => void;
+  /** QA U8: the Google round trip came back with this message; the invite waits in the flow cookie. */
+  googleError?: string | null;
 }) {
-  const [state, setState] = useState<State>(() => token ? { kind: "loading" } : { kind: "dead", reason: "missing" });
+  const resumed = !token && googleError !== null;
+  const [state, setState] = useState<State>(() => token || resumed ? { kind: "loading" } : { kind: "dead", reason: "missing" });
+  const [googleNotice, setGoogleNotice] = useState(googleError ? googleErrorMessage(googleError) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const fields = useFieldErrors();
+  // Wave 35 (D298): which ways to join this Nook offers. Unknown: a placeholder (QA U2); a failed
+  // request or an older server: the password form only, as before.
+  const [methods, setMethods] = useState<{ password: boolean; google: boolean } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api<RegistrationInfo>("/about").then((info) => { if (live) setMethods(info.authMethods ?? { password: true, google: false }); }, () => { if (live) setMethods({ password: true, google: false }); });
+    return () => { live = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!resumed) return;
+    let active = true;
+    api<InvitePreview>("/auth/google/invite").then((preview) => { if (active) setState({ kind: "ready", preview }); }, (reason) => { if (active) setState(deadState(reason)); });
+    return () => { active = false; };
+  }, [resumed]);
+
+  /** The token goes to the server in a JSON body and waits there; the start URL carries no token (T136). */
+  async function continueWithGoogle() {
+    if (resumed) {
+      window.location.assign("/api/auth/google/start?intent=invite");
+      return;
+    }
+    if (!token) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { start } = await api<{ start: string }>("/auth/google/invite", { method: "POST", body: JSON.stringify({ token }) });
+      window.location.assign(start);
+    } catch (reason) {
+      const code = codeOf(reason);
+      if (code === "INVITE_INVALID" || code === "INVITE_EXPIRED") setState(deadState(reason));
+      else setError(reason instanceof Error ? reason.message : "Could not continue with Google");
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -90,7 +132,14 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
           <p className="invite-register-role">{ROLE_DESCRIPTIONS[state.preview.role]}.</p>
           <p className="invite-register-expiry">The link works once, until {new Date(state.preview.expiresAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.</p>
         </div>
-        <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+        {!methods && <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading sign-in options" />}
+        {methods?.google && googleNotice && <div className="auth-google-notice" role="alert"><p>{googleNotice}</p><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice("")}><X /></button></div>}
+        {methods?.google && <GoogleButton onClick={() => void continueWithGoogle()} disabled={busy} />}
+        {methods?.google && state.preview.emailHint && <p className="invite-google-hint">Choose the Google account for {state.preview.emailHint}.</p>}
+        {methods?.google && methods.password && !resumed && <AuthDivider />}
+        {methods && (!methods.password || resumed) && error && <p className="form-error" role="alert">{error}</p>}
+        {methods?.password && resumed && <p className="invite-google-hint">To create an account with a password instead, open your invite link again.</p>}
+        {methods?.password && !resumed && <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
           <label>Name<input name="displayName" autoComplete="name" maxLength={80} disabled={busy} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "invite-name-error" : undefined} /><FieldError id="invite-name-error" message={fields.errors.displayName} /></label>
           <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} disabled={busy} aria-invalid={fields.errors.email ? true : undefined} aria-describedby={[state.preview.emailHint ? "invite-email-hint" : "", fields.errors.email ? "invite-email-error" : ""].filter(Boolean).join(" ") || undefined} />
             {state.preview.emailHint && <small id="invite-email-hint">This invite is for {state.preview.emailHint}. Use that address.</small>}
@@ -108,7 +157,7 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Create account"}</button>
-        </form>
+        </form>}
       </>}
       <button type="button" className="text-button" onClick={onSignIn}>Already have an account? Sign in</button>
       <p className="security-note"><Lock /> Your notes stay on this machine.</p>

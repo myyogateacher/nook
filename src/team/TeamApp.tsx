@@ -8,6 +8,8 @@ import { relativeTime } from "../files/format";
 import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { Select } from "../ui/Select";
+import { Avatar } from "../ui/Avatar";
+import { TeamGoogleCard } from "./TeamGoogle";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
@@ -342,7 +344,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         {!loadError && visible.length > 0 && <ul className="team-list" aria-label="Team members">
           {visible.map((member) => <li key={member.id}>
             <button type="button" className={`team-row${member.id === routeUserId ? " selected" : ""}${member.status === "blocked" ? " blocked" : ""}`} aria-current={member.id === routeUserId ? "page" : undefined} onClick={() => { if (member.id !== routeUserId) go(member.id); }}>
-              <span className="team-avatar" aria-hidden="true">{initialOf(member.displayName)}</span>
+              <Avatar className="team-avatar" name={member.displayName} url={member.avatarUrl} />
               <span className="team-row-copy">
                 <span className="team-row-title">
                   <strong>{member.displayName}</strong>
@@ -423,7 +425,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
   return <article className="team-detail">
     <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
     <header className="team-detail-header">
-      <span className="team-avatar large" aria-hidden="true">{initialOf(member.displayName)}</span>
+      <Avatar className="team-avatar large" name={member.displayName} url={member.avatarUrl} />
       <div>
         <h2>{member.displayName}{member.isYou && <span className="team-tag">You</span>}</h2>
         {admin && member.email && <p className="team-detail-email">{member.email}</p>}
@@ -462,6 +464,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
       <span className="team-row-copy"><strong>Access</strong><span className="team-row-meta">What {member.isYou ? "you" : member.displayName} can open, and through what; remove or reset</span></span>
       <ChevronRight aria-hidden="true" />
     </button>}
+    {admin && <TeamGoogleCard key={member.id} userId={member.id} name={member.displayName} />}
     {admin && member.isYou && <p className="team-self-note">This is your account. Sign out from the account menu; another admin can block or sign out your account.</p>}
 
     {admin && blocked && <section className="team-card team-blocked" aria-label="Block details">

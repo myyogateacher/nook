@@ -20,10 +20,12 @@ export function inviteTokenFromHash(hash: string) {
  * (the history entry keeps its state, only the URL changes). Returns null off /register.
  */
 export function takeInviteFromLocation(location: Pick<Location, "pathname" | "hash"> = window.location, history: Pick<History, "state" | "replaceState"> = window.history) {
-  if (!isRegisterPath(location.pathname)) return { onRegister: false, token: null };
+  if (!isRegisterPath(location.pathname)) return { onRegister: false, token: null, googleError: null };
   const token = inviteTokenFromHash(location.hash);
+  // Wave 35 (QA U8): back from Google with a message; the invite itself waits server side.
+  const googleError = new URLSearchParams(location.hash.replace(/^#/, "")).get("google-error");
   if (location.hash) history.replaceState(history.state, "", REGISTER_PATH);
-  return { onRegister: true, token };
+  return { onRegister: true, token, googleError: googleError && /^[a-z_]{1,32}$/.test(googleError) ? googleError : null };
 }
 
 let initial: ReturnType<typeof takeInviteFromLocation> | null = null;

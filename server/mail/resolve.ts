@@ -159,7 +159,8 @@ function resolveTwoFactor(payload: Payload): Resolution {
 }
 
 function resolveAccount(payload: Payload): Resolution {
-  return { data: { event: String(payload.event) as AccountEvent, actorName: nameOf(payload.actorId), at: String(payload.at) } };
+  const counts = payload.counts && typeof payload.counts === "object" ? payload.counts as Record<string, number> : null;
+  return { data: { event: String(payload.event) as AccountEvent, actorName: nameOf(payload.actorId), at: String(payload.at), ...(counts ? { counts } : {}) } };
 }
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");

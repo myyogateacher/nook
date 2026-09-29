@@ -81,6 +81,10 @@
   .ui-chip-remove { width: 44px; height: 44px; margin: -6px -2px -6px -8px; }
 }
 
+/* Avatars (Wave 35, src/ui/Avatar.tsx): a picture fills the same circle the letters used. */
+.avatar-has-image { overflow: hidden; padding: 0; }
+.avatar-has-image > img { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: inherit; }
+
 /* The reaction picker (Wave 20): a 4 x 3 grid of 44 px buttons in the popover or the phone sheet. */
 .ui-reaction-grid { display: grid; grid-template-columns: repeat(4, 44px); gap: 4px; padding: 2px; }
 .ui-reaction-choice { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 10px; background: transparent; font-size: 22px; line-height: 1; cursor: pointer; touch-action: manipulation; }

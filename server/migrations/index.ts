@@ -28,6 +28,7 @@ import { emailDigestsMigration } from "./028_email_digests";
 import { accessLevelsMigration } from "./029_access_levels";
 import { whiteboardsMigration } from "./030_whiteboards";
 import { accessCentralMigration } from "./032_access_central";
+import { googleIdentitiesMigration } from "./034_google_identities";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -44,7 +45,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // 030 (whiteboards, Wave 23; the plan's 023 was taken) needs only 006.
   whiteboardsMigration,
   // 031 is reserved for a parallel wave. 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
-  accessCentralMigration
+  accessCentralMigration,
+  // 033 belongs to a parallel wave. 034 (Google identities, flows, avatars, re-auth) needs only 001.
+  googleIdentitiesMigration
 ];
 
 /**

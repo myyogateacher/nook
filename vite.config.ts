@@ -19,13 +19,26 @@ function excalidrawFonts(): Plugin {
         createReadStream(file).pipe(res);
       });
     },
-    // Excalidraw appends an esm.sh CDN fallback to every font URL, which the CSP blocks (and reports)
-    // even when the self-hosted copy loads. Point the fallback at the self-hosted copy too.
     transform(code, id) {
-      if (!id.includes("@excalidraw/excalidraw") || !code.includes("https://esm.sh/")) return null;
-      const out = code.replace(/`https:\/\/esm\.sh\/\$\{.*?\}\/dist\/prod\/`/, "`${window.location.origin}/excalidraw/`");
-      if (out.includes("https://esm.sh/")) this.error("Excalidraw's esm.sh font fallback changed shape; update the rewrite (D203)");
-      return { code: out, map: null };
+      if (!id.includes("@excalidraw/excalidraw")) return null;
+      let out = code;
+      // Excalidraw appends an esm.sh CDN fallback to every font URL, which the CSP blocks (and reports)
+      // even when the self-hosted copy loads. Point the fallback at the self-hosted copy too.
+      if (out.includes("https://esm.sh/")) {
+        out = out.replace(/`https:\/\/esm\.sh\/\$\{.*?\}\/dist\/prod\/`/, "`${window.location.origin}/excalidraw/`");
+        if (out.includes("https://esm.sh/")) this.error("Excalidraw's esm.sh font fallback changed shape; update the rewrite (D203)");
+      }
+      // D201 and the spike result: SVG export inlines fonts through a subsetting chunk that calls
+      // Function(), which the CSP refuses. The export dialog is off (UIOptions), so the one way in is
+      // "Copy to clipboard as SVG" (context menu and command palette): its predicate is made false.
+      const copyAsSvg = /name:\s*"copyAsSvg"/.exec(out);
+      if (copyAsSvg) {
+        const at = out.indexOf("predicate:", copyAsSvg.index);
+        const next = out.slice(copyAsSvg.index, at).search(/name:\s*"copyAsPng"/);
+        if (at < 0 || next >= 0 || at - copyAsSvg.index > 4000) this.error("Excalidraw's copyAsSvg action changed shape; update the rewrite (D201)");
+        out = `${out.slice(0, at)}predicate:()=>false,nookHiddenPredicate:${out.slice(at + "predicate:".length)}`;
+      }
+      return out === code ? null : { code: out, map: null };
     },
     writeBundle(options) {
       cpSync(excalidrawFontsDir, join(options.dir ?? "dist", "excalidraw/fonts"), { recursive: true });

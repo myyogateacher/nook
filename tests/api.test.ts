@@ -164,6 +164,10 @@ describe("authorization and version workflow", () => {
     expect(stored.totp_secret.startsWith("v1:")).toBe(true);
     expect(stored.totp_secret).not.toContain(setup.secret);
 
+    // A code from the previous 30 s window is accepted only while the server is still one window on:
+    // near the end of a window, wait for the next one so a slow request cannot cross it.
+    const windowLeftMs = 30_000 - (Date.now() % 30_000);
+    if (windowLeftMs < 2_000) await Bun.sleep(windowLeftMs + 50);
     const previousCode = totpCodeAt(setup.secret, totpCounter() - 1);
     const enable = await request("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: previousCode }) }, owner);
     expect(enable.status).toBe(200);
@@ -226,7 +230,11 @@ describe("authorization and version workflow", () => {
     const reader = await register("Reader");
 
     const folderResponse = await request("/folders", {}, owner);
-    const ownerFolders = ((await folderResponse.json()) as { folders: Array<{ id: string; name: string; is_default: number }> }).folders;
+    const listedFolders = ((await folderResponse.json()) as { folders: Array<{ id: string; name: string; is_default: number; is_owner: number; visibility: string }> }).folders;
+    // The suite shares one database: folders other files shared with all users are listed too, so
+    // check the new user's own folders, and that nothing else reaches them but all-users folders.
+    const ownerFolders = listedFolders.filter((folder) => folder.is_owner === 1);
+    expect(listedFolders.filter((folder) => folder.is_owner !== 1).every((folder) => folder.visibility === "all_users")).toBe(true);
     expect(ownerFolders).toHaveLength(1);
     expect(ownerFolders[0]?.name).toBe("Default");
     expect(ownerFolders[0]?.is_default).toBe(1);

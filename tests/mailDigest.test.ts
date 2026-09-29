@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 
 const mail = await import("../server/mail");
@@ -27,9 +27,16 @@ beforeEach(() => {
   mail.setMailTransportForTests(async (message) => { sent.push(message); return { id: `msg_${sent.length}` }; });
 });
 afterEach(() => mail.setMailTransportForTests(null));
+// The suite shares one database: a digest left scheduled would be queued, and sent, by any later
+// file's dispatch tick at a fake clock past it.
+const people: string[] = [];
+afterAll(() => {
+  db.query("UPDATE email_prefs SET digest = 'off', next_digest_at = NULL WHERE user_id IN (SELECT value FROM json_each(?))").run(JSON.stringify(people));
+});
 
 async function person(label: string) {
   const session = await createUser(label);
+  people.push(session.userId);
   db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(new Date().toISOString(), session.userId);
   return session;
 }

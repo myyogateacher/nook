@@ -103,7 +103,7 @@ describe("reminders by email", () => {
     const fireMs = Date.parse(both.nextFireAt);
     reminders.runDispatch({ nowMs: fireMs + 20 * MINUTE });
     await runMailDispatch({ nowMs: fireMs + 21 * MINUTE });
-    expect(sent.at(-1)!.subject).toEndWith("(late)");
+    expect(sent.filter((item) => item.to === user.email).at(-1)!.subject).toEndWith("(late)");
     await call(user, "PUT", "/mail/settings", { enabled: true, categories: { assignments: true, comments: true, sharing: true, proposals: true, sprints: false, bin: false, reminders: false }, digest: "off", digestLocalTime: "08:00", quietHours: null, tz: "UTC", revision: 0 });
     const third = (await call(user, "POST", "/reminders", { eventId: event.id, offsetMinutes: 15, tz: "UTC", channels: "email" })).body.reminder;
     reminders.runDispatch({ nowMs: Date.parse(third.nextFireAt) + 1000 });

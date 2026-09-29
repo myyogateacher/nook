@@ -67,11 +67,11 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
   }
 
   if (readOnly) {
-    return <ModalDialog title={card.title} eyebrow="Card" onClose={onCancel} variant="sheet">
+    return <ModalDialog title={card.title} eyebrow="Card" onClose={onCancel}>
       {onCopyLink && <div className="move-list task-move-parent">
         <button className="move-option" autoFocus onClick={() => { onCopyLink(); onCancel(); }}><LinkIcon aria-hidden="true" /><span>Copy link<small>A link to this card</small></span></button>
       </div>}
-      <p className="task-cal-help">You can read this card here but not move or change it.</p>
+      <p className="file-dialog-copy">You can read this card here but not move or change it.</p>
       <footer className="file-dialog-actions">
         <button className="secondary-button" onClick={onCancel}>Close</button>
       </footer>

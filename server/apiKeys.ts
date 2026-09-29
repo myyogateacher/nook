@@ -53,7 +53,8 @@ export const grantInput = z.object({
 export type GrantInput = z.infer<typeof grantInput>;
 
 const reauthFields = {
-  password: z.string().min(1).max(256),
+  /** Omitted when the session confirmed the account with Google in the last 5 minutes (D297). */
+  password: z.string().min(1).max(256).optional(),
   totpCode: totpCode.optional(),
   recoveryCode: recoveryCode.optional()
 };

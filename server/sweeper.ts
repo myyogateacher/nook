@@ -10,6 +10,8 @@ import { sweepRuns } from "./inbox/routines";
 import { sweepKeyGraces } from "./apiKeys";
 import { sweepMail } from "./mail/dispatcher";
 import { orphanGrantReport } from "./access/groups";
+import { sweepAvatarFiles } from "./avatars";
+import { sweepGoogleFlows } from "./google/flows";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -115,6 +117,14 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (mail.outbox || mail.tokens) console.info(`Mail sweep: ${mail.outbox} outbox rows and ${mail.tokens} tokens removed`);
       } catch (error) {
         console.error("Mail sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Google sign-in (Wave 35): flows past their 10 minutes, and avatar files no account points at.
+        const flows = sweepGoogleFlows(options.nowMs);
+        const avatars = await sweepAvatarFiles(options.nowMs);
+        if (flows || avatars) console.info(`Google sweep: ${flows} sign-in flows and ${avatars} avatar files removed`);
+      } catch (error) {
+        console.error("Google sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       return counts && bin ? { ...counts, bin } : null;
     } finally {

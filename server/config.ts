@@ -140,6 +140,52 @@ function mailLinksBlocked() {
 const mailBlockedReason = resendApiKey && mailFrom ? mailLinksBlocked() : null;
 const mailEnabled = mailTransportValue === "file" || Boolean(resendApiKey && mailFrom && !mailBlockedReason);
 
+// Sign-in methods (Wave 35, D290): password (default, as before), google, or both.
+const authMethodsValue = process.env.AUTH_METHODS?.trim().toLowerCase() || "password";
+if (!(["password", "google", "both"] as const).includes(authMethodsValue as "password")) throw new Error("AUTH_METHODS must be password, google, or both");
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim() || null;
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim() || null;
+if (authMethodsValue !== "password" && (!googleClientId || !googleClientSecret)) {
+  throw new Error(`AUTH_METHODS=${authMethodsValue} needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (the OAuth client from Google Cloud Console)`);
+}
+if (googleClientId && !/^[A-Za-z0-9._-]{8,200}$/.test(googleClientId)) throw new Error("GOOGLE_CLIENT_ID must be the client id from Google Cloud Console, without spaces");
+if (googleClientSecret && !/^\S{8,200}$/.test(googleClientSecret)) throw new Error("GOOGLE_CLIENT_SECRET must be a single token without spaces");
+const googleAllowedDomains = (process.env.GOOGLE_ALLOWED_DOMAINS ?? "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean)
+  .map((value) => {
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(value)) throw new Error("GOOGLE_ALLOWED_DOMAINS entries must be domain names such as example.com");
+    return value;
+  });
+// Tests and local QA only: a fake issuer standing in for Google (D290). Never in production.
+const googleTestBaseUrl = process.env.GOOGLE_OIDC_TEST_BASE_URL?.trim() || null;
+if (googleTestBaseUrl && process.env.NODE_ENV === "production") throw new Error("GOOGLE_OIDC_TEST_BASE_URL is for tests only and cannot be used in production");
+
+/** Google's endpoints, or a fake issuer's (tests). The avatar hosts are suffix rules: ".googleusercontent.com". */
+export function googleEndpoints(base: string | null) {
+  if (!base) {
+    return {
+      authorization: "https://accounts.google.com/o/oauth2/v2/auth",
+      token: "https://oauth2.googleapis.com/token",
+      jwks: "https://www.googleapis.com/oauth2/v3/certs",
+      issuers: ["https://accounts.google.com", "accounts.google.com"],
+      avatarHosts: [".googleusercontent.com"],
+      avatarHttp: false
+    };
+  }
+  const url = new URL(base);
+  const root = url.origin;
+  return {
+    authorization: `${root}/o/oauth2/v2/auth`,
+    token: `${root}/token`,
+    jwks: `${root}/oauth2/v3/certs`,
+    issuers: [root],
+    avatarHosts: [url.hostname],
+    avatarHttp: url.protocol === "http:"
+  };
+}
+
 export const config = {
   port,
   dataDir,
@@ -168,6 +214,16 @@ export const config = {
    * Email is on only when both RESEND_API_KEY and MAIL_FROM are set and links in mail can work
    * (server/mail.ts), or with the development file transport.
    */
+  /** Sign-in methods and the Google OAuth client (Wave 35, D290). Tests switch these in process. */
+  auth: {
+    methods: authMethodsValue as "password" | "google" | "both",
+    google: {
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+      allowedDomains: googleAllowedDomains,
+      endpoints: googleEndpoints(googleTestBaseUrl)
+    }
+  },
   mail: {
     enabled: mailEnabled,
     apiKey: resendApiKey,
@@ -195,3 +251,8 @@ export function isEmailAllowed(email: string) {
 export function isOriginAllowed(origin: string | undefined | null) {
   return Boolean(origin && appOrigins.has(origin));
 }
+
+/** Whether email and password sign-in is on (D295). Read on every request, never cached. */
+export const passwordAuthEnabled = () => config.auth.methods !== "google";
+/** Whether Google sign-in is on (D295). */
+export const googleAuthEnabled = () => config.auth.methods !== "password" && Boolean(config.auth.google.clientId && config.auth.google.clientSecret);

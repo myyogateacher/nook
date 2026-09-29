@@ -43,7 +43,7 @@ test("the login screen offers the first account only on a fresh instance (QA not
   expect(typeof about.hasUsers).toBe("boolean");
   expect(typeof about.openRegistration).toBe("boolean");
   expect(typeof about.passwordReset).toBe("boolean");
-  expect(Object.keys(about).sort()).toEqual(["gitSha", "hasUsers", "openRegistration", "passwordReset", "version"]);
+  expect(Object.keys(about).sort()).toEqual(["authMethods", "gitSha", "hasUsers", "openRegistration", "passwordReset", "version"]);
 });
 
 test("the proposal push switch is named by its visible label (QA note 7)", async () => {

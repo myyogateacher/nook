@@ -133,7 +133,12 @@ export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorN
   fixture: () => ({ event: "blocked", actorName: "Priya Admin", at: "2026-09-28T09:00:00.000Z" })
 });
 
-export type PasswordEvent = "changed" | "reset";
+/**
+ * `google_linked`: Google sign-in was added from Settings (Wave 35, D293). `google_linked_reset`:
+ * Google was linked to an address that had never been confirmed, so the old password, sessions, and
+ * keys were removed (pre-hijacking, T254).
+ */
+export type PasswordEvent = "changed" | "reset" | "google_linked" | "google_linked_reset";
 
 /**
  * #12: the password was changed in Settings → Security, or reset from a mailed link (Wave 30,
@@ -144,6 +149,27 @@ export const passwordChangedTemplate = defineTemplate<{ event: PasswordEvent; at
   name: "security.password_changed",
   class: "security",
   render(data, ctx) {
+    if (data.event === "google_linked" || data.event === "google_linked_reset") {
+      const replaced = data.event === "google_linked_reset";
+      const lead = replaced
+        ? "Someone signed in to Nook with Google as this address. The address had never been confirmed, so the password and any two-factor setup made before were removed, every device was signed out, and every API key was revoked."
+        : "Google sign-in was added to your Nook account. You can now sign in with Google as this address; your password and devices are unchanged.";
+      return layout({
+        instanceName: ctx.instanceName,
+        tone: "security",
+        subject: delayed(replaced ? "Your Nook account now signs in with Google" : "Google sign-in was added to your Nook account", data.delayed),
+        preheader: lead,
+        eyebrow: "Security · Sign-in",
+        title: replaced ? "Your account now signs in with Google" : "Google sign-in was added",
+        lead,
+        blocks: [
+          context([{ title: formatInstant(data.at, ctx.tz) }], { tone: "security" }),
+          paragraph("If this wasn't you, ask your admin to block the account at once.")
+        ],
+        action: { label: "Review in Settings", href: appLink(paths.settings("security")) },
+        footer: securityFooter()
+      });
+    }
     const reset = data.event === "reset";
     const lead = reset
       ? "Your Nook password was reset with a link sent to this address. Every device was signed out."

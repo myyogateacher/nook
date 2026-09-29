@@ -3,6 +3,7 @@ import { relationTypeFor, storedRelation, type RelationKind, type RelationType, 
 import { getBoard, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
+import { avatarUrlsFor } from "../avatars";
 
 /**
  * Typed card relations (WAVE_13_TASK_CARD_UX.md D104–D107, §3.2, T90, T91).
@@ -196,7 +197,7 @@ export function getBoardWithRelationCounts(userId: string, boardId: string) {
 }
 
 /** One entry of the board payload's `users` map: every assignee on the board, once (D113 trim). */
-export type BoardPayloadUser = { display_name: string; can_read: 0 | 1 };
+export type BoardPayloadUser = { display_name: string; can_read: 0 | 1; avatar_url?: string | null };
 
 /**
  * `GET /api/tasks/boards/:b` (D113 trim, v0.9.0): each card lists `assignee_ids` and the board
@@ -211,5 +212,8 @@ export function boardPayload(userId: string, boardId: string) {
     for (const assignee of assignees) users[assignee.id] ??= { display_name: assignee.display_name, can_read: assignee.can_read };
     return { ...card, assignee_ids: assignees.map((assignee) => assignee.id) };
   });
+  // Wave 35 (D299): each assignee's picture, beside the name the map already carries.
+  const avatars = avatarUrlsFor(Object.keys(users));
+  for (const [id, entry] of Object.entries(users)) entry.avatar_url = avatars.get(id) ?? null;
   return { ...detail, cards, users };
 }

@@ -27,9 +27,11 @@ export const loginSchema = z.object({
   recoveryCode: recoveryCode.optional()
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 export const totpCodeSchema = z.object({ code: totpCode }).strict();
-export const totpSetupSchema = z.object({ password: z.string().min(1).max(256) }).strict();
-export const totpDisableSchema = z.object({ code: totpCode, password: z.string().min(1).max(256) }).strict();
-export const totpRecoveryViewSchema = z.object({ code: totpCode, password: z.string().min(1).max(256) }).strict();
+// The password is optional where a fresh Google confirmation of this session can stand in (D297).
+const reauthPassword = z.string().min(1).max(256).optional();
+export const totpSetupSchema = z.object({ password: reauthPassword }).strict();
+export const totpDisableSchema = z.object({ code: totpCode, password: reauthPassword }).strict();
+export const totpRecoveryViewSchema = z.object({ code: totpCode, password: reauthPassword }).strict();
 export const folderSchema = z.object({ name: z.string().trim().min(1).max(120), parentId: uuid.nullish() }).strict();
 export const noteCreateSchema = z.object({ folderId: uuid.nullish() }).strict();
 export const noteMetaSchema = z.object({ folderId: uuid.nullish() }).strict();
@@ -57,7 +59,7 @@ export const mcpApiKeySchema = z.object({
   scopes: z.array(z.enum(MCP_SCOPES)).min(1).max(MCP_SCOPES.length)
     .refine((values) => new Set(values).size === values.length, "Scopes must be unique")
     .optional(),
-  password: z.string().min(1).max(256),
+  password: reauthPassword,
   totpCode: totpCode.optional(),
   recoveryCode: recoveryCode.optional()
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");

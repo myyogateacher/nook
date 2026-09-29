@@ -6,6 +6,7 @@ import { parseJson, uuid } from "../validation";
 import { TASK_QUERY_LIMITS } from "../../shared/taskQuery";
 import { QUERY_GROUPS, QUERY_PAGE, QUERY_SORTS, queryCards } from "./query";
 import { TaskError } from "./service";
+import { withAssigneeAvatars } from "../avatars";
 import {
   createView,
   deleteView,
@@ -170,7 +171,7 @@ export function registerTaskQueryRoutes(app: Hono<AppEnv>) {
       return c.json(invalid(`limit must be an integer from 1 to ${QUERY_PAGE.max}`), 400);
     }
     if (!tzSchema.safeParse(tz).success) return c.json(invalid("tz must be an IANA time zone"), 400);
-    return respond(c, () => viewCards(c.get("user").id, id, { cursor, limit: limitParam === undefined ? undefined : Number(limitParam), tz }));
+    return respond(c, () => withAssigneeAvatars(viewCards(c.get("user").id, id, { cursor, limit: limitParam === undefined ? undefined : Number(limitParam), tz })));
   });
 
   app.post("/api/tasks/query", async (c) => {
@@ -178,7 +179,7 @@ export function registerTaskQueryRoutes(app: Hono<AppEnv>) {
     if (limited) return limited;
     const body = await parseJson(c.req.raw, taskQuerySchema);
     try {
-      return c.json(queryCards(c.get("user").id, body));
+      return c.json(withAssigneeAvatars(queryCards(c.get("user").id, body)));
     } catch (error) {
       if (error instanceof TaskError) return c.json(error.body(), error.status);
       throw error;

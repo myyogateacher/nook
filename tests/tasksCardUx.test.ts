@@ -46,7 +46,8 @@ describe("multiple card assignees (D102, D103)", () => {
     // The board payload sends ids plus one users map (D113 trim); the card routes keep the objects.
     const board = (await call(owner, "GET", `/boards/${boardId}`)).body;
     expect(board.cards[0].assignee_ids).toEqual([member.userId, owner.userId]);
-    expect(board.users[member.userId]).toEqual({ display_name: "Many member", can_read: 1 });
+    // Wave 35 (D299): the map carries each person's picture URL beside the name (null without one).
+    expect(board.users[member.userId]).toEqual({ display_name: "Many member", can_read: 1, avatar_url: null });
     expect(board.cards[0]).not.toHaveProperty("assignees");
     // The client rebuilds the in-memory shape from the trimmed payload.
     expect(hydrateBoard(board).cards[0]).toMatchObject({ board_id: boardId, assignees: patched.body.card.assignees });

@@ -134,3 +134,41 @@ describe("mail link host check (L4)", () => {
     expect(enabled("http://nook.lan:2026")).toBe(true);
   }, 30_000);
 });
+
+describe("sign-in methods (Wave 35, D290)", () => {
+  function loadAuth(env: Record<string, string>) {
+    const result = Bun.spawnSync(["bun", "--eval", `const { config, passwordAuthEnabled, googleAuthEnabled } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ methods: config.auth.methods, domains: config.auth.google.allowedDomains, token: config.auth.google.endpoints.token, password: passwordAuthEnabled(), google: googleAuthEnabled() }));`], {
+      cwd: tmpdir(),
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    return { ok: result.exitCode === 0, stdout: result.stdout.toString().trim().split("\n").at(-1) ?? "", stderr: result.stderr.toString() };
+  }
+  const client = { GOOGLE_CLIENT_ID: "1234-abc.apps.googleusercontent.test", GOOGLE_CLIENT_SECRET: "placeholder-secret-value" };
+
+  test("defaults to password only, as before the wave", () => {
+    expect(JSON.parse(loadAuth({}).stdout)).toEqual({ methods: "password", domains: [], token: "https://oauth2.googleapis.com/token", password: true, google: false });
+  });
+
+  test("google and both need the client id and secret, or the server refuses to start", () => {
+    for (const methods of ["google", "both"]) {
+      const missing = loadAuth({ AUTH_METHODS: methods });
+      expect(missing.ok).toBe(false);
+      expect(missing.stderr).toContain("needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET");
+      expect(loadAuth({ AUTH_METHODS: methods, GOOGLE_CLIENT_ID: client.GOOGLE_CLIENT_ID }).ok).toBe(false);
+    }
+    expect(JSON.parse(loadAuth({ AUTH_METHODS: "google", ...client }).stdout)).toMatchObject({ methods: "google", password: false, google: true });
+    expect(JSON.parse(loadAuth({ AUTH_METHODS: "Both", ...client, GOOGLE_ALLOWED_DOMAINS: " Example.test ,corp.test" }).stdout)).toMatchObject({ methods: "both", domains: ["example.test", "corp.test"], password: true, google: true });
+  }, 30_000);
+
+  test("rejects unknown methods, bad domains, and the test issuer in production", () => {
+    expect(loadAuth({ AUTH_METHODS: "saml" }).stderr).toContain("AUTH_METHODS must be password, google, or both");
+    expect(loadAuth({ AUTH_METHODS: "google", ...client, GOOGLE_ALLOWED_DOMAINS: "not a domain" }).stderr).toContain("GOOGLE_ALLOWED_DOMAINS entries must be domain names");
+    expect(loadAuth({ AUTH_METHODS: "google", GOOGLE_CLIENT_ID: "has spaces in it", GOOGLE_CLIENT_SECRET: "placeholder-secret-value" }).ok).toBe(false);
+    const production = loadAuth({ NODE_ENV: "production", COOKIE_SECURE: "true", AUTH_METHODS: "google", ...client, GOOGLE_OIDC_TEST_BASE_URL: "http://localhost:9" });
+    expect(production.ok).toBe(false);
+    expect(production.stderr).toContain("GOOGLE_OIDC_TEST_BASE_URL is for tests only");
+    expect(JSON.parse(loadAuth({ AUTH_METHODS: "google", ...client, GOOGLE_OIDC_TEST_BASE_URL: "http://localhost:9" }).stdout).token).toBe("http://localhost:9/token");
+  }, 30_000);
+});

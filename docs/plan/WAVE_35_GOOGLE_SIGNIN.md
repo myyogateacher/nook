@@ -34,8 +34,9 @@ CREATE TABLE google_auth_flows (
   id TEXT PRIMARY KEY,               -- SHA-256 of the cookie's binding token
   state_hash TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
   intent TEXT NOT NULL CHECK (intent IN ('signin','invite','link','reauth')),
-  stage TEXT NOT NULL DEFAULT 'authorize' CHECK (stage IN ('authorize','second_factor')),
+  stage TEXT NOT NULL DEFAULT 'authorize' CHECK (stage IN ('prepared','authorize','second_factor')), -- prepared: an invite posted, start not yet called
   return_to TEXT NOT NULL, invite_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,   -- reauth: the session to confirm
   failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
 ALTER TABLE users ADD COLUMN avatar_id TEXT;       -- UUID of DATA_DIR/avatars/<id>
 ALTER TABLE sessions ADD COLUMN reauth_at TEXT;    -- D297

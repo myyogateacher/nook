@@ -12,6 +12,8 @@ import { hashAuthToken } from "./mail/resolve";
 import { mailPasswordChanged, mailTwoFactor } from "./mail/triggers";
 import { bumpUnsubscribeEpoch } from "./mail/unsubscribe";
 import { consumeRecoveryCode, consumeTotp, verifyReauth } from "./reauth";
+import { passwordMethodRefusal } from "./authMethods";
+import { hashPassword, verifyPassword } from "./passwords";
 import { email, parseJson, password, recoveryCode, totpCode } from "./validation";
 
 /**
@@ -96,12 +98,14 @@ function clientAddress(c: Context<AppEnv>) {
 }
 
 function publicRequestRefusal(c: Context<AppEnv>) {
+  // D295: with AUTH_METHODS=google there are no passwords to reset.
+  const methodRefusal = passwordMethodRefusal(c);
+  if (methodRefusal) return methodRefusal;
   if (!isOriginAllowed(c.req.header("Origin"))) return c.json({ error: "Invalid request origin" }, 403);
   if (!c.req.header("Content-Type")?.toLowerCase().startsWith("application/json")) return c.json({ error: "Content-Type must be application/json" }, 415);
   return null;
 }
 
-const hashPassword = (value: string) => Bun.password.hash(value, { algorithm: "argon2id", memoryCost: 65536, timeCost: 3 });
 
 /**
  * The work behind a reset request, run after the response: the per-address limit, then the lookup,
@@ -230,18 +234,20 @@ export function registerPasswordResetRoutes(app: Hono<AppEnv>) {
 /** The signed-in change: register after the session, CSRF, and role middleware. */
 export function registerPasswordChangeRoute(app: Hono<AppEnv>) {
   app.post("/api/auth/password/change", async (c) => {
+    const methodRefusal = passwordMethodRefusal(c);
+    if (methodRefusal) return methodRefusal;
     const current = c.get("user");
     const body = await parseJson(c.req.raw, passwordChangeSchema);
     if (limited(`password-change:${current.id}`, RESET_LIMITS.changePerUserTenMinutes, 10 * 60_000)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
     // The password first; a code is consumed only after it verifies (server/reauth.ts).
-    if (!await verifyReauth(current.id, { password: body.currentPassword, totpCode: body.totpCode, recoveryCode: body.recoveryCode }, "password_change")) {
+    if (!await verifyReauth(current.id, { password: body.currentPassword, totpCode: body.totpCode, recoveryCode: body.recoveryCode }, "password_change", c.get("sessionId"))) {
       audit(current.id, null, "auth.password_change_failed");
       return c.json({ error: current.totp_enabled_at ? "Invalid password or authentication code" : "Your current password is not correct", code: "REAUTH_FAILED" }, 400);
     }
     if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
     const user = db.query("SELECT password_hash FROM users WHERE id = ?").get(current.id) as { password_hash: string };
-    if (await Bun.password.verify(body.newPassword, user.password_hash)) return c.json({ error: "Choose a password that is different from your current one", code: "SAME_PASSWORD" }, 400);
+    if (await verifyPassword(body.newPassword, user.password_hash)) return c.json({ error: "Choose a password that is different from your current one", code: "SAME_PASSWORD" }, 400);
     const passwordHash = await hashPassword(body.newPassword);
     const signedOut = db.transaction(() => {
       db.query("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, current.id);

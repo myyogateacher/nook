@@ -48,9 +48,13 @@ export function offerDialogReopen(reopen: () => void) {
 // sentinel back, or the next Back would leave the dialog's entry.
 let heldFromSentinel = false;
 
-/** Called by a blocked guard that kept its layer open: a Back off the sentinel pushes the sentinel again. */
+/**
+ * Called by a guard that kept a layer open (a blocked one, or one that closed only the layer over
+ * another): a Back off the sentinel pushes the sentinel again. True when this is such a Back.
+ */
 export function holdDialogSentinel() {
   if (closingFromSentinel) heldFromSentinel = true;
+  return closingFromSentinel;
 }
 
 /** Registers a guard for the dialogs of the app on screen (or shared chrome). Returns the unregister function. */

@@ -202,6 +202,22 @@ function authorize(kind: AccessKind, id: string, userId: string) {
 
 export type ItemAccess = ReturnType<typeof readAccess>;
 
+const KEY_MODULE: Record<AccessKind, string> = { note: "notes", folder: "notes", document: "files", board: "tasks", task_view: "tasks", collection: "collections", calendar: "calendar" };
+
+/**
+ * How many of the owner's usable keys (live, not expired, not past a rotation grace) hold a grant
+ * on this item's module over "all" or on this item. The owner's live access always covers their
+ * own items, so this is what the keys can reach today (role and policy blocks aside).
+ */
+function keysReaching(kind: AccessKind, id: string, ownerId: string) {
+  const at = now();
+  return (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys k WHERE k.user_id = $ownerId AND k.revoked_at IS NULL
+      AND (k.expires_at IS NULL OR k.expires_at > $at) AND (k.revoke_after IS NULL OR k.revoke_after > $at)
+      AND EXISTS (SELECT 1 FROM api_key_grants g WHERE g.key_id = k.id AND g.module = $module
+        AND (g.resource_id IS NULL OR (g.resource_kind = $kind AND g.resource_id = $id)))`)
+    .get({ ownerId, at, module: KEY_MODULE[kind], kind, id }) as { count: number }).count;
+}
+
 export function readAccess(kind: AccessKind, id: string, userId: string) {
   const { state, yourLevel } = authorize(kind, id, userId);
   const direct = directShares(kind, id);
@@ -223,6 +239,8 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.member_count, guestCount: group.guest_count, selfAddedCount: group.self_added, level: group.level })),
     levels: offered,
     yourLevel,
+    // "N of your API keys can reach this" (§C.5, §E): the owner's own usable keys only (Wave 33).
+    ...(yourLevel === "owner" ? { keysWithAccess: keysReaching(kind, id, userId) } : {}),
     shareWithGuests: readPolicies().shareWithGuests,
     inheritable: CONFIG[kind].inherit
   };

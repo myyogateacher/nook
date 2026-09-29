@@ -46,7 +46,9 @@ export type InviteErrorCode =
   | "INVITE_EMAIL_MISMATCH"
   | "EMAIL_NOT_ALLOWED"
   | "ACCOUNT_EXISTS"
-  | "EMAIL_REQUIRED";
+  | "EMAIL_REQUIRED"
+  | "TEMPLATE_NOT_FOUND"
+  | "TEMPLATE_ROLE_MISMATCH";
 
 export class InviteError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 410 | 429, readonly code: InviteErrorCode, message: string) {
@@ -87,13 +89,15 @@ export type TeamInvite = {
   usedBy: { id: string; displayName: string } | null;
   usedAt: string | null;
   revokedAt: string | null;
+  /** The access template applied on acceptance (Wave 33, D286); null when none, or once it is deleted. */
+  template: { id: string; name: string } | null;
 };
 
-type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number };
+type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; template_id: string | null; template_name: string | null };
 
 const listSelect = `
-  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name
-  FROM team_invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by`;
+  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name, t.name AS template_name
+  FROM team_invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by LEFT JOIN access_templates t ON t.id = i.template_id`;
 
 function present(row: ListedRow, at: string): TeamInvite {
   return {
@@ -108,7 +112,8 @@ function present(row: ListedRow, at: string): TeamInvite {
     createdBy: row.created_by && row.created_by_name !== null ? { id: row.created_by, displayName: row.created_by_name } : null,
     usedBy: row.used_by && row.used_by_name !== null ? { id: row.used_by, displayName: row.used_by_name } : null,
     usedAt: row.used_at,
-    revokedAt: row.revoked_at
+    revokedAt: row.revoked_at,
+    template: row.template_id && row.template_name !== null ? { id: row.template_id, name: row.template_name } : null
   };
 }
 
@@ -149,7 +154,7 @@ function recentCreations(userId: string, nowMs: number) {
   return recent;
 }
 
-export type CreateInviteInput = { role: InviteRole; email?: string | null; expiresInDays?: number; note?: string | null; sendEmail?: boolean };
+export type CreateInviteInput = { role: InviteRole; email?: string | null; expiresInDays?: number; note?: string | null; sendEmail?: boolean; templateId?: string | null };
 
 /**
  * Creates an invite and returns the token once (D161). The link carries the token in the URL
@@ -174,9 +179,16 @@ export function createInvite(actor: Actor, input: CreateInviteInput, origin: str
   const row = db.transaction(() => {
     if (email && db.query("SELECT 1 FROM users WHERE email = ?").get(email)) throw new InviteError(409, "ACCOUNT_EXISTS", "An account with that email already exists");
     if (liveCount(createdAt) >= LIVE_INVITE_LIMIT) throw new InviteError(409, "INVITE_LIMIT", `This Nook already has ${LIVE_INVITE_LIMIT} live invites. Revoke one or wait for one to expire.`);
-    db.query(`INSERT INTO team_invites (id, token_hash, token_prefix, email, role, note, created_by, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, hashInviteToken(token), token.slice(0, 6), email, input.role, note, actor.id, createdAt, expiresAt);
-    audit(actor.id, null, "team.invite_create", { inviteId: id, role: input.role });
+    // D286: a template's role must be the invite's role, so the admin sees exactly what the link grants.
+    const templateId = input.templateId?.toLowerCase() ?? null;
+    if (templateId) {
+      const template = db.query("SELECT role FROM access_templates WHERE id = ?").get(templateId) as { role: InviteRole } | null;
+      if (!template) throw new InviteError(404, "TEMPLATE_NOT_FOUND", "That access template no longer exists");
+      if (template.role !== input.role) throw new InviteError(400, "TEMPLATE_ROLE_MISMATCH", "The invite's role must match the template's role");
+    }
+    db.query(`INSERT INTO team_invites (id, token_hash, token_prefix, email, role, note, created_by, created_at, expires_at, template_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, hashInviteToken(token), token.slice(0, 6), email, input.role, note, actor.id, createdAt, expiresAt, templateId);
+    audit(actor.id, null, "team.invite_create", { inviteId: id, role: input.role, ...(templateId ? { templateId } : {}) });
     return db.query(`${listSelect} WHERE i.id = ?`).get(id) as ListedRow;
   })();
   creations.set(actor.id, [...recent, nowMs]);

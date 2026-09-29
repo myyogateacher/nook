@@ -55,6 +55,8 @@ export type TeamInviteRow = {
   used_by: string | null;
   revoked_at: string | null;
   revoked_by: string | null;
+  /** 025; applied on acceptance from Wave 33 (D286). */
+  template_id?: string | null;
 };
 
 export type NoteRow = {

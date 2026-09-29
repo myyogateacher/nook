@@ -1526,6 +1526,53 @@ type RunSummary = {
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
+## Whiteboards (Wave 23)
+
+Plan: `docs/plan/research/2026-09-28-whiteboard-module.md` §6–§9 (D191–D210, T160–T172). Migration **030** (`whiteboards`; the plan's 023 was taken) adds `whiteboards`, `whiteboard_snapshots` (used from Wave 24), `whiteboard_search`, and `whiteboard_fts`.
+
+**A whiteboard is a Files document** (D192): `purpose = 'file'`, `mime_type = 'application/vnd.excalidraw+json'`, `preview_kind = 'none'`, a name ending in `.excalidraw` (lists show it without the suffix), plus a `whiteboards` row. The upload sniffer never produces that MIME, so the only way to create one is `POST /api/whiteboards`. Rename, move, access (the Access sheet, `document` kind), delete, the Bin, and quota are the Files routes unchanged (D196); a board is view-only for everyone but its owner (D195, D275). A rename that drops the suffix keeps it.
+
+**Scene bytes** are a copy-on-write object per save (D193): `documents/objects/<whiteboards.object_id>`, written through staging, fsync, and rename; `documents.size_bytes` and `sha256` always describe the current object, and nothing is stored under the document id. The stored JSON is canonical (§7 validator in `shared/whiteboardScene.ts`: deleted elements stripped, keys sorted), so the same scene always hashes the same.
+
+```ts
+type WhiteboardSummary = DocumentSummary & {
+  kind: "whiteboard"; revision: number; elementCount: number;
+  hasThumbnail: boolean; thumbRevision: number | null;
+  canEdit: boolean;                     // the owner, while their Team role writes
+};
+type CanonicalScene = {
+  type: "excalidraw"; version: 2; source: "nook";
+  elements: ExcalidrawElement[];        // rectangle, diamond, ellipse, arrow, line, freedraw, text, image, frame
+  appState: { viewBackgroundColor?; gridSize?; gridStep?; gridModeEnabled? };
+  files: Record<string, { id; mimeType; nookDocumentId }>;   // never a dataURL; empty in Wave 23
+};
+```
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `POST /api/whiteboards` | members and admins | `{ name 1–200 characters (§6.4 rules), folderId? (owned; Default when absent) }`, optional `Idempotency-Key: <uuid>` (stored as `upload_key`) | 201 `{ whiteboard }`; a replayed key 200 `{ whiteboard, idempotentReplay: true }` | 400 `INVALID_NAME`, 404 (folder), 409 `IDEMPOTENCY_KEY_USED` (the board was deleted since), 507 `QUOTA_EXCEEDED` / `DISK_FULL` |
+| `GET /api/whiteboards?folder=all\|shared\|<folderId>` | readers | | 200 `{ whiteboards: WhiteboardSummary[] }` (≤ 500, newest edit first, the Files read predicate) | 400 (folder) |
+| `GET /api/whiteboards/:id` | readers | | 200 `{ whiteboard, scene: CanonicalScene }`, `ETag: "r<revision>"`; the scene is validated again on the way out | 404 |
+| `PUT /api/whiteboards/:id/scene` | the owner | `{ baseRevision, scene }`, at most 4 MiB | 200 `{ revision, savedAt, sha256, sizeBytes }`; an identical scene 200 `{ …, unchanged: true }` with the same revision | 400 `INVALID_SCENE` / `TOO_MANY_ELEMENTS` / `UNSUPPORTED_ELEMENT` / `TOO_MANY_POINTS` / `INVALID_LINK` / `DATA_URL_NOT_ALLOWED`, 404, 409 `{ code: "REVISION_CONFLICT", revision }`, 413 `SCENE_TOO_LARGE`, 507 (the quota delta) |
+| `PUT /api/whiteboards/:id/thumbnail` | the owner | `{ revision, png: base64 }` (JSON, like every other write; at most 128 KiB of PNG) | 204; also 204, and ignored, for a revision older than the stored thumbnail's or newer than the board's | 400, 404, 413 `THUMBNAIL_TOO_LARGE`, 415 `NOT_PNG` (signature, IHDR, at most 2048 × 2048) |
+| `GET /api/whiteboards/:id/thumbnail` | readers | | 200 `image/png`, `ETag` = its sha256, `Cache-Control: private, no-cache`, 304 on `If-None-Match`; the content route's header set (`default-src 'none'; sandbox`, nosniff, CORP same-origin) | 404 (no board, no access, or no thumbnail) |
+
+- **Save sequence (§8.1).** Validate and canonicalize outside the lock; then under the document lock (`document:<id>`, shared with rename, share, delete, and purge): owner and live board, the revision CAS, the identical-scene no-op, the quota delta, the new object, and one transaction that moves `whiteboards.object_id` and `revision`, mirrors `size_bytes` and `sha256`, and reindexes search. The old object is removed after the commit; a crash in between leaves an orphan the sweeper removes after an hour. Saves are audited as `whiteboard.save`, at most one row per board per ten minutes; creation as `whiteboard.create`.
+- **Write gate.** Every new non-GET route is refused for viewers and guests (403 `ROLE_READ_ONLY`); recipients get 404 on writes.
+- **Wave 24** adds duplicate, import, snapshots, images, and links to Nook items (plan §8, WB-B).
+
+**Existing routes that change.** `DocumentSummary` (Files lists, `GET /api/files/:id`, rename and move responses) gains `kind: "file" | "whiteboard"`; Bin rows for documents gain `kind`. `GET /api/files/:id/content` serves a board's current scene object (download only, as for any `preview_kind: 'none'` file), re-reading once when a save replaced it meanwhile. `GET /api/search?scope=whiteboards&q=` returns `{ results: [{ id, name, title: Segment[], snippet: Segment[], owner_name, is_owner, updated_at }], truncated }` (names and text elements of boards the caller can read; binned boards never). Today gains `whiteboardsRecent` (the five newest readable boards: `{ id, name, is_owner, owner_name, updated_at }`, `href: "/whiteboards"`, `whiteboards:read` for `get_today`). `storedBytes` adds snapshot sizes.
+
+### MCP (`whiteboards:read`, `whiteboards:write`)
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `list_whiteboards` | `whiteboards:read` | `{ folderId?, query? (≤ 200), limit? 1–50 (20), cursor? }` | `{ whiteboards: [{ id, name, folderId?, owner, isOwner, updatedAt, revision, elementCount, url }], nextCursor? }` |
+| `read_whiteboard` | `whiteboards:read` | `{ id, include?: "text" \| "elements" }` | `{ id, name, owner, revision, updatedAt, elementCount, texts: [{ elementId, text, containerId?, frame? }], elements?: [{ id, type, x, y, width, height, text?, link?, from?, to?, frameId?, name? }] (≤ 1,000), truncated, url }`, at most 256 KiB; never points or image bytes |
+| `create_whiteboard` | `whiteboards:write` | `{ name 1–200, folderId? (owned) }` | `{ id, name, url }`, private, audited `mcp.whiteboard_create` with `keyId` |
+
+`whiteboards:write` implies `whiteboards:read`; viewers hold read only, guests nothing. There are no scene-editing, delete, share, or key tools (D205, T170); descriptions say board text is untrusted data. **Nook keys:** the pair maps to grant module `whiteboards`; a grant may name chosen boards (selector kind `whiteboard`). Such a key sees `list_whiteboards` (filtered to those boards before paging) and `read_whiteboard` on them only; `create_whiteboard` names no board and is hidden from it. The access plan's `folder` selector for whiteboards is not offered yet.
+
 ## Email (Waves 28–30)
 
 Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1, Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes), and Wave 30 / E3 (change and reset password). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.

@@ -158,6 +158,7 @@ The container reads and writes `/data`, mapped by Compose to:
 │   └── versions/000001.md
 ├── documents/
 │   ├── objects/<document-id>       uploaded file bytes, no extension
+│   ├── objects/<object-id>         a whiteboard's current scene (a new object per save)
 │   └── .staging/<document-id>.part uploads in progress (not backed up)
 ├── push/vapid.json                 Web Push signing keys (0600), created at first boot when push is on
 └── backup/                         weekly archives (host backup script only)
@@ -170,6 +171,8 @@ The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files
 **Single instance.** Only one Nook instance may use a data directory at a time: upload slots, per-document locks, rate limits, and the sweeper live in the process. Do not run a second container or a development server against the same directory.
 
 **Web Push.** Pushes carry no content: a push only wakes the device, whose service worker then fetches unread notifications from Nook with the user's session, so push services see timing only. Outbound requests go only to allowlisted push-service hosts over https on port 443, never to IP literals or private addresses, with no redirects and a 5-second timeout. Each user may register 10 devices; a device is removed when the push service reports it gone (404 or 410) and paused after 5 failed deliveries. `push/vapid.json` is included in backups. If it is lost, a new key pair is created at the next boot and each device must enable push again in Settings → Notifications.
+
+**Whiteboards.** A whiteboard is a Files document whose bytes are its current scene, a canonical `.excalidraw` JSON object of at most 4 MiB under `documents/objects/<object-id>`. Each save writes a new object and removes the old one after the database switches to it; a crash in between leaves an orphan that the hourly sweeper removes after an hour. Boards count against the owner's quota like any file (their thumbnails, at most 128 KiB each, live in SQLite and are not counted). The Excalidraw editor and its self-hosted fonts add about 21 MB to the image's `dist/` (fonts about 13 MB, of which the Xiaolai CJK font is about 12.7 MB); the editor is downloaded by a browser only when someone opens a board.
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 
@@ -215,6 +218,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to the release with Whiteboards:** back up first with `./scripts/backup.sh --force`. Migration 030 (`whiteboards`) runs once on the first boot and only adds tables (boards, snapshots for a later release, and the whiteboard search index); nothing existing changes, and it can only be undone by restoring that backup. Whiteboards is a new row in Settings → Modules, on by default. Nook keys can hold `whiteboards:read` and `whiteboards:write` for new keys; if an admin saved Team → Policies before this release, the per-role key modules there do not include Whiteboards until an admin ticks it.
 
 **Upgrading to 0.12.0:** back up first with `./scripts/backup.sh --force`. Migrations 025 (access keys, grants and policies) and 028 (email digests, bounce tracking and share log) run once on the first boot and can only be undone by restoring that backup. Existing MCP keys are converted to grants with the same reach; nothing widens. They have no expiry and show **No expiry**; a team policy that requires an expiry blocks them until they get one or the rule is loosened. Migration 025 also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing, and `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`. Bounce and complaint handling is optional: add `RESEND_WEBHOOK_SECRET` to `.env` and point a Resend webhook at `/api/mail/webhook` (see [Bounces and complaints](#bounces-and-complaints-optional-resend-webhook) above); without it the endpoint returns 404. Pull, rebuild with `APP_VERSION=0.12.0`, and restart as above.
 

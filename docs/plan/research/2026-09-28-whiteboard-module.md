@@ -461,3 +461,17 @@ Each wave keeps the QA instance running and ends with the §12 gates: typecheck,
 ### Spike result (2026-09-28): PASS with conditions → proceed with Excalidraw for Wave 23
 
 `@excalidraw/excalidraw` 0.18.1 (MIT, React 19 OK). Commit `6cf81bd` on the spike worktree branch (parked until the operator schedules Wave 23). Gates: zero off-origin requests after the font plugin rewrites Excalidraw's esm.sh font fallback to same-origin (230 CSP-blocked requests without it); no CSP/eval violations for drawing, text, PNG export, help, library and Mermaid preview; route chunk 337.6 KB gzip (limit 500), `dist/` +20.9 MB (limit 25; Xiaolai CJK font is 12.7 MB of that); canvas-only pinch zoom at 390 px after `touch-action: pan-x pan-y` on Excalidraw overlays; typecheck/build/tests clean (1156). Exceptions: default SVG export loads a font-subsetting chunk that calls `Function(...)` (one blocked-eval report; no wasm instantiated) → Wave 23 exports SVG with `skipInliningFonts: true` or hides SVG export and the "Copy as SVG" menu item; image tools (WB-B) pull `pica`/`image-blob-reduce` with `WebAssembly.compile` → re-check CSP then. No active telemetry (tracking compiled out; built-in remote hosts never contacted and CSP-blocked anyway). Carry-overs listed in the spike report: keep the esm.sh rewrite, keep the overlay touch-action rule, consider dropping Xiaolai.
+
+### Wave 23 build notes (2026-09-29, WB-A)
+
+Built as planned, with these differences, each the conservative reading:
+
+- **Migration 030**, not 023 (023 was taken); the tables are exactly §6.
+- **Sharing** is the Wave 32 Access sheet for the `document` kind, not the older share panel (§10.4). Boards stay view-only for everyone but the owner (D195, D275).
+- **Thumbnail upload** is JSON (`{ revision, png: base64 }`), because every write must be `application/json` (the only multipart exception is `POST /api/files`); the checks are §8's. Thumbnails revalidate with `Cache-Control: private, no-cache` and their hash as ETag.
+- **Search** is `GET /api/search?scope=whiteboards` (the existing `scope` parameter), not `type=whiteboard`.
+- **No `beforeunload` prompt**: the operator rule forbids native dialogs, so unsaved work is covered by the save on `visibilitychange`/`pagehide`, the leave flush, and the IndexedDB pending copy (D210).
+- **Back** closes Excalidraw's overlays found in the DOM (main menu, dialogs, context menu, sidebar, popovers), because 0.18.1 does not keep every one of them in `appState`.
+- **SVG export** is not offered; the build also disables "Copy to clipboard as SVG" (its font inlining calls `Function()`). **The shape library** trigger is hidden (Q12). **Dropped or pasted images** are removed before a save (no image tool until Wave 24).
+- **Nook keys** accept chosen whiteboards (selector kind `whiteboard`); the `folder` selector for whiteboards waits for Wave 34's list filters.
+- **The list** is a lazy chunk too (about 8 KB gzip), so the main bundle does not grow; the canvas chunk is about 342 KB gzip; `dist/` grows by about 20.9 MB (fonts 13.1 MB, Xiaolai kept). `@excalidraw/excalidraw` is a devDependency: only the client build needs it, so the production image's `node_modules` does not carry it.

@@ -87,7 +87,7 @@ describe("task due dates, assignees, and done columns", () => {
     expect((readers.body.users as Array<{ id: string }>).map((user) => user.id).sort()).toEqual([owner.userId, member.userId].sort());
     expect((await call(stranger, "GET", `/boards/${boardId}/readers`)).status).toBe(404);
     expect((await call(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "private", userIds: [] })).status).toBe(200);
-    expect((await call(owner, "GET", `/boards/${boardId}/readers`)).body.users).toEqual([{ id: owner.userId, displayName: "Readers owner" }]);
+    expect((await call(owner, "GET", `/boards/${boardId}/readers`)).body.users).toEqual([{ id: owner.userId, displayName: "Readers owner", avatarUrl: null }]);
   });
 
   test("only the owner sets isDone on a column", async () => {

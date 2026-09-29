@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarDays, Flag, Tag, UsersRound } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
+import { Avatar } from "../ui/Avatar";
+import { initials } from "./CardFace";
 import type { Option } from "../ui/Listbox";
 import {
   assigneeLabel,
@@ -53,8 +55,8 @@ export function CardFields({ card, userId, idPrefix, done, saving, onSave, tags,
     <div className="task-card-field">
       <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
       <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
-        onCommit={(ids, names) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned",
-          { assignees: ids.map((id, index) => ({ id, display_name: names[index] ?? "", can_read: 1 })) })} />
+        onCommit={(ids, names, avatars) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned",
+          { assignees: ids.map((id, index) => ({ id, display_name: names[index] ?? "", can_read: 1, avatar_url: avatars[index] ?? null })) })} />
     </div>
     {tags && <div className="task-card-field">
       <label htmlFor={`${idPrefix}-tags`}><Tag aria-hidden="true" />Tags</label>
@@ -106,7 +108,7 @@ type AssigneePickerProps = {
   assignees: ReturnType<typeof cardAssignees>;
   disabled: boolean;
   /** Saves the whole list (D102); resolves once the save settled. */
-  onCommit: (ids: string[], names: string[]) => Promise<unknown>;
+  onCommit: (ids: string[], names: string[], avatars: Array<string | null>) => Promise<unknown>;
 };
 
 /**
@@ -119,7 +121,11 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
   const [draft, setDraft] = useState<string[] | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const names = useRef(new Map<string, string>());
-  for (const assignee of assignees) names.current.set(assignee.id, assignee.display_name);
+  const avatars = useRef(new Map<string, string | null>());
+  for (const assignee of assignees) {
+    names.current.set(assignee.id, assignee.display_name);
+    if (assignee.avatar_url !== undefined) avatars.current.set(assignee.id, assignee.avatar_url);
+  }
   const saved = assignees.map((assignee) => assignee.id);
   const value = draft ?? saved;
 
@@ -132,7 +138,7 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
     }
     committing.current = true;
     try {
-      await onCommit(next, next.map((id) => names.current.get(id) ?? "them"));
+      await onCommit(next, next.map((id) => names.current.get(id) ?? "them"), next.map((id) => avatars.current.get(id) ?? null));
     } finally {
       // Saved or not (a conflict shows the other person's version), the chips follow the card.
       draftRef.current = null;
@@ -169,10 +175,15 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
   const loadOptions = useCallback(async (query: string, signal: AbortSignal): Promise<Option[]> => {
     const q = query.trim().slice(0, 64);
     const { users } = await getBoardReaders(boardId, q ? { q, limit: MAX_ASSIGNEES, signal } : { signal });
-    for (const user of users) names.current.set(user.id, user.displayName);
+    for (const user of users) {
+      names.current.set(user.id, user.displayName);
+      avatars.current.set(user.id, user.avatarUrl ?? null);
+    }
     return users.map((user) => {
       const detail = pickerDetail(user, users);
-      return { value: user.id, label: user.id === userId ? `${user.displayName} (me)` : user.displayName, ...(detail ? { description: detail } : {}) };
+      // Q7: each person's picture beside the name (the initial only when there is none).
+      const icon = <Avatar className="task-avatar picker-avatar" name={user.displayName} url={user.avatarUrl ?? null} fallback={initials(user.displayName)} />;
+      return { value: user.id, label: user.id === userId ? `${user.displayName} (me)` : user.displayName, icon, ...(detail ? { description: detail } : {}) };
     });
   }, [boardId, userId]);
 

@@ -1,5 +1,5 @@
 import type { Context, Hono } from "hono";
-import { getConnInfo } from "hono/bun";
+import { clientAddress } from "../clientAddress";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { config, isOriginAllowed } from "../config";
@@ -56,13 +56,7 @@ export function resetMailRouteLimits() {
   buckets.clear();
 }
 
-function clientAddress(c: Context<AppEnv>) {
-  try {
-    return getConnInfo(c).remote.address ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
+
 
 /** Marks the address verified when the token is live and was issued for the current address. */
 export function consumeVerifyToken(token: string, nowMs = Date.now()): "verified" | "invalid" | "expired" {

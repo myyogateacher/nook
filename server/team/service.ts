@@ -15,6 +15,7 @@ import { userRole } from "./userRole";
 import { readPolicies } from "./policies";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { mailAccountEvent, mailRoleChanged } from "../mail/triggers";
+import { avatarUrlFor } from "../avatars";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -62,11 +63,12 @@ type MemberRow = {
   last_seen_at: string | null;
   live_keys: number;
   storage_bytes: number;
+  avatar_id: string | null;
 };
 
 const memberSelect = `
   SELECT u.id, u.email, u.display_name, u.role, u.created_at, u.disabled_at, u.blocked_by, b.display_name AS blocked_by_name,
-         u.block_reason, u.totp_enabled_at,
+         u.block_reason, u.totp_enabled_at, u.avatar_id,
          (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen_at,
          (SELECT COUNT(*) FROM mcp_api_keys k WHERE k.user_id = u.id AND k.revoked_at IS NULL) AS live_keys,
          (SELECT COALESCE(SUM(d.size_bytes), 0) FROM documents d WHERE d.owner_id = u.id) AS storage_bytes
@@ -79,6 +81,8 @@ export type TeamMember = {
   status: "active" | "blocked";
   createdAt: string;
   isYou: boolean;
+  /** Same-origin picture (Wave 35, D299), or null for the letter avatar. */
+  avatarUrl: string | null;
 };
 
 export type AdminTeamMember = TeamMember & {
@@ -112,7 +116,8 @@ function present(row: MemberRow, viewer: { id: string; role: Role }): TeamMember
     role: row.role,
     status: row.disabled_at === null ? "active" : "blocked",
     createdAt: row.created_at,
-    isYou: row.id === viewer.id
+    isYou: row.id === viewer.id,
+    avatarUrl: avatarUrlFor(row.id, row.avatar_id)
   };
   if (!can(viewer.role, "team.manage")) return base;
   return {

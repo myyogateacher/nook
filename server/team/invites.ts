@@ -302,7 +302,12 @@ function findUsable(tokenHash: string, at: string) {
 
 /** Pre-auth preview (`POST /api/auth/invite`): what the invitee sees before registering. */
 export function previewInvite(token: string) {
-  const row = findUsable(hashInviteToken(token), now());
+  return previewInviteHash(hashInviteToken(token));
+}
+
+/** The same preview from the token's hash (Wave 35: an invite kept server side for a Google retry). */
+export function previewInviteHash(tokenHash: string) {
+  const row = findUsable(tokenHash, now());
   return { role: row.role, emailHint: row.email ? maskEmail(row.email) : null, expiresAt: row.expires_at, inviterName: row.inviter_name };
 }
 

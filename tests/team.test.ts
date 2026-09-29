@@ -82,7 +82,7 @@ describe("Team API: reading", () => {
     const asMember = await call(member, "GET", "");
     expect(asMember.status).toBe(200);
     const adminAsSeenByMember = asMember.body.users.find((row: { id: string }) => row.id === admin.userId);
-    expect(Object.keys(adminAsSeenByMember).sort()).toEqual(["createdAt", "displayName", "id", "isYou", "role", "status"]);
+    expect(Object.keys(adminAsSeenByMember).sort()).toEqual(["avatarUrl", "createdAt", "displayName", "id", "isYou", "role", "status"]);
     expect(JSON.stringify(asMember.body)).not.toContain("@example.test");
 
     const detail = await call(member, "GET", `/${admin.userId}`);

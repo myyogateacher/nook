@@ -14,7 +14,10 @@ const LEVEL_WORDS: Record<Level, string> = { view: "Can view", comment: "Can com
  * (O-A13 leaves it to the digest), so the bell is the only channel.
  */
 
-export type AccessNoticeKind = "share_removed" | "share_lowered" | "access_reset" | "access_reset_self" | "group_added" | "group_removed" | "key_revoked";
+export type AccessNoticeKind = "share_removed" | "share_lowered" | "access_reset" | "access_reset_self" | "group_added" | "group_removed" | "key_revoked"
+  // Wave 35 (Google sign-in): an admin allowed linking or re-linking, reset the account for Google,
+  // or unlinked Google; or a re-link completed. `count` carries GOOGLE_RESET_PARTS bits.
+  | "google_allowed" | "google_relink_allowed" | "google_reset" | "google_unlinked" | "google_relinked";
 
 export type AccessNotice = {
   userId: string;
@@ -72,6 +75,17 @@ function line(row: NoticeRow, recipientId: string) {
     case "group_added": return `${actor} added you to ${group}`;
     case "group_removed": return `${actor} removed you from ${group}`;
     case "key_revoked": return `${actor} revoked your API key${row.key_name ? ` “${row.key_name}”` : ""}`;
+    case "google_allowed": return `${actor} allowed your account to be linked to Google at your next Google sign-in`;
+    case "google_relink_allowed": return `${actor} allowed your account to be re-linked: the next Google sign-in with your address takes it over`;
+    case "google_reset": {
+      const parts = googleResetParts(row.count ?? 0);
+      return `${actor} reset your account for Google sign-in${parts.length ? `: ${listWords(parts)}` : ""}`;
+    }
+    case "google_unlinked": return `${actor} unlinked Google from your account`;
+    case "google_relinked": {
+      const parts = googleResetParts(row.count ?? 0);
+      return `A new Google account was linked to your account${parts.length ? `; removed ${listWords(parts)}` : ""}`;
+    }
     default: return "Your access changed";
   }
 }
@@ -90,6 +104,26 @@ export function resetMask(removed: Record<(typeof RESET_PARTS)[number]["key"], n
 }
 
 export const resetParts = (mask: number) => RESET_PARTS.filter((part) => (mask & part.bit) !== 0).map((part) => part.words);
+
+/** What a Google reset or re-link removed (Wave 35), as bits in the notice's `count`. */
+const GOOGLE_RESET_PARTS = [
+  { bit: 1, key: "sessions", words: "signed-in sessions" },
+  { bit: 2, key: "keys", words: "API keys" },
+  { bit: 4, key: "feeds", words: "calendar feeds" },
+  { bit: 8, key: "password", words: "the password" },
+  { bit: 16, key: "twoFactor", words: "two-factor" },
+  { bit: 32, key: "sharing", words: "sharing" },
+  { bit: 64, key: "invites", words: "live invites" },
+  { bit: 128, key: "routines", words: "routines (paused)" }
+] as const;
+
+/** Counts of a Google reset or re-link; `items`, `shares`, and `groupGrants` together are "sharing". */
+export function googleResetMask(counts: Partial<Record<string, number>>) {
+  const values: Partial<Record<string, number>> = { ...counts, sharing: (counts.items ?? 0) + (counts.shares ?? 0) + (counts.groupGrants ?? 0) };
+  return GOOGLE_RESET_PARTS.reduce((mask, part) => (values[part.key] ?? 0) > 0 ? mask | part.bit : mask, 0);
+}
+
+export const googleResetParts = (mask: number) => GOOGLE_RESET_PARTS.filter((part) => (mask & part.bit) !== 0).map((part) => part.words);
 
 /** "a, b, and c" */
 export function listWords(words: readonly string[]) {

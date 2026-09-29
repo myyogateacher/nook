@@ -19,7 +19,7 @@ const tokenHash = (token: string) => createHash("sha256").update(token).digest("
 const randomToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
 let lastSessionCleanup = 0;
 
-function secureCookie(c: Context) {
+export function secureCookie(c: Context) {
   const origin = c.req.header("Origin");
   return config.cookieSecure || Boolean(origin && new URL(origin).protocol === "https:");
 }
@@ -40,6 +40,22 @@ export async function createSession(c: Context, userId: string) {
     maxAge: config.sessionDays * 86_400
   });
   return csrfToken;
+}
+
+/**
+ * The live session behind this request's cookie, read without side effects: used by Google start to
+ * bind a link or re-authentication flow to the signed-in account and session (Wave 35, D297).
+ */
+export function readSession(c: Context) {
+  const token = getCookie(c, SESSION_COOKIE);
+  if (!token) return null;
+  const row = db.query(`
+    SELECT s.id AS session_id, u.id, u.email, u.role
+    FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL
+  `).get(tokenHash(token), now()) as { session_id: string; id: string; email: string; role: UserRow["role"] } | null;
+  if (!row || !isEmailAllowed(row.email)) return null;
+  return { sessionId: row.session_id, user: { id: row.id, email: row.email, role: row.role } };
 }
 
 export function clearSession(c: Context) {

@@ -12,6 +12,19 @@ import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NA
 import { registerTaskQueryRoutes } from "./queryRoutes";
 import { cardHierarchy } from "./hierarchy";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
+import { avatarUrlsFor } from "../avatars";
+
+/** Web payloads only (MCP output unchanged): each comment author's picture, beside the name (QA U4). */
+function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]) {
+  const urls = avatarUrlsFor(comments.flatMap((comment) => comment.author_id ? [comment.author_id] : []));
+  return comments.map((comment) => ({ ...comment, author_avatar_url: comment.author_id ? urls.get(comment.author_id) ?? null : null }));
+}
+const withAuthorAvatar = <T extends { author_id: string | null }>(result: { comment: T }) => ({ ...result, comment: withAuthorAvatars([result.comment])[0]! });
+/** Q7: a card in a web answer carries each assignee's picture, as the board payload does. */
+function withAssigneeAvatars<T extends { card: { assignees: Array<{ id: string }> } }>(result: T): T {
+  const urls = avatarUrlsFor(result.card.assignees.map((assignee) => assignee.id));
+  return { ...result, card: { ...result.card, assignees: result.card.assignees.map((assignee) => ({ ...assignee, avatar_url: urls.get(assignee.id) ?? null })) } };
+}
 import {
   createBoard,
   createCard,
@@ -254,7 +267,12 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
       return c.json(invalid(`limit must be an integer from 1 to ${READERS_LIMIT_MAX}`), 400);
     }
     if (limitParam !== undefined && q === undefined) return c.json(invalid("limit needs q"), 400);
-    return respond(c, () => listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) }));
+    return respond(c, () => {
+      const result = listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) });
+      // Q7: the picker shows each person's picture, not a letter (web payload only; MCP unchanged).
+      const urls = avatarUrlsFor(result.users.map((user) => user.id));
+      return { ...result, users: result.users.map((user) => ({ ...user, avatarUrl: urls.get(user.id) ?? null })) };
+    });
   });
 
   app.post("/api/tasks/boards/:boardId/tags", async (c) => {
@@ -294,17 +312,17 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.post("/api/tasks/boards/:boardId/cards", async (c) => {
     const boardId = id(c, "boardId");
     const body = await parseJson(c.req.raw, cardCreateSchema);
-    return respond(c, () => createCard(c.get("user").id, boardId, body), 201);
+    return respond(c, async () => withAssigneeAvatars(await createCard(c.get("user").id, boardId, body)), 201);
   });
 
   app.get("/api/tasks/cards/:cardId", (c) => {
     const cardId = id(c, "cardId");
     const userId = c.get("user").id;
     return respond(c, () => {
-      const { card } = getCard(userId, cardId);
+      const { card } = withAssigneeAvatars(getCard(userId, cardId));
       const page = listComments(userId, cardId);
       // Parent, ancestors, and children are on the card's own board (D133, T112).
-      return { card: { ...card, ...cardHierarchy(cardId) }, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+      return { card: { ...card, ...cardHierarchy(cardId) }, comments: withAuthorAvatars(page.comments), hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
     });
   });
 
@@ -328,14 +346,16 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     const beforeId = before === undefined ? undefined : uuid.parse(before);
     return respond(c, () => {
       getCard(userId, cardId);
-      return listComments(userId, cardId, { before: beforeId, limit });
+      const page = listComments(userId, cardId, { before: beforeId, limit });
+      return { ...page, comments: withAuthorAvatars(page.comments) };
     });
   });
 
   app.post("/api/tasks/cards/:cardId/comments", async (c) => {
     const cardId = id(c, "cardId");
     const body = await parseJson(c.req.raw, commentCreateSchema);
-    return respond(c, () => createComment(c.get("user").id, cardId, body), 201);
+    // Q3: the new comment carries its author's picture like listed ones, so it never shows initials first.
+    return respond(c, async () => withAuthorAvatar(await createComment(c.get("user").id, cardId, body)), 201);
   });
 
   app.post("/api/tasks/cards/:cardId/attachments", async (c) => {
@@ -359,7 +379,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.patch("/api/tasks/comments/:commentId", async (c) => {
     const commentId = id(c, "commentId");
     const body = await parseJson(c.req.raw, commentPatchSchema);
-    return respond(c, () => updateComment(c.get("user").id, commentId, body.body));
+    return respond(c, async () => withAuthorAvatar(await updateComment(c.get("user").id, commentId, body.body)));
   });
 
   app.delete("/api/tasks/comments/:commentId", (c) => {
@@ -370,7 +390,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.patch("/api/tasks/cards/:cardId", async (c) => {
     const cardId = id(c, "cardId");
     const body = await parseJson(c.req.raw, cardPatchSchema);
-    return respond(c, () => patchCard(c.get("user").id, cardId, body));
+    return respond(c, async () => withAssigneeAvatars(await patchCard(c.get("user").id, cardId, body)));
   });
 
   app.post("/api/tasks/cards/:cardId/move", async (c) => {

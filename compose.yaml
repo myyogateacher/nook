@@ -4,12 +4,14 @@ services:
       context: .
       target: production
       args:
-        APP_VERSION: ${APP_VERSION:-0.13.0}
+        APP_VERSION: ${APP_VERSION:-0.15.0}
         GIT_SHA: ${GIT_SHA:-development}
     container_name: mynotes
     restart: unless-stopped
     user: "1000:1000"
     ports:
+      # Behind a reverse proxy on this host, publish on localhost only ("127.0.0.1:<host-port>:2026")
+      # or firewall the port, so nobody reaches Nook around the proxy (docs/OPERATIONS.md, TRUSTED_PROXY_HOPS).
       - "2026:2026"
     environment:
       PORT: "2026"
@@ -22,6 +24,11 @@ services:
       SIGNUP_ROLE: ${SIGNUP_ROLE:-guest}
       TOTP_POLICY: ${TOTP_POLICY:-optional}
       TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:-}
+      AUTH_METHODS: ${AUTH_METHODS:-password}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_ALLOWED_DOMAINS: ${GOOGLE_ALLOWED_DOMAINS:-}
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-0}
       SESSION_DAYS: ${SESSION_DAYS:-14}
       MAX_MARKDOWN_BYTES: ${MAX_MARKDOWN_BYTES:-2000000}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-104857600}

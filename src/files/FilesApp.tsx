@@ -52,6 +52,8 @@ import { NameDialog, RenameDialog } from "./RenameDialog";
 import { kindIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
+import { Avatar } from "../ui/Avatar";
+import { useSelfAvatar } from "../ui/selfAvatar";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 
 export type FilesNavigate = (route: Route, options?: { replace?: boolean; filesPanel?: FilesPanel }) => void;
@@ -96,6 +98,7 @@ function browserStorage(): Storage | null {
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
 export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut }: FilesAppProps) {
+  const selfAvatar = useSelfAvatar();
   // Viewers and guests read and download; upload, new folder, rename, move, share, and delete are hidden.
   const { canWrite } = useRole();
   const canManage = (document: Pick<DocumentSummary, "is_owner">) => canWrite && ownsDocument(document);
@@ -655,7 +658,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
       </nav>
       <footer className="sidebar-footer">
         <button className="footer-settings" title={displayName} onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`}>
-          <strong>{displayName}</strong>
+          <strong className="footer-identity"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span>{displayName}</span></strong>
           <span><Settings />Settings</span>
         </button>
         {onBin && <button className="footer-bin" onClick={() => { void leaveFiles(onBin); }}><Trash2 />Bin</button>}

@@ -16,7 +16,7 @@ test("without a TOTP key /api/about says two-factor is not available", () => {
   const line = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(line) as { twoFactor: unknown; keys: string[] };
   expect(result.twoFactor).toBe(false);
-  expect(result.keys).toEqual(["gitSha", "hasUsers", "openRegistration", "passwordReset", "twoFactor", "version"]);
+  expect(result.keys).toEqual(["authMethods", "gitSha", "hasUsers", "openRegistration", "passwordReset", "twoFactor", "version"]);
 });
 
 test("Settings → Security shows the explanation instead of the setup form when two-factor is off", async () => {

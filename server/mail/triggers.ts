@@ -120,8 +120,8 @@ export function mailTwoFactor(userId: string, event: TwoFactorEvent, remaining: 
 }
 
 /** #3/#4/#8: blocked, unblocked, or signed out everywhere by an admin. The admin's reason is never sent. */
-export function mailAccountEvent(userId: string, event: AccountEvent, actorId: string | null) {
-  safely("security.account", () => enqueueMail({ userId, template: "security.account", payload: { event, actorId, at: new Date().toISOString() } }));
+export function mailAccountEvent(userId: string, event: AccountEvent, actorId: string | null, counts: Record<string, number> | null = null) {
+  safely("security.account", () => enqueueMail({ userId, template: "security.account", payload: { event, actorId, at: new Date().toISOString(), ...(counts ? { counts } : {}) } }));
 }
 
 /** #12: the password was changed in Settings or reset from a mailed link (Wave 30). */

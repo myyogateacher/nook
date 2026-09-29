@@ -9,6 +9,7 @@ import { withNoteLock, withResourceLock } from "../storage";
 import { readPolicies } from "../team/policies";
 import type { Role } from "../team/roles";
 import { parseJson, uuid } from "../validation";
+import { avatarUrlFor } from "../avatars";
 import { keysReachingItem } from "../apiKeys";
 import type { GrantModule } from "../keyGrants";
 import { itemLevel } from "./effective";
@@ -217,7 +218,7 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
   const groups = groupGrants(kind, id);
   const ids = [...direct.keys()];
   const users = ids.length
-    ? db.query(`SELECT id, display_name, role, kind, disabled_at FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: string; display_name: string; role: Role; kind: "person" | "service"; disabled_at: string | null }>
+    ? db.query(`SELECT id, display_name, role, kind, disabled_at, avatar_id FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: string; display_name: string; role: Role; kind: "person" | "service"; disabled_at: string | null; avatar_id: string | null }>
     : [];
   const offered = KIND_LEVELS[kind].filter((level) => yourLevel === "owner" || level !== "manage");
   // Which of this item's granted groups each listed person is in, so the sheet can say when a group
@@ -235,7 +236,7 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     owner: { id: state.ownerId, displayName: state.ownerName },
     audience: state.audience,
     ...(AUDIENCE_LEVELS[kind] ? { audienceLevel: state.audienceLevel, audienceLevels: AUDIENCE_LEVELS[kind] } : {}),
-    people: users.map((user) => ({ id: user.id, displayName: user.display_name, teamRole: user.role, kind: user.kind, level: direct.get(user.id)!, via: "direct" as const, blocked: user.disabled_at !== null, groupIds: memberOf.get(user.id) ?? [] }))
+    people: users.map((user) => ({ id: user.id, displayName: user.display_name, teamRole: user.role, kind: user.kind, level: direct.get(user.id)!, via: "direct" as const, blocked: user.disabled_at !== null, groupIds: memberOf.get(user.id) ?? [], avatarUrl: avatarUrlFor(user.id, user.avatar_id) }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" })),
     groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.member_count, guestCount: group.guest_count, selfAddedCount: group.self_added, level: group.level })),
     levels: offered,

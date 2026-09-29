@@ -156,6 +156,7 @@
 .task-comment { display: grid; gap: 6px; border: 1px solid #242428; border-radius: 12px; padding: 10px 12px; background: #17171a; }
 .task-comment header { display: flex; align-items: center; gap: 8px; color: #8d8d94; font-size: .76rem; }
 .task-comment header strong { color: #e4e4e6; font-size: .82rem; }
+.task-comment header .task-comment-avatar { margin-left: 0; width: 24px; height: 24px; }
 .task-comment-edited { font-style: italic; }
 .task-comment-actions { display: flex; margin-left: auto; }
 .task-comment-actions .icon-button { width: 30px; height: 30px; }
@@ -382,6 +383,7 @@
 .task-avatar:nth-child(1) { position: relative; z-index: 3; }
 .task-avatar:nth-child(2) { position: relative; z-index: 2; }
 .task-avatar:nth-child(3) { position: relative; z-index: 1; }
+.ui-option-icon .task-avatar.picker-avatar, .ui-chip .task-avatar.picker-avatar { width: 22px; height: 22px; margin: 0; border: 0; font-size: .58rem; }
 .task-avatar.tone-0 { background: #4b3a1c; color: #f5d995; }
 .task-avatar.tone-1 { background: #1f3b4d; color: #a9d6f5; }
 .task-avatar.tone-2 { background: #3b2350; color: #dcc2f7; }

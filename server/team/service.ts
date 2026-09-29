@@ -246,7 +246,7 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     if (target.role === input.role) return { changed: false as const, role: target.role };
     if (target.role === "admin" && target.disabled_at === null && otherActiveAdmins(target.id) === 0) throw lastAdmin();
     if (input.role === "guest" && !readPolicies().shareWithGuests && inGrantedGroup(target.id)) {
-      throw new TeamError(400, "GUEST_SHARE_DISABLED", "Sharing with guests is turned off for this Nook. Remove this person from groups that are shared with items first.");
+      throw new TeamError(400, "GUEST_SHARE_DISABLED", "Sharing with guests is turned off for this Nook. Remove this person from groups that have items shared with them first.");
     }
     const result = db.query("UPDATE users SET role = ? WHERE id = ? AND role = ?").run(input.role, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: userRole(target.id) });

@@ -137,7 +137,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
   const [result, setResult] = useState<{ removed: ResetCounts; remaining: ResetCounts } | null>(null);
   const name = summary.member.displayName;
   const userId = summary.member.id;
-  // The server refuses a template for a guest when any of its groups is shared with items and sharing with guests is off (Q2).
+  // The server refuses a template for a guest when any of its groups has items shared with it and sharing with guests is off (Q2).
   const refusedNames = dialog.kind === "template" && summary.member.role === "guest" ? guestRefusedNames(dialog.template) : [];
   const templateRefusal = refusedNames.length ? refusedNames : null;
   let confirmDisabled = false;

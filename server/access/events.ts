@@ -90,7 +90,7 @@ export type ActivityFilter = { userId?: string; groupId?: string; keyId?: string
 type ActivityRow = {
   id: string; seq: number; action: string; via: string; created_at: string; meta_json: string | null;
   actor_id: string | null; actor_name: string | null; target_user_id: string | null; target_name: string | null;
-  group_id: string | null; group_name: string | null; key_id: string | null; key_name: string | null; key_prefix: string | null;
+  group_id: string | null; group_name: string | null; key_id: string | null; key_name: string | null; key_prefix: string | null; key_owner_id: string | null; key_owner_name: string | null;
   resource_kind: string | null; resource_id: string | null;
 };
 
@@ -142,9 +142,10 @@ export function listAccessActivity(filter: ActivityFilter, present: (kind: strin
   }
   const rows = db.query(`SELECT e.id, e.rowid AS seq, e.action, e.via, e.created_at, e.meta_json, e.actor_id, a.display_name AS actor_name,
       e.target_user_id, t.display_name AS target_name, e.group_id, g.name AS group_name, e.key_id, k.name AS key_name, k.key_prefix,
-      e.resource_kind, e.resource_id
+      k.user_id AS key_owner_id, o.display_name AS key_owner_name, e.resource_kind, e.resource_id
     FROM access_events e LEFT JOIN users a ON a.id = e.actor_id LEFT JOIN users t ON t.id = e.target_user_id
       LEFT JOIN user_groups g ON g.id = e.group_id LEFT JOIN mcp_api_keys k ON k.id = e.key_id
+      LEFT JOIN users o ON o.id = k.user_id
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY e.created_at DESC, e.rowid DESC LIMIT $limit`).all(params) as ActivityRow[];
   const page = rows.slice(0, ACTIVITY_PAGE);
   return {
@@ -153,7 +154,8 @@ export function listAccessActivity(filter: ActivityFilter, present: (kind: strin
       actor: row.actor_id && row.actor_name !== null ? { id: row.actor_id, displayName: row.actor_name } : null,
       target: row.target_user_id && row.target_name !== null ? { id: row.target_user_id, displayName: row.target_name } : null,
       group: row.group_id ? { id: row.group_id, name: row.group_name } : null,
-      key: row.key_id ? { id: row.key_id, name: row.key_name, prefix: row.key_prefix } : null,
+      // The key's owner too, so a key that is no longer live can still be told apart (C15b).
+      key: row.key_id ? { id: row.key_id, name: row.key_name, prefix: row.key_prefix, owner: row.key_owner_id && row.key_owner_name !== null ? { id: row.key_owner_id, displayName: row.key_owner_name } : null } : null,
       item: row.resource_kind && row.resource_id ? present(row.resource_kind, row.resource_id) : null,
       meta: safeMeta(row.meta_json)
     })),

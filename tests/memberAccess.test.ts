@@ -251,6 +251,13 @@ describe("admin reductions (D268)", () => {
     await send(admin, "PUT", `/team/groups/${groupId}/members`, { userIds: [target.userId], revision: 3 });
     expect((await send(admin, "DELETE", `/team/members/${target.userId}/groups/${groupId}`)).status).toBe(200);
     expect((await send(admin, "DELETE", `/team/members/${target.userId}/groups/${groupId}`)).status).toBe(404);
+    // C15a: once the group is deleted, older notices say so in a sentence of their own.
+    const revision = (await send(admin, "GET", `/team/groups/${groupId}`)).body.group.revision;
+    expect((await send(admin, "DELETE", `/team/groups/${groupId}`, { revision })).status).toBe(200);
+    const titles = ((await send(target, "GET", "/notifications")).body.items as Array<{ title: string }>).map((item) => item.title);
+    expect(titles).toContain("Group row admin added you to a group that has since been deleted");
+    expect(titles).toContain("Group row admin removed you from a group that has since been deleted");
+    expect(titles.some((title) => title.includes("the group a group"))).toBe(false);
   });
 
   test("Reset access removes shares, groups, keys, feeds, and routines in one go, with counts before and after; never on yourself", async () => {
@@ -360,6 +367,11 @@ describe("paging and the activity log (T218, D288)", () => {
     expect((await send(admin, "GET", "/team/activity?action=bogus")).status).toBe(400);
     const keys = await send(admin, "GET", "/team/activity?action=keys");
     expect(keys.body.events.every((event: { action: string }) => event.action.startsWith("key."))).toBe(true);
+    // C15b: key events carry the key's owner, so a key that is no longer live can be told apart.
+    const created = createApiKey(target.userId, { name: "Gone key", surfaces: "mcp", grants: [{ module: "notes", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 30 });
+    db.query("UPDATE mcp_api_keys SET revoked_at = ? WHERE id = ?").run(new Date().toISOString(), created.id);
+    const byKey = await send(admin, "GET", `/team/activity?key=${created.id}`);
+    expect(byKey.body.events[0].key).toEqual({ id: created.id, name: "Gone key", prefix: created.prefix, owner: { id: target.userId, displayName: "Activity target" } });
   });
 });
 

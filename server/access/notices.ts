@@ -59,7 +59,8 @@ function line(row: NoticeRow, recipientId: string) {
   const target = row.target_name ?? "someone";
   const item = isAccessKind(row.resource_kind) && row.resource_id ? presentItem(row.resource_kind, row.resource_id, recipientId) : null;
   const itemText = item ? (item.titleHidden ? `a ${item.title.split(" owned by ")[0]!.toLowerCase()}` : `“${item.title}”`) : "an item that is gone";
-  const group = row.group_name ? `“${row.group_name}”` : "a group that was deleted";
+  // A group that is gone gets its own sentence, not "the group a group…" (C15a).
+  const group = row.group_name ? `the group “${row.group_name}”` : "a group that has since been deleted";
   switch (row.kind) {
     case "share_removed": return `${actor} removed ${target}'s access to ${itemText}`;
     case "share_lowered": return `${actor} lowered ${target}'s access to ${itemText}${row.level && row.level in LEVEL_WORDS ? ` to ${LEVEL_WORDS[row.level as Level]}` : ""}`;
@@ -68,8 +69,8 @@ function line(row: NoticeRow, recipientId: string) {
       const parts = resetParts(row.count ?? 0);
       return parts.length ? `${actor} reset your access: ${listWords(parts)}` : `${actor} reset your access`;
     }
-    case "group_added": return `${actor} added you to the group ${group}`;
-    case "group_removed": return `${actor} removed you from the group ${group}`;
+    case "group_added": return `${actor} added you to ${group}`;
+    case "group_removed": return `${actor} removed you from ${group}`;
     case "key_revoked": return `${actor} revoked your API key${row.key_name ? ` “${row.key_name}”` : ""}`;
     default: return "Your access changed";
   }

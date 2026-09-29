@@ -91,7 +91,7 @@ export const applyTemplateToMember = (userId: string, templateId: string) =>
 
 // Templates (D286)
 export type TemplateRole = "member" | "viewer" | "guest";
-/** `guestRefused`: with sharing with guests off, a guest cannot join this group (it is shared with items). */
+/** `guestRefused`: with sharing with guests off, a guest cannot join this group (it has items shared with it). */
 export type AccessTemplate = { id: string; name: string; role: TemplateRole; groups: Array<{ id: string; name: string; guestRefused?: boolean }>; liveInvites: number; revision: number; createdAt: string; updatedAt: string };
 
 /** The groups of a template a guest would skip or be refused right now (Wave 33 QA, Q2). */
@@ -99,7 +99,7 @@ export const guestRefusedNames = (template: Pick<AccessTemplate, "groups">) => t
 
 /** Why, in one sentence. */
 export const guestRefusalReason = (names: readonly string[]) =>
-  `Sharing with guests is turned off, and ${names.length === 1 ? `${names[0]} is` : `${names.join(", ")} are`} shared with items.`;
+  `Sharing with guests is turned off, and ${names.length === 1 ? `${names[0]} has items shared with it` : `${names.join(", ")} have items shared with them`}.`;
 
 export const listTemplates = () => api<{ templates: AccessTemplate[]; limit: number }>("/team/templates");
 export const createTemplate = (body: { name: string; role: TemplateRole; groupIds: string[] }) =>
@@ -119,7 +119,7 @@ export type ActivityEvent = {
   actor: { id: string; displayName: string } | null;
   target: { id: string; displayName: string } | null;
   group: { id: string; name: string | null } | null;
-  key: { id: string; name: string | null; prefix: string | null } | null;
+  key: { id: string; name: string | null; prefix: string | null; owner?: { id: string; displayName: string } | null } | null;
   item: { kind: string; title: string; titleHidden: boolean; id?: string } | null;
   meta: Record<string, unknown> | null;
 };

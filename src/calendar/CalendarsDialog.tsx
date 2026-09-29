@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eye, EyeOff, Pencil, Plus, Rss, Share2, Trash2 } from "lucide-react";
+import { Eye, EyeOff, MailX, Pencil, Plus, Rss, Share2, Trash2 } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import type { CalendarColor, CalendarSummary } from "./calendarApi";
 import { CALENDAR_COLORS } from "./calendarFormat";
@@ -32,6 +32,14 @@ const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
     ? calendar.share_role === "editor" ? "Shared with everyone · others can edit" : "Shared with everyone · others can view"
     : "Shared with people you chose"
   : `${calendar.owner_name} · ${calendar.level === "manage" ? "you manage it" : calendar.role === "editor" ? "you can edit" : "view only"}`;
+
+/**
+ * A muted calendar says so in words next to its role (C6), at every width and without hover: the
+ * mail button alone showed it only by its icon. The tooltip says what muting means.
+ */
+export function MutedTag() {
+  return <span className="calendar-muted-tag" title="No activity emails from this calendar"><MailX aria-hidden="true" />Muted</span>;
+}
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */
 export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, onUpdate, onShare, onFeeds, onDelete, onClose, showTasks, onToggleTasks }: CalendarsDialogProps) {
@@ -84,7 +92,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
                 onBlur={() => { void rename(calendar); }}
                 onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void rename(calendar); } if (event.key === "Escape") { event.stopPropagation(); setEditing(null); } }} />
               : <strong>{calendar.name}</strong>}
-            <small>{roleLabel(calendar)}</small>
+            <small>{mutes.loaded && mutes.isMuted("calendar", calendar.id) && <><MutedTag /> · </>}{roleLabel(calendar)}</small>
           </span>
           {(() => {
             const mute = mutes.loaded && (calendar.is_owner !== 1 || calendar.visibility !== "private")

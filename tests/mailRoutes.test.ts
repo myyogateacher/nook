@@ -74,7 +74,7 @@ describe("email verification", () => {
     expect((await call(session, "POST", "/mail/verify/send")).body.code).toBe("ALREADY_VERIFIED");
     expect((await call(session, "POST", "/mail/test")).status).toBe(200);
     await runMailDispatch();
-    expect(sent.at(-1)!.subject).toBe("Test email from Nook");
+    expect(sent.filter((item) => item.to === session.email).at(-1)!.subject).toBe("Test email from Nook");
     mail.setMailTransportForTests(null);
     expect((await call(session, "POST", "/mail/test")).body.code).toBe("NOT_CONFIGURED");
   });

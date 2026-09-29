@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Link2Off, Lock, MailX, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
+import { collectProblems, confirmPasswordProblem, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import "./auth.css";
 
 /**
@@ -59,29 +60,41 @@ function Card({ children }: { children: React.ReactNode }) {
   </main>;
 }
 
-export function PasswordInput({ name, label, autoComplete, disabled, minLength = 12, describedBy }: { name: string; label: string; autoComplete: string; disabled?: boolean; minLength?: number; describedBy?: string }) {
+/**
+ * A password field with the show/hide toggle. Its form sets `noValidate` and checks it itself
+ * (fieldChecks.tsx); `error` is shown under the field.
+ */
+export function PasswordInput({ name, label, autoComplete, disabled, describedBy, error }: { name: string; label: string; autoComplete: string; disabled?: boolean; describedBy?: string; error?: string }) {
   const id = useId();
+  const errorId = useId();
   const [visible, setVisible] = useState(false);
+  const described = [describedBy, error ? errorId : undefined].filter(Boolean).join(" ") || undefined;
   return <div className="auth-password-group">
     <label htmlFor={id}>{label}</label>
     <span className="password-field">
-      <input id={id} name={name} type={visible ? "text" : "password"} autoComplete={autoComplete} required minLength={minLength} maxLength={256} disabled={disabled} aria-describedby={describedBy} />
+      <input id={id} name={name} type={visible ? "text" : "password"} autoComplete={autoComplete} maxLength={256} disabled={disabled} aria-describedby={described} aria-invalid={error ? true : undefined} />
       <button type="button" className="password-visibility-toggle" aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`} aria-pressed={visible} onClick={() => setVisible((value) => !value)}>
         {visible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
       </button>
     </span>
+    <FieldError id={errorId} message={error} />
   </div>;
 }
 
 /** The six-digit or recovery code field, with the switch between them (as on the sign-in page). */
-export function SecondFactorField({ recovery, onToggle, disabled }: { recovery: boolean; onToggle: () => void; disabled?: boolean }) {
+export function SecondFactorField({ recovery, onToggle, disabled, error }: { recovery: boolean; onToggle: () => void; disabled?: boolean; error?: string }) {
+  const errorId = useId();
+  const invalid = error ? { "aria-invalid": true, "aria-describedby": errorId } : {};
   return <>
     {recovery
-      ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required disabled={disabled} /><small>Enter one complete recovery code. Each code works once.</small></label>
-      : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required disabled={disabled} /><small>Your account uses two-factor authentication, so the code from your app is needed too.</small></label>}
+      ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} disabled={disabled} {...invalid} /><small>Enter one complete recovery code. Each code works once.</small><FieldError id={errorId} message={error} /></label>
+      : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" disabled={disabled} {...invalid} /><small>Your account uses two-factor authentication, so the code from your app is needed too.</small><FieldError id={errorId} message={error} /></label>}
     <button type="button" className="inline-auth-switch" onClick={onToggle}>{recovery ? "Use an authentication code instead" : "Use a recovery code"}</button>
   </>;
 }
+
+/** The name of the second-factor field on screen. */
+export const secondFactorName = (recovery: boolean) => recovery ? "recoveryCode" : "totpCode";
 
 /** The second-factor part of a password form's body, from its fields. */
 export function secondFactorBody(form: FormData, needsCode: boolean, recovery: boolean) {
@@ -93,6 +106,7 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   const [available, setAvailable] = useState<boolean | null>(null);
   const [state, setState] = useState<"form" | "working" | "sent">("form");
   const [error, setError] = useState("");
+  const fields = useFieldErrors();
   useEffect(() => pageTitle("Forgot password · Nook"), []);
   useEffect(() => {
     let live = true;
@@ -103,8 +117,9 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const address = String(new FormData(event.currentTarget).get("email") ?? "").trim();
-    setState("working");
     setError("");
+    if (fields.show(event.currentTarget, collectProblems({ email: emailProblem(address) }))) return;
+    setState("working");
     try {
       await api("/auth/password-reset/request", { method: "POST", body: JSON.stringify({ email: address }) });
       setState("sent");
@@ -130,8 +145,8 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
         <h1>Forgot your password?</h1>
         <p>Enter the email address of your Nook account. If it has a verified address, Nook emails you a link to choose a new password.</p>
       </div>
-      <form className="auth-form" onSubmit={submit}>
-        <label>Email<input name="email" type="email" autoComplete="email" required maxLength={254} disabled={state === "working" || available === null} autoFocus /></label>
+      <form className="auth-form" onSubmit={submit} noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+        <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} disabled={state === "working" || available === null} autoFocus aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "forgot-email-error" : undefined} /><FieldError id="forgot-email-error" message={fields.errors.email} /></label>
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button" disabled={state === "working" || available === null}>{state === "working" ? "Sending…" : "Send reset link"}</button>
       </form>
@@ -164,6 +179,7 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false 
   const [error, setError] = useState("");
   const checked = useRef(false);
   const hintId = useId();
+  const fields = useFieldErrors();
   useEffect(() => pageTitle("Reset password · Nook"), []);
   useEffect(() => {
     if (!token || checked.current) return;
@@ -177,13 +193,15 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false 
     if (!token || state.kind !== "ready") return;
     const form = new FormData(event.currentTarget);
     const newPassword = String(form.get("newPassword") ?? "");
-    if (newPassword !== String(form.get("confirmPassword") ?? "")) {
-      setError("The two passwords do not match.");
-      return;
-    }
+    setError("");
+    const problems = collectProblems({
+      newPassword: newPasswordProblem(newPassword),
+      confirmPassword: newPasswordProblem(newPassword) ? null : confirmPasswordProblem(newPassword, String(form.get("confirmPassword") ?? "")),
+      [secondFactorName(recovery)]: state.needsCode ? secondFactorProblem(String(form.get(secondFactorName(recovery)) ?? ""), recovery) : null
+    });
+    if (fields.show(event.currentTarget, problems)) return;
     const factor = secondFactorBody(form, state.needsCode, recovery);
     setBusy(true);
-    setError("");
     try {
       await api("/auth/password-reset/complete", { method: "POST", body: JSON.stringify({ token, newPassword, ...factor }) });
       setState({ kind: "done" });
@@ -225,10 +243,10 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false 
         <h1><KeyRound aria-hidden="true" className="invite-register-icon" />Choose a new password</h1>
         <p id={hintId}>Use at least 12 characters. Every device signed in to this account will be signed out.</p>
       </div>
-      <form className="auth-form" onSubmit={submit}>
-        <PasswordInput name="newPassword" label="New password" autoComplete="new-password" disabled={busy} describedBy={hintId} />
-        <PasswordInput name="confirmPassword" label="Confirm new password" autoComplete="new-password" disabled={busy} />
-        {state.needsCode && <SecondFactorField recovery={recovery} disabled={busy} onToggle={() => { setRecovery((value) => !value); setError(""); }} />}
+      <form className="auth-form" onSubmit={submit} noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+        <PasswordInput name="newPassword" label="New password" autoComplete="new-password" disabled={busy} describedBy={hintId} error={fields.errors.newPassword} />
+        <PasswordInput name="confirmPassword" label="Confirm new password" autoComplete="new-password" disabled={busy} error={fields.errors.confirmPassword} />
+        {state.needsCode && <SecondFactorField recovery={recovery} disabled={busy} error={fields.errors[secondFactorName(recovery)]} onToggle={() => { setRecovery((value) => !value); setError(""); fields.clear(); }} />}
         {error && <p className="form-error" role="alert">{error}</p>}
         <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Change password"}</button>
       </form>

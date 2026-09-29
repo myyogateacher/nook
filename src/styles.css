@@ -53,6 +53,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .security-note { display: flex; justify-content: center; align-items: center; gap: 7px; margin: 22px 0 0; padding-top: 20px; border-top: 1px solid var(--border); color: #74747c; font-size: .78rem; }
 .security-note svg { width: 14px; }
 .form-error { margin: 0; color: #fda4af; font-size: .84rem; }
+/* A field's own problem (A4), under it; beats `.auth-form label small`. */
+.auth-form .field-error { color: #fda4af; font-size: .78rem; font-weight: 400; line-height: 1.45; }
 .inline-auth-switch { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--yellow); font-size: .8rem; cursor: pointer; }
 .invite-register-status { margin: 28px 0 0; color: var(--muted); }
 .invite-register .auth-heading p + p { margin-top: 8px; }

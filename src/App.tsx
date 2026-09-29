@@ -76,6 +76,7 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
 import { NameDialog } from "./files/RenameDialog";
+import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { AccessSheet } from "./access/AccessSheet";
@@ -127,6 +128,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
   const signUpPrompt = registrationPrompt(registration);
+  const fields = useFieldErrors();
 
   useEffect(() => {
     let live = true;
@@ -136,9 +138,15 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const text = (name: string) => String(form.get(name) ?? "");
+    const codeName = useRecoveryCode ? "recoveryCode" : "totpCode";
+    const problems = collectProblems(registering
+      ? { displayName: text("displayName").trim() ? null : "Enter your name.", email: emailProblem(text("email")), password: newPasswordProblem(text("password")) }
+      : { email: emailProblem(text("email")), password: text("password") ? null : "Enter your password.", [codeName]: needsTotp ? secondFactorProblem(text(codeName), useRecoveryCode) : null });
+    if (fields.show(event.currentTarget, problems)) return;
+    setBusy(true);
     try {
       const payload = registering
         ? { email: form.get("email"), password: form.get("password"), displayName: form.get("displayName") }
@@ -178,13 +186,13 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
           <h1>{registering ? "Create your account" : "Welcome back"}</h1>
           <p>Your private workspace for ideas, passwords, and configuration notes.</p>
         </div>
-        <form onSubmit={submit} className="auth-form">
-          {registering && <label>Name<input name="displayName" autoComplete="name" required maxLength={80} /></label>}
-          <label>Email<input name="email" type="email" autoComplete="email" required /></label>
+        <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+          {registering && <label>Name<input name="displayName" autoComplete="name" maxLength={80} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "auth-name-error" : undefined} /><FieldError id="auth-name-error" message={fields.errors.displayName} /></label>}
+          <label>Email<input name="email" type="email" autoComplete="email" aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "auth-email-error" : undefined} /><FieldError id="auth-email-error" message={fields.errors.email} /></label>
           <div className="auth-password-group">
             <label htmlFor="auth-password">Password</label>
             <span className="password-field">
-              <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} />
+              <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} maxLength={256} aria-invalid={fields.errors.password ? true : undefined} aria-describedby={fields.errors.password ? "auth-password-error" : undefined} />
               <button
                 type="button"
                 className="password-visibility-toggle"
@@ -195,16 +203,17 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
                 {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
               </button>
             </span>
+            <FieldError id="auth-password-error" message={fields.errors.password} />
           </div>
           {!registering && needsTotp && (useRecoveryCode
-            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
-            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small></label>)}
-          {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
+            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="auth-recovery-error" message={fields.errors.recoveryCode} /></label>
+            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
+          {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
           {!registering && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>
-        {(registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
+        {(registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); fields.clear(); }}>
           {registering ? "Already have an account? Sign in" : signUpPrompt}
         </button>}
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>

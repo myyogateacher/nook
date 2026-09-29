@@ -46,8 +46,20 @@ export function clearFlowCookie(c: Context) {
 
 type NewFlow = { intent: FlowIntent; stage: FlowRow["stage"]; returnTo: string; inviteHash?: string | null; userId?: string | null; sessionId?: string | null; ttlMs?: number; clientHash?: string | null };
 
-/** Live (unused, unexpired) flows one client holds at most (L4): a cap per client, not a global one. */
-export const LIVE_FLOWS_PER_CLIENT = 10;
+/**
+ * Live (unused, unexpired) flows one client address holds at most (L4, N1). At the cap the oldest
+ * is evicted, never the new start refused: behind a proxy with TRUSTED_PROXY_HOPS=0 every visitor
+ * shares one address, and refusing would let anyone stop everyone's sign-in.
+ */
+export const LIVE_FLOWS_PER_CLIENT = 50;
+
+/** Marks the client's oldest unfinished flows used until at most `keep` remain. Returns how many went. */
+export function evictOldestFlows(clientHash: string, keep: number, nowMs = Date.now()) {
+  const at = new Date(nowMs).toISOString();
+  return db.query(`UPDATE google_auth_flows SET used_at = ? WHERE id IN (
+      SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ?
+      ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`).run(at, clientHash, at, keep).changes;
+}
 export function liveFlowsForClient(clientHash: string, nowMs = Date.now()) {
   return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ?").get(clientHash, new Date(nowMs).toISOString()) as { count: number }).count;
 }

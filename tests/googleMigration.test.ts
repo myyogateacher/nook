@@ -33,7 +33,7 @@ describe("migration 034 google_identities (Wave 35)", () => {
     runMigrations(db);
     // Back to the schema before 034 (what an upgrading install has).
     db.exec(`DELETE FROM schema_migrations WHERE id = 34; DROP TABLE google_identities; DROP TABLE google_auth_flows;
-      ALTER TABLE users DROP COLUMN avatar_id; ALTER TABLE users DROP COLUMN google_link_allowed_until; ALTER TABLE sessions DROP COLUMN reauth_at;`);
+      ALTER TABLE users DROP COLUMN avatar_id; ALTER TABLE users DROP COLUMN google_link_allowed_until; ALTER TABLE users DROP COLUMN google_reset_notice_at; ALTER TABLE users DROP COLUMN google_reset_notice_json; ALTER TABLE sessions DROP COLUMN reauth_at;`);
     const at = new Date().toISOString();
     db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'a@nook.test', 'A', '$argon2id$v=19$m=4096,t=2,p=1$x$y', ?)").run(at);
     db.query("INSERT INTO sessions (id, user_id, token_hash, csrf_token, created_at, last_seen_at, expires_at) VALUES ('s1', 'u1', 'h', 'c', ?, ?, ?)").run(at, at, at);
@@ -43,6 +43,21 @@ describe("migration 034 google_identities (Wave 35)", () => {
     expect(db.query("SELECT reauth_at FROM sessions WHERE id = 's1'").get()).toEqual({ reauth_at: null });
     // Running again changes nothing.
     runMigrations(db);
+    expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE id = 34").get()).toEqual({ count: 1 });
+  });
+});
+
+describe("migration 034 repair (review N7)", () => {
+  test("a database that recorded an earlier shape of 034 gets the missing columns at the next boot", () => {
+    const db = new Database(":memory:", { strict: true });
+    runMigrations(db);
+    // The first shape of 034 on this branch: no client_hash, no allowance or notice columns.
+    db.exec(`DROP INDEX google_auth_flows_client; ALTER TABLE google_auth_flows DROP COLUMN client_hash;
+      ALTER TABLE users DROP COLUMN google_link_allowed_until; ALTER TABLE users DROP COLUMN google_reset_notice_at; ALTER TABLE users DROP COLUMN google_reset_notice_json;`);
+    expect(columns(db, "google_auth_flows")).not.toContain("client_hash");
+    runMigrations(db);
+    expect(columns(db, "google_auth_flows")).toContain("client_hash");
+    expect(columns(db, "users")).toEqual(expect.arrayContaining(["google_link_allowed_until", "google_reset_notice_at", "google_reset_notice_json"]));
     expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE id = 34").get()).toEqual({ count: 1 });
   });
 });

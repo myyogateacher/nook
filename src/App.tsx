@@ -52,7 +52,7 @@ import { ChangePasswordCard } from "./auth/ChangePassword";
 import { Avatar } from "./ui/Avatar";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
-import { GoogleAccountCard, googleSettingsNotice, PasswordStateCard } from "./auth/GoogleAccountCard";
+import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
 import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
@@ -100,7 +100,8 @@ import { usePreferences, type PreferencesStatus } from "./usePreferences";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
+// `notices` (Wave 35 review N2c) comes with /api/auth/me only.
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null } };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 
@@ -1779,7 +1780,12 @@ export function App() {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) closeSettings();
   }} />;
-  const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const resetNotice = session.notices?.googleReset ?? null;
+  const dismissResetNotice = () => {
+    setSession((current) => current ? { ...current, notices: { ...current.notices, googleReset: null } } : current);
+    void api("/auth/notices/google-reset/dismiss", { method: "POST", body: "{}" }).catch(() => undefined);
+  };
+  const toastStatus = <>{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
     <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>

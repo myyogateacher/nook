@@ -16,10 +16,7 @@ import { addColumn, type Migration } from "./types";
  *
  * Needs only 001 (users, sessions). Independent of 030–033 (parallel waves). Filesystem-free.
  */
-export const googleIdentitiesMigration: Migration = {
-  id: 34,
-  name: "google_identities",
-  up(db) {
+function apply034(db: Parameters<Migration["up"]>[0]) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS google_identities (
         id TEXT PRIMARY KEY,
@@ -41,18 +38,32 @@ export const googleIdentitiesMigration: Migration = {
         invite_hash TEXT,
         user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
         session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
-        client_hash TEXT,
         failures INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         used_at TEXT
       );
+    `);
+    // Every column is added only when missing, so this also repairs a database that ran an earlier
+    // shape of 034 on the Wave 35 branch (review N7); production never ran 034 before release.
+    addColumn(db, "google_auth_flows", "client_hash", "TEXT");
+    db.exec(`
       CREATE INDEX IF NOT EXISTS google_auth_flows_expiry ON google_auth_flows(expires_at);
       CREATE INDEX IF NOT EXISTS google_auth_flows_client ON google_auth_flows(client_hash, expires_at);
     `);
     addColumn(db, "users", "avatar_id", "TEXT");
     addColumn(db, "sessions", "reauth_at", "TEXT");
-    // An admin's one-time, 24-hour permission for the next Google sign-in with this address to link.
+    // An admin's one-time, 24-hour permission for the next Google sign-in with this address to link,
+    // or (on a linked account) to re-link a recreated Google account.
     addColumn(db, "users", "google_link_allowed_until", "TEXT");
-  }
+    // When an admin reset the account (N2c): shown once at the next sign-in, cleared when read.
+    addColumn(db, "users", "google_reset_notice_at", "TEXT");
+    addColumn(db, "users", "google_reset_notice_json", "TEXT");
+}
+
+export const googleIdentitiesMigration: Migration = {
+  id: 34,
+  name: "google_identities",
+  up: apply034,
+  repair: apply034
 };

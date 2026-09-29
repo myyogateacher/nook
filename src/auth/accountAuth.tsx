@@ -18,6 +18,8 @@ export type AccountAuth = {
   reauthUntil: string | null;
   /** Email is on, so Forgot password can add or reset a password. */
   passwordReset: boolean;
+  /** The account has two-factor on, so re-authentication also asks for a code (older servers omit it). */
+  twoFactor?: boolean;
 };
 
 export const AccountAuthContext = createContext<AccountAuth | null>(null);

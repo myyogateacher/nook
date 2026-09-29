@@ -108,7 +108,7 @@ export const twoFactorTemplate = defineTemplate<{ event: TwoFactorEvent; at: str
  * account), `google_reset` (the admin reset the account first; `counts` says what was removed), and
  * `google_unlinked` (an admin removed the Google sign-in).
  */
-export type AccountEvent = "blocked" | "unblocked" | "sessions_revoked" | "google_allowed" | "google_reset" | "google_unlinked";
+export type AccountEvent = "blocked" | "unblocked" | "sessions_revoked" | "google_allowed" | "google_reset" | "google_unlinked" | "google_unlinked_self";
 
 /** The reset counts, in plain words ("3 sessions", "2 shared items made private"), zeros left out. */
 export function resetCountLines(counts: Record<string, number> | null | undefined) {
@@ -141,6 +141,8 @@ export const accountEventTemplate = defineTemplate<{ event: AccountEvent; actorN
         ? { subject: "Your Nook account was reset for Google sign-in", title: "Your account was reset", lead: `${actor} reset your account before allowing Google sign-in. Removed: ${removed.length ? removed.join(", ") : "nothing"}. Your notes, files, and other items are kept, and everything you owned is private now.`, action: { label: "Sign in with Google", href: appLink(paths.home()) }, extra: "Sign in with Google as this address within 24 hours to link it. If you did not expect this, contact your admin." }
         : data.event === "google_unlinked"
           ? { subject: "Google sign-in was removed from your Nook account", title: "Google sign-in was removed", lead: `${actor} removed Google sign-in from your Nook account.`, action: { label: "Review in Settings", href: appLink(paths.settings("security")) }, extra: "Contact your admin if you think this is a mistake." }
+          : data.event === "google_unlinked_self"
+            ? { subject: "Google sign-in was removed from your Nook account", title: "Google sign-in was removed", lead: "Google sign-in was removed from your Nook account in Settings. Sign in with your email and password from now on.", action: { label: "Review in Settings", href: appLink(paths.settings("security")) }, extra: "If this wasn't you, change your password and ask your admin to check your account." }
           : data.event === "blocked"
       // The admin's reason is never included (O11).
       ? { subject: "Your Nook account was blocked", title: "Your account was blocked", lead: `${actor} blocked your account. You are signed out everywhere and cannot sign in until an admin unblocks it.`, action: null, extra: "Contact your admin if you think this is a mistake." }

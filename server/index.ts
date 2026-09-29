@@ -11,6 +11,7 @@ import { avatarUrlFor, registerAvatarRoute } from "./avatars";
 import { passwordMethodRefusal } from "./authMethods";
 import { rateLimited, resetRegistrationRateLimit } from "./authLimits";
 import { registerGoogleAccountRoutes, registerGoogleRoutes } from "./google/routes";
+import { googleResetNotice } from "./google/linkAdmin";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
@@ -294,7 +295,9 @@ app.get("/api/auth/me", (c) => {
     csrfToken: c.get("csrfToken"),
     totp: totpState(user),
     // UI-only (D92): which modules this user hid. Never used for authorization (T97).
-    preferences: readPreferences(user.id)
+    preferences: readPreferences(user.id),
+    // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
+    notices: { googleReset: googleResetNotice(user.id) }
   });
 });
 

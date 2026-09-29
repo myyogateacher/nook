@@ -1,5 +1,5 @@
 import type { Context, Hono } from "hono";
-import { getConnInfo } from "hono/bun";
+import { clientAddress } from "./clientAddress";
 import { z } from "zod";
 import type { AppEnv } from "./auth";
 import { revokeUserPushSubscriptions } from "./calendar/push";
@@ -89,13 +89,6 @@ export async function passwordResetWorkSettled() {
   while (pending.size) await Promise.all([...pending]);
 }
 
-function clientAddress(c: Context<AppEnv>) {
-  try {
-    return getConnInfo(c).remote.address ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 function publicRequestRefusal(c: Context<AppEnv>) {
   // D295: with AUTH_METHODS=google there are no passwords to reset.

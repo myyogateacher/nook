@@ -24,7 +24,7 @@ export function reauthBody(form: FormData, account: AccountAuth | null, totpEnab
 }
 
 /** Password (or the Google confirmation) and, with two-factor on, the code: inline errors, no native validation. */
-function ReauthFields({ account, totpEnabled, errors, idPrefix, returnTo, disabled }: { account: AccountAuth; totpEnabled: boolean; errors: Record<string, string>; idPrefix: string; returnTo: string; disabled: boolean }) {
+export function ReauthFields({ account, totpEnabled, errors, idPrefix, returnTo, disabled }: { account: AccountAuth; totpEnabled: boolean; errors: Record<string, string>; idPrefix: string; returnTo: string; disabled: boolean }) {
   return <>
     {asksForPassword(account)
       ? <label>Your password<input name="password" type="password" autoComplete="current-password" maxLength={256} disabled={disabled} aria-invalid={errors.password ? true : undefined} aria-describedby={errors.password ? `${idPrefix}-password-error` : undefined} /><FieldError id={`${idPrefix}-password-error`} message={errors.password} /></label>
@@ -33,7 +33,7 @@ function ReauthFields({ account, totpEnabled, errors, idPrefix, returnTo, disabl
   </>;
 }
 
-const problemsOf = (form: FormData, account: AccountAuth, totpEnabled: boolean) => collectProblems({
+export const reauthProblems = (form: FormData, account: AccountAuth, totpEnabled: boolean) => collectProblems({
   password: asksForPassword(account) && !String(form.get("password") ?? "") ? "Enter your password." : null,
   totpCode: totpEnabled ? secondFactorProblem(String(form.get("totpCode") ?? ""), false) : null
 });
@@ -64,7 +64,7 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    if (fields.show(event.currentTarget, problemsOf(form, account, totpEnabled))) return;
+    if (fields.show(event.currentTarget, reauthProblems(form, account, totpEnabled))) return;
     setBusy(true);
     setError("");
     try {
@@ -107,6 +107,30 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
         </div>
       </form>
     </KeysDialog>}
+  </div>;
+}
+
+export type GoogleResetNotice = { at: string; counts: Partial<Record<string, number>> };
+
+/** "An admin reset this account on <date>: …" in plain words (review N2c). */
+export function googleResetNoticeText(notice: GoogleResetNotice) {
+  const date = new Date(notice.at).toLocaleDateString(undefined, { dateStyle: "medium" });
+  const removed = [
+    notice.counts.password ? "password" : null,
+    notice.counts.twoFactor ? "two-factor" : null,
+    notice.counts.keys ? "API keys" : null,
+    notice.counts.feeds ? "calendar feeds" : null,
+    notice.counts.items || notice.counts.shares || notice.counts.groupGrants ? "sharing" : null
+  ].filter(Boolean) as string[];
+  const list = removed.length > 1 ? `${removed.slice(0, -1).join(", ")} and ${removed.at(-1)}` : removed[0] ?? "sign-in details";
+  return `An admin reset this account on ${date}: ${list} ${removed.length === 1 ? "was" : "were"} removed. Your notes, files, and other content are kept, and everything you owned is private now.`;
+}
+
+/** The one-time notice after an admin reset (N2c); dismissed once read. */
+export function GoogleResetNoticeBanner({ notice, onDismiss }: { notice: GoogleResetNotice; onDismiss: () => void }) {
+  return <div className="google-reset-notice" role="alert">
+    <p>{googleResetNoticeText(notice)}</p>
+    <button type="button" className="secondary-button" onClick={onDismiss}>Got it</button>
   </div>;
 }
 

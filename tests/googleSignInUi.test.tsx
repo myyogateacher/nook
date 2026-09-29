@@ -9,7 +9,7 @@ import { resetLines } from "../src/team/TeamGoogle";
 import { draftFrom } from "../src/access/accessModel";
 import { takeInviteFromLocation } from "../src/auth/inviteLink";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, type AccountAuth } from "../src/auth/accountAuth";
-import { googleSettingsNotice, PasswordStateCard } from "../src/auth/GoogleAccountCard";
+import { googleResetNoticeText, GoogleResetNoticeBanner, googleSettingsNotice, PasswordStateCard } from "../src/auth/GoogleAccountCard";
 
 /**
  * Wave 35 client pieces: the shared Avatar (D299), the Google sign-in helpers and button (D300), and
@@ -232,6 +232,25 @@ describe("end-user QA fixes (U1–U11)", () => {
     expect(keys).toContain('returnTo="/settings/mcp" startable={false}');
     const account: AccountAuth = { methods: { password: true, google: true }, hasPassword: false, google: { email: "g@nook.test" }, reauth: "google", reauthUntil: null, passwordReset: true };
     expect(renderToStaticMarkup(<GoogleReauthNotice account={account} returnTo="/" startable={false} />)).not.toContain("href=");
+  });
+});
+
+describe("second review (N2, N5)", () => {
+  test("the Team dialogs re-authenticate the admin inline, hide a refused reset, and offer re-linking", () => {
+    const team = readFileSync(join(src, "team", "TeamGoogle.tsx"), "utf8");
+    expect(team).toContain("<ReauthFields");
+    expect(team).toContain("noValidate onSubmit={submit}");
+    expect(team).toContain("{state.resetAllowed && <button");
+    expect(team).toContain("state.resetRefusal.message");
+    expect(team).toContain("Allow re-linking…");
+    expect(team).not.toMatch(/window\.(confirm|alert|prompt)\(/);
+  });
+
+  test("the one-time reset notice says what was removed and when", () => {
+    const text = googleResetNoticeText({ at: "2026-09-28T09:00:00.000Z", counts: { password: 1, twoFactor: 1, keys: 2, feeds: 1, items: 3 } });
+    expect(text).toContain("An admin reset this account on");
+    expect(text).toContain("password, two-factor, API keys, calendar feeds and sharing were removed");
+    expect(renderToStaticMarkup(<GoogleResetNoticeBanner notice={{ at: "2026-09-28T09:00:00.000Z", counts: { password: 1 } }} onDismiss={() => undefined} />)).toContain("Got it");
   });
 });
 

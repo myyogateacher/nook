@@ -56,7 +56,10 @@ export function runMigrations(db: Database) {
   for (let index = 0; index < migrations.length; index += 1) {
     const migration = migrations[index]!;
     if (index > 0 && migrations[index - 1]!.id >= migration.id) throw new Error("Database migrations must have unique ascending ids");
-    if (db.query("SELECT id FROM schema_migrations WHERE id = ?").get(migration.id)) continue;
+    if (db.query("SELECT id FROM schema_migrations WHERE id = ?").get(migration.id)) {
+      if (migration.repair) db.transaction(() => migration.repair!(db))();
+      continue;
+    }
     db.transaction(() => {
       migration.up(db);
       db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, new Date().toISOString());

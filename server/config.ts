@@ -140,6 +140,11 @@ function mailLinksBlocked() {
 const mailBlockedReason = resendApiKey && mailFrom ? mailLinksBlocked() : null;
 const mailEnabled = mailTransportValue === "file" || Boolean(resendApiKey && mailFrom && !mailBlockedReason);
 
+// Reverse proxies in front of Nook (Wave 35 review N1; access plan O-A7): 0 = the socket address and
+// no forwarding header is read; N = the N-th X-Forwarded-For entry from the right. Rate limits and
+// audit entries only, never access.
+const trustedProxyHops = integerEnv("TRUSTED_PROXY_HOPS", 0, 0, 5);
+
 // Sign-in methods (Wave 35, D290): password (default, as before), google, or both.
 const authMethodsValue = process.env.AUTH_METHODS?.trim().toLowerCase() || "password";
 if (!(["password", "google", "both"] as const).includes(authMethodsValue as "password")) throw new Error("AUTH_METHODS must be password, google, or both");
@@ -214,6 +219,8 @@ export const config = {
    * Email is on only when both RESEND_API_KEY and MAIL_FROM are set and links in mail can work
    * (server/mail.ts), or with the development file transport.
    */
+  /** How many trusted reverse proxies add X-Forwarded-For entries (server/clientAddress.ts). */
+  trustedProxyHops,
   /** Sign-in methods and the Google OAuth client (Wave 35, D290). Tests switch these in process. */
   auth: {
     methods: authMethodsValue as "password" | "google" | "both",

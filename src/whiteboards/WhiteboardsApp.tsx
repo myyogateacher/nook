@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Ellipsis, House, LayoutGrid, List as ListIcon, PenTool, Plus, RotateCcw, Sparkles, TriangleAlert, Users } from "lucide-react";
 import { api } from "../api";
 import { AccountActions, AppPageName, useBinCount } from "../AppShell";
@@ -37,7 +37,31 @@ const prefetchCanvas = () => {
   void loadCanvas().catch(() => { prefetched = false; });
 };
 
-type WhiteboardsNavigate = (route: Route, options?: { replace?: boolean }) => void;
+type WhiteboardsNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean }) => void;
+
+/**
+ * Wave 23 QA 1c: the canvas chunk could not be loaded (offline, or a release removed it and the one
+ * reload chunkReload.ts allows did not help). Instead of a blank page: what happened, Retry, and the
+ * way back to the list. Retry loads the page again: the browser keeps a failed module import for the
+ * life of the page, so only a fresh page fetches the chunk again (nothing is unsaved: the canvas never
+ * opened).
+ */
+class CanvasLoadBoundary extends Component<{ children: ReactNode; onRetry: () => void; onBack: () => void }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error("Could not load the whiteboard editor", error); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return <div className="whiteboard-canvas-page whiteboard-loading" role="alert">
+      <TriangleAlert aria-hidden="true" />
+      <p>The whiteboard editor could not be loaded. Check your connection and try again.</p>
+      <div className="whiteboard-load-actions">
+        <button type="button" className="primary-button" onClick={() => { this.setState({ failed: false }); this.props.onRetry(); }}><RotateCcw />Retry</button>
+        <button type="button" className="secondary-button" onClick={this.props.onBack}>Back to whiteboards</button>
+      </div>
+    </div>;
+  }
+}
 
 type WhiteboardsAppProps = {
   userId: string;
@@ -144,11 +168,9 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   // CAS save); the list refreshes once any was saved.
   const showingList = !route.boardId;
   useEffect(() => {
-    if (!showingList || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
-    // Signing out unmounts this app: a run it started stops at its next step.
-    let mounted = true;
-    void requestPendingSync(() => pendingSyncDeps(userId, () => mounted ? userId : null));
-    return () => { mounted = false; };
+    if (!showingList) return;
+    // A run stops at its next step once this person has signed out (the app shell says who is signed in).
+    void requestPendingSync(() => pendingSyncDeps(userId));
   }, [showingList, userId]);
   useEffect(() => {
     const onSynced = () => {
@@ -228,7 +250,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   }, [folders]);
 
   if (route.boardId) {
-    return <Suspense fallback={<div className="whiteboard-canvas-page whiteboard-loading" role="status"><PenTool aria-hidden="true" /><p>Opening the whiteboard…</p></div>}>
+    return <CanvasLoadBoundary key={route.boardId} onBack={back} onRetry={() => window.location.reload()}><Suspense fallback={<div className="whiteboard-canvas-page whiteboard-loading" role="status"><PenTool aria-hidden="true" /><p>Opening the whiteboard…</p></div>}>
       <WhiteboardCanvas
         key={route.boardId}
         boardId={route.boardId}
@@ -239,9 +261,14 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
         onOpenPath={onOpenPath}
         onOpenBoard={(id) => go(whiteboardsRoute(folderFilter, id))}
         onAccessLost={() => { flash("You no longer have access to this whiteboard"); go(whiteboardsRoute(folderFilter), true); }}
-        onDeleted={() => back()}
+        onDeleted={() => {
+          // Wave 23 QA 1e: the board is gone, so its entry is not left behind for Back to repeat.
+          const list = whiteboardsRoute(folderFilter);
+          setRoute(list);
+          navigateRef.current(list, { replace: true, removed: true });
+        }}
       />
-    </Suspense>;
+    </Suspense></CanvasLoadBoundary>;
   }
 
   const count = boards?.length ?? 0;

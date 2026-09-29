@@ -6,6 +6,7 @@ import "@excalidraw/excalidraw/index.css";
 import { api, ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { whenHistorySettled } from "../historyDialogs";
 import type { Folder } from "../types";
 import { canonicalSceneJson, whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
 import {
@@ -15,6 +16,7 @@ import {
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
 import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isKeptElement, linkTarget, openExcalidrawLayer, restoreMessage, sceneForLoad, sceneForSave } from "./historyGuard";
 import { markBoardOpen } from "./pendingSync";
+import { onBeforeChunkReload } from "../chunkReload";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
 import { announceThumbnail, createWhiteboard, getPreviousVersion, getWhiteboard, putWhiteboardThumbnail, restorePreviousVersion, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
 import { Avatar } from "../ui/Avatar";
@@ -174,14 +176,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     return sceneForSave(captured.elements as never, captured.appState);
   }, []);
 
-  const writePendingNow = useCallback(() => {
+  const writePendingNow = useCallback((): Promise<void> => {
     if (pendingTimer.current !== null) window.clearTimeout(pendingTimer.current);
     pendingTimer.current = null;
     // Only a captured edit the server has not confirmed (QA E1): never the loaded scene, never after teardown began.
-    if (tearingDownRef.current || !boardRef.current?.canEdit || !maySendCapture(stateRef.current, sceneRef.current)) return;
+    if (tearingDownRef.current || !boardRef.current?.canEdit || !maySendCapture(stateRef.current, sceneRef.current)) return Promise.resolve();
     const result = currentScene();
-    if (!result?.ok) return;
-    void writePending(userId, boardId, { scene: result.scene, baseRevision: stateRef.current.baseRevision, savedAt: new Date().toISOString(), live: result.stats.elementCount, origin: "edit" });
+    if (!result?.ok) return Promise.resolve();
+    return writePending(userId, boardId, { scene: result.scene, baseRevision: stateRef.current.baseRevision, savedAt: new Date().toISOString(), live: result.stats.elementCount, origin: "edit" });
   }, [boardId, currentScene, userId]);
 
   /** Throttled, not debounced (QA D4): the copy is written within 0.5 s of an edit while edits keep coming. */
@@ -344,6 +346,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   useLayoutEffect(() => () => teardownRef.current(), []);
   // QA E5: while this canvas is open, the background sync leaves this board's pending copy alone.
   useEffect(() => markBoardOpen(boardId), [boardId]);
+  // Wave 23 QA 1c: a release removed a lazy chunk and the page is about to reload once
+  // (chunkReload.ts): unsaved edits go to the pending copy first, which the reloaded page applies
+  // (same base) or offers (the board changed meanwhile), as after any other interruption.
+  useEffect(() => onBeforeChunkReload(async () => {
+    if (!hasPendingWork(stateRef.current)) return;
+    await writePendingNow();
+    void runSave();
+  }), [runSave, writePendingNow]);
 
   /** Waits for the save to finish, at most three seconds; true when nothing is left unsaved. */
   const flush = useCallback(async () => {
@@ -698,7 +708,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       onExportPng={() => { void exportPng(); }}
       onRestorePrevious={() => { void openRestore(); }}
       onChanged={(patch) => setLoaded((current) => current ? { ...current, board: { ...current.board, ...patch } } : current)}
-      onDeleted={() => { void clearPending(userId, boardId); dispatch({ type: "reset", revision: stateRef.current.baseRevision, live: stateRef.current.savedLive }); onDeleted(); }}
+      onDeleted={() => {
+        void clearPending(userId, boardId);
+        dispatch({ type: "reset", revision: stateRef.current.baseRevision, live: stateRef.current.savedLive });
+        // The confirm is a history layer: close it and let its guard go (and any history move it
+        // made land) before leaving, or the guard would take the step back as "close the dialog".
+        setLayer(null);
+        window.setTimeout(() => whenHistorySettled(onDeleted), 0);
+      }}
       onAction={(action, target) => setLayer({ kind: "board", dialog: { kind: action, board: target } })} />
     {layer?.kind === "conflict" && <ModalDialog title="This whiteboard changed on another device" onClose={() => setLayer(null)}>
       <p className="file-dialog-copy">Someone saved a newer version of this whiteboard, from another tab or device. Your changes here are kept on this device until you choose.</p>

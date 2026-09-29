@@ -23,7 +23,7 @@ function token(value: string) {
 }
 
 /** The URL slugs of Settings sections (API keys is `/settings/keys` since C3; the client still opens `/settings/mcp`). */
-export const SETTINGS_SECTIONS = ["security", "modules", "keys", "notifications", "about"] as const;
+export const SETTINGS_SECTIONS = ["security", "modules", "keys", "access", "notifications", "about"] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
 /** Path builders, one per place a mail may open. */

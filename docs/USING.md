@@ -242,7 +242,7 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 
 ## Email
 
-When your admin has set up email (OPERATIONS → Email), Nook can email you about things that involve you. Open **Settings → Notifications** and scroll to **Email**; the direct link is `/settings/notifications`. Settings has a URL for each section now (`/settings/security`, `/settings/mcp`, …): Back closes Settings, and Forward opens it again at the same section.
+When your admin has set up email (OPERATIONS → Email), Nook can email you about things that involve you. Open **Settings → Notifications** and scroll to **Email**; the direct link is `/settings/notifications`. Settings has a URL for each section now (`/settings/security`, `/settings/keys`, …): Back closes Settings, and Forward opens it again at the same section.
 
 - **Verify your address first.** An account made with an invite sent to your address is already verified. Otherwise Nook emails you a verification link when you sign up; open it (it works once, for 24 hours) or press **Send verification email**. Until you verify, Nook sends you only security emails.
 - **What Nook emails.** *Assigned to you* (someone else adds you to a card), *Comments on your cards* (cards you created or are assigned to), *Shared with you* (a note, folder, file, board, calendar, collection, or task view shared with you by name; sharing with everyone sends nothing), and *Proposals awaiting you* (your MCP keys suggested changes: only the key's name and how many, never the agent's text). Each has its own switch, and **Email notifications** turns them all off at once. Nothing you do yourself emails you.

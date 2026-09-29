@@ -9,6 +9,7 @@ import { adminRevokeKey, adminRevokeSchema, listInventory } from "../apiKeys";
 import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
 import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPoliciesSchema, writePolicies } from "./policies";
 import { registerGroupRoutes } from "./groups";
+import { registerCentralAccessRoutes } from "./centralRoutes";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
@@ -29,7 +30,9 @@ export const createInviteSchema = z.object({
   expiresInDays: z.number().int().min(1).max(INVITE_MAX_DAYS).optional(),
   note: z.string().max(INVITE_NOTE_MAX).nullish(),
   /** Also email the link to the bound address (only there, never elsewhere). */
-  sendEmail: z.boolean().optional()
+  sendEmail: z.boolean().optional(),
+  /** An access template (D286) whose groups the new account joins on acceptance; its role must match. */
+  templateId: uuid.nullish()
 }).strict();
 
 /** 30 Team writes a minute per admin (§5.5). In memory, like the auth limits. */
@@ -222,11 +225,21 @@ function groupReadGate(c: Context<AppEnv>) {
   return null;
 }
 
+/** Member access, templates, and activity reads: admins only (guests 404, everyone else 403 ADMIN_ONLY). */
+function accessReadGate(c: Context<AppEnv>) {
+  const user = c.get("user");
+  if (!can(user.role, "team.read")) return notFound(c);
+  if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage access", code: "ADMIN_ONLY" }, 403);
+  return null;
+}
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerInviteRoutes(app);
   registerAccessRoutes(app);
   // Groups (Wave 32, access plan D267): before `/api/team/:userId` so "groups" is never a user id.
   registerGroupRoutes(app, { read: groupReadGate, write: writeGate });
+  // Member access, templates, and access activity (Wave 33, §C.6): the same admin gates.
+  registerCentralAccessRoutes(app, { read: accessReadGate, write: writeGate });
 
   app.get("/api/team", (c) => {
     const user = c.get("user");

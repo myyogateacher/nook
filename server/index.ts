@@ -49,6 +49,7 @@ import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./tea
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
 import { registerItemAccessRoutes } from "./access/itemAccess";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
+import { applyInviteTemplate } from "./team/templates";
 import { can, mcpScopesForRole } from "./team/roles";
 import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
 import {
@@ -249,6 +250,9 @@ app.post("/api/auth/register", async (c) => {
         // An invite bound to this address proved control of the inbox (D244).
         if (invite.email !== null) db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(timestamp, id);
         audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
+        // D286: the groups the invite's access template had when the invite was created, in this same
+        // transaction (a template deleted since leaves template_id NULL: the role only, no groups).
+        applyInviteTemplate(invite, id, timestamp);
       }
     })();
   } catch (error) {

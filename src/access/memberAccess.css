@@ -1,0 +1,50 @@
+/* Member access page, Settings → My access, Templates, and Access activity (Wave 33). */
+.ma-overview { display: grid; gap: 12px; min-width: 0; }
+.my-access > .team-card { margin-bottom: 12px; }
+.ma-module { min-width: 0; }
+.ma-kind { display: grid; gap: 6px; min-width: 0; }
+.ma-kind-toggle { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; border: 1px solid #2a2a2f; border-radius: 10px; padding: 6px 12px; background: #161618; color: #ededee; text-align: left; cursor: pointer; font: inherit; }
+.ma-kind-toggle:hover { background: #1c1c1f; }
+.ma-kind-toggle svg { width: 16px; height: 16px; flex: none; color: #9a9aa1; }
+.ma-kind-toggle span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.ma-kind-toggle small { color: #8d8d94; font-size: .75rem; }
+.ma-audience { margin: 0; padding: 0 4px; color: #8d8d94; font-size: .78rem; }
+.ma-kind-rows { display: grid; gap: 8px; min-width: 0; }
+.ma-row { min-width: 0; flex-wrap: wrap; padding-right: 6px; }
+.ma-row .team-row-copy { flex: 1 1 200px; min-width: 0; overflow-wrap: break-word; }
+.ma-sources { display: grid; gap: 4px; width: 100%; margin: 0; padding: 0; list-style: none; }
+.ma-source { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; min-height: 40px; }
+.ma-source-label { color: #b7b7bd; font-size: .78rem; }
+.ma-row-actions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
+.ma-row-actions .select-trigger { min-height: 40px; }
+.ma-more { justify-self: start; }
+.ma-header-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+.ma-header-button { flex: none; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.member-access .team-invites-header > div:first-child { min-width: 0; }
+.ma-summary-line { margin: 0; color: #b7b7bd; font-size: .82rem; }
+.ma-group-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.ma-group-chip { min-height: 40px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #303035; border-radius: 999px; padding: 0 4px 0 12px; background: #161618; color: #d6d6d9; font-size: .82rem; }
+.ma-group-chip .icon-button { width: 40px; height: 40px; }
+.ma-group-chip.ma-group-chip-static { padding-right: 12px; }
+.team-ma-row { margin: 0; }
+.ma-group-chip .team-status-chip { margin-left: 4px; }
+.ma-key-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ma-key-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #242428; border-radius: 12px; padding: 6px 6px 6px 12px; background: #161618; min-width: 0; }
+.ma-key-row code { color: #b7b7bd; font-size: .75rem; }
+.ma-reset-counts { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; color: #d6d6d9; font-size: .86rem; }
+.ma-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-activity-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.ma-activity-row { display: grid; gap: 2px; border: 1px solid #242428; border-radius: 12px; padding: 10px 12px; background: #161618; min-width: 0; overflow-wrap: anywhere; }
+.ma-activity-row time, .ma-activity-row small { color: #8d8d94; font-size: .74rem; }
+.template-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.template-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #242428; border-radius: 12px; padding: 8px 8px 8px 12px; background: #161618; min-width: 0; }
+.template-row .team-row-copy { min-width: 0; overflow-wrap: anywhere; }
+.template-row-actions { display: flex; gap: 6px; flex: none; }
+.template-row-actions .icon-button { width: 44px; height: 44px; }
+.ma-keys-line { min-height: 40px; display: inline-flex; align-items: center; gap: 6px; margin: 0; border: 0; padding: 0; background: transparent; color: #b7b7bd; font-size: .82rem; text-align: left; }
+
+@media (max-width: 760px) {
+  .ma-filters { grid-template-columns: minmax(0, 1fr); }
+  .ma-header-actions .team-action { flex: 1 1 auto; }
+  .ma-header-button { width: 100%; justify-content: center; }
+}

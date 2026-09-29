@@ -2,9 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Ban, Check, ChevronLeft, Copy, Link2, Mail, Plus, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
-import { Select } from "../ui/Select";
+import { Select, type Option } from "../ui/Select";
+import { guestRefusalReason, guestRefusedNames, listTemplates, type AccessTemplate } from "../access/memberAccessApi";
+import { collectProblems, emailProblem, FieldError, useFieldErrors } from "../auth/fieldChecks";
+
+/**
+ * What a template does for this invite (D286, Q2): the groups they join, and for a guest while
+ * sharing with guests is off, the groups that are skipped and why. Checked again at acceptance.
+ */
+export function templateHint(template: AccessTemplate | null, role: InviteRole) {
+  if (!template) return "A template adds groups when they register.";
+  const skipped = role === "guest" ? guestRefusedNames(template) : [];
+  const joining = template.groups.filter((group) => !skipped.includes(group.name)).map((group) => group.name);
+  const joins = joining.length ? `They join ${joining.join(", ")} when they register.` : "They join no groups when they register.";
+  return skipped.length ? `${joins} Skipped for a guest: ${skipped.join(", ")}. ${guestRefusalReason(skipped)}` : joins;
+}
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
+import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, templateLabel, type ExpiryDays } from "./inviteFormat";
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 
@@ -20,6 +34,7 @@ type Props = {
 type Dialog = { kind: "create" } | { kind: "revoke"; invite: TeamInvite } | { kind: "email"; invite: TeamInvite };
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+const NO_TEMPLATE = "none";
 
 /**
  * The admin Invites panel at /team/invites (docs/plan/WAVES_18-20_SMALL.md §1.6, D167): in the
@@ -73,9 +88,10 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
           <span className={`team-status-chip invite-${invite.status}`}>{INVITE_STATUS_LABELS[invite.status]}</span>
           <code className="team-invite-prefix" title="The first characters of the link's token">{invite.tokenPrefix}…</code>
         </div>
-        {(invite.email || invite.note) && <p className="team-invite-label">
+        {(invite.email || invite.note || invite.template) && <p className="team-invite-label">
           {invite.email && <span>Only {invite.email}</span>}
           {invite.note && <span className="team-invite-note">{invite.note}</span>}
+          {invite.template && <span>{templateLabel(invite.template)}</span>}
         </p>}
         <p className="team-invite-meta">
           <span>{inviteTimeLabel(invite)}</span>
@@ -123,18 +139,40 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
   const [error, setError] = useState("");
   const [created, setCreated] = useState<Created | null>(null);
   const [copied, setCopied] = useState(false);
+  // Wave 33 (D286): an optional access template; its role becomes the invite's role.
+  const [templates, setTemplates] = useState<AccessTemplate[]>([]);
+  const [templateId, setTemplateId] = useState<string>(NO_TEMPLATE);
   const linkRef = useRef<HTMLInputElement>(null);
   useDialogChrome(busy, onClose);
+  useEffect(() => { listTemplates().then((result) => setTemplates(result.templates), () => setTemplates([])); }, []);
+  const template = templates.find((entry) => entry.id === templateId) ?? null;
+  const fields = useFieldErrors();
+  const templateOptions: Option[] = [{ value: NO_TEMPLATE, label: "No template" }, ...templates.map((entry) => {
+    const skipped = entry.role === "guest" ? guestRefusedNames(entry) : [];
+    return { value: entry.id, label: entry.name, description: `${ROLE_LABELS[entry.role]} · ${entry.groups.length ? entry.groups.map((group) => group.name).join(", ") : "no groups"}${skipped.length ? ` · a guest skips ${skipped.join(", ")}` : ""}` };
+  })];
+  const chooseTemplate = (id: string) => {
+    setTemplateId(id);
+    const picked = templates.find((entry) => entry.id === id);
+    if (picked) setRole(picked.role);
+  };
+  const chooseRole = (next: InviteRole) => {
+    setRole(next);
+    // A template's role must match the invite's (the server refuses otherwise), so a different role drops it.
+    if (template && template.role !== next) setTemplateId(NO_TEMPLATE);
+  };
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const note = String(form.get("note") ?? "").trim();
+    // The app's own checks, shown under the field (noValidate: no browser bubble, Q3).
+    if (fields.show(event.currentTarget, collectProblems({ email: boundEmail ? emailProblem(boundEmail) : null }))) return;
     setBusy(true);
     setError("");
     try {
       const mailIt = Boolean(boundEmail) && sendEmail && emailEnabled;
-      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(boundEmail ? { email: boundEmail } : {}), ...(note ? { note } : {}), ...(mailIt ? { sendEmail: true } : {}) });
+      const result = await createTeamInvite({ role, expiresInDays: Number(expiry), ...(boundEmail ? { email: boundEmail } : {}), ...(note ? { note } : {}), ...(mailIt ? { sendEmail: true } : {}), ...(template ? { templateId: template.id } : {}) });
       setCreated({ url: result.url, role: result.invite.role, expiresAt: result.invite.expiresAt, email: result.invite.email, ...(result.email ? { mail: result.email } : {}) });
       onCreated();
     } catch (reason) {
@@ -175,10 +213,15 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
           <button type="button" className="team-action" onClick={onClose}>Done</button>
           <button type="button" className="team-action primary" onClick={() => { void copy(); }} autoFocus>{copied ? <><Check />Link copied</> : <><Copy />Copy link</>}</button>
         </div>
-      </div> : <form onSubmit={submit}>
+      </div> : <form onSubmit={submit} noValidate>
+        {templates.length > 0 && <div className="team-field">
+          <span id="team-invite-template-label">Template (optional)</span>
+          <Select labelledBy="team-invite-template-label" label="Template" value={templateId} options={templateOptions} onChange={chooseTemplate} disabled={busy} />
+          <small className="team-muted">{templateHint(template, role)}</small>
+        </div>}
         <div className="team-field">
           <span id="team-invite-role-label">Team role</span>
-          <Select labelledBy="team-invite-role-label" label="Team role" value={role} options={inviteRoleOptions()} onChange={setRole} disabled={busy} />
+          <Select labelledBy="team-invite-role-label" label="Team role" value={role} options={inviteRoleOptions()} onChange={chooseRole} disabled={busy} />
           <small className="team-muted">{ROLE_DESCRIPTIONS[role]}. Admins are promoted after sign-up.</small>
         </div>
         <div className="team-field">
@@ -186,7 +229,10 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
           <Select labelledBy="team-invite-expiry-label" label="Expires" value={expiry} options={expiryOptions()} onChange={setExpiry} disabled={busy} />
         </div>
         <label className="team-field">Email (optional)
-          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} value={email} onChange={(event) => setEmail(event.target.value)} />
+          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} value={email}
+            aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "team-invite-email-error" : undefined}
+            onChange={(event) => { setEmail(event.target.value); fields.clear("email"); }} />
+          <FieldError id="team-invite-email-error" message={fields.errors.email} />
         </label>
         {boundEmail && <label className={`team-check${emailEnabled ? "" : " disabled"}`}>
           <input type="checkbox" checked={sendEmail && emailEnabled} disabled={busy || !emailEnabled} onChange={(event) => setSendEmail(event.target.checked)} />

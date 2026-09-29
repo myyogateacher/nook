@@ -2,6 +2,7 @@ import { audit, db } from "../db";
 import { calendarAudiencePredicate, readableEvent, type EventRow } from "./access";
 import { isValidTimeZone, nextOccurrence, parseLocal, zonedToUtc, type RecurrenceRule, type SeriesInput } from "./recurrence";
 import { mailReminder } from "../mail/calendarMail";
+import { listAccessNotices, markAccessNoticesRead, sweepAccessNotices, unreadAccessNotices } from "../access/notices";
 
 /**
  * Reminders, the dispatcher, and in-app notifications (WAVES_10-12.md §4.1–4.3, D64, T66, T67).
@@ -384,7 +385,7 @@ export function listNotifications(userId: string, options: { unread: boolean; li
       LEFT JOIN routine_runs rr ON rr.id = n.run_id LEFT JOIN routines ro ON ro.id = rr.routine_id
       WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NotificationRow[];
-  const items = rows.map((row): NotificationItem => {
+  const calendarItems = rows.map((row): NotificationItem => {
     if (row.kind === "proposals") {
       return { id: row.id, title: proposalNotificationTitle(row.key_name, row.proposal_count ?? 1, row.routine_name), href: "/inbox", late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null };
     }
@@ -392,7 +393,11 @@ export function listNotifications(userId: string, options: { unread: boolean; li
     const title = event ? event.event.title : row.event_id ? "An event you can no longer open" : row.reminder_title ?? "Reminder";
     return { id: row.id, title, href: notificationHref(event ? row.event_id : null), late: row.late === 1, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: row.occurrence_start };
   });
-  const unreadCount = (db.query("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL").get(userId) as { count: number }).count;
+  // Access notices (Wave 33, migration 032) share the bell: merged newest first, one page.
+  const items = [...calendarItems, ...listAccessNotices(userId, options)]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, options.limit);
+  const unreadCount = (db.query("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND read_at IS NULL").get(userId) as { count: number }).count
+    + unreadAccessNotices(userId);
   return { items, unreadCount };
 }
 
@@ -401,13 +406,13 @@ export function markNotificationsRead(userId: string, target: { ids: string[] } 
   const result = "all" in target
     ? db.query("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL").run(now, userId)
     : db.query("UPDATE notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL AND id IN (SELECT value FROM json_each(?))").run(now, userId, JSON.stringify(target.ids));
-  return { ok: true as const, updated: result.changes };
+  return { ok: true as const, updated: result.changes + markAccessNoticesRead(userId, target, now) };
 }
 
 /** Sweeper step: notifications older than 30 days, and fired standalone reminders past the same age. */
 export function sweepNotifications(nowMs = Date.now()) {
   const cutoff = iso(nowMs - NOTIFICATION_RETENTION_MS);
-  const notifications = db.query("DELETE FROM notifications WHERE created_at < ?").run(cutoff).changes;
+  const notifications = db.query("DELETE FROM notifications WHERE created_at < ?").run(cutoff).changes + sweepAccessNotices(cutoff);
   const reminders = db.query("DELETE FROM reminders WHERE event_id IS NULL AND next_fire_at IS NULL AND last_fired_at < ?").run(cutoff).changes;
   return { notifications, reminders };
 }

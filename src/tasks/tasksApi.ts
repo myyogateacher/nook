@@ -122,7 +122,7 @@ export function hydrateBoard(payload: BoardPayload): BoardDetail {
     cards: cards.map(({ assignee_ids, ...card }) => ({
       ...card,
       board_id: payload.board.id,
-      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0, ...(users[id]?.avatar_url ? { avatar_url: users[id]!.avatar_url } : {}) }))
+      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0, avatar_url: users[id]?.avatar_url ?? null }))
     }))
   };
 }

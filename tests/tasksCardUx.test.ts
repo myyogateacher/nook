@@ -36,8 +36,8 @@ describe("multiple card assignees (D102, D103)", () => {
     expect(patched.status).toBe(200);
     expect(patched.body.card.revision).toBe(2);
     expect(patched.body.card.assignees).toEqual([
-      { id: member.userId, display_name: "Many member", can_read: 1 },
-      { id: owner.userId, display_name: "Many owner", can_read: 1 }
+      { id: member.userId, display_name: "Many member", can_read: 1, avatar_url: null },
+      { id: owner.userId, display_name: "Many owner", can_read: 1, avatar_url: null }
     ]);
     expect(patched.body.card).toMatchObject({ assignee_id: member.userId, assignee_name: "Many member" });
     expect((db.query("SELECT assignee_id FROM cards WHERE id = ?").get(card.id) as { assignee_id: string }).assignee_id).toBe(member.userId);
@@ -108,8 +108,8 @@ describe("multiple card assignees (D102, D103)", () => {
     expect((await call(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "private", userIds: [] })).status).toBe(200);
     const detail = (await call(owner, "GET", `/cards/${card.id}`)).body.card;
     expect(detail.assignees).toEqual([
-      { id: member.userId, display_name: "Access member", can_read: 0 },
-      { id: owner.userId, display_name: "Access owner", can_read: 1 }
+      { id: member.userId, display_name: "Access member", can_read: 0, avatar_url: null },
+      { id: owner.userId, display_name: "Access owner", can_read: 1, avatar_url: null }
     ]);
     const kept = await call(owner, "PATCH", `/cards/${card.id}`, { title: "Plan it", assigneeIds: [member.userId, owner.userId], revision: 2 });
     expect(kept.status).toBe(200);

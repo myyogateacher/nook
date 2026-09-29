@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.15.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.16.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -226,7 +226,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.15.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.16.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -301,6 +301,18 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.16.0:** back up first with `./scripts/backup.sh --force`. Migration 035 (the Today digest offer: one new nullable column, `email_prefs.digest_prompt_at`, recording when a person answered or dismissed the offer) runs once on the first boot and can only be undone by restoring that backup. It only adds; nobody's email settings change by upgrading. Migration numbers 030, 031, and 033 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.16.0`, and restart as above.
+
+What an admin should know:
+
+- **Caching and compression:** Nook now caches and compresses its own static files (see [Static files and caching](#static-files-and-caching)); there is nothing to configure. A reverse proxy in front that also compresses is fine: it passes the already-compressed files through. After the upgrade, browsers pick up the new version on the next page load, and a tab left open across the upgrade reloads itself once if needed.
+- **API keys page moved:** Settings → API keys is now `/settings/keys`. Old `/settings/mcp` links and bookmarks still open it, and the new-key and password-changed emails link to the new address.
+- **Keys without an expiry:** creating or rotating a key can now choose **No expiry**, unless **Team → Policies** requires an expiry. That policy already blocked keys without an expiry before this release; what is new is that such keys can be created on purpose, and that a blocked key's row now says "Blocked by team policy: keys need an expiry. Rotate it to give it one." Blocked keys are not revoked: rotating one gives its holder a replacement with an expiry, and turning the policy off unblocks it.
+- **Missing files answer 404:** a request for a file that does not exist and whose name has an extension (for example `/favicon.ico`; Nook ships `/favicon.svg`) now gets a plain 404 instead of the app page with 200. Adjust any uptime check that probed such a path and expected 200; use `/api/health` instead. Addresses without an extension still open the app, and `/robots.txt` now asks crawlers to stay out.
+- **Today digest offer:** people with email on, a verified address, and an account at least 7 days old are asked once on Today whether they want the email digest. Viewers and guests can answer it too; answering changes only their own email settings.
+
+The web API gains `GET` and `POST /api/mail/digest-prompt` (the offer's visibility, and the answer `{ "choice": "daily" | "weekly" | "dismiss" }`), and `POST /api/keys` and `POST /api/keys/:id/rotate` accept `"expiresInDays": null` for a key with no expiry (refused with 403 `KEY_POLICY` when the team policy requires an expiry). There are no new MCP tools.
 
 **Upgrading to 0.15.0:** back up first with `./scripts/backup.sh --force`. Migration 034 (Google identities: the `google_identities` table linking a Google account to a Nook account, the `google_auth_flows` table for sign-ins in progress, and new columns for the profile picture (`users.avatar_id`), a session's last Google confirmation (`sessions.reauth_at`), an admin's link allowance, the one-time reset notice, and the last refused Google sign-in) runs once on the first boot and can only be undone by restoring that backup. It only adds; no account changes by upgrading. Migration numbers 030, 031, and 033 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected. Pull, rebuild with `APP_VERSION=0.15.0`, and restart as above.
 

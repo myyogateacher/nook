@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.12.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -184,7 +184,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.12.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.13.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -259,6 +259,20 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.13.0:** back up first with `./scripts/backup.sh --force`. Migration 029 (access levels) runs once on the first boot and can only be undone by restoring that backup. It keeps existing collection and calendar editors editing: people shared with as editors keep the edit level. Existing board members become editors, as before. Nobody becomes a manager by upgrading; only an owner can make one. API keys gain no new powers from this release. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.13.0`, and restart as above.
+
+Powers that moved from the owner to managers (the web API answers 403 `MANAGER_REQUIRED` to everyone else):
+
+- **Boards:** rename the board and change its structure settings (levels, sprints on or off, sprint defaults); add, rename, and reorder columns, set a column's state (including done) and WIP limit, and delete empty columns; rename, recolour, and delete tags; create, edit, start, complete, and delete sprints.
+- **Collections:** rename and change the icon; edit fields; create, edit, and delete saved views.
+- **Calendars:** rename and change colour.
+- **Boards, collections, and calendars:** open the Access sheet and share with people and groups up to the edit level.
+- **Still the owner's alone:** deleting the item, the Bin and deleting forever, the older audience-wide sharing routes, changing the audience or its level, and adding, changing, or removing managers.
+- **Unchanged:** collection CSV import stays at the edit level.
+- **Narrowed:** creating a board tag now needs the edit level (it used to need only read access).
+
+A client or script that matched the error code `OWNER_ONLY` for these structure refusals now receives `MANAGER_REQUIRED` on the web API; MCP still reports `OWNER_ONLY`. Through an API key, board structure tools (renaming and recolouring tags, WIP limits, creating and starting sprints) stay with the board's owner: a manager's key is refused. `/api/about` gained `passwordReset` (whether **Forgot password?** can send a link) and `twoFactor` (whether two-factor can be set up on this instance).
 
 **Upgrading to 0.12.0:** back up first with `./scripts/backup.sh --force`. Migrations 025 (access keys, grants and policies) and 028 (email digests, bounce tracking and share log) run once on the first boot and can only be undone by restoring that backup. Existing MCP keys are converted to grants with the same reach; nothing widens. They have no expiry and show **No expiry**; a team policy that requires an expiry blocks them until they get one or the rule is loosened. Migration 025 also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing, and `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`. Bounce and complaint handling is optional: add `RESEND_WEBHOOK_SECRET` to `.env` and point a Resend webhook at `/api/mail/webhook` (see [Bounces and complaints](#bounces-and-complaints-optional-resend-webhook) above); without it the endpoint returns 404. Pull, rebuild with `APP_VERSION=0.12.0`, and restart as above.
 

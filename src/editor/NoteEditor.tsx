@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChainedCommands, Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -12,6 +12,8 @@ import { SlashCommands } from "./slash";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
 import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import { NameDialog } from "../files/RenameDialog";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import "./editor.css";
 
 const tableActions: { label: string; Icon: LucideIcon; run: (chain: ChainedCommands) => ChainedCommands }[] = [
@@ -108,6 +110,14 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     editor.commands.setContent(markdown, { contentType: "markdown", emitUpdate: false });
   }, [editor, markdown]);
 
+  // Add link (D91): the app's own dialog instead of the browser's own prompt; empty removes the link.
+  const [linkDraft, setLinkDraft] = useState<string | null>(null);
+  const closeLink = useCallback(() => {
+    setLinkDraft(null);
+    editor?.commands.focus();
+  }, [editor]);
+  useHistoryDialogGuard(linkDraft !== null, closeLink);
+
   if (!editor) return <div className="editor-skeleton" />;
 
   return (
@@ -118,12 +128,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
           <button type="button" className={editor.isActive("italic") ? "active" : ""} onClick={() => editor.chain().focus().toggleItalic().run()} aria-label="Italic"><Italic /></button>
           <button type="button" className={editor.isActive("strike") ? "active" : ""} onClick={() => editor.chain().focus().toggleStrike().run()} aria-label="Strikethrough"><Strikethrough /></button>
           <button type="button" className={editor.isActive("code") ? "active" : ""} onClick={() => editor.chain().focus().toggleCode().run()} aria-label="Inline code"><Code2 /></button>
-          <button type="button" onClick={() => {
-            const href = window.prompt("Link URL", editor.getAttributes("link").href ?? "https://");
-            if (href === null) return;
-            if (!href) editor.chain().focus().unsetLink().run();
-            else editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
-          }} aria-label="Add link"><Link2 /></button>
+          <button type="button" onClick={() => setLinkDraft(editor.getAttributes("link").href ?? "https://")} aria-label="Add link" aria-haspopup="dialog"><Link2 /></button>
         </BubbleMenu>
       )}
       {editable && (
@@ -144,6 +149,21 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         </BubbleMenu>
       )}
       <EditorContent editor={editor} />
+      {linkDraft !== null && <NameDialog
+        title="Link"
+        eyebrow="Note"
+        label="Link URL"
+        initialValue={linkDraft}
+        submitLabel="Save link"
+        hint="Leave empty to remove the link."
+        validate={(value) => ({ ok: true, name: value.trim(), changed: true })}
+        onSubmit={(href) => {
+          setLinkDraft(null);
+          if (!href) editor.chain().focus().unsetLink().run();
+          else editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
+        }}
+        onCancel={closeLink}
+      />}
     </div>
   );
 }

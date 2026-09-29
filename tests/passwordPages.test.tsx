@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseRoute } from "../src/router";
 import { ChangePasswordCard, passwordChangedText } from "../src/auth/ChangePassword";
-import { FORGOT_OFF_TEXT, FORGOT_SENT_TEXT, ForgotPasswordPage, ResetPasswordPage, secondFactorBody, takePasswordLinkFromLocation } from "../src/auth/passwordPages";
+import { passwordResetOffered } from "../src/auth/registrationPrompt";
+import { FORGOT_OFF_TEXT, FORGOT_SENT_TEXT, ForgotPasswordPage, RESET_OFF_TEXT, ResetPasswordPage, secondFactorBody, takeNewResetLink, takePasswordLinkFromLocation } from "../src/auth/passwordPages";
 
 /** Client pieces of Wave 30: the forgot / reset pages, the Settings card, and their wiring. */
 
@@ -28,6 +29,23 @@ describe("password links", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test("a second reset link pasted into the same tab is read and stripped; other moves are left alone (A5)", async () => {
+    const token = "s".repeat(43);
+    const { calls, value } = history();
+    expect(takeNewResetLink({ pathname: "/reset-password", hash: `#token=${token}` }, value)).toEqual({ kind: "reset", token });
+    expect(calls).toEqual(["/reset-password"]);
+    // The stripped entry (no fragment), another page, or a fragment elsewhere: nothing to take.
+    expect(takeNewResetLink({ pathname: "/reset-password", hash: "" }, value)).toBeNull();
+    expect(takeNewResetLink({ pathname: "/", hash: `#token=${token}` }, value)).toBeNull();
+    expect(calls).toHaveLength(1);
+    // App listens for both popstate and hashchange, before its route handlers, and remounts the
+    // reset page per token so the new one is checked.
+    const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    expect(app).toContain('window.addEventListener("hashchange", onMove);');
+    expect(app).toContain("<ResetPasswordPage key={passwordLink.token ?? \"\"}");
+    expect(app.match(/if \(resetLinkEvents\.has\(event\)\) return;/g)).toHaveLength(2);
+  });
+
   test("both paths fall back to Home in the app router (no app of their own)", () => {
     expect(parseRoute("/forgot-password")).toEqual({ app: "home" });
     expect(parseRoute("/reset-password")).toEqual({ app: "home" });
@@ -48,9 +66,32 @@ describe("forgot page (T224)", () => {
 
 describe("reset page", () => {
   test("without a token it says the link is not valid and offers a new one", () => {
-    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} onSignIn={() => undefined} onForgot={() => undefined} />);
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: true }} onSignIn={() => undefined} onForgot={() => undefined} />);
     expect(markup).toContain("This link is not valid");
     expect(markup).toContain("Ask for a new link");
+    // /about failed: offered, as the forgot page assumes email is on then.
+    expect(renderToStaticMarkup(<ResetPasswordPage token={null} about="failed" onSignIn={() => undefined} onForgot={() => undefined} />)).toContain("Ask for a new link");
+  });
+
+  test("with email off a dead link offers no new link and says why (A6)", () => {
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: false }} onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(markup).toContain("This link is not valid");
+    expect(markup).not.toContain("Ask for a new link");
+    expect(markup).not.toContain("Ask for a new one.");
+    expect(markup).toContain(RESET_OFF_TEXT);
+    expect(markup).toContain("Back to sign in");
+    // Until /about answers, nothing is offered.
+    expect(renderToStaticMarkup(<ResetPasswordPage token={null} onSignIn={() => undefined} onForgot={() => undefined} />)).not.toContain("Ask for a new link");
+  });
+
+  test("the sign-in page offers Forgot password? only when email is on (A6)", async () => {
+    expect(passwordResetOffered(null)).toBe(false);
+    expect(passwordResetOffered({ passwordReset: false })).toBe(false);
+    expect(passwordResetOffered({ passwordReset: true })).toBe(true);
+    expect(passwordResetOffered({})).toBe(true);
+    expect(passwordResetOffered("failed")).toBe(true);
+    const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    expect(source).toContain("{!registering && passwordResetOffered(registration) && <a className=\"inline-auth-switch forgot-password-link\"");
   });
 
   test("signed in on this browser, a dead link offers Open Nook instead of the forgot page", () => {
@@ -97,7 +138,7 @@ describe("wiring", () => {
     expect(source).toContain('href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>');
     expect(source).toContain("<ChangePasswordCard totpEnabled={state.enabled} />");
     expect(source).toContain('window.history.pushState({ nookPasswordPage: "forgot" }, "", FORGOT_PATH)');
-    expect(source).toMatch(/if \(session\) return;\n\s+const onPopState = \(\) => \{\n\s+const link = takePasswordLinkFromLocation\(\);/);
+    expect(source).toMatch(/if \(session\) return;\n\s+const onPopState = \(event: PopStateEvent\) => \{\n\s+if \(resetLinkEvents\.has\(event\)\) return;\n\s+const link = takePasswordLinkFromLocation\(\);/);
     // Signed in, a Back onto an old /forgot-password entry shows the app, not the signed-out page (QA).
     expect(source).toContain('if (passwordLink?.kind === "forgot" && !session) return <ForgotPasswordPage');
   });

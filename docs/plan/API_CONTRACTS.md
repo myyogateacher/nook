@@ -1587,6 +1587,8 @@ Plan: §A.5 and §E.6 of the research. No migration: reset tokens use `auth_toke
 
 `GET /api/about` gains `passwordReset: boolean` (email is on, so the forgot page can mail a link; an instance fact, never per account).
 
+`GET /api/about` also carries `twoFactor: boolean` (v0.13.0 QA, A7): whether a TOTP key is configured, so two-factor can be set up on this instance. Only the flag, never the key. With `false`, Settings → Security explains that two-factor is not available instead of offering the setup form (which would end in 503).
+
 Tokens: 32 random bytes, base64url, stored as a SHA-256, minted by the dispatcher at send time (the outbox row holds `{}`), 30 minutes, single use; minting deletes the account's older unused reset tokens. Pages: `/forgot-password` (signed out; its own history entry from the sign-in card) and `/reset-password#token=…` (the fragment is stripped on load; `Referrer-Policy: no-referrer` on every response).
 
 ### Admin endpoints (Team)

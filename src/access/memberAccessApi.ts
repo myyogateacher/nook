@@ -174,7 +174,10 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
   "key.created": (event) => `${who(event)} created the key ${keyName(event)}`,
   "key.narrowed": (event) => `${who(event)} narrowed the key ${keyName(event)}`,
   "key.rotated": (event) => `${who(event)} rotated the key ${keyName(event)}`,
-  "key.revoked": (event) => event.meta?.by === "admin" ? `${who(event)} revoked ${target(event)}'s key ${keyName(event)}` : `${who(event)} revoked the key ${keyName(event)}`,
+  "key.revoked": (event) => event.meta?.by === "admin" ? `${who(event)} revoked ${target(event)}'s key ${keyName(event)}`
+    : event.meta?.by === "google_relink" ? `${target(event)}'s key ${keyName(event)} was revoked when a new Google account was linked`
+      : event.meta?.by === "google_reset" ? `${target(event)}'s key ${keyName(event)} was revoked by a reset for Google sign-in`
+        : `${who(event)} revoked the key ${keyName(event)}`,
   "key.grace_ended": (event) => `The rotation grace of ${keyName(event)} ended`,
   "key.policy_blocked": (event) => `A policy blocked the key ${keyName(event)}`,
   "policy.changed": (event) => `${who(event)} changed team policies`,

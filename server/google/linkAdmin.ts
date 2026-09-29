@@ -133,7 +133,7 @@ export function resetAccountForGoogle(userId: string, actor: Actor, via: AccessV
     const at = now();
     db.query("DELETE FROM sessions WHERE user_id = ?").run(userId);
     revokeUserPushSubscriptions(userId, "google_reset");
-    for (const { id } of db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>) revokeOwnKey(userId, id);
+    for (const { id } of db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>) revokeOwnKey(userId, id, "google_reset");
     db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(at, userId);
     db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(userId);
     db.query(`UPDATE users SET password_hash = ?, totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL
@@ -234,7 +234,7 @@ export function completeRelink(userId: string, identityId: string, google: { sub
     db.query("UPDATE google_identities SET subject = ?, email = ?, picture_url = NULL, last_login_at = ? WHERE id = ?").run(google.sub, google.email, at, identityId);
     db.query("DELETE FROM sessions WHERE user_id = ?").run(userId);
     revokeUserPushSubscriptions(userId, "google_relinked");
-    for (const { id } of db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>) revokeOwnKey(userId, id);
+    for (const { id } of db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>) revokeOwnKey(userId, id, "google_relink");
     db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(at, userId);
     db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(userId);
     if (removeCredentials) {

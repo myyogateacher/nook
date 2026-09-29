@@ -88,7 +88,7 @@ export function AccessActivity({ members, onBack }: { members: ReadonlyArray<{ i
     <header className="team-invites-header">
       <div>
         <h2 id="team-activity-title">Access activity</h2>
-        <p className="team-muted">Changes to keys, groups, item access, policies, and templates. Titles of items you cannot open stay hidden.</p>
+        <p className="team-muted">Changes to keys, groups, item access, policies, templates, and Google sign-in. Titles of items you cannot open stay hidden.</p>
       </div>
     </header>
     <div className="ma-filters" role="group" aria-label="Filter activity">

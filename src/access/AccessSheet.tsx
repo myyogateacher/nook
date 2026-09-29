@@ -4,12 +4,18 @@ import { ApiError } from "../api";
 import { trapTabKey } from "../files/Dialog";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useRole } from "../team/roleAccess";
 import { ROLE_LABELS } from "../team/teamRoles";
 import { getAccess, keysReachLine, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
-import { accessErrorMessage, addPicked, audienceOptions, draftFrom, groupSummary, levelOptions, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft } from "./accessModel";
+import {
+  accessErrorMessage, addPicked, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
+  KEPT_GUEST_NOTE, KEPT_GUEST_REASON, keptGuestLevel, levelOptions, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft
+} from "./accessModel";
 import { LEVEL_LABELS, type AccessKind, type Level } from "./accessLevels";
 import { LevelSelect } from "./LevelSelect";
 import { PrincipalPicker } from "./PrincipalPicker";
+import { SheetConfirm } from "./SheetConfirm";
+import "../files/files.css";
 import "./access.css";
 
 export type AccessSheetProps = {
@@ -31,6 +37,9 @@ export type AccessSheetProps = {
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? (reason.payload as { code?: unknown }).code : undefined;
 
+/** The confirm over the sheet: discarding unsaved changes (B4), or saving another audience that clears the list (B3). */
+type Prompt = { kind: "discard" } | { kind: "audience"; message: string };
+
 /**
  * The Access sheet (Wave 32, access plan §C.5, §E): one component for every shareable item, in
  * place of the five share panels. Who can open it (only me, people and groups I choose, everyone
@@ -39,6 +48,10 @@ const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payl
  * Combobox only (D91); Escape and (with `guardHistory`, or through the host) Back close it; Tab
  * stays inside; focus returns to the control that opened it. Saving sends the ETag it loaded, so a
  * change made meanwhile is never overwritten (409: the sheet shows the latest instead).
+ *
+ * With unsaved changes, Close, Escape, the scrim, and Back ask "Discard changes?" first; Back is
+ * caught by a guard registered once the sheet is dirty, so it runs before the host's own (newest
+ * first). Saving another audience over a list of people and groups asks first too, with the count.
  */
 export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = false, initial }: AccessSheetProps) {
   const [access, setAccess] = useState<ItemAccess | null>(initial?.access ?? null);
@@ -47,13 +60,25 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
   const [groups, setGroups] = useState<PickerGroup[]>(initial?.groups ?? []);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The rows a GUEST_SHARE_DISABLED refusal named, marked until the next save.
+  const [refused, setRefused] = useState<{ people: string[]; groups: string[] } | null>(null);
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [busy, setBusy] = useState(false);
   const titleId = useId();
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Viewers and guests have no people directory (403 ROLE_READ_ONLY): do not ask for it.
+  const { readOnly: roleReadOnly } = useRole();
   // Focus goes back to whatever opened the sheet (the Share button), once it closes.
   const openerRef = useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement);
 
+  const dirty = Boolean(access && draft && isDirty(draft, access));
   useHistoryDialogGuard(guardHistory, onClose, { blocked: busy });
+  // Back with unsaved changes asks first (B4); this guard registers after the host's, so it is asked first.
+  const askDiscard = useCallback(() => setPrompt({ kind: "discard" }), []);
+  useHistoryDialogGuard(dirty && prompt === null, askDiscard, { blocked: busy });
+  // Back on the prompt is Keep editing.
+  const keepEditing = useCallback(() => setPrompt(null), []);
+  useHistoryDialogGuard(prompt !== null, keepEditing, { blocked: busy });
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -61,7 +86,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
       const [loaded, directory, groupList] = await Promise.all([
         getAccess(kind, id),
         // Read-only roles have no directory (403): they can still withdraw a share.
-        listPeople().then((result) => result.users, () => [] as PickerPerson[]),
+        roleReadOnly ? Promise.resolve([] as PickerPerson[]) : listPeople().then((result) => result.users, () => [] as PickerPerson[]),
         listPickerGroups().then((result) => result.groups, () => [] as PickerGroup[])
       ]);
       setAccess(loaded);
@@ -71,7 +96,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
     } catch (reason) {
       setLoadError(reason instanceof ApiError && reason.status === 404 ? "This item is gone or you can no longer open it." : reason instanceof Error ? reason.message : "Could not load who has access");
     }
-  }, [id, kind]);
+  }, [id, kind, roleReadOnly]);
   useEffect(() => { if (!initial) void load(); }, [initial, load]);
 
   useEffect(() => {
@@ -82,18 +107,31 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
     };
   }, []);
 
+  const close = useCallback(() => {
+    if (busy) return;
+    if (dirty) setPrompt({ kind: "discard" });
+    else onClose();
+  }, [busy, dirty, onClose]);
+
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !busy) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && prompt === null) close(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  }, [close, prompt]);
 
-  const close = () => { if (!busy) onClose(); };
+  function requestSave() {
+    if (!access || !draft) return;
+    const loss = audienceLoss(draft, access);
+    if (loss) setPrompt({ kind: "audience", message: audienceLossMessage(loss, draft.audience) });
+    else void save();
+  }
 
   async function save() {
     if (!access || !draft) return;
+    setPrompt(null);
     setBusy(true);
     setError(null);
+    setRefused(null);
     try {
       const saved = await putAccess(kind, id, toPutBody(draft, access), access.etag);
       setBusy(false);
@@ -101,12 +139,20 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
     } catch (reason) {
       setBusy(false);
       const code = errorCode(reason);
-      const latest = code === "ACCESS_CHANGED" ? (reason as ApiError).payload as { access?: ItemAccess } : null;
+      const payload = reason instanceof ApiError ? reason.payload : null;
+      const latest = code === "ACCESS_CHANGED" ? payload as { access?: ItemAccess } : null;
       if (latest?.access) {
         setAccess(latest.access);
         setDraft(draftFrom(latest.access));
       }
-      setError(accessErrorMessage(code, reason instanceof Error ? reason.message : "Could not save access"));
+      const guests = code === "GUEST_SHARE_DISABLED" ? guestRefusal(payload) : null;
+      if (guests) {
+        // Point at the rows that caused it (B1): the server names them.
+        setRefused(guests);
+        const names = [...draft.groups.filter((group) => guests.groups.includes(group.id)).map((group) => group.name),
+          ...draft.people.filter((person) => guests.people.includes(person.id)).map((person) => person.displayName)];
+        setError(guestRefusalMessage(names));
+      } else setError(accessErrorMessage(code, reason instanceof Error ? reason.message : "Could not save access"));
     }
   }
 
@@ -149,14 +195,20 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
             <ul className="access-list">
               {draft.groups.map((group) => {
                 const locked = lockedForYou(access, group.level);
-                return <li key={`g-${group.id}`} className="access-row">
+                const kept = keptGuestLevel(access, { type: "group", id: group.id });
+                const flagged = refused?.groups.includes(group.id) ?? false;
+                return <li key={`g-${group.id}`} className={`access-row${flagged ? " refused" : ""}`}>
                   <span className="access-avatar group" aria-hidden="true"><UsersRound /></span>
                   <span className="access-row-copy">
                     <strong>{group.name}</strong>
                     <small>{groupSummary(group)}</small>
-                    <small className="access-row-hint">Admins decide who is in this group{group.selfAddedCount ? ` · ${group.selfAddedCount === 1 ? "an admin" : `${group.selfAddedCount} admins`} added themselves` : ""}</small>
+                    {kept
+                      ? <small className="access-row-hint access-kept">{KEPT_GUEST_NOTE}</small>
+                      : <small className="access-row-hint">Admins decide who is in this group{group.selfAddedCount ? ` · ${group.selfAddedCount === 1 ? "an admin" : `${group.selfAddedCount} admins`} added themselves` : ""}</small>}
+                    {flagged && <small className="access-row-refused">Sharing with guests is off: remove this group{kept ? " or set its level back" : ""}.</small>}
                   </span>
-                  <LevelSelect kind={kind} levels={access.levels} value={group.level} label={`What ${group.name} can do`} lockedReason={locked ? "Only the owner changes managers" : null}
+                  <LevelSelect kind={kind} levels={kept ? levelsUpTo(access.levels, kept) : access.levels} value={group.level} label={`What ${group.name} can do`}
+                    lockedReason={locked ? "Only the owner changes managers" : kept && levelsUpTo(access.levels, kept).length === 1 ? KEPT_GUEST_REASON : null}
                     onChange={(level) => update((current) => ({ ...current, groups: current.groups.map((item) => item.id === group.id ? { ...item, level } : item) }))} />
                   {!locked && <button type="button" className="icon-button access-remove" aria-label={`Remove ${group.name}`} disabled={busy}
                     onClick={() => update((current) => ({ ...current, groups: current.groups.filter((item) => item.id !== group.id) }))}><X /></button>}
@@ -167,21 +219,27 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
                 // A manager cannot lower or remove their own manage row (403 MANAGER_CAP): say who can.
                 const yours = person.id === access.youId;
                 const cap = roleCapHint(person.teamRole);
-                return <li key={`p-${person.id}`} className="access-row">
+                const kept = keptGuestLevel(access, { type: "person", id: person.id });
+                const boost = groupBoost(person, draft.groups);
+                const flagged = refused?.people.includes(person.id) ?? false;
+                return <li key={`p-${person.id}`} className={`access-row${flagged ? " refused" : ""}`}>
                   <span className="access-avatar" aria-hidden="true">{person.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
                   <span className="access-row-copy">
                     <strong>{person.displayName}</strong>
                     <small>Team role: {ROLE_LABELS[person.teamRole]}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>
+                    {kept && <small className="access-row-hint access-kept">{KEPT_GUEST_NOTE}</small>}
+                    {boost && <small className="access-row-hint access-boost">Also {LEVEL_LABELS[boost.level]} through {boost.group}; the higher level applies</small>}
+                    {flagged && <small className="access-row-refused">Sharing with guests is off: remove this person{kept ? " or set their level back" : ""}.</small>}
                   </span>
-                  <LevelSelect kind={kind} levels={access.levels} value={person.level} label={`What ${person.displayName} can do`}
-                    lockedReason={locked ? yours ? "Ask the owner to change your access" : "Only the owner changes managers" : cap}
+                  <LevelSelect kind={kind} levels={kept ? levelsUpTo(access.levels, kept) : access.levels} value={person.level} label={`What ${person.displayName} can do`}
+                    lockedReason={locked ? yours ? "Ask the owner to change your access" : "Only the owner changes managers" : cap ?? (kept && levelsUpTo(access.levels, kept).length === 1 ? KEPT_GUEST_REASON : null)}
                     onChange={(level) => update((current) => ({ ...current, people: current.people.map((item) => item.id === person.id ? { ...item, level } : item) }))} />
                   {!locked && <button type="button" className="icon-button access-remove" aria-label={`Remove ${person.displayName}`} disabled={busy}
                     onClick={() => update((current) => ({ ...current, people: current.people.filter((item) => item.id !== person.id) }))}><X /></button>}
                 </li>;
               })}
             </ul>
-            {!access.shareWithGuests && <p className="access-row-hint">Sharing with guests is turned off for this Nook.</p>}
+            {!access.shareWithGuests && <p className="access-row-hint">Sharing with guests is turned off for this Nook. Guests already listed keep their access; they cannot be added or given more.</p>}
           </section>}
         </>}
       </div>
@@ -192,9 +250,13 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
         {access && typeof access.keysWithAccess === "number" && access.keysWithAccess > 0 && <p className="access-row-hint access-keys-hint">{keysReachLine(access.keysWithAccess)}</p>}
         <div className="access-actions">
           <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>
-          <button type="button" className="primary-button" onClick={() => { void save(); }} disabled={busy || !access || !draft || blocker !== null}>{busy ? "Saving…" : "Save"}</button>
+          <button type="button" className="primary-button" onClick={requestSave} disabled={busy || !access || !draft || blocker !== null}>{busy ? "Saving…" : "Save"}</button>
         </div>
       </footer>
     </aside>
+    {prompt?.kind === "discard" && <SheetConfirm title="Discard changes?" message="Your changes to who has access are not saved." confirmLabel="Discard" cancelLabel="Keep editing" danger
+      onConfirm={() => { setPrompt(null); onClose(); }} onCancel={keepEditing} />}
+    {prompt?.kind === "audience" && <SheetConfirm title="Remove individual access?" message={prompt.message} confirmLabel="Save" cancelLabel="Keep editing" danger
+      onConfirm={() => { void save(); }} onCancel={keepEditing} />}
   </>;
 }

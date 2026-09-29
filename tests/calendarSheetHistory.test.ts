@@ -19,7 +19,7 @@ function calendarHistory(initial: unknown[], phone: boolean) {
     pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
     back() { moves.push(-1); }
   };
-  const env = { history: history as unknown as History, href: () => "https://nook.test/calendar", phone: () => phone };
+  const env = { history: history as unknown as History, href: () => "https://nook.test/calendar", landingDepth: () => phone ? 0 : -1 };
   const go = (delta: number) => { moves.push(delta); };
   // A move lands (and fires popstate) only when delivered, like a browser.
   const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };

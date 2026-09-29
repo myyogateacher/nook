@@ -8,6 +8,7 @@ import { useHistoryDialogGuard } from "../../ui/useHistoryDialogGuard";
 import { BoardViewSwitch } from "../BoardViewSwitch";
 import { localDateString, type TaskNotify } from "../taskActions";
 import { listBoards } from "../tasksApi";
+import { useRole } from "../../team/roleAccess";
 import type { QueriedCard } from "./homeApi";
 import { HomeFilterBar } from "./HomeFilterBar";
 import { refNames } from "./homeResults";
@@ -21,12 +22,14 @@ export type HomeDirectory = { boards: Array<{ id: string; name: string }>; users
 /** The viewer's boards and the user list, for filter options and names (loaded once per visit to the home). */
 export function useHomeDirectory(): HomeDirectory {
   const [directory, setDirectory] = useState<HomeDirectory>({ boards: [], users: [] });
+  // Viewers and guests have no people directory (403 ROLE_READ_ONLY): do not ask for it.
+  const { readOnly } = useRole();
   useEffect(() => {
     let active = true;
     listBoards().then(({ boards }) => { if (active) setDirectory((current) => ({ ...current, boards: boards.map((board) => ({ id: board.id, name: board.name })) })); }, () => undefined);
-    api<{ users: User[] }>("/users").then(({ users }) => { if (active) setDirectory((current) => ({ ...current, users: users.map((user) => ({ id: user.id, displayName: user.displayName })) })); }, () => undefined);
+    if (!readOnly) api<{ users: User[] }>("/users").then(({ users }) => { if (active) setDirectory((current) => ({ ...current, users: users.map((user) => ({ id: user.id, displayName: user.displayName })) })); }, () => undefined);
     return () => { active = false; };
-  }, []);
+  }, [readOnly]);
   return directory;
 }
 

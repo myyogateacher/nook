@@ -1,6 +1,6 @@
 import { db, now } from "../db";
 import { readPolicies } from "../team/policies";
-import { isLevel, type AccessKind, type Level } from "./levels";
+import { isLevel, LEVEL_RANK, type AccessKind, type Level } from "./levels";
 
 /**
  * Direct share rows with levels (D272), shared by the Access sheet's `PUT …/access` and the older
@@ -56,21 +56,42 @@ export function legacyShareLevels(kind: AccessKind, id: string, userIds: readonl
   });
 }
 
+type Grant = { id: string; level: Level };
+
 /**
- * Whether sharing with these people and groups would reach a guest while the `share_with_guests`
- * policy is off (D.2, T213): answered 400 GUEST_SHARE_DISABLED by every sharing route.
+ * What a save would newly give guests while the `share_with_guests` policy is off (D.2, T213),
+ * answered 400 GUEST_SHARE_DISABLED by every sharing route. The policy is a write-time refusal and
+ * not retroactive, so only what the save ADDS counts: a guest person not shared with before, a group
+ * with a guest not granted before, or a higher level for an existing guest person or guest group.
+ * Unchanged rows, lowering, and removing always save. `groups` null leaves group grants out (the
+ * older `/sharing` routes never touch them). Returns the offending ids, or null when nothing is.
  */
-export function guestShareBlocked(userIds: readonly string[], groupIds: readonly string[] = []) {
-  if (readPolicies().shareWithGuests) return false;
-  if (userIds.length) {
-    const placeholders = userIds.map(() => "?").join(",");
-    if (db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${placeholders}) LIMIT 1`).get(...userIds)) return true;
+export function guestShareAdditions(kind: AccessKind, id: string, people: readonly Grant[], groups: readonly Grant[] | null = null): { people: string[]; groups: string[] } | null {
+  if (readPolicies().shareWithGuests) return null;
+  const raised = (before: Level | undefined, after: Level) => before === undefined || LEVEL_RANK[after] > LEVEL_RANK[before];
+  const beforePeople = directShares(kind, id);
+  const candidatePeople = people.filter((entry) => raised(beforePeople.get(entry.id), entry.level)).map((entry) => entry.id);
+  let offendingPeople: string[] = [];
+  if (candidatePeople.length) {
+    const placeholders = candidatePeople.map(() => "?").join(",");
+    offendingPeople = (db.query(`SELECT id FROM users WHERE role = 'guest' AND id IN (${placeholders})`).all(...candidatePeople) as Array<{ id: string }>).map((row) => row.id);
   }
-  if (groupIds.length) {
-    const placeholders = groupIds.map(() => "?").join(",");
-    if (db.query(`SELECT 1 FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE u.role = 'guest' AND gm.group_id IN (${placeholders}) LIMIT 1`).get(...groupIds)) return true;
+  let offendingGroups: string[] = [];
+  if (groups?.length) {
+    const beforeGroups = new Map((db.query("SELECT group_id, level FROM group_grants WHERE resource_kind = ? AND resource_id = ? AND env_id IS NULL").all(kind, id) as Array<{ group_id: string; level: string }>)
+      .map((row) => [row.group_id, isLevel(row.level) ? row.level : "view"]));
+    const candidateGroups = groups.filter((entry) => raised(beforeGroups.get(entry.id), entry.level)).map((entry) => entry.id);
+    if (candidateGroups.length) {
+      const placeholders = candidateGroups.map(() => "?").join(",");
+      offendingGroups = (db.query(`SELECT DISTINCT gm.group_id AS id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE u.role = 'guest' AND gm.group_id IN (${placeholders})`).all(...candidateGroups) as Array<{ id: string }>).map((row) => row.id);
+    }
   }
-  return false;
+  return offendingPeople.length || offendingGroups.length ? { people: offendingPeople, groups: offendingGroups } : null;
+}
+
+/** The older `/sharing` routes: whether the direct rows they would write newly reach a guest (see above). */
+export function legacyGuestShareBlocked(kind: AccessKind, id: string, entries: ReadonlyArray<{ userId: string; level: Level }>) {
+  return guestShareAdditions(kind, id, entries.map((entry) => ({ id: entry.userId, level: entry.level }))) !== null;
 }
 
 export const GUEST_SHARE_DISABLED = { error: "Sharing with guests is turned off for this Nook", code: "GUEST_SHARE_DISABLED" } as const;

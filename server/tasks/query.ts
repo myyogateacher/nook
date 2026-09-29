@@ -3,7 +3,8 @@ import { db } from "../db";
 import { dateInZone } from "../today/registry";
 import { addQueryDays, dueWindow, parse, format, SPRINT_VALUES, type FilterTerm, type TaskQuery } from "../../shared/taskQuery";
 import { EFFECTIVE_SPRINT_SQL } from "./sprintData";
-import { readableBoardPredicate } from "./access";
+import { boardLevel, readableBoard, readableBoardPredicate } from "./access";
+import type { ItemLevel } from "../access/levels";
 import { assigneesForCards, type CardAssignee } from "./assignees";
 import { dueAt } from "./dueTime";
 import { TaskError } from "./service";
@@ -405,6 +406,25 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
     result.refs = resolveRefs(userId, query, result.cards);
   }
   return result;
+}
+
+/**
+ * The web client's card actions: each card with the caller's level on its board (Wave 32, §D.3),
+ * so a card on a board they only view or comment on offers no Move, edit, or delete. Resolved once
+ * per board on the page. The web routes add it; MCP results keep their shape.
+ */
+export function withBoardLevels<T extends { cards: QueriedCard[] }>(userId: string, result: T): T & { cards: Array<QueriedCard & { board_level: ItemLevel }> } {
+  const levels = new Map<string, ItemLevel>();
+  const levelOf = (boardId: string) => {
+    let level = levels.get(boardId);
+    if (level === undefined) {
+      const board = readableBoard(boardId, userId);
+      level = board ? boardLevel(board, userId) : "none";
+      levels.set(boardId, level);
+    }
+    return level;
+  };
+  return { ...result, cards: result.cards.map((card) => ({ ...card, board_level: levelOf(card.board_id) })) };
 }
 
 /** Adds assignees, tags, and flags to a page with one grouped query each (no per-card subqueries). */

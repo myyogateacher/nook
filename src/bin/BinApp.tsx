@@ -277,7 +277,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
 
     {sheetItem && <>
       <button className="panel-scrim" onClick={closeSheet} aria-label="Close actions" />
-      <div className="bin-sheet" role="dialog" aria-modal="true" aria-labelledby="bin-sheet-title">
+      <div className="bin-sheet" role="dialog" aria-modal="true" aria-label={`Actions for ${binItemLabel(sheetItem)}`}>
         <header>
           <strong id="bin-sheet-title" title={binItemLabel(sheetItem)}>{binItemLabel(sheetItem)}</strong>
           <button className="icon-button" onClick={closeSheet} aria-label="Close actions"><X /></button>

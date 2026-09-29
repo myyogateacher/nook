@@ -32,7 +32,22 @@ const MAX_INTEGER = Number.MAX_SAFE_INTEGER;
 export const ELEMENT_TYPES = ["rectangle", "diamond", "ellipse", "arrow", "line", "freedraw", "text", "image", "frame"] as const;
 export const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 
-export type SceneErrorCode = "INVALID_SCENE" | "TOO_MANY_ELEMENTS" | "UNSUPPORTED_ELEMENT" | "TOO_MANY_POINTS" | "INVALID_LINK" | "DATA_URL_NOT_ALLOWED";
+export type SceneErrorCode = "INVALID_SCENE" | "TOO_MANY_ELEMENTS" | "UNSUPPORTED_ELEMENT" | "TOO_MANY_POINTS" | "INVALID_LINK" | "DATA_URL_NOT_ALLOWED" | "IMAGES_NOT_SUPPORTED";
+
+/**
+ * Wave 23 has no images (review L1): image elements and a non-empty `files` map are refused with
+ * IMAGES_NOT_SUPPORTED. Wave 24 turns this on (D198); the image rules below already hold.
+ */
+export const WHITEBOARD_IMAGES_ENABLED = false;
+export type SceneOptions = { images?: boolean };
+
+/**
+ * Keys that must never become own properties of validated objects (review L9): assigning
+ * `__proto__` changes an object's prototype and drops the key from JSON, so canonical output
+ * would depend on it. They are skipped wherever user keys are copied.
+ */
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const safeEntries = (value: Record<string, unknown>) => Object.entries(value).filter(([key]) => !FORBIDDEN_KEYS.has(key));
 export type SceneElement = Record<string, unknown> & { id: string; type: (typeof ELEMENT_TYPES)[number] };
 export type SceneFile = { id: string; mimeType: string; nookDocumentId: string };
 export type CanonicalScene = {
@@ -130,7 +145,7 @@ function unknownValue(value: unknown, key: string) {
 function smallObject(value: unknown, key: string, idKeys: readonly string[] = []) {
   if (value === null) return null;
   if (!isPlainObject(value)) throw invalid(`${key} must be an object or null`);
-  const entries = Object.entries(value);
+  const entries = safeEntries(value);
   if (entries.length > 16) throw invalid(`${key} has too many keys`);
   const out: Record<string, unknown> = {};
   for (const [name, item] of entries) {
@@ -151,9 +166,9 @@ function points(value: unknown, key: string) {
 
 function customData(value: unknown) {
   if (!isPlainObject(value)) return undefined;
-  const entries = Object.entries(value);
+  const entries = safeEntries(value);
   if (!entries.every(([, item]) => item === null || ["string", "number", "boolean"].includes(typeof item) && (typeof item !== "number" || Number.isFinite(item)))) return undefined;
-  const serialized = JSON.stringify(value);
+  const serialized = JSON.stringify(Object.fromEntries(entries));
   return serialized.length <= MAX_CUSTOM_DATA_BYTES ? Object.fromEntries(entries) : undefined;
 }
 
@@ -171,13 +186,14 @@ const utf8Bytes = (value: string) => {
 
 type Tally = { points: number; textBytes: number };
 
-function element(raw: unknown, files: Record<string, SceneFile>, tally: Tally): SceneElement {
+function element(raw: unknown, files: Record<string, SceneFile>, tally: Tally, options: SceneOptions): SceneElement {
   if (!isPlainObject(raw)) throw invalid("Each element must be an object");
   const type = raw.type;
   if (typeof type !== "string" || !(ELEMENT_TYPES as readonly string[]).includes(type)) {
     throw new SceneError("UNSUPPORTED_ELEMENT", `Element type ${typeof type === "string" ? type.slice(0, 32) : "unknown"} is not supported`);
   }
-  const entries = Object.entries(raw).filter(([, value]) => value !== undefined);
+  if (type === "image" && !(options.images ?? WHITEBOARD_IMAGES_ENABLED)) throw new SceneError("IMAGES_NOT_SUPPORTED", "Images are not supported on whiteboards yet");
+  const entries = safeEntries(raw).filter(([, value]) => value !== undefined);
   if (entries.length > MAX_ELEMENT_KEYS) throw invalid(`An element has more than ${MAX_ELEMENT_KEYS} keys`);
   const out: Record<string, unknown> = {};
   for (const [key, value] of entries) {
@@ -201,7 +217,7 @@ function element(raw: unknown, files: Record<string, SceneFile>, tally: Tally): 
         if (!Array.isArray(value) || value.length > MAX_UNKNOWN_ARRAY) throw invalid("fixedSegments must be a short list");
         out.fixedSegments = value.map((segment) => {
           if (!isPlainObject(segment)) throw invalid("fixedSegments must hold objects");
-          return Object.fromEntries(Object.entries(segment).map(([name, item]) => [name, name === "start" || name === "end" ? points([item], "fixedSegments")[0] : unknownValue(item, `fixedSegments.${name}`)]));
+          return Object.fromEntries(safeEntries(segment).map(([name, item]) => [name, name === "start" || name === "end" ? points([item], "fixedSegments")[0] : unknownValue(item, `fixedSegments.${name}`)]));
         });
         break;
       case "points": {
@@ -262,7 +278,7 @@ function element(raw: unknown, files: Record<string, SceneFile>, tally: Tally): 
 function sceneFiles(value: unknown): Record<string, SceneFile> {
   if (value === undefined || value === null) return {};
   if (!isPlainObject(value)) throw invalid("files must be an object");
-  const entries = Object.entries(value);
+  const entries = safeEntries(value);
   if (entries.length > WHITEBOARD_MAX_FILES) throw invalid(`A scene may refer to at most ${WHITEBOARD_MAX_FILES} files`);
   const out: Record<string, SceneFile> = {};
   for (const [key, raw] of entries) {
@@ -288,17 +304,18 @@ function appState(value: unknown): CanonicalScene["appState"] {
 }
 
 /** Validates and canonicalizes a parsed scene (§7). Never throws. */
-export function validateScene(input: unknown): SceneResult {
+export function validateScene(input: unknown, options: SceneOptions = {}): SceneResult {
   try {
     if (jsonDepth(input) > WHITEBOARD_MAX_DEPTH) throw invalid(`The scene is nested more than ${WHITEBOARD_MAX_DEPTH} levels deep`);
     if (!isPlainObject(input)) throw invalid("The scene must be an object");
     if (input.type !== "excalidraw") throw invalid("The scene must be an Excalidraw scene");
     if (!Array.isArray(input.elements)) throw invalid("The scene needs a list of elements");
     const files = sceneFiles(input.files);
+    if (Object.keys(files).length > 0 && !(options.images ?? WHITEBOARD_IMAGES_ENABLED)) throw new SceneError("IMAGES_NOT_SUPPORTED", "Images are not supported on whiteboards yet");
     const live = input.elements.filter((item) => !(isPlainObject(item) && item.isDeleted === true));
     if (live.length > WHITEBOARD_MAX_ELEMENTS) throw new SceneError("TOO_MANY_ELEMENTS", `A whiteboard may hold at most ${WHITEBOARD_MAX_ELEMENTS} elements`);
     const tally: Tally = { points: 0, textBytes: 0 };
-    const elements = live.map((item) => element(item, files, tally));
+    const elements = live.map((item) => element(item, files, tally, options));
     const ids = new Set<string>();
     for (const item of elements) {
       if (ids.has(item.id)) throw invalid("Element ids must be unique");
@@ -316,7 +333,7 @@ function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value).sort()) if (value[key] !== undefined) out[key] = sortKeys(value[key]);
+    for (const key of Object.keys(value).sort()) if (value[key] !== undefined && !FORBIDDEN_KEYS.has(key)) out[key] = sortKeys(value[key]);
     return out;
   }
   return value;

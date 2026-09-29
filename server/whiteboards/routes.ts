@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { REVALIDATE_CACHE } from "../documents";
 import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
-import { createWhiteboard, listWhiteboards, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
+import { createWhiteboard, listWhiteboardsPage, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
 
 /**
  * docs/plan/API_CONTRACTS.md § Whiteboards (whiteboard plan §8). Every route needs a session;
@@ -20,7 +20,10 @@ const SCENE_BODY_LIMIT = WHITEBOARD_MAX_SCENE_BYTES + 1024;
 const THUMBNAIL_BODY_LIMIT = Math.ceil(THUMBNAIL_MAX_BYTES / 3) * 4 + 1024;
 
 function fail(c: Context<AppEnv>, error: unknown) {
-  if (error instanceof WhiteboardError) return c.json({ error: error.message, code: error.code, ...error.details }, error.status);
+  if (error instanceof WhiteboardError) {
+    if (error.status === 429 && typeof error.details.retryAfter === "number") c.header("Retry-After", String(error.details.retryAfter));
+    return c.json({ error: error.message, code: error.code, ...error.details }, error.status);
+  }
   throw error;
 }
 
@@ -59,10 +62,18 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
     }
   });
 
+  // Pages of at most 500, newest edit first; pass nextCursor back as cursor (review L7).
   app.get("/api/whiteboards", (c) => {
     const folder = (c.req.query("folder") ?? "all").toLowerCase();
     if (folder !== "all" && folder !== "shared" && !uuid.safeParse(folder).success) return c.json({ error: "Invalid request", details: ["folder must be all, shared, or a folder id"] }, 400);
-    return c.json({ whiteboards: listWhiteboards(c.get("user").id, folder) });
+    const limitParam = c.req.query("limit");
+    const limit = limitParam === undefined ? undefined : Number(limitParam);
+    if (limit !== undefined && (!/^\d{1,3}$/.test(limitParam!) || limit < 1 || limit > 500)) return c.json({ error: "Invalid request", details: ["limit must be an integer from 1 to 500"] }, 400);
+    try {
+      return c.json(listWhiteboardsPage(c.get("user").id, folder, { limit, cursor: c.req.query("cursor") ?? null }));
+    } catch (error) {
+      return fail(c, error);
+    }
   });
 
   app.get("/api/whiteboards/:id", async (c) => {

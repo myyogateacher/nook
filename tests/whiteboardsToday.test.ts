@@ -19,5 +19,6 @@ test("Today lists the five newest boards the caller can read", async () => {
   for (const name of ["a", "b", "c", "d", "e", "f"]) await create(owner, name);
   const today = await api(owner, "GET", "/today?tz=UTC");
   expect(today.body.sections.whiteboardsRecent).toMatchObject({ more: true, href: "/whiteboards" });
-  expect(today.body.sections.whiteboardsRecent.items.map((item: { name: string }) => item.name)).toEqual(["f", "e", "d", "c", "b"]);
+  // The owner's newest five; boards others share with everyone never outrank them here (created last).
+  expect(today.body.sections.whiteboardsRecent.items.filter((item: { is_owner: number }) => item.is_owner === 1).map((item: { name: string }) => item.name)).toEqual(["f", "e", "d", "c", "b"]);
 });

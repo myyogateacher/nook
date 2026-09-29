@@ -125,9 +125,14 @@ describe("whiteboards and guests", () => {
     expect(viaGroup.body.code).toBe("GUEST_SHARE_DISABLED");
     expect((await send(guest, "GET", `/whiteboards/${id}`)).status).toBe(404);
     // Everyone signed in never includes guests.
-    expect((await shareAccess(owner, id, { audience: "all_users", people: [], groups: [] })).status).toBe(200);
-    expect((await send(guest, "GET", `/whiteboards/${id}`)).status).toBe(404);
-    expect((await send(guest, "GET", "/whiteboards")).body.whiteboards.map((item: Json) => item.id)).not.toContain(id);
+    try {
+      expect((await shareAccess(owner, id, { audience: "all_users", people: [], groups: [] })).status).toBe(200);
+      expect((await send(guest, "GET", `/whiteboards/${id}`)).status).toBe(404);
+      expect((await send(guest, "GET", "/whiteboards")).body.whiteboards.map((item: Json) => item.id)).not.toContain(id);
+    } finally {
+      // Nothing stays shared with everyone for later tests (review M1).
+      await send(owner, "DELETE", `/files/${id}`);
+    }
   });
 
   test("a guest reached through a group reads view-only and holds no whiteboard MCP scope", async () => {

@@ -4,8 +4,8 @@ import { db } from "../db";
 import { scopeReach, grantsForScopes } from "../keyGrants";
 import { defineTool, McpToolError, notFound, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { sceneTexts, whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
-import { matchingWhiteboardIds } from "./search";
-import { createWhiteboard, listWhiteboards, readWhiteboard, WhiteboardError, type WhiteboardSummary } from "./service";
+import { searchWhiteboards } from "./search";
+import { createWhiteboard, listWhiteboardsPage, readWhiteboard, readableWhiteboard, WhiteboardError, type WhiteboardSummary } from "./service";
 
 /**
  * MCP tools for Whiteboards (whiteboard plan §9, D205, T170). `whiteboards:read` lists boards and
@@ -46,10 +46,11 @@ function listItem(board: WhiteboardSummary) {
   };
 }
 
-const cursorOf = (offset: number) => Buffer.from(`o:${offset}`).toString("base64url");
-function offsetOf(cursor: string | undefined) {
+/** Search results page by offset (`q:<n>`); plain lists use the REST keyset cursor. */
+const searchCursorOf = (offset: number) => Buffer.from(`q:${offset}`).toString("base64url");
+function searchOffsetOf(cursor: string | undefined) {
   if (!cursor) return 0;
-  const match = /^o:(\d{1,4})$/.exec(Buffer.from(cursor, "base64url").toString());
+  const match = /^q:(\d{1,4})$/.exec(Buffer.from(cursor, "base64url").toString());
   if (!match) throw new McpToolError("INVALID", "cursor is not valid");
   return Number(match[1]);
 }
@@ -89,6 +90,7 @@ function rethrow(error: unknown): never {
   if (error instanceof WhiteboardError) {
     if (error.status === 404) throw notFound(error.message.startsWith("Folder") ? "Folder" : "Whiteboard");
     if (error.code === "QUOTA_EXCEEDED") throw new McpToolError("QUOTA_EXCEEDED", error.message);
+    if (error.code === "RATE_LIMITED") throw new McpToolError("RATE_LIMITED", error.message, { retryAfterSeconds: error.details.retryAfter });
     throw new McpToolError("INVALID", error.message);
   }
   throw error;
@@ -106,21 +108,27 @@ export const whiteboardTools: McpToolSpec[] = [
       folderId: uuid.optional().describe("Only boards in this folder"),
       query: z.string().min(1).max(200).optional().describe("Search board names and text"),
       limit: z.number().int().min(1).max(50).optional().describe("Page size, default 20"),
-      cursor: z.string().max(64).optional().describe("nextCursor from the previous page")
+      cursor: z.string().max(256).optional().describe("nextCursor from the previous page")
     }),
     handler: ({ folderId, query, limit, cursor }, key) => {
       const pageSize = limit ?? 20;
-      const offset = offsetOf(cursor);
+      // A key over chosen boards is narrowed in SQL, before any page cut (T203, review L7).
       const chosen = chosenBoards(key);
-      let boards = listWhiteboards(key.userId, folderId ?? "all");
-      if (chosen) boards = boards.filter((board) => chosen.has(board.id));
+      const ids = chosen ? [...chosen] : undefined;
       if (query) {
-        const order = matchingWhiteboardIds(key.userId, query, 50);
-        const byId = new Map(boards.map((board) => [board.id, board]));
-        boards = order.map((id) => byId.get(id)).filter((board): board is WhiteboardSummary => Boolean(board));
+        const offset = searchOffsetOf(cursor);
+        const { results, truncated } = searchWhiteboards(key.userId, query, pageSize, { offset, ids });
+        const boards = results.map((hit) => readableWhiteboard(hit.id, key.userId)).filter((board): board is WhiteboardSummary => Boolean(board))
+          .filter((board) => !folderId || board.folder_id === folderId.toLowerCase());
+        return { whiteboards: boards.map(listItem), ...(truncated ? { nextCursor: searchCursorOf(offset + pageSize) } : {}) };
       }
-      const page = boards.slice(offset, offset + pageSize);
-      return { whiteboards: page.map(listItem), ...(offset + pageSize < boards.length ? { nextCursor: cursorOf(offset + pageSize) } : {}) };
+      let page: ReturnType<typeof listWhiteboardsPage>;
+      try {
+        page = listWhiteboardsPage(key.userId, folderId?.toLowerCase() ?? "all", { limit: pageSize, cursor: cursor ?? null, ids });
+      } catch (error) {
+        rethrow(error);
+      }
+      return { whiteboards: page.whiteboards.map(listItem), ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
     }
   }),
   defineTool({

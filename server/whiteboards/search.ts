@@ -56,22 +56,19 @@ const searchQuery = db.query(`
   JOIN whiteboards w ON w.document_id = d.id
   JOIN users u ON u.id = d.owner_id
   WHERE whiteboard_fts MATCH $query AND ${readableDocumentPredicate}
+    AND ($ids IS NULL OR d.id IN (SELECT value FROM json_each($ids)))
   ORDER BY bm25(whiteboard_fts, 8.0, 1.0), d.updated_at DESC
-  LIMIT $limit
+  LIMIT $limit OFFSET $offset
 `);
 
 /** Boards the caller can read that match `q`. The ACL is part of the query, before LIMIT (T171). */
-export function searchWhiteboards(userId: string, q: string, limit: number) {
+export function searchWhiteboards(userId: string, q: string, limit: number, options: { offset?: number; ids?: readonly string[] } = {}) {
   const query = buildFtsQuery(q);
   if (query === null) return { results: [] as WhiteboardSearchHit[], truncated: false };
-  const rows = searchQuery.all({ userId, query, hitStart: HIT_START, hitEnd: HIT_END, limit: limit + 1 }) as Array<Omit<WhiteboardSearchHit, "title" | "snippet"> & { title_marked: string; snippet_marked: string }>;
+  const rows = searchQuery.all({ userId, query, hitStart: HIT_START, hitEnd: HIT_END, limit: limit + 1, offset: options.offset ?? 0, ids: options.ids ? JSON.stringify(options.ids) : null }) as Array<Omit<WhiteboardSearchHit, "title" | "snippet"> & { title_marked: string; snippet_marked: string }>;
   const results = rows.slice(0, limit).map(({ title_marked, snippet_marked, ...row }): WhiteboardSearchHit => ({
     ...row, name: whiteboardDisplayName(row.name), title: toSegments(title_marked), snippet: toSegments(snippet_marked)
   }));
   return { results, truncated: rows.length > limit };
 }
 
-/** Matching board ids (for MCP list_whiteboards `query`), ACL applied, best first. */
-export function matchingWhiteboardIds(userId: string, q: string, limit: number) {
-  return searchWhiteboards(userId, q, limit).results.map((hit) => hit.id);
-}

@@ -63,8 +63,9 @@ describe("whiteboards MCP", () => {
     expect((await call(reader, "create_whiteboard", { name: "No" })).value.code).toBe("SCOPE_REQUIRED");
 
     const listed = await call(reader, "list_whiteboards");
-    expect(listed.value.whiteboards[0]).toMatchObject({ id: board.id, name: "Retro", revision: 2, elementCount: 1 });
-    expect(listed.value.whiteboards[0].url).toEndWith(`/whiteboards/${board.id}`);
+    const listedBoard = listed.value.whiteboards.find((item: Json) => item.id === board.id);
+    expect(listedBoard).toMatchObject({ id: board.id, name: "Retro", revision: 2, elementCount: 1 });
+    expect(listedBoard.url).toEndWith(`/whiteboards/${board.id}`);
     const searched = await call(reader, "list_whiteboards", { query: "shipping" });
     expect(searched.value.whiteboards.map((item: Json) => item.id)).toEqual([board.id]);
     const read = await call(reader, "read_whiteboard", { id: board.id });
@@ -121,5 +122,36 @@ describe("whiteboards MCP", () => {
     db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(demoted.userId);
     expect(visible(demotedKey)).toEqual(["list_whiteboards", "read_whiteboard"]);
     expect((await call(demotedKey, "create_whiteboard", { name: "No" })).value.code).toBe("SCOPE_REQUIRED");
+  });
+
+  test("paging: REST and list_whiteboards page with a cursor; a chosen-board key finds its board however old (review L7)", async () => {
+    const owner = await createUser("WB mcp pager");
+    const boards: Json[] = [];
+    for (const name of ["Oldest", "Middle", "Newest"]) boards.push(await create(owner, name));
+    const ids = new Set(boards.map((board) => board.id));
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await api(owner, "GET", `/whiteboards?limit=1${cursor ? `&cursor=${cursor}` : ""}`);
+      expect(page.status).toBe(200);
+      expect(page.body.whiteboards.length).toBeLessThanOrEqual(1);
+      seen.push(...page.body.whiteboards.map((board: Json) => board.id).filter((id: string) => ids.has(id)));
+      cursor = page.body.nextCursor;
+    } while (cursor);
+    expect(seen).toEqual([boards[2]!.id, boards[1]!.id, boards[0]!.id]);
+    expect((await api(owner, "GET", "/whiteboards?cursor=nope")).status).toBe(400);
+    expect((await api(owner, "GET", "/whiteboards?limit=501")).status).toBe(400);
+
+    const wholeKey = key(owner, [all("whiteboards", "read")]);
+    const first = await call(wholeKey, "list_whiteboards", { limit: 2 });
+    expect(first.value.whiteboards).toHaveLength(2);
+    expect(first.value.nextCursor).toBeString();
+    const second = await call(wholeKey, "list_whiteboards", { limit: 2, cursor: first.value.nextCursor });
+    expect(second.value.whiteboards.map((item: Json) => item.id)).toContain(boards[0]!.id);
+
+    const chosen = key(owner, [on("read", boards[0]!.id)]);
+    const narrow = await call(chosen, "list_whiteboards", { limit: 1 });
+    expect(narrow.value.whiteboards.map((item: Json) => item.id)).toEqual([boards[0]!.id]);
+    expect(narrow.value.nextCursor).toBeUndefined();
   });
 });

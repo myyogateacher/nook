@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  canonicalSceneJson, emptyScene, isAllowedLink, jsonDepth, sceneTexts, validateScene, whiteboardDisplayName, whiteboardFileName,
+  canonicalSceneJson, emptyScene, isAllowedLink, jsonDepth, sceneTexts, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_IMAGES_ENABLED,
   WHITEBOARD_MAX_ELEMENTS, WHITEBOARD_MAX_POINTS, WHITEBOARD_MAX_POINTS_PER_ELEMENT, WHITEBOARD_MAX_TEXT_CHARS
 } from "../shared/whiteboardScene";
 
@@ -126,15 +126,42 @@ describe("whiteboard scene validator", () => {
     expect(code(scene([rect({ link: "" })]))).toBe("OK");
   });
 
-  test("files: dataURL is refused; images must refer to a listed Nook file", () => {
+  test("Wave 23 has no images: image elements and a non-empty files map are IMAGES_NOT_SUPPORTED (review L1)", () => {
     const fileId = "f".repeat(40);
     const image = { ...rect({ id: "img" }), type: "image", fileId, status: "pending", scale: [1, 1], crop: null };
     const nook = { [fileId]: { id: fileId, mimeType: "image/png", nookDocumentId: "123e4567-e89b-42d3-a456-426614174000" } };
-    const ok = validateScene(scene([image], { files: nook }));
+    expect(WHITEBOARD_IMAGES_ENABLED).toBe(false);
+    expect(code(scene([image], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
+    expect(code(scene([], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
+    expect(code(scene([image], { files: {} }))).toBe("IMAGES_NOT_SUPPORTED");
+    expect(code(scene([rect()], { files: {} }))).toBe("OK");
+  });
+
+  test("with images on (Wave 24): dataURL is refused; images must refer to a listed Nook file", () => {
+    const fileId = "f".repeat(40);
+    const image = { ...rect({ id: "img" }), type: "image", fileId, status: "pending", scale: [1, 1], crop: null };
+    const nook = { [fileId]: { id: fileId, mimeType: "image/png", nookDocumentId: "123e4567-e89b-42d3-a456-426614174000" } };
+    const on = (input: unknown) => { const result = validateScene(input, { images: true }); return result.ok ? "OK" : result.code; };
+    const ok = validateScene(scene([image], { files: nook }), { images: true });
     expect(ok.ok && ok.scene.elements[0]!.status).toBe("saved");
-    expect(code(scene([image], { files: { [fileId]: { ...nook[fileId], dataURL: "data:image/png;base64,AAAA" } } }))).toBe("DATA_URL_NOT_ALLOWED");
-    expect(code(scene([image], { files: {} }))).toBe("INVALID_SCENE");
-    expect(code(scene([], { files: { [fileId]: { ...nook[fileId], mimeType: "image/svg+xml" } } }))).toBe("INVALID_SCENE");
+    expect(on(scene([image], { files: { [fileId]: { ...nook[fileId], dataURL: "data:image/png;base64,AAAA" } } }))).toBe("DATA_URL_NOT_ALLOWED");
+    expect(on(scene([image], { files: {} }))).toBe("INVALID_SCENE");
+    expect(on(scene([], { files: { [fileId]: { ...nook[fileId], mimeType: "image/svg+xml" } } }))).toBe("INVALID_SCENE");
+  });
+
+  test("__proto__, constructor, and prototype keys never change the canonical output (review L9)", () => {
+    const plain = '{"type":"excalidraw","elements":[{"id":"p1","type":"rectangle","x":1,"y":2,"width":3,"height":4,"roundness":{"type":3}}],"appState":{},"files":{}}';
+    const polluted = '{"files":{},"__proto__":{"polluted":true},"appState":{"__proto__":{"x":1}},"elements":[{"height":4,"__proto__":[1,2],"width":3,"constructor":"x","y":2,"x":1,"type":"rectangle","id":"p1","prototype":7,"roundness":{"__proto__":{"a":1},"type":3}}],"type":"excalidraw"}';
+    const a = validateScene(JSON.parse(plain));
+    const b = validateScene(JSON.parse(polluted));
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    const hash = (value: typeof a & { ok: true }) => createHash("sha256").update(canonicalSceneJson(value.scene)).digest("hex");
+    expect(hash(b)).toBe(hash(a));
+    expect(canonicalSceneJson(b.scene)).not.toContain("proto");
+    expect(canonicalSceneJson(b.scene)).not.toContain("constructor");
+    expect(Object.getPrototypeOf(b.scene.elements[0])).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   test("unknown element keys: primitives and short number arrays only, at most 48 keys", () => {

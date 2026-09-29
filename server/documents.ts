@@ -66,11 +66,13 @@ function acquireSlot(userId: string) {
 
 /**
  * Bytes that count against the quota: every document the user owns, live or binned, plus the
- * snapshots of their whiteboards (§6; a board's `size_bytes` is its current scene).
+ * snapshots and thumbnails of their whiteboards (§6, review L8; a board's `size_bytes` is its
+ * current scene).
  */
 export const storedBytes = (userId: string) =>
   (db.query(`SELECT COALESCE((SELECT SUM(size_bytes) FROM documents WHERE owner_id = $userId), 0)
-    + COALESCE((SELECT SUM(s.size_bytes) FROM whiteboard_snapshots s JOIN documents d ON d.id = s.document_id WHERE d.owner_id = $userId), 0) AS total`).get({ userId }) as { total: number }).total;
+    + COALESCE((SELECT SUM(s.size_bytes) FROM whiteboard_snapshots s JOIN documents d ON d.id = s.document_id WHERE d.owner_id = $userId), 0)
+    + COALESCE((SELECT SUM(length(w.thumb_png)) FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE d.owner_id = $userId AND w.thumb_png IS NOT NULL), 0) AS total`).get({ userId }) as { total: number }).total;
 
 /** The quota picture shown on Today: stored bytes (as the quota counts them), the binned part, and the quota (null = unlimited). */
 export function storageUsage(userId: string) {

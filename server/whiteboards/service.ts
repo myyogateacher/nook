@@ -29,13 +29,43 @@ const SAVE_AUDIT_INTERVAL_MS = 10 * 60_000;
 const LIST_LIMIT = 500;
 
 export class WhiteboardError extends Error {
-  constructor(readonly status: 400 | 404 | 409 | 413 | 415 | 507, readonly code: string, message: string, readonly details: Record<string, unknown> = {}) {
+  constructor(readonly status: 400 | 404 | 409 | 413 | 415 | 429 | 507, readonly code: string, message: string, readonly details: Record<string, unknown> = {}) {
     super(message);
     this.name = "WhiteboardError";
   }
 }
 
 const notFound = () => new WhiteboardError(404, "NOT_FOUND", "Whiteboard not found");
+
+/**
+ * Per-user fixed one-minute windows (review L8, L11). Autosave writes at most once per 1.5 s per
+ * board (40 a minute) and a thumbnail at most once a minute per board plus one on leave, so these
+ * are only reached by several busy boards at once or by a script: 30 new boards, 120 scene saves,
+ * and 30 thumbnails a minute. A refused request costs nothing; the client keeps its pending copy and
+ * retries after `retryAfter`.
+ */
+export const WHITEBOARD_LIMITS = { create: 30, save: 120, thumbnail: 30 } as const;
+type LimitName = keyof typeof WHITEBOARD_LIMITS;
+const windows = new Map<string, { count: number; resetAt: number }>();
+
+function charge(name: LimitName, userId: string, nowMs = Date.now()) {
+  if (windows.size > 5000) for (const [key, window] of windows) if (window.resetAt <= nowMs) windows.delete(key);
+  const key = `${name}:${userId}`;
+  let window = windows.get(key);
+  if (!window || window.resetAt <= nowMs) {
+    window = { count: 0, resetAt: nowMs + 60_000 };
+    windows.set(key, window);
+  }
+  if (window.count >= WHITEBOARD_LIMITS[name]) {
+    throw new WhiteboardError(429, "RATE_LIMITED", "Too many whiteboard changes. Try again in a minute.", { retryAfter: Math.max(1, Math.ceil((window.resetAt - nowMs) / 1000)) });
+  }
+  window.count += 1;
+}
+
+/** Test hook: forget the whiteboard rate windows. */
+export function resetWhiteboardLimitsForTests() {
+  windows.clear();
+}
 
 export type WhiteboardSummary = DocumentSummary & {
   kind: "whiteboard";
@@ -68,14 +98,55 @@ export function readableWhiteboard(documentId: string, userId: string) {
   return row ? toSummary(row, userId) : null;
 }
 
-/** Boards `userId` can read: all, the ones others shared, or one folder. At most 500, newest edit first. */
-export function listWhiteboards(userId: string, folder: "all" | "shared" | string, options: { limit?: number; ids?: readonly string[] } = {}) {
-  const folderFilter = folder === "all" ? "" : folder === "shared" ? "AND d.owner_id <> $userId" : "AND d.folder_id = $folderId";
-  const rows = db.query(`${summarySelect} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter}
-    ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
-    .all({ userId, limit: Math.min(options.limit ?? LIST_LIMIT, LIST_LIMIT), ...(folder !== "all" && folder !== "shared" ? { folderId: folder } : {}) }) as Array<DocumentSummary & BoardColumns>;
-  return rows.map((row) => toSummary(row, userId));
+/**
+ * Lists are driven from `whiteboards` (review L12): CROSS JOIN keeps SQLite from scanning every
+ * live document and probing for a board row; each board is one primary-key lookup into documents.
+ */
+const listSelect = documentSummarySelect.replace(
+  "FROM documents d JOIN users u ON u.id = d.owner_id",
+  ", w.revision, w.element_count, w.thumb_png IS NOT NULL AS has_thumb, w.thumb_revision FROM whiteboards w CROSS JOIN documents d ON d.id = w.document_id JOIN users u ON u.id = d.owner_id"
+);
+
+type ListCursor = { at: string; id: string };
+export const encodeListCursor = (cursor: ListCursor) => Buffer.from(JSON.stringify([cursor.at, cursor.id])).toString("base64url");
+export function decodeListCursor(value: string | undefined | null): ListCursor | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString());
+    if (Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === "string" && typeof parsed[1] === "string" && parsed[0].length <= 40 && parsed[1].length <= 40) return { at: parsed[0], id: parsed[1] };
+  } catch {
+    // fall through
+  }
+  throw new WhiteboardError(400, "INVALID_CURSOR", "cursor is not valid");
 }
+
+/**
+ * Boards `userId` can read: all, the ones others shared, or one folder, newest edit first, in pages
+ * of at most 500 with a keyset cursor (review L7). `ids` narrows to chosen boards in SQL, before
+ * the page cut, so a chosen-board key sees its boards however old they are.
+ */
+export function listWhiteboardsPage(userId: string, folder: "all" | "shared" | string, options: { limit?: number; cursor?: string | null; ids?: readonly string[] } = {}) {
+  const limit = Math.max(1, Math.min(options.limit ?? LIST_LIMIT, LIST_LIMIT));
+  const cursor = decodeListCursor(options.cursor);
+  const folderFilter = folder === "all" ? "" : folder === "shared" ? "AND d.owner_id <> $userId" : "AND d.folder_id = $folderId";
+  const idFilter = options.ids ? "AND d.id IN (SELECT value FROM json_each($ids))" : "";
+  const cursorFilter = cursor ? "AND (d.updated_at < $cursorAt OR (d.updated_at = $cursorAt AND d.id > $cursorId))" : "";
+  const rows = db.query(`${listSelect} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter} ${idFilter} ${cursorFilter}
+    ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
+    .all({
+      userId, limit: limit + 1,
+      ...(folder !== "all" && folder !== "shared" ? { folderId: folder } : {}),
+      ...(options.ids ? { ids: JSON.stringify(options.ids) } : {}),
+      ...(cursor ? { cursorAt: cursor.at, cursorId: cursor.id } : {})
+    }) as Array<DocumentSummary & BoardColumns>;
+  const page = rows.slice(0, limit).map((row) => toSummary(row, userId));
+  const last = page[page.length - 1];
+  return { whiteboards: page, nextCursor: rows.length > limit && last ? encodeListCursor({ at: last.updated_at, id: last.id }) : null };
+}
+
+/** The first page (Today, tests): see listWhiteboardsPage. */
+export const listWhiteboards = (userId: string, folder: "all" | "shared" | string, options: { limit?: number; ids?: readonly string[] } = {}) =>
+  listWhiteboardsPage(userId, folder, options).whiteboards;
 
 type OwnedBoard = { id: string; owner_id: string; name: string; size_bytes: number; sha256: string; revision: number; object_id: string; thumb_revision: number | null };
 
@@ -137,6 +208,7 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
     const existing = replay(userId, uploadKey);
     if (existing) return { whiteboard: existing, replay: true };
   }
+  charge("create", userId);
   const folderId = input.folderId ?? ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
   const prepared = prepareScene(emptyScene());
@@ -180,16 +252,23 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
 }
 
 /** The current scene's canonical bytes, re-reading once when a save replaced the object meanwhile (§6). */
-async function readSceneBytes(documentId: string): Promise<{ bytes: Uint8Array; revision: number }> {
-  const read = () => db.query("SELECT w.object_id, w.revision, d.size_bytes FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE w.document_id = ?")
-    .get(documentId) as { object_id: string; revision: number; size_bytes: number } | null;
+type SceneRow = { object_id: string; revision: number; element_count: number; size_bytes: number; updated_at: string };
+
+/**
+ * The current scene's bytes together with the revision, count, and time that belong to THOSE bytes,
+ * from one row read (review H1): a save that commits while the file is read never relabels an older
+ * scene with its newer revision, which would let the next save pass the CAS and overwrite it.
+ */
+async function readSceneBytes(documentId: string): Promise<{ bytes: Uint8Array; revision: number; row: SceneRow }> {
+  const read = () => db.query(`SELECT w.object_id, w.revision, w.element_count, d.size_bytes, d.updated_at
+    FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE w.document_id = ?`).get(documentId) as SceneRow | null;
   let row = read();
   if (!row) throw notFound();
   for (let attempt = 0; ; attempt += 1) {
     try {
       const { handle } = await openObjectForRead(row.object_id, row.size_bytes);
       try {
-        return { bytes: new Uint8Array(await handle.readFile()), revision: row.revision };
+        return { bytes: new Uint8Array(await handle.readFile()), revision: row.revision, row };
       } finally {
         await handle.close();
       }
@@ -204,10 +283,11 @@ async function readSceneBytes(documentId: string): Promise<{ bytes: Uint8Array; 
 /** GET /api/whiteboards/:id: the board and its scene (validated again on the way out, T160). */
 export async function readWhiteboard(documentId: string, userId: string) {
   if (!readableWhiteboard(documentId, userId)) throw notFound();
-  const { bytes } = await readSceneBytes(documentId);
-  // The summary is read after the bytes, so its revision is never older than the scene.
-  const whiteboard = readableWhiteboard(documentId, userId);
-  if (!whiteboard) throw notFound();
+  const { bytes, row } = await readSceneBytes(documentId);
+  // Access is checked again after the read; the revision, count, size, and time are the bytes' own.
+  const current = readableWhiteboard(documentId, userId);
+  if (!current) throw notFound();
+  const whiteboard: WhiteboardSummary = { ...current, revision: row.revision, elementCount: row.element_count, size_bytes: row.size_bytes, updated_at: row.updated_at };
   const result = validateScene(JSON.parse(new TextDecoder().decode(bytes)));
   if (!result.ok) throw new Error("Stored whiteboard scene failed validation");
   return { whiteboard, scene: result.scene };
@@ -234,6 +314,7 @@ export type SaveResult = { revision: number; savedAt: string; sha256: string; si
  * object is removed after the commit; a crash in between leaves an orphan the sweeper removes.
  */
 export async function saveScene(documentId: string, userId: string, baseRevision: number, input: unknown): Promise<SaveResult> {
+  charge("save", userId);
   const prepared = prepareScene(input);
   return withResourceLock(lockKey(documentId), async () => {
     const board = ownedBoard(documentId, userId);
@@ -250,6 +331,8 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     const savedAt = now();
     try {
       db.transaction(() => {
+        // T80: a save that authenticated before its owner was blocked must not commit after it.
+        if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw notFound();
         checkQuota(userId, delta);
         const moved = db.query(`UPDATE whiteboards SET revision = revision + 1, object_id = ?, element_count = ?, text_bytes = ?, updated_at = ?
           WHERE document_id = ? AND revision = ?`).run(objectId, prepared.stats.elementCount, prepared.stats.textBytes, savedAt, documentId, baseRevision);
@@ -284,11 +367,14 @@ export function checkThumbnail(bytes: Uint8Array) {
 
 /** PUT …/thumbnail (D200): the owner's PNG of revision `revision`; a stale or future revision is ignored. */
 export async function putThumbnail(documentId: string, userId: string, revision: number, bytes: Uint8Array) {
+  charge("thumbnail", userId);
   checkThumbnail(bytes);
   return withResourceLock(lockKey(documentId), async () => {
     const board = ownedBoard(documentId, userId);
     if (!board) throw notFound();
     if (revision > board.revision || (board.thumb_revision !== null && revision < board.thumb_revision)) return { stored: false };
+    const previous = (db.query("SELECT COALESCE(length(thumb_png), 0) AS size FROM whiteboards WHERE document_id = ?").get(documentId) as { size: number }).size;
+    checkQuota(userId, bytes.byteLength - previous);
     db.query("UPDATE whiteboards SET thumb_png = ?, thumb_revision = ?, thumb_sha256 = ? WHERE document_id = ?").run(bytes, revision, sha256(bytes), documentId);
     return { stored: true };
   });

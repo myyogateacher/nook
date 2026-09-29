@@ -6,7 +6,7 @@ import { createUser, dataDir, db, request, type Session } from "./support/harnes
 
 const { runSweep, hasDocumentRow } = await import("../server/sweeper");
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
-const { reconcileWhiteboardSearchIndex } = await import("../server/whiteboards/service");
+const { reconcileWhiteboardSearchIndex, resetWhiteboardLimitsForTests } = await import("../server/whiteboards/service");
 
 /**
  * Whiteboards on Files (Wave 23, whiteboard plan §8, §12, T160–T172): create, list, read, the
@@ -14,7 +14,10 @@ const { reconcileWhiteboardSearchIndex } = await import("../server/whiteboards/s
  * and search. MCP is in whiteboardsMcp.test.ts.
  */
 
-beforeEach(() => resetSearchRateLimit());
+beforeEach(() => {
+  resetSearchRateLimit();
+  resetWhiteboardLimitsForTests();
+});
 
 type Json = Record<string, any>;
 async function api(session: Session | undefined, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
@@ -97,7 +100,9 @@ describe("whiteboards API", () => {
     expect((await api(owner, "PATCH", `/files/${inherited.id}`, { folderId: folder.id })).status).toBe(200);
     expect((await api(owner, "PUT", `/folders/${folder.id}/sharing`, { visibility: "selected", userIds: [reader.userId] })).status).toBe(200);
 
-    const listed = (session: Session, folderParam = "all") => api(session, "GET", `/whiteboards?folder=${folderParam}`).then((result) => (result.body.whiteboards as Json[]).map((board) => board.name).sort());
+    // Only this test's boards: other tests may leave boards shared with everyone (review M1).
+    const mine = new Set([direct.id, inherited.id, everyone.id, privateBoard.id]);
+    const listed = (session: Session, folderParam = "all") => api(session, "GET", `/whiteboards?folder=${folderParam}`).then((result) => (result.body.whiteboards as Json[]).filter((board) => mine.has(board.id)).map((board) => board.name).sort());
     expect(await listed(owner)).toEqual(["Direct.excalidraw", "Everyone.excalidraw", "Inherited.excalidraw", "Private.excalidraw"]);
     expect(await listed(reader)).toEqual(["Direct.excalidraw", "Everyone.excalidraw", "Inherited.excalidraw"]);
     expect(await listed(reader, "shared")).toEqual(["Direct.excalidraw", "Everyone.excalidraw", "Inherited.excalidraw"]);
@@ -114,8 +119,9 @@ describe("whiteboards API", () => {
     expect((await api(reader, "GET", `/whiteboards/${privateBoard.id}`)).status).toBe(404);
     expect((await api(reader, "GET", `/whiteboards/${crypto.randomUUID()}`)).status).toBe(404);
     expect((await api(reader, "GET", "/whiteboards/not-a-uuid")).status).toBe(404);
-    // A plain file is not a whiteboard.
     expect((await api(owner, "GET", "/whiteboards?folder=nope")).status).toBe(400);
+    // Leave nothing shared with everyone for later tests (review M1).
+    expect((await api(owner, "DELETE", `/files/${everyone.id}`)).status).toBe(200);
   });
 
   test("only the owner writes: a recipient's save and thumbnail are 404, a viewer's 403 ROLE_READ_ONLY", async () => {
@@ -165,6 +171,75 @@ describe("whiteboards API", () => {
     // Saves are audited, coalesced to one row per board per ten minutes.
     await save(owner, board.id, 2, sceneWith(["Third"]));
     expect(db.query("SELECT COUNT(*) AS n FROM audit_log WHERE event_type = 'whiteboard.save' AND metadata_json LIKE ?").get(`%${board.id}%`)).toEqual({ n: 1 });
+  });
+
+  test("reads racing saves: the revision (and ETag) always labels the bytes it came with (review H1)", async () => {
+    const owner = await createUser("WB race");
+    const board = await create(owner, "Race");
+    const marker = (revision: number) => ({ type: "excalidraw", elements: [{ id: `m${revision}`, type: "text", x: 0, y: 0, width: 1, height: 1, text: `rev-${revision}`, originalText: `rev-${revision}` }], appState: {}, files: {} });
+    let saving = true;
+    const saves = (async () => {
+      try {
+        for (let revision = 2; revision <= 80; revision += 1) {
+          resetWhiteboardLimitsForTests();
+          const saved = await save(owner, board.id, revision - 1, marker(revision));
+          expect(saved.body.revision).toBe(revision);
+        }
+      } finally {
+        saving = false;
+      }
+    })();
+    const mismatches: string[] = [];
+    let reads = 0;
+    const reader = async () => {
+      while (saving) {
+        const read = await api(owner, "GET", `/whiteboards/${board.id}`);
+        if (read.status !== 200) continue;
+        reads += 1;
+        const revision = read.body.whiteboard.revision as number;
+        const text = read.body.scene.elements[0]?.text ?? "rev-1";
+        if (text !== `rev-${revision}` || read.headers.get("etag") !== `"r${revision}"`) mismatches.push(`${text} labelled r${revision}`);
+      }
+    };
+    await Promise.all([saves, reader(), reader(), reader(), reader()]);
+    expect(reads).toBeGreaterThan(20);
+    expect(mismatches).toEqual([]);
+    // MCP reads use the same path.
+    const { readWhiteboard } = await import("../server/whiteboards/service");
+    const final = await readWhiteboard(board.id, owner.userId);
+    expect(final.whiteboard.revision).toBe(80);
+    expect(final.scene.elements[0]!.text).toBe("rev-80");
+  }, 60_000);
+
+  test("rate limits: saves past the per-minute window are 429 with Retry-After, and nothing is stored (review L11)", async () => {
+    const owner = await createUser("WB limits");
+    const board = await create(owner, "Limits");
+    resetWhiteboardLimitsForTests();
+    const { WHITEBOARD_LIMITS } = await import("../server/whiteboards/service");
+    let revision = 1;
+    for (let index = 0; index < WHITEBOARD_LIMITS.save; index += 1) {
+      const saved = await save(owner, board.id, revision, sceneWith([`n${index}`]));
+      expect(saved.status).toBe(200);
+      revision = saved.body.revision;
+    }
+    const refused = await save(owner, board.id, revision, sceneWith(["one too many"]));
+    expect(refused.status).toBe(429);
+    expect(refused.body.code).toBe("RATE_LIMITED");
+    expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(boardRow(board.id)!.revision).toBe(revision);
+    resetWhiteboardLimitsForTests();
+    for (let index = 0; index < WHITEBOARD_LIMITS.create; index += 1) expect((await api(owner, "POST", "/whiteboards", { name: `c${index}` })).status).toBe(201);
+    expect((await api(owner, "POST", "/whiteboards", { name: "too many" })).status).toBe(429);
+    resetWhiteboardLimitsForTests();
+  }, 30_000);
+
+  test("a blocked owner's save does not commit (T80, review L10)", async () => {
+    const owner = await createUser("WB blocked");
+    const board = await create(owner, "Blocked");
+    const { saveScene } = await import("../server/whiteboards/service");
+    db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), owner.userId);
+    await expect(saveScene(board.id, owner.userId, 1, sceneWith(["late"]))).rejects.toMatchObject({ status: 404 });
+    expect(boardRow(board.id)!.revision).toBe(1);
   });
 
   test("invalid scenes are 400 with the validator's code and 413 past 4 MiB; nothing is stored", async () => {
@@ -294,6 +369,9 @@ describe("whiteboards API", () => {
     expect((await put(1, pngWithSize(4, 4))).status).toBe(204);
     const stored = boardRow(board.id)!;
     expect(Buffer.from(stored.thumb_png as Uint8Array).equals(PNG)).toBe(true);
+    // Thumbnails count against the quota (review L8).
+    const { storedBytes } = await import("../server/documents");
+    expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + PNG.byteLength);
 
     const got = await request(`/whiteboards/${board.id}/thumbnail`, {}, owner);
     expect(got.status).toBe(200);

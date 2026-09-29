@@ -172,7 +172,7 @@ describe("Security and proposals", () => {
     expect(message.subject).toBe("New API key “laptop” on your Nook account");
     expect(message.text).toContain("Notes: read · Tasks: read, write");
     expect(message.text).not.toContain(created.body.key.token);
-    expect(message.text).toContain("/settings/mcp");
+    expect(message.text).toContain("/settings/keys");
   });
 
   test("proposals coalesce for an hour and carry key names and counts only (T233)", async () => {

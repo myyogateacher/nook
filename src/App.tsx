@@ -83,7 +83,7 @@ import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
+import { formatRoute, isLegacySettingsPath, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -1457,6 +1457,8 @@ export function App() {
       // is on screen; Back off one closes it, then the entry below is restored as usual.
       const poppedSettings = parseSettingsPath(window.location.pathname);
       if (poppedSettings) {
+        // An old /settings/mcp entry shows the canonical /settings/keys, in place (C3).
+        if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, "", settingsPath(poppedSettings));
         setPanel(null);
         setSharingFolder(null);
         setSettingsSection(poppedSettings);

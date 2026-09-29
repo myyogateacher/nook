@@ -377,7 +377,7 @@ where `nook-mcp.json` names the server `nook` with the URL `https://nook.example
 
 Nook includes an authenticated [Model Context Protocol](https://modelcontextprotocol.io/) server over Streamable HTTP, so trusted AI clients can search and read your notes and files, and write drafts for you to review.
 
-1. Open **Settings → API keys** and choose **New key**. Name it, say where it is used (MCP today; REST arrives in a later release), and build its **Access** one permission at a time (below). Pick when it expires, confirm with your password (and a fresh two-factor code when two-factor is on), and **Create key**. The key is shown in full only once; Nook stores its SHA-256 hash and a short identifying prefix, never the plaintext.
+1. Open **Settings → API keys** (`/settings/keys`) and choose **New key**. Name it, say where it is used (MCP today; REST arrives in a later release), and build its **Access** one permission at a time (below). Pick when it expires, confirm with your password (and a fresh two-factor code when two-factor is on), and **Create key**. The key is shown in full only once; Nook stores its SHA-256 hash and a short identifying prefix, never the plaintext.
 2. Copy the ready-to-paste client configuration. The endpoint is `<your origin>/mcp` (`http://localhost:2026/mcp` for the default deployment) and the key is sent as an `Authorization: Bearer` header.
 3. Revoke keys you no longer need from the same screen.
 

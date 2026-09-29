@@ -174,7 +174,7 @@ describe("reset link", () => {
     await runMailDispatch();
     const changed = sent.at(-1)!;
     expect(changed.subject).toBe("Your Nook password was reset");
-    expect(changed.text).toContain(`${origin}/settings/mcp`);
+    expect(changed.text).toContain(`${origin}/settings/keys`);
   });
 
   test("completing a reset voids unsubscribe links mailed before it (§B.2); a password change does not", async () => {

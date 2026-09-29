@@ -15,7 +15,7 @@ An AI client can use this key to reach your notes and other modules with the per
 If this wasn't you, sign in and revoke the key, then change your password, or ask your admin.
 
 Review in Settings:
-https://nook.test/settings/mcp
+https://nook.test/settings/keys
 
 --
 You got this because it is about your own Nook account.

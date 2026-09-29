@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { ChevronLeft, Cloud, CloudOff, Ellipsis, ImageDown, LoaderCircle, Share2, TriangleAlert } from "lucide-react";
-import { Excalidraw, exportToBlob } from "@excalidraw/excalidraw";
+import { Excalidraw, exportToBlob, MainMenu } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ApiError } from "../api";
@@ -243,7 +243,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (hasUnsupportedElements(loose)) {
       // Images arrive in Wave 24 (D198): a dropped or pasted image is removed before it is ever saved.
       apiRef.current?.updateScene({ elements: (elements as never[]).filter((element: { type?: string }) => element.type !== "image") as never });
-      flash("Images are not supported on whiteboards yet");
+      flash("Images and embeds are not supported on whiteboards yet");
       return;
     }
     const key = changeKey(loose, appState as unknown as Record<string, unknown>);
@@ -407,7 +407,15 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         validateEmbeddable={false}
         renderTopRightUI={() => null}
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, clearCanvas: canEdit, toggleTheme: false, changeViewBackgroundColor: canEdit }, tools: { image: false } }}
-      />
+      >
+        {/* Nook's own main menu: no social links or promotions, only what works here. */}
+        <MainMenu>
+          <MainMenu.DefaultItems.SearchMenu />
+          <MainMenu.DefaultItems.Help />
+          {canEdit && <MainMenu.DefaultItems.ClearCanvas />}
+          {canEdit && <MainMenu.DefaultItems.ChangeCanvasBackground />}
+        </MainMenu>
+      </Excalidraw>
     </div>
 
     <BoardDialogs dialog={boardDialog} folders={folders} flash={flash}

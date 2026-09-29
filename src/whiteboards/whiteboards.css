@@ -90,3 +90,5 @@ button.whiteboard-title:hover { background: #222225; }
   .whiteboard-status span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padding: 0 8px; background: #2a2113; cursor: pointer; }
+/* No embeds (D199, T163): Web Embed is hidden from the extra tools; embeddable elements are never saved. */
+.whiteboard-stage .excalidraw [data-testid="toolbar-embeddable"] { display: none !important; }

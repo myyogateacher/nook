@@ -71,6 +71,16 @@ const groupCount = (kind: AccessKind, userId: string) =>
   (db.query(`SELECT COUNT(*) AS count FROM group_members gm JOIN group_grants gg ON gg.group_id = gm.group_id
     WHERE gm.user_id = ? AND gg.resource_kind = ? AND gg.env_id IS NULL`).get(userId, kind) as { count: number }).count;
 
+/** Distinct items `userId` reaches on `kind` through a direct share or a group (one item shared both ways counts once). */
+const itemCount = (kind: AccessKind, userId: string) => {
+  const { table, column } = SHARE_TABLES[kind];
+  return (db.query(`SELECT COUNT(*) AS count FROM (
+      SELECT ${column} AS resource_id FROM ${table} WHERE user_id = $userId
+      UNION
+      SELECT gg.resource_id FROM group_members gm JOIN group_grants gg ON gg.group_id = gm.group_id
+        WHERE gm.user_id = $userId AND gg.resource_kind = $kind AND gg.env_id IS NULL)`).get({ userId, kind }) as { count: number }).count;
+};
+
 /** What Reset access removes, counted (the confirm shows these before, the result after). */
 export function resetCounts(userId: string) {
   let direct = 0;
@@ -124,7 +134,7 @@ export function accessSummary(viewerId: string, userId: string) {
     feeds: { live: counts.feeds },
     routines: { enabled: counts.routines },
     kinds: ACCESS_KINDS.map((kind) => ({
-      kind, module: KIND_MODULE[kind], direct: directCount(kind, userId), group: groupCount(kind, userId),
+      kind, module: KIND_MODULE[kind], items: itemCount(kind, userId), direct: directCount(kind, userId), group: groupCount(kind, userId),
       audience: target.role === "guest" ? 0 : (db.query(AUDIENCE_COUNTS[kind]).get({ userId }) as { count: number }).count
     })),
     resetCounts: counts,

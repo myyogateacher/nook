@@ -78,7 +78,7 @@ function KindSection({ counts, loadPage, actions, reloadKey, busy }: { counts: K
     {shared > 0
       ? <button type="button" className="ma-kind-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((value) => !value)}>
         {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-        <span><strong>{kindCount(counts.kind, shared)}</strong>{parts && <small>{parts}</small>}</span>
+        <span><strong>{kindCount(counts.kind, counts.items)}</strong>{parts && <small>{parts}</small>}</span>
       </button>
       : null}
     {counts.audience > 0 && <p className="ma-audience">{kindCount(counts.kind, counts.audience)} shared with everyone signed in</p>}

@@ -10,7 +10,8 @@ import type { Role } from "../team/teamRoles";
 export type AccessKind = "note" | "folder" | "document" | "board" | "task_view" | "collection" | "calendar";
 export type AccessLevel = "view" | "comment" | "edit" | "manage";
 
-export type KindCount = { kind: AccessKind; module: "notes" | "files" | "tasks" | "collections" | "calendar"; direct: number; group: number; audience: number };
+/** `items`: distinct items (the headline); `direct` and `group`: grant rows, so an item shared both ways is in each. */
+export type KindCount = { kind: AccessKind; module: "notes" | "files" | "tasks" | "collections" | "calendar"; items: number; direct: number; group: number; audience: number };
 export type ResetCounts = { directShares: number; groups: number; keys: number; feeds: number; routines: number };
 
 export type AccessSummary = {

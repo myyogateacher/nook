@@ -97,7 +97,7 @@ describe("the member access page", () => {
     expect(summary.body.member).toMatchObject({ id: target.userId, displayName: "Central list target", isYou: false });
     expect(summary.body.groups.map((group: { id: string }) => group.id)).toContain(groupId);
     const byKind = Object.fromEntries(summary.body.kinds.map((row: { kind: string }) => [row.kind, row]));
-    expect(byKind.board).toMatchObject({ direct: 2, group: 0 });
+    expect(byKind.board).toMatchObject({ items: 2, direct: 2, group: 0 });
     expect(byKind.collection).toMatchObject({ group: 1 });
     expect(byKind.calendar.audience).toBeGreaterThanOrEqual(1);
     expect(summary.body.pageSize).toBe(200);

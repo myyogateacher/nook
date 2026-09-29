@@ -18,13 +18,13 @@ const summary = (): AccessSummary => ({
   feeds: { live: 0 },
   routines: { enabled: 0 },
   kinds: [
-    { kind: "note", module: "notes", direct: 0, group: 0, audience: 4 },
-    { kind: "folder", module: "notes", direct: 0, group: 0, audience: 0 },
-    { kind: "document", module: "files", direct: 0, group: 0, audience: 0 },
-    { kind: "board", module: "tasks", direct: 2, group: 1, audience: 0 },
-    { kind: "task_view", module: "tasks", direct: 0, group: 0, audience: 0 },
-    { kind: "collection", module: "collections", direct: 0, group: 0, audience: 0 },
-    { kind: "calendar", module: "calendar", direct: 0, group: 0, audience: 1 }
+    { kind: "note", module: "notes", items: 0, direct: 0, group: 0, audience: 4 },
+    { kind: "folder", module: "notes", items: 0, direct: 0, group: 0, audience: 0 },
+    { kind: "document", module: "files", items: 0, direct: 0, group: 0, audience: 0 },
+    { kind: "board", module: "tasks", items: 2, direct: 2, group: 1, audience: 0 },
+    { kind: "task_view", module: "tasks", items: 0, direct: 0, group: 0, audience: 0 },
+    { kind: "collection", module: "collections", items: 0, direct: 0, group: 0, audience: 0 },
+    { kind: "calendar", module: "calendar", items: 0, direct: 0, group: 0, audience: 1 }
   ],
   resetCounts: { directShares: 2, groups: 1, keys: 0, feeds: 0, routines: 0 },
   pageSize: 200
@@ -70,7 +70,8 @@ describe("central access on the client", () => {
   test("the overview lists modules with counts, audience-wide items as counts, and no native select", async () => {
     const { AccessOverview } = await import("../src/access/AccessOverview");
     const html = renderToStaticMarkup(<AccessOverview summary={summary()} loadPage={async (kind) => ({ kind, items: [], nextCursor: null })} actions={{ onRemove: () => undefined, onLower: () => undefined }} />);
-    expect(html).toContain("3 boards");
+    // The headline counts distinct items: one board is shared both directly and through a group.
+    expect(html).toContain("2 boards");
     expect(html).toContain("2 direct, 1 through groups");
     expect(html).toContain("4 notes shared with everyone signed in");
     expect(html).toContain("1 calendar shared with everyone signed in");

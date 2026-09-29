@@ -9,7 +9,7 @@ const excalidrawFontsDir = "node_modules/@excalidraw/excalidraw/dist/prod/fonts"
 function excalidrawFonts(): Plugin {
   // Review L6: a production build must apply both rewrites at least once, or it fails.
   let building = false;
-  const applied = { fontFallback: 0, copyAsSvg: 0 };
+  const applied = { fontFallback: 0, copyAsSvg: 0, addToLibrary: 0, helpImage: 0 };
   return {
     name: "nook-excalidraw-fonts",
     configResolved(config) {
@@ -46,12 +46,25 @@ function excalidrawFonts(): Plugin {
         out = `${out.slice(0, at)}predicate:()=>false,nookHiddenPredicate:${out.slice(at + "predicate:".length)}`;
         applied.copyAsSvg += 1;
       }
+      // QA Q4: no library actions ("Add to library" in the context menu and command palette).
+      if (/name:\s*"addToLibrary",/.test(out)) {
+        out = out.replace(/name:\s*"addToLibrary",/, 'name:"addToLibrary",predicate:()=>false,');
+        applied.addToLibrary += 1;
+      }
+      // QA Q5: Help does not list "Insert image" (images are refused in this release). Production build only.
+      const helpImage = /[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{label:[A-Za-z_$][\w$]*\("toolBar\.image"\),shortcuts:\[[^}]*?\]\}\),/;
+      if (helpImage.test(out)) {
+        out = out.replace(helpImage, "");
+        applied.helpImage += 1;
+      }
       return out === code ? null : { code: out, map: null };
     },
     buildEnd(error) {
       if (!building || error) return;
       if (applied.fontFallback === 0) this.error("Excalidraw's esm.sh font fallback was never rewritten; update the rewrite (D203)");
       if (applied.copyAsSvg === 0) this.error("Excalidraw's copyAsSvg action was never patched; update the rewrite (D201)");
+      if (applied.addToLibrary === 0) this.error("Excalidraw's addToLibrary action was never patched; update the rewrite (QA Q4)");
+      if (applied.helpImage === 0) this.error("Excalidraw's Help image entry was never removed; update the rewrite (QA Q5)");
     },
     writeBundle(options) {
       cpSync(excalidrawFontsDir, join(options.dir ?? "dist", "excalidraw/fonts"), { recursive: true });

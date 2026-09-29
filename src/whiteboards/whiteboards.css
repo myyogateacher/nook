@@ -6,6 +6,7 @@
 .whiteboards-count { color: #85858c; font-weight: 500; }
 .whiteboards-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .whiteboards-folder-select { min-width: 190px; max-width: 280px; min-height: 42px; }
+.whiteboards-sort-select { min-width: 160px; min-height: 42px; }
 .whiteboards-view-toggle { display: inline-flex; border: 1px solid #2c2c31; border-radius: 10px; padding: 2px; background: #111113; }
 .whiteboards-view-toggle button { width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #95959c; cursor: pointer; }
 .whiteboards-view-toggle button.active { background: #2b261b; color: #ffe19a; }
@@ -18,8 +19,9 @@
 .whiteboard-open { width: 100%; min-width: 0; display: grid; grid-template-rows: auto auto; border: 1px solid #26262b; border-radius: 14px; padding: 0; overflow: hidden; background: #131316; color: inherit; text-align: left; cursor: pointer; }
 .whiteboard-open:hover { border-color: #4a3f25; }
 .whiteboard-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
-.whiteboard-thumb { aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden; background: #f7f7f5; color: #6d6d73; }
-.whiteboard-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.whiteboard-thumb { position: relative; aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden; background: #f7f7f5; color: #6d6d73; }
+/* QA Q3: the whole drawing, fitted with padding (the image is laid out against the box, not the grid track). */
+.whiteboard-thumb img { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); object-fit: contain; }
 .whiteboard-thumb > svg { width: 34px; height: 34px; }
 .whiteboard-card-copy { min-width: 0; display: grid; gap: 4px; padding: 10px 48px 12px 12px; }
 .whiteboard-name { min-width: 0; overflow: hidden; color: #ededee; font-size: .92rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
@@ -50,7 +52,8 @@
   .whiteboards-body { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); }
   .whiteboards-toolbar h1 { flex: 1 1 100%; font-size: 1.1rem; }
   .whiteboards-controls { flex: 1 1 100%; }
-  .whiteboards-folder-select { flex: 1 1 auto; min-width: 0; max-width: none; }
+  .whiteboards-folder-select { flex: 1 1 100%; min-width: 0; max-width: none; }
+  .whiteboards-sort-select { flex: 1 1 auto; min-width: 0; }
   .whiteboards-grid:not(.whiteboards-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .whiteboard-card-copy { padding: 8px 44px 10px 10px; }
 }
@@ -101,3 +104,7 @@ button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padd
 .excalidraw .HelpDialog__header { display: none !important; }
 /* Review L5: the sidebar offers only its search tab; the library tab (and its links to libraries.excalidraw.com) is not offered. */
 .whiteboard-stage .excalidraw .sidebar-tab-trigger[id$="-trigger-library"] { display: none !important; }
+/* QA Q5: the Mermaid dialog's description links to mermaid.js.org and says other diagrams "render as image", which this release refuses. */
+.excalidraw .ttd-dialog-desc { display: none !important; }
+/* QA Q11: no keyboard hints ("Hold Ctrl and Arrow key…") on touch screens. */
+@media (pointer: coarse) { .whiteboard-stage .excalidraw .HintViewer { display: none !important; } }

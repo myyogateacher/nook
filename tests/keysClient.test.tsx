@@ -79,6 +79,9 @@ describe("key grants on the client", () => {
     expect(rowsToGrants([row({ module: "tasks", applies: "chosen" })]).error).toBe("Choose at least one board for Tasks, or pick All boards.");
     expect(grantSummary([row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["b1", "b2"] })]))
       .toBe("Tasks: write tasks on 2 boards. Never shares, never manages access or keys, and never deletes forever.");
+    // Creating whiteboards makes new boards: never "on 0 whiteboards" (Wave 23 QA Q7).
+    expect(grantSummary([row({ module: "whiteboards", permission: "write", applies: "chosen", resourceIds: [] })]))
+      .toBe("Whiteboards: create whiteboards. Never shares, never manages access or keys, and never deletes forever.");
   });
 
   test("chips group chosen items, name them, and mark grants that grant nothing now", () => {

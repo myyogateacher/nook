@@ -184,7 +184,9 @@ export function grantSummary(rows: readonly GrantRow[]) {
   if (!rows.length) return "This key can do nothing yet. Add a permission.";
   const parts = rows.map((row) => {
     const selector = SELECTOR_KINDS[row.module];
-    const where = row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? selector.one : selector.many}` : selector ? ` on all ${selector.many}` : "";
+    // Creating a whiteboard makes a new, private board: it is not "on" any existing ones (QA Q7).
+    const createOnly = row.module === "whiteboards" && row.permission === "write";
+    const where = createOnly ? "" : row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? selector.one : selector.many}` : selector ? ` on all ${selector.many}` : "";
     return `${MODULE_LABELS[row.module]}: ${permissionLabel(row.module, row.permission).toLowerCase()}${where}`;
   });
   return `${parts.join("; ")}. Never shares, never manages access or keys, and never deletes forever.`;

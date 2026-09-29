@@ -1,5 +1,5 @@
 import { Hono, type Context } from "hono";
-import { serveStatic } from "hono/bun";
+import { distRoot, serveStaticFile } from "./staticFiles";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { ZodError } from "zod";
@@ -901,8 +901,10 @@ app.use("/sw.js", async (c, next) => {
 });
 
 if (config.isProduction) {
-  app.use("/*", serveStatic({ root: "./dist" }));
-  app.get("/*", serveStatic({ path: "./dist/index.html" }));
+  // The built client with long caching for hashed assets, no-cache for the rest, and
+  // precompressed br/gzip twins (C14, server/staticFiles.ts).
+  const root = distRoot();
+  app.on(["GET", "HEAD"], "/*", async (c) => (await serveStaticFile(c.req.raw, new URL(c.req.url).pathname, root)) ?? c.notFound());
 }
 
 async function reconcilePublishedMirrors() {

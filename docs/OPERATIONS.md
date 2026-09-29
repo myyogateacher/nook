@@ -107,6 +107,10 @@ Each delivery is verified with Resend's SDK (`webhooks.verify`, the Svix / Stand
 
 Development: `MAIL_TRANSPORT=file` with an absolute `MAIL_FILE_PATH` writes every message to that JSON file instead of sending it, and `/dev/mail/preview` renders every template with sample data. Both exist only outside production (`NODE_ENV=production` refuses the file transport at startup and answers 404 for `/dev/*`).
 
+### Static files and caching
+
+Nothing to configure. The production server sends the app's content-hashed files (`/assets/*`) with `Cache-Control: public, max-age=31536000, immutable`: a browser keeps them until a release changes their names. Everything else it serves from `dist/` (the app page, `sw.js`, the web app manifest, icons) is `Cache-Control: no-cache` with an ETag and Last-Modified, so a new release is picked up on the next load and an unchanged page costs a 304. The build writes Brotli (`.br`) and gzip (`.gz`) copies of text files next to them (about 1 MB more in the image); the server sends one when the browser accepts it, with `Vary: Accept-Encoding`, and never compresses images or fonts. API responses stay `no-store`, and files, previews, and downloads keep their own private rules. A reverse proxy in front (Tailscale Serve, Caddy, nginx) may compress too; it sees already-compressed static files and passes them through.
+
 ## Configuration
 
 Compose passes these variables from `.env` (see `.env.example`). Invalid values stop the server at startup with a message naming the variable.

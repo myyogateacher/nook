@@ -94,3 +94,7 @@ A local fake issuer (`tests/support/fakeGoogle.ts`: authorization, token, JWKS, 
 | L8 stale identity address | The identity's `email` follows Google at each sign-in. |
 | L9 junk callback cleared the flow | A state that does not match leaves the flow and its cookie alone. |
 | L10 avatar URL | `Avatar` loads only `/api/users/<uuid>/avatar?v=<uuid>`. |
+
+## 7. End-user QA fixes (2026-09-29)
+
+U1 passwords-off notices on `/forgot-password` and `/reset-password`; U2 a placeholder until the methods are known; U3 Access sheet rows keep the picture; U4 the signed-in person's picture in headers, sidebar footers, and Settings, and comment authors' pictures (web payloads only; card activity, mentions, and the assignee picker's fresh picks still show letters); U5 the Google-only hint; U6 Google messages beside the Google button; U7 **Cancel and use another account** on the code step (`POST /api/auth/google/cancel`); U8 an invite that fails with the wrong Google account returns to the invite page with the invite kept server side (`GET /api/auth/google/invite`, fragment `google-error`); U9 no picture from Google removes the avatar; U10 unchanged generic password error; U11 Google confirmation before New key and Rotate (the two-factor forms already ask for it at the top of the card); U12 a richer fake issuer chooser (tests and local QA only; refused in production).

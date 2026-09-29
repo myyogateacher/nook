@@ -54,11 +54,13 @@ export type TeamInvite = {
   usedBy: { id: string; displayName: string } | null;
   usedAt: string | null;
   revokedAt: string | null;
+  /** The template snapshot this invite applies: its name and group count when the invite was made; `edited` when the template changed since. */
+  template?: { id: string; name: string; groupCount: number; edited: boolean; guestSkipped?: string[] } | null;
 };
 
 /** `emailEnabled`: whether mail is configured on the server (RESEND_API_KEY and MAIL_FROM). */
 export type TeamInviteList = { invites: TeamInvite[]; liveCount: number; liveLimit: number; emailEnabled?: boolean };
-export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string; sendEmail?: boolean };
+export type CreateInviteBody = { role: InviteRole; email?: string; expiresInDays?: number; note?: string; sendEmail?: boolean; templateId?: string };
 export type MailOutcome = { sent: true; id: string } | { sent: false; reason: "not_configured" | "rate_limited" | "failed" };
 
 const memberPath = (userId: string) => `/team/${encodeURIComponent(userId)}`;

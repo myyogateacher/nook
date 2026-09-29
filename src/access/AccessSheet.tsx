@@ -6,7 +6,7 @@ import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { useRole } from "../team/roleAccess";
 import { ROLE_LABELS } from "../team/teamRoles";
-import { getAccess, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
+import { getAccess, keysReachLine, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
 import {
   accessErrorMessage, addPicked, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
   KEPT_GUEST_NOTE, KEPT_GUEST_REASON, keptGuestLevel, levelOptions, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft
@@ -247,6 +247,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
       <footer className="access-footer">
         {error && <p className="access-error" role="alert">{error}</p>}
         {!error && blocker && selected && <p className="access-row-hint">{blocker}</p>}
+        {access && typeof access.keysWithAccess === "number" && access.keysWithAccess > 0 && <p className="access-row-hint access-keys-hint">{keysReachLine(access.keysWithAccess)}</p>}
         <div className="access-actions">
           <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>
           <button type="button" className="primary-button" onClick={requestSave} disabled={busy || !access || !draft || blocker !== null}>{busy ? "Saving…" : "Save"}</button>

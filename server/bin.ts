@@ -36,8 +36,20 @@ const isProvided = (type: string): type is ProvidedBinType => (PROVIDED_BIN_TYPE
  * object so tests can inject a failure without touching the filesystem.
  */
 export const binStorage = {
-  removeBytes: (type: CoreBinType, id: string) => type === "note" ? storage.removeNote(id) : removeObject(id)
+  removeBytes: (type: CoreBinType, id: string) => type === "note" ? storage.removeNote(id) : removeDocumentObjects(id)
 };
+
+/**
+ * A document's bytes: its own object, and for a whiteboard (Wave 23, §6) its current scene object and
+ * every snapshot object first (the board has no object under its document id). ENOENT is success.
+ * The rows still exist here (purge step 2), and step 3 cascades them away.
+ */
+async function removeDocumentObjects(id: string) {
+  const objects = db.query(`SELECT object_id FROM whiteboards WHERE document_id = ?
+    UNION ALL SELECT object_id FROM whiteboard_snapshots WHERE document_id = ?`).all(id, id) as Array<{ object_id: string }>;
+  for (const { object_id } of objects) await removeObject(object_id);
+  await removeObject(id);
+}
 
 /**
  * DEVELOPMENT_PLAN §9.3. The caller must hold withResourceLock(lockKey(type, id)).
@@ -265,6 +277,8 @@ export type BinItem = {
   can_purge: boolean;
   /** Cards: descendants binned with it, restored and purged with it (task hierarchy D129). */
   descendant_count?: number;
+  /** Documents only: a whiteboard (Wave 23) or any other file. */
+  kind?: "file" | "whiteboard";
 };
 
 export const BIN_LIST_LIMIT = 500;
@@ -276,7 +290,7 @@ export const BIN_LIST_LIMIT = 500;
  */
 export function listBin(ownerId: string, type: BinListType | null) {
   const notes = `SELECT 'note' AS type, n.id, n.title, f.id AS folder_id, f.name AS folder_name, NULL AS size_bytes,
-      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment, NULL AS attachment_of, NULL AS row_attachment_of, NULL AS attachment_kind
+      n.deleted_at, n.purge_after, n.purge_started_at IS NOT NULL AS purging, 0 AS attachment, NULL AS attachment_of, NULL AS row_attachment_of, NULL AS attachment_kind, 0 AS whiteboard
     FROM notes n LEFT JOIN folders f ON f.id = n.folder_id AND f.owner_id = n.owner_id
     WHERE n.owner_id = $ownerId AND n.deleted_at IS NOT NULL`;
   const documents = `SELECT 'document' AS type, d.id, d.name AS title, f.id AS folder_id, f.name AS folder_name, d.size_bytes,
@@ -292,7 +306,8 @@ export function listBin(ownerId: string, type: BinListType | null) {
       ) END AS row_attachment_of,
       CASE WHEN d.purpose = 'file' THEN NULL
         WHEN EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = d.id) THEN 'card'
-        WHEN EXISTS (SELECT 1 FROM collection_row_attachments cra WHERE cra.document_id = d.id) THEN 'row' ELSE NULL END AS attachment_kind
+        WHEN EXISTS (SELECT 1 FROM collection_row_attachments cra WHERE cra.document_id = d.id) THEN 'row' ELSE NULL END AS attachment_kind,
+      EXISTS (SELECT 1 FROM whiteboards w WHERE w.document_id = d.id) AS whiteboard
     FROM documents d LEFT JOIN folders f ON f.id = d.folder_id AND f.owner_id = d.owner_id
     WHERE d.owner_id = $ownerId AND d.deleted_at IS NOT NULL`;
   const items: BinItem[] = [];
@@ -301,9 +316,10 @@ export function listBin(ownerId: string, type: BinListType | null) {
     // The Files filter shows Files items only; attachments appear under All (WAVES_7-9.md §7).
     const source = type === "note" ? notes : type === "document" ? `${documents} AND d.purpose = 'file'` : `${notes} UNION ALL ${documents}`;
     const rows = db.query(`SELECT * FROM (${source}) ORDER BY deleted_at DESC, id LIMIT $limit`)
-      .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge"> & { purging: number; attachment: number; row_attachment_of: string | null }>;
-    items.push(...rows.map(({ row_attachment_of, ...row }): BinItem => ({
-      ...row, attachment_of: row.attachment_of ?? row_attachment_of, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true
+      .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge" | "kind"> & { purging: number; attachment: number; row_attachment_of: string | null; whiteboard: number }>;
+    items.push(...rows.map(({ row_attachment_of, whiteboard, ...row }): BinItem => ({
+      ...row, attachment_of: row.attachment_of ?? row_attachment_of, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true,
+      ...(row.type === "document" ? { kind: whiteboard === 1 ? "whiteboard" as const : "file" as const } : {})
     })));
   }
   if (type === null || type === "card" || type === "board") {

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { CalendarDays, Clock, X } from "lucide-react";
 import { DropdownSurface, useOutsideClose, useSheet, type Presentation } from "../ui/Listbox";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { committableDueDate, committableDueTime, dueStatus, dueTimeNote, instantParts, localDateString, viewerTimeZone } from "./taskActions";
 import type { CardChange } from "./tasksApi";
 
@@ -135,8 +134,8 @@ export function DuePicker({ card, idPrefix, done, disabled, onApply, presentatio
     }
   }
 
-  // Back closes the popover without saving (the phone sheet's own guard does the same).
-  useHistoryDialogGuard(open && !sheet, () => cancel());
+  // Back closes the popover without saving: the popup and the phone sheet (DropdownSurface) each
+  // register their own history layer, so the picker adds none.
   useOutsideClose(open && !sheet, rootRef, () => cancel(false));
   // Focus moves into the editor: the date field on desktop (once the popup is placed and visible, so
   // not autoFocus), the first quick pick in the phone sheet (the date field would raise a picker).

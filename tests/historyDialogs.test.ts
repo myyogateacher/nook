@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, holdDialogSentinel, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
 import { createDialogGuard } from "../src/ui/useHistoryDialogGuard";
+import { guardDialogPop } from "../src/calendar/hooks";
 import { readHistoryDepth, withHistoryDepth } from "../src/appShellNavigation";
 
 test("the window env reads the landing depth, at every width (A1)", () => {
@@ -611,4 +612,100 @@ test("a dialog closed by its own button on the landing entry pops its sentinel; 
   expect(harness.index()).toBe(0);
   harness.userBack();
   expect(harness.left()).toBe(true);
+});
+
+// v0.13.0 fix C1: a dialog opened from a settings-style dialog is a layer above it.
+test("Board settings → Share board on the landing entry: Back closes the sheet, then settings, then leaves (C1)", async () => {
+  const harness = tab([{ site: "elsewhere" }, withHistoryDepth({ route: "board" }, 0)], 1);
+  const closed: string[] = [];
+  const settings = layer(harness, "settings", closed);
+  layer(harness, "access", closed);
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(closed).toEqual(["access"]);
+  expect(settings.isOpen()).toBe(true);
+  // Settings still open holds a fresh sentinel, so the next Back stays in Nook.
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(closed).toEqual(["access", "settings"]);
+  expect(harness.left()).toBe(false);
+  harness.userBack();
+  expect(harness.left()).toBe(true);
+});
+
+test("Board settings → Share board with unsaved changes: Back asks first, Keep editing keeps both layers (C1, B4)", async () => {
+  const harness = tab([withHistoryDepth({ route: "board" }, 0)], 0);
+  const closed: string[] = [];
+  const settings = layer(harness, "settings", closed);
+  const access = layer(harness, "access", closed);
+  // The sheet's dirty guard (its own layer while dirty): Back hands over to the Discard / Keep
+  // editing prompt, which React mounts in the same commit that unmounts the dirty guard.
+  const asked: string[] = [];
+  layer(harness, "discard?", asked);
+  expect(harness.userBack()).toBe(true);
+  await Bun.sleep(1);
+  expect(asked).toEqual(["discard?"]);
+  const prompt = layer(harness, "prompt", closed);
+  await harness.deliverAll();
+  expect(closed).toEqual([]);
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
+  // Back on the prompt is Keep editing: the sheet and settings stay, and Back still stays in Nook.
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(closed).toEqual(["prompt"]);
+  expect(prompt.isOpen()).toBe(false);
+  expect(access.isOpen() && settings.isOpen()).toBe(true);
+  expect(harness.left()).toBe(false);
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(closed).toEqual(["prompt", "access"]);
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(closed).toEqual(["prompt", "access", "settings"]);
+  harness.userBack();
+  expect(harness.left()).toBe(true);
+});
+
+test("Calendars sheet → Share on the landing entry: one guard closes only the Access layer, then the sheet (C1)", async () => {
+  const harness = tab([{ site: "elsewhere" }, withHistoryDepth({ route: "calendar" }, 0)], 1);
+  const shown = ["calendars", "sharing"];
+  let release: (() => void) | null = acquireDialogSentinel(harness.env);
+  const unregister = registerHistoryDialogGuard((state) => shown.length > 0 && guardDialogPop(0, state, (forced) => {
+    // CalendarApp: a forced Back off the sentinel with a layer over the Calendars sheet closes that layer only.
+    if (forced && shown.length > 1 && holdDialogSentinel()) { shown.pop(); return "keep"; }
+    shown.length = 0;
+    release?.();
+    release = null;
+  }, () => undefined, (direction) => undoDialogPop(direction, harness.go)));
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(shown).toEqual(["calendars"]);
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
+  expect(harness.userBack()).toBe(true);
+  await harness.deliverAll();
+  expect(shown).toEqual([]);
+  expect(harness.left()).toBe(false);
+  unregister();
+  await Bun.sleep(5);
+  harness.userBack();
+  expect(harness.left()).toBe(true);
+});
+
+test("Board settings stays mounted under the dialogs it opens; the Calendars sheet keeps its layer (C1)", async () => {
+  const board = await Bun.file(new URL("../src/tasks/BoardView.tsx", import.meta.url)).text();
+  expect(board).toContain("useHistoryDialogGuard(overSettings, backToSettings);");
+  expect(board).toContain(`{(dialog?.kind === "settings" || overSettings) && board && <BoardSettingsSheet`);
+  expect(board).toContain("suspended={overSettings}");
+  expect(board).toContain(`onShare={() => openOverSettings("share")}`);
+  expect(board).toMatch(/<AccessSheet kind="board" id=\{board\.id\} title=\{board\.name\} onClose=\{closeLayer\} onSaved=\{\(\) => \{\n\s+closeLayer\(\);/);
+  const calendar = await Bun.file(new URL("../src/calendar/CalendarApp.tsx", import.meta.url)).text();
+  expect(calendar).toContain(`if (forced && calendarsOpen && (sharing || feeds || confirm?.kind === "deleteCalendar") && holdDialogSentinel())`);
+});
+
+test("the Due picker adds no layer of its own: its dropdown popup or sheet is the one layer (C2)", async () => {
+  const due = await Bun.file(new URL("../src/tasks/DuePicker.tsx", import.meta.url)).text();
+  expect(due).not.toContain("useHistoryDialogGuard");
+  expect(due).toContain("<DropdownSurface sheet={sheet}");
 });

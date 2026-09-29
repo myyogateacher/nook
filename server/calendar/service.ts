@@ -37,7 +37,7 @@ import {
   type SeriesInput
 } from "./recurrence";
 import { mailShared, shareMembers } from "../mail/triggers";
-import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { mailEventChanged } from "../mail/calendarMail";
 
@@ -201,7 +201,7 @@ export function putCalendarSharing(userId: string, calendarId: string, input: { 
     const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (valid.length !== uniqueIds.length) throw invalid("One or more users were not found");
   }
-  if (input.visibility === "selected" && guestShareBlocked(uniqueIds)) throw new CalendarError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
+  if (input.visibility === "selected" && legacyGuestShareBlocked("calendar", calendarId, legacyShareLevels("calendar", calendarId, uniqueIds, shareRoleToLevel(input.shareRole), true))) throw new CalendarError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   db.transaction(() => {
     const before = shareMembers("calendar_members", "calendar_id", calendarId);
     // The old route's one role applies to everyone it names, as before (D54); managers stay managers

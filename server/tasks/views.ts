@@ -9,7 +9,7 @@ import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
 import { groupGrantExists } from "../access/groups";
-import { GUEST_SHARE_DISABLED, guestShareBlocked } from "../access/shares";
+import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked } from "../access/shares";
 
 /**
  * Saved cross-board task views (research 2026-09-26 §10.2, D140, Q12, Q13;
@@ -250,7 +250,7 @@ export function putViewSharing(userId: string, viewId: string, visibility: Board
     const found = db.query("SELECT id FROM users WHERE disabled_at IS NULL AND id IN (SELECT value FROM json_each(?))").all(JSON.stringify(uniqueIds));
     if (found.length !== uniqueIds.length) throw new TaskError(400, "One or more users were not found");
   }
-  if (visibility === "selected" && guestShareBlocked(uniqueIds)) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
+  if (visibility === "selected" && legacyGuestShareBlocked("task_view", viewId, uniqueIds.map((recipientId) => ({ userId: recipientId, level: "view" as const })))) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withViewsLock(userId, () => {
     requireOwnedView(viewId, userId);
     db.transaction(() => {

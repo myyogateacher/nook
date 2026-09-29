@@ -58,8 +58,10 @@ export function inviteLimitHint(liveCount: number, liveLimit: number) {
 }
 
 /** An invite's template line (Wave 33, D286): the snapshot it applies, and whether the template changed since. */
-export function templateLabel(template: { name: string; groupCount: number; edited: boolean; guestSkipped?: string[] }) {
-  const groups = `${template.groupCount} ${template.groupCount === 1 ? "group" : "groups"}`;
+export function templateLabel(template: { name: string; groupCount: number; deletedGroupCount?: number; edited: boolean; guestSkipped?: string[] }) {
+  // Only groups that still exist count; acceptance skips deleted ones, so say how many (follow-up P2).
+  const deleted = template.deletedGroupCount ?? 0;
+  const groups = `${template.groupCount} ${template.groupCount === 1 ? "group" : "groups"}${deleted ? `; ${deleted} ${deleted === 1 ? "was" : "were"} deleted since` : ""}`;
   const base = template.edited ? `Template: ${template.name} (as it was when invited: ${groups}; edited since)` : `Template: ${template.name} (${groups})`;
   // A guest invite while sharing with guests is off: these groups are skipped (checked again at acceptance, Q2).
   const skipped = template.guestSkipped ?? [];

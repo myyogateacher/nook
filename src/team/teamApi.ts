@@ -55,7 +55,7 @@ export type TeamInvite = {
   usedAt: string | null;
   revokedAt: string | null;
   /** The template snapshot this invite applies: its name and group count when the invite was made; `edited` when the template changed since. */
-  template?: { id: string; name: string; groupCount: number; edited: boolean; guestSkipped?: string[] } | null;
+  template?: { id: string; name: string; groupCount: number; deletedGroupCount?: number; edited: boolean; guestSkipped?: string[] } | null;
 };
 
 /** `emailEnabled`: whether mail is configured on the server (RESEND_API_KEY and MAIL_FROM). */

@@ -9,10 +9,11 @@ import { withResourceLock } from "../storage";
 import { sanitizeDisplayName } from "../validation";
 import { canWriteContent } from "../team/userRole";
 import {
-  canonicalSceneJson, emptyScene, validateScene, whiteboardFileName, WHITEBOARD_MAX_SCENE_BYTES, WHITEBOARD_MIME,
+  canonicalSceneJson, emptyScene, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_MAX_SCENE_BYTES, WHITEBOARD_MIME,
   type CanonicalScene, type SceneErrorCode
 } from "../../shared/whiteboardScene";
 import { indexWhiteboard } from "./search";
+import { avatarUrlFor } from "../avatars";
 
 /**
  * Whiteboards on Files (docs/plan/research/2026-09-28-whiteboard-module.md §6, §8, D192–D194,
@@ -78,13 +79,16 @@ export type WhiteboardSummary = DocumentSummary & {
   /** The owner's safety snapshots (0 for everyone else) and when the newest was taken. */
   snapshotCount: number;
   snapshotAt: string | null;
+  /** The owner's picture (the same-origin avatar route, Wave 35), or null. */
+  ownerAvatarUrl: string | null;
 };
 
-type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null; snapshot_count: number; snapshot_at: string | null };
+type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null; snapshot_count: number; snapshot_at: string | null; owner_avatar_id: string | null };
 
 /** Safety snapshots are the owner's: others always see 0 (and no time). */
 const SNAPSHOT_COLUMNS = `CASE WHEN d.owner_id = $userId THEN (SELECT COUNT(*) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE 0 END AS snapshot_count,
-  CASE WHEN d.owner_id = $userId THEN (SELECT MAX(ws.created_at) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE NULL END AS snapshot_at`;
+  CASE WHEN d.owner_id = $userId THEN (SELECT MAX(ws.created_at) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE NULL END AS snapshot_at,
+  u.avatar_id AS owner_avatar_id`;
 
 const summarySelect = documentSummarySelect.replace(
   "FROM documents d JOIN users u ON u.id = d.owner_id",
@@ -92,10 +96,10 @@ const summarySelect = documentSummarySelect.replace(
 );
 
 function toSummary(row: DocumentSummary & BoardColumns, userId: string): WhiteboardSummary {
-  const { revision, element_count, has_thumb, thumb_revision, snapshot_count, snapshot_at, ...document } = row;
+  const { revision, element_count, has_thumb, thumb_revision, snapshot_count, snapshot_at, owner_avatar_id, ...document } = row;
   return {
     ...document, kind: "whiteboard", revision, elementCount: element_count, hasThumbnail: has_thumb === 1, thumbRevision: thumb_revision,
-    snapshotCount: snapshot_count, snapshotAt: snapshot_at,
+    snapshotCount: snapshot_count, snapshotAt: snapshot_at, ownerAvatarUrl: avatarUrlFor(document.owner_id, owner_avatar_id),
     canEdit: document.is_owner === 1 && canWriteContent(userId)
   };
 }
@@ -118,12 +122,22 @@ const listSelect = documentSummarySelect.replace(
 /** List orders (QA Q6), as the Files list names them. The cursor carries the sort it was made for. */
 export const WHITEBOARD_SORTS = ["updated-desc", "updated-asc", "name-asc", "name-desc"] as const;
 export type WhiteboardSort = (typeof WHITEBOARD_SORTS)[number];
-const SORT_SQL: Record<WhiteboardSort, { key: string; order: string; after: string }> = {
+const SORT_SQL: Record<"updated-desc" | "updated-asc", { key: string; order: string; after: string }> = {
   "updated-desc": { key: "d.updated_at", order: "d.updated_at DESC, d.id", after: "(d.updated_at < $cursorKey OR (d.updated_at = $cursorKey AND d.id > $cursorId))" },
-  "updated-asc": { key: "d.updated_at", order: "d.updated_at ASC, d.id", after: "(d.updated_at > $cursorKey OR (d.updated_at = $cursorKey AND d.id > $cursorId))" },
-  "name-asc": { key: "lower(d.name)", order: "lower(d.name) ASC, d.id", after: "(lower(d.name) > $cursorKey OR (lower(d.name) = $cursorKey AND d.id > $cursorId))" },
-  "name-desc": { key: "lower(d.name)", order: "lower(d.name) DESC, d.id", after: "(lower(d.name) < $cursorKey OR (lower(d.name) = $cursorKey AND d.id > $cursorId))" }
+  "updated-asc": { key: "d.updated_at", order: "d.updated_at ASC, d.id", after: "(d.updated_at > $cursorKey OR (d.updated_at = $cursorKey AND d.id > $cursorId))" }
 };
+
+/**
+ * QA E6: names sort as the Files list sorts them: natural ("Board 2" before "Board 10") and
+ * case-insensitive, on the name people see (without ".excalidraw"), so "Name" comes before
+ * "Name (copy)". Ties go by id. SQLite has no such collation, so name orders sort in the server.
+ */
+const nameCollator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+export function compareBoardNames(left: { name: string; id: string }, right: { name: string; id: string }, direction: "asc" | "desc" = "asc") {
+  const byName = nameCollator.compare(whiteboardDisplayName(left.name), whiteboardDisplayName(right.name));
+  if (byName !== 0) return direction === "asc" ? byName : -byName;
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
 
 type ListCursor = { sort: WhiteboardSort; key: string; id: string };
 export const encodeListCursor = (cursor: ListCursor) => Buffer.from(JSON.stringify([cursor.sort, cursor.key, cursor.id])).toString("base64url");
@@ -148,18 +162,36 @@ export function decodeListCursor(value: string | undefined | null, sort: Whitebo
 export function listWhiteboardsPage(userId: string, folder: "all" | "shared" | string, options: { limit?: number; cursor?: string | null; ids?: readonly string[]; sort?: WhiteboardSort } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? LIST_LIMIT, LIST_LIMIT));
   const sort = options.sort ?? "updated-desc";
-  const order = SORT_SQL[sort];
   const cursor = decodeListCursor(options.cursor, sort);
   const folderFilter = folder === "all" ? "" : folder === "shared" ? "AND d.owner_id <> $userId" : "AND d.folder_id = $folderId";
   const idFilter = options.ids ? "AND d.id IN (SELECT value FROM json_each($ids))" : "";
+  const scope = {
+    userId,
+    ...(folder !== "all" && folder !== "shared" ? { folderId: folder } : {}),
+    ...(options.ids ? { ids: JSON.stringify(options.ids) } : {})
+  };
+  if (sort === "name-asc" || sort === "name-desc") {
+    const direction = sort === "name-asc" ? "asc" : "desc";
+    // Names and ids only (SQLite flattens the subquery and skips the unused columns), sorted here.
+    const all = (db.query(`SELECT id, name FROM (${listSelect} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter} ${idFilter})`)
+      .all(scope) as Array<{ id: string; name: string }>).sort((left, right) => compareBoardNames(left, right, direction));
+    const start = cursor ? all.findIndex((board) => compareBoardNames(board, { name: cursor.key, id: cursor.id }, direction) > 0) : 0;
+    const slice = start < 0 ? [] : all.slice(start, start + limit + 1);
+    const pageIds = slice.slice(0, limit).map((board) => board.id);
+    const rows = pageIds.length === 0 ? [] : db.query(`${listSelect} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} AND d.id IN (SELECT value FROM json_each($pageIds))`)
+      .all({ userId, pageIds: JSON.stringify(pageIds) }) as Array<DocumentSummary & BoardColumns>;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const page = pageIds.flatMap((id) => { const row = byId.get(id); return row ? [toSummary(row, userId)] : []; });
+    const last = slice.length > limit ? slice[limit - 1] : undefined;
+    return { whiteboards: page, nextCursor: last ? encodeListCursor({ sort, key: last.name, id: last.id }) : null };
+  }
+  const order = SORT_SQL[sort];
   const cursorFilter = cursor ? `AND ${order.after}` : "";
   const select = listSelect.replace(" FROM whiteboards w CROSS JOIN", `, ${order.key} AS sort_key FROM whiteboards w CROSS JOIN`);
   const rows = db.query(`${select} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter} ${idFilter} ${cursorFilter}
     ORDER BY ${order.order} LIMIT $limit`)
     .all({
-      userId, limit: limit + 1,
-      ...(folder !== "all" && folder !== "shared" ? { folderId: folder } : {}),
-      ...(options.ids ? { ids: JSON.stringify(options.ids) } : {}),
+      ...scope, limit: limit + 1,
       ...(cursor ? { cursorKey: cursor.key, cursorId: cursor.id } : {})
     }) as Array<DocumentSummary & BoardColumns & { sort_key: string }>;
   const lastRow = rows.length > limit ? rows[limit - 1] : undefined;
@@ -409,9 +441,7 @@ export function newestSnapshot(documentId: string, userId: string) {
  * POST …/restore-previous: the owner saves the newest snapshot as a NEW revision through the usual
  * CAS (409 on a stale base); the scene it replaces is kept as the newest snapshot, so nothing is lost.
  */
-export async function restorePreviousVersion(documentId: string, userId: string, baseRevision: number) {
-  const snapshot = newestSnapshot(documentId, userId);
-  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+async function readSnapshotScene(snapshot: { object_id: string; size_bytes: number }): Promise<unknown> {
   const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
   let bytes: Uint8Array;
   try {
@@ -419,7 +449,25 @@ export async function restorePreviousVersion(documentId: string, userId: string,
   } finally {
     await handle.close();
   }
-  const scene: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+/**
+ * GET …/previous-version (QA E6): what "Restore previous version" would switch to, so its dialog can
+ * say how many shapes each version has. The owner's only; 404 NO_SNAPSHOT when there is none.
+ */
+export async function previousVersion(documentId: string, userId: string) {
+  const snapshot = newestSnapshot(documentId, userId);
+  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+  const scene = await readSnapshotScene(snapshot);
+  const elements = scene && typeof scene === "object" && Array.isArray((scene as { elements?: unknown }).elements) ? (scene as { elements: Array<{ isDeleted?: unknown }> }).elements : [];
+  return { revision: snapshot.revision, createdAt: snapshot.created_at, elementCount: elements.filter((element) => element?.isDeleted !== true).length };
+}
+
+export async function restorePreviousVersion(documentId: string, userId: string, baseRevision: number) {
+  const snapshot = newestSnapshot(documentId, userId);
+  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+  const scene = await readSnapshotScene(snapshot);
   // What is on the board now is kept too, so a restore can itself be undone the same way.
   const saved = await saveScene(documentId, userId, baseRevision, scene, { keepSnapshot: true });
   audit(userId, null, "whiteboard.restore_snapshot", { documentId, fromRevision: snapshot.revision, revision: saved.revision });

@@ -273,6 +273,20 @@ describe("whiteboards API", () => {
     await api(owner, "PUT", `/files/${board.id}/sharing`, { visibility: "selected", userIds: [reader.userId] });
     expect((await api(reader, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 0, snapshotAt: null });
     expect((await api(reader, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 })).status).toBe(404);
+    // QA E6: what a restore would switch to, for the dialog's wording; the owner's only.
+    const previous = await api(owner, "GET", `/whiteboards/${board.id}/previous-version`);
+    expect(previous.status).toBe(200);
+    expect(previous.body).toEqual({ revision: 3, createdAt: expect.any(String), elementCount: 7 });
+    expect((await api(reader, "GET", `/whiteboards/${board.id}/previous-version`)).status).toBe(404);
+    const fresh = await create(owner, "No snapshot yet");
+    expect((await api(owner, "GET", `/whiteboards/${fresh.id}/previous-version`)).body).toMatchObject({ code: "NO_SNAPSHOT" });
+    // The owner's picture travels with the board (Wave 35's same-origin avatar URL), for everyone who reads it.
+    expect((await api(reader, "GET", `/whiteboards/${board.id}`)).body.whiteboard.ownerAvatarUrl).toBeNull();
+    const avatarId = crypto.randomUUID();
+    db.query("UPDATE users SET avatar_id = ? WHERE id = ?").run(avatarId, owner.userId);
+    expect((await api(reader, "GET", `/whiteboards/${board.id}`)).body.whiteboard.ownerAvatarUrl).toBe(`/api/users/${owner.userId}/avatar?v=${avatarId}`);
+    expect((await api(reader, "GET", "/whiteboards?folder=shared")).body.whiteboards[0].ownerAvatarUrl).toBe(`/api/users/${owner.userId}/avatar?v=${avatarId}`);
+    db.query("UPDATE users SET avatar_id = NULL WHERE id = ?").run(owner.userId);
     // Restore: a new revision with the kept scene, through the CAS; the emptied scene is kept in turn.
     expect((await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 3 })).status).toBe(409);
     const restored = await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 });
@@ -319,6 +333,25 @@ describe("whiteboards API", () => {
     // A cursor made for another order is refused rather than mixing orders.
     const first = await api(owner, "GET", "/whiteboards?sort=name-asc&limit=1");
     expect((await api(owner, "GET", `/whiteboards?sort=updated-desc&cursor=${first.body.nextCursor}`)).status).toBe(400);
+    // QA E6: natural and case-insensitive on the name people see; a shorter name that is a prefix
+    // comes first ("Name" before "Name (copy)", "Board 2" before "Board 10"), across pages.
+    const natural = await createUser("WB natural sorter");
+    for (const name of ["Name (copy)", "Board 10", "name", "Board 2", "board 1"]) await create(natural, name);
+    const pageThrough = async (sort: string, limit: number) => {
+      const out: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await api(natural, "GET", `/whiteboards?sort=${sort}&limit=${limit}${cursor ? `&cursor=${cursor}` : ""}`);
+        expect(page.status).toBe(200);
+        out.push(...page.body.whiteboards.map((board: Json) => (board.name as string).replace(/\.excalidraw$/, "")));
+        cursor = page.body.nextCursor;
+      } while (cursor);
+      return out;
+    };
+    for (const limit of [1, 2, 500]) {
+      expect(await pageThrough("name-asc", limit)).toEqual(["board 1", "Board 2", "Board 10", "name", "Name (copy)"]);
+      expect(await pageThrough("name-desc", limit)).toEqual(["Name (copy)", "name", "Board 10", "Board 2", "board 1"]);
+    }
   });
 
   test("invalid scenes are 400 with the validator's code and 413 past 4 MiB; nothing is stored", async () => {

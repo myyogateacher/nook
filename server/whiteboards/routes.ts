@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { REVALIDATE_CACHE } from "../documents";
 import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
-import { createWhiteboard, listWhiteboardsPage, restorePreviousVersion, WHITEBOARD_SORTS, type WhiteboardSort, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
+import { createWhiteboard, listWhiteboardsPage, previousVersion, restorePreviousVersion, WHITEBOARD_SORTS, type WhiteboardSort, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
 
 /**
  * docs/plan/API_CONTRACTS.md § Whiteboards (whiteboard plan §8). Every route needs a session;
@@ -102,6 +102,14 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
 
   // The owner's "Restore previous version" (QA D1–D3 safety net): the newest safety snapshot is
   // saved as a new revision through the CAS. No MCP tool does this.
+  app.get("/api/whiteboards/:id/previous-version", async (c) => {
+    try {
+      return c.json(await previousVersion(idParam(c), c.get("user").id));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
   app.post("/api/whiteboards/:id/restore-previous", async (c) => {
     try {
       const id = idParam(c);

@@ -13,6 +13,8 @@ export type WhiteboardSummary = DocumentSummary & {
   /** The owner's safety snapshots (0 for everyone else) and when the newest was taken. */
   snapshotCount: number;
   snapshotAt: string | null;
+  /** The owner's picture (Wave 35's same-origin avatar URL), or null for their letters. */
+  ownerAvatarUrl: string | null;
 };
 
 export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true; snapshotKept?: true };
@@ -26,6 +28,10 @@ export const listWhiteboards = (folder: "all" | "shared" | string = "all", curso
 /** The owner's "Restore previous version": the newest safety snapshot becomes a new revision (CAS). */
 export const restorePreviousVersion = (id: string, baseRevision: number) =>
   api<SaveResult & { restoredFrom: { revision: number; createdAt: string } }>(`/whiteboards/${encodeURIComponent(id)}/restore-previous`, { method: "POST", body: JSON.stringify({ baseRevision }) });
+
+/** The newest safety snapshot as the restore dialog describes it (owner only; 404 NO_SNAPSHOT). */
+export const getPreviousVersion = (id: string) =>
+  api<{ revision: number; createdAt: string; elementCount: number }>(`/whiteboards/${encodeURIComponent(id)}/previous-version`);
 
 export const getWhiteboard = (id: string) => api<{ whiteboard: WhiteboardSummary; scene: CanonicalScene }>(`/whiteboards/${encodeURIComponent(id)}`);
 

@@ -47,7 +47,7 @@ import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type F
 import { AccessSheet } from "../access/AccessSheet";
 import { MoveSheet } from "./MoveSheet";
 import { NameDialog, RenameDialog } from "./RenameDialog";
-import { kindIcon, relativeTime } from "./format";
+import { documentIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
 import "./files.css";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
@@ -64,6 +64,8 @@ type FilesAppProps = {
   onBin?: () => void;
   onSettings: () => void;
   onSignOut: () => void;
+  /** Opens a whiteboard's canvas (Wave 23); unset while the Whiteboards module is off, so boards preview as files. */
+  onOpenWhiteboard?: (id: string) => void;
 };
 
 type LoadedData = { folders: Folder[]; documents: DocumentSummary[] };
@@ -93,7 +95,7 @@ function browserStorage(): Storage | null {
 
 const statusLabels: Record<UploadItem["status"], string> = { queued: "Waiting", uploading: "Uploading", done: "Uploaded", failed: "Failed", canceled: "Canceled" };
 
-export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut }: FilesAppProps) {
+export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, onSettings, onSignOut, onOpenWhiteboard }: FilesAppProps) {
   // Viewers and guests read and download; upload, new folder, rename, move, share, and delete are hidden.
   const { canWrite } = useRole();
   const canManage = (document: Pick<DocumentSummary, "is_owner">) => canWrite && ownsDocument(document);
@@ -527,6 +529,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   }
 
   function openDocument(document: DocumentSummary) {
+    // A whiteboard opens its canvas (§10.1) as a new entry, so Back returns to Files.
+    if (document.kind === "whiteboard" && onOpenWhiteboard) {
+      onOpenWhiteboard(document.id);
+      return;
+    }
     setDocumentId(document.id);
     setPanel("preview");
     navigate(filesRoute(folder, document.id), { filesPanel: "preview" });
@@ -681,7 +688,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
       <p id="file-list-keys" className="sr-only">{view === "grid" ? "Use the arrow keys to move between files." : "Use the up and down arrow keys to move between files."} On your own files, F2 renames and Delete moves the file to the Bin.</p>
       <div id="file-list" tabIndex={-1} className={`note-list file-list${view === "grid" ? " file-grid" : ""}`} data-view={view} role="list" aria-label={folderTitle} aria-describedby="file-list-keys" aria-busy={!data && !loadError ? true : undefined} onKeyDown={onListKeyDown}>
         {visible.map((item) => {
-          const Icon = kindIcon(item.preview_kind);
+          const Icon = documentIcon(item);
           const grid = view === "grid";
           const sharedIcon = item.visibility !== "private" && <Users className="file-row-shared" aria-label="Shared" />;
           return <div role="listitem" className={`file-row-item${grid ? " file-tile-item" : ""}`} key={item.id} {...{ [ROW_ITEM_ATTRIBUTE]: item.id }}>
@@ -744,6 +751,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
           onBack={() => back("files")}
           onClose={closePreview}
           onMore={(trigger) => openActions(selected, trigger)}
+          onOpenWhiteboard={selected.kind === "whiteboard" && onOpenWhiteboard ? () => onOpenWhiteboard(selected.id) : undefined}
           actions={canManage(selected) ? {
             rename: () => openDialog("rename", selected),
             move: () => openDialog("move", selected),
@@ -754,7 +762,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
         : <div className="editor-empty"><div className="empty-glyph"><Files /></div><h2>Select a file</h2><p>Choose one from the list to preview it and see its details.</p></div>}
     </section>
 
-    {dialog?.kind === "actions" && dialogDocument && <FileActionSheet document={dialogDocument} onAction={(action) => chooseSheetAction(dialogDocument, action)} onClose={closeDialog} />}
+    {dialog?.kind === "actions" && dialogDocument && <FileActionSheet document={dialogDocument} onAction={(action) => chooseSheetAction(dialogDocument, action)} onClose={closeDialog}
+      onOpenWhiteboard={dialogDocument.kind === "whiteboard" && onOpenWhiteboard ? () => { setDialog(null); onOpenWhiteboard(dialogDocument.id); } : undefined} />}
     {dialog?.kind === "newFolder" && <NameDialog
       title="New folder"
       eyebrow="Files"

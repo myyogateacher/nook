@@ -59,6 +59,8 @@ export type DocumentSummary = {
   size_bytes: number;
   visibility: Visibility;
   sharing_override: 0 | 1;
+  /** A whiteboard (Wave 23) is a Files document with a board row; older servers omit it. */
+  kind?: "file" | "whiteboard";
   created_at: string;
   updated_at: string;
 };
@@ -85,6 +87,8 @@ export type BinItem = {
   can_purge?: boolean;
   /** A card's descendants binned with it; they come back and are deleted with it (task hierarchy D129). */
   descendant_count?: number;
+  /** Documents: a whiteboard (Wave 23) or any other file. */
+  kind?: "file" | "whiteboard";
 };
 export type BinRestoreResult = {
   ok: true;

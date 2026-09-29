@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, PenTool, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions, AppPageName } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
@@ -245,7 +245,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
         {visible.map((item) => {
           const key = itemKey(item);
           const action = pending[key];
-          const Icon = itemIcons[item.type];
+          const Icon = item.type === "document" && item.kind === "whiteboard" ? PenTool : itemIcons[item.type];
           const canPurge = item.can_purge !== false;
           const label = binItemLabel(item);
           const disabled = Boolean(action) || item.purging || emptying;

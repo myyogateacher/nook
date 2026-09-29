@@ -1,5 +1,5 @@
 import { useEffect, useId } from "react";
-import { Download, ExternalLink, FolderInput, Pencil, Share2, Trash2, X } from "lucide-react";
+import { Download, ExternalLink, FolderInput, PenTool, Pencil, Share2, Trash2, X } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { canManage } from "./fileActions";
 import { contentUrl } from "./filesApi";
@@ -12,11 +12,13 @@ type FileActionSheetProps = {
   document: DocumentSummary;
   onAction: (action: FileSheetAction) => void;
   onClose: () => void;
+  /** A whiteboard while the module is on (Wave 23): opens its canvas. */
+  onOpenWhiteboard?: () => void;
 };
 
 // Phone action sheet (⋯ on a row or in the preview header). Like the Bin sheet it has no history
 // entry: Escape, the scrim, or browser Back close it.
-export function FileActionSheet({ document, onAction, onClose }: FileActionSheetProps) {
+export function FileActionSheet({ document, onAction, onClose, onOpenWhiteboard }: FileActionSheetProps) {
   const titleId = useId();
   const owner = useRole().canWrite && canManage(document);
   useEffect(() => {
@@ -32,7 +34,8 @@ export function FileActionSheet({ document, onAction, onClose }: FileActionSheet
         <strong id={titleId} title={document.name}>{document.name}</strong>
         <button className="icon-button" onClick={onClose} aria-label="Close actions"><X /></button>
       </header>
-      <a href={contentUrl(document.id, "attachment")} download onClick={onClose} autoFocus><Download />Download</a>
+      {onOpenWhiteboard && <button onClick={onOpenWhiteboard} autoFocus><PenTool />Open whiteboard</button>}
+      <a href={contentUrl(document.id, "attachment")} download onClick={onClose} autoFocus={!onOpenWhiteboard}><Download />Download</a>
       {document.preview_kind === "pdf" && <a href={contentUrl(document.id, "inline")} target="_blank" rel="noopener noreferrer" onClick={onClose}><ExternalLink />Open preview</a>}
       {owner && <>
         <button onClick={() => onAction("rename")}><Pencil />Rename</button>

@@ -97,6 +97,16 @@ export const TODAY_SECTIONS: Record<string, TodaySectionDef> = {
       route: collectionsRoute(item.collectionId, { rowId: item.rowId })
     })
   },
+  // Whiteboards (Wave 23, §10.7): the five most recently edited boards the viewer can open.
+  whiteboardsRecent: {
+    title: "Recent whiteboards", group: "recent", empty: "no whiteboards yet", app: "Whiteboards",
+    row: (item) => ({
+      key: item.id,
+      label: item.name || "Untitled",
+      meta: [item.is_owner ? null : item.owner_name, `Edited ${relativeTime(item.updated_at)}`].filter(Boolean).join(" · "),
+      route: { app: "whiteboards", folder: "all", boardId: item.id }
+    })
+  },
   // Housekeeping
   drafts: {
     title: "Unpublished drafts", group: "housekeeping", empty: "none", app: "Notes",

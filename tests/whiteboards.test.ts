@@ -219,6 +219,7 @@ describe("whiteboards API", () => {
     expect(renamed.body.document).toMatchObject({ name: "Final plan.excalidraw", kind: "whiteboard" });
     expect((await api(owner, "GET", "/search?scope=whiteboards&q=final")).body.results.map((hit: Json) => hit.id)).toEqual([board.id]);
     const access = await api(owner, "GET", `/files/${board.id}/access`);
+    expect(access.body.kind).toBe("document");
     expect(access.status).toBe(200);
   });
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, Download, Ellipsis, ExternalLink, FolderInput, Pencil, Share2, Trash2, X } from "lucide-react";
+import { ChevronLeft, Download, Ellipsis, ExternalLink, FolderInput, PenTool, Pencil, Share2, Trash2, X } from "lucide-react";
 import type { DocumentSummary } from "../types";
 import { contentUrl, fetchTextPreview, formatBytes, TEXT_PREVIEW_BYTES } from "./filesApi";
-import { formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
+import { documentIcon, formatDateTime, kindIcon, kindLabel, visibilityLabels } from "./format";
 
 type TextState = { id: string; status: "loading" | "ready" | "error"; text: string };
 
@@ -60,10 +60,12 @@ type FilePreviewProps = {
   actions?: FilePreviewActions | null;
   /** Opens the phone action sheet. */
   onMore?: (trigger: HTMLElement) => void;
+  /** A whiteboard while the module is on (Wave 23): opens its canvas. */
+  onOpenWhiteboard?: () => void;
 };
 
-export function FilePreview({ document, folderName, onBack, onClose, actions = null, onMore }: FilePreviewProps) {
-  const Icon = kindIcon(document.preview_kind);
+export function FilePreview({ document, folderName, onBack, onClose, actions = null, onMore, onOpenWhiteboard }: FilePreviewProps) {
+  const Icon = documentIcon(document);
   return <>
     <header className="editor-toolbar file-preview-toolbar">
       <div className="mobile-editor-nav"><button className="icon-button" onClick={onBack} aria-label="Back to files"><ChevronLeft /></button></div>
@@ -80,7 +82,9 @@ export function FilePreview({ document, folderName, onBack, onClose, actions = n
       {onClose && <button className="icon-button desktop-only file-preview-close" onClick={onClose} aria-label="Close preview" aria-keyshortcuts="Escape" title="Close (Esc)"><X /></button>}
     </header>
     <div className="file-preview-body">
-      <section className="file-preview-stage" aria-label="Preview"><PreviewBody key={document.id} document={document} /></section>
+      <section className="file-preview-stage" aria-label="Preview">{document.kind === "whiteboard"
+        ? <div className="file-preview-placeholder"><span className="file-preview-icon"><PenTool /></span><p>{onOpenWhiteboard ? "A whiteboard. Open it to draw, or download the .excalidraw file." : "A whiteboard. Download the .excalidraw file, or turn on Whiteboards in Settings → Modules to open it here."}</p>{onOpenWhiteboard && <button className="primary-button file-action" onClick={onOpenWhiteboard}><PenTool />Open whiteboard</button>}</div>
+        : <PreviewBody key={document.id} document={document} />}</section>
       <dl className="file-details" aria-label="Details">
         <div><dt>Type</dt><dd>{kindLabel(document.preview_kind)} · <code>{document.mime_type}</code></dd></div>
         <div><dt>Size</dt><dd>{formatBytes(document.size_bytes)}</dd></div>

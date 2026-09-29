@@ -93,7 +93,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.14.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.15.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -102,6 +102,19 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.15.0
+
+- **Sign in with Google**: the sign-in, register, and invite pages offer **Continue with Google**. A Google address with no account gets one automatically when registration would allow it: open registration, a valid invite, or the first account on an empty instance (which becomes the admin). Accounts with two-factor on still enter their Nook code after Google. `ALLOWED_EMAILS` and blocking apply as for passwords.
+- **Sign-in methods**: `AUTH_METHODS` is `password` (the default), `google`, or `both`, enforced on the server. `password` turns Google sign-in off; `google` turns off password sign-in, registration with a password, forgot and reset password, and password change. Upgrading changes nothing until you set it.
+- **New settings**: `AUTH_METHODS` (default `password`), `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (empty; both required for `google` or `both`, or the server refuses to start), `GOOGLE_ALLOWED_DOMAINS` (empty; optional list of email domains allowed to use Google sign-in; it does not restrict password registration), and `TRUSTED_PROXY_HOPS` (0 to 5, default `0`; the number of reverse proxies in front of Nook).
+- **Profile pictures**: a Google user's picture replaces the letter in the header, Settings, Team, the Access sheet, card assignees and the assignee picker, and comment authors. The server downloads it at sign-in and serves it from your Nook, so browsers never contact Google and the content security policy is unchanged. Without a picture, or if it fails to load, the letter is shown. Pictures are stored in the data directory (`avatars/`) and included in backups.
+- **Linking existing accounts**: a Google sign-in links automatically only to an account whose address Nook has verified, and only when Google is authoritative for that address (a Gmail address, or a Google Workspace account on the address's own domain). Otherwise nothing about the account changes and the person is told what to do. Password users link in **Settings → Security → Link Google** after confirming their password. An admin can allow a link from **Team** (once, within 24 hours), optionally resetting the account first, and can allow re-linking when someone recreated their Google account. The host command line does the same: `allow-google-link <email> [--reset | --keep-credentials]` and `unlink-google <email>`.
+- **New admin powers**: **Allow Google sign-in**; **Reset account for Google sign-in** (signs the account out everywhere, revokes its API keys and calendar feed links, removes its password and two-factor, makes everything it owns private and removes its shares, revokes its open invites, and pauses its routines; content is kept), offered in the app only for accounts whose address was never verified and never for admins or accounts that were admins in the last 24 hours; **Allow re-linking** (when the new Google account signs in, the previous holder's sessions, API keys, calendar feed links, and unused password-reset links end, and by default the password and two-factor too); and **Unlink** (the member is signed out everywhere). Each asks for your own password (or a Google confirmation) and two-factor code, is recorded in **Team → Access activity**, and tells the member on the bell and, with email on, by security mail; a reset is also shown at their next sign-in.
+- **Accounts without a password**: people who sign in only with Google are asked to **Confirm with Google** where others give their password (new API key, rotate, two-factor setup); it needs a fresh Google sign-in.
+- **Rate limits**: password sign-in, account creation, and invite preview are now also limited per client address (20, 5, and 10 a minute), in addition to the per-email and instance-wide limits. Behind a reverse proxy set `TRUSTED_PROXY_HOPS` so each visitor counts alone.
+- **Fixes**: after turning on two-factor, Settings now stays open on the recovery codes (**Copy all**, **Download**, **I saved them**); before, they disappeared at once. No new MCP tools for sign-in or Google accounts, and API keys are unaffected.
+- Migration 034 runs on the first boot, so back up first. Nothing changes for sign-in until you set `AUTH_METHODS`; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades) for the Google Cloud setup and reverse-proxy advice.
 
 ## What's new in v0.14.0
 

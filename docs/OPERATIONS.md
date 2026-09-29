@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.14.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.15.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -220,7 +220,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.14.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.15.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -295,6 +295,34 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.15.0:** back up first with `./scripts/backup.sh --force`. Migration 034 (Google identities: the `google_identities` table linking a Google account to a Nook account, the `google_auth_flows` table for sign-ins in progress, and new columns for the profile picture (`users.avatar_id`), a session's last Google confirmation (`sessions.reauth_at`), an admin's link allowance, the one-time reset notice, and the last refused Google sign-in) runs once on the first boot and can only be undone by restoring that backup. It only adds; no account changes by upgrading. Migration numbers 030, 031, and 033 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected. Pull, rebuild with `APP_VERSION=0.15.0`, and restart as above.
+
+**Nothing changes for sign-in until you set `AUTH_METHODS`.** The default is `password`, which keeps sign-in exactly as before and turns Google off. `both` offers email and password and Google; `google` turns off password sign-in, registration with a password, forgot and reset password, and password change. New variables (all optional; see [Configuration](#configuration)): `AUTH_METHODS` (`password`), `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` (empty; both required for `google` or `both`, or the server refuses to start), `GOOGLE_ALLOWED_DOMAINS` (empty), and `TRUSTED_PROXY_HOPS` (`0`, at most 5). Compose passes them through from `.env`, and `.env.example` lists them.
+
+To turn on Google sign-in (details in [Google sign-in](#google-sign-in)):
+
+1. In the Google Cloud console, open *APIs & Services → OAuth consent screen* and choose **Internal** for a Google Workspace organisation (**External** otherwise).
+2. Create an OAuth client of type **Web application** and add exactly one authorised redirect URI: `APP_ORIGIN/api/auth/google/callback`, for example `https://notes.example.com/api/auth/google/callback`. It must match `APP_ORIGIN` character for character.
+3. In `.env`, set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `AUTH_METHODS=both` (or `google`), then restart.
+
+- **Company deployments:** set `GOOGLE_ALLOWED_DOMAINS=example.com`. It restricts Google sign-in only, not password registration, so if only company accounts should exist use `AUTH_METHODS=google` or keep `ALLOW_REGISTRATION=false`. The first account on an empty instance becomes the admin: sign in yourself before you share the address.
+- **Behind a reverse proxy:** set `TRUSTED_PROXY_HOPS` to the number of proxies in front of Nook (`1` for one), and publish the port on localhost only (`127.0.0.1:<host-port>:2026`) or firewall it, because anyone who can reach the app's port directly could otherwise forge their address. With the default `0` behind a proxy, every visitor shares one address for the per-address limits. Never set it above `0` without a proxy in front. See *Rate limits and reverse proxies* under [Google sign-in](#google-sign-in).
+- **New per-address limits:** password sign-in (20 a minute per client address), account creation (5), and invite link preview (10) are now limited per client address as well as per email (10 password sign-ins) and for the whole instance (120, 20, and 60).
+- **Switching to `AUTH_METHODS=google`:** accounts that have only a password cannot sign in until they are linked. Link them first in `both` mode (**Settings → Security → Link Google**), or use an admin's allowance in **Team** or the host command line.
+- **With email off**, no address is ever verified in Nook, so a Google sign-in never links an existing account by itself: existing accounts link through **Settings** (in `both` mode) or through an admin's allowance.
+- **Lockout:** the host command line works in every `AUTH_METHODS` mode: `docker compose exec mynotes bun server/team-admin.ts allow-google-link user@example.com [--reset | --keep-credentials]`, `unlink-google user@example.com`, `set-role`, and `unblock`. If Google sign-in breaks, set `AUTH_METHODS=both` or `password` and restart.
+
+New admin powers (see [Google sign-in](#google-sign-in) above), each asking for the admin's own password (or a Google confirmation) and two-factor code, recorded in **Team → Access activity**, and told to the member on the bell and, with email on, by security mail:
+
+- **Allow Google sign-in:** the next Google sign-in with the member's address links the account, once, within 24 hours, and only from a Google account that Google confirms manages the address.
+- **Reset account for Google sign-in:** signs the account out everywhere, revokes its API keys and calendar feed links and unused password-reset links, removes its password and two-factor setup, makes everything it owns private and removes every person and group it shared with, revokes its open invites, and pauses its routines. Content is kept. In the app it is offered only for accounts whose address was never verified, never for admins or accounts that were admins in the last 24 hours, and never for your own account; the command line's `--reset` can. The member also sees a one-time notice at their next sign-in.
+- **Allow re-linking:** for a linked account whose owner recreated their Google account. When the new Google account signs in, the previous holder's sessions, push subscriptions, API keys, calendar feed links, and unused password-reset links end, and by default the password and two-factor are removed too.
+- **Unlink:** removes the member's Google account and signs them out everywhere.
+
+Accounts that sign in only with Google have no password: where Nook asks for a password to confirm a change (a new API key, rotating a key, two-factor setup), they choose **Confirm with Google**, which needs a fresh Google sign-in. Google profile pictures are stored in `avatars/` in the data directory and included in backups. After turning on two-factor, Settings now stays open on the recovery codes until **I saved them**.
+
+The web API gains the `/api/auth/google/*` routes (start, callback, second factor, invite, cancel, link, and `DELETE /api/auth/google` to unlink), `/api/team/:userId/google` (Google sign-in state, allow, and unlink for admins), and `/api/users/:id/avatar`; `/api/about` reports `authMethods`. There are no new MCP tools, and API keys are unaffected.
 
 **Upgrading to 0.14.0:** back up first with `./scripts/backup.sh --force`. Migration 032 (central access: the table behind access notices on the bell, the snapshot of an access template stored on each invite, and an index for the Access activity page) runs once on the first boot and can only be undone by restoring that backup. It only adds; nobody's access changes by upgrading. Migration numbers 030 and 031 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected and those migrations will run on a later upgrade. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.14.0`, and restart as above.
 

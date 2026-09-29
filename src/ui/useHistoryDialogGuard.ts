@@ -47,12 +47,6 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  * Same contract as FilesApp.
  */
 /**
- * Inside a provider set to true, desktop dropdown popups keep their own history layer (2i, the Inbox
- * routine sheet), so Back closes one layer at a time: the dropdown, then a confirm, then the sheet.
- */
-export const DesktopHistoryLayers = createContext(false);
-
-/**
  * How the owner of a layer shows it again, for guarded layers rendered inside (the key dialogs): after
  * Back closed the layer off the sentinel, Forward calls it instead of landing on a dead entry.
  * The `reopen` option of useHistoryDialogGuard wins over it.

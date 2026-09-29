@@ -736,6 +736,8 @@ export function App() {
     window.addEventListener("keydown", closeSort);
     return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
   }, [sortOpen]);
+  // The sort menu is a history layer like any dropdown (D69): Back closes only the menu.
+  useHistoryDialogGuard(sortOpen, () => setSortOpen(false));
 
   const saveDraft = useCallback(async () => {
     if (savingPromiseRef.current) await savingPromiseRef.current;

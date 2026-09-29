@@ -15,16 +15,22 @@ test("the window env reads the landing depth, at every width (A1)", () => {
   }
 });
 
-test("the routine sheet and the dropdowns inside it keep their own desktop history layers (2i)", async () => {
+test("every dropdown popup and the routine sheet are their own history layers at every width (2i, A2)", async () => {
   const pane = await Bun.file(new URL("../src/inbox/RoutinesPane.tsx", import.meta.url)).text();
   expect(pane).toContain("useHistoryDialogGuard(true, onClose);");
-  expect(pane).toContain("<DesktopHistoryLayers.Provider value={true}>");
+  expect(pane).not.toContain("DesktopHistoryLayers");
   expect(pane).toContain("useDialogFocus(sheetRef)");
   expect(pane).toContain("onKeyDown={trapTabKey}");
   const listbox = await Bun.file(new URL("../src/ui/Listbox.tsx", import.meta.url)).text();
-  expect(listbox).toContain("useHistoryDialogGuard(useContext(DesktopHistoryLayers), onClose)");
+  const popup = listbox.slice(listbox.indexOf("function DropdownPopup"), listbox.indexOf("function DropdownSheet"));
+  expect(popup).toContain("useHistoryDialogGuard(true, onClose)");
   const css = await Bun.file(new URL("../src/ui/ui.css", import.meta.url)).text();
   expect(css).toContain(".ui-chip-remove { width: 44px; height: 44px;");
+  // The sort menus of Notes and Files are dropdowns too.
+  for (const file of ["../src/App.tsx", "../src/files/FilesApp.tsx"]) {
+    const source = await Bun.file(new URL(file, import.meta.url)).text();
+    expect(source).toContain("useHistoryDialogGuard(sortOpen, () => setSortOpen(false))");
+  }
 });
 
 test("a sentinel is pushed for a dialog opened on the landing entry or below it, at any width (A1)", () => {

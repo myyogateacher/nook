@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { clientAddress, normalizeIp } from "../server/clientAddress";
+// server/config.ts reads the environment once for the whole run: the harness must set it first.
+import "./support/harness";
+const { clientAddress, normalizeIp } = await import("../server/clientAddress");
 
 /**
  * TRUSTED_PROXY_HOPS (Wave 35 review N1): the client address for rate limits and audits. Requests go

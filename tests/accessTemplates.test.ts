@@ -84,10 +84,13 @@ describe("access templates", () => {
     expect((await send(admin, "POST", "/team/invites", { role: "viewer", templateId: crypto.randomUUID() })).body.code).toBe("TEMPLATE_NOT_FOUND");
     const invite = await send(admin, "POST", "/team/invites", { role: "viewer", templateId: template.id });
     expect(invite.status).toBe(201);
-    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name, groupCount: 2, edited: false, guestSkipped: [] });
+    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name, groupCount: 2, deletedGroupCount: 0, edited: false, guestSkipped: [] });
     expect((await send(admin, "GET", "/team/templates")).body.templates.find((row: { id: string }) => row.id === template.id).liveInvites).toBe(1);
     // A group deleted meanwhile is skipped; the other one is joined.
     await send(admin, "DELETE", `/team/groups/${second}`, {});
+    // The invite row counts only the groups that still exist, and says one was deleted (follow-up P2).
+    const listed = (await send(admin, "GET", "/team/invites")).body.invites.find((row: { id: string }) => row.id === invite.body.invite.id);
+    expect(listed.template).toMatchObject({ groupCount: 1, deletedGroupCount: 1 });
 
     const registered = await registerWith({ email: spareEmail(), inviteToken: invite.body.token });
     expect(registered.status).toBe(201);
@@ -113,7 +116,7 @@ describe("access templates", () => {
     const edited = await send(adminB, "PATCH", `/team/templates/${template.id}`, { name: `${template.name} v2`, role: "viewer", groupIds: [later], revision: 1 });
     expect(edited.status).toBe(200);
     const listed = (await send(adminA, "GET", "/team/invites")).body.invites.find((row: { id: string }) => row.id === invite.invite.id);
-    expect(listed.template).toEqual({ id: template.id, name: template.name, groupCount: 1, edited: true, guestSkipped: [] });
+    expect(listed.template).toEqual({ id: template.id, name: template.name, groupCount: 1, deletedGroupCount: 0, edited: true, guestSkipped: [] });
     const registered = await registerWith({ email: spareEmail(), inviteToken: invite.token });
     expect(registered.status).toBe(201);
     expect(registered.body.user.role).toBe("member");

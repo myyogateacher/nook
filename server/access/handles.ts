@@ -52,8 +52,14 @@ export function openItemHandle(token: string, viewer: string, target: string, no
  * item id, so neither the order nor a page break says anything about ids. The key lives only in
  * this process, like the handle key; a cursor made with it is sealed with that key too, so the
  * order a cursor relies on never changes while the cursor is valid (a restart ends both).
+ *
+ * The viewer and the person whose access is listed are part of the hash (Wave 33 follow-up, P1), so
+ * the same hidden items come in a different order on different people's pages and for different
+ * admins: an admin cannot tell from the order that two people hold the same hidden item. My access
+ * passes the person as both.
  */
-export const itemSortKey = (id: string) => createHmac("sha256", KEY).update(`order:${id}`).digest("hex");
+export const itemSortKey = (viewerId: string, targetId: string, id: string) =>
+  createHmac("sha256", KEY).update(`order:${viewerId}:${targetId}:${id}`).digest("hex");
 
 export type PageCursor = { owner: string; key: string };
 

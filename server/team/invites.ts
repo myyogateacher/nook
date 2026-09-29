@@ -92,21 +92,26 @@ export type TeamInvite = {
   usedAt: string | null;
   revokedAt: string | null;
   /** The access template applied on acceptance (Wave 33, D286); null when none, or once it is deleted. */
-  template: { id: string; name: string; groupCount: number; edited: boolean; guestSkipped: string[] } | null;
+  template: { id: string; name: string; groupCount: number; deletedGroupCount: number; edited: boolean; guestSkipped: string[] } | null;
 };
 
 type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; current_template_revision: number | null };
 
 /**
- * An invite's template as the list shows it: the snapshot's name and group count, `edited` when the
+ * An invite's template as the list shows it: the snapshot's name, how many of its groups still exist
+ * (`groupCount`; acceptance skips deleted ones) and how many were deleted since, `edited` when the
  * template changed since, and for a guest invite the snapshot groups that would be skipped now
  * because sharing with guests is off (re-checked when the invite is accepted, T213).
  */
 function templateView(row: ListedRow) {
   const groupIds = row.template_group_ids ? (JSON.parse(row.template_group_ids) as unknown[]).filter((value): value is string => typeof value === "string") : [];
+  const existing = groupIds.length
+    ? (db.query(`SELECT COUNT(*) AS count FROM user_groups WHERE id IN (${groupIds.map(() => "?").join(",")})`).get(...groupIds) as { count: number }).count
+    : 0;
   return {
     id: row.template_id!, name: row.template_name!,
-    groupCount: groupIds.length,
+    groupCount: existing,
+    deletedGroupCount: groupIds.length - existing,
     edited: row.current_template_revision !== null && row.current_template_revision !== row.template_revision,
     guestSkipped: row.role === "guest" ? guestRefusedGroups(groupIds).map((group) => group.name) : []
   };

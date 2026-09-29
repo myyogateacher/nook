@@ -45,6 +45,10 @@ export async function loadResources(module: GrantModule): Promise<ResourceOption
     const { collections } = await api<{ collections: Array<{ id: string; name: string; owner_name: string; is_owner: 0 | 1; role: string }> }>("/collections");
     return collections.map((item) => ({ value: item.id, label: item.name, description: item.is_owner ? undefined : `Owned by ${item.owner_name}`, writable: item.role !== "viewer" }));
   }
+  if (module === "whiteboards") {
+    const { whiteboards } = await api<{ whiteboards: Array<{ id: string; name: string; owner_name: string; is_owner: 0 | 1 }> }>("/whiteboards");
+    return whiteboards.map((item) => ({ value: item.id, label: item.name.replace(/\.excalidraw$/i, ""), description: item.is_owner ? undefined : `Owned by ${item.owner_name}`, writable: item.is_owner === 1 }));
+  }
   if (module === "calendar") {
     const { calendars } = await api<{ calendars: Array<{ id: string; name: string; owner_name: string; is_owner: 0 | 1; role: string }> }>("/calendars");
     return calendars.map((item) => ({ value: item.id, label: item.name, description: item.is_owner ? undefined : `Owned by ${item.owner_name}`, writable: item.role !== "viewer" }));

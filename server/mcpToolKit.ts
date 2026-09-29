@@ -33,7 +33,7 @@ export type McpKeyContext = {
  */
 export type McpToolResource = {
   arg: string;
-  kind: "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event";
+  kind: "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event" | "whiteboard";
 };
 
 export type McpErrorCode =
@@ -140,7 +140,7 @@ export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
    * A list tool whose result field is an array of containers `{id, …}` (D281 `list`): a key with
    * chosen items gets only those entries back. The only other shape such a key may see.
    */
-  listFilter?: { field: string; kind: "board" | "collection" | "calendar" };
+  listFilter?: { field: string; kind: "board" | "collection" | "calendar" | "whiteboard" };
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

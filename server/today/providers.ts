@@ -10,6 +10,8 @@ import { checksum } from "../storage";
 import { readableBoardPredicate } from "../tasks/access";
 import { dueAt as dueAtOf } from "../tasks/dueTime";
 import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
+import { recentWhiteboards } from "../whiteboards/service";
+import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 
 /**
  * The built-in Today sections (docs/plan/WAVES_10-12.md §2.2). Each one reads
@@ -22,10 +24,13 @@ import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
  * - Bin: `listBin`; storage: `storageUsage` (the upload quota's own sum)
  * - collectionsRecent: `listRecentRows` (readable collections, live rows, titles only)
  * - upcoming: `listUpcoming` (Calendar's occurrence service, readable calendars only)
+ * - whiteboardsRecent: `recentWhiteboards` (the Files read predicate joined to whiteboards, names only)
  */
 
 export const TASKS_DUE_DAYS = 7;
 export const BIN_SOON_MS = 3 * 86_400_000;
+/** Recent whiteboards on Today (whiteboard plan §10.7). */
+export const WHITEBOARDS_RECENT = 5;
 
 type TaskRow = {
   cardId: string; boardId: string; boardName: string; title: string;
@@ -171,6 +176,19 @@ registerTodayProvider("collectionsRecent", {
   mcpScope: "collections:read",
   href: "/collections",
   load: ({ userId }) => page(listRecentRows(userId, TODAY_FETCH))
+});
+
+/** Recently edited whiteboards the caller can read (Wave 23, D206): names and times only. */
+registerTodayProvider("whiteboardsRecent", {
+  mcpScope: "whiteboards:read",
+  href: "/whiteboards",
+  load: ({ userId }) => {
+    const boards = recentWhiteboards(userId, WHITEBOARDS_RECENT + 1);
+    return {
+      items: boards.slice(0, WHITEBOARDS_RECENT).map((board) => ({ id: board.id, name: whiteboardDisplayName(board.name), is_owner: board.is_owner, owner_name: board.owner_name, updated_at: board.updated_at })),
+      more: boards.length > WHITEBOARDS_RECENT
+    };
+  }
 });
 
 /** Items in the caller's Bin that are purged within three days, soonest first. */

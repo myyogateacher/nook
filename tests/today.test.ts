@@ -106,7 +106,7 @@ describe("GET /api/today", () => {
     const user = await createUser("Today shape");
     const view = await today(user, "Europe/Berlin");
     // agentDrafts retired with the agent inbox (D158): MCP drafts are listed under proposals.
-    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "collectionsRecent", "binSoon", "upcoming", "storage", "proposals"]);
+    expect(Object.keys(view.sections)).toEqual(["tasksDue", "tasksMine", "notesRecent", "drafts", "files", "collectionsRecent", "whiteboardsRecent", "binSoon", "upcoming", "storage", "proposals"]);
     // Calendar (W12) is installed: a user with no calendars gets an empty section linking to /calendar.
     expect(view.sections.upcoming).toEqual({ items: [], more: false, href: "/calendar" });
     expect(view.date).toBe(dateInZone(new Date(view.generatedAt), "Europe/Berlin"));

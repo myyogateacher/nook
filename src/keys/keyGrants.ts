@@ -6,15 +6,15 @@ import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPer
  * builder's rules and summaries are unit-tested.
  */
 
-export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin";
+export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin" | "whiteboards";
 export type KeyPermission = "read" | "comment" | "write" | "draft" | "publish" | "create";
-export type ResourceKind = "board" | "collection" | "calendar";
+export type ResourceKind = "board" | "collection" | "calendar" | "whiteboard";
 export type KeySurfaces = "mcp" | "rest" | "both";
 
-export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin"];
+export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards"];
 
 export const MODULE_LABELS: Record<GrantModule, string> = {
-  notes: "Notes", files: "Files", tasks: "Tasks", today: "Today", calendar: "Calendar", collections: "Collections", team: "Team", inbox: "Inbox", bin: "Bin"
+  notes: "Notes", files: "Files", tasks: "Tasks", today: "Today", calendar: "Calendar", collections: "Collections", team: "Team", inbox: "Inbox", bin: "Bin", whiteboards: "Whiteboards"
 };
 
 /** Every `{module, permission}` pair a key can hold, and the MCP scope it is. */
@@ -27,7 +27,8 @@ export const GRANT_SCOPES: Record<GrantModule, Partial<Record<KeyPermission, Mcp
   collections: { read: "collections:read", write: "collections:write" },
   team: { read: "team:read" },
   inbox: { read: "inbox:read", write: "inbox:write" },
-  bin: { write: "bin:write" }
+  bin: { write: "bin:write" },
+  whiteboards: { read: "whiteboards:read", write: "whiteboards:write" }
 };
 
 export const scopeFor = (module: GrantModule, permission: KeyPermission) => GRANT_SCOPES[module][permission] ?? null;
@@ -38,7 +39,8 @@ export const permissionsFor = (module: GrantModule) => Object.keys(GRANT_SCOPES[
 export const SELECTOR_KINDS: Partial<Record<GrantModule, { kind: ResourceKind; one: string; many: string }>> = {
   tasks: { kind: "board", one: "board", many: "boards" },
   collections: { kind: "collection", one: "collection", many: "collections" },
-  calendar: { kind: "calendar", one: "calendar", many: "calendars" }
+  calendar: { kind: "calendar", one: "calendar", many: "calendars" },
+  whiteboards: { kind: "whiteboard", one: "whiteboard", many: "whiteboards" }
 };
 
 export function permissionLabel(module: GrantModule, permission: KeyPermission) {

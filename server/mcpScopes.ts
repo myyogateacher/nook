@@ -21,7 +21,9 @@ export const MCP_SCOPES = [
   // Admin-only (server/team/roles.ts ADMIN_ONLY_SCOPES); there is no team write scope (D79).
   "team:read",
   // Agent inbox (Wave 21, D151): suggest changes for the key owner to approve; never applies anything.
-  "inbox:read", "inbox:write"
+  "inbox:read", "inbox:write",
+  // Whiteboards (Wave 23, D205): list and read boards as bounded JSON; write only creates an empty board.
+  "whiteboards:read", "whiteboards:write"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
@@ -35,7 +37,8 @@ export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "tasks:write": "tasks:read",
   "calendar:write": "calendar:read",
   "collections:write": "collections:read",
-  "inbox:write": "inbox:read"
+  "inbox:write": "inbox:read",
+  "whiteboards:write": "whiteboards:read"
 };
 
 /**
@@ -45,7 +48,7 @@ export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
  * classified exactly once.
  */
 export const MCP_WRITE_SCOPES: readonly McpScope[] = [
-  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write"
+  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write"
 ];
 
 export const isWriteScope = (scope: McpScope) => MCP_WRITE_SCOPES.includes(scope);

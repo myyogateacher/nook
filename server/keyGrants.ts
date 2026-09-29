@@ -43,7 +43,9 @@ export const SCOPE_GRANTS: Record<McpScope, { module: GrantModule; permission: K
   "bin:write": { module: "bin", permission: "write" },
   "team:read": { module: "team", permission: "read" },
   "inbox:read": { module: "inbox", permission: "read" },
-  "inbox:write": { module: "inbox", permission: "write" }
+  "inbox:write": { module: "inbox", permission: "write" },
+  "whiteboards:read": { module: "whiteboards", permission: "read" },
+  "whiteboards:write": { module: "whiteboards", permission: "write" }
 };
 
 export const scopeToGrant = (scope: McpScope) => SCOPE_GRANTS[scope];
@@ -67,9 +69,11 @@ export const GENERAL_KEY_MODULES: readonly GrantModule[] = GRANT_MODULES.filter(
 
 /**
  * Which resource kinds a module's grants may name in Wave 31 (D281). Tasks, collections, and
- * calendar take their container; every other module is "all" only until Wave 34.
+ * calendar take their container; whiteboards (Wave 23) take chosen boards (the access plan's
+ * `folder` selector for whiteboards waits for Wave 34's list filters); every other module is "all"
+ * only until Wave 34.
  */
-export const SELECTOR_KINDS: Partial<Record<GrantModule, ResourceKind>> = { tasks: "board", collections: "collection", calendar: "calendar" };
+export const SELECTOR_KINDS: Partial<Record<GrantModule, ResourceKind>> = { tasks: "board", collections: "collection", calendar: "calendar", whiteboards: "whiteboard" };
 
 /** What a permission implies (write ⇒ read, draft ⇒ read, publish ⇒ read, comment ⇒ read). */
 export function permissionImplies(held: KeyPermission, needed: KeyPermission) {

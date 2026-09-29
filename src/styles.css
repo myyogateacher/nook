@@ -49,6 +49,8 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible { out
 .primary-button:hover, .publish-button:hover { background: var(--yellow-strong); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .text-button { width: 100%; border: 0; background: none; color: #c5c5ca; margin-top: 18px; cursor: pointer; }
+/* "Already have an account? Sign in" and the other card links are 44 px targets (A8). */
+.auth-card .text-button { min-height: 44px; }
 .text-button:hover { color: var(--yellow); }
 .security-note { display: flex; justify-content: center; align-items: center; gap: 7px; margin: 22px 0 0; padding-top: 20px; border-top: 1px solid var(--border); color: #74747c; font-size: .78rem; }
 .security-note svg { width: 14px; }
@@ -125,7 +127,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .search-box { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid #29292d; border-radius: 10px; background: #0b0b0d; color: #696970; }
 .search-box:focus-within { border-color: #6b582f; }
 .search-box svg { width: 16px; }
-.search-box input { width: 100%; border: 0; outline: 0; background: transparent; color: #e9e9eb; font-size: .86rem; }
+/* The input fills the box's height, so the whole box is the tap target (A8). */
+.search-box input { width: 100%; align-self: stretch; min-height: 0; border: 0; outline: 0; background: transparent; color: #e9e9eb; font-size: .86rem; }
 .note-list { flex: 1; overflow-y: auto; padding: 0 10px 14px; }
 .note-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 32px; border-radius: 12px; }
 .note-card:hover { background: #18181b; }

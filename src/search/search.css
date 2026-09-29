@@ -30,6 +30,7 @@
 @media (max-width: 760px) {
   .search-result { min-height: 44px; padding: 12px 14px; }
   .search-scope-chip { min-height: 44px; }
-  .search-clear { width: 44px; height: 38px; margin-right: -11px; }
+  .search-box { height: 44px; }
+  .search-clear { width: 44px; height: 42px; margin-right: -11px; }
   .search-box kbd { display: none; }
 }

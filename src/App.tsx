@@ -275,7 +275,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   useEffect(() => {
     if (state.setupRequired || nestedDialogOpen || confirmOpen) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) void guardedClose(); };
+    // An app confirm over Settings (its own, or the app's for a scrim click or Back) takes Escape itself.
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector(".app-confirm-layer")) void guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, [guardedClose, state.setupRequired, nestedDialogOpen, confirmOpen]);

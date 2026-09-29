@@ -25,6 +25,8 @@ test("every former native confirm site asks through useConfirm", async () => {
   expect(app).toContain('title: "Disable two-factor authentication?"');
   expect(app).toContain('title: "Generate new recovery codes?"');
   expect(app).toContain("const confirmed = await appConfirm.ask({");
+  // Escape on a confirm over Settings cancels the confirm only; Settings' own Escape stands aside.
+  expect(app).toContain('!event.defaultPrevented && !document.querySelector(".app-confirm-layer")) void guardedClose();');
   const bin = await read("bin/BinApp.tsx");
   expect(bin).toContain('title: "Delete forever?"');
   expect(bin).toContain('title: "Empty the Bin?"');

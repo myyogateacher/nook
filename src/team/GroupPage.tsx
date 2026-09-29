@@ -14,7 +14,7 @@ type TeamPerson = { id: string; displayName: string; role: Role; status: "active
 const staleMessage = "Someone else changed this group. It now shows the latest.";
 const isStale = (reason: unknown) => reason instanceof ApiError && reason.status === 409 && (reason.payload as { code?: unknown } | null)?.code === "GROUP_CHANGED";
 const isGuestRefusal = (reason: unknown) => reason instanceof ApiError && reason.status === 400 && (reason.payload as { code?: unknown } | null)?.code === "GUEST_SHARE_DISABLED";
-const guestRefusedMessage = "Sharing with guests is turned off, and this group is shared with items, so guests cannot be added.";
+const guestRefusedMessage = "Sharing with guests is turned off, and this group has items shared with it, so guests cannot be added.";
 
 /**
  * Active people not yet in the group, for the member picker. With `guestAddRefused` (T213) guests
@@ -175,7 +175,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
 function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: GroupDetail; onClose: () => void; onDeleted: () => void; onStale: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function confirm() {
+  async function confirmAction() {
     setBusy(true);
     setError("");
     try {
@@ -191,7 +191,7 @@ function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: Grou
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-      <button type="button" className="primary-button danger" onClick={() => { void confirm(); }} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button>
+      <button type="button" className="primary-button danger" onClick={() => { void confirmAction(); }} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button>
     </div>
   </KeysDialog>;
 }

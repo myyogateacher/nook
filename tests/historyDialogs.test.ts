@@ -701,7 +701,7 @@ test("Board settings stays mounted under the dialogs it opens; the Calendars she
   expect(board).toContain(`onShare={() => openOverSettings("share")}`);
   expect(board).toMatch(/<AccessSheet kind="board" id=\{board\.id\} title=\{board\.name\} onClose=\{closeLayer\} onSaved=\{\(\) => \{\n\s+closeLayer\(\);/);
   const calendar = await Bun.file(new URL("../src/calendar/CalendarApp.tsx", import.meta.url)).text();
-  expect(calendar).toContain(`if (forced && calendarsOpen && (sharing || feeds || confirm?.kind === "deleteCalendar") && holdDialogSentinel())`);
+  expect(calendar).toContain(`if (forced && calendarsOpen && (sharing || feeds || pendingConfirm?.kind === "deleteCalendar") && holdDialogSentinel())`);
 });
 
 test("the Due picker adds no layer of its own: its dropdown popup or sheet is the one layer (C2)", async () => {

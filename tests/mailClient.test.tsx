@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatRoute, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
+import { formatRoute, isLegacySettingsPath, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory, verifyErrorText } from "../src/auth/mailPages";
 import { emailOffText } from "../src/notifications/EmailSettings";
@@ -48,6 +48,33 @@ describe("routes", () => {
     expect(parseSettingsPath("/settings/nope")).toBeNull();
     expect(parseSettingsPath("/settings")).toBeNull();
     expect(parseSettingsPath("/settings/notifications/")).toBe("notifications");
+  });
+
+  test("API keys live at /settings/keys; /settings/mcp still opens them and is rewritten (C3)", async () => {
+    expect(settingsPath("mcp")).toBe("/settings/keys");
+    expect(parseSettingsPath("/settings/keys")).toBe("mcp");
+    expect(parseSettingsPath("/settings/mcp")).toBe("mcp");
+    expect(isLegacySettingsPath("/settings/mcp")).toBe(true);
+    expect(isLegacySettingsPath("/settings/keys")).toBe(false);
+    expect(isLegacySettingsPath("/settings/nope")).toBe(false);
+    // Mails link the canonical path; every server slug opens a client section.
+    // (Read as text: importing server config here would fix its data dir before the test harness sets it.)
+    const links = await Bun.file(new URL("../server/mail/links.ts", import.meta.url)).text();
+    const slugs = JSON.parse(/export const SETTINGS_SECTIONS = (\[[^\]]*\]) as const;/.exec(links)![1]!) as string[];
+    expect(slugs).toContain("keys");
+    expect(slugs).not.toContain("mcp");
+    for (const slug of slugs) {
+      const section = parseSettingsPath(`/settings/${slug}`);
+      expect(section).not.toBeNull();
+      expect(settingsPath(section!)).toBe(`/settings/${slug}`);
+    }
+    // The popstate path rewrites an old entry in place, without a new history entry.
+    // The Google re-auth round trip from API keys comes back to /settings/keys (Wave 35 merge).
+    const keys = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+    expect(keys).toContain('returnTo="/settings/keys"');
+    expect(keys).not.toContain("/settings/mcp");
+    const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    expect(app).toContain("if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, \"\", settingsPath(poppedSettings));");
   });
 });
 

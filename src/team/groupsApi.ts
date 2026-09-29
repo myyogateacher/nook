@@ -33,7 +33,7 @@ export type GroupItem = { kind: AccessKind; title: string; titleHidden: boolean;
 
 export type GroupHistoryRow = { id: string; action: string; createdAt: string; actor: { id: string; displayName: string } | null; target: { id: string; displayName: string } | null; self: boolean };
 
-/** `guestAddRefused`: sharing with guests is off and the group is shared with items, so guests cannot be added (T213). */
+/** `guestAddRefused`: sharing with guests is off and the group has items shared with it, so guests cannot be added (T213). */
 export type GroupDetail = GroupSummary & { members: GroupMember[]; items: GroupItem[]; truncated: boolean; history: GroupHistoryRow[]; guestAddRefused: boolean };
 
 const groupPath = (groupId: string) => `/team/groups/${encodeURIComponent(groupId)}`;

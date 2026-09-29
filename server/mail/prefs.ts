@@ -83,6 +83,8 @@ export function writeEmailPrefs(userId: string, input: EmailPrefsInput, nowMs = 
     // The schedule moves only when the digest itself changed, so saving another switch at 07:59 keeps 08:00.
     const scheduleChanged = !before || before.digest !== input.digest || before.digest_local_time !== input.digestLocalTime || before.tz !== input.tz || (input.digest !== "off" && before.next_digest_at === null);
     if (scheduleChanged) refreshDigestSchedule(userId, nowMs);
+    // Choosing a cadence (turning the digest on, or off again) settles the Today prompt for good (D248).
+    if (before ? before.digest !== input.digest : input.digest !== "off") db.query("UPDATE email_prefs SET digest_prompt_at = COALESCE(digest_prompt_at, ?) WHERE user_id = ?").run(timestamp, userId);
     const prefs = readEmailPrefs(userId);
     audit(userId, null, "mail.prefs_update", { enabled: prefs.enabled, categories: prefs.categories, quietHours: prefs.quietStart !== null, digest: prefs.digest, revision: prefs.revision });
     return { ok: true, prefs };

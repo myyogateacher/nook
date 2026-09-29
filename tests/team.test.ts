@@ -8,6 +8,8 @@ const { resetMcpLimits } = await import("../server/mcpRateLimit");
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { runDispatch, resetReminderDeferrals } = await import("../server/calendar/reminders");
 const { totpCodeAt, totpCounter } = await import("../server/totp");
+// Fixture dates sit five years ahead of the current year (C12), so they never fall into the past.
+const Y = new Date().getUTCFullYear() + 5;
 
 beforeEach(() => {
   resetTeamRateLimits();
@@ -335,17 +337,17 @@ describe("Team API: blocking", () => {
   test("the reminders dispatcher skips blocked accounts until they are unblocked", async () => {
     const admin = await user("Reminder admin", "admin");
     const target = await user("Reminder target");
-    const created = await request("/reminders", { method: "POST", body: JSON.stringify({ tz: "UTC", title: "Call", fireAt: "2031-05-01T09:00" }) }, target);
+    const created = await request("/reminders", { method: "POST", body: JSON.stringify({ tz: "UTC", title: "Call", fireAt: `${Y}-05-01T09:00` }) }, target);
     expect(created.status).toBe(201);
     const { reminder } = await created.json() as { reminder: { id: string } };
     expect((await call(admin, "POST", `/${target.userId}/block`, {})).status).toBe(200);
     resetReminderDeferrals();
-    runDispatch({ nowMs: Date.parse("2031-05-01T09:01:00Z") });
+    runDispatch({ nowMs: Date.parse(`${Y}-05-01T09:01:00Z`) });
     const notifications = (userId: string) => (db.query("SELECT COUNT(*) AS count FROM notifications WHERE user_id = ?").get(userId) as { count: number }).count;
     expect(notifications(target.userId)).toBe(0);
     expect((db.query("SELECT claimed_at, next_fire_at FROM reminders WHERE id = ?").get(reminder.id) as { claimed_at: string | null; next_fire_at: string | null }).next_fire_at).not.toBeNull();
     expect((await call(admin, "POST", `/${target.userId}/unblock`, {})).status).toBe(200);
-    runDispatch({ nowMs: Date.parse("2031-05-01T09:01:30Z") });
+    runDispatch({ nowMs: Date.parse(`${Y}-05-01T09:01:30Z`) });
     expect(notifications(target.userId)).toBe(1);
   });
 });

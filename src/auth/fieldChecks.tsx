@@ -26,9 +26,9 @@ export function newPasswordProblem(value: string) {
   return null;
 }
 
-export function confirmPasswordProblem(password: string, confirm: string) {
-  if (!confirm) return "Enter the new password again.";
-  return password === confirm ? null : "The two passwords do not match.";
+export function confirmPasswordProblem(password: string, confirmation: string) {
+  if (!confirmation) return "Enter the new password again.";
+  return password === confirmation ? null : "The two passwords do not match.";
 }
 
 /** The second-factor field: six digits, or one complete recovery code. */

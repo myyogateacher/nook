@@ -104,7 +104,7 @@ describe("central access on the client", () => {
     for (const html of pages) expect(html).not.toContain("<select");
   });
 
-  test("QA copy: breakdowns that cannot read as a sum, zero counts hidden, template names, and quotes only around real titles (Q2, Q5, Q7)", () => {
+  test("QA copy: breakdowns that cannot read as a sum, zero counts hidden, template names, and quotes only around real titles (Q2, Q5, Q7)", async () => {
     expect(kindBreakdown({ direct: 3, groupItems: 2, both: 1 })).toBe("3 shared directly · 2 through groups · 1 both ways");
     expect(kindBreakdown({ direct: 0, groupItems: 2, both: 0 })).toBe("2 through groups");
     expect(feedsAndRoutines({ feeds: { live: 0 }, routines: { enabled: 0 } })).toBeNull();
@@ -117,7 +117,17 @@ describe("central access on the client", () => {
     const template: AccessTemplate = { id: "t", name: "Guests", role: "guest", groups: [{ id: "g1", name: "Ops", guestRefused: true }, { id: "g2", name: "Lobby", guestRefused: false }], liveInvites: 0, revision: 1, createdAt: "", updatedAt: "" };
     expect(templateHint(template, "guest")).toBe(`They join Lobby when they register. Skipped for a guest: Ops. ${guestRefusalReason(["Ops"])}`);
     expect(templateHint({ ...template, groups: template.groups.map((group) => ({ ...group, guestRefused: false })) }, "guest")).toBe("They join Ops, Lobby when they register.");
-    expect(templateLabel({ name: "Guests", groupCount: 2, edited: false, guestSkipped: ["Ops"] })).toBe("Template: Guests (2 groups). A guest skips Ops: sharing with guests is off and it is shared with items");
+    expect(templateLabel({ name: "Guests", groupCount: 2, edited: false, guestSkipped: ["Ops"] })).toBe("Template: Guests (2 groups). A guest skips Ops: sharing with guests is off and it has items shared with it");
+    // C15c: three or fewer groups are named, more are counted; "has items shared with it" everywhere.
+    expect(templateLabel({ name: "Ops starter", groupCount: 2, groupNames: ["Ops", "Design"], edited: true })).toBe("Template: Ops starter (as it was when invited: Ops, Design; edited since)");
+    expect(templateLabel({ name: "Ops starter", groupCount: 3, groupNames: ["Ops", "Design", "QA"], edited: false })).toBe("Template: Ops starter (Ops, Design, QA)");
+    expect(templateLabel({ name: "Big", groupCount: 4, groupNames: ["A", "B", "C", "D"], edited: false })).toBe("Template: Big (4 groups)");
+    expect(templateLabel({ name: "Two", groupCount: 2, groupNames: ["A", "B"], edited: false, guestSkipped: ["A", "B"] })).toBe("Template: Two (A, B). A guest skips A, B: sharing with guests is off and they have items shared with them");
+    const { pastKeyDescription } = await import("../src/team/AccessActivity");
+    expect(pastKeyDescription({ owner: "Ada", prefix: "nook_ab12" })).toBe("No longer live · Ada · nook_ab12…");
+    expect(pastKeyDescription({ owner: null, prefix: "nook_ab12" })).toBe("No longer live · nook_ab12…");
+    expect(guestRefusalReason(["QA Ops"])).toBe("Sharing with guests is turned off, and QA Ops has items shared with it.");
+    expect(guestRefusalReason(["Ops", "QA"])).toBe("Sharing with guests is turned off, and Ops, QA have items shared with them.");
     expect(templateLabel({ name: "Ops", groupCount: 1, deletedGroupCount: 1, edited: false })).toBe("Template: Ops (1 group; 1 was deleted since)");
     expect(templateLabel({ name: "Ops", groupCount: 0, deletedGroupCount: 2, edited: true })).toBe("Template: Ops (as it was when invited: 0 groups; 2 were deleted since; edited since)");
   });

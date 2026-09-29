@@ -2,6 +2,7 @@ import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
 import { audienceLevel, type ItemLevel, type Level } from "../access/levels";
+import { audienceLevels } from "../access/batchLevels";
 
 export type BoardVisibility = "private" | "selected" | "all_users";
 
@@ -50,6 +51,11 @@ export const editableBoardPredicate = `(
 export function boardLevel(board: Pick<BoardRow, "id" | "owner_id" | "visibility" | "share_role" | "deleted_at">, userId: string): ItemLevel {
   if (board.deleted_at) return "none";
   return audienceLevel({ kind: "board", id: board.id, ownerId: board.owner_id, visibility: board.visibility, audienceLevel: board.share_role as Level, memberTable: "board_members", memberColumn: "board_id" }, userId);
+}
+
+/** boardLevel for a page of live boards in a constant number of queries (C10); same results, by id. */
+export function boardLevels(boards: ReadonlyArray<Pick<BoardRow, "id" | "owner_id" | "visibility" | "share_role">>, userId: string) {
+  return audienceLevels(boards.map((board) => ({ kind: "board" as const, id: board.id, ownerId: board.owner_id, visibility: board.visibility, audienceLevel: board.share_role as Level, memberTable: "board_members", memberColumn: "board_id" })), userId);
 }
 
 export function readableBoard(boardId: string, userId: string) {

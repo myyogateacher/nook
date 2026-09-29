@@ -5,28 +5,31 @@ import { ModalDialog } from "./Dialog";
 import { moveTargets } from "./fileActions";
 
 type MoveSheetProps = {
-  document: DocumentSummary;
+  /** A file, or (Notes → Move to folder…) the open note. */
+  document: Pick<DocumentSummary, "name" | "folder_id">;
+  /** What is moved, for the error line: "file" (default) or "note". */
+  itemLabel?: "file" | "note";
   folders: Folder[];
   onMove: (folder: Folder) => Promise<void>;
   onCancel: () => void;
 };
 
 // Move dialog on desktop, full-screen sheet on phones. Lists owned folders only; the current one is disabled.
-export function MoveSheet({ document, folders, onMove, onCancel }: MoveSheetProps) {
+export function MoveSheet({ document, itemLabel = "file", folders, onMove, onCancel }: MoveSheetProps) {
   const targets = moveTargets(folders, document.folder_id);
   const [chosen, setChosen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const folder = folders.find((item) => item.id === chosen) ?? null;
 
-  async function confirm() {
+  async function confirmAction() {
     if (!folder) return;
     setBusy(true);
     setError(null);
     try {
       await onMove(folder);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not move the file");
+      setError(reason instanceof Error ? reason.message : `Could not move the ${itemLabel}`);
       setBusy(false);
     }
   }
@@ -51,7 +54,7 @@ export function MoveSheet({ document, folders, onMove, onCancel }: MoveSheetProp
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className="primary-button" onClick={() => { void confirm(); }} disabled={!folder || busy}>{busy ? "Moving…" : folder ? `Move to ${folder.name}` : "Move"}</button>
+      <button className="primary-button" onClick={() => { void confirmAction(); }} disabled={!folder || busy}>{busy ? "Moving…" : folder ? `Move to ${folder.name}` : "Move"}</button>
     </footer>
   </ModalDialog>;
 }

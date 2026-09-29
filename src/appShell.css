@@ -1,4 +1,13 @@
 .app-home, .app-page { min-height: 100dvh; background: radial-gradient(circle at 82% 0%, #292313 0, #111114 35rem, #09090a 76%); }
+/*
+ * The body never scrolls (styles.css: overflow hidden), so every module page is its own scroll
+ * container, as Tasks, Collections, and Today already were (P0: Team, Bin, Inbox, Notifications, and
+ * Calendar could not scroll). The header stays in place while the content under it scrolls; the
+ * background is fixed to the page so it does not scroll away. Tasks and Collections keep their own
+ * shell (a flex column whose content pane scrolls).
+ */
+.app-page:not(.tasks-app):not(.collections-app) { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; background-attachment: local; scroll-padding-top: 88px; }
+.app-page:not(.tasks-app):not(.collections-app) > .app-page-header { position: sticky; top: 0; z-index: 25; background: rgb(13 13 15 / 94%); backdrop-filter: blur(10px); }
 .app-home-header, .app-page-header { height: 76px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(20px, 5vw, 64px); border-bottom: 1px solid rgb(255 255 255 / 7%); }
 .app-home-brand { display: inline-flex; align-items: center; gap: 11px; color: #f4f4f5; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }

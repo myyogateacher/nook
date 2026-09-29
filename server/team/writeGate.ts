@@ -42,6 +42,7 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "PUT", path: "/api/mail/settings", why: "own email preferences (outbound email §B.1)" },
   { method: "POST", path: "/api/mail/verify/send", why: "verify own address (D244)" },
   { method: "POST", path: "/api/mail/test", why: "own test email" },
+  { method: "POST", path: "/api/mail/digest-prompt", why: "own email digest prompt" },
   { method: "POST", path: "/api/mail/suppression/clear", why: "try own bounced address again (§B.4)" },
   { method: "PUT", path: "/api/mail/mutes/:targetType/:targetId", why: "own email mutes on readable items (D249)" },
   { method: "DELETE", path: "/api/mail/mutes/:targetType/:targetId", why: "own email mutes" },

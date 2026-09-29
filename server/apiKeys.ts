@@ -64,8 +64,8 @@ export const createKeySchema = z.object({
   name: z.string().trim().min(1).max(KEY_NAME_MAX),
   description: z.string().trim().max(KEY_DESCRIPTION_MAX).nullish(),
   surfaces: z.enum(["mcp", "rest", "both"]).default("mcp"),
-  /** Days until the key expires; the policy default when omitted (D276). */
-  expiresInDays: z.number().int().min(1).max(365).optional(),
+  /** Days until the key expires; the policy default when omitted (D276); null for no expiry, unless policy requires one. */
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
   grants: z.array(grantInput).min(1).max(MAX_GRANTS),
   limits: z.object({ callsPerMinute: z.number().int().min(1).optional(), writesPerMinute: z.number().int().min(1).optional() }).strict().optional(),
   ...reauthFields
@@ -76,13 +76,16 @@ export const narrowKeySchema = z.object({
   name: z.string().trim().min(1).max(KEY_NAME_MAX).optional(),
   description: z.string().trim().max(KEY_DESCRIPTION_MAX).nullable().optional(),
   surfaces: z.enum(["mcp", "rest", "both"]).optional(),
-  expiresInDays: z.number().int().min(1).max(365).optional(),
+  /** Closer only; null keeps a key that has no expiry as it is (giving one no expiry would widen it). */
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
   grants: z.array(grantInput).min(1).max(MAX_GRANTS).optional(),
   limits: z.object({ callsPerMinute: z.number().int().min(1).nullable().optional(), writesPerMinute: z.number().int().min(1).nullable().optional() }).strict().optional()
 }).strict();
 
 export const rotateKeySchema = z.object({
   graceHours: z.union([z.literal(0), z.literal(1), z.literal(24), z.literal(168)]).default(24),
+  /** The new key's lifetime; omitted keeps the old key's (capped by policy); null for no expiry, unless policy requires one. */
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
   ...reauthFields
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
@@ -344,10 +347,15 @@ export function liveKeyCount(userId: string, time = Date.now()) {
 }
 
 /** Policy and count checks shared by `/api/keys` and the `/api/mcp/keys` alias, before any code is consumed. */
-export function checkCreatePolicy(userId: string, role: Role, input: { surfaces: KeySurfaces; expiresInDays?: number }, policies: Policies) {
+export function checkCreatePolicy(userId: string, role: Role, input: { surfaces: KeySurfaces; expiresInDays?: number | null }, policies: Policies): number | null {
   if (!can(role, "mcp.key.create")) throw new KeyError(403, "ROLE_READ_ONLY", "Your team role cannot create API keys");
   if ((input.surfaces === "mcp" || input.surfaces === "both") && !policies.mcpRoles.includes(role as "admin")) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow your team role to use MCP keys");
   if ((input.surfaces === "rest" || input.surfaces === "both") && !policies.restRoles.includes(role as "admin")) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow your team role to use REST keys");
+  // "No expiry" (C2): allowed while the team does not require an expiry (O-A6); the inventory flags it.
+  if (input.expiresInDays === null) {
+    if (policies.keyRequireExpiry) throw new KeyError(403, "KEY_POLICY", "Team policy requires every API key to have an expiry date", { requireExpiry: true });
+    return null;
+  }
   const days = input.expiresInDays ?? policies.keyDefaultDays;
   if (days > policies.keyMaxDays) throw new KeyError(403, "KEY_POLICY", `Team policy allows keys for at most ${policies.keyMaxDays} days`, { maxDays: policies.keyMaxDays });
   return Math.min(days, policies.keyMaxDays);
@@ -452,7 +460,9 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
     changed.push("surfaces");
   }
   let expiresAt = row.expires_at;
-  if (patch.expiresInDays !== undefined) {
+  if (patch.expiresInDays === null) {
+    if (row.expires_at !== null) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only bring its expiry closer. Rotate it for a new lifetime.");
+  } else if (patch.expiresInDays !== undefined) {
     const next = new Date(Date.now() + patch.expiresInDays * DAY_MS).toISOString();
     if (row.expires_at !== null && Date.parse(next) > Date.parse(row.expires_at)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only bring its expiry closer. Rotate it for a new lifetime.");
     expiresAt = next;
@@ -515,11 +525,11 @@ function supersedeProposals(keyId: string, ownerId: string, timestamp: string) {
  * the same transaction and needs none. An expired key may be rotated (with the password): that is
  * how its holder renews it without re-entering its grants.
  */
-export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number]) {
+export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null) {
   const row = liveOwnKey(userId, keyId);
   if (row.revoke_after !== null) throw new KeyError(409, "KEY_ROTATING", "This key was already rotated. Revoke it now or wait for its grace period to end.");
   const policies = readPolicies();
-  checkCreatePolicy(userId, row.role, { surfaces: row.surfaces }, policies);
+  checkCreatePolicy(userId, row.role, { surfaces: row.surfaces, expiresInDays }, policies);
   const allowed = mcpScopesForRole(row.role);
   const modules = activeModules(row.role, policies);
   for (const grant of loadGrants(row.id)) {
@@ -536,15 +546,16 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
  * grants, surfaces, and limits, linked by `rotated_from`. The old key works for `graceHours`, then
  * stops. Routines bound to the old key move to the new one in the same transaction.
  */
-export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number]) {
-  const { row, policies } = checkRotation(userId, keyId, graceHours);
+export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null) {
+  const { row, policies } = checkRotation(userId, keyId, graceHours, expiresInDays);
   const lifetimeDays = row.expires_at === null ? policies.keyDefaultDays
     : Math.max(1, Math.round((Date.parse(row.expires_at) - Date.parse(row.created_at)) / DAY_MS));
-  const days = Math.min(lifetimeDays, policies.keyMaxDays);
+  // A lifetime chosen in the rotate dialog (C2) was checked above; otherwise the old one, capped.
+  const days = expiresInDays === undefined ? Math.min(lifetimeDays, policies.keyMaxDays) : expiresInDays;
   const grants = loadGrants(row.id);
   if (!grants.length) throw new KeyError(409, "NO_GRANTS", "This key has no permissions left. Create a new key instead.");
   const createdAt = now();
-  const expiresAt = new Date(Date.parse(createdAt) + days * DAY_MS).toISOString();
+  const expiresAt = days === null ? null : new Date(Date.parse(createdAt) + days * DAY_MS).toISOString();
   const revokeAfter = new Date(Date.parse(createdAt) + graceHours * 3_600_000).toISOString();
   return db.transaction(() => {
     const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces: row.surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt });

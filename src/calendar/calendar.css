@@ -167,6 +167,8 @@
 .calendar-list-copy { min-width: 0; display: grid; gap: 2px; }
 .calendar-list-copy strong { overflow: hidden; color: #ededee; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-list-copy small { overflow: hidden; color: #7c7c83; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-list-copy .calendar-muted-tag { display: inline-flex; align-items: center; gap: 3px; color: #d9b25c; font-weight: 600; vertical-align: bottom; }
+.calendar-muted-tag svg { width: 12px; height: 12px; flex: none; }
 .calendar-list-actions { display: flex; align-items: center; gap: 2px; }
 .calendar-list-actions .icon-button { width: 44px; height: 44px; }
 .calendar-list-actions .icon-button.danger { color: #f3a3ae; }

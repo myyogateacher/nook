@@ -61,6 +61,10 @@ const metaLine = (event: ActivityEvent) => {
   return parts.length ? parts.join(" · ") : null;
 };
 
+/** A key that is no longer live, in the Key filter (C15b): its owner when the event names one, and its prefix. */
+export const pastKeyDescription = (entry: { prefix: string | null; owner: string | null }) =>
+  ["No longer live", entry.owner, entry.prefix ? `${entry.prefix}…` : null].filter(Boolean).join(" · ");
+
 export function AccessActivity({ members, onBack }: { members: ReadonlyArray<{ id: string; displayName: string }>; onBack: () => void }) {
   const [person, setPerson] = useState("all");
   const [group, setGroup] = useState("all");
@@ -95,12 +99,12 @@ export function AccessActivity({ members, onBack }: { members: ReadonlyArray<{ i
   const personOptions: Option[] = [{ value: "all", label: "Anyone" }, ...members.map((member) => ({ value: member.id, label: member.displayName }))];
   const groupOptions: Option[] = [{ value: "all", label: "Any group" }, ...groups.map((entry) => ({ value: entry.id, label: entry.name }))];
   // Live keys first (Team → Keys), then keys no longer live that the loaded events name (revoked or expired).
-  const seenKeys = new Map<string, { name: string; prefix: string | null }>();
-  for (const event of events ?? []) if (event.key?.name && !keys.some((entry) => entry.id === event.key!.id)) seenKeys.set(event.key.id, { name: event.key.name, prefix: event.key.prefix });
+  const seenKeys = new Map<string, { name: string; prefix: string | null; owner: string | null }>();
+  for (const event of events ?? []) if (event.key?.name && !keys.some((entry) => entry.id === event.key!.id)) seenKeys.set(event.key.id, { name: event.key.name, prefix: event.key.prefix, owner: event.key.owner?.displayName ?? null });
   const keyOptions: Option[] = [
     { value: "all", label: "Any key" },
     ...keys.map((entry) => ({ value: entry.id, label: entry.name, description: `${entry.owner.displayName} · ${entry.prefix}…` })),
-    ...[...seenKeys].map(([id, entry]) => ({ value: id, label: entry.name, description: `No longer live${entry.prefix ? ` · ${entry.prefix}…` : ""}` }))
+    ...[...seenKeys].map(([id, entry]) => ({ value: id, label: entry.name, description: pastKeyDescription(entry) }))
   ];
 
   return <article className="team-detail team-access-activity" aria-labelledby="team-activity-title">

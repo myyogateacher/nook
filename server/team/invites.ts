@@ -92,7 +92,7 @@ export type TeamInvite = {
   usedAt: string | null;
   revokedAt: string | null;
   /** The access template applied on acceptance (Wave 33, D286); null when none, or once it is deleted. */
-  template: { id: string; name: string; groupCount: number; deletedGroupCount: number; edited: boolean; guestSkipped: string[] } | null;
+  template: { id: string; name: string; groupCount: number; groupNames: string[]; deletedGroupCount: number; edited: boolean; guestSkipped: string[] } | null;
 };
 
 type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; current_template_revision: number | null };
@@ -105,13 +105,16 @@ type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name:
  */
 function templateView(row: ListedRow) {
   const groupIds = row.template_group_ids ? (JSON.parse(row.template_group_ids) as unknown[]).filter((value): value is string => typeof value === "string") : [];
-  const existing = groupIds.length
-    ? (db.query(`SELECT COUNT(*) AS count FROM user_groups WHERE id IN (${groupIds.map(() => "?").join(",")})`).get(...groupIds) as { count: number }).count
-    : 0;
+  const found = groupIds.length
+    ? new Map((db.query(`SELECT id, name FROM user_groups WHERE id IN (${groupIds.map(() => "?").join(",")})`).all(...groupIds) as Array<{ id: string; name: string }>).map((group) => [group.id, group.name]))
+    : new Map<string, string>();
+  // The names of the snapshot's groups that still exist, in snapshot order (the row names them when few, C15c).
+  const groupNames = groupIds.flatMap((id) => found.has(id) ? [found.get(id)!] : []);
   return {
     id: row.template_id!, name: row.template_name!,
-    groupCount: existing,
-    deletedGroupCount: groupIds.length - existing,
+    groupCount: groupNames.length,
+    groupNames,
+    deletedGroupCount: groupIds.length - groupNames.length,
     edited: row.current_template_revision !== null && row.current_template_revision !== row.template_revision,
     guestSkipped: row.role === "guest" ? guestRefusedGroups(groupIds).map((group) => group.name) : []
   };

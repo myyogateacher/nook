@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GENERAL_KEY_MODULES, SCOPE_GRANTS, SELECTOR_KINDS as SERVER_SELECTORS } from "../server/keyGrants";
 import {
-  expiryOptions, GRANT_MODULES, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowModuleChoices, rowPermissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
+  expiryChoices, expiryDays, expiryOptions, GRANT_MODULES, NO_EXPIRY, rotationExpiryDefault, GRANT_SCOPES, grantChips, grantSummary, keyStateLabel, moduleChoices, permissionChoices, rowModuleChoices, rowPermissionChoices, rowsToGrants, SELECTOR_KINDS, usageLabel,
   type GrantRow, type KeyGrantView
 } from "../src/keys/keyGrants";
-import { keyAfterRevoke, KeyRow, keyToRows, revokeCopy } from "../src/keys/KeysSettings";
+import { expiryNote, keyAfterRevoke, KeyRow, keyToRows, revokeCopy } from "../src/keys/KeysSettings";
 import type { ApiKey } from "../src/keys/keysApi";
 
 /** Settings → API keys (access plan §E, §G "UI"): the client vocabulary, the builder's rules, and a key row. */
@@ -116,6 +116,25 @@ describe("key grants on the client", () => {
   test("expiry options stop at the policy maximum and include the default", () => {
     expect(expiryOptions({ keyMaxDays: 30, keyDefaultDays: 14 }).map((option) => option.value)).toEqual(["7", "14", "30"]);
     expect(expiryOptions({ keyMaxDays: 365, keyDefaultDays: 90 }).find((option) => option.value === "90")?.description).toBe("Team default");
+  });
+
+  test("No expiry (C2) sits next to the day choices, off with its reason when policy requires an expiry", () => {
+    const open = { keyMaxDays: 30, keyDefaultDays: 14, keyRequireExpiry: false };
+    expect(expiryChoices(open).map((option) => [option.value, option.disabled])).toEqual([["7", false], ["14", false], ["30", false], [NO_EXPIRY, false]]);
+    const strict = { ...open, keyRequireExpiry: true };
+    expect(expiryChoices(strict).at(-1)).toMatchObject({ value: NO_EXPIRY, label: "No expiry", disabled: true, description: "Team policy requires an expiry" });
+    expect(expiryDays(NO_EXPIRY)).toBeNull();
+    expect(expiryDays("30")).toBe(30);
+    expect(expiryNote(open)).toBe("Team policy allows at most 30 days, or no expiry.");
+    expect(expiryNote(strict)).toBe("Team policy allows at most 30 days and requires an expiry.");
+    // A rotation starts on the key's own lifetime (capped), or No expiry when it has none and policy allows.
+    const created = "2026-01-01T00:00:00.000Z";
+    expect(rotationExpiryDefault({ createdAt: created, expiresAt: null }, open)).toBe(NO_EXPIRY);
+    expect(rotationExpiryDefault({ createdAt: created, expiresAt: null }, strict)).toBe("14");
+    expect(rotationExpiryDefault({ createdAt: created, expiresAt: "2026-01-08T00:00:00.000Z" }, open)).toBe("7");
+    expect(rotationExpiryDefault({ createdAt: created, expiresAt: "2027-01-01T00:00:00.000Z" }, open)).toBe("30");
+    // A key row says No expiry in words.
+    expect(renderToStaticMarkup(<KeyRow apiKey={apiKey({ expiresAt: null })} />)).toContain(">No expiry<");
   });
 
   test("a key row shows kind, state, grants, usage, and 44 px actions, and never a token", () => {

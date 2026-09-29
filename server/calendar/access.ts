@@ -2,6 +2,7 @@ import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
 import { audienceLevel, roleWord, shareRoleToLevel, type ItemLevel } from "../access/levels";
+import { audienceLevels } from "../access/batchLevels";
 import { canWriteContent } from "../team/userRole";
 
 export type CalendarVisibility = "private" | "selected" | "all_users";
@@ -98,8 +99,18 @@ export function calendarLevel(calendar: LevelSource, userId: string): ItemLevel 
 
 /** The role word kept for API compatibility next to `level`: owner, editor (edit or manage), or viewer. */
 export function calendarRole(calendar: LevelSource, userId: string): CalendarRole {
-  const word = roleWord(calendarLevel(calendar, userId));
-  return word === "owner" || canWriteContent(userId) ? word : "viewer";
+  return calendarRoleFor(calendarLevel(calendar, userId), () => canWriteContent(userId));
+}
+
+/** calendarRole from a level already known, asking the Team role only when it matters. */
+export function calendarRoleFor(level: ItemLevel, canWrite: () => boolean): CalendarRole {
+  const word = roleWord(level);
+  return word === "owner" || canWrite() ? word : "viewer";
+}
+
+/** calendarLevel for a page of live calendars in a constant number of queries (C10); same results, by id. */
+export function calendarLevels(calendars: ReadonlyArray<Pick<CalendarRow, "id" | "owner_id" | "share_role" | "visibility">>, userId: string) {
+  return audienceLevels(calendars.map((calendar) => ({ kind: "calendar" as const, id: calendar.id, ownerId: calendar.owner_id, visibility: calendar.visibility, audienceLevel: shareRoleToLevel(calendar.share_role), memberTable: "calendar_members", memberColumn: "calendar_id" })), userId);
 }
 
 /** A live event on a calendar the caller can read, with that calendar. */

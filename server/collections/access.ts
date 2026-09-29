@@ -2,6 +2,7 @@ import { db } from "../db";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
 import { audienceLevel, roleWord, shareRoleToLevel, type ItemLevel } from "../access/levels";
+import { audienceLevels } from "../access/batchLevels";
 import { canWriteContent } from "../team/userRole";
 
 export type CollectionVisibility = "private" | "selected" | "all_users";
@@ -69,8 +70,18 @@ export function collectionLevel(collection: LevelSource, userId: string): ItemLe
  * requireEditable*, not by hiding ownership).
  */
 export function collectionRole(collection: LevelSource, userId: string): CollectionRole {
-  const word = roleWord(collectionLevel(collection, userId));
-  return word === "owner" || canWriteContent(userId) ? word : "viewer";
+  return collectionRoleFor(collectionLevel(collection, userId), () => canWriteContent(userId));
+}
+
+/** collectionRole from a level already known, asking the Team role only when it matters. */
+export function collectionRoleFor(level: ItemLevel, canWrite: () => boolean): CollectionRole {
+  const word = roleWord(level);
+  return word === "owner" || canWrite() ? word : "viewer";
+}
+
+/** collectionLevel for a page of live collections in a constant number of queries (C10); same results, by id. */
+export function collectionLevels(collections: ReadonlyArray<Pick<CollectionRecord, "id" | "owner_id" | "share_role" | "visibility">>, userId: string) {
+  return audienceLevels(collections.map((collection) => ({ kind: "collection" as const, id: collection.id, ownerId: collection.owner_id, visibility: collection.visibility, audienceLevel: shareRoleToLevel(collection.share_role), memberTable: "collection_members", memberColumn: "collection_id" })), userId);
 }
 
 export type RowRecord = {

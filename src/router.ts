@@ -216,12 +216,27 @@ function formatTasksHome(home: TasksHome) {
 export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notifications", "about"] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
+/**
+ * The URL slug of each section. API keys (section id "mcp" since Wave 8) lives at `/settings/keys`
+ * (C3); the old `/settings/mcp` still opens it and is rewritten in place (no extra history entry).
+ */
+const SETTINGS_SLUGS: Record<SettingsSection, string> = { security: "security", modules: "modules", mcp: "keys", access: "access", notifications: "notifications", about: "about" };
+const LEGACY_SETTINGS_SLUGS: Record<string, SettingsSection> = { mcp: "mcp" };
+
 export function parseSettingsPath(pathname: string): SettingsSection | null {
   const match = /^\/settings\/([a-z]+)\/?$/.exec(pathname);
-  return match && (SETTINGS_SECTIONS as readonly string[]).includes(match[1]!) ? match[1] as SettingsSection : null;
+  if (!match) return null;
+  const slug = match[1]!;
+  return (Object.keys(SETTINGS_SLUGS) as SettingsSection[]).find((section) => SETTINGS_SLUGS[section] === slug) ?? LEGACY_SETTINGS_SLUGS[slug] ?? null;
 }
 
-export const settingsPath = (section: SettingsSection) => `/settings/${section}`;
+export const settingsPath = (section: SettingsSection) => `/settings/${SETTINGS_SLUGS[section]}`;
+
+/** True when `pathname` is a Settings URL that is not the section's canonical one (`/settings/mcp`, a trailing slash). */
+export function isLegacySettingsPath(pathname: string) {
+  const section = parseSettingsPath(pathname);
+  return section !== null && pathname !== settingsPath(section);
+}
 
 const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", about: "About" };
 

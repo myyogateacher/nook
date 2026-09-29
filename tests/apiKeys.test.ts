@@ -340,4 +340,43 @@ describe("/api/mcp/keys alias", () => {
     expect((await api(owner, "POST", "/mcp/keys", { name: "Blocked", password: "wrong", scopes: ["tasks:read"] })).body.code).toBe("KEY_POLICY");
     expect((await api(owner, "DELETE", `/mcp/keys/${key.id}`)).status).toBe(200);
   });
+
+  test("No expiry (C2): allowed unless policy requires an expiry, on create and rotate; editing never widens to it", async () => {
+    const admin = await createUser("Keys no expiry admin");
+    db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+    const setPolicies = (patch: Record<string, unknown>) => writePolicies(admin.userId, { ...DEFAULT_POLICIES, ...patch }, policiesRevision());
+    const owner = await createUser("Keys no expiry");
+
+    // Created with no expiry: listed with expiresAt null, works, and counts in the inventory's No expiry filter.
+    const forever = await createKey(owner, { name: "Forever", expiresInDays: null });
+    expect(forever.status).toBe(201);
+    expect(forever.body.key).toMatchObject({ expiresAt: null, state: "active" });
+    expect((await mcp(forever.body.key.token)).status).toBe(200);
+    const inventory = await api(admin, "GET", "/team/keys?state=no_expiry");
+    expect(inventory.body.keys.some((item: { id: string }) => item.id === forever.body.key.id)).toBe(true);
+
+    // Editing cannot give a dated key no expiry; null on a key that has none changes nothing.
+    const dated = (await createKey(owner, { name: "Dated", expiresInDays: 30 })).body.key;
+    expect((await api(owner, "PATCH", `/keys/${dated.id}`, { expiresInDays: null })).body.code).toBe("WIDENING_NOT_ALLOWED");
+    expect((await api(owner, "PATCH", `/keys/${forever.body.key.id}`, { expiresInDays: null })).body.changed).toEqual([]);
+
+    // Rotating may choose no expiry, or a dated lifetime within the maximum.
+    const rotated = await api(owner, "POST", `/keys/${dated.id}/rotate`, { password: owner.password, graceHours: 0, expiresInDays: null });
+    expect(rotated.status).toBe(201);
+    expect(rotated.body.key.expiresAt).toBeNull();
+    const redated = await api(owner, "POST", `/keys/${rotated.body.key.id}/rotate`, { password: owner.password, graceHours: 0, expiresInDays: 7 });
+    expect(Math.round((Date.parse(redated.body.key.expiresAt) - Date.parse(redated.body.key.createdAt)) / 86_400_000)).toBe(7);
+
+    // key_require_expiry: refused before the password (a wrong one still gets the policy code), on create and rotate.
+    setPolicies({ keyRequireExpiry: true });
+    const refused = await createKey(owner, { name: "Refused", expiresInDays: null, password: "wrong" });
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ code: "KEY_POLICY", requireExpiry: true });
+    expect((await api(owner, "POST", `/keys/${redated.body.key.id}/rotate`, { password: "wrong", graceHours: 0, expiresInDays: null })).body.code).toBe("KEY_POLICY");
+    expect((await createKey(owner, { name: "Dated again", expiresInDays: 30 })).status).toBe(201);
+    // key_max_days still caps the dated choices.
+    setPolicies({ keyMaxDays: 30, keyDefaultDays: 30 });
+    expect((await createKey(owner, { name: "Too long", expiresInDays: 90, password: "wrong" })).body).toMatchObject({ code: "KEY_POLICY", maxDays: 30 });
+    expect((await api(owner, "POST", `/keys/${redated.body.key.id}/rotate`, { password: "wrong", graceHours: 0, expiresInDays: 90 })).body.code).toBe("KEY_POLICY");
+  });
 });

@@ -19,6 +19,7 @@ import {
   History,
   Info,
   KeyRound,
+  FolderInput,
   LayoutGrid,
   Lock,
   LogOut,
@@ -82,14 +83,16 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 import { KeysSettings } from "./keys/KeysSettings";
 import { MyAccess } from "./settings/MyAccess";
 import { ConfirmDialog } from "./files/Dialog";
+import { useConfirm } from "./ui/useConfirm";
 import { NameDialog } from "./files/RenameDialog";
+import { MoveSheet } from "./files/MoveSheet";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
+import { formatRoute, isLegacySettingsPath, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -315,7 +318,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.15.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.15.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -325,16 +328,17 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [mcpKeyPending, setMcpKeyPending] = useState(false);
   const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
+  const { ask, confirmOpen, confirmElement } = useConfirm();
   // Q4: the codes shown right after turning two-factor on, until the person says they saved them.
   const [codesDialog, setCodesDialog] = useState(false);
 
-  const guardedClose = useCallback(() => {
-    if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
+  const guardedClose = useCallback(async () => {
+    if (mcpKeyPending && !await ask(unsavedKeyConfirm("close"))) return;
     onClose();
-  }, [mcpKeyPending, onClose]);
+  }, [ask, mcpKeyPending, onClose]);
 
-  function selectSection(next: SettingsSection) {
-    if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
+  async function selectSection(next: SettingsSection) {
+    if (next !== "mcp" && mcpKeyPending && !await ask(unsavedKeyConfirm("section"))) return;
     setSection(next);
     onSectionChange?.(next);
   }
@@ -355,15 +359,16 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
-    api<{ version: string; gitSha: string; twoFactor?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
+    api<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    if (state.setupRequired || nestedDialogOpen || codesDialog) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
+    if (state.setupRequired || nestedDialogOpen || confirmOpen || codesDialog) return;
+    // An app confirm over Settings (its own, or the app's for a scrim click or Back) takes Escape itself.
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector(".app-confirm-layer")) void guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired, nestedDialogOpen, codesDialog]);
+  }, [guardedClose, state.setupRequired, nestedDialogOpen, confirmOpen, codesDialog]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
   // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
@@ -408,11 +413,12 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   async function disable(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!window.confirm("Disable two-factor authentication for this account?")) return;
+    // Read the form before the confirm: the event's target is gone once it has been answered.
+    const form = new FormData(event.currentTarget);
+    if (!await ask({ title: "Disable two-factor authentication?", message: "Signing in to this account will need only the password.", confirmLabel: "Disable", danger: true })) return;
     setBusy(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
       const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
       setState(next);
       onSecurityChanged(next);
@@ -446,11 +452,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   async function regenerateRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (recoveryCodes.length && !window.confirm("Generate new recovery codes? Every previous recovery code will stop working.")) return;
+    const form = new FormData(event.currentTarget);
+    if (recoveryCodes.length && !await ask({ title: "Generate new recovery codes?", message: "Every previous recovery code will stop working.", confirmLabel: "Generate new codes", danger: true })) return;
     setBusy(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
       const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
@@ -471,13 +477,13 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
         <div className="settings-identity"><Avatar className="app-user-avatar settings-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><div><span className="eyebrow">Account · {session.user.displayName}</span><h2 id="settings-title">Settings</h2></div></div>
-        {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
+        {!state.setupRequired && <button className="icon-button" onClick={() => { void guardedClose(); }} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button>{session.user.role !== "guest" && <button className={section === "access" ? "active" : ""} aria-current={section === "access" ? "page" : undefined} onClick={() => selectSection("access")}><Share2 />My access</button>}<button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
+        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => { void selectSection("security"); }}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => { void selectSection("modules"); }}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => { void selectSection("mcp"); }}><KeyRound />API keys</button>{session.user.role !== "guest" && <button className={section === "access" ? "active" : ""} aria-current={section === "access" ? "page" : undefined} onClick={() => { void selectSection("access"); }}><Share2 />My access</button>}<button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => { void selectSection("notifications"); }}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => { void selectSection("about"); }}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { void (async () => { if (!mcpKeyPending || await ask(unsavedKeyConfirm("leave"))) onManageTeam(); })(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           {googleNoticeLine}
-          {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} /> : <PasswordStateCard account={account} />)}
+          {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} /> : <PasswordStateCard account={account} />)}
           {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -508,10 +514,24 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
           </div>}
         </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
+      {confirmElement}
     </section>
     {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
     </AccountAuthContext.Provider>
   );
+}
+
+/**
+ * The confirm for leaving an API key that is shown only once (C1): closing Settings (button, Escape,
+ * scrim, Back), switching section, or "Manage team". Closing the browser tab is not guarded.
+ */
+export function unsavedKeyConfirm(action: "close" | "section" | "leave") {
+  return {
+    title: "Leave without saving the key?",
+    message: `This API key is shown only once. ${action === "section" ? "Leave this section" : action === "close" ? "Close Settings" : "Leave Settings"} without copying it? You would have to rotate or create a key again.`,
+    confirmLabel: action === "section" ? "Leave section" : action === "close" ? "Close without saving" : "Leave without saving",
+    danger: true
+  };
 }
 
 function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
@@ -602,6 +622,21 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
 // The URL carries the app, folder, and item; the state payload adds the phone panel hint (and the
 // folder a note was opened from). A change that keeps the URL is a pure panel step: phones get a Back
 // entry for it, desktops just update the current entry.
+/** The URL an entry was pushed over, so leaving a removed item can step back instead of duplicating it (Q2). */
+export const PUSHED_OVER_KEY = "mynotes.pushed-over";
+
+/**
+ * Q2: the item on screen was deleted or moved away. When its entry was pushed over `targetUrl` (the
+ * list it was opened from), step back onto that entry instead of rewriting this one into a second
+ * copy of it, which made Back repeat a step. Returns false when the caller should replace in place.
+ */
+export function stepBackIfPushedOver(targetUrl: string, history: Pick<History, "state" | "back"> = window.history) {
+  const state = history.state as Record<string, unknown> | null;
+  if (!state || state[PUSHED_OVER_KEY] !== targetUrl || readHistoryDepth(state) <= 0) return false;
+  history.back();
+  return true;
+}
+
 function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "push" | "replace" = "push", filesPanel?: FilesPanel, search: SearchHint | null = null) {
   const url = formatRoute(route);
   const current: unknown = window.history.state;
@@ -616,7 +651,7 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const depth = readHistoryDepth(current);
   const state = historyStateFor(userId, route, panel, filesPanel, search);
   // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
-  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth(state, depth + 1), "", url);
+  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location) }, depth + 1), "", url);
   else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
 
@@ -670,6 +705,8 @@ export function App() {
   settingsOpenRef.current = settingsOpen;
   // True while Settings shows a new MCP key that is shown only once.
   const settingsPendingRef = useRef(false);
+  // The app's own confirms (C1): leaving Settings with an unsaved key, discarding a draft.
+  const appConfirm = useConfirm();
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
@@ -980,8 +1017,10 @@ export function App() {
     autosaveTimerRef.current = null;
   }
 
-  function navigate(route: Route, options: { replace?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
+  function navigate(route: Route, options: { replace?: boolean; removed?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
+    // The item on screen is gone: Back onto the list it was opened from rather than a duplicate of it (Q2).
+    if (options.removed && stepBackIfPushedOver(formatRoute(route))) return;
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
@@ -1044,6 +1083,23 @@ export function App() {
   }, []);
   useHistoryDialogGuard(newFolderOpen, closeNewFolder);
 
+  // Move to folder… (QA v0.13.0): the Files Move sheet for the open note, so phones (no drag and
+  // drop) can file a note too. A history layer; focus goes back to the control that opened it.
+  const [movingNote, setMovingNote] = useState(false);
+  const moveTriggerRef = useRef<HTMLElement | null>(null);
+  function openMoveNote(trigger: HTMLElement | null) {
+    moveTriggerRef.current = trigger;
+    setMobileActions(false);
+    setMovingNote(true);
+  }
+  const closeMoveNote = useCallback(() => {
+    setMovingNote(false);
+    const trigger = moveTriggerRef.current;
+    moveTriggerRef.current = null;
+    window.requestAnimationFrame(() => { if (trigger?.isConnected) trigger.focus(); });
+  }, []);
+  useHistoryDialogGuard(movingNote, closeMoveNote);
+
   async function createFolder(name: string) {
     const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
     await loadNavigation();
@@ -1094,7 +1150,7 @@ export function App() {
     revisionRef.current = null;
     loadedRef.current = "";
     setMobilePanel("notes");
-    navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
+    navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true, removed: true });
   }
 
   function askDeleteNote(noteId: string, title: string, opener: HTMLElement) {
@@ -1236,7 +1292,8 @@ export function App() {
     fallback = setTimeout(restoreTitle, 1000);
   }
 
-  async function discard() {
+  // `opener`: where focus goes back to; from the phone ⋯ menu it is the ⋯ button, since the menu item is gone (Q3).
+  async function discard(opener?: HTMLElement | null) {
     if (!note || switchingRef.current) return;
     const noteId = note.id;
     const removesNote = note.current_version === 0;
@@ -1245,7 +1302,14 @@ export function App() {
       : markdown.trim() === ""
         ? "Discard this empty note?"
         : `This note was never published. Move “${note.title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
-    if (!window.confirm(message)) return;
+    const confirmed = await appConfirm.ask({
+      title: !removesNote ? "Discard this draft?" : markdown.trim() === "" ? "Discard this empty note?" : "Move this note to the Bin?",
+      message,
+      confirmLabel: !removesNote ? "Discard draft" : markdown.trim() === "" ? "Discard" : "Move to Bin",
+      danger: true,
+      ...(opener !== undefined ? { opener } : {})
+    });
+    if (!confirmed || switchingRef.current) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1532,6 +1596,8 @@ export function App() {
       // is on screen; Back off one closes it, then the entry below is restored as usual.
       const poppedSettings = parseSettingsPath(window.location.pathname);
       if (poppedSettings) {
+        // An old /settings/mcp entry shows the canonical /settings/keys, in place (C3).
+        if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, "", settingsPath(poppedSettings));
         setPanel(null);
         setSharingFolder(null);
         setSettingsSection(poppedSettings);
@@ -1539,9 +1605,16 @@ export function App() {
         return;
       }
       if (settingsOpenRef.current) {
-        if (settingsPendingRef.current && !window.confirm("This API key is shown only once. Close settings without saving it?")) {
+        if (settingsPendingRef.current) {
+          // Stay on Settings and ask; leaving repeats the move once the key no longer holds it.
+          const direction = dialogPopDirection(previousDepth, poppedDepth) ?? "back";
           historyDepthRef.current = previousDepth;
-          undoDialogPop(dialogPopDirection(previousDepth, poppedDepth) ?? "back");
+          undoDialogPop(direction);
+          void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => {
+            if (!leave || !settingsOpenRef.current) return;
+            settingsPendingRef.current = false;
+            window.history.go(direction === "back" ? -1 : 1);
+          });
           return;
         }
         settingsPendingRef.current = false;
@@ -1675,6 +1748,13 @@ export function App() {
     window.history.replaceState(rest, "", over);
   }
 
+  /** A click outside Settings: asks first while a new key is still on screen (C1). */
+  function requestCloseSettings() {
+    if (session?.totp.setupRequired) return;
+    if (!settingsPendingRef.current) return closeSettings();
+    void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => { if (leave && settingsOpenRef.current) closeSettings(); });
+  }
+
   function signOut() {
     logout().catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }
@@ -1794,7 +1874,7 @@ export function App() {
     setSession((current) => current ? { ...current, notices: { ...current.notices, googleReset: null } } : current);
     void api("/auth/notices/google-reset/dismiss", { method: "POST", body: "{}" }).catch(() => undefined);
   };
-  const toastStatus = <>{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
     <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
@@ -1820,13 +1900,13 @@ export function App() {
       : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
-      : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenNote={openLinkedNote} />
+      : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
-    {settingsOpen && <button className="panel-scrim" onClick={() => closeSettings()} aria-label="Close panel" />}
+    {settingsOpen && <button className="panel-scrim" onClick={requestCloseSettings} aria-label="Close panel" />}
     {toastStatus}
   </InboxNavContext.Provider></TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
@@ -1968,6 +2048,7 @@ export function App() {
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
+              {note.isOwner && canWrite && <button className="icon-button" disabled={editorLocked} onClick={(event) => openMoveNote(event.currentTarget)} aria-label="Move to folder…" title="Move to folder"><FolderInput /></button>}
               {note.isOwner && canWrite && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && canWrite && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
               {hasPublishableDelta && canWrite && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
@@ -1976,8 +2057,9 @@ export function App() {
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
+              {note.isOwner && canWrite && <button disabled={editorLocked} onClick={() => openMoveNote(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"))}><FolderInput />Move to folder…</button>}
               {note.isOwner && canWrite && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
+              {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more")); }}><X />Discard draft</button>}
               {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
@@ -1997,6 +2079,13 @@ export function App() {
           setDeletingNote(null);
           void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
         }} />}
+      {movingNote && note && <MoveSheet
+        document={{ name: note.title.trim() || "Untitled", folder_id: note.folder_id }}
+        itemLabel="note"
+        folders={folders}
+        onMove={async (folder) => { await moveNote(note.id, folder); closeMoveNote(); }}
+        onCancel={closeMoveNote}
+      />}
       {newFolderOpen && <NameDialog
         title="New folder"
         eyebrow="Notes"
@@ -2012,7 +2101,7 @@ export function App() {
       {settingsDialog}
       {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired
         ? <div className="panel-scrim" aria-hidden="true" />
-        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) closeSettings(); }} aria-label="Close panel" />)}
+        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) requestCloseSettings(); }} aria-label="Close panel" />)}
       {toastStatus}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>

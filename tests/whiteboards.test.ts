@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, request, type Session } from "./support/harness";
+import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { runSweep, hasDocumentRow } = await import("../server/sweeper");
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
@@ -13,6 +14,13 @@ const { reconcileWhiteboardSearchIndex, resetWhiteboardLimitsForTests } = await 
  * revision CAS save with copy-on-write objects, thumbnails, Files and Bin parity, the sweeper,
  * and search. MCP is in whiteboardsMcp.test.ts.
  */
+
+retireUsersAfterFile();
+// Run alone, the file still leaves an active admin behind (retireUsersAfterFile keeps the last one).
+beforeAll(async () => {
+  const admin = await createUser("WB file admin");
+  db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+});
 
 beforeEach(() => {
   resetSearchRateLimit();
@@ -240,6 +248,77 @@ describe("whiteboards API", () => {
     db.query("UPDATE users SET disabled_at = ? WHERE id = ?").run(new Date().toISOString(), owner.userId);
     await expect(saveScene(board.id, owner.userId, 1, sceneWith(["late"]))).rejects.toMatchObject({ status: 404 });
     expect(boardRow(board.id)!.revision).toBe(1);
+  });
+
+  test("safety snapshots (QA D1–D3): emptying a board or losing more than half of a big one keeps the previous scene; the owner restores it as a new revision", async () => {
+    const owner = await createUser("WB snapshot owner");
+    const reader = await createUser("WB snapshot reader");
+    const board = await create(owner, "Snapshots");
+    const texts = (count: number, prefix = "s") => Array.from({ length: count }, (_, index) => `${prefix}${index}`);
+    expect((await save(owner, board.id, 1, sceneWith(texts(12)))).status).toBe(200);
+    // 12 → 7 is not below half: no snapshot.
+    expect((await save(owner, board.id, 2, sceneWith(texts(7)))).body.snapshotKept).toBeUndefined();
+    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 0 });
+    const beforeEmpty = boardRow(board.id)!;
+    // 7 → 0: the 7-element scene is kept as a snapshot, its object stays, and it counts toward the quota.
+    const emptied = await save(owner, board.id, 3, sceneWith([]));
+    expect(emptied.body).toMatchObject({ revision: 4, snapshotKept: true });
+    const snapshots = db.query("SELECT revision, object_id, size_bytes FROM whiteboard_snapshots WHERE document_id = ?").all(board.id) as Json[];
+    expect(snapshots).toEqual([{ revision: 3, object_id: beforeEmpty.object_id, size_bytes: docRow(board.id) ? expect.any(Number) : 0 }]);
+    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(true);
+    const { storedBytes } = await import("../server/documents");
+    expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + (snapshots[0]!.size_bytes as number));
+    // Only the owner sees it.
+    expect((await api(owner, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 1 });
+    await api(owner, "PUT", `/files/${board.id}/sharing`, { visibility: "selected", userIds: [reader.userId] });
+    expect((await api(reader, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 0, snapshotAt: null });
+    expect((await api(reader, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 })).status).toBe(404);
+    // Restore: a new revision with the kept scene, through the CAS; the emptied scene is kept in turn.
+    expect((await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 3 })).status).toBe(409);
+    const restored = await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 });
+    expect(restored.status).toBe(200);
+    expect(restored.body).toMatchObject({ revision: 5, restoredFrom: { revision: 3 } });
+    const read = await api(owner, "GET", `/whiteboards/${board.id}`);
+    expect(read.body.scene.elements).toHaveLength(7);
+    expect(read.body.whiteboard.snapshotCount).toBe(2);
+    // At most five are kept; the oldest objects are removed.
+    let revision = 5;
+    for (let round = 0; round < 4; round += 1) {
+      revision = (await save(owner, board.id, revision, sceneWith([]))).body.revision;
+      revision = (await save(owner, board.id, revision, sceneWith(texts(2, `r${round}`)))).body.revision;
+    }
+    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 5 });
+    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(false);
+    // Purging the board removes the snapshot objects too.
+    const kept = (db.query("SELECT object_id FROM whiteboard_snapshots WHERE document_id = ?").all(board.id) as Json[]).map((row) => row.object_id as string);
+    await api(owner, "DELETE", `/files/${board.id}`);
+    await api(owner, "DELETE", `/bin/document/${board.id}`);
+    for (const object of kept) expect(existsSync(objectPath(object))).toBe(false);
+    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 0 });
+  }, 30_000);
+
+  test("the list sorts by name or modified time and pages in that order (QA Q6)", async () => {
+    const owner = await createUser("WB sorter");
+    for (const name of ["banana", "Apple", "cherry"]) await create(owner, name);
+    const names = async (sort: string) => {
+      const out: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await api(owner, "GET", `/whiteboards?sort=${sort}&limit=1${cursor ? `&cursor=${cursor}` : ""}`);
+        expect(page.status).toBe(200);
+        out.push(...page.body.whiteboards.filter((board: Json) => board.is_owner === 1).map((board: Json) => board.name));
+        cursor = page.body.nextCursor;
+      } while (cursor);
+      return out;
+    };
+    expect(await names("name-asc")).toEqual(["Apple.excalidraw", "banana.excalidraw", "cherry.excalidraw"]);
+    expect(await names("name-desc")).toEqual(["cherry.excalidraw", "banana.excalidraw", "Apple.excalidraw"]);
+    expect(await names("updated-asc")).toEqual(["banana.excalidraw", "Apple.excalidraw", "cherry.excalidraw"]);
+    expect(await names("updated-desc")).toEqual(["cherry.excalidraw", "Apple.excalidraw", "banana.excalidraw"]);
+    expect((await api(owner, "GET", "/whiteboards?sort=size")).status).toBe(400);
+    // A cursor made for another order is refused rather than mixing orders.
+    const first = await api(owner, "GET", "/whiteboards?sort=name-asc&limit=1");
+    expect((await api(owner, "GET", `/whiteboards?sort=updated-desc&cursor=${first.body.nextCursor}`)).status).toBe(400);
   });
 
   test("invalid scenes are 400 with the validator's code and 413 past 4 MiB; nothing is stored", async () => {

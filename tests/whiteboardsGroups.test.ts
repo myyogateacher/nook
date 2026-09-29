@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
+import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { resetSearchRateLimit } = await import("../server/searchRoutes");
@@ -8,6 +9,8 @@ const { createApiKey } = await import("../server/apiKeys");
 const { invokeMcpToolForTests } = await import("../server/mcpTools");
 const { mcpScopesForRole } = await import("../server/team/roles");
 
+
+retireUsersAfterFile();
 /**
  * Whiteboards through Wave 32 access (Wave 23 follow-up): a board shared with a group reaches its
  * members on every surface (list, canvas read, search, Today, MCP) and stops when they leave;

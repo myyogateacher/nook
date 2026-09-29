@@ -10,13 +10,22 @@ export type WhiteboardSummary = DocumentSummary & {
   hasThumbnail: boolean;
   thumbRevision: number | null;
   canEdit: boolean;
+  /** The owner's safety snapshots (0 for everyone else) and when the newest was taken. */
+  snapshotCount: number;
+  snapshotAt: string | null;
 };
 
-export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true };
+export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true; snapshotKept?: true };
 
-/** One page (at most 500, newest edit first); pass `nextCursor` back for the next. */
-export const listWhiteboards = (folder: "all" | "shared" | string = "all", cursor: string | null = null) =>
-  api<{ whiteboards: WhiteboardSummary[]; nextCursor: string | null }>(`/whiteboards?folder=${encodeURIComponent(folder)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+export type WhiteboardSort = "updated-desc" | "updated-asc" | "name-asc" | "name-desc";
+
+/** One page (at most 500) in `sort` order; pass `nextCursor` back for the next. */
+export const listWhiteboards = (folder: "all" | "shared" | string = "all", cursor: string | null = null, sort: WhiteboardSort = "updated-desc") =>
+  api<{ whiteboards: WhiteboardSummary[]; nextCursor: string | null }>(`/whiteboards?folder=${encodeURIComponent(folder)}&sort=${sort}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+
+/** The owner's "Restore previous version": the newest safety snapshot becomes a new revision (CAS). */
+export const restorePreviousVersion = (id: string, baseRevision: number) =>
+  api<SaveResult & { restoredFrom: { revision: number; createdAt: string } }>(`/whiteboards/${encodeURIComponent(id)}/restore-previous`, { method: "POST", body: JSON.stringify({ baseRevision }) });
 
 export const getWhiteboard = (id: string) => api<{ whiteboard: WhiteboardSummary; scene: CanonicalScene }>(`/whiteboards/${encodeURIComponent(id)}`);
 

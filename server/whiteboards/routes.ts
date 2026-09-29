@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { REVALIDATE_CACHE } from "../documents";
 import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
-import { createWhiteboard, listWhiteboardsPage, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
+import { createWhiteboard, listWhiteboardsPage, restorePreviousVersion, WHITEBOARD_SORTS, type WhiteboardSort, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
 
 /**
  * docs/plan/API_CONTRACTS.md § Whiteboards (whiteboard plan §8). Every route needs a session;
@@ -69,8 +69,10 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
     const limitParam = c.req.query("limit");
     const limit = limitParam === undefined ? undefined : Number(limitParam);
     if (limit !== undefined && (!/^\d{1,3}$/.test(limitParam!) || limit < 1 || limit > 500)) return c.json({ error: "Invalid request", details: ["limit must be an integer from 1 to 500"] }, 400);
+    const sortParam = c.req.query("sort") ?? "updated-desc";
+    if (!(WHITEBOARD_SORTS as readonly string[]).includes(sortParam)) return c.json({ error: "Invalid request", details: [`sort must be one of ${WHITEBOARD_SORTS.join(", ")}`] }, 400);
     try {
-      return c.json(listWhiteboardsPage(c.get("user").id, folder, { limit, cursor: c.req.query("cursor") ?? null }));
+      return c.json(listWhiteboardsPage(c.get("user").id, folder, { limit, cursor: c.req.query("cursor") ?? null, sort: sortParam as WhiteboardSort }));
     } catch (error) {
       return fail(c, error);
     }
@@ -93,6 +95,19 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
       const parsed = z.object({ baseRevision: z.number().int().min(1), scene: z.unknown() }).strict().safeParse(body);
       if (!parsed.success) throw new WhiteboardError(400, "INVALID_SCENE", "Send baseRevision and scene");
       return c.json(await saveScene(id, c.get("user").id, parsed.data.baseRevision, parsed.data.scene));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // The owner's "Restore previous version" (QA D1–D3 safety net): the newest safety snapshot is
+  // saved as a new revision through the CAS. No MCP tool does this.
+  app.post("/api/whiteboards/:id/restore-previous", async (c) => {
+    try {
+      const id = idParam(c);
+      const parsed = z.object({ baseRevision: z.number().int().min(1) }).strict().safeParse(await readJson(c, 1024, "INVALID"));
+      if (!parsed.success) throw new WhiteboardError(400, "INVALID", "Send baseRevision");
+      return c.json(await restorePreviousVersion(id, c.get("user").id, parsed.data.baseRevision));
     } catch (error) {
       return fail(c, error);
     }

@@ -13,7 +13,7 @@ import { Select } from "../ui/Select";
 import { whiteboardsBackAction, whiteboardsRoute, type WhiteboardsRoute } from "../whiteboardsRoute";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { BoardDialogs, NewBoardDialog, type BoardDialog } from "./BoardDialogs";
-import { listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, type WhiteboardSummary } from "./whiteboardsApi";
+import { listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, type WhiteboardSort, type WhiteboardSummary } from "./whiteboardsApi";
 import "../files/files.css";
 import "./whiteboards.css";
 
@@ -63,6 +63,23 @@ function readView(userId: string): ViewMode {
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
+/** QA Q6: the Files list's name and modified orders; the server pages in the chosen one. */
+export const WHITEBOARD_SORT_OPTIONS: Array<{ value: WhiteboardSort; label: string }> = [
+  { value: "updated-desc", label: "Newest modified" },
+  { value: "updated-asc", label: "Oldest modified" },
+  { value: "name-asc", label: "Name A–Z" },
+  { value: "name-desc", label: "Name Z–A" }
+];
+const sortKey = (userId: string) => `mynotes:whiteboards-sort:${userId}`;
+function readSort(userId: string): WhiteboardSort {
+  try {
+    const value = window.localStorage.getItem(sortKey(userId));
+    return WHITEBOARD_SORT_OPTIONS.some((option) => option.value === value) ? value as WhiteboardSort : "updated-desc";
+  } catch {
+    return "updated-desc";
+  }
+}
+
 /**
  * Whiteboards (docs/plan/research/2026-09-28-whiteboard-module.md §10): the list at /whiteboards
  * (all, shared, or one folder) and a board's canvas at /whiteboards/:id, each a history entry;
@@ -76,6 +93,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>(() => readView(userId));
+  const [sort, setSort] = useState<WhiteboardSort>(() => readSort(userId));
   const [dialog, setDialog] = useState<BoardDialog | null>(null);
   const [creating, setCreating] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -104,7 +122,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     const current = ++generation.current;
     setLoadError(null);
     try {
-      const [{ whiteboards, nextCursor: more }, { folders: loaded }] = await Promise.all([listWhiteboards(folderFilter), api<{ folders: Folder[] }>("/folders")]);
+      const [{ whiteboards, nextCursor: more }, { folders: loaded }] = await Promise.all([listWhiteboards(folderFilter, null, sort), api<{ folders: Folder[] }>("/folders")]);
       if (current !== generation.current) return;
       setBoards(whiteboards);
       setNextCursor(more);
@@ -112,7 +130,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     } catch (reason) {
       if (current === generation.current) setLoadError(messageOf(reason, "Could not load your whiteboards"));
     }
-  }, [folderFilter]);
+  }, [folderFilter, sort]);
 
   // The list reloads when it is shown (and after the canvas closes, so thumbnails and names are fresh).
   useEffect(() => {
@@ -143,7 +161,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     const current = generation.current;
     setLoadingMore(true);
     try {
-      const page = await listWhiteboards(folderFilter, nextCursor);
+      const page = await listWhiteboards(folderFilter, nextCursor, sort);
       if (current !== generation.current) return;
       setBoards((existing) => [...(existing ?? []), ...page.whiteboards.filter((board) => !(existing ?? []).some((item) => item.id === board.id))]);
       setNextCursor(page.nextCursor);
@@ -153,6 +171,11 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
       setLoadingMore(false);
     }
   }
+
+  const chooseSort = (next: WhiteboardSort) => {
+    setSort(next);
+    try { window.localStorage.setItem(sortKey(userId), next); } catch { /* private mode: this visit only */ }
+  };
 
   const chooseView = (next: ViewMode) => {
     setView(next);
@@ -194,7 +217,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
         onBack={back}
         onOpenPath={onOpenPath}
         onOpenBoard={(id) => go(whiteboardsRoute(folderFilter, id))}
-        onMissing={() => { flash("Whiteboard not found"); go(whiteboardsRoute(folderFilter), true); }}
+        onAccessLost={() => { flash("You no longer have access to this whiteboard"); go(whiteboardsRoute(folderFilter), true); }}
         onDeleted={() => back()}
       />
     </Suspense>;
@@ -216,6 +239,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
         <h1 id="whiteboards-title">{heading}{boards && <span className="whiteboards-count"> · {countLabel}</span>}</h1>
         <div className="whiteboards-controls">
           <Select label="Show" value={route.folder} onChange={(value) => { if (value !== route.folder) go(whiteboardsRoute(value)); }} options={folderOptions} className="whiteboards-folder-select" />
+          <Select label="Sort" value={sort} onChange={chooseSort} options={WHITEBOARD_SORT_OPTIONS} className="whiteboards-sort-select" />
           <div className="whiteboards-view-toggle" role="group" aria-label="Layout">
             <button type="button" className={view === "grid" ? "active" : ""} aria-pressed={view === "grid"} onClick={() => chooseView("grid")} aria-label="Grid" title="Grid"><LayoutGrid /></button>
             <button type="button" className={view === "list" ? "active" : ""} aria-pressed={view === "list"} onClick={() => chooseView("list")} aria-label="List" title="List"><ListIcon /></button>

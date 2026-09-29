@@ -75,19 +75,27 @@ export type WhiteboardSummary = DocumentSummary & {
   thumbRevision: number | null;
   /** Only the owner edits (D195, D275), and only while their role writes. */
   canEdit: boolean;
+  /** The owner's safety snapshots (0 for everyone else) and when the newest was taken. */
+  snapshotCount: number;
+  snapshotAt: string | null;
 };
 
-type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null };
+type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null; snapshot_count: number; snapshot_at: string | null };
+
+/** Safety snapshots are the owner's: others always see 0 (and no time). */
+const SNAPSHOT_COLUMNS = `CASE WHEN d.owner_id = $userId THEN (SELECT COUNT(*) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE 0 END AS snapshot_count,
+  CASE WHEN d.owner_id = $userId THEN (SELECT MAX(ws.created_at) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE NULL END AS snapshot_at`;
 
 const summarySelect = documentSummarySelect.replace(
   "FROM documents d JOIN users u ON u.id = d.owner_id",
-  ", w.revision, w.element_count, w.thumb_png IS NOT NULL AS has_thumb, w.thumb_revision FROM documents d JOIN whiteboards w ON w.document_id = d.id JOIN users u ON u.id = d.owner_id"
+  `, w.revision, w.element_count, w.thumb_png IS NOT NULL AS has_thumb, w.thumb_revision, ${SNAPSHOT_COLUMNS} FROM documents d JOIN whiteboards w ON w.document_id = d.id JOIN users u ON u.id = d.owner_id`
 );
 
 function toSummary(row: DocumentSummary & BoardColumns, userId: string): WhiteboardSummary {
-  const { revision, element_count, has_thumb, thumb_revision, ...document } = row;
+  const { revision, element_count, has_thumb, thumb_revision, snapshot_count, snapshot_at, ...document } = row;
   return {
     ...document, kind: "whiteboard", revision, elementCount: element_count, hasThumbnail: has_thumb === 1, thumbRevision: thumb_revision,
+    snapshotCount: snapshot_count, snapshotAt: snapshot_at,
     canEdit: document.is_owner === 1 && canWriteContent(userId)
   };
 }
@@ -104,16 +112,28 @@ export function readableWhiteboard(documentId: string, userId: string) {
  */
 const listSelect = documentSummarySelect.replace(
   "FROM documents d JOIN users u ON u.id = d.owner_id",
-  ", w.revision, w.element_count, w.thumb_png IS NOT NULL AS has_thumb, w.thumb_revision FROM whiteboards w CROSS JOIN documents d ON d.id = w.document_id JOIN users u ON u.id = d.owner_id"
+  `, w.revision, w.element_count, w.thumb_png IS NOT NULL AS has_thumb, w.thumb_revision, ${SNAPSHOT_COLUMNS} FROM whiteboards w CROSS JOIN documents d ON d.id = w.document_id JOIN users u ON u.id = d.owner_id`
 );
 
-type ListCursor = { at: string; id: string };
-export const encodeListCursor = (cursor: ListCursor) => Buffer.from(JSON.stringify([cursor.at, cursor.id])).toString("base64url");
-export function decodeListCursor(value: string | undefined | null): ListCursor | null {
+/** List orders (QA Q6), as the Files list names them. The cursor carries the sort it was made for. */
+export const WHITEBOARD_SORTS = ["updated-desc", "updated-asc", "name-asc", "name-desc"] as const;
+export type WhiteboardSort = (typeof WHITEBOARD_SORTS)[number];
+const SORT_SQL: Record<WhiteboardSort, { key: string; order: string; after: string }> = {
+  "updated-desc": { key: "d.updated_at", order: "d.updated_at DESC, d.id", after: "(d.updated_at < $cursorKey OR (d.updated_at = $cursorKey AND d.id > $cursorId))" },
+  "updated-asc": { key: "d.updated_at", order: "d.updated_at ASC, d.id", after: "(d.updated_at > $cursorKey OR (d.updated_at = $cursorKey AND d.id > $cursorId))" },
+  "name-asc": { key: "lower(d.name)", order: "lower(d.name) ASC, d.id", after: "(lower(d.name) > $cursorKey OR (lower(d.name) = $cursorKey AND d.id > $cursorId))" },
+  "name-desc": { key: "lower(d.name)", order: "lower(d.name) DESC, d.id", after: "(lower(d.name) < $cursorKey OR (lower(d.name) = $cursorKey AND d.id > $cursorId))" }
+};
+
+type ListCursor = { sort: WhiteboardSort; key: string; id: string };
+export const encodeListCursor = (cursor: ListCursor) => Buffer.from(JSON.stringify([cursor.sort, cursor.key, cursor.id])).toString("base64url");
+export function decodeListCursor(value: string | undefined | null, sort: WhiteboardSort): ListCursor | null {
   if (!value) return null;
   try {
     const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString());
-    if (Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === "string" && typeof parsed[1] === "string" && parsed[0].length <= 40 && parsed[1].length <= 40) return { at: parsed[0], id: parsed[1] };
+    if (Array.isArray(parsed) && parsed.length === 3 && parsed[0] === sort && typeof parsed[1] === "string" && typeof parsed[2] === "string" && parsed[1].length <= 1100 && parsed[2].length <= 40) {
+      return { sort, key: parsed[1], id: parsed[2] };
+    }
   } catch {
     // fall through
   }
@@ -125,34 +145,37 @@ export function decodeListCursor(value: string | undefined | null): ListCursor |
  * of at most 500 with a keyset cursor (review L7). `ids` narrows to chosen boards in SQL, before
  * the page cut, so a chosen-board key sees its boards however old they are.
  */
-export function listWhiteboardsPage(userId: string, folder: "all" | "shared" | string, options: { limit?: number; cursor?: string | null; ids?: readonly string[] } = {}) {
+export function listWhiteboardsPage(userId: string, folder: "all" | "shared" | string, options: { limit?: number; cursor?: string | null; ids?: readonly string[]; sort?: WhiteboardSort } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? LIST_LIMIT, LIST_LIMIT));
-  const cursor = decodeListCursor(options.cursor);
+  const sort = options.sort ?? "updated-desc";
+  const order = SORT_SQL[sort];
+  const cursor = decodeListCursor(options.cursor, sort);
   const folderFilter = folder === "all" ? "" : folder === "shared" ? "AND d.owner_id <> $userId" : "AND d.folder_id = $folderId";
   const idFilter = options.ids ? "AND d.id IN (SELECT value FROM json_each($ids))" : "";
-  const cursorFilter = cursor ? "AND (d.updated_at < $cursorAt OR (d.updated_at = $cursorAt AND d.id > $cursorId))" : "";
-  const rows = db.query(`${listSelect} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter} ${idFilter} ${cursorFilter}
-    ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
+  const cursorFilter = cursor ? `AND ${order.after}` : "";
+  const select = listSelect.replace(" FROM whiteboards w CROSS JOIN", `, ${order.key} AS sort_key FROM whiteboards w CROSS JOIN`);
+  const rows = db.query(`${select} WHERE d.purpose = 'file' AND ${readableDocumentPredicate} ${folderFilter} ${idFilter} ${cursorFilter}
+    ORDER BY ${order.order} LIMIT $limit`)
     .all({
       userId, limit: limit + 1,
       ...(folder !== "all" && folder !== "shared" ? { folderId: folder } : {}),
       ...(options.ids ? { ids: JSON.stringify(options.ids) } : {}),
-      ...(cursor ? { cursorAt: cursor.at, cursorId: cursor.id } : {})
-    }) as Array<DocumentSummary & BoardColumns>;
-  const page = rows.slice(0, limit).map((row) => toSummary(row, userId));
-  const last = page[page.length - 1];
-  return { whiteboards: page, nextCursor: rows.length > limit && last ? encodeListCursor({ at: last.updated_at, id: last.id }) : null };
+      ...(cursor ? { cursorKey: cursor.key, cursorId: cursor.id } : {})
+    }) as Array<DocumentSummary & BoardColumns & { sort_key: string }>;
+  const lastRow = rows.length > limit ? rows[limit - 1] : undefined;
+  const page = rows.slice(0, limit).map(({ sort_key: _sortKey, ...row }) => toSummary(row, userId));
+  return { whiteboards: page, nextCursor: lastRow ? encodeListCursor({ sort, key: lastRow.sort_key, id: lastRow.id }) : null };
 }
 
 /** The first page (Today, tests): see listWhiteboardsPage. */
 export const listWhiteboards = (userId: string, folder: "all" | "shared" | string, options: { limit?: number; ids?: readonly string[] } = {}) =>
   listWhiteboardsPage(userId, folder, options).whiteboards;
 
-type OwnedBoard = { id: string; owner_id: string; name: string; size_bytes: number; sha256: string; revision: number; object_id: string; thumb_revision: number | null };
+type OwnedBoard = { id: string; owner_id: string; name: string; size_bytes: number; sha256: string; revision: number; object_id: string; element_count: number; thumb_revision: number | null };
 
 /** A live board owned by `userId` (not binned, not being purged), or null. */
 function ownedBoard(documentId: string, userId: string) {
-  return db.query(`SELECT d.id, d.owner_id, d.name, d.size_bytes, d.sha256, w.revision, w.object_id, w.thumb_revision
+  return db.query(`SELECT d.id, d.owner_id, d.name, d.size_bytes, d.sha256, w.revision, w.object_id, w.element_count, w.thumb_revision
     FROM documents d JOIN whiteboards w ON w.document_id = d.id
     WHERE d.id = ? AND d.owner_id = ? AND d.deleted_at IS NULL AND d.purge_started_at IS NULL AND d.purpose = 'file'`).get(documentId, userId) as OwnedBoard | null;
 }
@@ -305,7 +328,7 @@ function auditSave(userId: string, documentId: string, revision: number) {
   audit(userId, null, "whiteboard.save", { documentId, revision });
 }
 
-export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true };
+export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true; snapshotKept?: true };
 
 /**
  * PUT /api/whiteboards/:id/scene (§8.1): validate outside the lock, then under the document lock
@@ -313,7 +336,16 @@ export type SaveResult = { revision: number; savedAt: string; sha256: string; si
  * quota delta, write a new object, and switch to it in one transaction with the index. The old
  * object is removed after the commit; a crash in between leaves an orphan the sweeper removes.
  */
-export async function saveScene(documentId: string, userId: string, baseRevision: number, input: unknown): Promise<SaveResult> {
+/** Safety snapshots kept per board (QA D1–D3 defence in depth); they count toward the quota. */
+export const SAFETY_SNAPSHOTS = 5;
+
+/**
+ * Whether a save from `before` to `after` live elements keeps the scene it replaces as a snapshot:
+ * a board emptied, or a board of 10 or more elements losing more than half of them.
+ */
+export const keepsSafetySnapshot = (before: number, after: number) => (before > 0 && after === 0) || (before >= 10 && after < before / 2);
+
+export async function saveScene(documentId: string, userId: string, baseRevision: number, input: unknown, options: { keepSnapshot?: boolean } = {}): Promise<SaveResult> {
   charge("save", userId);
   const prepared = prepareScene(input);
   return withResourceLock(lockKey(documentId), async () => {
@@ -323,12 +355,16 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     if (board.sha256 === prepared.sha256) {
       return { revision: board.revision, savedAt: now(), sha256: board.sha256, sizeBytes: board.size_bytes, unchanged: true as const };
     }
-    const delta = prepared.bytes.byteLength - board.size_bytes;
+    // A save that empties a board, or drops more than half of a big one, keeps the replaced scene
+    // as a snapshot the owner can restore (the old object stays instead of being removed).
+    const keep = options.keepSnapshot === true || keepsSafetySnapshot(board.element_count, prepared.stats.elementCount);
+    const delta = prepared.bytes.byteLength - (keep ? 0 : board.size_bytes);
     checkQuota(userId, delta);
     await ensureDiskSpace(prepared.bytes.byteLength);
     const objectId = crypto.randomUUID();
     await writeObject(objectId, prepared.bytes);
     const savedAt = now();
+    let dropped: string[] = [];
     try {
       db.transaction(() => {
         // T80: a save that authenticated before its owner was blocked must not commit after it.
@@ -340,15 +376,54 @@ export async function saveScene(documentId: string, userId: string, baseRevision
         db.query("UPDATE documents SET size_bytes = ?, sha256 = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
           .run(prepared.bytes.byteLength, prepared.sha256, savedAt, documentId, userId);
         indexWhiteboard(documentId, board.name, prepared.scene, prepared.sha256);
+        if (keep) {
+          db.query(`INSERT INTO whiteboard_snapshots (id, document_id, revision, object_id, size_bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (document_id, revision) DO NOTHING`)
+            .run(crypto.randomUUID(), documentId, board.revision, board.object_id, board.size_bytes, board.sha256, savedAt);
+          const old = db.query(`SELECT id, object_id FROM whiteboard_snapshots WHERE document_id = ? ORDER BY created_at DESC, revision DESC LIMIT -1 OFFSET ?`)
+            .all(documentId, SAFETY_SNAPSHOTS) as Array<{ id: string; object_id: string }>;
+          for (const row of old) db.query("DELETE FROM whiteboard_snapshots WHERE id = ?").run(row.id);
+          dropped = old.map((row) => row.object_id);
+          audit(userId, null, "whiteboard.snapshot", { documentId, revision: board.revision, elementsBefore: board.element_count, elementsAfter: prepared.stats.elementCount });
+        }
       })();
     } catch (error) {
       await removeObject(objectId);
       throw error;
     }
-    await removeObject(board.object_id).catch(() => console.error("Could not remove a superseded whiteboard object; the sweeper will"));
+    if (!keep) await removeObject(board.object_id).catch(() => console.error("Could not remove a superseded whiteboard object; the sweeper will"));
+    for (const object of dropped) await removeObject(object).catch(() => console.error("Could not remove a dropped whiteboard snapshot; the sweeper will"));
     auditSave(userId, documentId, baseRevision + 1);
-    return { revision: baseRevision + 1, savedAt, sha256: prepared.sha256, sizeBytes: prepared.bytes.byteLength };
+    return { revision: baseRevision + 1, savedAt, sha256: prepared.sha256, sizeBytes: prepared.bytes.byteLength, ...(keep ? { snapshotKept: true as const } : {}) };
   });
+}
+
+/** The newest safety snapshot of an owned board, or null. */
+export function newestSnapshot(documentId: string, userId: string) {
+  if (!ownedBoard(documentId, userId)) return null;
+  return db.query("SELECT id, revision, object_id, size_bytes, created_at FROM whiteboard_snapshots WHERE document_id = ? ORDER BY created_at DESC, revision DESC LIMIT 1")
+    .get(documentId) as { id: string; revision: number; object_id: string; size_bytes: number; created_at: string } | null;
+}
+
+/**
+ * POST …/restore-previous: the owner saves the newest snapshot as a NEW revision through the usual
+ * CAS (409 on a stale base); the scene it replaces is kept as the newest snapshot, so nothing is lost.
+ */
+export async function restorePreviousVersion(documentId: string, userId: string, baseRevision: number) {
+  const snapshot = newestSnapshot(documentId, userId);
+  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+  const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await handle.readFile());
+  } finally {
+    await handle.close();
+  }
+  const scene: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  // What is on the board now is kept too, so a restore can itself be undone the same way.
+  const saved = await saveScene(documentId, userId, baseRevision, scene, { keepSnapshot: true });
+  audit(userId, null, "whiteboard.restore_snapshot", { documentId, fromRevision: snapshot.revision, revision: saved.revision });
+  return { ...saved, restoredFrom: { revision: snapshot.revision, createdAt: snapshot.created_at } };
 }
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

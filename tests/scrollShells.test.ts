@@ -57,3 +57,22 @@ test("sign-in pages scroll on a short screen and keep their top reachable", asyn
   expect(declarations).toContain("overflow-y: auto");
   expect(declarations).toContain("place-items: safe center");
 });
+
+test("Whiteboards: the list scrolls as a page with a fixed header; the canvas fills the screen and never scrolls", async () => {
+  const shell = await read("appShell.css");
+  expect(bounded(rule(shell, ".app-page:not(.tasks-app):not(.collections-app)"))).toBe(true);
+  // The list renders the `app-page` root the page rule matches (it is neither Tasks nor Collections).
+  expect(await read("whiteboards/WhiteboardsApp.tsx")).toContain(`<main className="app-page whiteboards-app">`);
+  const whiteboards = await read("whiteboards/whiteboards.css");
+  // The list's own rules never take the page's scrolling away.
+  expect(whiteboards).not.toMatch(/\.whiteboards-app\s*\{[^}]*overflow/);
+  // The canvas is its own fixed full-screen page outside the page rule: no page scroll, the stage fills the rest.
+  const canvas = rule(whiteboards, ".whiteboard-canvas-page") ?? "";
+  expect(canvas).toContain("position: fixed");
+  expect(canvas).toContain("height: 100dvh");
+  expect(canvas).toContain("overflow: hidden");
+  expect(await read("whiteboards/WhiteboardCanvas.tsx")).not.toContain("app-page");
+  const stage = rule(whiteboards, ".whiteboard-stage") ?? "";
+  expect(stage).toContain("flex: 1 1 auto");
+  expect(stage).toContain("min-height: 0");
+});

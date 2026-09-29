@@ -38,6 +38,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
     "@tailwindcss/vite": "4.3.3",
     "@types/bun": "1.4.2",
     "@types/busboy": "1.5.4",

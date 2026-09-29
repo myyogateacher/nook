@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bot,
@@ -42,6 +42,9 @@ import { api, ApiError, setCsrfToken } from "./api";
 import { TodayHome } from "./today/TodayHome";
 import { BinApp } from "./bin/BinApp";
 import { InboxApp } from "./inbox/InboxApp";
+// Whiteboards (Wave 23) load as their own chunks: the list here, and the Excalidraw canvas inside it
+// (D191), so nobody who never opens Whiteboards downloads either.
+const WhiteboardsApp = lazy(() => import("./whiteboards/WhiteboardsApp").then((module) => ({ default: module.WhiteboardsApp })));
 import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
@@ -89,6 +92,8 @@ import { MoveSheet } from "./files/MoveSheet";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
+import { clearPendingForUser, countPendingForUser } from "./whiteboards/pendingStore";
+import { usePendingWhiteboardSync } from "./whiteboards/pendingSync";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
@@ -601,6 +606,16 @@ export function NoteDeleteConfirm({ title, onConfirm, onCancel }: { title: strin
   return <ConfirmDialog title="Move to the Bin?" message={noteDeleteMessage(title)} confirmLabel="Move to Bin" danger onConfirm={onConfirm} onCancel={onCancel} />;
 }
 
+/** Sign-out with unsaved whiteboard copies on this device (review L4): the shared confirm (useConfirm). */
+export function signOutPendingRequest(count: number) {
+  return {
+    title: "Sign out and discard unsaved drawings?",
+    message: `${count === 1 ? "One whiteboard has" : `${count} whiteboards have`} changes that are not saved yet and are kept only on this device. Signing out deletes them. Open the whiteboard while online to save them first.`,
+    confirmLabel: "Sign out and discard",
+    danger: true
+  };
+}
+
 export const noteDeleteMessage = (title: string) => `Move “${title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
 
 function filesSnapshotFor(userId: string, route: Extract<Route, { app: "files" }>, filesPanel?: FilesPanel) {
@@ -881,7 +896,7 @@ export function App() {
   useEffect(() => {
     // The Settings dialog owns the title while it is open, and restores it on close.
     if (settingsOpen) return;
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox", whiteboards: "Whiteboards" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session, settingsOpen]);
@@ -1384,6 +1399,7 @@ export function App() {
     if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
     if (section === "team") return { app: "team", userId: null };
     if (section === "inbox") return { app: "inbox", view: "pending", proposalId: null };
+    if (section === "whiteboards") return { app: "whiteboards", folder: "all", boardId: null };
     return { app: section };
   }
 
@@ -1582,6 +1598,8 @@ export function App() {
   useEffect(() => {
     if (sessionUserId) historyDepthRef.current = readHistoryDepth(window.history.state);
   }, [sessionUserId]);
+  // QA E5: pending whiteboard copies are sent once the app is open and online.
+  usePendingWhiteboardSync(sessionUserId);
 
   useEffect(() => {
     if (!session) return;
@@ -1755,14 +1773,22 @@ export function App() {
     void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => { if (leave && settingsOpenRef.current) closeSettings(); });
   }
 
+  // Review L4: unsaved whiteboard copies on this device are deleted at sign-out; if there are any,
+  // the app's own confirm says so first (never a native dialog).
   function signOut() {
-    logout().catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+    const userId = session?.user.id;
+    (userId ? countPendingForUser(userId) : Promise.resolve(0)).then(async (count) => {
+      if (count > 0 && !await appConfirm.ask(signOutPendingRequest(count))) return;
+      return logout();
+    }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }
 
   async function logout() {
+    const signedOutUserId = session?.user.id ?? null;
     // T69: forget this device's push subscription and service worker while the session still works.
     await forgetThisDevice();
     await api("/auth/logout", { method: "POST", body: "{}" });
+    if (signedOutUserId) await clearPendingForUser(signedOutUserId);
     sessionUserRef.current = null;
     noteLoadGenerationRef.current += 1;
     setCsrfToken("");
@@ -1897,13 +1923,14 @@ export function App() {
 
   if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}><InboxNavContext.Provider value={inboxNav}>
     {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
-      : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenWhiteboard={isModuleEnabled(disabledModules, "whiteboards") ? (id) => openNotificationPath(`/whiteboards/${id}`) : undefined} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
+      : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} /></Suspense>
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
     {settingsOpen && <button className="panel-scrim" onClick={requestCloseSettings} aria-label="Close panel" />}

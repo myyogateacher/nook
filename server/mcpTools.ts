@@ -24,6 +24,7 @@ import { calendarTools } from "./calendar/mcpTools";
 import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { inboxTools } from "./inbox/mcpTools";
+import { whiteboardTools } from "./whiteboards/mcpTools";
 import { countRunToolCall } from "./inbox/routineHooks";
 import { canWriteContent } from "./team/userRole";
 
@@ -386,7 +387,8 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...collectionTools,
   ...todayTools,
   ...teamTools,
-  ...inboxTools
+  ...inboxTools,
+  ...whiteboardTools
 ];
 
 /** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */
@@ -427,7 +429,7 @@ function wholeModuleScopes(key: McpKeyContext): McpScope[] {
 }
 
 const RESOURCE_LABELS: Record<NonNullable<McpToolSpec["resource"]>["kind"], string> = {
-  board: "Board", card: "Card", column: "Column", sprint: "Sprint", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event"
+  board: "Board", card: "Card", column: "Column", sprint: "Sprint", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", whiteboard: "Whiteboard"
 };
 const resourceLabel = (spec: McpToolSpec) => spec.resource ? RESOURCE_LABELS[spec.resource.kind] : "Item";
 

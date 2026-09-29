@@ -173,12 +173,25 @@ async function seed() {
 
   // Inbox: many routines.
   for (let index = 0; index < 22; index += 1) await api(admin, "POST", "/inbox/routines", { name: `Scroll routine ${index}`, instructions: "Audit", outputKinds: ["note_draft"], cadence: "manual", tz: "UTC" });
+
+  // Whiteboards: 64 boards (the create limit is 30 a minute: wait as the server says).
+  let whiteboard = null;
+  for (let index = 0; index < 64; index += 1) {
+    let created = await api(admin, "POST", "/whiteboards", { name: `Scroll board ${String(index).padStart(2, "0")} ${RUN}` });
+    while (created.status === 429) {
+      await sleep(((created.body?.retryAfter ?? 10) + 1) * 1000);
+      created = await api(admin, "POST", "/whiteboards", { name: `Scroll board ${String(index).padStart(2, "0")} ${RUN}` });
+    }
+    if (index === 0) whiteboard = created.body.whiteboard;
+  }
+  seeded.whiteboard = whiteboard;
   admin.browserContext().close();
   // Ids only: a later run against the same instance reuses them (SEED_FILE), under the registration limits.
   return {
     longNote: { id: seeded.longNote.id }, sharedNote: { id: seeded.sharedNote.id }, longFile: { id: seeded.longFile.id },
     board: { id: seeded.board.id }, card: { id: seeded.card.id }, collection: { id: seeded.collection.id }, row: { id: seeded.row.id },
-    group: { id: seeded.group.id }, members: seeded.members.map((member) => ({ userId: member.userId })), inviteToken: seeded.inviteToken
+    group: { id: seeded.group.id }, members: seeded.members.map((member) => ({ userId: member.userId })), inviteToken: seeded.inviteToken,
+    whiteboard: { id: seeded.whiteboard.id }
   };
 }
 
@@ -375,6 +388,10 @@ const ROUTES = (s) => [
   ["Calendar agenda", "/calendar"],
   ["Calendar month", "/calendar/month"],
   ["Calendars sheet", "/calendar", async (page) => { await tapText(page, ".calendar-toolbar-button", "Calendars"); }],
+  ["Whiteboards grid (64 boards)", "/whiteboards", async (page) => { await tapText(page, ".whiteboards-view-toggle button", "Grid"); }],
+  ["Whiteboards list (64 boards)", "/whiteboards", async (page) => { await tapText(page, ".whiteboards-view-toggle button", "List"); }],
+  // The canvas is a fixed full-screen page: nothing may scroll and nothing may sit below the fold.
+  ["Whiteboard canvas", `/whiteboards/${s.whiteboard.id}`, async (page) => { await page.waitForSelector(".excalidraw canvas"); }],
   ["Inbox", "/inbox"],
   ["Inbox routines", "/inbox/routines"],
   ["Notifications", "/notifications"],

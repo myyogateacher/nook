@@ -411,7 +411,8 @@ describe("Bin API", () => {
       board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null, can_purge: true
     });
     expect(documentItem).toMatchObject({ type: "document", title: "listed.txt", folder_name: "Default", size_bytes: 12, purging: false });
-    expect(Object.keys(documentItem!).sort()).toEqual(["attachment", "attachment_kind", "attachment_of", "board_id", "board_name", "can_purge", "deleted_at", "folder_id", "folder_name", "id", "purge_after", "purging", "size_bytes", "title", "type"]);
+    expect(Object.keys(documentItem!).sort()).toEqual(["attachment", "attachment_kind", "attachment_of", "board_id", "board_name", "can_purge", "deleted_at", "folder_id", "folder_name", "id", "kind", "purge_after", "purging", "size_bytes", "title", "type"]);
+    expect(documentItem!.kind).toBe("file");
     expect(items.some((item) => item.id === live || item.id === othersNote)).toBe(false);
     expect((await listBin(owner, "?type=note")).items.map((item) => item.id)).toEqual([noteId]);
     expect((await listBin(owner, "?type=document")).items.map((item) => item.id)).toEqual([document.id]);

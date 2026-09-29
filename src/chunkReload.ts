@@ -48,6 +48,26 @@ type Target = Pick<Window, "addEventListener"> & { location: Pick<Location, "rel
 
 let reloading = false;
 
+/**
+ * Work that must be kept before the page reloads (Wave 23 QA 1c: an open whiteboard writes its
+ * unsaved edits to the on-device pending copy, which the reloaded page applies or offers). The reload
+ * waits for every hook, at most BEFORE_RELOAD_MS; with no hook it happens at once.
+ */
+export const BEFORE_RELOAD_MS = 1500;
+const beforeReload = new Set<() => Promise<unknown> | unknown>();
+export function onBeforeChunkReload(hook: () => Promise<unknown> | unknown) {
+  beforeReload.add(hook);
+  return () => { beforeReload.delete(hook); };
+}
+
+/** Runs the hooks (each failure ignored), resolving when all are done or the time is up. */
+export function runBeforeReload(wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))) {
+  const hooks = [...beforeReload].map((hook) => {
+    try { return Promise.resolve(hook()).catch(() => undefined); } catch { return Promise.resolve(); }
+  });
+  return Promise.race([Promise.all(hooks).then(() => undefined), wait(BEFORE_RELOAD_MS)]);
+}
+
 /** Installs the listener (main.tsx). `event.preventDefault()` keeps Vite from rethrowing while the page reloads. */
 export function installChunkReload(target: Target = window as unknown as Target) {
   target.addEventListener("vite:preloadError", (event) => {
@@ -59,14 +79,19 @@ export function installChunkReload(target: Target = window as unknown as Target)
     if (!decision) return;
     reloading = true;
     event.preventDefault();
-    if (decision === "reload") target.location.reload();
-    else target.location.replace(withReloadMarker(target.location.href, true));
+    const go = () => {
+      if (decision === "reload") target.location.reload();
+      else target.location.replace(withReloadMarker(target.location.href, true));
+    };
+    if (beforeReload.size === 0) go();
+    else void runBeforeReload().then(go);
   });
 }
 
 /** Test hook. */
 export function resetChunkReloadForTests() {
   reloading = false;
+  beforeReload.clear();
 }
 
 /** After the app mounted: drop the marker from the address bar without a new history entry. */

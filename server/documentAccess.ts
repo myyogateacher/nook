@@ -20,6 +20,8 @@ export type DocumentSummary = {
   size_bytes: number;
   visibility: Visibility;
   sharing_override: 0 | 1;
+  /** A whiteboard is a Files document with a `whiteboards` row (Wave 23, D192). */
+  kind: "file" | "whiteboard";
   created_at: string;
   updated_at: string;
 };
@@ -40,6 +42,7 @@ export const documentSummarySelect = `
          d.name, d.mime_type, d.preview_kind, d.size_bytes,
          CASE WHEN d.sharing_override = 0 THEN COALESCE(f.visibility, 'private') ELSE d.visibility END AS visibility,
          CASE WHEN d.owner_id = $userId THEN d.sharing_override ELSE 0 END AS sharing_override,
+         CASE WHEN EXISTS (SELECT 1 FROM whiteboards wk WHERE wk.document_id = d.id) THEN 'whiteboard' ELSE 'file' END AS kind,
          d.created_at, d.updated_at
   FROM documents d JOIN users u ON u.id = d.owner_id LEFT JOIN folders f ON f.id = d.folder_id
 `;
@@ -58,7 +61,7 @@ export function ownedDocumentSummary(documentId: string, userId: string) {
  * Sharing and folder access apply to Files documents only: an attachment is
  * readable by its owner and through its card and row links (below), nothing else.
  */
-const readablePredicate = `
+export const readableDocumentPredicate = `
   d.deleted_at IS NULL AND (
     d.owner_id = $userId
     OR (d.purpose = 'file' AND d.sharing_override = 1 AND ((d.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (d.visibility = 'selected' AND (EXISTS (
@@ -99,6 +102,7 @@ const collectionAttachmentPredicate = `EXISTS (
   JOIN collections c ON c.id = r.collection_id
   WHERE a.document_id = d.id AND ${readableCollectionPredicate}
 )`;
+const readablePredicate = readableDocumentPredicate;
 /** Readable by `$userId`: its own sharing, a readable card it is attached to, or a readable collection row (exported for batch checks, C10b). */
 export const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}))`;
 

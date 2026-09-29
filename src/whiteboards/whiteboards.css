@@ -1,0 +1,125 @@
+/* Whiteboards (Wave 23, whiteboard plan §10): the list and the canvas page. */
+
+.whiteboards-body { width: min(1180px, 100%); margin: 0 auto; padding: 22px clamp(16px, 4vw, 40px) calc(40px + env(safe-area-inset-bottom)); }
+.whiteboards-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.whiteboards-toolbar h1 { margin: 0; min-width: 0; overflow: hidden; color: #f4f4f5; font-size: 1.25rem; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboards-count { color: #85858c; font-weight: 500; }
+.whiteboards-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.whiteboards-folder-select { min-width: 190px; max-width: 280px; min-height: 42px; }
+.whiteboards-sort-select { min-width: 160px; min-height: 42px; }
+.whiteboards-view-toggle { display: inline-flex; border: 1px solid #2c2c31; border-radius: 10px; padding: 2px; background: #111113; }
+.whiteboards-view-toggle button { width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #95959c; cursor: pointer; }
+.whiteboards-view-toggle button.active { background: #2b261b; color: #ffe19a; }
+.whiteboards-view-toggle svg { width: 17px; height: 17px; }
+.whiteboards-new { min-height: 42px; margin: 0; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; }
+.whiteboards-new svg { width: 17px; }
+
+.whiteboards-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.whiteboard-card { position: relative; min-width: 0; }
+.whiteboard-open { width: 100%; min-width: 0; display: grid; grid-template-rows: auto auto; border: 1px solid #26262b; border-radius: 14px; padding: 0; overflow: hidden; background: #131316; color: inherit; text-align: left; cursor: pointer; }
+.whiteboard-open:hover { border-color: #4a3f25; }
+.whiteboard-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.whiteboard-thumb { position: relative; aspect-ratio: 16 / 10; display: grid; place-items: center; overflow: hidden; background: #f7f7f5; color: #6d6d73; }
+/* QA Q3: the whole drawing, fitted with padding (the image is laid out against the box, not the grid track). */
+.whiteboard-thumb img { position: absolute; inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); object-fit: contain; }
+.whiteboard-thumb > svg { width: 34px; height: 34px; }
+.whiteboard-card-copy { min-width: 0; display: grid; gap: 4px; padding: 10px 48px 12px 12px; }
+.whiteboard-name { min-width: 0; overflow: hidden; color: #ededee; font-size: .92rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboard-meta { min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; color: #85858c; font-size: .76rem; white-space: nowrap; }
+.whiteboard-meta .owner-badge { min-width: 0; display: inline-flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; }
+/* Wave 35's shared Avatar: the owner's picture, or their letter. */
+.whiteboard-owner-avatar { width: 16px; height: 16px; flex: none; display: inline-grid; place-items: center; border-radius: 50%; background: #2c2c33; color: #d4d4d8; font-size: .6rem; font-weight: 700; line-height: 1; vertical-align: middle; }
+.whiteboard-banner .whiteboard-owner-avatar { width: 20px; height: 20px; font-size: .66rem; }
+.whiteboard-shared { width: 14px; height: 14px; flex: none; color: #b99b59; }
+.whiteboard-more { position: absolute; right: 4px; bottom: 6px; width: 40px; height: 40px; }
+.whiteboards-list { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.whiteboards-list .whiteboard-open { grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: auto; align-items: center; }
+.whiteboards-list .whiteboard-thumb { aspect-ratio: auto; height: 48px; margin: 6px; border-radius: 8px; }
+.whiteboards-list .whiteboard-thumb > svg { width: 22px; height: 22px; }
+.whiteboards-list .whiteboard-more { top: 50%; bottom: auto; transform: translateY(-50%); }
+.whiteboard-skeleton .whiteboard-thumb { background: #1b1b1f; }
+.whiteboard-skeleton { border: 1px solid #222226; border-radius: 14px; overflow: hidden; }
+.whiteboard-skeleton .whiteboard-card-copy span { display: block; height: 10px; border-radius: 5px; background: #222226; }
+.whiteboard-skeleton .whiteboard-card-copy span + span { width: 50%; }
+.whiteboards-state { display: grid; justify-items: center; gap: 10px; padding: 48px 20px; color: #9a9aa1; text-align: center; }
+.whiteboards-state h2 { margin: 0; color: #ededee; font-size: 1.05rem; }
+.whiteboards-state p { margin: 0; max-width: 36ch; }
+.whiteboards-state button { min-height: 42px; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; }
+.whiteboards-state-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 16px; background: #1d1a12; color: #d9b55f; }
+.whiteboard-new-form .whiteboard-field-label { margin-top: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.whiteboard-new-form .form-error { margin: 0; color: #fda4af; font-size: .8rem; }
+@media (min-width: 761px) {
+  /* QA E6: the filter, the sort, the layout toggle, and New stay on one row on desktop. */
+  .whiteboards-controls { flex-wrap: nowrap; }
+  .whiteboards-controls > .ui-select-root { width: auto; flex: 0 1 auto; }
+  .whiteboard-sheet { left: 50%; right: auto; width: min(420px, 100vw); transform: translateX(-50%); }
+}
+@media (max-width: 760px) {
+  .whiteboards-body { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); }
+  .whiteboards-toolbar h1 { flex: 1 1 100%; font-size: 1.1rem; }
+  .whiteboards-controls { flex: 1 1 100%; }
+  .whiteboards-folder-select { flex: 1 1 100%; min-width: 0; max-width: none; }
+  .whiteboards-sort-select { flex: 1 1 auto; min-width: 0; }
+  .whiteboards-controls > .ui-select-root:first-child { flex: 1 1 100%; }
+  .whiteboards-controls > .ui-select-root:nth-child(2) { width: auto; flex: 1 1 auto; }
+  .whiteboards-grid:not(.whiteboards-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .whiteboard-card-copy { padding: 8px 44px 10px 10px; }
+}
+
+/* The canvas page: the whole viewport, no page scroll, pinch and pan on the canvas only (§10.3, G4). */
+.whiteboard-canvas-page { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; height: 100dvh; overflow: hidden; overscroll-behavior: none; background: #121212; }
+.whiteboard-loading { align-items: center; justify-content: center; gap: 12px; color: #a1a1a8; }
+.whiteboard-loading > svg { width: 30px; height: 30px; color: #d9b55f; }
+.whiteboard-loading p { max-width: 36ch; margin: 0; padding: 0 16px; text-align: center; }
+.whiteboard-load-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.whiteboard-load-actions button { min-height: 42px; }
+.whiteboard-bar { flex: none; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 4px calc(8px + env(safe-area-inset-right)) 4px calc(4px + env(safe-area-inset-left)); padding-top: calc(4px + env(safe-area-inset-top)); border-bottom: 1px solid #242428; background: #141416; }
+.whiteboard-bar .icon-button { width: 40px; height: 40px; }
+.whiteboard-title { min-width: 0; min-height: 40px; flex: 0 1 auto; display: flex; align-items: center; border: 0; border-radius: 8px; padding: 4px 8px; background: transparent; color: #f1f1f2; text-align: left; cursor: pointer; }
+button.whiteboard-title:hover { background: #222225; }
+.whiteboard-title h1, h1.whiteboard-title { margin: 0; overflow: hidden; font-size: .98rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboard-status { flex: none; display: inline-flex; align-items: center; gap: 5px; color: #8b8b92; font-size: .76rem; white-space: nowrap; }
+.whiteboard-status svg { width: 15px; height: 15px; }
+.whiteboard-status.status-saving svg { animation: whiteboard-spin 1s linear infinite; }
+.whiteboard-status.status-offline, .whiteboard-status.status-rejected, .whiteboard-status.status-conflict { color: #f3b667; }
+@keyframes whiteboard-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .whiteboard-status.status-saving svg { animation: none; } }
+.whiteboard-bar-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.whiteboard-bar-button { min-height: 40px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; font-size: .82rem; }
+.whiteboard-bar-button svg { width: 16px; }
+.whiteboard-banner { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 7px 12px; border-bottom: 1px solid #242428; background: #17171a; color: #b4b4ba; font-size: .8rem; }
+.whiteboard-banner strong { color: #ededee; }
+.whiteboard-banner.warn { background: #2a2113; color: #f6d9a1; }
+.whiteboard-banner .secondary-button { min-height: 40px; padding: 0 12px; font-size: .8rem; }
+.whiteboard-stage { position: relative; flex: 1 1 auto; min-height: 0; touch-action: none; overscroll-behavior: contain; }
+.whiteboard-stage > .excalidraw, .whiteboard-stage .excalidraw.excalidraw-container { height: 100%; }
+.whiteboard-conflict-actions { flex-wrap: wrap; }
+/* Spike G4: pinch over Excalidraw's overlays (the library sidebar is full screen on a phone) must not zoom the page. */
+.whiteboard-stage .excalidraw .sidebar, .excalidraw .Modal { touch-action: pan-x pan-y; }
+/* Q12: the shape library is hidden in this version (no public library browser, D209). */
+.whiteboard-stage .excalidraw .default-sidebar-trigger, .whiteboard-stage .excalidraw .sidebar-trigger { display: none !important; }
+@media (max-width: 760px) {
+  .whiteboard-bar .desktop-only { display: none; }
+  .whiteboard-status span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padding: 0 8px; background: #2a2113; cursor: pointer; }
+/*
+ * No embeds (D199, T163): Web Embed is hidden from the extra tools; embeddable elements are never
+ * saved. In 0.18.1 "Mermaid to Excalidraw" shares its test id, so only the item right after Frame is
+ * hidden; Mermaid stays under "Generate" (local only, CSP-clean).
+ */
+.whiteboard-stage .excalidraw [data-testid="toolbar-frame"] + [data-testid="toolbar-embeddable"] { display: none !important; }
+.whiteboards-more { display: block; min-height: 42px; margin: 18px auto 0; padding: 0 18px; }
+/* No links that leave Nook (review): the Help dialog keeps its keyboard shortcuts, not its docs, blog, GitHub, and YouTube links. */
+.excalidraw .HelpDialog__header { display: none !important; }
+/* Review L5: the sidebar offers only its search tab; the library tab (and its links to libraries.excalidraw.com) is not offered. */
+.whiteboard-stage .excalidraw .sidebar-tab-trigger[id$="-trigger-library"] { display: none !important; }
+/* QA Q5: the Mermaid dialog's description links to mermaid.js.org and says other diagrams "render as image", which this release refuses. */
+.excalidraw .ttd-dialog-desc { display: none !important; }
+/* QA Q11 and E6: no keyboard hints ("Hold Ctrl and Arrow key…") on touch screens: a coarse or
+   hover-less pointer, Excalidraw's phone layout, or any touch on the canvas during this visit. */
+@media (pointer: coarse), (hover: none) { .whiteboard-stage .excalidraw .HintViewer { display: none !important; } }
+.whiteboard-stage[data-touch] .excalidraw .HintViewer, .whiteboard-stage .excalidraw.excalidraw--mobile .HintViewer { display: none !important; }
+/* QA E3: every Excalidraw dialog has a close control (Excalidraw shows one only full screen), at least 40 px. */
+.excalidraw .Dialog__close { min-width: 40px; min-height: 40px; display: grid; place-items: center; top: .5rem; right: .5rem; border-radius: 8px; }
+.excalidraw .Dialog__close:focus-visible { outline: 2px solid #d9b55f; outline-offset: 1px; }

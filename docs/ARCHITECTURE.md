@@ -284,6 +284,15 @@ Accounts, roles, and blocking (Wave 14; plan of record `docs/plan/research/2026-
 
 The client (`src/team/`) is one app with a list at `/team` and a member page at `/team/:userId`. The role picker is the shared 13A `src/ui/Select.tsx` (a listbox popup on desktop, a bottom sheet at phone width, keyboard and type-ahead; D91), and every confirmation registers through `src/ui/useHistoryDialogGuard.ts`, which wraps the dialog guard in `src/historyDialogs.ts`. Team is a row in Settings → Modules: off hides the Team button and redirects `/team` Home, guests never see the row, and admins keep Settings → Manage team, which passes the route gate for that visit. The Team button in the account row comes from `TeamNavContext` in `src/AppShell.tsx`, so apps do not wire it themselves.
 
+## Whiteboards
+
+Whiteboards on Files (Wave 23; plan of record `docs/plan/research/2026-09-28-whiteboard-module.md`), in `server/whiteboards/` with routes under `/api/whiteboards` (API_CONTRACTS.md § Whiteboards):
+
+- A board is a `documents` row (`purpose = 'file'`, `application/vnd.excalidraw+json`, `preview_kind = 'none'`, a `.excalidraw` name) plus a `whiteboards` row (migration 030) with the revision, the current scene object, counts, and the owner's thumbnail. Access, sharing, rename, move, the Bin, and quota are the Files ones: `readableDocumentPredicate` in `server/documentAccess.ts` to read, the owner to write.
+- `shared/whiteboardScene.ts` is the pure, bounded scene validator both sides run; its output is canonical JSON. `service.ts` creates boards, reads scenes (re-reading once across a concurrent save), saves with the revision CAS and a copy-on-write object per save (`writeObject` in `server/documentStorage.ts`: staging, fsync, rename), and stores thumbnails. `search.ts` keeps `whiteboard_search` and `whiteboard_fts` in the save transaction; `mcpTools.ts` holds the three MCP tools.
+- The object lifecycle reaches into Files: the content route serves `whiteboards.object_id`, the sweeper's `hasDocumentRow` and the boot integrity check know scene and snapshot objects, and purge removes them before the rows cascade.
+- Client: `src/whiteboards/`. The list (`WhiteboardsApp.tsx`) and the canvas (`WhiteboardCanvas.tsx`, Excalidraw 0.18.1) are separate lazy chunks, so the main bundle does not carry them. `autosave.ts` is the pure save state machine, `pendingStore.ts` the IndexedDB pending copy, `historyGuard.ts` the pure helpers between Excalidraw, saves, and history. The canvas watches Excalidraw's overlays in the DOM and closes them on Back through the shared dialog guard. `vite.config.ts` copies Excalidraw's fonts to `dist/excalidraw/fonts/`, rewrites its esm.sh font fallback to the same origin, and turns off its copy-as-SVG action, so the CSP stays as it is.
+
 ## UI
 
 ### Apps

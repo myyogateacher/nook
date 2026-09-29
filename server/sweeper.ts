@@ -18,12 +18,20 @@ export type SweepResult = SweepCounts & { bin: BinSweepCounts };
 let running: Promise<SweepResult | null> | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 
-const hasDocumentRow = (id: string) => Boolean(db.query("SELECT 1 FROM documents WHERE id = ?").get(id));
+/**
+ * Whether an object name is live (T166): a document's own object, a whiteboard's current scene
+ * object, or a whiteboard snapshot. Anything else past the one-hour minimum age is an orphan.
+ */
+export const hasDocumentRow = (id: string) => Boolean(db.query(`SELECT 1 FROM documents WHERE id = $id
+  UNION ALL SELECT 1 FROM whiteboards WHERE object_id = $id
+  UNION ALL SELECT 1 FROM whiteboard_snapshots WHERE object_id = $id LIMIT 1`).get({ id }));
 
 async function countIntegrityErrors() {
-  const rows = db.query("SELECT id, size_bytes FROM documents WHERE purge_started_at IS NULL").all() as Array<{ id: string; size_bytes: number }>;
+  // A whiteboard's bytes live in its current scene object, never under the document id.
+  const rows = db.query(`SELECT COALESCE(w.object_id, d.id) AS object_id, d.size_bytes FROM documents d LEFT JOIN whiteboards w ON w.document_id = d.id
+    WHERE d.purge_started_at IS NULL`).all() as Array<{ object_id: string; size_bytes: number }>;
   let broken = 0;
-  for (const row of rows) if (!await objectIsIntact(row.id, row.size_bytes)) broken += 1;
+  for (const row of rows) if (!await objectIsIntact(row.object_id, row.size_bytes)) broken += 1;
   return broken;
 }
 

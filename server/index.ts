@@ -33,6 +33,9 @@ import { registerSprintRoutes } from "./tasks/sprintRoutes";
 import { registerTodayRoutes } from "./today/routes";
 import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
+import { registerWhiteboardRoutes } from "./whiteboards/routes";
+import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
+import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { registerCalendarRoutes } from "./calendar/routes";
 import { readPreferences, registerPreferenceRoutes } from "./preferences";
 import { isFeedRequest } from "./calendar/feeds";
@@ -851,6 +854,8 @@ registerReactionRoutes(app);
 registerSprintRoutes(app);
 registerTodayRoutes(app);
 registerCollectionRoutes(app);
+// Whiteboards on Files (Wave 23): create, list, read, CAS save, thumbnails.
+registerWhiteboardRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerMailRoutes(app);
@@ -881,6 +886,12 @@ registerMailPreviewRoutes(app);
 app.use("/sw.js", async (c, next) => {
   await next();
   c.header("Cache-Control", "no-cache");
+});
+
+// Excalidraw's self-hosted fonts (D203): fixed by the pinned version, so they may be cached for a week.
+app.use("/excalidraw/fonts/*", async (c, next) => {
+  await next();
+  if (c.res.status === 200) c.header("Cache-Control", "public, max-age=604800");
 });
 
 if (config.isProduction) {
@@ -920,6 +931,11 @@ try {
   console.error("Collection search index reconcile failed", errorClass(error));
 }
 try {
+  await reconcileWhiteboardSearchIndex();
+} catch (error) {
+  console.error("Whiteboard search index reconcile failed", errorClass(error));
+}
+try {
   await reconcileEventNextOccurrences();
 } catch (error) {
   console.error("Calendar range index reconcile failed", errorClass(error));
@@ -945,5 +961,6 @@ export default {
   hostname: "0.0.0.0",
   fetch: app.fetch,
   // Uploads need a larger transport cap; JSON and MCP bodies are bounded separately while reading.
-  maxRequestBodySize: Math.max(config.maxUploadBytes, JSON_BODY_LIMIT_BYTES) + 1_048_576
+  // Whiteboard scenes are read through their own 4 MiB bounded reader (413 SCENE_TOO_LARGE).
+  maxRequestBodySize: Math.max(config.maxUploadBytes, JSON_BODY_LIMIT_BYTES, WHITEBOARD_MAX_SCENE_BYTES + 65_536) + 1_048_576
 };

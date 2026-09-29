@@ -1,4 +1,4 @@
-import { File as FileIcon, FileAudio, FileImage, FileText, FileType, FileVideo } from "lucide-react";
+import { File as FileIcon, FileAudio, FileImage, FileText, FileType, FileVideo, PenTool } from "lucide-react";
 import type { PreviewKind, Visibility } from "../types";
 
 export function relativeTime(value: string) {
@@ -39,6 +39,9 @@ export const kindLabels: Record<PreviewKind, string> = {
 export function kindIcon(kind: string): typeof FileIcon {
   return Object.hasOwn(kindIcons, kind) ? kindIcons[kind as PreviewKind] : FileIcon;
 }
+
+/** A document's icon: the board pen for a whiteboard (Wave 23), else its preview kind's. */
+export const documentIcon = (document: { preview_kind: string; kind?: string }): typeof FileIcon => document.kind === "whiteboard" ? PenTool : kindIcon(document.preview_kind);
 
 export function kindLabel(kind: string): string {
   return Object.hasOwn(kindLabels, kind) ? kindLabels[kind as PreviewKind] : kindLabels.none;

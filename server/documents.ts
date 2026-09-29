@@ -16,6 +16,8 @@ import { purgeAfterFrom } from "./bin";
 import { documentPatchSchema, parseJson, sanitizeDisplayName, sharingSchema, uuid } from "./validation";
 import { mailShared, shareMembers } from "./mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, writeDirectShares } from "./access/shares";
+import { whiteboardFileName } from "../shared/whiteboardScene";
+import { isWhiteboard, renameWhiteboardIndex } from "./whiteboards/search";
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
@@ -62,9 +64,15 @@ function acquireSlot(userId: string) {
   };
 }
 
-/** Bytes that count against the quota: every document the user owns, live or binned. */
+/**
+ * Bytes that count against the quota: every document the user owns, live or binned, plus the
+ * snapshots and thumbnails of their whiteboards (§6, review L8; a board's `size_bytes` is its
+ * current scene).
+ */
 export const storedBytes = (userId: string) =>
-  (db.query("SELECT COALESCE(SUM(size_bytes), 0) AS total FROM documents WHERE owner_id = ?").get(userId) as { total: number }).total;
+  (db.query(`SELECT COALESCE((SELECT SUM(size_bytes) FROM documents WHERE owner_id = $userId), 0)
+    + COALESCE((SELECT SUM(s.size_bytes) FROM whiteboard_snapshots s JOIN documents d ON d.id = s.document_id WHERE d.owner_id = $userId), 0)
+    + COALESCE((SELECT SUM(length(w.thumb_png)) FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE d.owner_id = $userId AND w.thumb_png IS NOT NULL), 0) AS total`).get({ userId }) as { total: number }).total;
 
 /** The quota picture shown on Today: stored bytes (as the quota counts them), the binned part, and the quota (null = unlimited). */
 export function storageUsage(userId: string) {
@@ -435,18 +443,23 @@ async function handleUpload(c: Context<AppEnv>) {
 
 /** Matches exactly the content route, whose security headers are set here instead of by secureHeaders. */
 const contentPath = /^\/api\/files\/[^/]+\/content$/;
-export const isContentRequest = (method: string, path: string) => (method === "GET" || method === "HEAD") && contentPath.test(path);
+/** Whiteboard thumbnails (Wave 23, D200, T169) get the same strict header set. */
+const thumbnailPath = /^\/api\/whiteboards\/[^/]+\/thumbnail$/;
+export const isContentRequest = (method: string, path: string) => (method === "GET" || method === "HEAD") && (contentPath.test(path) || thumbnailPath.test(path));
 
 const SANDBOX_CSP = "default-src 'none'; sandbox";
 const PDF_CSP = "default-src 'none'; frame-ancestors 'none'";
+/** A thumbnail may be revalidated by its ETag instead of downloaded again (D200); everything else is never stored. */
+export const REVALIDATE_CACHE = "private, no-cache";
 
-function applyContentSecurityHeaders(headers: Headers, csp = SANDBOX_CSP) {
+export function applyContentSecurityHeaders(headers: Headers, csp = SANDBOX_CSP) {
+  const cache = headers.get("Cache-Control") === REVALIDATE_CACHE ? REVALIDATE_CACHE : "private, no-store";
   headers.set("Content-Security-Policy", csp);
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("X-Frame-Options", "DENY");
   headers.set("Referrer-Policy", "no-referrer");
   headers.set("Cross-Origin-Resource-Policy", "same-origin");
-  headers.set("Cache-Control", "private, no-store");
+  headers.set("Cache-Control", cache);
 }
 
 /**
@@ -460,6 +473,13 @@ export async function contentRouteSecurityHeaders(c: Context, next: Next) {
   applyContentSecurityHeaders(c.res.headers, csp);
 }
 
+/** A whiteboard's current scene object with the size, hash, and time that describe it, or null for any other document. */
+function whiteboardObject(documentId: string) {
+  const row = db.query(`SELECT w.object_id, d.size_bytes, d.sha256, d.updated_at FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE w.document_id = ?`)
+    .get(documentId) as { object_id: string; size_bytes: number; sha256: string; updated_at: string } | null;
+  return row ? { objectId: row.object_id, row: { size_bytes: row.size_bytes, sha256: row.sha256, updated_at: row.updated_at } } : null;
+}
+
 function contentError(status: 400 | 404 | 500, error: string) {
   const headers = new Headers({ "Content-Type": "application/json" });
   applyContentSecurityHeaders(headers);
@@ -470,12 +490,27 @@ async function handleContent(c: Context<AppEnv>) {
   const parsedId = uuid.safeParse(c.req.param("id"));
   if (!parsedId.success) return contentError(400, "Invalid request");
   const id = parsedId.data;
-  const document = readableDocument(id, c.get("user").id);
+  let document = readableDocument(id, c.get("user").id);
   if (!document) return contentError(404, "File not found");
 
   let opened: Awaited<ReturnType<typeof openObjectForRead>>;
   try {
-    opened = await openObjectForRead(id, document.size_bytes);
+    // A whiteboard's bytes are its current scene object (D193): read the object id with the size and
+    // hash in one query, and re-read once when a save replaced the object in between (§6).
+    const board = whiteboardObject(id);
+    if (board) {
+      document = { ...document, ...board.row };
+      try {
+        opened = await openObjectForRead(board.objectId, board.row.size_bytes);
+      } catch (error) {
+        const again = error instanceof DocumentIntegrityError ? whiteboardObject(id) : null;
+        if (!again || again.objectId === board.objectId) throw error;
+        document = { ...document, ...again.row };
+        opened = await openObjectForRead(again.objectId, again.row.size_bytes);
+      }
+    } else {
+      opened = await openObjectForRead(id, document.size_bytes);
+    }
   } catch (error) {
     const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof Error ? error.name : "unknown";
     console.error(`Document content integrity error (${reason}) for document ${id}`);
@@ -557,6 +592,11 @@ export async function patchDocument(userId: string, id: string, input: { name?: 
     if (input.name !== undefined) {
       name = sanitizeDisplayName(input.name, "rename");
       if (!name) throw new DocumentPatchError(400, "Enter a name of 1 to 255 bytes that is not . or ..");
+      // A whiteboard keeps its `.excalidraw` suffix when the new name drops it (§8); lists hide it anyway.
+      if (isWhiteboard(id)) {
+        name = sanitizeDisplayName(whiteboardFileName(name), "rename");
+        if (!name) throw new DocumentPatchError(400, "Enter a shorter name");
+      }
     }
     const moving = input.folderId !== undefined;
     if (input.folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(input.folderId, userId)) {
@@ -570,6 +610,7 @@ export async function patchDocument(userId: string, id: string, input: { name?: 
         WHERE id = ? AND owner_id = ? AND deleted_at IS NULL`)
         .run(name, moving ? 1 : 0, input.folderId ?? null, now(), id, userId);
       if (name !== null) audit(userId, null, "document.rename", { documentId: id });
+      if (name !== null) renameWhiteboardIndex(id, name);
       if (moving) audit(userId, null, "document.move", { documentId: id, folderId: input.folderId ?? null });
     })();
     return ownedDocumentSummary(id, userId)!;

@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
+import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, PenTool, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
 import type { AppSection } from "./appShellNavigation";
 
 /**
@@ -12,11 +12,11 @@ import type { AppSection } from "./appShellNavigation";
  */
 
 /** Every module id, in Settings order. Keep in step with `MODULE_IDS` in server/moduleIds.ts. */
-export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "search", "bin", "notifications", "team", "inbox"] as const;
+export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "search", "bin", "notifications", "team", "inbox"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** The apps with a Today launcher tile. */
-export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar";
+export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards";
 
 export type ModuleDef = {
   id: ModuleId;
@@ -42,6 +42,9 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "tasks", label: "Tasks", description: "Boards, cards, and the Due soon and My tasks sections.", icon: KanbanSquare, routeApps: ["tasks"], launcher: { section: "tasks", href: "/tasks" }, todaySections: ["tasksDue", "tasksMine"] },
   { id: "collections", label: "Collections", description: "Tables of rows with fields, views, and CSV.", icon: Table2, routeApps: ["collections"], launcher: { section: "collections", href: "/collections" }, todaySections: ["collectionsRecent"] },
   { id: "calendar", label: "Calendar", description: "Calendars, events, and the Upcoming section.", icon: CalendarDays, routeApps: ["calendar"], launcher: { section: "calendar", href: "/calendar" }, todaySections: ["upcoming"] },
+  // Whiteboards (Wave 23, D206). Off hides the launcher, routes, Today section, and Files' "Open
+  // whiteboard"; boards still appear in Files as .excalidraw downloads (not a boundary, T97).
+  { id: "whiteboards", label: "Whiteboards", description: "Sketches, diagrams, and floor plans saved in your Files.", icon: PenTool, routeApps: ["whiteboards"], launcher: { section: "whiteboards", href: "/whiteboards" }, todaySections: ["whiteboardsRecent"] },
   { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides the Bin button and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },

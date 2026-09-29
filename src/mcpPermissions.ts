@@ -5,7 +5,7 @@
  */
 export type McpScope = "notes:read" | "notes:write-draft" | "notes:publish" | "files:read" | "files:write" | "tasks:read" | "tasks:write" | "today:read"
   | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "bin:write" | "team:read"
-  | "inbox:read" | "inbox:write";
+  | "inbox:read" | "inbox:write" | "whiteboards:read" | "whiteboards:write";
 
 /** `warning` is an extra line Settings shows under the help, for permissions with a wider reach. */
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope; warning?: string };
@@ -27,7 +27,9 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "bin:write", label: "Move to Bin", help: "Move items to the Bin and restore them, only where this key can also write; never deletes forever." },
   { scope: "team:read", label: "Read team", help: "Names, roles, and status of accounts; never emails. Admins only, and it stops working if you stop being an admin." },
   { scope: "inbox:read", label: "Read inbox", help: "See your routines and this key's own proposals." },
-  { scope: "inbox:write", label: "Suggest changes", help: "Suggest changes for you to approve in the Inbox. Never applies anything; each suggestion also needs that module's read permission.", implies: "inbox:read" }
+  { scope: "inbox:write", label: "Suggest changes", help: "Suggest changes for you to approve in the Inbox. Never applies anything; each suggestion also needs that module's read permission.", implies: "inbox:read" },
+  { scope: "whiteboards:read", label: "Read whiteboards", help: "Whiteboards you can open: their names and text, and on request a summary of their shapes." },
+  { scope: "whiteboards:write", label: "Create whiteboards", help: "Create empty, private whiteboards in your folders; never draws, shares, or deletes.", implies: "whiteboards:read" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */
@@ -54,7 +56,7 @@ export function offeredMcpPermissions(role: string | undefined) {
  * Explicit: `bin:write` implies no read scope and is still a write scope, so viewers are never offered it.
  */
 export const MCP_WRITE_SCOPES: readonly McpScope[] = [
-  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write"
+  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write"
 ];
 
 export const isWriteScope = (scope: McpScope) => MCP_WRITE_SCOPES.includes(scope);

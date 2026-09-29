@@ -14,6 +14,8 @@ import { activeModules, blockedKeySql, policyBlock, POLICY_BLOCK_MESSAGES, readP
 import { can, mcpScopesForRole, type Role } from "./team/roles";
 import { editableBoardPredicate, readableBoardPredicate } from "./tasks/access";
 import { editableCollectionPredicate, readableCollectionPredicate } from "./collections/access";
+import { readableDocumentPredicate } from "./documentAccess";
+import { whiteboardDisplayName } from "../shared/whiteboardScene";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
 
 /**
@@ -229,7 +231,7 @@ function notePolicyBlock(row: KeyRow, reason: PolicyBlock, time: number) {
 // ------------------------------------------------------------------------------ resources
 
 /** A resource a tool touches (D281), resolved to the container kind grants name in Wave 31. */
-export type ToolResourceArg = "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event";
+export type ToolResourceArg = "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event" | "whiteboard";
 
 const containerLookups: Record<ToolResourceArg, { kind: ResourceKind; sql: string | null }> = {
   board: { kind: "board", sql: null },
@@ -239,7 +241,9 @@ const containerLookups: Record<ToolResourceArg, { kind: ResourceKind; sql: strin
   collection: { kind: "collection", sql: null },
   row: { kind: "collection", sql: "SELECT collection_id AS id FROM collection_rows WHERE id = ?" },
   calendar: { kind: "calendar", sql: null },
-  event: { kind: "calendar", sql: "SELECT calendar_id AS id FROM events WHERE id = ?" }
+  event: { kind: "calendar", sql: "SELECT calendar_id AS id FROM events WHERE id = ?" },
+  // A whiteboard is its own container (Wave 23); only ids of real boards resolve.
+  whiteboard: { kind: "whiteboard", sql: "SELECT document_id AS id FROM whiteboards WHERE document_id = ?" }
 };
 
 export const containerKindOf = (arg: ToolResourceArg) => containerLookups[arg].kind;
@@ -260,6 +264,9 @@ export function resourceReachable(userId: string, kind: ResourceKind, id: string
     case "board": return Boolean(db.query(`SELECT 1 FROM boards b WHERE b.id = $id AND ${write ? editableBoardPredicate : readableBoardPredicate}`).get({ id, userId }));
     case "collection": return Boolean(db.query(`SELECT 1 FROM collections c WHERE c.id = $id AND ${write ? editableCollectionPredicate : readableCollectionPredicate}`).get({ id, userId }));
     case "calendar": return Boolean(db.query(`SELECT 1 FROM calendars k WHERE k.id = $id AND ${write ? editableCalendarPredicate : readableCalendarPredicate}`).get({ id, userId }));
+    // Whiteboards: readers read, only the owner writes (D195).
+    case "whiteboard": return Boolean(db.query(`SELECT 1 FROM documents d JOIN whiteboards w ON w.document_id = d.id WHERE d.id = $id AND d.purpose = 'file'
+      AND ${write ? "d.owner_id = $userId AND d.deleted_at IS NULL" : readableDocumentPredicate}`).get({ id, userId }));
     default: return false;
   }
 }
@@ -269,6 +276,10 @@ function resourceName(userId: string, kind: ResourceKind, id: string): string | 
     case "board": return (db.query(`SELECT b.name FROM boards b WHERE b.id = $id AND ${readableBoardPredicate}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
     case "collection": return (db.query(`SELECT c.name FROM collections c WHERE c.id = $id AND ${readableCollectionPredicate}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
     case "calendar": return (db.query(`SELECT k.name FROM calendars k WHERE k.id = $id AND ${readableCalendarPredicate}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
+    case "whiteboard": {
+      const name = (db.query(`SELECT d.name FROM documents d JOIN whiteboards w ON w.document_id = d.id WHERE d.id = $id AND d.purpose = 'file' AND ${readableDocumentPredicate}`).get({ id, userId }) as { name: string } | null)?.name;
+      return name ? whiteboardDisplayName(name) : null;
+    }
     default: return null;
   }
 }

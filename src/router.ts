@@ -25,7 +25,10 @@ export type Route =
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
-  | { app: "inbox"; view: "pending" | "history" | "routines"; proposalId: string | null };
+  | { app: "inbox"; view: "pending" | "history" | "routines"; proposalId: string | null }
+  // Whiteboards (Wave 23, §10.1): /whiteboards, /whiteboards/shared, /whiteboards/folder/:id, and
+  // one board at /whiteboards/:id (the canvas, a history entry of its own).
+  | { app: "whiteboards"; folder: "all" | "shared" | string; boardId: string | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -146,6 +149,10 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "team" && rest.length === 2 && rest[1] === "access" && isRouteId(rest[0]!)) return { app: "team", userId: rest[0]!.toLowerCase(), access: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   if (app === "inbox") return parseInbox(rest);
+  if (app === "whiteboards") {
+    const { folder, itemId } = parseCollection(rest);
+    return { app: "whiteboards", folder, boardId: itemId };
+  }
   return { app: "home" };
 }
 
@@ -192,6 +199,7 @@ export function formatRoute(route: Route): string {
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
   if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
+  if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
     const base = route.view === "history" ? "/inbox/history" : "/inbox";

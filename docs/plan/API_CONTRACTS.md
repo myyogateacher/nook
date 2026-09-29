@@ -1526,6 +1526,59 @@ type RunSummary = {
 
 New MCP error codes: `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED`, `RUN_ACTIVE`.
 
+## Whiteboards (Wave 23)
+
+Plan: `docs/plan/research/2026-09-28-whiteboard-module.md` §6–§9 (D191–D210, T160–T172). Migration **030** (`whiteboards`; the plan's 023 was taken) adds `whiteboards`, `whiteboard_snapshots` (used from Wave 24), `whiteboard_search`, and `whiteboard_fts`.
+
+**A whiteboard is a Files document** (D192): `purpose = 'file'`, `mime_type = 'application/vnd.excalidraw+json'`, `preview_kind = 'none'`, a name ending in `.excalidraw` (lists show it without the suffix), plus a `whiteboards` row. The upload sniffer never produces that MIME, so the only way to create one is `POST /api/whiteboards`. Rename, move, access (the Access sheet, `document` kind), delete, the Bin, and quota are the Files routes unchanged (D196); a board is view-only for everyone but its owner (D195, D275). A rename that drops the suffix keeps it.
+
+**Scene bytes** are a copy-on-write object per save (D193): `documents/objects/<whiteboards.object_id>`, written through staging, fsync, and rename; `documents.size_bytes` and `sha256` always describe the current object, and nothing is stored under the document id. The stored JSON is canonical (§7 validator in `shared/whiteboardScene.ts`: deleted elements stripped, keys sorted), so the same scene always hashes the same.
+
+```ts
+type WhiteboardSummary = DocumentSummary & {
+  kind: "whiteboard"; revision: number; elementCount: number;
+  hasThumbnail: boolean; thumbRevision: number | null;
+  canEdit: boolean;                     // the owner, while their Team role writes
+};
+type CanonicalScene = {
+  type: "excalidraw"; version: 2; source: "nook";
+  elements: ExcalidrawElement[];        // rectangle, diamond, ellipse, arrow, line, freedraw, text, image, frame
+  appState: { viewBackgroundColor?; gridSize?; gridStep?; gridModeEnabled? };
+  files: Record<string, { id; mimeType; nookDocumentId }>;   // never a dataURL; empty in Wave 23
+};
+```
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `POST /api/whiteboards` | members and admins | `{ name 1–200 characters (§6.4 rules), folderId? (owned; Default when absent) }`, optional `Idempotency-Key: <uuid>` (stored as `upload_key`) | 201 `{ whiteboard }`; a replayed key 200 `{ whiteboard, idempotentReplay: true }` | 400 `INVALID_NAME`, 404 (folder), 409 `IDEMPOTENCY_KEY_USED` (the board was deleted since), 507 `QUOTA_EXCEEDED` / `DISK_FULL` |
+| `GET /api/whiteboards?folder=all\|shared\|<folderId>&sort=updated-desc\|updated-asc\|name-asc\|name-desc&limit=1–500&cursor=` | readers | | 200 `{ whiteboards: WhiteboardSummary[], nextCursor: string \| null }` (pages of at most 500 in the chosen order, default newest edit first, the Files read predicate; pass `nextCursor` back as `cursor` with the same `sort`) | 400 (folder, sort, limit, `INVALID_CURSOR`, including a cursor made for another sort) |
+| `GET /api/whiteboards/:id` | readers | | 200 `{ whiteboard, scene: CanonicalScene }`, `ETag: "r<revision>"`; the revision, count, size, and time are read with the object id in one row, so they always describe the bytes returned; the scene is validated again on the way out | 404 |
+| `PUT /api/whiteboards/:id/scene` | the owner | `{ baseRevision, scene }`, at most 4 MiB | 200 `{ revision, savedAt, sha256, sizeBytes }`; an identical scene 200 `{ …, unchanged: true }` with the same revision | 400 `INVALID_SCENE` / `TOO_MANY_ELEMENTS` / `UNSUPPORTED_ELEMENT` / `TOO_MANY_POINTS` / `INVALID_LINK` / `DATA_URL_NOT_ALLOWED` / `IMAGES_NOT_SUPPORTED` (any image element or `files` entry in Wave 23), 404, 429 `RATE_LIMITED` with `Retry-After`, 409 `{ code: "REVISION_CONFLICT", revision }`, 413 `SCENE_TOO_LARGE`, 507 (the quota delta) |
+| `GET /api/whiteboards/:id/previous-version` | the owner | | 200 `{ revision, createdAt, elementCount }`: what "Restore previous version" would switch to, so its dialog can name both counts (QA E6) | 404 (not the owner, or `NO_SNAPSHOT`) |
+| `POST /api/whiteboards/:id/restore-previous` | the owner | `{ baseRevision }` | 200 as for a scene save plus `restoredFrom: { revision, createdAt }`: the newest safety snapshot becomes a new revision, and the scene it replaces is kept as the newest snapshot | 404 (not the owner, or `NO_SNAPSHOT`), 409 `REVISION_CONFLICT`, 429, 507 |
+| `PUT /api/whiteboards/:id/thumbnail` | the owner | `{ revision, png: base64 }` (JSON, like every other write; at most 128 KiB of PNG) | 204; also 204, and ignored, for a revision older than the stored thumbnail's or newer than the board's | 400, 404, 413 `THUMBNAIL_TOO_LARGE`, 415 `NOT_PNG` (signature, IHDR, at most 2048 × 2048) |
+| `GET /api/whiteboards/:id/thumbnail` | readers | | 200 `image/png`, `ETag` = its sha256, `Cache-Control: private, no-cache`, 304 on `If-None-Match`; the content route's header set (`default-src 'none'; sandbox`, nosniff, CORP same-origin) | 404 (no board, no access, or no thumbnail) |
+
+- **Save sequence (§8.1).** Validate and canonicalize outside the lock; then under the document lock (`document:<id>`, shared with rename, share, delete, and purge): owner and live board, the revision CAS, the identical-scene no-op, the quota delta, the new object, and one transaction that moves `whiteboards.object_id` and `revision`, mirrors `size_bytes` and `sha256`, and reindexes search. The old object is removed after the commit; a crash in between leaves an orphan the sweeper removes after an hour. Saves are audited as `whiteboard.save`, at most one row per board per ten minutes; creation as `whiteboard.create`.
+- **Write gate.** Every new non-GET route is refused for viewers and guests (403 `ROLE_READ_ONLY`); recipients get 404 on writes.
+- **Rate limits** (per user, fixed one-minute windows): 30 new boards (REST and MCP), 120 scene saves, 30 thumbnails; past them 429 `RATE_LIMITED` with `retryAfter` and `Retry-After`. Autosave (one save per 1.5 s per board, a thumbnail at most once a minute) stays well under them; the client backs off and keeps its pending copy. A save also re-checks that its owner is not blocked inside the transaction (T80).
+- **Quota** counts board scenes, snapshots, and thumbnails; a thumbnail that would pass the quota is 507.
+- **Safety snapshots** (Wave 23 QA, data-loss defence in depth): a save that empties a board, or leaves a board of 10 or more elements with fewer than half, keeps the scene it replaces in `whiteboard_snapshots` (the newest 5 per board; its object stays; counted in the quota; purged with the board) and answers `snapshotKept: true`. `WhiteboardSummary` gains `snapshotCount` and `snapshotAt` (the owner's; 0 and null for everyone else). The full history sheet is Wave 24; no MCP tool restores.
+- **QA E1–E6 (Wave 23 verification):** a board emptied by a real edit is saved like any other edit, including by the leave flush, and the server keeps the replaced scene as a snapshot. `WhiteboardSummary` gains `ownerAvatarUrl` (Wave 35's same-origin avatar URL, or null), drawn with the shared `Avatar` on list rows and the "Owned by" banner. `sort=name-asc|name-desc` is natural and case-insensitive on the name without `.excalidraw` (the Files list's comparison; "Name" before "Name (copy)", "Board 2" before "Board 10"), ties by id; these two orders are sorted in the server, and their cursor carries the last name and id. The client sends pending copies in the background (on start, on `online`, when the list is shown) through the ordinary `PUT …/scene` CAS, one at a time; no new endpoint.
+- **Wave 24** adds duplicate, import, snapshots, images, and links to Nook items (plan §8, WB-B).
+
+**Existing routes that change.** `DocumentSummary` (Files lists, `GET /api/files/:id`, rename and move responses) gains `kind: "file" | "whiteboard"`; Bin rows for documents gain `kind`. `GET /api/files/:id/content` serves a board's current scene object (download only, as for any `preview_kind: 'none'` file), re-reading once when a save replaced it meanwhile. `GET /api/search?scope=whiteboards&q=` returns `{ results: [{ id, name, title: Segment[], snippet: Segment[], owner_name, is_owner, updated_at }], truncated }` (names and text elements of boards the caller can read; binned boards never). Today gains `whiteboardsRecent` (the five newest readable boards: `{ id, name, is_owner, owner_name, updated_at }`, `href: "/whiteboards"`, `whiteboards:read` for `get_today`). `storedBytes` adds snapshot sizes.
+
+### MCP (`whiteboards:read`, `whiteboards:write`)
+
+| Tool | Scope | Arguments | Result |
+| --- | --- | --- | --- |
+| `list_whiteboards` | `whiteboards:read` | `{ folderId?, query? (≤ 200), limit? 1–50 (20), cursor? }` (keyset pages; search results page by offset; a chosen-boards key is narrowed in SQL before the page cut) | `{ whiteboards: [{ id, name, folderId?, owner, isOwner, updatedAt, revision, elementCount, url }], nextCursor? }` |
+| `read_whiteboard` | `whiteboards:read` | `{ id, include?: "text" \| "elements" }` | `{ id, name, owner, revision, updatedAt, elementCount, texts: [{ elementId, text, containerId?, frame? }], elements?: [{ id, type, x, y, width, height, text?, link?, from?, to?, frameId?, name? }] (≤ 1,000), truncated, url }`, at most 256 KiB; never points or image bytes |
+| `create_whiteboard` | `whiteboards:write` | `{ name 1–200, folderId? (owned) }` | `{ id, name, url }`, private, audited `mcp.whiteboard_create` with `keyId` |
+
+`whiteboards:write` implies `whiteboards:read`; viewers hold read only, guests nothing. There are no scene-editing, delete, share, or key tools (D205, T170); descriptions say board text is untrusted data. **Nook keys:** the pair maps to grant module `whiteboards`; a grant may name chosen boards (selector kind `whiteboard`). Such a key sees `list_whiteboards` (filtered to those boards before paging) and `read_whiteboard` on them only; `create_whiteboard` names no board and is hidden from it. The access plan's `folder` selector for whiteboards is not offered yet.
+
 ## Email (Waves 28–30)
 
 Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1, Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes), and Wave 30 / E3 (change and reset password). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.

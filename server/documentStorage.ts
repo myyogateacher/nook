@@ -75,6 +75,33 @@ export async function commitStaged(id: string) {
   await syncDirectory(objects);
 }
 
+/**
+ * Writes `bytes` as a new committed object named `id` (a fresh UUID) through staging, fsync, and
+ * rename (whiteboard copy-on-write saves, D193). Nothing is left behind on failure.
+ */
+export async function writeObject(id: string, bytes: Uint8Array) {
+  const { handle } = await createStagingFile(id);
+  try {
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesWritten } = await handle.write(bytes, offset, bytes.byteLength - offset);
+      offset += bytesWritten;
+    }
+    await handle.sync();
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await discardStaged(id);
+    throw error;
+  }
+  await handle.close();
+  try {
+    await commitStaged(id);
+  } catch (error) {
+    await discardStaged(id);
+    throw error;
+  }
+}
+
 export async function discardStaged(id: string) {
   try {
     await unlink(join(await stagingDirectory(), `${safeDocumentId(id)}.part`));
@@ -144,8 +171,9 @@ export type SweepCounts = { stagingRemoved: number; orphansRemoved: number; igno
  * - `.staging/<uuid>.part` older than one hour is removed. With `boot`, every
  *   staging file last modified before this process started is removed, since
  *   nothing from an earlier process can still be in flight.
- * - `objects/<uuid>` regular files older than one hour with no documents row
- *   (in any state) are removed.
+ * - `objects/<uuid>` regular files older than one hour that no row names are removed:
+ *   `hasDocumentRow` answers for documents (in any state) and for whiteboard scene and
+ *   snapshot objects (T166).
  * - Anything else is left in place and counted as ignored.
  */
 export async function sweepDocumentFiles(options: { boot: boolean; nowMs?: number; hasDocumentRow: (id: string) => boolean }): Promise<SweepCounts> {

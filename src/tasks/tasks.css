@@ -156,6 +156,7 @@
 .task-comment { display: grid; gap: 6px; border: 1px solid #242428; border-radius: 12px; padding: 10px 12px; background: #17171a; }
 .task-comment header { display: flex; align-items: center; gap: 8px; color: #8d8d94; font-size: .76rem; }
 .task-comment header strong { color: #e4e4e6; font-size: .82rem; }
+.task-comment header .task-comment-avatar { margin-left: 0; width: 24px; height: 24px; }
 .task-comment-edited { font-style: italic; }
 .task-comment-actions { display: flex; margin-left: auto; }
 .task-comment-actions .icon-button { width: 30px; height: 30px; }

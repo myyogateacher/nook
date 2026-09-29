@@ -50,7 +50,7 @@ export function reauthPassword(value: FormDataEntryValue | string | null | undef
  * In place of a password field: "Confirm with Google" (a round trip that comes back to `returnTo`),
  * or the confirmation's expiry once it is done, or a note when nothing can confirm this account.
  */
-export function GoogleReauthNotice({ account, returnTo }: { account: AccountAuth; returnTo: string }) {
+export function GoogleReauthNotice({ account, returnTo, startable = true }: { account: AccountAuth; returnTo: string; /** False inside a form with typed content (QA U11): confirm before opening it instead. */ startable?: boolean }) {
   if (account.reauth === "none") {
     return <p className="reauth-note" role="note">This account has no password on this Nook and no linked Google account, so it cannot confirm changes here. Link Google under Security, or ask your admin.</p>;
   }
@@ -58,6 +58,7 @@ export function GoogleReauthNotice({ account, returnTo }: { account: AccountAuth
     const until = new Date(account.reauthUntil!).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
     return <p className="reauth-note reauth-done" role="status"><Check aria-hidden="true" />Confirmed with Google until {until}.</p>;
   }
+  if (!startable) return <p className="reauth-note" role="note"><ShieldCheck aria-hidden="true" />Your Google confirmation ran out. Close this, confirm with Google again, then start over.</p>;
   return <div className="reauth-google">
     <p className="reauth-note"><ShieldCheck aria-hidden="true" />Confirm it's you with Google{account.google ? ` (${account.google.email})` : ""} first. It counts for 5 minutes on this device.</p>
     <GoogleButton label="Confirm with Google" href={googleStartUrl("reauth", returnTo)} />

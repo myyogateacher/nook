@@ -49,9 +49,11 @@ import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from 
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
+import { Avatar } from "./ui/Avatar";
+import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { GoogleAccountCard, googleSettingsNotice, PasswordStateCard } from "./auth/GoogleAccountCard";
-import { AuthDivider, currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
+import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
@@ -131,8 +133,10 @@ function relativeTime(value: string) {
 function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: { onAuthenticated: (session: SessionResponse) => void; onForgotPassword: () => void; googleResult?: GoogleSignInResult }) {
   const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code) : "");
-  // Review HIGH-1: an account with this address exists but Google cannot link it on its own.
+  // Password form errors stay in the form; Google flow messages get their own notice by the Google
+  // button (QA U6), and link_required its own explanation (review HIGH-1).
+  const [error, setError] = useState("");
+  const [googleNotice, setGoogleNotice] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code) : "");
   const [linkRequired, setLinkRequired] = useState(googleResult?.kind === "error" && googleResult.code === "link_required");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
@@ -141,7 +145,9 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
   const fields = useFieldErrors();
   // Wave 35 (D296): Google proved the account; the Nook code finishes the sign-in.
   const [googleCode, setGoogleCode] = useState(googleResult?.kind === "code");
-  // Unknown (loading, failed, or an older server): the password form as before, and no Google button.
+  // QA U2: nothing but a placeholder until /api/about says which methods are on (no flash of the
+  // wrong form); a failed request or an older server shows the password form as before.
+  const methodsKnown = registration !== null;
   const methods = (registration !== "failed" ? registration?.authMethods : undefined) ?? { password: true, google: false };
   const signUpPrompt = methods.password ? registrationPrompt(registration === "failed" ? null : registration) : null;
 
@@ -209,13 +215,25 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
       window.location.replace(result.returnTo || "/");
     } catch (reason) {
       const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+      const message = reason instanceof ApiError && reason.status === 429 ? "Too many attempts. Try again soon." : reason instanceof Error ? reason.message : "Could not sign in";
       if (code === "FLOW_EXPIRED" || code === "ACCOUNT_BLOCKED") {
         setGoogleCode(false);
         setUseRecoveryCode(false);
-      }
-      setError(reason instanceof ApiError && reason.status === 429 ? "Too many attempts. Try again soon." : reason instanceof Error ? reason.message : "Could not sign in");
+        setGoogleNotice(message);
+      } else setError(message);
       setBusy(false);
     }
+  }
+
+  /** QA U7: leave the two-factor step; the pending Google sign-in ends on the server too. */
+  async function cancelGoogleCode() {
+    setBusy(true);
+    await api("/auth/google/cancel", { method: "POST", body: "{}" }).catch(() => undefined);
+    setBusy(false);
+    setGoogleCode(false);
+    setUseRecoveryCode(false);
+    setError("");
+    fields.clear();
   }
 
   const heading = googleCode ? "One more step" : registering ? "Create your account" : "Welcome back";
@@ -237,15 +255,17 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
           <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use an authentication code instead" : "Use a recovery code"}</button>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
-        </form> : <>
+          <button type="button" className="text-button" onClick={() => void cancelGoogleCode()} disabled={busy}>Cancel and use another account</button>
+        </form> : !methodsKnown ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading sign-in options" /> : <>
+          {googleNotice && <div className="auth-google-notice" role="alert"><p>{googleNotice}</p><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice("")}><X /></button></div>}
           {linkRequired && <div className="auth-link-required" role="alert">
             <strong>This address already has a Nook account</strong>
             <p>{linkRequiredText(methods.password)}</p>
             <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setLinkRequired(false)}><X /></button>
           </div>}
           {googleButton}
+          {googleButton && !methods.password && <p className="auth-google-only">{GOOGLE_ONLY_HINT}</p>}
           {googleButton && methods.password && <AuthDivider />}
-          {!methods.password && error && <p className="form-error" role="alert">{error}</p>}
           {methods.password && <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
             {registering && <label>Name<input name="displayName" autoComplete="name" maxLength={80} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "auth-name-error" : undefined} /><FieldError id="auth-name-error" message={fields.errors.displayName} /></label>}
             <label>Email<input name="email" type="email" autoComplete="email" aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "auth-email-error" : undefined} /><FieldError id="auth-email-error" message={fields.errors.email} /></label>
@@ -441,7 +461,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     <AccountAuthContext.Provider value={account}>
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
-        <div><span className="eyebrow">Account</span><h2 id="settings-title">Settings</h2></div>
+        <div className="settings-identity"><Avatar className="app-user-avatar settings-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><div><span className="eyebrow">Account · {session.user.displayName}</span><h2 id="settings-title">Settings</h2></div></div>
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
@@ -593,6 +613,8 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
+  // Wave 35 (QA U4): headers and sidebar footers show the signed-in person's picture.
+  useEffect(() => { setSelfAvatar(session?.user.avatarUrl ?? null); }, [session?.user.avatarUrl]);
   // Wave 18: /register#invite=<token>. Read once, and the fragment is stripped at once (T136); the
   // token then lives only in this state until the account is created or the visitor leaves.
   const [invite, setInvite] = useState(initialInvite);
@@ -1701,7 +1723,7 @@ export function App() {
     setChecking(false);
   };
   const leaveInvite = () => {
-    setInvite({ onRegister: false, token: null });
+    setInvite({ onRegister: false, token: null, googleError: null });
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
@@ -1738,7 +1760,7 @@ export function App() {
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;
-  if (invite.onRegister && !session) return <InviteRegister token={invite.token} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
+  if (invite.onRegister && !session) return <InviteRegister token={invite.token} googleError={invite.googleError} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
     const result = await api<SessionResponse>("/auth/register", { method: "POST", body: JSON.stringify(body) });
     setCsrfToken(result.csrfToken);
     // After registering, replace /register with Today (§1.6): Back never returns to the used link.
@@ -1833,7 +1855,7 @@ export function App() {
         </nav>
         <footer className="sidebar-footer">
           <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
-            <strong>{session.user.displayName}</strong>
+            <strong className="footer-identity"><Avatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
             <span><Settings />Settings</span>
           </button>
           {openBin && <button className="footer-bin" onClick={openBin}><Trash2 />Bin</button>}

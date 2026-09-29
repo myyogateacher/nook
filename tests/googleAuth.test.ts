@@ -602,8 +602,18 @@ describe("invites (D298)", () => {
     const started = await start("?intent=invite", { Cookie: prepared });
     const other = spareEmail();
     const callback = await fetch(fake.authorize(started.location, identityFor(other)), { redirect: "manual", headers: { Cookie: started.flowCookie! } });
-    expect(callback.headers.get("location")).toBe("/login#error=invite_mismatch");
+    // QA U8: back to the invite page with the message; the invite waits server side, still usable.
+    expect(callback.headers.get("location")).toBe("/register#google-error=invite_mismatch");
+    expect(callback.headers.get("location")).not.toContain(token);
     expect(userRow(other)).toBeNull();
+    const kept = cookieOf(callback, "nook_google_flow")!;
+    const preview = await fetch(`${origin}/api/auth/google/invite`, { headers: { Cookie: kept } });
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toMatchObject({ role: "viewer" });
+    const retry = await start("?intent=invite", { Cookie: kept });
+    const joined = await fetch(fake.authorize(retry.location, identityFor(bound)), { redirect: "manual", headers: { Cookie: retry.flowCookie! } });
+    expect(joined.headers.get("location")).toBe("/");
+    expect(userRow(bound)!.role).toBe("viewer");
     // Without a prepared invite, intent=invite goes nowhere.
     expect((await start("?intent=invite")).location).toBe("/login#error=invite_invalid");
   });
@@ -721,6 +731,58 @@ describe("review LOW fixes", () => {
     } finally {
       mail.setMailTransportForTests(null);
     }
+  });
+
+  test("U7: Use another account ends the pending two-factor step on the server", async () => {
+    const person = await createUser("Cancel two-factor");
+    verify(person);
+    await enableTotpFor(person);
+    const result = await googleSignIn(workspace(person.email));
+    expect(result.location).toBe("/login#google=code");
+    const flow = cookieOf(result.response, "nook_google_flow")!;
+    const cancel = await fetch(`${origin}/api/auth/google/cancel`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: flow }, body: "{}" });
+    expect(cancel.status).toBe(200);
+    const after = await fetch(`${origin}/api/auth/google/second-factor`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: flow }, body: JSON.stringify({ totpCode: "123456" }) });
+    expect((await after.json() as { code: string }).code).toBe("FLOW_EXPIRED");
+  });
+
+  test("U9: when Google reports no picture on a later sign-in, the stored avatar goes", async () => {
+    const email = spareEmail();
+    const identity = identityFor(email);
+    await googleSignIn(identity);
+    await avatarWorkSettled();
+    const avatarId = userRow(email)!.avatar_id as string;
+    expect(avatarId).toBeTruthy();
+    const again = await googleSignIn({ ...identity, picture: null });
+    await avatarWorkSettled();
+    expect(userRow(email)!.avatar_id).toBeNull();
+    expect(existsSync(join(dataDir, "avatars", avatarId))).toBe(false);
+    expect((await me(again.session)).body.user.avatarUrl).toBeNull();
+  });
+
+  test("U10: a password attempt on a Google-only account keeps the generic answer", async () => {
+    const email = spareEmail();
+    await googleSignIn(identityFor(email));
+    const response = await passwordLogin(email, "some long password here");
+    expect(response.status).toBe(401);
+    expect((await response.json() as { error: string }).error).toBe("Invalid email or password");
+  });
+
+  test("U4: card comments in web payloads carry the author's picture", async () => {
+    const email = spareEmail();
+    const signedIn = await googleSignIn(identityFor(email));
+    await avatarWorkSettled();
+    const cookie = signedIn.session!;
+    const csrf = (await me(cookie)).body.csrfToken;
+    const send = (path: string, body: unknown) => fetch(`${origin}/api/tasks${path}`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: cookie, "X-CSRF-Token": csrf }, body: JSON.stringify(body) }).then((response) => response.json() as Promise<Record<string, any>>);
+    const board = await send("/boards", { name: "Avatars" });
+    const boardId = (board.board ?? board).id as string;
+    const detail = await (await fetch(`${origin}/api/tasks/boards/${boardId}`, { headers: { Cookie: cookie } })).json() as { columns: Array<{ id: string }> };
+    const card = await send(`/boards/${boardId}/cards`, { title: "Pictured", columnId: detail.columns[0]!.id });
+    const cardId = (card.card ?? card).id as string;
+    await send(`/cards/${cardId}/comments`, { body: "Hello" });
+    const loaded = await (await fetch(`${origin}/api/tasks/cards/${cardId}`, { headers: { Cookie: cookie } })).json() as { comments: Array<{ author_avatar_url: string | null }> };
+    expect(loaded.comments[0]!.author_avatar_url).toBe((await me(cookie)).body.user.avatarUrl);
   });
 
   test("L9: a callback with a junk state leaves the in-progress flow alone", async () => {

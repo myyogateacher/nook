@@ -15,7 +15,7 @@ export type Draft = { audience: Audience; audienceLevel: Level | null; people: D
 export const draftFrom = (access: ItemAccess): Draft => ({
   audience: access.audience,
   audienceLevel: access.audienceLevel ?? null,
-  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}) })),
+  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds, avatarUrl }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}), ...(avatarUrl ? { avatarUrl } : {}) })),
   groups: access.groups.map(({ id, name, memberCount, guestCount, selfAddedCount, level }) => ({ id, name, memberCount, guestCount, selfAddedCount, level }))
 });
 

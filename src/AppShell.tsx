@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { Avatar } from "./ui/Avatar";
+import { useSelfAvatar } from "./ui/selfAvatar";
 import { Inbox, LogOut, Settings, Trash2, Users } from "lucide-react";
 import "./appShell.css";
 import { listBin, onBinChanged } from "./bin/binApi";
@@ -102,9 +104,11 @@ export function AccountActions({ displayName, onSettings, onSignOut, onBin, binC
   const inbox = useContext(InboxNavContext);
   const inboxEnabled = useModuleEnabled("inbox");
   const binLabel = binCount > 0 ? `Bin, ${binCount} item${binCount === 1 ? "" : "s"}` : "Bin";
+  // Wave 35 (QA U4): the signed-in person's own picture beside their name (the letter without one).
+  const selfAvatar = useSelfAvatar();
   // The bell sits beside the group (it renders only inside the signed-in shell).
   return <><div className="app-account" role="group" aria-label="Account">
-    <span className="app-home-user">{displayName}</span>
+    <span className="app-home-user"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span className="app-home-user-name">{displayName}</span></span>
     <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
     {onBin && binEnabled && <button className="app-account-button app-account-bin" onClick={onBin} aria-label={binLabel} title="Bin"><Trash2 /><span className="app-account-label">Bin</span>{binCount > 0 && <span className="app-account-badge" aria-hidden="true">{binCount > 99 ? "99+" : binCount}</span>}</button>}
     {team && teamEnabled && canSeeTeam(team.role) && !team.onTeam && <TeamButton nav={team} />}

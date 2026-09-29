@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Avatar, avatarInitial, AvatarView, isAvatarPath } from "../src/ui/Avatar";
-import { currentReturnPath, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, takeGoogleSettingsResult, takeGoogleSignInResult } from "../src/auth/googleSignIn";
+import { currentReturnPath, GOOGLE_ONLY_HINT, GOOGLE_ONLY_PASSWORD_TEXT, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, takeGoogleSettingsResult, takeGoogleSignInResult } from "../src/auth/googleSignIn";
 import { resetLines } from "../src/team/TeamGoogle";
+import { draftFrom } from "../src/access/accessModel";
+import { takeInviteFromLocation } from "../src/auth/inviteLink";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, type AccountAuth } from "../src/auth/accountAuth";
 import { googleSettingsNotice, PasswordStateCard } from "../src/auth/GoogleAccountCard";
 
@@ -175,3 +177,60 @@ describe("Team → Google sign-in and the Settings link dialog (review HIGH-1, L
     expect(teamApp).toContain("<TeamGoogleCard");
   });
 });
+
+describe("end-user QA fixes (U1–U11)", () => {
+  const app = () => readFileSync(join(src, "App.tsx"), "utf8");
+
+  test("U1: the forgot and reset pages say passwords are off in google mode", () => {
+    const pages = readFileSync(join(src, "auth", "passwordPages.tsx"), "utf8");
+    expect(pages).toContain("setGoogleOnly(info.authMethods?.password === false)");
+    expect(pages).toContain('code === "PASSWORD_SIGNIN_DISABLED"');
+    expect(GOOGLE_ONLY_PASSWORD_TEXT).toContain("Google only");
+  });
+
+  test("U2: sign-in, register, and invite render a placeholder until the methods are known", () => {
+    expect(app()).toContain('!methodsKnown ? <div className="auth-methods-placeholder"');
+    const invite = readFileSync(join(src, "auth", "InviteRegister.tsx"), "utf8");
+    expect(invite).toContain('{!methods && <div className="auth-methods-placeholder"');
+    expect(readFileSync(join(src, "auth", "auth.css"), "utf8")).toMatch(/\.auth-methods-placeholder \{ min-height: \d+px; \}/);
+  });
+
+  test("U3: Access sheet rows keep the picture from the server", () => {
+    const draft = draftFrom({ etag: "x", kind: "board", title: "B", owner: { id: "o", displayName: "O" }, audience: "selected", people: [{ id: "p", displayName: "P", teamRole: "member", kind: "person", level: "view", via: "direct", blocked: false, avatarUrl: "/api/users/3f1c2b1e-1111-4a2b-9c3d-222233334444/avatar?v=8e7d6c5b-5555-4666-8777-888899990000" }], groups: [], levels: ["view"], yourLevel: "owner", shareWithGuests: true, inheritable: false } as never);
+    expect(draft.people[0]!.avatarUrl).toContain("/avatar?v=");
+  });
+
+  test("U4: the header, sidebar footers, Settings, and comments draw the shared Avatar", () => {
+    expect(readFileSync(join(src, "AppShell.tsx"), "utf8")).toContain('<Avatar className="app-user-avatar"');
+    expect(app()).toContain('className="app-user-avatar settings-avatar"');
+    expect(app()).toContain('<strong className="footer-identity"><Avatar');
+    expect(readFileSync(join(src, "files", "FilesApp.tsx"), "utf8")).toContain('<strong className="footer-identity"><Avatar');
+    expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
+    expect(readFileSync(join(src, "appShell.css"), "utf8")).toMatch(/@media \(max-width: 760px\) \{\s*\.app-home-user \{ display: inline-flex;/);
+  });
+
+  test("U5–U7: the Google-only hint, Google messages beside the button, and a way out of the code step", () => {
+    expect(GOOGLE_ONLY_HINT).toBe("This Nook signs people in with Google. Use the Google account with your Nook email address. If that does not work, ask your admin.");
+    expect(app()).toContain('<p className="auth-google-only">{GOOGLE_ONLY_HINT}</p>');
+    expect(app()).toContain('<div className="auth-google-notice" role="alert">');
+    expect(app()).toContain("Cancel and use another account");
+    expect(app()).toContain('api("/auth/google/cancel"');
+  });
+
+  test("U8: an invite page reached back from Google reads the invite from the server, not a URL", () => {
+    const invite = readFileSync(join(src, "auth", "InviteRegister.tsx"), "utf8");
+    expect(invite).toContain('api<InvitePreview>("/auth/google/invite")');
+    const history = { state: null, replaceState: () => undefined };
+    expect(takeInviteFromLocation({ pathname: "/register", hash: "#google-error=invite_mismatch" }, history)).toEqual({ onRegister: true, token: null, googleError: "invite_mismatch" });
+  });
+
+  test("U11: Google confirmation happens before New key and Rotate open", () => {
+    const keys = readFileSync(join(src, "keys", "KeysSettings.tsx"), "utf8");
+    expect(keys).toContain("|| needsGoogle}><Plus");
+    expect(keys).toContain("onRotate={needsGoogle ? undefined");
+    expect(keys).toContain('returnTo="/settings/mcp" startable={false}');
+    const account: AccountAuth = { methods: { password: true, google: true }, hasPassword: false, google: { email: "g@nook.test" }, reauth: "google", reauthUntil: null, passwordReset: true };
+    expect(renderToStaticMarkup(<GoogleReauthNotice account={account} returnTo="/" startable={false} />)).not.toContain("href=");
+  });
+});
+

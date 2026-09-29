@@ -6,7 +6,7 @@ import { Select } from "../ui/Select";
 import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
-import { asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
+import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
   expiryOptions, GRACE_OPTIONS, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
@@ -36,6 +36,10 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const endpoint = `${window.location.origin}/mcp`;
   const configText = JSON.stringify({ mcpServers: { nook: { type: "streamable-http", url: endpoint, headers: { Authorization: `Bearer ${newToken?.token ?? "<YOUR_API_KEY>"}` } } } }, null, 2);
   const guest = role === "guest";
+  // QA U11: an account that confirms with Google does it BEFORE opening New key or Rotate, so the
+  // round trip never loses what was typed into the dialog.
+  const account = useAccountAuth();
+  const needsGoogle = Boolean(account && !asksForPassword(account) && !googleConfirmed(account));
 
   const load = useCallback(() => {
     listKeys().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
@@ -114,14 +118,15 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
         <div><h4 ref={headingRef} tabIndex={-1}>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
-        {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken)}><Plus aria-hidden="true" />New key</button>}
+        {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken) || needsGoogle}><Plus aria-hidden="true" />New key</button>}
       </div>
+      {!guest && needsGoogle && account && <GoogleReauthNotice account={account} returnTo="/settings/mcp" />}
       {guest && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
       {role === "viewer" && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
       {data && !data.policy.mcpAllowed && <p className="mcp-role-note" role="note">Team policy does not allow your team role to use MCP keys.</p>}
       {atLimit && <p className="mcp-role-note" role="note">You have {data!.liveCount} live keys, the most team policy allows. Revoke one to create another.</p>}
       <ul ref={liveListRef} className="keys-list" aria-label="API keys">
-        {live.map((key) => <KeyRow key={key.id} apiKey={key} onRotate={() => openDialog({ kind: "rotate", key })} onEdit={() => openDialog({ kind: "edit", key })} onRevoke={() => openDialog({ kind: "revoke", key })} onReview={() => openDialog({ kind: "review", key })} />)}
+        {live.map((key) => <KeyRow key={key.id} apiKey={key} onRotate={needsGoogle ? undefined : () => openDialog({ kind: "rotate", key })} onEdit={() => openDialog({ kind: "edit", key })} onRevoke={() => openDialog({ kind: "revoke", key })} onReview={() => openDialog({ kind: "review", key })} />)}
       </ul>
       {data && !live.length && <p className="keys-empty">No active API keys.</p>}
       {revoked.length > 0 && <details className="keys-revoked"><summary>Revoked in the last 7 days ({revoked.length})</summary><ul className="keys-list">{revoked.map((key) => <KeyRow key={key.id} apiKey={key} />)}</ul></details>}
@@ -194,7 +199,7 @@ function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disable
   return <div className="keys-reauth">
     {asksForPassword(account)
       ? <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
-      : <GoogleReauthNotice account={account!} returnTo="/settings/mcp" />}
+      : <GoogleReauthNotice account={account!} returnTo="/settings/mcp" startable={false} />}
     {totpEnabled && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
   </div>;
 }

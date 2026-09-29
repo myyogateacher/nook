@@ -107,6 +107,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .footer-settings { min-width: 0; display: grid; gap: 5px; padding: 10px; background: #131315; color: #e3e3e5; text-align: left; }
 .footer-settings:hover { background: #1b1b1e; }
 .footer-settings strong { overflow-wrap: anywhere; font-size: .88rem; line-height: 1.25; }
+/* Wave 35 (QA U4): the signed-in person's picture in the sidebar footer and the Settings header. */
+.footer-settings .footer-identity { display: flex; align-items: center; gap: 8px; }
+.settings-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.settings-identity .settings-avatar { width: 40px; height: 40px; font-size: 1rem; }
 .footer-settings span { display: flex; align-items: center; gap: 6px; color: #85858c; font-size: .74rem; }
 .footer-settings span svg { width: 14px; height: 14px; flex: none; }
 .footer-signout, .footer-bin { display: flex; align-items: center; gap: 9px; padding: 9px 10px; color: #77777f; text-align: left; }

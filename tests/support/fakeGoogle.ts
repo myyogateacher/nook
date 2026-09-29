@@ -8,6 +8,54 @@
  * endpoint, so the whole flow can be clicked through in a browser.
  */
 import { createHash } from "node:crypto";
+import { deflateSync } from "node:zlib";
+
+/** QA pictures: real-size (256 × 256) solid PNGs, so picture changes and crisp rendering can be checked. */
+export const FAKE_PICTURES: Record<string, [number, number, number]> = { amber: [245, 180, 60], teal: [40, 170, 160], violet: [140, 90, 220] };
+
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes: Uint8Array) {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function chunk(type: string, data: Uint8Array) {
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  out.set(new TextEncoder().encode(type), 4);
+  out.set(data, 8);
+  view.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+/** A solid-colour RGB PNG of `size` × `size` with a lighter disc, built without dependencies. */
+export function solidPng(size: number, [r, g, b]: [number, number, number]) {
+  const header = new Uint8Array(13);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, size);
+  view.setUint32(4, size);
+  header.set([8, 2, 0, 0, 0], 8);
+  const raw = new Uint8Array(size * (size * 3 + 1));
+  for (let y = 0; y < size; y += 1) {
+    raw[y * (size * 3 + 1)] = 0;
+    for (let x = 0; x < size; x += 1) {
+      const inside = (x - size / 2) ** 2 + (y - size * 0.42) ** 2 < (size * 0.2) ** 2;
+      const offset = y * (size * 3 + 1) + 1 + x * 3;
+      raw[offset] = inside ? 255 : r;
+      raw[offset + 1] = inside ? 255 : g;
+      raw[offset + 2] = inside ? 255 : b;
+    }
+  }
+  const parts = [Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", new Uint8Array())];
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
 
 export type FakeIdentity = {
   sub: string;
@@ -82,14 +130,20 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
           const form = await request.formData();
           const auth = new URL(String(form.get("auth")));
           if (form.get("deny")) return Response.redirect(`${auth.searchParams.get("redirect_uri")}?error=access_denied&state=${encodeURIComponent(auth.searchParams.get("state") ?? "")}`, 302);
+          const picture = String(form.get("picture") ?? "none");
+          const hd = String(form.get("hd") ?? "").trim().toLowerCase();
           const identity: FakeIdentity = {
             sub: String(form.get("sub") || `sub-${createHash("sha256").update(String(form.get("email"))).digest("hex").slice(0, 16)}`),
             email: String(form.get("email")),
             email_verified: form.get("verified") === "on",
             name: String(form.get("name") || ""),
-            picture: form.get("picture") ? `${base}/avatar/${encodeURIComponent(String(form.get("email")))}.png` : null
+            picture: picture in FAKE_PICTURES ? `${base}/avatar/color-${picture}.png` : null,
+            ...(hd ? { hd } : {})
           };
-          return Response.redirect(authorize(auth.toString(), identity), 302);
+          // "Signed in to Google": now (a fresh login) or an hour ago (a reused session, not a re-auth).
+          const authAge = String(form.get("authAge") ?? "request");
+          const tweaks: TokenTweaks = authAge === "old" ? { claims: { auth_time: Math.floor(Date.now() / 1000) - 3600 } } : authAge === "now" ? { claims: { auth_time: Math.floor(Date.now() / 1000) } } : {};
+          return Response.redirect(authorize(auth.toString(), identity, tweaks), 302);
         }
         const self = request.url.replace(/"/g, "&quot;");
         const html = `<!doctype html><meta name="viewport" content="width=device-width"><title>Fake Google</title>
@@ -98,9 +152,16 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
 <form method="post"><input type="hidden" name="auth" value="${self}">
 <label>Email <input type="email" name="email" required value="${(params.get("login_hint") ?? "").replace(/[<>&"]/g, "")}"></label>
 <label>Name <input type="text" name="name" value="QA Person"></label>
-<label>Subject (sub, optional) <input type="text" name="sub"></label>
+<label>Subject (sub, optional; the same sub is the same Google account) <input type="text" name="sub"></label>
+<label>Workspace domain (hd claim, empty for none) <input type="text" name="hd"></label>
 <label><input type="checkbox" name="verified" checked> Email verified</label>
-<label><input type="checkbox" name="picture" checked> Has a profile picture</label>
+<fieldset><legend>Profile picture</legend>
+${Object.keys(FAKE_PICTURES).map((name, index) => `<label><input type="radio" name="picture" value="${name}"${index === 0 ? " checked" : ""}> ${name} (256 × 256)</label>`).join("")}
+<label><input type="radio" name="picture" value="none"> No picture</label></fieldset>
+<fieldset><legend>Signed in to Google (auth_time)</legend>
+<label><input type="radio" name="authAge" value="request" checked> As requested (fresh when Nook asks for a new login)</label>
+<label><input type="radio" name="authAge" value="now"> Just now</label>
+<label><input type="radio" name="authAge" value="old"> An hour ago</label></fieldset>
 <button type="submit">Continue</button><button type="submit" name="deny" value="1" formnovalidate>Cancel</button></form>`;
         return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
       }
@@ -137,6 +198,8 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
       }
       if (url.pathname.startsWith("/avatar/")) {
         avatarRequests += 1;
+        const colour = /^\/avatar\/color-([a-z]+)\.png$/.exec(url.pathname)?.[1];
+        if (colour && FAKE_PICTURES[colour]) return new Response(solidPng(256, FAKE_PICTURES[colour]!), { headers: { "Content-Type": "image/png" } });
         const configured = avatars.get(url.pathname);
         if (configured) return new Response(configured.body ?? null, { status: configured.status ?? 200, headers: configured.headers ?? { "Content-Type": "image/png" } });
         return new Response(PNG_BYTES, { headers: { "Content-Type": "image/png" } });

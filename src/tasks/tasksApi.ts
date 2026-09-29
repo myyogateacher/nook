@@ -194,6 +194,8 @@ export type CardComment = {
   card_id: string;
   author_id: string | null;
   author_name: string | null;
+  /** Wave 35 (QA U4): the author's picture in web payloads; absent from MCP and older servers. */
+  author_avatar_url?: string | null;
   is_author: 0 | 1;
   body: string;
   created_at: string;

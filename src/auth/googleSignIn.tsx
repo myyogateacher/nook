@@ -115,6 +115,12 @@ export function GoogleButton({ label = "Continue with Google", href, onClick, di
   return <button type="button" className="google-button" onClick={onClick} disabled={disabled}><GoogleMark /><span>{label}</span></button>;
 }
 
+/** QA U5: under the button when this Nook signs people in with Google only. */
+export const GOOGLE_ONLY_HINT = "This Nook signs people in with Google. Use the Google account with your Nook email address. If that does not work, ask your admin.";
+
+/** QA U1: the password pages and forms when passwords are off. */
+export const GOOGLE_ONLY_PASSWORD_TEXT = "This Nook signs people in with Google only, so there are no passwords to set or reset here.";
+
 /** The "or" rule between Google and the password form. */
 export function AuthDivider() {
   return <div className="auth-divider" role="separator"><span>or</span></div>;

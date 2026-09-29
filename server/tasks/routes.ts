@@ -12,6 +12,13 @@ import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NA
 import { registerTaskQueryRoutes } from "./queryRoutes";
 import { cardHierarchy } from "./hierarchy";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
+import { avatarUrlsFor } from "../avatars";
+
+/** Web payloads only (MCP output unchanged): each comment author's picture, beside the name (QA U4). */
+function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]) {
+  const urls = avatarUrlsFor(comments.flatMap((comment) => comment.author_id ? [comment.author_id] : []));
+  return comments.map((comment) => ({ ...comment, author_avatar_url: comment.author_id ? urls.get(comment.author_id) ?? null : null }));
+}
 import {
   createBoard,
   createCard,
@@ -304,7 +311,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
       const { card } = getCard(userId, cardId);
       const page = listComments(userId, cardId);
       // Parent, ancestors, and children are on the card's own board (D133, T112).
-      return { card: { ...card, ...cardHierarchy(cardId) }, comments: page.comments, hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
+      return { card: { ...card, ...cardHierarchy(cardId) }, comments: withAuthorAvatars(page.comments), hasMoreComments: page.hasMore, attachments: listAttachments(cardId), relations: listRelations(userId, cardId) };
     });
   });
 
@@ -328,7 +335,8 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
     const beforeId = before === undefined ? undefined : uuid.parse(before);
     return respond(c, () => {
       getCard(userId, cardId);
-      return listComments(userId, cardId, { before: beforeId, limit });
+      const page = listComments(userId, cardId, { before: beforeId, limit });
+      return { ...page, comments: withAuthorAvatars(page.comments) };
     });
   });
 

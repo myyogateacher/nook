@@ -16,7 +16,7 @@ import { isUsablePasswordHash, UNUSABLE_PASSWORD } from "../passwords";
 import { consumeRecoveryCode, consumeTotp, googleReauthUntil, reauthMethod, verifyReauth } from "../reauth";
 import { can } from "../team/roles";
 import { allowGoogleLink, consumeGoogleLinkAllowance, googleAdminState, googleResetPreview, GoogleLinkError, unlinkGoogleForAccount } from "./linkAdmin";
-import { hashInviteToken, InviteError, previewInvite } from "../team/invites";
+import { hashInviteToken, InviteError, previewInvite, previewInviteHash } from "../team/invites";
 import { invitePreviewSchema, parseJson, recoveryCode, totpCode, uuid } from "../validation";
 import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, liveFlowsForClient, LIVE_FLOWS_PER_CLIENT, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
 import { authorizationUrl, domainAllowed, exchangeCode, freshAuthTime, googleAuthoritative, OidcError, sha256Hex, verifyIdToken, type GoogleClaims } from "./oidc";
@@ -55,8 +55,14 @@ const safeEqual = (left: string, right: string) => left.length === right.length 
 const toLogin = (c: Context, fragment: string) => c.redirect(`/login#${fragment}`, 303);
 
 /** Where a flow's failure goes: back to Settings for link and reauth, else the sign-in page. */
-function failTo(c: Context, flow: Pick<FlowRow, "intent" | "return_to"> | null, code: string) {
+function failTo(c: Context, flow: Pick<FlowRow, "intent" | "return_to" | "invite_hash"> | null, code: string) {
   if (flow && (flow.intent === "link" || flow.intent === "reauth")) return c.redirect(`${flow.return_to}#google-error=${code}`, 303);
+  // QA U8: an invite that is still good goes back to the invite page with the message; its hash is
+  // prepared again server side (the token never enters a URL), so another Google account can be tried.
+  if (flow?.intent === "invite" && flow.invite_hash && !["invite_invalid", "invite_expired", "expired", "rate_limited"].includes(code)) {
+    createFlow(c, { intent: "invite", stage: "prepared", returnTo: "/", inviteHash: flow.invite_hash, clientHash: sha256Hex(`google-client:${clientAddress(c)}`) });
+    return c.redirect(`/register#google-error=${code}`, 303);
+  }
   return toLogin(c, `error=${code}`);
 }
 
@@ -74,7 +80,16 @@ export async function avatarWorkSettled() {
 
 /** Saves the picture URL on the identity and downloads it when it changed or no file is stored. */
 function refreshPicture(userId: string, identityId: string, previousUrl: string | null, picture: string | null) {
-  if (!picture) return;
+  if (!picture) {
+    // QA U9: Google reports no picture, so the person removed it: back to the letter.
+    if (previousUrl) {
+      db.query("UPDATE google_identities SET picture_url = NULL WHERE id = ?").run(identityId);
+      const work = clearAvatar(userId).catch(() => undefined);
+      pendingAvatars.add(work);
+      void work.finally(() => pendingAvatars.delete(work));
+    }
+    return;
+  }
   db.query("UPDATE google_identities SET picture_url = ? WHERE id = ?").run(picture, identityId);
   const avatarId = (db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null)?.avatar_id ?? null;
   if (picture === previousUrl && avatarId) return;
@@ -342,6 +357,32 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       csrfToken,
       totp: totpState(user)
     });
+  });
+
+  // QA U8: the invite page after a Google retry: the preview of the invite kept in this browser's flow.
+  app.get("/api/auth/google/invite", (c) => {
+    const off = googleMethodRefusal(c);
+    if (off) return off;
+    const flow = readFlow(c);
+    if (!flow || flow.stage !== "prepared" || flow.intent !== "invite" || !flow.invite_hash) return c.json({ error: "This invite link is not valid. Ask your admin for a new link.", code: "INVITE_INVALID" }, 404);
+    try {
+      return c.json(previewInviteHash(flow.invite_hash));
+    } catch (error) {
+      if (error instanceof InviteError) return c.json({ error: error.message, code: error.code }, error.status);
+      throw error;
+    }
+  });
+
+  // QA U7: "Use another account" on the two-factor step ends the pending sign-in.
+  app.post("/api/auth/google/cancel", (c) => {
+    const off = googleMethodRefusal(c);
+    if (off) return off;
+    const refusal = publicPostRefusal(c);
+    if (refusal) return refusal;
+    const flow = readFlow(c);
+    if (flow) claimFlow(flow.id);
+    clearFlowCookie(c);
+    return c.json({ ok: true });
   });
 
   app.post("/api/auth/google/invite", async (c) => {

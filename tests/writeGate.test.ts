@@ -52,7 +52,7 @@ const PUBLIC_WRITES = new Set(["POST /api/auth/login", "POST /api/auth/register"
   // Wave 30: forgot / reset password work signed out.
   "POST /api/auth/password-reset/request", "POST /api/auth/password-reset/check", "POST /api/auth/password-reset/complete",
   // Wave 35: the Google second-factor step and the invite hand-off work signed out.
-  "POST /api/auth/google/second-factor", "POST /api/auth/google/invite"]);
+  "POST /api/auth/google/second-factor", "POST /api/auth/google/invite", "POST /api/auth/google/cancel"]);
 
 const concrete = (path: string) => path.replace(/:type/g, "note").replace(/:[A-Za-z]+/g, () => crypto.randomUUID());
 

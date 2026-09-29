@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Link2Off, Lock, MailX, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
 import { passwordResetOffered, type RegistrationInfo } from "./registrationPrompt";
+import { GOOGLE_ONLY_PASSWORD_TEXT } from "./googleSignIn";
 import { collectProblems, confirmPasswordProblem, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import "./auth.css";
 
@@ -115,13 +116,19 @@ export function secondFactorBody(form: FormData, needsCode: boolean, recovery: b
 
 export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   const [available, setAvailable] = useState<boolean | null>(null);
+  // QA U1: with AUTH_METHODS=google there is no password to reset.
+  const [googleOnly, setGoogleOnly] = useState(false);
   const [state, setState] = useState<"form" | "working" | "sent">("form");
   const [error, setError] = useState("");
   const fields = useFieldErrors();
   useEffect(() => pageTitle("Forgot password · Nook"), []);
   useEffect(() => {
     let live = true;
-    api<{ passwordReset?: boolean }>("/about").then((info) => { if (live) setAvailable(info.passwordReset === true); }, () => { if (live) setAvailable(true); });
+    api<{ passwordReset?: boolean; authMethods?: { password: boolean } }>("/about").then((info) => {
+      if (!live) return;
+      setGoogleOnly(info.authMethods?.password === false);
+      setAvailable(info.passwordReset === true);
+    }, () => { if (live) setAvailable(true); });
     return () => { live = false; };
   }, []);
 
@@ -141,7 +148,11 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   }
 
   return <Card>
-    {available === false ? <div className="auth-heading" role="status">
+    {googleOnly ? <div className="auth-heading" role="status">
+      <span className="eyebrow">Password</span>
+      <h1><KeyRound aria-hidden="true" className="invite-register-icon" />Sign in with Google</h1>
+      <p>{GOOGLE_ONLY_PASSWORD_TEXT}</p>
+    </div> : available === false ? <div className="auth-heading" role="status">
       <span className="eyebrow">Password</span>
       <h1><MailX aria-hidden="true" className="invite-register-icon" />Email is off</h1>
       <p>{FORGOT_OFF_TEXT}</p>
@@ -177,6 +188,7 @@ const DEAD_COPY = {
 
 function deadFrom(reason: unknown): ResetState {
   const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+  if (code === "PASSWORD_SIGNIN_DISABLED") return { kind: "dead", reason: "error", message: GOOGLE_ONLY_PASSWORD_TEXT };
   if (code === "TOKEN_EXPIRED") return { kind: "dead", reason: "expired" };
   if (code === "TOKEN_INVALID") return { kind: "dead", reason: "invalid" };
   return { kind: "dead", reason: "error", message: reason instanceof Error ? reason.message : "Something went wrong" };

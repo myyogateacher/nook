@@ -30,6 +30,14 @@
 .auth-card > .form-error { margin-top: 12px; }
 .invite-google-hint { margin: 8px 0 0; color: #85858c; font-size: .8rem; text-align: center; }
 
+/* QA U2: the sign-in options' space while /api/about answers (no flash of the wrong form). */
+.auth-methods-placeholder { min-height: 300px; }
+/* QA U5, U6: the Google-only hint and Google flow messages beside the Google button. */
+.auth-google-only { margin: 10px 0 0; color: #a8a8ae; font-size: .84rem; line-height: 1.5; text-align: center; }
+.auth-google-notice { position: relative; margin: 0 0 14px; padding: 10px 48px 10px 14px; border: 1px solid #5b2a31; border-radius: 12px; background: #2a1518; color: #fda4af; font-size: .86rem; line-height: 1.5; }
+.auth-google-notice p { margin: 0; }
+.auth-google-notice .icon-button { position: absolute; top: 2px; right: 2px; width: 40px; height: 40px; }
+
 /* Review HIGH-1: "This address already has a Nook account" on the sign-in page. */
 .auth-link-required { position: relative; display: grid; gap: 6px; margin: 0 0 16px; padding: 12px 48px 12px 14px; border: 1px solid #624c21; border-radius: 12px; background: #282116; color: #f3ce79; font-size: .86rem; line-height: 1.5; }
 .auth-link-required strong { color: #f7dc9b; }

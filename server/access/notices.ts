@@ -64,12 +64,37 @@ function line(row: NoticeRow, recipientId: string) {
     case "share_removed": return `${actor} removed ${target}'s access to ${itemText}`;
     case "share_lowered": return `${actor} lowered ${target}'s access to ${itemText}${row.level && row.level in LEVEL_WORDS ? ` to ${LEVEL_WORDS[row.level as Level]}` : ""}`;
     case "access_reset": return `${actor} reset ${target}'s access, including ${row.count ?? 0} of your items`;
-    case "access_reset_self": return `${actor} reset your access: direct shares, groups, API keys, and calendar feeds`;
+    case "access_reset_self": {
+      const parts = resetParts(row.count ?? 0);
+      return parts.length ? `${actor} reset your access: ${listWords(parts)}` : `${actor} reset your access`;
+    }
     case "group_added": return `${actor} added you to the group ${group}`;
     case "group_removed": return `${actor} removed you from the group ${group}`;
     case "key_revoked": return `${actor} revoked your API key${row.key_name ? ` “${row.key_name}”` : ""}`;
     default: return "Your access changed";
   }
+}
+
+/** What a Reset removed, as bits in the notice's `count` (the notice keeps ids and numbers only). */
+const RESET_PARTS = [
+  { bit: 1, key: "directShares", words: "direct shares" },
+  { bit: 2, key: "groups", words: "groups" },
+  { bit: 4, key: "keys", words: "API keys" },
+  { bit: 8, key: "feeds", words: "calendar feeds" },
+  { bit: 16, key: "routines", words: "routines (paused)" }
+] as const;
+
+export function resetMask(removed: Record<(typeof RESET_PARTS)[number]["key"], number>) {
+  return RESET_PARTS.reduce((mask, part) => removed[part.key] > 0 ? mask | part.bit : mask, 0);
+}
+
+export const resetParts = (mask: number) => RESET_PARTS.filter((part) => (mask & part.bit) !== 0).map((part) => part.words);
+
+/** "a, b, and c" */
+export function listWords(words: readonly string[]) {
+  if (words.length <= 1) return words.join("");
+  if (words.length === 2) return `${words[0]} and ${words[1]}`;
+  return `${words.slice(0, -1).join(", ")}, and ${words.at(-1)}`;
 }
 
 export type AccessNoticeItem = { id: string; title: string; href: string; late: false; read: boolean; createdAt: string; occurrenceStart: null };

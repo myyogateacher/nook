@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, spareEmail, type Session } from "./support/harness";
+import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { resetInviteRateLimits } = await import("../server/team/invites");
@@ -19,6 +20,9 @@ beforeEach(() => {
   resetRegistrationRateLimit();
 });
 afterEach(() => { db.query("DELETE FROM team_settings WHERE key = 'share_with_guests'").run(); });
+
+// Many accounts: block them when the file ends so other files' Team lists keep their own (TEAM_LIST_LIMIT).
+retireUsersAfterFile();
 
 type Role = "admin" | "member" | "viewer" | "guest";
 async function user(label: string, role: Role = "member") {
@@ -63,13 +67,20 @@ describe("the guest rule reaches templates (T213, D286)", () => {
     const template = (await send(admin, "POST", "/team/templates", { name: `Guests ${tag()}`, role: "guest", groupIds: [granted, plain] })).body.template;
     const invite = (await send(admin, "POST", "/team/invites", { role: "guest", templateId: template.id })).body;
     policyOff();
+    // Q2: the template and the invite row say which group a guest skips, and why, before anyone registers.
+    const listedTemplate = (await send(admin, "GET", "/team/templates")).body.templates.find((row: { id: string }) => row.id === template.id);
+    expect(listedTemplate.groups.find((row: { id: string }) => row.id === granted).guestRefused).toBe(true);
+    expect(listedTemplate.groups.find((row: { id: string }) => row.id === plain).guestRefused).toBe(false);
+    const grantedName = listedTemplate.groups.find((row: { id: string }) => row.id === granted).name as string;
+    const listedInvite = (await send(admin, "GET", "/team/invites")).body.invites.find((row: { id: string }) => row.id === invite.invite.id);
+    expect(listedInvite.template.guestSkipped).toEqual([grantedName]);
     resetRegistrationRateLimit();
     const registered = await send(undefined, "POST", "/auth/register", { displayName: "Guest invitee", password: "correct horse battery staple", email: spareEmail(), inviteToken: invite.token });
     expect(registered.status).toBe(201);
     const userId = registered.body.user.id as string;
     expect(groupsOf(userId)).toEqual([plain]);
     const applied = db.query("SELECT meta_json FROM access_events WHERE action = 'template.applied' AND target_user_id = ?").get(userId) as { meta_json: string };
-    expect(JSON.parse(applied.meta_json)).toEqual({ templateId: template.id, added: 1, skipped: 1, guestRefused: 1 });
+    expect(JSON.parse(applied.meta_json)).toEqual({ templateId: template.id, templateName: template.name, added: 1, skipped: 1, guestRefused: 1 });
   });
 
   test("applying a template to a guest is refused as a whole with the policy off, and allowed with it on", async () => {
@@ -134,7 +145,7 @@ describe("kind headlines count items (Wave 33 review)", () => {
     await putAccess(owner, `/tasks/boards/${both}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [{ id: group, level: "view" }] });
     await putAccess(owner, `/tasks/boards/${direct}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }] });
     const summary = await send(admin, "GET", `/team/members/${target.userId}/access`);
-    expect(summary.body.kinds.find((row: { kind: string }) => row.kind === "board")).toMatchObject({ items: 2, direct: 2, group: 1 });
+    expect(summary.body.kinds.find((row: { kind: string }) => row.kind === "board")).toMatchObject({ items: 2, direct: 2, groupItems: 1, both: 1, group: 1 });
     expect((await send(target, "GET", "/me/access")).body.kinds.find((row: { kind: string }) => row.kind === "board").items).toBe(2);
   });
 });

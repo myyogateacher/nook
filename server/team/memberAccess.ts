@@ -5,7 +5,7 @@ import { ITEM_TABLES, itemLevel, presentItem, readabilityChecker } from "../acce
 import { recordAccessEvent } from "../access/events";
 import { itemSortKey, openCursor, openItemHandle, sealCursor, sealItemHandle, type PageCursor } from "../access/handles";
 import { ACCESS_KINDS, KIND_LEVELS, LEVEL_RANK, isLevel, type AccessKind, type ItemLevel, type Level } from "../access/levels";
-import { notifyAccess } from "../access/notices";
+import { notifyAccess, resetMask } from "../access/notices";
 import { SHARE_TABLES } from "../access/shares";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { AUDIENCE_ALL_USERS, type Role } from "./roles";
@@ -81,6 +81,27 @@ const itemCount = (kind: AccessKind, userId: string) => {
         WHERE gm.user_id = $userId AND gg.resource_kind = $kind AND gg.env_id IS NULL)`).get({ userId, kind }) as { count: number }).count;
 };
 
+/** Distinct items `userId` reaches on `kind` through at least one group. */
+const groupItemCount = (kind: AccessKind, userId: string) =>
+  (db.query(`SELECT COUNT(DISTINCT gg.resource_id) AS count FROM group_members gm JOIN group_grants gg ON gg.group_id = gm.group_id
+    WHERE gm.user_id = ? AND gg.resource_kind = ? AND gg.env_id IS NULL`).get(userId, kind) as { count: number }).count;
+
+/**
+ * Per kind: `items` distinct items (the headline); `direct` items shared directly (one row per item
+ * in every share table); `groupItems` distinct items reached through groups; `both` items reached
+ * both ways (so direct + groupItems - both = items); `group` grant rows through groups; `audience`
+ * items shared with everyone signed in.
+ */
+function kindCounts(kind: AccessKind, userId: string, role: Role) {
+  const items = itemCount(kind, userId);
+  const direct = directCount(kind, userId);
+  const groupItems = groupItemCount(kind, userId);
+  return {
+    kind, module: KIND_MODULE[kind], items, direct, groupItems, both: direct + groupItems - items, group: groupCount(kind, userId),
+    audience: role === "guest" ? 0 : (db.query(AUDIENCE_COUNTS[kind]).get({ userId }) as { count: number }).count
+  };
+}
+
 /** What Reset access removes, counted (the confirm shows these before, the result after). */
 export function resetCounts(userId: string) {
   let direct = 0;
@@ -133,10 +154,7 @@ export function accessSummary(viewerId: string, userId: string) {
     keys: keySummaries(viewerId, userId),
     feeds: { live: counts.feeds },
     routines: { enabled: counts.routines },
-    kinds: ACCESS_KINDS.map((kind) => ({
-      kind, module: KIND_MODULE[kind], items: itemCount(kind, userId), direct: directCount(kind, userId), group: groupCount(kind, userId),
-      audience: target.role === "guest" ? 0 : (db.query(AUDIENCE_COUNTS[kind]).get({ userId }) as { count: number }).count
-    })),
+    kinds: ACCESS_KINDS.map((kind) => kindCounts(kind, userId, target.role)),
     resetCounts: counts,
     pageSize: ACCESS_PAGE
   };
@@ -333,7 +351,8 @@ export function resetAccess(actorId: string, userId: string) {
     recordAccessEvent({ actorId, via: "web", action: "access.reset", targetUserId: userId, meta: removed }, timestamp);
     audit(actorId, null, "team.access_reset", { targetId: userId, ...removed });
     for (const [ownerId, count] of perOwner) notifyAccess({ userId: ownerId, kind: "access_reset", actorId, targetUserId: userId, count }, timestamp);
-    notifyAccess({ userId, kind: "access_reset_self", actorId }, timestamp);
+    // Only what was actually removed (a bitmask in `count`, see RESET_PARTS in notices.ts).
+    notifyAccess({ userId, kind: "access_reset_self", actorId, count: resetMask(removed) }, timestamp);
     return { removed, remaining: resetCounts(userId) };
   })();
 }

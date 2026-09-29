@@ -11,7 +11,24 @@ export type AccessKind = "note" | "folder" | "document" | "board" | "task_view" 
 export type AccessLevel = "view" | "comment" | "edit" | "manage";
 
 /** `items`: distinct items (the headline); `direct` and `group`: grant rows, so an item shared both ways is in each. */
-export type KindCount = { kind: AccessKind; module: "notes" | "files" | "tasks" | "collections" | "calendar"; items: number; direct: number; group: number; audience: number };
+/**
+ * Per kind: `items` distinct items (the headline); `direct` items shared directly; `groupItems`
+ * distinct items reached through groups; `both` items reached both ways; `group` grant rows through
+ * groups; `audience` items shared with everyone signed in.
+ */
+export type KindCount = { kind: AccessKind; module: "notes" | "files" | "tasks" | "collections" | "calendar"; items: number; direct: number; groupItems: number; both: number; group: number; audience: number };
+
+/**
+ * The line under a kind's headline, worded so the parts cannot read as a sum (Wave 33 QA, Q7):
+ * "3 shared directly · 2 through groups · 1 both ways". Zero parts are left out.
+ */
+export function kindBreakdown(counts: Pick<KindCount, "direct" | "groupItems" | "both">) {
+  return [
+    counts.direct ? `${counts.direct} shared directly` : "",
+    counts.groupItems ? `${counts.groupItems} through groups` : "",
+    counts.both ? `${counts.both} both ways` : ""
+  ].filter(Boolean).join(" · ");
+}
 export type ResetCounts = { directShares: number; groups: number; keys: number; feeds: number; routines: number };
 
 export type AccessSummary = {
@@ -74,7 +91,15 @@ export const applyTemplateToMember = (userId: string, templateId: string) =>
 
 // Templates (D286)
 export type TemplateRole = "member" | "viewer" | "guest";
-export type AccessTemplate = { id: string; name: string; role: TemplateRole; groups: Array<{ id: string; name: string }>; liveInvites: number; revision: number; createdAt: string; updatedAt: string };
+/** `guestRefused`: with sharing with guests off, a guest cannot join this group (it is shared with items). */
+export type AccessTemplate = { id: string; name: string; role: TemplateRole; groups: Array<{ id: string; name: string; guestRefused?: boolean }>; liveInvites: number; revision: number; createdAt: string; updatedAt: string };
+
+/** The groups of a template a guest would skip or be refused right now (Wave 33 QA, Q2). */
+export const guestRefusedNames = (template: Pick<AccessTemplate, "groups">) => template.groups.filter((group) => group.guestRefused).map((group) => group.name);
+
+/** Why, in one sentence. */
+export const guestRefusalReason = (names: readonly string[]) =>
+  `Sharing with guests is turned off, and ${names.length === 1 ? `${names[0]} is` : `${names.join(", ")} are`} shared with items.`;
 
 export const listTemplates = () => api<{ templates: AccessTemplate[]; limit: number }>("/team/templates");
 export const createTemplate = (body: { name: string; role: TemplateRole; groupIds: string[] }) =>
@@ -120,16 +145,29 @@ export const LEVEL_WORDS: Record<AccessLevel, string> = { view: "Can view", comm
 /** "Can edit (direct)" or "Can view (via Ops)". */
 export const viaLabel = (row: Pick<AccessSource, "level" | "via" | "group">) => `${LEVEL_WORDS[row.level]} ${row.via === "direct" ? "(direct)" : `(via ${row.group?.name ?? "a group"})`}`;
 
+/** "1 calendar feed · 2 active routines", leaving out zero counts; null when both are zero (Q5). */
+export function feedsAndRoutines(summary: Pick<AccessSummary, "feeds" | "routines">) {
+  const parts = [
+    summary.feeds.live ? `${summary.feeds.live} calendar ${summary.feeds.live === 1 ? "feed" : "feeds"}` : "",
+    summary.routines.enabled ? `${summary.routines.enabled} active ${summary.routines.enabled === 1 ? "routine" : "routines"}` : ""
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 /** The confirm copy for Reset access: what goes, what stays. */
 export function resetSummary(counts: ResetCounts) {
-  const parts = [
-    `${counts.directShares} direct ${counts.directShares === 1 ? "share" : "shares"}`,
-    `${counts.groups} ${counts.groups === 1 ? "group" : "groups"}`,
-    `${counts.keys} API ${counts.keys === 1 ? "key" : "keys"}`,
-    `${counts.feeds} calendar ${counts.feeds === 1 ? "feed" : "feeds"}`,
-    `${counts.routines} ${counts.routines === 1 ? "routine" : "routines"} paused`
-  ];
-  return parts.join(" · ");
+  return resetLines(counts).join(" · ") || "nothing";
+}
+
+/** One line per kind of access Reset removes, leaving out zero counts (Q5). */
+export function resetLines(counts: ResetCounts) {
+  return [
+    counts.directShares ? `${counts.directShares} direct ${counts.directShares === 1 ? "share" : "shares"}` : "",
+    counts.groups ? `${counts.groups} group ${counts.groups === 1 ? "membership" : "memberships"}` : "",
+    counts.keys ? `${counts.keys} API ${counts.keys === 1 ? "key" : "keys"} (revoked)` : "",
+    counts.feeds ? `${counts.feeds} calendar ${counts.feeds === 1 ? "feed" : "feeds"} (revoked)` : "",
+    counts.routines ? `${counts.routines} ${counts.routines === 1 ? "routine" : "routines"} (paused)` : ""
+  ].filter(Boolean);
 }
 
 const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
@@ -149,11 +187,12 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
   "access.share_removed": (event) => `${who(event)} removed ${target(event)}'s access to ${itemName(event)}`,
   "access.share_lowered": (event) => `${who(event)} lowered ${target(event)}'s access to ${itemName(event)}`,
   "access.reset": (event) => `${who(event)} reset ${target(event)}'s access`,
-  "template.created": (event) => `${who(event)} created an access template`,
-  "template.updated": (event) => `${who(event)} changed an access template`,
-  "template.deleted": (event) => `${who(event)} deleted an access template`,
-  "template.applied": (event) => `${who(event)} applied a template to ${target(event)}`
+  "template.created": (event) => `${who(event)} created the template ${templateName(event)}`,
+  "template.updated": (event) => `${who(event)} changed the template ${templateName(event)}`,
+  "template.deleted": (event) => `${who(event)} deleted the template ${templateName(event)}`,
+  "template.applied": (event) => `${who(event)} applied the template ${templateName(event)} to ${target(event)}`
 };
+const templateName = (event: ActivityEvent) => typeof event.meta?.templateName === "string" ? `“${event.meta.templateName}”` : "(name not recorded)";
 const who = (event: ActivityEvent) => event.actor?.displayName ?? (event.via === "sweeper" ? "Nook" : "Someone");
 const target = (event: ActivityEvent) => event.target?.displayName ?? "someone";
 const keyName = (event: ActivityEvent) => event.key?.name ? `“${event.key.name}”` : "(deleted)";

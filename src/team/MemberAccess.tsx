@@ -8,7 +8,7 @@ import { Select, type Option } from "../ui/Select";
 import { AccessOverview } from "../access/AccessOverview";
 import {
   applyTemplateToMember, getMemberAccess, getMemberAccessPage, LEVEL_WORDS, listTemplates, lowerMemberAccess, removeMemberAccess, removeMemberFromGroup,
-  resetMemberAccess, resetSummary, type AccessKind, type AccessLevel, type AccessRow, type AccessSource, type AccessSummary, type AccessTemplate, type ResetCounts
+  resetMemberAccess, resetLines, resetSummary, feedsAndRoutines, guestRefusedNames, guestRefusalReason, type AccessKind, type AccessLevel, type AccessRow, type AccessSource, type AccessSummary, type AccessTemplate, type ResetCounts
 } from "../access/memberAccessApi";
 import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
@@ -30,6 +30,9 @@ type Dialog =
   | { kind: "reset" };
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
+
+/** A real title in quotes; a placeholder for an item you cannot open in plain words ("the board owned by Carol"). */
+export const itemRef = (row: Pick<AccessRow, "title" | "titleHidden">) => row.titleHidden ? row.title.replace(/^\w/, (letter) => `the ${letter.toLowerCase()}`) : `“${row.title}”`;
 
 export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack: () => void; flash: (message: string) => void }) {
   const [summary, setSummary] = useState<AccessSummary | null>(null);
@@ -70,7 +73,12 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
   if (!summary) return <p className="team-loading" role="status">Loading access…</p>;
 
   const { member } = summary;
-  const templateOptions: Option[] = templates.map((template) => ({ value: template.id, label: template.name, description: template.groups.length ? template.groups.map((group) => group.name).join(", ") : "No groups" }));
+  // A guest cannot join granted groups while sharing with guests is off: say so on the option (Q2).
+  const templateOptions: Option[] = templates.map((template) => {
+    const refused = member.role === "guest" ? guestRefusedNames(template) : [];
+    const groups = template.groups.length ? template.groups.map((group) => group.name).join(", ") : "No groups";
+    return { value: template.id, label: refused.length ? `${template.name} (refused for a guest)` : template.name, description: refused.length ? `${groups}. ${guestRefusalReason(refused)}` : groups };
+  });
   const nothingToReset = Object.values(summary.resetCounts).every((count) => count === 0);
 
   return <article className="team-detail member-access" aria-labelledby="member-access-title">
@@ -112,7 +120,7 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
           <button type="button" className="team-action danger" aria-haspopup="dialog" onClick={() => setDialog({ kind: "key", key })}>Revoke</button>
         </li>)}
       </ul>}
-      <p className="ma-summary-line">{summary.feeds.live} calendar {summary.feeds.live === 1 ? "feed" : "feeds"} · {summary.routines.enabled} active {summary.routines.enabled === 1 ? "routine" : "routines"} (Reset access revokes feeds and pauses routines)</p>
+      <p className="ma-summary-line">{feedsAndRoutines(summary) ?? "No calendar feeds or active routines."}{feedsAndRoutines(summary) ? " Reset access revokes feeds and pauses routines." : ""}</p>
     </section>
 
     <AccessOverview summary={summary} loadPage={loadPage} reloadKey={reloadKey} busy={dialog !== null}
@@ -129,6 +137,10 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
   const [result, setResult] = useState<{ removed: ResetCounts; remaining: ResetCounts } | null>(null);
   const name = summary.member.displayName;
   const userId = summary.member.id;
+  // The server refuses a template for a guest when any of its groups is shared with items and sharing with guests is off (Q2).
+  const refusedNames = dialog.kind === "template" && summary.member.role === "guest" ? guestRefusedNames(dialog.template) : [];
+  const templateRefusal = refusedNames.length ? refusedNames : null;
+  let confirmDisabled = false;
 
   async function run(operation: () => Promise<string | null>) {
     setBusy(true);
@@ -155,8 +167,8 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       const viaGroup = source.via === "group";
       title = viaGroup ? `Remove ${name} from ${source.group?.name ?? "the group"}?` : `Remove ${name}'s access?`;
       body = viaGroup
-        ? <p>{name} loses everything owners shared with {source.group?.name ?? "this group"}, not only “{row.title}”. Their own items and direct shares stay. They are told.</p>
-        : <p>{name} can no longer open {row.titleHidden ? row.title.replace(/^\w/, (letter) => `the ${letter.toLowerCase()}`) : `“${row.title}”`} {row.sources.some((other) => other.via === "group") ? `through a direct share; they keep what ${row.sources.filter((other) => other.via === "group").map((other) => other.group?.name ?? "a group").join(", ")} gives them` : "unless it is shared with them another way"}. The owner is told and can share it again.</p>;
+        ? <p>{name} loses everything owners shared with {source.group?.name ?? "this group"}, not only {itemRef(row)}. Their own items and direct shares stay. They are told.</p>
+        : <p>{name} can no longer open {itemRef(row)} {row.sources.some((other) => other.via === "group") ? `through a direct share; they keep what ${row.sources.filter((other) => other.via === "group").map((other) => other.group?.name ?? "a group").join(", ")} gives them` : "unless it is shared with them another way"}. The owner is told and can share it again.</p>;
       confirm = viaGroup ? "Remove from group" : "Remove access";
       action = async () => {
         const removed = await removeMemberAccess(userId, source.handle!);
@@ -165,8 +177,8 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       break;
     }
     case "lower":
-      title = `Lower ${name} to ${LEVEL_WORDS[dialog.level]}?`;
-      body = <p>{name} keeps access to {dialog.row.titleHidden ? "this item" : `“${dialog.row.title}”`}, at {LEVEL_WORDS[dialog.level]} instead of {LEVEL_WORDS[dialog.source.level]} through their direct share. The owner is told and can change it back.</p>;
+      title = `Lower ${name}'s access to ${LEVEL_WORDS[dialog.level]}?`;
+      body = <p>{name} keeps access to {itemRef(dialog.row)}, at {LEVEL_WORDS[dialog.level]} instead of {LEVEL_WORDS[dialog.source.level]} through their direct share. The owner is told and can change it back.</p>;
       confirm = "Lower access";
       action = async () => {
         await lowerMemberAccess(userId, dialog.source.handle!, dialog.level);
@@ -198,8 +210,11 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
     case "template":
       danger = false;
       title = `Add ${name} to the groups of ${dialog.template.name}?`;
-      body = <p>{dialog.template.groups.length ? `${name} joins ${dialog.template.groups.map((group) => group.name).join(", ")}, and so reaches what owners shared with those groups.` : "This template has no groups, so nothing changes."} Their team role stays {ROLE_LABELS[summary.member.role]}. They are told.</p>;
+      body = templateRefusal
+        ? <p className="form-error" role="alert">{name} is a guest, so this template cannot be applied: {guestRefusalReason(templateRefusal)} Remove those groups from the template, or turn on sharing with guests in Team → Policies.</p>
+        : <p>{dialog.template.groups.length ? `${name} joins ${dialog.template.groups.map((group) => group.name).join(", ")}, and so reaches what owners shared with those groups.` : "This template has no groups, so nothing changes."} Their team role stays {ROLE_LABELS[summary.member.role]}. They are told.</p>;
       confirm = "Add to groups";
+      confirmDisabled = templateRefusal !== null;
       action = async () => {
         const applied = await applyTemplateToMember(userId, dialog.template.id);
         return applied.added ? `${name} joined ${applied.added} ${applied.added === 1 ? "group" : "groups"}` : `${name} was already in those groups`;
@@ -215,11 +230,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
         : <>
           <p>This removes, at once:</p>
           <ul className="ma-reset-counts">
-            <li>{summary.resetCounts.directShares} direct {summary.resetCounts.directShares === 1 ? "share" : "shares"}</li>
-            <li>{summary.resetCounts.groups} group {summary.resetCounts.groups === 1 ? "membership" : "memberships"}</li>
-            <li>{summary.resetCounts.keys} API {summary.resetCounts.keys === 1 ? "key" : "keys"} (revoked)</li>
-            <li>{summary.resetCounts.feeds} calendar {summary.resetCounts.feeds === 1 ? "feed" : "feeds"} (revoked)</li>
-            <li>{summary.resetCounts.routines} {summary.resetCounts.routines === 1 ? "routine" : "routines"} (paused)</li>
+            {resetLines(summary.resetCounts).map((line) => <li key={line}>{line}</li>)}
           </ul>
           <p>Their own items and what is shared with everyone stay. Each owner is told once. This cannot be undone here; owners can share again.</p>
         </>;
@@ -239,7 +250,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         {!result && <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>}
-        <button type="button" className={`primary-button${danger ? " danger" : ""}`} onClick={() => { void run(action); }} disabled={busy}>{busy ? "Working…" : confirm}</button>
+        <button type="button" className={`primary-button${danger ? " danger" : ""}`} onClick={() => { void run(action); }} disabled={busy || confirmDisabled}>{busy ? "Working…" : confirm}</button>
       </div>
     </div>
   </KeysDialog>;

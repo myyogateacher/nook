@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
+import { retireUsersAfterFile } from "./support/retireUsers";
 import { newCollection } from "./support/collections";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
@@ -20,6 +21,9 @@ beforeEach(() => resetTeamRateLimits());
  */
 const cleanups: Array<() => void> = [];
 afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
+
+// Many accounts: block them when the file ends so other files' Team lists keep their own (TEAM_LIST_LIMIT).
+retireUsersAfterFile();
 
 type Role = "admin" | "member" | "viewer" | "guest";
 async function user(label: string, role: Role = "member") {
@@ -290,6 +294,16 @@ describe("admin reductions (D268)", () => {
     expect(own.some((title: string) => title.includes("revoked your API key"))).toBe(false);
     const event = db.query("SELECT meta_json FROM access_events WHERE action = 'access.reset' AND target_user_id = ?").get(target.userId) as { meta_json: string };
     expect(JSON.parse(event.meta_json)).toEqual({ directShares: 3, groups: 1, keys: 1, feeds: 1, routines: 0 });
+  });
+
+  test("the person's Reset line names only what was removed (QA Q5)", async () => {
+    const admin = await user("Reset line admin", "admin");
+    const owner = await user("Reset line owner");
+    const target = await user("Reset line target");
+    const id = await board(owner, "Reset line board");
+    await putAccess(owner, `/tasks/boards/${id}/access`, { audience: "selected", people: [{ id: target.userId, level: "edit" }], groups: [] });
+    expect((await send(admin, "POST", `/team/members/${target.userId}/access/reset`, {})).status).toBe(200);
+    expect((await send(target, "GET", "/notifications")).body.items[0].title).toBe("Reset line admin reset your access: direct shares");
   });
 
   test("an admin revoking a key from Team → Keys puts a notice on the owner's bell", async () => {

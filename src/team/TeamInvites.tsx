@@ -3,7 +3,20 @@ import { Ban, Check, ChevronLeft, Copy, Link2, Mail, Plus, RotateCcw, TriangleAl
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
 import { Select, type Option } from "../ui/Select";
-import { listTemplates, type AccessTemplate } from "../access/memberAccessApi";
+import { guestRefusalReason, guestRefusedNames, listTemplates, type AccessTemplate } from "../access/memberAccessApi";
+import { collectProblems, emailProblem, FieldError, useFieldErrors } from "../auth/fieldChecks";
+
+/**
+ * What a template does for this invite (D286, Q2): the groups they join, and for a guest while
+ * sharing with guests is off, the groups that are skipped and why. Checked again at acceptance.
+ */
+export function templateHint(template: AccessTemplate | null, role: InviteRole) {
+  if (!template) return "A template adds groups when they register.";
+  const skipped = role === "guest" ? guestRefusedNames(template) : [];
+  const joining = template.groups.filter((group) => !skipped.includes(group.name)).map((group) => group.name);
+  const joins = joining.length ? `They join ${joining.join(", ")} when they register.` : "They join no groups when they register.";
+  return skipped.length ? `${joins} Skipped for a guest: ${skipped.join(", ")}. ${guestRefusalReason(skipped)}` : joins;
+}
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, templateLabel, type ExpiryDays } from "./inviteFormat";
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
@@ -133,7 +146,11 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
   useDialogChrome(busy, onClose);
   useEffect(() => { listTemplates().then((result) => setTemplates(result.templates), () => setTemplates([])); }, []);
   const template = templates.find((entry) => entry.id === templateId) ?? null;
-  const templateOptions: Option[] = [{ value: NO_TEMPLATE, label: "No template" }, ...templates.map((entry) => ({ value: entry.id, label: entry.name, description: `${ROLE_LABELS[entry.role]} · ${entry.groups.length ? entry.groups.map((group) => group.name).join(", ") : "no groups"}` }))];
+  const fields = useFieldErrors();
+  const templateOptions: Option[] = [{ value: NO_TEMPLATE, label: "No template" }, ...templates.map((entry) => {
+    const skipped = entry.role === "guest" ? guestRefusedNames(entry) : [];
+    return { value: entry.id, label: entry.name, description: `${ROLE_LABELS[entry.role]} · ${entry.groups.length ? entry.groups.map((group) => group.name).join(", ") : "no groups"}${skipped.length ? ` · a guest skips ${skipped.join(", ")}` : ""}` };
+  })];
   const chooseTemplate = (id: string) => {
     setTemplateId(id);
     const picked = templates.find((entry) => entry.id === id);
@@ -149,6 +166,8 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const note = String(form.get("note") ?? "").trim();
+    // The app's own checks, shown under the field (noValidate: no browser bubble, Q3).
+    if (fields.show(event.currentTarget, collectProblems({ email: boundEmail ? emailProblem(boundEmail) : null }))) return;
     setBusy(true);
     setError("");
     try {
@@ -194,11 +213,11 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
           <button type="button" className="team-action" onClick={onClose}>Done</button>
           <button type="button" className="team-action primary" onClick={() => { void copy(); }} autoFocus>{copied ? <><Check />Link copied</> : <><Copy />Copy link</>}</button>
         </div>
-      </div> : <form onSubmit={submit}>
+      </div> : <form onSubmit={submit} noValidate>
         {templates.length > 0 && <div className="team-field">
           <span id="team-invite-template-label">Template (optional)</span>
           <Select labelledBy="team-invite-template-label" label="Template" value={templateId} options={templateOptions} onChange={chooseTemplate} disabled={busy} />
-          <small className="team-muted">{template ? `They join ${template.groups.length ? template.groups.map((group) => group.name).join(", ") : "no groups"} when they register.` : "A template adds groups when they register."}</small>
+          <small className="team-muted">{templateHint(template, role)}</small>
         </div>}
         <div className="team-field">
           <span id="team-invite-role-label">Team role</span>
@@ -210,7 +229,10 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
           <Select labelledBy="team-invite-expiry-label" label="Expires" value={expiry} options={expiryOptions()} onChange={setExpiry} disabled={busy} />
         </div>
         <label className="team-field">Email (optional)
-          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} value={email} onChange={(event) => setEmail(event.target.value)} />
+          <input name="email" type="email" autoComplete="off" maxLength={254} placeholder="Only this address can use the link" disabled={busy} value={email}
+            aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "team-invite-email-error" : undefined}
+            onChange={(event) => { setEmail(event.target.value); fields.clear("email"); }} />
+          <FieldError id="team-invite-email-error" message={fields.errors.email} />
         </label>
         {boundEmail && <label className={`team-check${emailEnabled ? "" : " disabled"}`}>
           <input type="checkbox" checked={sendEmail && emailEnabled} disabled={busy || !emailEnabled} onChange={(event) => setSendEmail(event.target.checked)} />

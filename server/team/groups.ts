@@ -236,6 +236,17 @@ export function guestJoinRefused(groupId: string, userIds: readonly string[]) {
   return Boolean(db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${userIds.map(() => "?").join(",")}) LIMIT 1`).get(...userIds));
 }
 
+/**
+ * Of `groupIds`, the groups a guest could not join right now (`guestJoinRefused` for a guest): with
+ * `share_with_guests` off, those that have any grant. Names only, for admins (Wave 33 QA, Q2).
+ */
+export function guestRefusedGroups(groupIds: readonly string[]): Array<{ id: string; name: string }> {
+  if (!groupIds.length || readPolicies().shareWithGuests) return [];
+  const placeholders = groupIds.map(() => "?").join(",");
+  return db.query(`SELECT g.id, g.name FROM user_groups g WHERE g.id IN (${placeholders})
+    AND EXISTS (SELECT 1 FROM group_grants gg WHERE gg.group_id = g.id) ORDER BY g.name COLLATE NOCASE`).all(...groupIds) as Array<{ id: string; name: string }>;
+}
+
 /** Whether a group has a guest in it (the `share_with_guests` policy, D.2). */
 export function groupHasGuests(groupId: string) {
   return Boolean(db.query("SELECT 1 FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? AND u.role = 'guest' LIMIT 1").get(groupId));

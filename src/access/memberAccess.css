@@ -32,7 +32,7 @@
 .ma-key-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #242428; border-radius: 12px; padding: 6px 6px 6px 12px; background: #161618; min-width: 0; }
 .ma-key-row code { color: #b7b7bd; font-size: .75rem; }
 .ma-reset-counts { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; color: #d6d6d9; font-size: .86rem; }
-.ma-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ma-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ma-activity-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .ma-activity-row { display: grid; gap: 2px; border: 1px solid #242428; border-radius: 12px; padding: 10px 12px; background: #161618; min-width: 0; overflow-wrap: anywhere; }
 .ma-activity-row time, .ma-activity-row small { color: #8d8d94; font-size: .74rem; }

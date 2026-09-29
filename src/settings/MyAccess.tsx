@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { KeyRound, RotateCcw, ShieldCheck } from "lucide-react";
 import { AccessOverview } from "../access/AccessOverview";
-import { getMyAccess, getMyAccessPage, type AccessKind, type AccessSummary } from "../access/memberAccessApi";
+import { feedsAndRoutines, getMyAccess, getMyAccessPage, type AccessKind, type AccessSummary } from "../access/memberAccessApi";
 import { ROLE_LABELS } from "../team/teamRoles";
 import "../team/team.css";
 
@@ -43,7 +43,8 @@ export function MyAccess() {
             <span className="team-row-meta"><code>{key.prefix}…</code><span>{key.modules.join(", ") || "No modules"}</span><span>{key.expiresAt ? `Expires ${new Date(key.expiresAt).toLocaleDateString()}` : "No expiry"}</span></span>
           </span></li>)}
         </ul>}
-        <p className="ma-summary-line">Manage keys in Settings → API keys. {summary.feeds.live} calendar {summary.feeds.live === 1 ? "feed" : "feeds"} · {summary.routines.enabled} active {summary.routines.enabled === 1 ? "routine" : "routines"}</p>
+        {feedsAndRoutines(summary) && <p className="ma-summary-line">{feedsAndRoutines(summary)}</p>}
+        <p className="team-muted">Manage keys in Settings → API keys.</p>
       </section>
       <AccessOverview summary={summary} loadPage={loadPage} />
     </>}

@@ -18,6 +18,7 @@ import { inviteEmail } from "./inviteEmail";
 import { logSentMail } from "../mail/outbox";
 import { can, type Role } from "./roles";
 import { templateSnapshot } from "./templates";
+import { guestRefusedGroups } from "./groups";
 
 export const INVITE_ROLES = ["member", "viewer", "guest"] as const;
 export type InviteRole = typeof INVITE_ROLES[number];
@@ -91,10 +92,25 @@ export type TeamInvite = {
   usedAt: string | null;
   revokedAt: string | null;
   /** The access template applied on acceptance (Wave 33, D286); null when none, or once it is deleted. */
-  template: { id: string; name: string; groupCount: number; edited: boolean } | null;
+  template: { id: string; name: string; groupCount: number; edited: boolean; guestSkipped: string[] } | null;
 };
 
 type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; current_template_revision: number | null };
+
+/**
+ * An invite's template as the list shows it: the snapshot's name and group count, `edited` when the
+ * template changed since, and for a guest invite the snapshot groups that would be skipped now
+ * because sharing with guests is off (re-checked when the invite is accepted, T213).
+ */
+function templateView(row: ListedRow) {
+  const groupIds = row.template_group_ids ? (JSON.parse(row.template_group_ids) as unknown[]).filter((value): value is string => typeof value === "string") : [];
+  return {
+    id: row.template_id!, name: row.template_name!,
+    groupCount: groupIds.length,
+    edited: row.current_template_revision !== null && row.current_template_revision !== row.template_revision,
+    guestSkipped: row.role === "guest" ? guestRefusedGroups(groupIds).map((group) => group.name) : []
+  };
+}
 
 const listSelect = `
   SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name, t.revision AS current_template_revision
@@ -115,11 +131,7 @@ function present(row: ListedRow, at: string): TeamInvite {
     usedAt: row.used_at,
     revokedAt: row.revoked_at,
     // The snapshot this invite applies; `edited` when the template changed since (the invite does not follow it).
-    template: row.template_id && row.template_name ? {
-      id: row.template_id, name: row.template_name,
-      groupCount: row.template_group_ids ? (JSON.parse(row.template_group_ids) as unknown[]).length : 0,
-      edited: row.current_template_revision !== null && row.current_template_revision !== row.template_revision
-    } : null
+    template: row.template_id && row.template_name ? templateView(row) : null
   };
 }
 

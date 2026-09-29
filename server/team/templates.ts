@@ -4,7 +4,7 @@ import { recordAccessEvent } from "../access/events";
 import { notifyAccess } from "../access/notices";
 import { uuid } from "../validation";
 import { GUEST_SHARE_DISABLED } from "../access/shares";
-import { GROUP_MEMBERS_LIMIT, guestJoinRefused } from "./groups";
+import { GROUP_MEMBERS_LIMIT, guestJoinRefused, guestRefusedGroups } from "./groups";
 
 /**
  * Access templates (access plan D286, §C.6): a name, a team role, and groups. An invite may carry
@@ -44,10 +44,12 @@ function present(row: TemplateRow) {
   const byId = new Map(groups.map((group) => [group.id, group.name]));
   const liveInvites = (db.query("SELECT COUNT(*) AS count FROM team_invites WHERE template_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?")
     .get(row.id, now()) as { count: number }).count;
+  // With share_with_guests off, a guest skips (on an invite) or is refused (apply) these groups (T213).
+  const guestRefused = new Set(guestRefusedGroups(ids).map((group) => group.id));
   return {
     id: row.id, name: row.name, role: row.role,
     // Groups deleted since are dropped from the answer (and skipped when the template is applied).
-    groups: ids.filter((id) => byId.has(id)).map((id) => ({ id, name: byId.get(id)! })),
+    groups: ids.filter((id) => byId.has(id)).map((id) => ({ id, name: byId.get(id)!, guestRefused: guestRefused.has(id) })),
     liveInvites, revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at
   };
 }
@@ -86,7 +88,7 @@ export function createTemplate(actorId: string, input: { name: string; role: Tem
       const timestamp = now();
       db.query("INSERT INTO access_templates (id, name, role, group_ids, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
         .run(id, input.name, input.role, JSON.stringify(groupIds), timestamp, timestamp);
-      recordAccessEvent({ actorId, via: "web", action: "template.created", meta: { templateId: id, role: input.role, groupCount: groupIds.length } }, timestamp);
+      recordAccessEvent({ actorId, via: "web", action: "template.created", meta: { templateId: id, templateName: input.name, role: input.role, groupCount: groupIds.length } }, timestamp);
       audit(actorId, null, "team.template_created", { templateId: id, role: input.role, groupCount: groupIds.length });
     })();
   } catch (error) {
@@ -108,7 +110,7 @@ export function patchTemplate(actorId: string, id: string, input: { name?: strin
         updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`)
         .run(input.name ?? null, input.role ?? null, groupIds ? JSON.stringify(groupIds) : null, timestamp, id, input.revision).changes;
       if (!changed) throw new TemplateError(409, "TEMPLATE_CHANGED", "Someone else changed this template. It now shows the latest.", { revision: row.revision });
-      recordAccessEvent({ actorId, via: "web", action: "template.updated", meta: { templateId: id, fields: Object.keys(input).filter((key) => key !== "revision") } }, timestamp);
+      recordAccessEvent({ actorId, via: "web", action: "template.updated", meta: { templateId: id, templateName: input.name ?? row.name, fields: Object.keys(input).filter((key) => key !== "revision") } }, timestamp);
     })();
   } catch (error) {
     if (isNameTaken(error)) throw new TemplateError(409, "NAME_TAKEN", "A template with this name already exists");
@@ -125,7 +127,7 @@ export function deleteTemplate(actorId: string, id: string, revision?: number) {
     if (revision !== undefined && row.revision !== revision) throw new TemplateError(409, "TEMPLATE_CHANGED", "Someone else changed this template. It now shows the latest.", { revision: row.revision });
     const invites = (db.query("SELECT COUNT(*) AS count FROM team_invites WHERE template_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?").get(id, now()) as { count: number }).count;
     db.query("DELETE FROM access_templates WHERE id = ?").run(id);
-    recordAccessEvent({ actorId, via: "web", action: "template.deleted", meta: { templateId: id, liveInvites: invites } });
+    recordAccessEvent({ actorId, via: "web", action: "template.deleted", meta: { templateId: id, templateName: row.name, liveInvites: invites } });
     audit(actorId, null, "team.template_deleted", { templateId: id });
     return { ok: true as const, liveInvites: invites };
   })();
@@ -140,7 +142,7 @@ type JoinOptions = { notify: boolean; timestamp?: string; guests: "skip" | "refu
  * never joins a group that has grants. Registration skips that group (the account is still
  * created); applying a template to someone refuses as a whole, before anything is added.
  */
-function joinGroups(actorId: string | null, userId: string, groupIds: readonly string[], templateId: string, options: JoinOptions) {
+function joinGroups(actorId: string | null, userId: string, groupIds: readonly string[], template: { id: string; name: string }, options: JoinOptions) {
   const timestamp = options.timestamp ?? now();
   let added = 0;
   let skipped = 0;
@@ -159,7 +161,7 @@ function joinGroups(actorId: string | null, userId: string, groupIds: readonly s
     recordAccessEvent({ actorId, via: "web", action: "group.member_added", groupId, targetUserId: userId, meta: { from: "template", ...(actorId === userId ? { self: true } : {}) } }, timestamp);
     if (options.notify) notifyAccess({ userId, kind: "group_added", actorId, groupId }, timestamp);
   }
-  recordAccessEvent({ actorId, via: "web", action: "template.applied", targetUserId: userId, meta: { templateId, added, skipped, ...(guestRefused ? { guestRefused } : {}) } }, timestamp);
+  recordAccessEvent({ actorId, via: "web", action: "template.applied", targetUserId: userId, meta: { templateId: template.id, templateName: template.name, added, skipped, ...(guestRefused ? { guestRefused } : {}) } }, timestamp);
   return { added, skipped, guestRefused };
 }
 
@@ -167,7 +169,7 @@ function joinGroups(actorId: string | null, userId: string, groupIds: readonly s
 export function applyTemplateGroups(actorId: string | null, userId: string, templateId: string, options: JoinOptions) {
   const row = rowById(templateId);
   if (!row) return null;
-  return { ...joinGroups(actorId, userId, groupIdsOf(row), templateId, options), templateName: row.name, role: row.role };
+  return { ...joinGroups(actorId, userId, groupIdsOf(row), { id: templateId, name: row.name }, options), templateName: row.name, role: row.role };
 }
 
 /** What an invite stores about its template at creation (D286): the snapshot acceptance applies. */
@@ -182,10 +184,10 @@ export function templateSnapshot(templateId: string) {
  * invites already sent), added by the invite's admin. A deleted template (`template_id` NULL)
  * adds nothing: the invite keeps its role only. Guests skip granted groups (T213).
  */
-export function applyInviteTemplate(invite: { created_by: string | null; template_id?: string | null; template_group_ids?: string | null }, userId: string, timestamp: string) {
+export function applyInviteTemplate(invite: { created_by: string | null; template_id?: string | null; template_group_ids?: string | null; template_name?: string | null }, userId: string, timestamp: string) {
   if (!invite.template_id || !invite.template_group_ids) return null;
   const groupIds = (JSON.parse(invite.template_group_ids) as unknown[]).filter((value): value is string => typeof value === "string");
-  return joinGroups(invite.created_by, userId, groupIds, invite.template_id, { notify: false, timestamp, guests: "skip" });
+  return joinGroups(invite.created_by, userId, groupIds, { id: invite.template_id, name: invite.template_name ?? "a template" }, { notify: false, timestamp, guests: "skip" });
 }
 
 /** From the member access page: the template's groups for an existing person (never their role). */

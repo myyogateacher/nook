@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, EyeOff, UserMinus, X } from "lucide-react";
 import { Select, type Option } from "../ui/Select";
 import { KIND_LABELS } from "../team/groupsApi";
-import { kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount } from "./memberAccessApi";
+import { kindBreakdown, kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount } from "./memberAccessApi";
 import "./memberAccess.css";
 
 /**
@@ -73,7 +73,7 @@ function KindSection({ counts, loadPage, actions, reloadKey, busy }: { counts: K
   }, [load, open, reloadKey, shared]);
 
   const id = `ma-kind-${counts.kind}`;
-  const parts = [counts.direct ? `${counts.direct} direct` : "", counts.group ? `${counts.group} through groups` : ""].filter(Boolean).join(", ");
+  const parts = kindBreakdown(counts);
   return <div className="ma-kind">
     {shared > 0
       ? <button type="button" className="ma-kind-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((value) => !value)}>

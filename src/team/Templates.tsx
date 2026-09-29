@@ -7,6 +7,7 @@ import { Select, type Option } from "../ui/Select";
 import { createTemplate, deleteTemplate, listTemplates, patchTemplate, type AccessTemplate, type TemplateRole } from "../access/memberAccessApi";
 import { listGroups, type GroupSummary } from "./groupsApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
+import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks";
 import "../keys/keys.css";
 import "../access/memberAccess.css";
 
@@ -93,11 +94,13 @@ function TemplateFormDialog({ template, groups, onClose, onSaved, onStale }: { t
   const [groupIds, setGroupIds] = useState<string[]>(template?.groups.map((group) => group.id) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const fields = useFieldErrors();
   const groupOptions: Option[] = groups.map((group) => ({ value: group.id, label: group.name, description: `${group.memberCount} ${group.memberCount === 1 ? "person" : "people"}` }));
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim()) return setError("Give the template a name.");
+    // The app's own check under the field (noValidate: no browser bubble, Q3).
+    if (fields.show(event.currentTarget, collectProblems({ name: name.trim() ? null : "Give the template a name." }))) return;
     setBusy(true);
     setError("");
     try {
@@ -112,8 +115,10 @@ function TemplateFormDialog({ template, groups, onClose, onSaved, onStale }: { t
   }
 
   return <KeysDialog title={template ? `Edit ${template.name}` : "New template"} onClose={onClose} busy={busy}>
-    <form className="keys-form" onSubmit={submit}>
-      <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} required autoFocus disabled={busy} /></label>
+    <form className="keys-form" onSubmit={submit} noValidate>
+      <label className="keys-input">Name<input name="name" value={name} onChange={(event) => { setName(event.target.value); fields.clear("name"); }} maxLength={60} autoFocus disabled={busy}
+        aria-invalid={fields.errors.name ? true : undefined} aria-describedby={fields.errors.name ? "template-name-error" : undefined} />
+        <FieldError id="template-name-error" message={fields.errors.name} /></label>
       <div className="keys-select-field"><span id="template-role">Team role</span><Select<TemplateRole> labelledBy="template-role" label="Team role" value={role} options={templateRoleOptions()} onChange={setRole} disabled={busy} /></div>
       <div className="keys-select-field"><span>Groups</span><Combobox multiple value={groupIds} onChange={setGroupIds} options={groupOptions} label="Groups" placeholder="Add groups…" emptyText={groups.length ? "No more groups" : "Create groups in Team → Groups first"} disabled={busy} maxSelected={20} /></div>
       <p className="team-muted">Invites that use this template must have the same role. Each invite keeps the groups this template had when the invite was created; editing it later changes only new invites, and deleting it leaves live invites with their role and no groups.</p>

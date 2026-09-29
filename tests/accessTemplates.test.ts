@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, spareEmail, type Session } from "./support/harness";
+import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { resetInviteRateLimits } = await import("../server/team/invites");
@@ -16,6 +17,9 @@ beforeEach(() => {
   resetInviteRateLimits();
   resetRegistrationRateLimit();
 });
+
+// Many accounts: block them when the file ends so other files' Team lists keep their own (TEAM_LIST_LIMIT).
+retireUsersAfterFile();
 
 type Role = "admin" | "member" | "viewer" | "guest";
 async function user(label: string, role: Role = "member") {
@@ -80,7 +84,7 @@ describe("access templates", () => {
     expect((await send(admin, "POST", "/team/invites", { role: "viewer", templateId: crypto.randomUUID() })).body.code).toBe("TEMPLATE_NOT_FOUND");
     const invite = await send(admin, "POST", "/team/invites", { role: "viewer", templateId: template.id });
     expect(invite.status).toBe(201);
-    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name, groupCount: 2, edited: false });
+    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name, groupCount: 2, edited: false, guestSkipped: [] });
     expect((await send(admin, "GET", "/team/templates")).body.templates.find((row: { id: string }) => row.id === template.id).liveInvites).toBe(1);
     // A group deleted meanwhile is skipped; the other one is joined.
     await send(admin, "DELETE", `/team/groups/${second}`, {});
@@ -94,7 +98,7 @@ describe("access templates", () => {
     expect(member.added_by).toBe(admin.userId);
     const applied = db.query("SELECT actor_id, meta_json FROM access_events WHERE action = 'template.applied' AND target_user_id = ?").get(userId) as { actor_id: string; meta_json: string };
     expect(applied.actor_id).toBe(admin.userId);
-    expect(JSON.parse(applied.meta_json)).toEqual({ templateId: template.id, added: 1, skipped: 1 });
+    expect(JSON.parse(applied.meta_json)).toEqual({ templateId: template.id, templateName: template.name, added: 1, skipped: 1 });
   });
 
   test("editing a template never changes an invite already sent: registration gets the groups it had then, the invite's role, and the inviting admin as adder (review R1)", async () => {
@@ -109,7 +113,7 @@ describe("access templates", () => {
     const edited = await send(adminB, "PATCH", `/team/templates/${template.id}`, { name: `${template.name} v2`, role: "viewer", groupIds: [later], revision: 1 });
     expect(edited.status).toBe(200);
     const listed = (await send(adminA, "GET", "/team/invites")).body.invites.find((row: { id: string }) => row.id === invite.invite.id);
-    expect(listed.template).toEqual({ id: template.id, name: template.name, groupCount: 1, edited: true });
+    expect(listed.template).toEqual({ id: template.id, name: template.name, groupCount: 1, edited: true, guestSkipped: [] });
     const registered = await registerWith({ email: spareEmail(), inviteToken: invite.token });
     expect(registered.status).toBe(201);
     expect(registered.body.user.role).toBe("member");

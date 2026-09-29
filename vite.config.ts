@@ -9,7 +9,7 @@ const excalidrawFontsDir = "node_modules/@excalidraw/excalidraw/dist/prod/fonts"
 function excalidrawFonts(): Plugin {
   // Review L6: a production build must apply both rewrites at least once, or it fails.
   let building = false;
-  const applied = { fontFallback: 0, copyAsSvg: 0, addToLibrary: 0, helpImage: 0 };
+  const applied = { fontFallback: 0, copyAsSvg: 0, addToLibrary: 0, helpImage: 0, helpCrop: 0, helpHeader: 0, dialogClose: 0 };
   return {
     name: "nook-excalidraw-fonts",
     configResolved(config) {
@@ -57,6 +57,27 @@ function excalidrawFonts(): Plugin {
         out = out.replace(helpImage, "");
         applied.helpImage += 1;
       }
+      // QA E3: nor "Crop image" and "Finish image cropping". Production build only.
+      const helpCrop = /[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{label:[A-Za-z_$][\w$]*\("helpDialog\.crop(?:Start|Finish)"\),shortcuts:\[[^}]*?\](?:,isOr:![01])?\}\),/g;
+      const withoutCrop = out.replace(helpCrop, "");
+      if (withoutCrop !== out) {
+        out = withoutCrop;
+        applied.helpCrop += 1;
+      }
+      // QA E3: Help's header is only links that leave Nook (docs, blog, GitHub, YouTube). It is not
+      // rendered at all: hidden with CSS, its links stayed first in the focus order, so the dialog
+      // took no focus and Escape did nothing.
+      const helpHeader = /var ([A-Za-z_$][\w$]*)=\(\)=>([A-Za-z_$][\w$]*)\("div",\{className:"HelpDialog__header"/;
+      if (helpHeader.test(out)) {
+        out = out.replace(helpHeader, 'var $1=()=>null,nookUnusedHelpHeader=()=>$2("div",{className:"HelpDialog__header"');
+        applied.helpHeader += 1;
+      }
+      // QA E3: Excalidraw draws a dialog's close button only full screen (phones); desktop gets it too.
+      const dialogClose = /[A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*\("button",\{className:"Dialog__close")/;
+      if (dialogClose.test(out)) {
+        out = out.replace(dialogClose, "$1");
+        applied.dialogClose += 1;
+      }
       return out === code ? null : { code: out, map: null };
     },
     buildEnd(error) {
@@ -65,6 +86,9 @@ function excalidrawFonts(): Plugin {
       if (applied.copyAsSvg === 0) this.error("Excalidraw's copyAsSvg action was never patched; update the rewrite (D201)");
       if (applied.addToLibrary === 0) this.error("Excalidraw's addToLibrary action was never patched; update the rewrite (QA Q4)");
       if (applied.helpImage === 0) this.error("Excalidraw's Help image entry was never removed; update the rewrite (QA Q5)");
+      if (applied.helpCrop === 0) this.error("Excalidraw's Help crop entries were never removed; update the rewrite (QA E3)");
+      if (applied.helpHeader === 0) this.error("Excalidraw's Help header was never removed; update the rewrite (QA E3)");
+      if (applied.dialogClose === 0) this.error("Excalidraw's dialog close button was never patched; update the rewrite (QA E3)");
     },
     writeBundle(options) {
       cpSync(excalidrawFontsDir, join(options.dir ?? "dist", "excalidraw/fonts"), { recursive: true });

@@ -9,10 +9,12 @@ import { isMobileViewport } from "../mobileNavigation";
 import { parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import type { Folder } from "../types";
+import { Avatar } from "../ui/Avatar";
 import { Select } from "../ui/Select";
 import { whiteboardsBackAction, whiteboardsRoute, type WhiteboardsRoute } from "../whiteboardsRoute";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { BoardDialogs, NewBoardDialog, type BoardDialog } from "./BoardDialogs";
+import { PENDING_SYNCED_EVENT, pendingSyncDeps, requestPendingSync } from "./pendingSync";
 import { listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, type WhiteboardSort, type WhiteboardSummary } from "./whiteboardsApi";
 import "../files/files.css";
 import "./whiteboards.css";
@@ -137,6 +139,25 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     if (route.boardId) return;
     void loadList();
   }, [loadList, route.boardId]);
+
+  // QA E5: showing the list sends pending copies from earlier visits (one at a time, through the
+  // CAS save); the list refreshes once any was saved.
+  const showingList = !route.boardId;
+  useEffect(() => {
+    if (!showingList || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    // Signing out unmounts this app: a run it started stops at its next step.
+    let mounted = true;
+    void requestPendingSync(() => pendingSyncDeps(userId, () => mounted ? userId : null));
+    return () => { mounted = false; };
+  }, [showingList, userId]);
+  useEffect(() => {
+    const onSynced = () => {
+      const now = parseRoute(window.location.pathname);
+      if (now.app === "whiteboards" && !now.boardId) void loadList();
+    };
+    window.addEventListener(PENDING_SYNCED_EVENT, onSynced);
+    return () => window.removeEventListener(PENDING_SYNCED_EVENT, onSynced);
+  }, [loadList]);
 
   useEffect(() => {
     if (route.boardId) return;
@@ -273,7 +294,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
                 <span className="whiteboard-name" title={name}>{name}</span>
                 <span className="whiteboard-meta">
                   <time dateTime={board.updated_at}>{relativeTime(board.updated_at)}</time>
-                  {board.is_owner === 0 && <span className="owner-badge">{board.owner_name}</span>}
+                  {board.is_owner === 0 && <span className="owner-badge"><Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} />{board.owner_name}</span>}
                   {board.visibility !== "private" && <Users className="whiteboard-shared" aria-label="Shared" />}
                 </span>
               </span>

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, leaveFlushAllowed, mayWritePending, nextSaveDelay, pendingCopyAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState } from "../src/whiteboards/autosave";
-import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
+import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, mayCaptureEdit, maySendCapture, nextSaveDelay, pendingCopyAction, pendingSyncAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState, type Capture } from "../src/whiteboards/autosave";
+import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, openExcalidrawLayer, restoreMessage, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
+import { markBoardOpen, isBoardOpen, syncPendingCopies, type SyncDeps } from "../src/whiteboards/pendingSync";
+import { ApiError } from "../src/api";
+import { canonicalSceneJson, emptyScene, type CanonicalScene } from "../shared/whiteboardScene";
 import { pendingKey } from "../src/whiteboards/pendingStore";
 import { formatRoute, parseRoute } from "../src/router";
 import { whiteboardsBackAction, whiteboardsRoute } from "../src/whiteboardsRoute";
@@ -79,9 +82,13 @@ describe("whiteboard autosave state machine", () => {
     expect(pendingCopyAction({ baseRevision: 3, live: 4, content: "mine" }, server)).toBe("offer");
     // Saved after all (the same bytes as the server's): nothing to restore.
     expect(pendingCopyAction({ baseRevision: 3, live: 3, content: "server" }, server)).toBe("discard");
-    // An empty copy over a board with elements is never applied silently.
+    // An empty copy over a board with elements that carries no recorded edit is never applied silently.
     expect(pendingCopyAction({ baseRevision: 4, live: 0, content: "empty" }, server)).toBe("offer");
     expect(pendingCopyAction({ baseRevision: 4, live: 0, content: "empty" }, { ...server, live: 0 })).toBe("apply");
+    // QA E1d: an empty copy from a real edit on the server's revision is applied like any other;
+    // on an older base it is offered, as any other copy is.
+    expect(pendingCopyAction({ baseRevision: 4, live: 0, content: "empty", origin: "edit" }, server)).toBe("apply");
+    expect(pendingCopyAction({ baseRevision: 3, live: 0, content: "empty", origin: "edit" }, server)).toBe("offer");
     expect(pendingKey("u1", "b1")).toBe("nook.whiteboard.pending.u1.b1");
   });
 
@@ -104,24 +111,51 @@ describe("whiteboard autosave state machine", () => {
     expect(nextSaveDelay(run([{ type: "edited", at: 0 }, { type: "saveStarted" }, { type: "failed" }]), 0)).toBe(RETRY_MIN_MS);
   });
 
-  test("QA D1–D3: only an unsaved edit may become pending, and a leave flush never sends an empty scene over elements", () => {
+  test("QA D1–D3 and E1: only a captured edit the server has not confirmed is ever sent or kept", () => {
     const loaded = autosaveReducer(initialAutosave(1), { type: "reset", revision: 2, live: 3 });
-    expect(loaded.savedLive).toBe(3);
+    const asLoaded: Capture = { origin: "load", live: 3 };
     // Nothing edited: nothing may be written or flushed, whatever the editor reports.
-    expect(mayWritePending(loaded)).toBe(false);
-    expect(leaveFlushAllowed(loaded, 0)).toBe(false);
-    expect(leaveFlushAllowed(loaded, 3)).toBe(false);
+    expect(maySendCapture(loaded, asLoaded)).toBe(false);
+    expect(maySendCapture(loaded, { origin: "edit", live: 0 })).toBe(false);
+    expect(maySendCapture(loaded, null)).toBe(false);
     const edited = autosaveReducer(loaded, { type: "edited", at: 0 });
-    expect(mayWritePending(edited)).toBe(true);
-    expect(leaveFlushAllowed(edited, 4)).toBe(true);
-    // An empty scene over a board with 3 saved elements is never sent from a leave flush.
-    expect(leaveFlushAllowed(edited, 0)).toBe(false);
+    expect(maySendCapture(edited, { origin: "edit", live: 4 })).toBe(true);
+    // A scene that is not an edit is never sent, even with unsaved work (a server scene shown, the loaded one).
+    expect(maySendCapture(edited, { origin: "load", live: 3 })).toBe(false);
+    expect(maySendCapture(edited, { origin: "server", live: 3 })).toBe(false);
     // Once saved, nothing is pending any more (the copy is not rewritten after the save).
     const saved = run([{ type: "saveStarted" }, { type: "saved", revision: 3, at: 1, live: 4 }], edited);
-    expect(mayWritePending(saved)).toBe(false);
-    // A board that is empty on the server may be saved empty.
-    const emptyBoard = autosaveReducer(autosaveReducer(initialAutosave(1), { type: "reset", revision: 1, live: 0 }), { type: "edited", at: 0 });
-    expect(leaveFlushAllowed(emptyBoard, 0)).toBe(true);
+    expect(maySendCapture(saved, { origin: "edit", live: 4 })).toBe(false);
+  });
+
+  test("QA E1: a board emptied by a real edit is saved on leave, by the timer, and by the maximum wait", () => {
+    // 3 shapes saved, then Reset the canvas (or select all and Delete): a real edit with 0 shapes.
+    let state = autosaveReducer(autosaveReducer(initialAutosave(1), { type: "reset", revision: 2, live: 3 }), { type: "edited", at: 1000 });
+    const emptied: Capture = { origin: "edit", live: 0 };
+    // The leave flush (100 ms later) sends it: provenance decides, not content.
+    expect(maySendCapture(state, emptied)).toBe(true);
+    expect(hasPendingWork(state)).toBe(true);
+    expect(shouldSave(state)).toBe(true);
+    // The timer and the maximum wait treat it like any other edit.
+    expect(nextSaveDelay(state, 1000)).toBe(AUTOSAVE_DEBOUNCE_MS);
+    for (let at = 2000; at <= 5000; at += 1000) state = autosaveReducer(state, { type: "edited", at });
+    expect(nextSaveDelay(state, 1000 + AUTOSAVE_MAX_WAIT_MS)).toBe(0);
+    expect(maySendCapture(state, emptied)).toBe(true);
+    // After the save the server has an empty board; nothing is pending.
+    state = run([{ type: "saveStarted" }, { type: "saved", revision: 3, at: 6000, live: 0 }], state);
+    expect(state).toMatchObject({ status: "idle", savedLive: 0 });
+    expect(maySendCapture(state, emptied)).toBe(false);
+  });
+
+  test("QA E1: an empty scene from a teardown can never be captured as an edit", () => {
+    // The only way a scene becomes an edit capture is through this gate.
+    expect(mayCaptureEdit({ loaded: true, ready: true, tearingDown: false })).toBe(true);
+    // Teardown begun (the editor then reports an empty scene): never an edit.
+    expect(mayCaptureEdit({ loaded: true, ready: true, tearingDown: true })).toBe(false);
+    // Before the loaded scene is in the editor (its start-up reports an empty scene): never an edit.
+    expect(mayCaptureEdit({ loaded: true, ready: false, tearingDown: false })).toBe(false);
+    expect(mayCaptureEdit({ loaded: false, ready: false, tearingDown: false })).toBe(false);
+    expect(mayCaptureEdit({ loaded: false, ready: true, tearingDown: true })).toBe(false);
   });
 });
 
@@ -194,5 +228,128 @@ describe("whiteboard routes", () => {
     expect(whiteboardsBackAction(whiteboardsRoute("all", id), 2)).toEqual({ kind: "history" });
     expect(whiteboardsBackAction(whiteboardsRoute("shared", id), 0)).toEqual({ kind: "replace", route: whiteboardsRoute("shared") });
     expect(whiteboardsBackAction(whiteboardsRoute(), 3)).toEqual({ kind: "home" });
+  });
+});
+
+describe("QA E5: the background sync of pending copies", () => {
+  const scene = (count: number): CanonicalScene => ({ ...emptyScene(), elements: Array.from({ length: count }, (_, index) => ({ id: `r${index}`, type: "rectangle", x: index * 10, y: 0, width: 5, height: 5, angle: 0, version: 1, isDeleted: false })) as never });
+  const fakeDeps = (options: { pending: Record<string, { baseRevision: number; count: number; origin?: "edit" }>; server: Record<string, { revision: number; count: number; canEdit?: boolean } | "gone">; save?: (id: string) => Promise<void>; open?: string[]; current?: () => boolean }) => {
+    const store = new Map(Object.entries(options.pending).map(([id, entry]) => [id, { scene: scene(entry.count), baseRevision: entry.baseRevision, savedAt: "t", origin: entry.origin }]));
+    const saves: string[] = [];
+    const deps: SyncDeps = {
+      listBoards: async () => [...store.keys()],
+      readPending: async (id) => store.get(id) ?? null,
+      getBoard: async (id) => {
+        const board = options.server[id];
+        if (!board || board === "gone") throw new ApiError("Not found", 404, { code: "NOT_FOUND" });
+        return { whiteboard: { revision: board.revision, canEdit: board.canEdit ?? true }, scene: scene(board.count) };
+      },
+      save: async (id) => { saves.push(id); await options.save?.(id); return { revision: 9, savedAt: "t", sha256: "x", sizeBytes: 1 }; },
+      clear: async (id) => { store.delete(id); },
+      isCurrent: options.current ?? (() => true),
+      isOpen: (id) => (options.open ?? []).includes(id)
+    };
+    return { deps, saves, store };
+  };
+
+  test("pendingSyncAction: only a copy the open would apply is sent; the same content is cleared; anything else waits", () => {
+    const server = { revision: 4, live: 3, content: "server", canEdit: true };
+    expect(pendingSyncAction({ baseRevision: 4, live: 4, content: "mine", origin: "edit" }, server)).toBe("send");
+    expect(pendingSyncAction({ baseRevision: 4, live: 0, content: "empty", origin: "edit" }, server)).toBe("send");
+    expect(pendingSyncAction({ baseRevision: 4, live: 0, content: "empty" }, server)).toBe("keep");
+    expect(pendingSyncAction({ baseRevision: 3, live: 4, content: "mine", origin: "edit" }, server)).toBe("keep");
+    expect(pendingSyncAction({ baseRevision: 3, live: 3, content: "server" }, server)).toBe("clear");
+    expect(pendingSyncAction({ baseRevision: 4, live: 4, content: "mine", origin: "edit" }, { ...server, canEdit: false })).toBe("keep");
+    expect(pendingSyncAction({ baseRevision: 4, live: 4, content: "mine", origin: "edit" }, null)).toBe("keep");
+  });
+
+  test("sends copies one at a time through the CAS, leaves conflicts and open boards, and clears the sent ones", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { deps, saves, store } = fakeDeps({
+      pending: { a: { baseRevision: 2, count: 4, origin: "edit" }, b: { baseRevision: 1, count: 2, origin: "edit" }, c: { baseRevision: 5, count: 1, origin: "edit" }, d: { baseRevision: 3, count: 3 }, e: { baseRevision: 7, count: 2, origin: "edit" } },
+      server: { a: { revision: 2, count: 3 }, b: { revision: 2, count: 3 }, c: { revision: 5, count: 0 }, d: { revision: 3, count: 3 }, e: { revision: 7, count: 1 } },
+      open: ["e"],
+      save: async (id) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        if (id === "c") throw new ApiError("This whiteboard changed on another device", 409, { code: "REVISION_CONFLICT", revision: 6 });
+      }
+    });
+    const result = await syncPendingCopies(deps);
+    expect(saves).toEqual(["a", "c"]);
+    expect(maxInFlight).toBe(1);
+    expect(result).toMatchObject({ sent: ["a"], cleared: ["d"], stopped: null });
+    // b (older base) waits to be offered; c (409) waits; e is open in a canvas.
+    expect(result.kept.sort()).toEqual(["b", "c", "e"]);
+    expect([...store.keys()].sort()).toEqual(["b", "c", "e"]);
+  });
+
+  test("stops at a 429, while offline, and when the person signs out; never sends for another user", async () => {
+    const limited = fakeDeps({
+      pending: { a: { baseRevision: 1, count: 2, origin: "edit" }, b: { baseRevision: 1, count: 2, origin: "edit" } },
+      server: { a: { revision: 1, count: 1 }, b: { revision: 1, count: 1 } },
+      save: async () => { throw new ApiError("Too many saves", 429, { code: "RATE_LIMITED", retryAfter: 30 }); }
+    });
+    expect(await syncPendingCopies(limited.deps)).toMatchObject({ stopped: "rate-limited", sent: [] });
+    expect(limited.saves).toEqual(["a"]);
+    const offline = fakeDeps({ pending: { a: { baseRevision: 1, count: 2, origin: "edit" } }, server: { a: { revision: 1, count: 1 } }, save: async () => { throw new TypeError("Failed to fetch"); } });
+    expect(await syncPendingCopies(offline.deps)).toMatchObject({ stopped: "offline" });
+    expect(offline.store.size).toBe(1);
+    let signedIn = true;
+    const signOut = fakeDeps({
+      pending: { a: { baseRevision: 1, count: 2, origin: "edit" }, b: { baseRevision: 1, count: 2, origin: "edit" } },
+      server: { a: { revision: 1, count: 1 }, b: { revision: 1, count: 1 } },
+      save: async () => { signedIn = false; },
+      current: () => signedIn
+    });
+    expect(await syncPendingCopies(signOut.deps)).toMatchObject({ stopped: "signed-out", sent: ["a"] });
+    expect(signOut.saves).toEqual(["a"]);
+    const nobody = fakeDeps({ pending: { a: { baseRevision: 1, count: 2, origin: "edit" } }, server: { a: { revision: 1, count: 1 } }, current: () => false });
+    expect(await syncPendingCopies(nobody.deps)).toMatchObject({ stopped: "signed-out" });
+    expect(nobody.saves).toEqual([]);
+    // A board that is gone stays (the next open says so) and the run goes on.
+    const gone = fakeDeps({ pending: { a: { baseRevision: 1, count: 2, origin: "edit" } }, server: { a: "gone" } });
+    expect(await syncPendingCopies(gone.deps)).toMatchObject({ kept: ["a"], stopped: null });
+    expect(canonicalSceneJson(scene(0))).toBe(canonicalSceneJson(emptyScene()));
+  });
+
+  test("a board a canvas has open is left to that canvas", () => {
+    expect(isBoardOpen("x")).toBe(false);
+    const release = markBoardOpen("x");
+    const again = markBoardOpen("x");
+    expect(isBoardOpen("x")).toBe(true);
+    release();
+    release();
+    expect(isBoardOpen("x")).toBe(true);
+    again();
+    expect(isBoardOpen("x")).toBe(false);
+  });
+});
+
+describe("QA E2, E6: the layer watcher and the restore wording", () => {
+  type Fake = { matches?: (selector: string) => boolean; getClientRects: () => { length: number } };
+  const node = (rendered: boolean): Fake => ({ getClientRects: () => ({ length: rendered ? 1 : 0 }) });
+  const root = (found: Fake[]) => ({ querySelectorAll: () => found as never });
+
+  test("only a rendered Excalidraw layer, in the stage or in a portal on <body>, counts", () => {
+    expect(openExcalidrawLayer(root([]) as never, root([]) as never)).toBeNull();
+    expect(openExcalidrawLayer(null, root([]) as never)).toBeNull();
+    const menu = node(true);
+    expect(openExcalidrawLayer(root([menu]) as never, root([]) as never)).toBe(menu as never);
+    // Help or Mermaid: a portal outside the stage.
+    const help = node(true);
+    expect(openExcalidrawLayer(root([]) as never, root([help]) as never)).toBe(help as never);
+    // A layer left in the DOM but not rendered (closed by a click outside) does not hold a Back entry.
+    expect(openExcalidrawLayer(root([node(false)]) as never, root([node(false)]) as never)).toBeNull();
+  });
+
+  test("the restore dialog names the version it switches to and both counts, whichever has more", () => {
+    const at = (value: string) => `[${value}]`;
+    expect(restoreMessage({ createdAt: "t1", elementCount: 3 }, 0, at)).toBe("Switch to the version from [t1], which has 3 shapes; the current one has 0 shapes. You can switch back the same way.");
+    expect(restoreMessage({ createdAt: "t2", elementCount: 0 }, 1, at)).toBe("Switch to the version from [t2], which has 0 shapes; the current one has 1 shape. You can switch back the same way.");
+    expect(restoreMessage(null, 2, at)).not.toMatch(/removed/);
   });
 });

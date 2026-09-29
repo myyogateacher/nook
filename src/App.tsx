@@ -90,6 +90,7 @@ import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProble
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { clearPendingForUser, countPendingForUser } from "./whiteboards/pendingStore";
+import { usePendingWhiteboardSync } from "./whiteboards/pendingSync";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
@@ -1529,6 +1530,8 @@ export function App() {
   useEffect(() => {
     if (sessionUserId) historyDepthRef.current = readHistoryDepth(window.history.state);
   }, [sessionUserId]);
+  // QA E5: pending whiteboard copies are sent once the app is open and online.
+  usePendingWhiteboardSync(sessionUserId);
 
   useEffect(() => {
     if (!session) return;

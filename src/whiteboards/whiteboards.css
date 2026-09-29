@@ -26,7 +26,10 @@
 .whiteboard-card-copy { min-width: 0; display: grid; gap: 4px; padding: 10px 48px 12px 12px; }
 .whiteboard-name { min-width: 0; overflow: hidden; color: #ededee; font-size: .92rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .whiteboard-meta { min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; color: #85858c; font-size: .76rem; white-space: nowrap; }
-.whiteboard-meta .owner-badge { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.whiteboard-meta .owner-badge { min-width: 0; display: inline-flex; align-items: center; gap: 5px; overflow: hidden; text-overflow: ellipsis; }
+/* Wave 35's shared Avatar: the owner's picture, or their letter. */
+.whiteboard-owner-avatar { width: 16px; height: 16px; flex: none; display: inline-grid; place-items: center; border-radius: 50%; background: #2c2c33; color: #d4d4d8; font-size: .6rem; font-weight: 700; line-height: 1; vertical-align: middle; }
+.whiteboard-banner .whiteboard-owner-avatar { width: 20px; height: 20px; font-size: .66rem; }
 .whiteboard-shared { width: 14px; height: 14px; flex: none; color: #b99b59; }
 .whiteboard-more { position: absolute; right: 4px; bottom: 6px; width: 40px; height: 40px; }
 .whiteboards-list { grid-template-columns: minmax(0, 1fr); gap: 6px; }
@@ -46,6 +49,9 @@
 .whiteboard-new-form .whiteboard-field-label { margin-top: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .whiteboard-new-form .form-error { margin: 0; color: #fda4af; font-size: .8rem; }
 @media (min-width: 761px) {
+  /* QA E6: the filter, the sort, the layout toggle, and New stay on one row on desktop. */
+  .whiteboards-controls { flex-wrap: nowrap; }
+  .whiteboards-controls > .ui-select-root { width: auto; flex: 0 1 auto; }
   .whiteboard-sheet { left: 50%; right: auto; width: min(420px, 100vw); transform: translateX(-50%); }
 }
 @media (max-width: 760px) {
@@ -54,6 +60,8 @@
   .whiteboards-controls { flex: 1 1 100%; }
   .whiteboards-folder-select { flex: 1 1 100%; min-width: 0; max-width: none; }
   .whiteboards-sort-select { flex: 1 1 auto; min-width: 0; }
+  .whiteboards-controls > .ui-select-root:first-child { flex: 1 1 100%; }
+  .whiteboards-controls > .ui-select-root:nth-child(2) { width: auto; flex: 1 1 auto; }
   .whiteboards-grid:not(.whiteboards-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .whiteboard-card-copy { padding: 8px 44px 10px 10px; }
 }
@@ -106,5 +114,10 @@ button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padd
 .whiteboard-stage .excalidraw .sidebar-tab-trigger[id$="-trigger-library"] { display: none !important; }
 /* QA Q5: the Mermaid dialog's description links to mermaid.js.org and says other diagrams "render as image", which this release refuses. */
 .excalidraw .ttd-dialog-desc { display: none !important; }
-/* QA Q11: no keyboard hints ("Hold Ctrl and Arrow key…") on touch screens. */
-@media (pointer: coarse) { .whiteboard-stage .excalidraw .HintViewer { display: none !important; } }
+/* QA Q11 and E6: no keyboard hints ("Hold Ctrl and Arrow key…") on touch screens: a coarse or
+   hover-less pointer, Excalidraw's phone layout, or any touch on the canvas during this visit. */
+@media (pointer: coarse), (hover: none) { .whiteboard-stage .excalidraw .HintViewer { display: none !important; } }
+.whiteboard-stage[data-touch] .excalidraw .HintViewer, .whiteboard-stage .excalidraw.excalidraw--mobile .HintViewer { display: none !important; }
+/* QA E3: every Excalidraw dialog has a close control (Excalidraw shows one only full screen), at least 40 px. */
+.excalidraw .Dialog__close { min-width: 40px; min-height: 40px; display: grid; place-items: center; top: .5rem; right: .5rem; border-radius: 8px; }
+.excalidraw .Dialog__close:focus-visible { outline: 2px solid #d9b55f; outline-offset: 1px; }

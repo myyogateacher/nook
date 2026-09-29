@@ -10,9 +10,12 @@
  * once it returns, with the new base revision. A conflict waits for the person (Reload latest or
  * Save mine as a copy); a rejection keeps the local copy and waits for the next edit.
  *
- * Data-loss invariants (QA D1–D3): only an edit makes work pending (`mayWritePending`); a leave
- * flush never sends an empty scene over a board that had elements (`leaveFlushAllowed`); and an
- * empty pending copy is never applied silently over a board that has elements (`pendingCopyAction`).
+ * Data-loss invariants (QA D1–D3, E1), by provenance rather than content: a scene is captured as an
+ * edit only from a real editor change after the loaded scene is in the editor and before teardown
+ * begins (`mayCaptureEdit`); only such a capture, with unsaved work, is ever saved or kept as the
+ * pending copy (`maySendCapture`), whatever it holds, so a board the person emptied is saved like
+ * any other edit (the server keeps the replaced scene as a safety snapshot); and an empty pending
+ * copy that did not come from a recorded edit is never applied silently (`pendingCopyAction`).
  */
 
 export const AUTOSAVE_DEBOUNCE_MS = 1500;
@@ -113,15 +116,29 @@ export function nextSaveDelay(state: AutosaveState, now: number): number | null 
 /** Whether leaving now could lose work (the leave flush cares). */
 export const hasPendingWork = (state: AutosaveState) => state.status === "dirty" || state.status === "saving" || state.status === "offline" || (state.status === "rejected" && hasUnsaved(state)) || (state.status === "conflict" && hasUnsaved(state));
 
-/** Only an edit the server has not confirmed may be written to the on-device pending copy. */
-export const mayWritePending = (state: AutosaveState) => hasUnsaved(state);
+/**
+ * How the scene the canvas holds was captured (QA E1): `edit` is a real editor change while the
+ * editor was mounted and showed the loaded scene; `load` is the scene as loaded (or the editor's own
+ * report of it); `server` is a scene shown from the server (Reload latest, a restore).
+ */
+export type CaptureOrigin = "edit" | "load" | "server";
+export type Capture = { origin: CaptureOrigin; live: number };
+
+/** Where the canvas is in its life: the loaded scene is in the editor (`ready`), teardown has begun. */
+export type CaptureGate = { loaded: boolean; ready: boolean; tearingDown: boolean };
 
 /**
- * A leave flush sends the last captured scene only when there is unsaved work, and never an empty
- * scene over a board whose saved scene has elements: clearing a board is saved by the normal timer
- * while the canvas is open, not in the moment of leaving (QA D1–D3).
+ * Whether an editor change may be captured as an edit: only after the loaded scene is in the editor
+ * and before teardown begins. A teardown (whose editor reports an empty scene) never produces one.
  */
-export const leaveFlushAllowed = (state: AutosaveState, sceneLive: number) => hasUnsaved(state) && !(sceneLive === 0 && state.savedLive > 0);
+export const mayCaptureEdit = (gate: CaptureGate) => gate.loaded && gate.ready && !gate.tearingDown;
+
+/**
+ * Whether the captured scene may be saved (the 1.5 s timer, the 5 s maximum wait, the leave flush)
+ * or written to the on-device pending copy: it came from a real edit and the server has not
+ * confirmed that edit yet. Its content does not matter: an empty board from a real edit is an edit.
+ */
+export const maySendCapture = (state: AutosaveState, capture: Capture | null) => capture !== null && capture.origin === "edit" && hasUnsaved(state);
 
 /** The header's save status. */
 export function autosaveLabel(state: AutosaveState): string {
@@ -135,20 +152,35 @@ export function autosaveLabel(state: AutosaveState): string {
   }
 }
 
-/** A pending copy as the open decision sees it: its base revision, live element count, and canonical JSON. */
-export type PendingCopy = { baseRevision: number; live: number; content: string };
+/**
+ * A pending copy as the open decision sees it: its base revision, live element count, canonical
+ * JSON, and whether it was written from a recorded edit (copies from before QA E1 carry no origin).
+ */
+export type PendingCopy = { baseRevision: number; live: number; content: string; origin?: CaptureOrigin };
 export type ServerScene = { revision: number; live: number; content: string };
 
 /**
  * D210: what to do with a pending local copy when a board opens.
  * - The same content as the server's: it was saved after all, so discard it (QA Q8).
- * - Empty over a board with elements: never applied silently, only offered (QA D2).
- * - Based on the server's revision: apply it silently (it was never saved).
+ * - Empty over a board with elements and not from a recorded edit: only offered (QA D2).
+ * - Based on the server's revision: apply it silently (it was never saved), empty or not (QA E1d).
  * - Any other base: the board changed since, so offer it as a copy.
  */
 export function pendingCopyAction(pending: PendingCopy | null, server: ServerScene): "none" | "discard" | "apply" | "offer" {
   if (!pending) return "none";
   if (pending.content === server.content) return "discard";
-  if (pending.live === 0 && server.live > 0) return "offer";
+  if (pending.live === 0 && server.live > 0 && pending.origin !== "edit") return "offer";
   return pending.baseRevision === server.revision ? "apply" : "offer";
+}
+
+/**
+ * QA E5: what the background sync does with one pending copy, given the board as the server has it
+ * now (null when it is gone or unreadable). A copy with the server's content is cleared; a copy the
+ * open would apply silently (an edit on the server's current revision) is sent through the usual CAS
+ * save; anything else stays for the next open, where it is applied or offered.
+ */
+export function pendingSyncAction(pending: PendingCopy, server: (ServerScene & { canEdit: boolean }) | null): "send" | "clear" | "keep" {
+  if (!server || !server.canEdit) return "keep";
+  if (pending.content === server.content) return "clear";
+  return pendingCopyAction(pending, server) === "apply" ? "send" : "keep";
 }

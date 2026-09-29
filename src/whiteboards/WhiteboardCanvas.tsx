@@ -9,13 +9,15 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { Folder } from "../types";
 import { canonicalSceneJson, whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
 import {
-  autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, leaveFlushAllowed, mayWritePending, nextSaveDelay,
-  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS
+  autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, mayCaptureEdit, maySendCapture, nextSaveDelay,
+  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS, type CaptureOrigin
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
-import { changeKey, closedExcalidrawLayers, EXCALIDRAW_LAYER_SELECTOR, excalidrawLayerOpen, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isKeptElement, linkTarget, sceneForLoad, sceneForSave } from "./historyGuard";
+import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isKeptElement, linkTarget, openExcalidrawLayer, restoreMessage, sceneForLoad, sceneForSave } from "./historyGuard";
+import { markBoardOpen } from "./pendingSync";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
-import { announceThumbnail, createWhiteboard, getWhiteboard, putWhiteboardThumbnail, restorePreviousVersion, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
+import { announceThumbnail, createWhiteboard, getPreviousVersion, getWhiteboard, putWhiteboardThumbnail, restorePreviousVersion, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
+import { Avatar } from "../ui/Avatar";
 
 /**
  * One board's canvas (whiteboard plan §10.3, D194, D202, D210): Excalidraw under Nook's 44 px header
@@ -29,6 +31,10 @@ import { announceThumbnail, createWhiteboard, getWhiteboard, putWhiteboardThumbn
  * from a real `onChange` while the editor was mounted and loaded (`sceneRef`), never from the editor's
  * API, which reports an empty scene once it is unmounting. Teardown flushes that captured scene first
  * and then stops everything: after it, nothing is captured, written, or sent.
+ *
+ * QA E1: each captured scene carries its provenance (`origin`). Only an `edit` capture is saved or
+ * kept as the pending copy, whatever it holds: a board the person emptied (Reset the canvas, select
+ * all and Delete) is saved by the timer, the maximum wait, and the leave flush like any other edit.
  */
 
 type Props = {
@@ -45,8 +51,8 @@ type Props = {
 };
 
 type Loaded = { board: WhiteboardSummary; scene: CanonicalScene };
-type Layer = { kind: "board"; dialog: BoardDialog } | { kind: "conflict" } | { kind: "discard" } | { kind: "restore" };
-type Captured = { elements: ReadonlyArray<Record<string, unknown>>; appState: Record<string, unknown>; live: number };
+type Layer = { kind: "board"; dialog: BoardDialog } | { kind: "conflict" } | { kind: "discard" } | { kind: "restore"; previous: { createdAt: string; elementCount: number } | null };
+type Captured = { elements: ReadonlyArray<Record<string, unknown>>; appState: Record<string, unknown>; live: number; origin: CaptureOrigin };
 
 const THUMBNAIL_MAX_SIDE = 640;
 const THUMBNAIL_MAX_BYTES = 128 * 1024;
@@ -103,6 +109,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const applyPendingRef = useRef<PendingEntry | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const accessLostRef = useRef(false);
+  /** Asks the layer watcher to look again (QA E2); set once the canvas is on screen. */
+  const checkLayersRef = useRef<() => void>(() => undefined);
 
   const canEdit = Boolean(loaded?.board.canEdit);
   const name = loaded ? whiteboardDisplayName(loaded.board.name) : "Whiteboard";
@@ -125,7 +133,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         if (!safe) throw new Error("This whiteboard could not be read");
         const pendingScene = pending ? sceneForLoad(pending.scene) : null;
         const action = whiteboard.canEdit && pending && pendingScene
-          ? pendingCopyAction({ baseRevision: pending.baseRevision, live: pendingScene.elements.length, content: canonicalSceneJson(pendingScene) }, { revision: whiteboard.revision, live: safe.elements.length, content: canonicalSceneJson(safe) })
+          ? pendingCopyAction({ baseRevision: pending.baseRevision, live: pendingScene.elements.length, content: canonicalSceneJson(pendingScene), origin: pending.origin }, { revision: whiteboard.revision, live: safe.elements.length, content: canonicalSceneJson(safe) })
           : pending ? "discard" : "none";
         let initial = safe;
         if (action === "apply" && pending && pendingScene) {
@@ -140,7 +148,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         dispatch({ type: "reset", revision: whiteboard.revision, live: safe.elements.length });
         // What Excalidraw reports for the loaded scene is not an edit; anything else is.
         lastKeyRef.current = changeKey(initial.elements, initialAppState(initial));
-        sceneRef.current = { elements: initial.elements, appState: initialAppState(initial), live: initial.elements.length };
+        sceneRef.current = { elements: initial.elements, appState: initialAppState(initial), live: initial.elements.length, origin: "load" };
         loadedLiveRef.current = initial.elements.length;
         readyRef.current = false;
         lastThumbAt.current = 0;
@@ -169,12 +177,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const writePendingNow = useCallback(() => {
     if (pendingTimer.current !== null) window.clearTimeout(pendingTimer.current);
     pendingTimer.current = null;
-    if (tearingDownRef.current || !boardRef.current?.canEdit || !mayWritePending(stateRef.current)) return;
+    // Only a captured edit the server has not confirmed (QA E1): never the loaded scene, never after teardown began.
+    if (tearingDownRef.current || !boardRef.current?.canEdit || !maySendCapture(stateRef.current, sceneRef.current)) return;
     const result = currentScene();
     if (!result?.ok) return;
-    // An empty copy over a board that has elements is never kept (QA D2): clearing is saved while open.
-    if (result.stats.elementCount === 0 && stateRef.current.savedLive > 0) return;
-    void writePending(userId, boardId, { scene: result.scene, baseRevision: stateRef.current.baseRevision, savedAt: new Date().toISOString(), live: result.stats.elementCount });
+    void writePending(userId, boardId, { scene: result.scene, baseRevision: stateRef.current.baseRevision, savedAt: new Date().toISOString(), live: result.stats.elementCount, origin: "edit" });
   }, [boardId, currentScene, userId]);
 
   /** Throttled, not debounced (QA D4): the copy is written within 0.5 s of an edit while edits keep coming. */
@@ -228,10 +235,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const state = stateRef.current;
     if (!shouldSave(state) || !boardRef.current?.canEdit) return Promise.resolve();
     if (tearingDownRef.current && !options.leaving) return Promise.resolve();
+    // Only a captured edit is ever sent (QA E1), on every path: the timer, the maximum wait, a
+    // hidden tab, and the leave flush. An empty board from a real edit is sent like any other.
+    if (!maySendCapture(state, sceneRef.current)) return Promise.resolve();
     const result = currentScene();
     if (!result) return Promise.resolve();
-    // Never an empty scene from a leave flush over a board that had elements (QA D1–D3).
-    if (options.leaving && result.ok && !leaveFlushAllowed(state, result.stats.elementCount)) return Promise.resolve();
     dispatch({ type: "saveStarted" });
     if (!result.ok) {
       dispatch({ type: "rejected", message: result.message });
@@ -313,6 +321,12 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   // everything. The request outlives the canvas.
   const teardownRef = useRef(() => undefined as void);
   teardownRef.current = () => {
+    // QA E4: end text editing while the editor is still whole. Its text box submits on blur, and a
+    // blur during the editor's own unmount threw ("Error: Error"). What was typed is already captured.
+    const editing = stageRef.current?.querySelector<HTMLTextAreaElement>("textarea.excalidraw-wysiwyg");
+    if (editing) {
+      try { editing.blur(); } catch { /* the editor is going away either way */ }
+    }
     if (hasPendingWork(stateRef.current)) {
       writePendingNow();
       void runSave({ leaving: true });
@@ -328,6 +342,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     thumbTimer.current = null;
   };
   useLayoutEffect(() => () => teardownRef.current(), []);
+  // QA E5: while this canvas is open, the background sync leaves this board's pending copy alone.
+  useEffect(() => markBoardOpen(boardId), [boardId]);
 
   /** Waits for the save to finish, at most three seconds; true when nothing is left unsaved. */
   const flush = useCallback(async () => {
@@ -366,7 +382,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const onChange = useCallback((elements: readonly unknown[], appState: AppState, _files: BinaryFiles) => {
     // Nothing counts before the loaded scene is in the editor, or once unmounting has begun.
     if (tearingDownRef.current || !sceneRef.current || !apiRef.current) return;
-    if (excalidrawLayerOpen(appState as never)) setExcalidrawLayer(true);
+    checkLayersRef.current();
     const state = appState as unknown as Record<string, unknown>;
     // QA Q5: a refused image (paste, drop, or a Mermaid diagram Excalidraw renders as an image) gets
     // one friendly message instead of Excalidraw's error dialog.
@@ -397,39 +413,77 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       if (live < loadedLiveRef.current) return;
       readyRef.current = true;
       if (applyPendingRef.current) {
-        // A pending copy applied on open (D210) is unsaved work: save it.
+        // A pending copy applied on open (D210) is unsaved work from a recorded edit: save it.
         applyPendingRef.current = null;
         lastKeyRef.current = key;
-        sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live };
+        sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live, origin: "edit" };
         dispatch({ type: "edited", at: Date.now() });
         schedulePendingWrite();
         return;
       }
       if (live === loadedLiveRef.current) {
+        // The editor's report of the loaded scene: the baseline, not an edit.
         lastKeyRef.current = key;
-        sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live };
+        sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live, origin: "load" };
+        // QA E6: a thumbnail older than the board (a reload or a closed tab right after a save) is
+        // drawn again from the loaded scene once the board has been idle for a while.
+        if (boardRef.current?.canEdit && stateRef.current.baseRevision > 1 && thumbRevision.current !== stateRef.current.baseRevision) scheduleThumbnail(stateRef.current.baseRevision);
         return;
       }
     }
     if (key === lastKeyRef.current || !boardRef.current?.canEdit) return;
+    if (!mayCaptureEdit({ loaded: true, ready: readyRef.current, tearingDown: tearingDownRef.current })) return;
     lastKeyRef.current = key;
-    sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live };
+    sceneRef.current = { elements: loose.slice(), appState: keptAppState(state), live, origin: "edit" };
     dispatch({ type: "edited", at: Date.now() });
     schedulePendingWrite();
     if (thumbTimer.current !== null) window.clearTimeout(thumbTimer.current);
-  }, [flash, schedulePendingWrite]);
+  }, [flash, schedulePendingWrite, scheduleThumbnail]);
 
   // D202: Back closes Excalidraw's own menus, dialogs, popups, and sidebar first. They are watched
-  // in the DOM, since not all of them keep their open state in appState.
+  // in the DOM, since not all of them keep their open state in appState, and their dialogs and
+  // popovers render outside the stage (portals on <body>). QA E2: the watch is both ways, so a layer
+  // closed any other way (Escape, a click or tap outside, its own close control) releases its guard,
+  // and its history sentinel, at once: the next Back does what it would have done without the layer.
   const hasCanvas = loaded !== null;
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const check = () => setExcalidrawLayer(Boolean(stage.querySelector(EXCALIDRAW_LAYER_SELECTOR)));
-    const observer = new MutationObserver(check);
-    observer.observe(stage, { childList: true, subtree: true });
+    let frame: number | null = null;
+    const check = () => {
+      frame = null;
+      if (!tearingDownRef.current) setExcalidrawLayer(openExcalidrawLayer(stage, document) !== null);
+    };
+    const schedule = () => { if (frame === null) frame = window.requestAnimationFrame(check); };
+    checkLayersRef.current = schedule;
+    const observer = new MutationObserver(schedule);
+    observer.observe(stage, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "open", "data-state"] });
+    // Portals are appended to <body>; their own subtrees change as a dialog opens and closes.
+    observer.observe(document.body, { childList: true, subtree: true });
     check();
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      checkLayersRef.current = () => undefined;
+    };
+  }, [hasCanvas]);
+
+  // QA E3: Escape closes Excalidraw's dialogs (Help, Mermaid, Clear canvas) even when focus is not
+  // inside them (Excalidraw only listens inside the dialog). Its own handler runs first when it can.
+  useEffect(() => {
+    if (!hasCanvas) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const layer = openExcalidrawLayer(stageRef.current, document);
+      if (!(layer instanceof HTMLElement) || !layer.matches(".Modal") || layer.contains(document.activeElement)) return;
+      const close = layer.querySelector<HTMLElement>(".Dialog__close") ?? layer.querySelector<HTMLElement>(".Modal__background");
+      if (!close) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close.click();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [hasCanvas]);
   useHistoryDialogGuard(excalidrawLayer && layer === null, () => {
     apiRef.current?.updateScene({ appState: closedExcalidrawLayers() as never });
@@ -438,10 +492,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     setExcalidrawLayer(false);
     // Layers that keep their state elsewhere close on Escape, as they do from the keyboard.
     window.requestAnimationFrame(() => {
-      const stage = stageRef.current;
-      if (!stage?.querySelector(EXCALIDRAW_LAYER_SELECTOR)) return;
-      const target = stage.querySelector(".dropdown-menu, .Modal, .context-menu, .sidebar, .popover") ?? stage.querySelector(".excalidraw") ?? document;
-      target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+      const layer = openExcalidrawLayer(stageRef.current, document);
+      if (!layer) return;
+      // A dialog closes with its own control (its close button, or a click on its backdrop).
+      const close = layer.matches(".Modal") ? layer.querySelector<HTMLElement>(".Dialog__close") ?? layer.querySelector<HTMLElement>(".Modal__background") : null;
+      if (close) { close.click(); return; }
+      layer.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+      const editor = stageRef.current?.querySelector(".excalidraw");
+      if (layer.isConnected && editor) editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
     });
   });
 
@@ -477,7 +535,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const safe = sceneForLoad(scene);
     if (!safe) throw new Error("This whiteboard could not be read");
     lastKeyRef.current = changeKey(safe.elements, initialAppState(safe));
-    sceneRef.current = { elements: safe.elements, appState: initialAppState(safe), live: safe.elements.length };
+    sceneRef.current = { elements: safe.elements, appState: initialAppState(safe), live: safe.elements.length, origin: "server" };
     apiRef.current?.updateScene({ elements: safe.elements as never, appState: { viewBackgroundColor: safe.appState.viewBackgroundColor ?? "#ffffff" } as never });
     apiRef.current?.history.clear();
     dispatch({ type: "reset", revision: whiteboard.revision, live: safe.elements.length });
@@ -500,7 +558,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const restorePrevious = useCallback(async () => {
     try {
       await restorePreviousVersion(boardId, stateRef.current.baseRevision);
-      await showServerScene("Restored the previous version");
+      await showServerScene("Switched to the previous version");
     } catch (reason) {
       const payload = codeOf(reason);
       if (payload?.code === "REVISION_CONFLICT") {
@@ -550,6 +608,17 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (result?.ok) void saveAsCopy(result.scene);
   }, [currentScene, saveAsCopy]);
 
+  /** QA E6: the restore dialog says which version it switches to, so it reads right either way. */
+  const openRestore = useCallback(async () => {
+    try {
+      const previous = await getPreviousVersion(boardId);
+      setLayer({ kind: "restore", previous });
+    } catch (reason) {
+      if (lostAccess(reason) && codeOf(reason)?.code !== "NO_SNAPSHOT") loseAccess();
+      else flash(messageOf(reason, "Could not find the previous version"));
+    }
+  }, [boardId, flash, loseAccess]);
+
   useHistoryDialogGuard(layer?.kind === "conflict" || layer?.kind === "discard" || layer?.kind === "restore", () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : null));
 
   // ------------------------------------------------------------------ render
@@ -568,7 +637,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const status = autosave.status;
   const StatusIcon = status === "offline" || status === "rejected" || status === "conflict" ? CloudOff : status === "saving" ? LoaderCircle : Cloud;
   const boardDialog = layer?.kind === "board" ? layer.dialog : null;
-  const snapshotTime = board.snapshotAt ? new Date(board.snapshotAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : null;
+  const formatTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
   return <div className="whiteboard-canvas-page" data-status={status}>
     <header className="whiteboard-bar">
@@ -585,14 +654,17 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         <button className="icon-button whiteboard-menu" onClick={() => setLayer({ kind: "board", dialog: { kind: "actions", board } })} aria-haspopup="dialog" aria-label={`Actions for ${name}`}><Ellipsis /></button>
       </div>
     </header>
-    {!canEdit && <p className="whiteboard-banner" role="note"><strong>View only</strong> · Owned by {board.owner_name}</p>}
+    {!canEdit && <p className="whiteboard-banner" role="note"><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} /> {board.owner_name}</p>}
     {status === "rejected" && <p className="whiteboard-banner warn" role="alert">Not saved: {autosave.message}. Your changes are kept on this device.</p>}
     {offer && <div className="whiteboard-banner warn" role="alert">
       <span>You have unsaved changes from an earlier visit that differ from this whiteboard as it is saved now.</span>
       <button className="secondary-button" onClick={() => { void saveAsCopy(offer.scene); }}>Restore as a copy</button>
       <button className="secondary-button" onClick={() => { setOffer(null); void clearPending(userId, boardId); }}>Discard</button>
     </div>}
-    <div className="whiteboard-stage" ref={stageRef}>
+    <div className="whiteboard-stage" ref={stageRef} onPointerDownCapture={(event) => {
+      // QA E6: keyboard hints are for keyboards; a touch hides them for the rest of the visit.
+      if (event.pointerType === "touch") event.currentTarget.dataset.touch = "true";
+    }}>
       <Excalidraw
         excalidrawAPI={(instance) => { apiRef.current = instance; }}
         initialData={{ elements: scene.elements as never, appState: initialAppState(scene), scrollToContent: true }}
@@ -624,7 +696,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     <BoardDialogs dialog={boardDialog} folders={folders} flash={flash}
       onClose={() => setLayer(null)}
       onExportPng={() => { void exportPng(); }}
-      onRestorePrevious={() => setLayer({ kind: "restore" })}
+      onRestorePrevious={() => { void openRestore(); }}
       onChanged={(patch) => setLoaded((current) => current ? { ...current, board: { ...current.board, ...patch } } : current)}
       onDeleted={() => { void clearPending(userId, boardId); dispatch({ type: "reset", revision: stateRef.current.baseRevision, live: stateRef.current.savedLive }); onDeleted(); }}
       onAction={(action, target) => setLayer({ kind: "board", dialog: { kind: action, board: target } })} />
@@ -636,6 +708,6 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       </footer>
     </ModalDialog>}
     {layer?.kind === "discard" && <ConfirmDialog title="Discard your changes?" message="Reloading shows the latest saved version. The changes you made here since then are discarded." confirmLabel="Discard and reload" danger onCancel={() => setLayer({ kind: "conflict" })} onConfirm={() => { void reloadLatest(); }} />}
-    {layer?.kind === "restore" && <ConfirmDialog title="Restore the previous version?" message={`This saves the version kept${snapshotTime ? ` on ${snapshotTime}` : ""}, before most of this whiteboard was removed, as the newest version. What is on the board now is kept too, so you can switch back the same way.`} confirmLabel="Restore" onCancel={() => setLayer(null)} onConfirm={() => { void restorePrevious(); }} />}
+    {layer?.kind === "restore" && <ConfirmDialog title="Restore previous version" message={restoreMessage(layer.previous, sceneRef.current?.live ?? autosave.savedLive, formatTime)} confirmLabel="Switch" onCancel={() => setLayer(null)} onConfirm={() => { void restorePrevious(); }} />}
   </div>;
 }

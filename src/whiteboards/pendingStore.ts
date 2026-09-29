@@ -1,4 +1,5 @@
 import type { CanonicalScene } from "../../shared/whiteboardScene";
+import type { CaptureOrigin } from "./autosave";
 
 /**
  * The pending local copy (whiteboard plan D210): unsaved scene JSON mirrored to IndexedDB under
@@ -7,7 +8,8 @@ import type { CanonicalScene } from "../../shared/whiteboardScene";
  * net, never the board.
  */
 
-export type PendingEntry = { scene: CanonicalScene; baseRevision: number; savedAt: string; live?: number };
+/** `origin: "edit"` marks a copy written from a recorded edit (QA E1); older copies have none. */
+export type PendingEntry = { scene: CanonicalScene; baseRevision: number; savedAt: string; live?: number; origin?: CaptureOrigin };
 
 const DB_NAME = "nook-whiteboards";
 const STORE = "pending";
@@ -49,11 +51,14 @@ async function run<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) 
   }
 }
 
-export async function readPending(userId: string, boardId: string): Promise<PendingEntry | null> {
-  const value = await run<unknown>("readonly", (store) => store.get(pendingKey(userId, boardId)));
+const asEntry = (value: unknown): PendingEntry | null => {
   if (!value || typeof value !== "object") return null;
   const entry = value as Partial<PendingEntry>;
   return typeof entry.baseRevision === "number" && entry.scene && typeof entry.savedAt === "string" ? entry as PendingEntry : null;
+};
+
+export async function readPending(userId: string, boardId: string): Promise<PendingEntry | null> {
+  return asEntry(await run<unknown>("readonly", (store) => store.get(pendingKey(userId, boardId))));
 }
 
 export async function writePending(userId: string, boardId: string, entry: PendingEntry) {
@@ -77,4 +82,12 @@ export async function countPendingForUser(userId: string): Promise<number> {
 export async function clearPendingForUser(userId: string) {
   if (typeof IDBKeyRange === "undefined") return;
   await run("readwrite", (store) => store.delete(userRange(userId)));
+}
+
+/** The boards `userId` has pending copies of on this device (QA E5, the background sync). */
+export async function listPendingBoards(userId: string): Promise<string[]> {
+  if (typeof IDBKeyRange === "undefined") return [];
+  const prefix = `nook.whiteboard.pending.${userId}.`;
+  const keys = (await run<IDBValidKey[]>("readonly", (store) => store.getAllKeys(userRange(userId)))) ?? [];
+  return keys.flatMap((key) => typeof key === "string" && key.startsWith(prefix) ? [key.slice(prefix.length)] : []);
 }

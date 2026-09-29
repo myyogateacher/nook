@@ -26,6 +26,32 @@ export function excalidrawLayerOpen(appState: ExcalidrawLayers | null | undefine
  */
 export const EXCALIDRAW_LAYER_SELECTOR = ".dropdown-menu, .Modal, .context-menu, .sidebar, .popover, [data-radix-popper-content-wrapper]";
 
+/**
+ * The Excalidraw layer on screen, or null (QA E2): one inside the stage (menus, the context menu,
+ * the sidebar), or one of its portals on <body> (dialogs in `.excalidraw-modal-container`, colour
+ * pickers and other popovers). Only a rendered one counts, so a closed or hidden layer never holds
+ * a Back entry.
+ */
+export function openExcalidrawLayer(stage: ParentNode | null, doc: Pick<Document, "querySelectorAll">): Element | null {
+  const candidates = [
+    ...(stage ? Array.from(stage.querySelectorAll(EXCALIDRAW_LAYER_SELECTOR)) : []),
+    ...Array.from(doc.querySelectorAll(".excalidraw-modal-container .Modal, body > .excalidraw [data-radix-popper-content-wrapper], body > [data-radix-popper-content-wrapper]"))
+  ];
+  for (const element of candidates) {
+    const rendered = typeof (element as HTMLElement).getClientRects !== "function" || (element as HTMLElement).getClientRects().length > 0;
+    if (rendered) return element;
+  }
+  return null;
+}
+
+const shapes = (count: number) => `${count} ${count === 1 ? "shape" : "shapes"}`;
+
+/** QA E6: the restore dialog's wording, neutral whichever version has more on it. */
+export function restoreMessage(previous: { createdAt: string; elementCount: number } | null, currentCount: number, formatTime: (value: string) => string) {
+  if (!previous) return `The current version has ${shapes(currentCount)}. You can switch back the same way.`;
+  return `Switch to the version from ${formatTime(previous.createdAt)}, which has ${shapes(previous.elementCount)}; the current one has ${shapes(currentCount)}. You can switch back the same way.`;
+}
+
 /** The one message for every refused image (paste, drop, the image shortcut, a Mermaid diagram drawn as an image; QA Q5). */
 export const IMAGES_REFUSED_MESSAGE = "Images can't be added to whiteboards yet.";
 

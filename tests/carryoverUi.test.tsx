@@ -72,3 +72,46 @@ describe("C7: the Files list/grid toggle is a phone-sized target", () => {
     expect(css).toContain(".file-view-toggle .icon-button { width: 32px; height: 32px; border-radius: 8px; }");
   });
 });
+
+describe("Q3 and Q4 (end-user QA, final carry-overs)", () => {
+  test("bell notices wrap to three lines instead of being cut off", async () => {
+    const css = await read("notifications/notifications.css");
+    expect(css).toContain(".notification-copy strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3;");
+    expect(css).not.toMatch(/\.notification-copy strong \{[^}]*white-space: nowrap/);
+  });
+
+  test("target sizes: the dialog close is 40 px on desktop and 44 px on phones; the note toolbar's ⋯ and Back are 44 px on phones", async () => {
+    const files = await read("files/files.css");
+    expect(files).toContain(".file-dialog-header .icon-button { width: 40px; height: 40px; }");
+    expect(files).toContain("  .file-dialog-header .icon-button { width: 44px; height: 44px; }");
+    const styles = await read("styles.css");
+    expect(styles).toContain(".toolbar-actions .mobile-more, .mobile-editor-nav .icon-button { width: 44px; height: 44px; }");
+  });
+
+  test("focus: Discard from the phone ⋯ menu returns to ⋯; a new API key takes focus", async () => {
+    const app = await read("App.tsx");
+    expect(app).toContain('void discard(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"));');
+    const keys = await read("keys/KeysSettings.tsx");
+    expect(keys).toContain("window.requestAnimationFrame(() => window.requestAnimationFrame(() => tokenFieldRef.current?.focus()));");
+    expect(keys).toContain('<textarea ref={tokenFieldRef} readOnly value={newToken.token} aria-label="New API key"');
+  });
+
+  test("the Access sheet stops offering guests once guest sharing is known to be off", async () => {
+    const { pickerOptions, draftFrom } = await import("../src/access/accessModel");
+    const access = { etag: "x", kind: "note", title: "N", owner: { id: "o", displayName: "O" }, audience: "selected", audienceLevel: "view", audienceLevels: ["view"], people: [], groups: [], levels: ["view", "edit"], yourLevel: "owner", shareWithGuests: true, inheritable: true } as never;
+    const people = [{ id: "g", displayName: "Gia", role: "guest" }, { id: "m", displayName: "Mo", role: "member" }] as never;
+    const labels = (shareWithGuests: boolean) => pickerOptions(draftFrom({ ...(access as object), shareWithGuests } as never), { ...(access as object), shareWithGuests } as never, people, []).map((option) => option.label);
+    expect(labels(true)).toEqual(["Gia", "Mo"]);
+    expect(labels(false)).toEqual(["Mo"]);
+  });
+
+  test("Q4: a key blocked for having no expiry says why and what to do", async () => {
+    const { blockedLine, EXPIRY_BLOCKED_TEXT } = await import("../src/keys/KeysSettings");
+    expect(EXPIRY_BLOCKED_TEXT).toBe("Blocked by team policy: keys need an expiry. Rotate it to give it one.");
+    expect(blockedLine({ blockedBy: "expiry_required", blockedMessage: "Team policy requires…" })).toBe(EXPIRY_BLOCKED_TEXT);
+    expect(blockedLine({ blockedBy: "lifetime", blockedMessage: "Too long" })).toBe("Too long");
+    // The Docker verify stage has no docs/: check the guide only where it exists.
+    const guide = Bun.file(new URL("../docs/USING.md", import.meta.url));
+    if (await guide.exists()) expect(await guide.text()).toContain(EXPIRY_BLOCKED_TEXT);
+  });
+});

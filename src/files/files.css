@@ -87,6 +87,8 @@
 /* A dialog that takes focus itself (no focusable child yet) shows no ring on its whole box. */
 .file-dialog:focus, .side-panel:focus { outline: none; }
 .file-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 16px 10px 20px; }
+/* Q3: the dialog close button is a 40 px target on desktop (44 px on phones, below). */
+.file-dialog-header .icon-button { width: 40px; height: 40px; }
 .file-dialog-header > div { min-width: 0; }
 .file-dialog-header h2 { margin: 4px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.1rem; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .file-dialog-copy { margin: 0; padding: 4px 20px 8px; color: #b7b7bd; font-size: .88rem; line-height: 1.55; overflow-wrap: anywhere; }

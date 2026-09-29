@@ -1292,7 +1292,8 @@ export function App() {
     fallback = setTimeout(restoreTitle, 1000);
   }
 
-  async function discard() {
+  // `opener`: where focus goes back to; from the phone ⋯ menu it is the ⋯ button, since the menu item is gone (Q3).
+  async function discard(opener?: HTMLElement | null) {
     if (!note || switchingRef.current) return;
     const noteId = note.id;
     const removesNote = note.current_version === 0;
@@ -1305,7 +1306,8 @@ export function App() {
       title: !removesNote ? "Discard this draft?" : markdown.trim() === "" ? "Discard this empty note?" : "Move this note to the Bin?",
       message,
       confirmLabel: !removesNote ? "Discard draft" : markdown.trim() === "" ? "Discard" : "Move to Bin",
-      danger: true
+      danger: true,
+      ...(opener !== undefined ? { opener } : {})
     });
     if (!confirmed || switchingRef.current) return;
     switchingRef.current = true;
@@ -2057,7 +2059,7 @@ export function App() {
               <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
               {note.isOwner && canWrite && <button disabled={editorLocked} onClick={() => openMoveNote(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"))}><FolderInput />Move to folder…</button>}
               {note.isOwner && canWrite && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
-              {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
+              {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more")); }}><X />Discard draft</button>}
               {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
             </div>}
           </header>

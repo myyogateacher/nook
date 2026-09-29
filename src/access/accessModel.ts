@@ -71,7 +71,8 @@ export function pickerOptions(draft: Draft, access: Pick<ItemAccess, "owner" | "
     const blocked = !access.shareWithGuests && group.guestCount > 0;
     return { value: groupValue(group.id), label: group.name, group: "Groups", description: blocked ? `${groupSummary(group)} · sharing with guests is off` : groupSummary(group), disabled: blocked };
   });
-  const personOptions: Option[] = people.filter((person) => person.id !== access.owner.id && !chosenPeople.has(person.id)).map((person) => ({
+  // With sharing with guests off (as loaded, or learned from a refusal: Q3), guests are not offered.
+  const personOptions: Option[] = people.filter((person) => person.id !== access.owner.id && !chosenPeople.has(person.id) && (access.shareWithGuests || person.role !== "guest")).map((person) => ({
     value: personValue(person.id),
     label: person.displayName,
     group: "People",

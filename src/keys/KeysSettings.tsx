@@ -45,6 +45,13 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     listKeys().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
   }, []);
   useEffect(load, [load]);
+  // Q3: a new (or rotated) key takes focus, selected, so it can be copied at once; the New key button that
+  // opened the dialog is disabled while the key is on screen.
+  const tokenFieldRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!newToken) return;
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => tokenFieldRef.current?.focus()));
+  }, [newToken]);
   useEffect(() => {
     onPendingChange(Boolean(newToken));
     return () => onPendingChange(false);
@@ -114,7 +121,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     {status && <p className="keys-status" role="status">{status}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
 
-    {newToken && <div className="new-api-key" role="status"><strong>{newToken.rotated ? `Copy the new key for ${newToken.name} now` : "Copy this key now"}</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea readOnly value={newToken.token} aria-label="New API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken.token, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken(null)}>I saved this key</button></div></div>}
+    {newToken && <div className="new-api-key" role="status"><strong>{newToken.rotated ? `Copy the new key for ${newToken.name} now` : "Copy this key now"}</strong><p>It cannot be shown again after you leave this screen. You can select the text manually if automatic copy is unavailable.</p><textarea ref={tokenFieldRef} readOnly value={newToken.token} aria-label="New API key" onFocus={(event) => event.currentTarget.select()} /><div><button type="button" className="secondary-button" onClick={() => copy(newToken.token, "token")}><Copy />{copied === "token" ? "Copied key" : "Copy key"}</button><button type="button" className="text-button" onClick={() => setNewToken(null)}>I saved this key</button></div></div>}
 
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
@@ -178,6 +185,13 @@ export function UsageBars({ usage }: { usage: readonly number[] }) {
   </span>;
 }
 
+/**
+ * Why a blocked key is blocked (Q4, decision kept): with an expiry required, a key without one is
+ * blocked, not revoked, until it is rotated with an expiry or the policy is turned off.
+ */
+export const EXPIRY_BLOCKED_TEXT = "Blocked by team policy: keys need an expiry. Rotate it to give it one.";
+export const blockedLine = (key: Pick<ApiKey, "blockedBy" | "blockedMessage">) => key.blockedBy === "expiry_required" ? EXPIRY_BLOCKED_TEXT : key.blockedMessage ?? "";
+
 export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: { apiKey: ApiKey; owner?: string; onRotate?: () => void; onEdit?: () => void; onRevoke?: () => void; onReview?: () => void }) {
   const state = keyStateLabel(apiKey);
   const binned = binnedTodayLine(apiKey.binnedToday);
@@ -189,7 +203,7 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
       <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {apiKey.lastUsedAt ? `Used ${relativeTime(apiKey.lastUsedAt)}` : "Never used"}</small>
       {apiKey.description && <small className="keys-row-description">{apiKey.description}</small>}
       <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{grantChips(apiKey.grants).map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}</ul>
-      {apiKey.state === "blocked" && apiKey.blockedMessage && <small className="keys-row-warning">{apiKey.blockedMessage}</small>}
+      {apiKey.state === "blocked" && (apiKey.blockedBy === "expiry_required" || apiKey.blockedMessage) && <small className="keys-row-warning">{blockedLine(apiKey)}</small>}
       {apiKey.state === "revoked" && apiKey.revokedBy === "admin" && <small className="keys-row-warning">An admin revoked this key{apiKey.revokeReason ? `: “${apiKey.revokeReason}”` : "."}</small>}
       {apiKey.state !== "revoked" && <div className="keys-row-usage"><UsageBars usage={apiKey.usage14d} /><small>{usageLabel(apiKey.usage14d)}</small></div>}
       {binned && onReview && <small className="mcp-key-binned">{binned} · <button type="button" className="text-button" onClick={onReview}>Review</button></small>}

@@ -103,7 +103,9 @@ Each link, allowance, reset, re-link, and unlink is audited and, with email on, 
 
 **Recommended company setup.** `AUTH_METHODS=google`, `GOOGLE_ALLOWED_DOMAINS=<your domain>`, and `ALLOW_REGISTRATION=true` if everyone on the domain may join (or `false` and invites). The first Google account on an empty instance becomes the admin. If the only admin is locked out, use `team-admin.ts set-role`, `unblock`, `allow-google-link`, or `unlink-google` on the host.
 
-**Rate limits and reverse proxies.** Nook limits sign-in attempts in memory (a restart clears them), per minute unless noted. Each limit has a scope: the **client address** (an IPv6 client counts by its /64, and every spelling of one address is one address), the **email** typed, the **account** acting, or the whole **instance**. An attempt refused by a narrower bucket does not count toward the instance-wide one, so one address cannot use up everyone's allowance; once the instance-wide bucket is full, everything is refused until the minute is over.
+### Rate limits and reverse proxies
+
+Nook limits sign-in attempts in memory (a restart clears them), per minute unless noted. Each limit has a scope: the **client address** (an IPv6 client counts by its /64, and every spelling of one address is one address), the **email** typed, the **account** acting, or the whole **instance**. An attempt refused by a narrower bucket does not count toward the instance-wide one, so one address cannot use up everyone's allowance; once the instance-wide bucket is full, everything is refused until the minute is over.
 
 | What | Per client address | Per email or account | Whole instance |
 | --- | --- | --- | --- |

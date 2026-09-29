@@ -74,7 +74,7 @@ export function deleteGroupMessage(memberCount: number, grantCount: number) {
   const tail = "This cannot be undone.";
   if (!memberCount && !grantCount) return `Nobody is in this group and nothing is shared with it. ${tail}`;
   if (!memberCount) return `Nobody is in this group. The ${items} shared with it will no longer be shared with the group. ${tail}`;
-  if (!grantCount) return `Nothing is shared with this group, so its ${memberCountLabel(memberCount)} lose no access. ${tail}`;
+  if (!grantCount) return `Nothing is shared with this group, so its ${memberCountLabel(memberCount)} ${memberCount === 1 ? "loses" : "lose"} no access. ${tail}`;
   return `${memberCountLabel(memberCount)} ${memberCount === 1 ? "loses" : "lose"} what owners shared with the group: ${items}. Their own and directly shared items are not affected. ${tail}`;
 }
 export const guestCountLabel = (count: number) => count ? ` · includes ${count} ${count === 1 ? "guest" : "guests"}` : "";

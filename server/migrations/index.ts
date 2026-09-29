@@ -26,6 +26,7 @@ import { emailMigration } from "./026_email";
 import { proposalBaseMigration } from "./027_proposal_base";
 import { emailDigestsMigration } from "./028_email_digests";
 import { accessLevelsMigration } from "./029_access_levels";
+import { accessCentralMigration } from "./032_access_central";
 import { googleIdentitiesMigration } from "./034_google_identities";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
@@ -40,6 +41,8 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   emailDigestsMigration,
   // 029 (access levels: member levels in line with share_role) needs 012, 013, and 025.
   accessLevelsMigration,
+  // 030 and 031 are reserved for parallel waves. 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
+  accessCentralMigration,
   // 030–033 belong to parallel waves. 034 (Google identities, flows, avatars, re-auth) needs only 001.
   googleIdentitiesMigration
 ];

@@ -10,6 +10,8 @@ import { readPolicies } from "../team/policies";
 import type { Role } from "../team/roles";
 import { parseJson, uuid } from "../validation";
 import { avatarUrlFor } from "../avatars";
+import { keysReachingItem } from "../apiKeys";
+import type { GrantModule } from "../keyGrants";
 import { itemLevel } from "./effective";
 import { recordAccessEvent } from "./events";
 import { AUDIENCE_LEVELS, KIND_LEVELS, LEVELS, isLevel, levelToShareRole, shareRoleToLevel, type AccessKind, type ItemLevel, type Level } from "./levels";
@@ -205,6 +207,11 @@ function authorize(kind: AccessKind, id: string, userId: string) {
 
 export type ItemAccess = ReturnType<typeof readAccess>;
 
+const KEY_MODULE: Record<AccessKind, GrantModule> = { note: "notes", folder: "notes", document: "files", board: "tasks", task_view: "tasks", collection: "collections", calendar: "calendar" };
+
+/** How many of the owner's keys reach this item right now (`keysReachingItem`: usable, not blocked by policy, an active grant). */
+const keysReaching = (kind: AccessKind, id: string, ownerId: string) => keysReachingItem(ownerId, KEY_MODULE[kind], kind, id);
+
 export function readAccess(kind: AccessKind, id: string, userId: string) {
   const { state, yourLevel } = authorize(kind, id, userId);
   const direct = directShares(kind, id);
@@ -234,6 +241,8 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.member_count, guestCount: group.guest_count, selfAddedCount: group.self_added, level: group.level })),
     levels: offered,
     yourLevel,
+    // "N of your API keys can reach this" (§C.5, §E): the owner's own usable keys only (Wave 33).
+    ...(yourLevel === "owner" ? { keysWithAccess: keysReaching(kind, id, userId) } : {}),
     // The caller's id, so the sheet can tell a manager's own row apart (they cannot change it, MANAGER_CAP).
     youId: userId,
     shareWithGuests: readPolicies().shareWithGuests,

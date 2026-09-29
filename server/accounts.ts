@@ -2,6 +2,7 @@ import { config } from "./config";
 import { audit, db, ensureDefaultFolder, now, type UserRow } from "./db";
 import { claimInvite, inviteForRegistration } from "./team/invites";
 import { hasActiveAdmin, recordBootstrapAdmin } from "./team/service";
+import { applyInviteTemplate } from "./team/templates";
 
 /**
  * Account creation shared by password registration and Google sign-in (Wave 35, D292), so the role,
@@ -56,6 +57,9 @@ export function createAccount(input: CreateAccountInput) {
       // Single use (T141): a lost race throws INVITE_INVALID and rolls the new account back.
       claimInvite(invite.id, id, timestamp);
       audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
+      // D286 (Wave 33): the groups the invite's access template had when the invite was created, in
+      // this same transaction (a template deleted since leaves template_id NULL: the role only).
+      applyInviteTemplate(invite, id, timestamp);
     }
     // An invite bound to this address proved control of the inbox (D244), and so did Google (D292).
     if (input.emailVerified || invite?.email) db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(timestamp, id);

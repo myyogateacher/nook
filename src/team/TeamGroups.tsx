@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, RotateCcw, TriangleAlert, UsersRound } from "lucide-react";
 import { KeysDialog } from "../keys/KeysDialog";
+import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks";
 import { createGroup, guestCountLabel, listGroups, memberCountLabel, type GroupSummary } from "./groupsApi";
 import "../keys/keys.css";
 
@@ -82,9 +83,11 @@ export function GroupFormDialog({ title, submitLabel, initial, onClose, onSubmit
   const [description, setDescription] = useState(initial?.description ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const fields = useFieldErrors();
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!name.trim()) return setError("Give the group a name.");
+    // The app's own check under the field (noValidate: no browser bubble).
+    if (fields.show(event.currentTarget, collectProblems({ name: name.trim() ? null : "Give the group a name." }))) return;
     setBusy(true);
     setError("");
     try {
@@ -95,8 +98,10 @@ export function GroupFormDialog({ title, submitLabel, initial, onClose, onSubmit
     }
   }
   return <KeysDialog title={title} onClose={onClose} busy={busy}>
-    <form className="keys-form" onSubmit={submit}>
-      <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} required autoFocus disabled={busy} /></label>
+    <form className="keys-form" onSubmit={submit} noValidate>
+      <label className="keys-input">Name<input name="name" value={name} onChange={(event) => { setName(event.target.value); fields.clear("name"); }} maxLength={60} autoFocus disabled={busy}
+        aria-invalid={fields.errors.name ? true : undefined} aria-describedby={fields.errors.name ? "group-name-error" : undefined} />
+        <FieldError id="group-name-error" message={fields.errors.name} /></label>
       <label className="keys-input">Description (optional)<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} rows={2} disabled={busy} /></label>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">

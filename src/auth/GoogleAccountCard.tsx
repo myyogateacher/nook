@@ -13,7 +13,7 @@ export function googleSettingsNotice(result: GoogleSettingsResult): { tone: "ok"
   if (!result) return null;
   if (result.kind === "linked") return { tone: "ok", text: "Google sign-in is linked. You can now sign in with Google." };
   if (result.kind === "reauthed") return { tone: "ok", text: "Confirmed with Google. Finish the change within 5 minutes." };
-  return result.kind === "error" ? { tone: "error", text: googleErrorMessage(result.code) } : null;
+  return result.kind === "error" ? { tone: "error", text: googleErrorMessage(result.code, result.domain) } : null;
 }
 
 /** The re-authentication part of a request body: the password (when asked for) and the code. */

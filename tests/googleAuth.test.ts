@@ -531,6 +531,13 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     const relinked = notices(linked.userId).at(-1)!;
     expect(relinked.actor_id).toBeNull();
     expect(googleResetParts(relinked.count!)).toEqual(["signed-in sessions", "the password"]);
+    // The bell lines: ids and counts rendered at read time, no address or title.
+    const { listAccessNotices } = await import("../server/access/notices");
+    expect(listAccessNotices(linked.userId, { unread: false, limit: 10 }).map((notice) => notice.title)).toEqual([
+      "A new Google account was linked to your account; removed signed-in sessions and the password",
+      "An admin allowed your account to be re-linked: the next Google sign-in with your address takes it over".replace("An admin", (db.query("SELECT display_name AS name FROM users WHERE id = ?").get(admin.userId) as { name: string }).name),
+      `${(db.query("SELECT display_name AS name FROM users WHERE id = ?").get(admin.userId) as { name: string }).name} unlinked Google from your account`
+    ]);
 
     // Team → Access activity lists the Google actions under their own category.
     const activity = await (await request(`/team/activity?action=accounts&user=${linked.userId}`, {}, admin)).json() as { events: Array<{ action: string }> };
@@ -1029,7 +1036,10 @@ describe("review LOW fixes", () => {
     const detail = await (await fetch(`${origin}/api/tasks/boards/${boardId}`, { headers: { Cookie: cookie } })).json() as { columns: Array<{ id: string }> };
     const card = await send(`/boards/${boardId}/cards`, { title: "Pictured", columnId: detail.columns[0]!.id });
     const cardId = (card.card ?? card).id as string;
-    await send(`/cards/${cardId}/comments`, { body: "Hello" });
+    // Q3: the create response carries it too, so the just-posted comment shows the picture at once.
+    const created = await send(`/cards/${cardId}/comments`, { body: "Hello" });
+    expect(created.comment.author_avatar_url).toBe((await me(cookie)).body.user.avatarUrl);
+    expect(created.comment.author_avatar_url).toBeTruthy();
     const loaded = await (await fetch(`${origin}/api/tasks/cards/${cardId}`, { headers: { Cookie: cookie } })).json() as { comments: Array<{ author_avatar_url: string | null }> };
     expect(loaded.comments[0]!.author_avatar_url).toBe((await me(cookie)).body.user.avatarUrl);
   });

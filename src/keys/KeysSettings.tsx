@@ -26,7 +26,7 @@ type Dialog = { kind: "create" } | { kind: "edit"; key: ApiKey } | { kind: "rota
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
-export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined }) {
+export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined; /** Q2: the result of a Google confirmation started here. */ notice?: React.ReactNode }) {
   const [data, setData] = useState<KeyList | null>(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -108,6 +108,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const revokedFocusKey = (revokedId: string) => keyAfterRevoke(live.map((key) => key.id), revokedId);
 
   return <section className="settings-content mcp-settings keys-settings" aria-labelledby="keys-heading">
+    {notice}
     <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {status && <p className="keys-status" role="status">{status}</p>}
@@ -120,7 +121,8 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
         <div><h4 ref={headingRef} tabIndex={-1}>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
         {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken) || needsGoogle}><Plus aria-hidden="true" />New key</button>}
       </div>
-      {!guest && needsGoogle && account && <GoogleReauthNotice account={account} returnTo="/settings/mcp" />}
+      {/* Q2: the confirmation state too ("Confirmed with Google until …"), not only the button. */}
+      {!guest && account && !asksForPassword(account) && <GoogleReauthNotice account={account} returnTo="/settings/mcp" />}
       {guest && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
       {role === "viewer" && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
       {data && !data.policy.mcpAllowed && <p className="mcp-role-note" role="note">Team policy does not allow your team role to use MCP keys.</p>}

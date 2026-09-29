@@ -254,3 +254,65 @@ describe("second review (N2, N5)", () => {
   });
 });
 
+
+describe("final fix round (S1, Q1, Q2, Q4, Q6, Q7, section 2)", () => {
+  test("Q1: link_not_authoritative names the domain, from the fragment, on sign-in and in Settings", async () => {
+    const history = { state: null, replaceState: () => undefined };
+    const signIn = takeGoogleSignInResult({ pathname: "/login", hash: "#error=link_not_authoritative&domain=Example.test" }, history);
+    expect(signIn).toEqual({ kind: "error", code: "link_not_authoritative", domain: "example.test" });
+    expect(takeGoogleSignInResult({ pathname: "/login", hash: "#error=link_not_authoritative&domain=%3Cscript%3E" }, history)).toEqual({ kind: "error", code: "link_not_authoritative" });
+    const settings = takeGoogleSettingsResult({ pathname: "/settings/security", search: "", hash: "#google-error=link_not_authoritative&domain=example.test" }, history);
+    expect(googleErrorMessage("link_not_authoritative", "example.test")).toBe("Google cannot confirm this Google account is managed by example.test. Use a Google Workspace account of example.test, or the Gmail account itself for a Gmail address.");
+    expect(googleSettingsNotice(settings)).toEqual({ tone: "error", text: googleErrorMessage("link_not_authoritative", "example.test") });
+    const { googleConditionText } = await import("../src/team/TeamGoogle");
+    expect(googleConditionText("example.test")).toContain("Google Workspace account of example.test");
+    expect(googleConditionText("gmail.com")).toBe("Only the Gmail account with this exact address can link it.");
+  });
+
+  test("Q2: a confirmation started on Team → member comes back there; Settings reads any section", () => {
+    const history = { state: null, replaceState: () => undefined };
+    expect(takeGoogleSettingsResult({ pathname: "/team/abc", search: "", hash: "#google-error=reauth_stale" }, history, "/team/")).toEqual({ kind: "error", code: "reauth_stale" });
+    expect(takeGoogleSettingsResult({ pathname: "/team/abc", search: "", hash: "#google-error=reauth_stale" }, history)).toBeNull();
+    const app = readFileSync(join(src, "App.tsx"), "utf8");
+    expect(app).toContain("<KeysSettings notice={googleNoticeLine}");
+  });
+
+  test("S1: the re-link counts, with and without the password and two-factor", async () => {
+    const { relinkLines } = await import("../src/team/TeamGoogle");
+    expect(relinkLines({ sessions: 2, keys: 1, feeds: 0, password: 1, twoFactor: 1 })).toEqual([
+      "2 signed-in sessions end", "1 API key is revoked", "Unused password-reset links stop working", "The password is removed", "Two-factor authentication is removed"
+    ]);
+    expect(relinkLines({ sessions: 0, keys: 0, feeds: 0, password: 0, twoFactor: 0 })).toEqual(["Signed-in sessions end (none now)", "Unused password-reset links stop working"]);
+    const card = readFileSync(join(src, "team", "TeamGoogle.tsx"), "utf8");
+    expect(card).toContain("gets this account and everything in it");
+    expect(card).toContain("Also remove the password and two-factor");
+    expect(card).toContain("Reset account for Google sign-in…");
+    // Q6: the reset step is its own history layer.
+    expect(card).toContain(`useHistoryDialogGuard(step === "reset"`);
+  });
+
+  test("Q4: recovery codes wait in their own dialog until saved, with copy and download", async () => {
+    const { recoveryCodesText, RecoveryCodesDialog } = await import("../src/auth/RecoveryCodesDialog");
+    expect(recoveryCodesText(["AAAAA-BBBBB", "CCCCC-DDDDD"])).toContain("AAAAA-BBBBB\nCCCCC-DDDDD\n");
+    expect(typeof RecoveryCodesDialog).toBe("function");
+    const app = readFileSync(join(src, "App.tsx"), "utf8");
+    expect(app).toContain("onSecurityChanged(next, true);");
+    expect(app).toContain("<RecoveryCodesDialog codes={recoveryCodes}");
+  });
+
+  test("section 2: Google actions have activity labels and a filter", async () => {
+    const { activityLabel } = await import("../src/access/memberAccessApi");
+    const event = (action: string, meta: Record<string, unknown> | null = null) => ({ id: "e", action, via: "web", createdAt: "2026-09-29T00:00:00.000Z", actor: { id: "a", displayName: "Ada" }, target: { id: "t", displayName: "Tom" }, group: null, key: null, item: null, meta }) as unknown as Parameters<typeof activityLabel>[0];
+    expect(activityLabel(event("account.google_allowed", { relink: true }))).toBe("Ada allowed Tom's account to be re-linked to a new Google account");
+    expect(activityLabel(event("account.google_reset"))).toBe("Ada reset Tom's account for Google sign-in");
+    expect(activityLabel(event("account.google_unlinked"))).toBe("Ada unlinked Google from Tom's account");
+    expect(activityLabel(event("account.google_relinked"))).toBe("A new Google account was linked to Tom's account");
+    expect(readFileSync(join(src, "team", "AccessActivity.tsx"), "utf8")).toContain(`{ value: "accounts", label: "Google sign-in" }`);
+  });
+
+  test("Q7: the assignee picker shows each person's picture", () => {
+    const fields = readFileSync(join(src, "tasks", "CardFields.tsx"), "utf8");
+    expect(fields).toContain(`url={user.avatarUrl ?? null}`);
+    expect(fields).toContain("avatar_url: avatars[index] ?? null");
+  });
+});

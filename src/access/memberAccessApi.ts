@@ -110,7 +110,7 @@ export const deleteTemplate = (id: string, revision: number) =>
   api<{ ok: true; liveInvites: number }>(`/team/templates/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ revision }) });
 
 // Access activity (D288)
-export type ActivityCategory = "keys" | "groups" | "items" | "policies" | "templates";
+export type ActivityCategory = "keys" | "groups" | "items" | "policies" | "templates" | "accounts";
 export type ActivityEvent = {
   id: string;
   action: string;
@@ -190,7 +190,13 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
   "template.created": (event) => `${who(event)} created the template ${templateName(event)}`,
   "template.updated": (event) => `${who(event)} changed the template ${templateName(event)}`,
   "template.deleted": (event) => `${who(event)} deleted the template ${templateName(event)}`,
-  "template.applied": (event) => `${who(event)} applied the template ${templateName(event)} to ${target(event)}`
+  "template.applied": (event) => `${who(event)} applied the template ${templateName(event)} to ${target(event)}`,
+  // Wave 35: Google sign-in on Team → member (and the host CLI).
+  "account.google_allowed": (event) => event.meta?.relink ? `${who(event)} allowed ${target(event)}'s account to be re-linked to a new Google account`
+    : event.meta?.reset ? `${who(event)} reset ${target(event)}'s account and allowed Google sign-in` : `${who(event)} allowed Google sign-in for ${target(event)}`,
+  "account.google_reset": (event) => `${who(event)} reset ${target(event)}'s account for Google sign-in`,
+  "account.google_unlinked": (event) => `${who(event)} unlinked Google from ${target(event)}'s account`,
+  "account.google_relinked": (event) => `A new Google account was linked to ${target(event)}'s account`
 };
 const templateName = (event: ActivityEvent) => typeof event.meta?.templateName === "string" ? `“${event.meta.templateName}”` : "(name not recorded)";
 const who = (event: ActivityEvent) => event.actor?.displayName ?? (event.via === "sweeper" ? "Nook" : "Someone");

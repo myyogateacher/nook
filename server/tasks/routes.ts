@@ -19,6 +19,7 @@ function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]
   const urls = avatarUrlsFor(comments.flatMap((comment) => comment.author_id ? [comment.author_id] : []));
   return comments.map((comment) => ({ ...comment, author_avatar_url: comment.author_id ? urls.get(comment.author_id) ?? null : null }));
 }
+const withAuthorAvatar = <T extends { author_id: string | null }>(result: { comment: T }) => ({ ...result, comment: withAuthorAvatars([result.comment])[0]! });
 import {
   createBoard,
   createCard,
@@ -261,7 +262,12 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
       return c.json(invalid(`limit must be an integer from 1 to ${READERS_LIMIT_MAX}`), 400);
     }
     if (limitParam !== undefined && q === undefined) return c.json(invalid("limit needs q"), 400);
-    return respond(c, () => listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) }));
+    return respond(c, () => {
+      const result = listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) });
+      // Q7: the picker shows each person's picture, not a letter (web payload only; MCP unchanged).
+      const urls = avatarUrlsFor(result.users.map((user) => user.id));
+      return { ...result, users: result.users.map((user) => ({ ...user, avatarUrl: urls.get(user.id) ?? null })) };
+    });
   });
 
   app.post("/api/tasks/boards/:boardId/tags", async (c) => {
@@ -343,7 +349,8 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.post("/api/tasks/cards/:cardId/comments", async (c) => {
     const cardId = id(c, "cardId");
     const body = await parseJson(c.req.raw, commentCreateSchema);
-    return respond(c, () => createComment(c.get("user").id, cardId, body), 201);
+    // Q3: the new comment carries its author's picture like listed ones, so it never shows initials first.
+    return respond(c, async () => withAuthorAvatar(await createComment(c.get("user").id, cardId, body)), 201);
   });
 
   app.post("/api/tasks/cards/:cardId/attachments", async (c) => {
@@ -367,7 +374,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.patch("/api/tasks/comments/:commentId", async (c) => {
     const commentId = id(c, "commentId");
     const body = await parseJson(c.req.raw, commentPatchSchema);
-    return respond(c, () => updateComment(c.get("user").id, commentId, body.body));
+    return respond(c, async () => withAuthorAvatar(await updateComment(c.get("user").id, commentId, body.body)));
   });
 
   app.delete("/api/tasks/comments/:commentId", (c) => {

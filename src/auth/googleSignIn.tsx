@@ -26,7 +26,13 @@ export function currentReturnPath(location: Pick<Location, "pathname" | "search"
   return path;
 }
 
-export type GoogleSignInResult = { kind: "error"; code: string } | { kind: "code" } | null;
+export type GoogleSignInResult = { kind: "error"; code: string; domain?: string } | { kind: "code" } | null;
+
+/** Q1: `link_not_authoritative` carries the address's domain (a host name, checked here). */
+function domainParam(params: URLSearchParams) {
+  const domain = params.get("domain")?.toLowerCase() ?? "";
+  return /^[a-z0-9.-]{1,253}$/.test(domain) ? domain : undefined;
+}
 
 /** Reads `/login#error=<code>` or `/login#google=code` once and replaces the URL with `/`. */
 export function takeGoogleSignInResult(location: Pick<Location, "pathname" | "hash"> = window.location, history: Pick<History, "replaceState"> = window.history): GoogleSignInResult {
@@ -34,7 +40,7 @@ export function takeGoogleSignInResult(location: Pick<Location, "pathname" | "ha
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
   history.replaceState(null, "", "/");
   const error = params.get("error");
-  if (error && /^[a-z_]{1,32}$/.test(error)) return { kind: "error", code: error };
+  if (error && /^[a-z_]{1,32}$/.test(error)) return { kind: "error", code: error, domain: domainParam(params) };
   if (params.get("google") === "code") return { kind: "code" };
   return null;
 }
@@ -46,18 +52,21 @@ export function initialGoogleSignInResult() {
   return initialSignIn;
 }
 
-export type GoogleSettingsResult = { kind: "linked" | "reauthed" } | { kind: "error"; code: string } | null;
+export type GoogleSettingsResult = { kind: "linked" | "reauthed" } | { kind: "error"; code: string; domain?: string } | null;
 
-/** Reads `#google=linked|reauthed` or `#google-error=<code>` on a Settings URL once and strips it. */
-export function takeGoogleSettingsResult(location: Pick<Location, "pathname" | "search" | "hash"> = window.location, history: Pick<History, "state" | "replaceState"> = window.history): GoogleSettingsResult {
-  if (!location.pathname.startsWith("/settings") || !location.hash) return null;
+/**
+ * Reads `#google=linked|reauthed` or `#google-error=<code>` once and strips it: on a Settings URL
+ * (any section, Q2), or on Team → member when `prefix` is "/team/" (an admin's re-authentication).
+ */
+export function takeGoogleSettingsResult(location: Pick<Location, "pathname" | "search" | "hash"> = window.location, history: Pick<History, "state" | "replaceState"> = window.history, prefix = "/settings"): GoogleSettingsResult {
+  if (!location.pathname.startsWith(prefix) || !location.hash) return null;
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
   const ok = params.get("google");
   const error = params.get("google-error");
   if (!ok && !error) return null;
   history.replaceState(history.state, "", `${location.pathname}${location.search}`);
   if (ok === "linked" || ok === "reauthed") return { kind: ok };
-  if (error && /^[a-z_]{1,32}$/.test(error)) return { kind: "error", code: error };
+  if (error && /^[a-z_]{1,32}$/.test(error)) return { kind: "error", code: error, domain: domainParam(params) };
   return null;
 }
 
@@ -65,6 +74,13 @@ let initialSettings: GoogleSettingsResult | undefined;
 export function initialGoogleSettingsResult() {
   if (initialSettings === undefined) initialSettings = takeGoogleSettingsResult();
   return initialSettings;
+}
+
+let initialTeam: GoogleSettingsResult | undefined;
+/** The result of an admin's Google confirmation that came back to Team → member, read once per page load. */
+export function initialGoogleTeamResult() {
+  if (initialTeam === undefined) initialTeam = typeof window === "undefined" ? null : takeGoogleSettingsResult(window.location, window.history, "/team/");
+  return initialTeam;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -86,7 +102,21 @@ const MESSAGES: Record<string, string> = {
   rate_limited: "Too many attempts. Try again soon."
 };
 
-export const googleErrorMessage = (code: string) => MESSAGES[code] ?? MESSAGES.failed!;
+export const googleErrorMessage = (code: string, domain?: string) =>
+  code === "link_not_authoritative" ? linkNotAuthoritativeText(domain) : MESSAGES[code] ?? MESSAGES.failed!;
+
+/**
+ * Q1: the address is right, but Google does not say this Google account manages it (a personal Google
+ * account using a company address, or a Workspace account of another domain). An admin's allowance
+ * cannot change that; the allowance waits for the right account.
+ */
+export function linkNotAuthoritativeText(domain?: string) {
+  const name = domain ?? "the address's domain";
+  return `Google cannot confirm this Google account is managed by ${name}. Use a Google Workspace account of ${name}, or the Gmail account itself for a Gmail address.`;
+}
+
+/** Added on the sign-in page when passwords are on (Q1). */
+export const LINK_NOT_AUTHORITATIVE_PASSWORD = " Or sign in with your password.";
 
 /**
  * `link_required` (review HIGH-1): a Nook account uses this Google address, but Nook never confirmed

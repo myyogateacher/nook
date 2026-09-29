@@ -383,6 +383,7 @@
 .task-avatar:nth-child(1) { position: relative; z-index: 3; }
 .task-avatar:nth-child(2) { position: relative; z-index: 2; }
 .task-avatar:nth-child(3) { position: relative; z-index: 1; }
+.ui-option-icon .task-avatar.picker-avatar, .ui-chip .task-avatar.picker-avatar { width: 22px; height: 22px; margin: 0; border: 0; font-size: .58rem; }
 .task-avatar.tone-0 { background: #4b3a1c; color: #f5d995; }
 .task-avatar.tone-1 { background: #1f3b4d; color: #a9d6f5; }
 .task-avatar.tone-2 { background: #3b2350; color: #dcc2f7; }

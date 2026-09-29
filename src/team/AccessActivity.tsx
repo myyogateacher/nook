@@ -20,7 +20,8 @@ const CATEGORY_OPTIONS: Option<"all" | ActivityCategory>[] = [
   { value: "groups", label: "Groups" },
   { value: "keys", label: "API keys" },
   { value: "policies", label: "Policies" },
-  { value: "templates", label: "Templates" }
+  { value: "templates", label: "Templates" },
+  { value: "accounts", label: "Google sign-in" }
 ];
 
 const metaLine = (event: ActivityEvent) => {
@@ -28,9 +29,13 @@ const metaLine = (event: ActivityEvent) => {
   const parts: string[] = [];
   const meta = event.meta;
   if (typeof meta.from === "string" && typeof meta.to === "string") parts.push(`${meta.from} → ${meta.to}`);
-  for (const key of ["directShares", "groups", "keys", "feeds", "routines", "peopleCount", "groupCount", "added", "skipped", "memberCount", "grantCount"] as const) {
+  for (const key of ["directShares", "groups", "sessions", "keys", "feeds", "items", "shares", "groupGrants", "invites", "routines", "peopleCount", "groupCount", "added", "skipped", "memberCount", "grantCount"] as const) {
     if (typeof meta[key] === "number") parts.push(`${key.replace(/([A-Z])/g, " $1").toLowerCase()}: ${meta[key]}`);
   }
+  // Google sign-in (Wave 35): what went with the password and two-factor.
+  if (meta.password === 1) parts.push("password removed");
+  if (meta.twoFactor === 1) parts.push("two-factor removed");
+  if (meta.relink === true) parts.push(meta.removeCredentials === false ? "keeps password and two-factor" : "removes password and two-factor at re-link");
   if (typeof meta.audience === "string") parts.push(`audience: ${meta.audience.replace("_", " ")}`);
   if (meta.self === true) parts.push("added themselves");
   return parts.length ? parts.join(" · ") : null;

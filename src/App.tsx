@@ -52,8 +52,9 @@ import { ChangePasswordCard } from "./auth/ChangePassword";
 import { Avatar } from "./ui/Avatar";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
+import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
 import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
-import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
+import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
@@ -138,7 +139,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
   // Password form errors stay in the form; Google flow messages get their own notice by the Google
   // button (QA U6), and link_required its own explanation (review HIGH-1).
   const [error, setError] = useState("");
-  const [googleNotice, setGoogleNotice] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code) : "");
+  const [googleNotice, setGoogleNotice] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code, googleResult.domain) : "");
   const [linkRequired, setLinkRequired] = useState(googleResult?.kind === "error" && googleResult.code === "link_required");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
@@ -259,7 +260,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
           <button type="button" className="text-button" onClick={() => void cancelGoogleCode()} disabled={busy}>Cancel and use another account</button>
         </form> : !methodsKnown ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading sign-in options" /> : <>
-          {googleNotice && <div className="auth-google-notice" role="alert"><p>{googleNotice}</p><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice("")}><X /></button></div>}
+          {googleNotice && <div className="auth-google-notice" role="alert"><p>{googleNotice}{methods.password && googleResult?.kind === "error" && googleResult.code === "link_not_authoritative" ? LINK_NOT_AUTHORITATIVE_PASSWORD : ""}</p><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice("")}><X /></button></div>}
           {linkRequired && <div className="auth-link-required" role="alert">
             <strong>This address already has a Nook account</strong>
             <p>{linkRequiredText(methods.password)}</p>
@@ -305,11 +306,13 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
   );
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef, googleResult = null }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean>; googleResult?: GoogleSettingsResult }) {
+function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef, googleResult = null }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState, keepOpen?: boolean) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean>; googleResult?: GoogleSettingsResult }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   // Wave 35: how this account signs in and re-authenticates (password, Google, or neither).
   const { account, reload: reloadAccount } = useAccountAuthLoader();
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
+  // Q2: shown in whichever section the Google round trip started from (Security or API keys).
+  const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
   const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.13.0", gitSha: "development" });
@@ -322,6 +325,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [mcpKeyPending, setMcpKeyPending] = useState(false);
   const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
+  // Q4: the codes shown right after turning two-factor on, until the person says they saved them.
+  const [codesDialog, setCodesDialog] = useState(false);
 
   const guardedClose = useCallback(() => {
     if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
@@ -354,11 +359,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }, []);
 
   useEffect(() => {
-    if (state.setupRequired || nestedDialogOpen) return;
+    if (state.setupRequired || nestedDialogOpen || codesDialog) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired, nestedDialogOpen]);
+  }, [guardedClose, state.setupRequired, nestedDialogOpen, codesDialog]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
   // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
@@ -391,7 +396,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       setQrCode("");
       setRecoveryCodes(next.recoveryCodes);
       setState(next);
-      onSecurityChanged(next);
+      // Q4: Settings stays open on the new recovery codes; "I saved them" finishes as before.
+      onSecurityChanged(next, true);
+      setCodesDialog(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication");
     } finally {
@@ -469,7 +476,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       <div className="settings-body">
         <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button>{session.user.role !== "guest" && <button className={section === "access" ? "active" : ""} aria-current={section === "access" ? "page" : undefined} onClick={() => selectSection("access")}><Share2 />My access</button>}<button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
-          {googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>}
+          {googleNoticeLine}
           {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} /> : <PasswordStateCard account={account} />)}
           {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
@@ -499,9 +506,10 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
+    {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
     </AccountAuthContext.Provider>
   );
 }
@@ -1777,9 +1785,9 @@ export function App() {
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
   // lets that one visit through; Back, Forward, and links still follow the toggle.
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} googleResult={googleSettings} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp) => {
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} googleResult={googleSettings} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp, keepOpen) => {
     setSession((current) => current ? { ...current, totp } : current);
-    if (!totp.setupRequired) closeSettings();
+    if (!totp.setupRequired && !keepOpen) closeSettings();
   }} />;
   const resetNotice = session.notices?.googleReset ?? null;
   const dismissResetNotice = () => {

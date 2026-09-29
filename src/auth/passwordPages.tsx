@@ -147,8 +147,9 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  // Q5: nothing but a neutral placeholder until /api/about says which methods are on (no flash of the form).
   return <Card>
-    {googleOnly ? <div className="auth-heading" role="status">
+    {available === null ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading" /> : googleOnly ? <div className="auth-heading" role="status">
       <span className="eyebrow">Password</span>
       <h1><KeyRound aria-hidden="true" className="invite-register-icon" />Sign in with Google</h1>
       <p>{GOOGLE_ONLY_PASSWORD_TEXT}</p>
@@ -255,6 +256,8 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
     }
   }
 
+  // Q5: a neutral placeholder until the instance's methods are known, so google mode never flashes a form or a wrong message.
+  if (!signedIn && info === null) return <Card><div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading" /></Card>;
   return <Card>
     {state.kind === "checking" && <p className="invite-register-status" role="status">Checking your link…</p>}
     {state.kind === "dead" && <>

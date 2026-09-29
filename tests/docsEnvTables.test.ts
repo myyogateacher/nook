@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 
 // C5: the docs site's environment table lists exactly the variables of OPERATIONS.md → Configuration
 // (it had drifted: no RESEND_WEBHOOK_SECRET and no other email or push rows), and every variable that
@@ -7,6 +8,8 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 const read = (path: string) => Bun.file(join(root, path)).text();
+// The Docker verify stage copies src, server, and tests only: the docs checks run in the repository.
+const docsPresent = ["docs/OPERATIONS.md", "site/index.html", ".env.example", "compose.yaml"].every((path) => existsSync(join(root, path)));
 
 async function operationsVariables() {
   const text = await read("docs/OPERATIONS.md");
@@ -20,13 +23,13 @@ async function siteVariables() {
   return [...section.matchAll(/<tr><td><code>([A-Z][A-Z0-9_]+)<\/code><\/td>/g)].map((match) => match[1]!);
 }
 
-test("the docs site's environment table matches OPERATIONS.md, row for row", async () => {
+test.skipIf(!docsPresent)("the docs site's environment table matches OPERATIONS.md, row for row", async () => {
   const operations = await operationsVariables();
   expect(operations).toContain("RESEND_WEBHOOK_SECRET");
   expect(await siteVariables()).toEqual(operations);
 });
 
-test("every variable in .env.example and compose.yaml is documented in OPERATIONS.md", async () => {
+test.skipIf(!docsPresent)("every variable in .env.example and compose.yaml is documented in OPERATIONS.md", async () => {
   const documented = new Set(await operationsVariables());
   const example = [...(await read(".env.example")).matchAll(/^#?\s*([A-Z][A-Z0-9_]+)=/gm)].map((match) => match[1]!);
   const compose = await read("compose.yaml");

@@ -41,20 +41,12 @@ type NoticeRow = {
   group_name: string | null; key_name: string | null; count: number | null; created_at: string; read_at: string | null;
 };
 
-/** Same-origin paths from ids only (T68); the client allows exactly these shapes. */
-export function accessNoticeHref(kind: string | null, id: string | null) {
-  if (!kind || !id || !/^[0-9a-f-]{36}$/.test(id)) return "/notifications";
-  switch (kind) {
-    case "note": return `/notes/${id}`;
-    case "folder": return `/notes/folder/${id}`;
-    case "document": return `/files/${id}`;
-    case "board": return `/tasks/${id}`;
-    case "task_view": return `/tasks/views/${id}`;
-    case "collection": return `/collections/${id}`;
-    case "calendar": return "/calendar";
-    default: return "/notifications";
-  }
-}
+/**
+ * Access notices open the notifications list: the line already names the item and the person, and
+ * the list is the one path every client follows safely (T68). Linking into each module's item is
+ * left for when the bell learns module deep links.
+ */
+export const ACCESS_NOTICE_HREF = "/notifications";
 
 const isAccessKind = (value: string | null): value is AccessKind => value !== null && (ACCESS_KINDS as readonly string[]).includes(value);
 
@@ -87,7 +79,7 @@ export function listAccessNotices(userId: string, options: { unread: boolean; li
     WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NoticeRow[];
   return rows.map((row) => ({
-    id: row.id, title: line(row, userId), href: accessNoticeHref(row.resource_kind, row.resource_id),
+    id: row.id, title: line(row, userId), href: ACCESS_NOTICE_HREF,
     late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null
   }));
 }

@@ -24,7 +24,12 @@ export type ItemAccess = {
   shareWithGuests: boolean;
   /** Notes and files can use their folder's access. */
   inheritable: boolean;
+  /** Owner only (Wave 33, §C.5): how many of your own usable API keys reach this item. */
+  keysWithAccess?: number;
 };
+
+/** "2 of your API keys can reach this" (§E), pointing at where keys are managed. */
+export const keysReachLine = (count: number) => `${count} of your API keys can reach this. Manage them in Settings → API keys.`;
 
 export type AccessPutBody = {
   audience: Audience;

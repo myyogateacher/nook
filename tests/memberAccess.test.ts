@@ -175,7 +175,7 @@ describe("admin reductions (D268)", () => {
     expect(JSON.parse(event.meta_json!)).toEqual({ level: "edit" });
     const bell = await send(owner, "GET", "/notifications");
     expect(bell.body.items[0].title).toBe(`Remove admin removed Remove target's access to “${name}”`);
-    expect(bell.body.items[0].href).toBe(`/tasks/${id}`);
+    expect(bell.body.items[0].href).toBe("/notifications");
     expect(bell.body.unreadCount).toBeGreaterThanOrEqual(1);
     expect((await send(owner, "POST", "/notifications/read", { all: true })).body.updated).toBeGreaterThanOrEqual(1);
     expect((await send(owner, "GET", "/notifications")).body.unreadCount).toBe(0);

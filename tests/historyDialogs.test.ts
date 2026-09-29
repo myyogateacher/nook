@@ -703,3 +703,9 @@ test("Board settings stays mounted under the dialogs it opens; the Calendars she
   const calendar = await Bun.file(new URL("../src/calendar/CalendarApp.tsx", import.meta.url)).text();
   expect(calendar).toContain(`if (forced && calendarsOpen && (sharing || feeds || confirm?.kind === "deleteCalendar") && holdDialogSentinel())`);
 });
+
+test("the Due picker adds no layer of its own: its dropdown popup or sheet is the one layer (C2)", async () => {
+  const due = await Bun.file(new URL("../src/tasks/DuePicker.tsx", import.meta.url)).text();
+  expect(due).not.toContain("useHistoryDialogGuard");
+  expect(due).toContain("<DropdownSurface sheet={sheet}");
+});

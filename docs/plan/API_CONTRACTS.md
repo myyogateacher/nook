@@ -1771,7 +1771,7 @@ type AccessPut = { audience; audienceLevel?: Level; people: { id; level }[] ≤ 
 
 ## Central access management (Wave 33, Access C)
 
-Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.6, §C.7, §C.11 (D267–D269, D286, D288; T204, T214, T218). Migration **032** (`access_notices`) adds only the bell's access lines; everything else uses tables from 025.
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` §C.6, §C.7, §C.11 (D267–D269, D286, D288; T204, T214, T218). Migration **032** (`access_central`) adds the bell's `access_notices` table, the invite's template snapshot columns (`team_invites.template_group_ids`, `template_name`, `template_revision`), and an `access_events(actor_id, created_at)` index; everything else uses tables from 025.
 
 ### Member access
 
@@ -1786,21 +1786,24 @@ type AccessSummary = {
   kinds: { kind: AccessKind; module; items: number; direct: number; group: number; audience: number }[];  // items: distinct items (the headline); direct/group: grant rows; audience: all_users items not owned (0 for guests)
   resetCounts: ResetCounts; pageSize: 200;
 };
-type AccessRow = {
+type AccessRow = {                                         // one row per item
   kind: AccessKind; title: string; titleHidden: boolean;   // "Board owned by Carol" when the viewer cannot open the item (D269)
   owner: { id; displayName }; id?: string;                 // id only when the viewer can open the item
-  level: Level; via: "direct" | "group"; group: { id; name } | null;
-  active: boolean;                                         // the grant is in effect now (the item may be private, binned, or the person blocked)
-  lowerTo: Level[];                                        // levels a direct share can be lowered to; [] for group rows and view-only kinds
-  handle?: string;                                         // admin page only: opaque, sealed (AES-GCM), bound to the admin and the person, 6 h
+  level: Level;                                            // the best of the sources
+  active: boolean;                                         // the person reaches the item now (it may be private, binned, or the person blocked)
+  sources: {                                               // every way they reach it: the direct share first, then groups by name
+    via: "direct" | "group"; level: Level; group: { id; name } | null;
+    lowerTo: Level[];                                      // levels a direct share can be lowered to; [] for group sources and view-only kinds
+    handle?: string;                                       // admin page only: opaque, sealed (AES-GCM), bound to the admin and the person, 6 h
+  }[];
 };
 ```
 
 | Endpoint | Who | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
 | `GET /api/team/members/:userId/access` | admin | | 200 `AccessSummary` | 403 `ADMIN_ONLY`, 404 (guests, unknown person, not a UUID) |
-| `GET /api/team/members/:userId/access?kind=&cursor=` | admin | | 200 `{ kind, items: AccessRow[] ≤ 200, nextCursor }`: direct rows then group rows, ordered by item; the cursor is sealed like a handle | 400 `INVALID` (unknown kind), 400 `INVALID_CURSOR` (another admin's, person's, or kind's cursor, or expired) |
-| `DELETE /api/team/members/:userId/access/:handle` | admin | `{}` | 200 `{ removed: "share", kind }` for a direct row; `{ removed: "group", groupId }` for a group row (the person leaves that group) | 404 (bad, foreign, or expired handle; already gone), 429 |
+| `GET /api/team/members/:userId/access?kind=&cursor=` | admin | | 200 `{ kind, items: AccessRow[] ≤ 200, nextCursor }`: one row per item, ordered by owner name, then by a keyed hash of the item id (a per-process HMAC key, never the id itself, T204); the cursor carries that sort key, sealed like a handle | 400 `INVALID` (unknown kind), 400 `INVALID_CURSOR` (another admin's, person's, or kind's cursor, or expired) |
+| `DELETE /api/team/members/:userId/access/:handle` | admin | `{}` | 200 `{ removed: "share", kind }` for a direct source; `{ removed: "group", groupId }` for a group source (the person leaves that group) | 404 (bad, foreign, or expired handle; already gone), 429 |
 | `PATCH /api/team/members/:userId/access/:handle` | admin | `{ level }` | 200 `{ lowered: true, kind, from, to }` | 400 `NOT_A_REDUCTION` (same or higher level), `NOT_LOWERABLE` (group row or task view), `LEVEL_NOT_OFFERED`; 404 |
 | `DELETE /api/team/members/:userId/groups/:groupId` | admin | `{}` | 200 `{ groupId }` | 404 |
 | `POST /api/team/members/:userId/access/reset` | admin | `{}` | 200 `{ removed: ResetCounts, remaining: ResetCounts }` | 400 `SELF_ACTION` (your own account), 404 |
@@ -1809,7 +1812,7 @@ type AccessRow = {
 
 - **Reductions only (D268).** Nothing here adds a share or raises a level. Remove deletes the person's direct share row; Lower sets a strictly lower level the kind offers; a group row's Remove takes the person out of that group (the group's `revision` moves). **Reset access** removes every direct share and group membership, revokes every live key (reason "Access reset by an admin") and calendar feed, and pauses routines, in one transaction; owned items and `all_users` audiences stay.
 - **Audit.** `access_events` `access.share_removed` (meta `{ level }`), `access.share_lowered` (`{ from, to }`), `group.member_removed` (`{ from: "member_access" | "reset" }`), `key.revoked` (`{ by: "admin", reset? }`), and `access.reset` (the removed counts); `audit_log` `team.access_removed`, `team.access_lowered`, `team.access_reset`. Ids and counts only.
-- **Bell (§C.11, migration 032).** The item's owner hears about a removal or lowering, and once per Reset with the count of their items; the person hears about a Reset, about group additions and removals, and about an admin revoking their key (Team → Keys too). Nobody is told about their own action. `GET /api/notifications` merges these lines (built at read time, so titles show only to someone who can open the item) with calendar and proposal notifications; `POST /api/notifications/read` and the 30-day sweep cover both. No email: the plan defines no mail kind for these yet (O-A13).
+- **Bell (§C.11, migration 032).** The item's owner hears about a removal or lowering, and once per Reset with the count of their items; the person hears about a Reset, about group additions and removals, and about an admin revoking their key (Team → Keys too). A lowering names the new level ("… to Can edit", stored as `access_notices.level`). Nobody is told about their own action. `GET /api/notifications` merges these lines (built at read time, so titles show only to someone who can open the item) with calendar and proposal notifications; `POST /api/notifications/read` and the 30-day sweep cover both. No email: the plan defines no mail kind for these yet (O-A13).
 - **Write limit.** The writes share the Team write limit (30 a minute per admin, T218).
 
 ### Templates (D286)
@@ -1825,7 +1828,7 @@ type AccessTemplate = { id; name; role: "member" | "viewer" | "guest"; groups: {
 | `PATCH /api/team/templates/:templateId` | admin | `{ name?, role?, groupIds?, revision }` | 200 `{ template }` | 400, 404, 409 `TEMPLATE_CHANGED` (CAS), 409 `NAME_TAKEN` |
 | `DELETE /api/team/templates/:templateId` | admin | `{ revision? }` | 200 `{ ok, liveInvites }` | 404, 409 `TEMPLATE_CHANGED` |
 
-**On invites.** `POST /api/team/invites` accepts `templateId`; the template's role must equal the invite's (400 `TEMPLATE_ROLE_MISMATCH`, 404 `TEMPLATE_NOT_FOUND`). `TeamInvite` gains `template: { id, name } | null`. When the invite is accepted, the registration transaction adds the new account to the template's groups that still exist and have room (`added_by` = the invite's admin) and records `template.applied` `{ templateId, added, skipped }`. The invite's own role always wins; editing a template later does not change invites already sent. **Guests (T213):** with `share_with_guests` off, a guest never joins a group that has grants through a template either (the same rule as `PUT /api/team/groups/:id/members`, one helper `guestJoinRefused`): on invite acceptance that group is skipped and counted (`template.applied` meta `guestRefused`), and the account is still created; applying a template to someone is refused as a whole with 400 `GUEST_SHARE_DISABLED`. Removing people (remove from a group, Reset access) is never refused. Deleting a template sets `team_invites.template_id` to NULL: the invite still works, with its role and no groups. `access_events`: `template.created`, `template.updated`, `template.deleted`, `template.applied`.
+**On invites.** `POST /api/team/invites` accepts `templateId`; the template's role must equal the invite's (400 `TEMPLATE_ROLE_MISMATCH`, 404 `TEMPLATE_NOT_FOUND`). Creating the invite **snapshots** the template: its group ids, name, and revision (`team_invites.template_group_ids`, `template_name`, `template_revision`). `TeamInvite` gains `template: { id, name, groupCount, edited } | null`: the snapshot's name and group count, and `edited` when the template has changed since. When the invite is accepted, the registration transaction adds the new account to the **snapshot's** groups that still exist and have room (`added_by` = the admin who created the invite) and records `template.applied` `{ templateId, added, skipped }`. The invite's own role always wins, and editing a template later changes only invites created after the edit; Team → Templates shows how many live invites carry each template. **Guests (T213):** with `share_with_guests` off, a guest never joins a group that has grants through a template either (the same rule as `PUT /api/team/groups/:id/members`, one helper `guestJoinRefused`): on invite acceptance that group is skipped and counted (`template.applied` meta `guestRefused`), and the account is still created; applying a template to someone is refused as a whole with 400 `GUEST_SHARE_DISABLED`. Removing people (remove from a group, Reset access) is never refused. Deleting a template sets `team_invites.template_id` to NULL: the invite still works, with its role and no groups. `access_events`: `template.created`, `template.updated`, `template.deleted`, `template.applied`.
 
 ### Access activity
 

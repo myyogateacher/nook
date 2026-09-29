@@ -206,7 +206,8 @@ describe("end-user QA fixes (U1–U11)", () => {
     expect(app()).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "files", "FilesApp.tsx"), "utf8")).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
-    expect(readFileSync(join(src, "appShell.css"), "utf8")).toMatch(/@media \(max-width: 760px\) \{\s*\.app-home-user \{ display: inline-flex;/);
+    const shell = readFileSync(join(src, "appShell.css"), "utf8");
+    expect(shell.slice(shell.lastIndexOf("@media (max-width: 760px)"))).toContain(".app-home-user { display: inline-flex; margin-right: 2px; }");
   });
 
   test("U5–U7: the Google-only hint, Google messages beside the button, and a way out of the code step", () => {

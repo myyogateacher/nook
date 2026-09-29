@@ -41,6 +41,9 @@
 .app-page-title { margin: 0; font-size: .95rem; font-weight: 700; letter-spacing: normal; }
 .app-page-name { display: none; }
 @media (max-width: 760px) {
+  /* Wave 35 (QA U4): the name is hidden, the picture (or letter) stays beside Settings. */
+  .app-home-user { display: inline-flex; margin-right: 2px; }
+  .app-home-user-name { display: none; }
   .app-page-header { flex-wrap: wrap; height: auto; min-height: 68px; row-gap: 2px; padding-top: 12px; padding-bottom: 8px; }
   .app-page-name { order: 10; flex: 0 0 100%; display: block; min-width: 0; overflow: hidden; padding-left: 2px; color: var(--yellow); font-size: .72rem; font-weight: 700; letter-spacing: .12em; line-height: 1.4; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 }
@@ -52,9 +55,3 @@
 .app-home-header { justify-content: flex-start; gap: 4px; }
 .app-home-header .app-home-brand { margin-right: auto; min-width: 0; }
 .app-account-inbox .app-account-badge { background: var(--yellow); color: #281f0b; font-weight: 800; }
-
-/* Wave 35 (QA U4): at 390 px the name is hidden, the picture (or letter) stays beside Settings. */
-@media (max-width: 760px) {
-  .app-home-user { display: inline-flex; margin-right: 2px; }
-  .app-home-user-name { display: none; }
-}

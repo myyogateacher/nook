@@ -73,10 +73,10 @@ Admins cannot trigger a reset email for someone else (D246: it would be a phishi
 `APP_ORIGINS` is a comma-separated allowlist of exact browser origins. Keep localhost and add every trusted LAN or Tailscale HTTPS origin you use, including its port when non-standard:
 
 ```dotenv
-APP_ORIGINS=http://localhost:2026,http://192.168.10.20:2026,https://your-device.your-tailnet.ts.net
+APP_ORIGINS=http://localhost:2026,http://<server-lan-ip>:2026,https://your-device.your-tailnet.ts.net
 ```
 
-Docker publishes port `2026` on all host interfaces for LAN access. Prefer Tailscale Serve or a TLS reverse proxy and keep `COOKIE_SECURE=true`. Direct plain-HTTP access such as `http://192.168.10.20:2026` requires `COOKIE_SECURE=false`; this is less safe for notes containing credentials, even on a trusted home network. Never use a wildcard origin.
+Docker publishes port `2026` on all host interfaces for LAN access. Prefer Tailscale Serve or a TLS reverse proxy and keep `COOKIE_SECURE=true`. Direct plain-HTTP access such as `http://<server-lan-ip>:2026` requires `COOKIE_SECURE=false`; this is less safe for notes containing credentials, even on a trusted home network. Never use a wildcard origin.
 
 ### Email (Resend)
 

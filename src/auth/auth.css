@@ -18,7 +18,73 @@
 .password-change-done { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: #b7e4c7; font-size: .86rem; }
 .password-change-done svg { width: 16px; flex: none; }
 
+/* Wave 35: "Continue with Google" (Google's dark button style, inline mark, 44 px tall). */
+.google-button { width: 100%; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 0 16px; border: 1px solid #8e918f; border-radius: 22px; background: #131314; color: #e3e3e3; font: inherit; font-size: .92rem; font-weight: 600; text-decoration: none; cursor: pointer; }
+.google-button:hover { background: #1c1c1f; }
+.google-button:focus-visible { outline: 2px solid #8a7340; outline-offset: 2px; }
+.google-button:disabled { opacity: .6; cursor: default; }
+.google-button .google-mark { flex: none; }
+.auth-card > .google-button { margin-bottom: 4px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: #85858c; font-size: .8rem; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: #2c2c30; }
+.auth-card > .form-error { margin-top: 12px; }
+.invite-google-hint { margin: 8px 0 0; color: #85858c; font-size: .8rem; text-align: center; }
+
+/* Review N2c: the one-time notice after an admin reset, above everything until read. */
+.google-reset-notice { position: fixed; z-index: 120; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(560px, calc(100vw - 32px)); display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 1px solid #624c21; border-radius: 14px; background: #282116; color: #f3ce79; font-size: .88rem; line-height: 1.5; box-shadow: 0 18px 50px rgb(0 0 0 / 50%); }
+.google-reset-notice p { margin: 0; flex: 1; }
+.google-reset-notice .secondary-button { min-height: 44px; flex: none; }
+@media (max-width: 760px) { .google-reset-notice { flex-direction: column; align-items: stretch; } }
+
+/* QA U2: the sign-in options' space while /api/about answers (no flash of the wrong form). */
+.auth-methods-placeholder { min-height: 300px; }
+/* QA U5, U6: the Google-only hint and Google flow messages beside the Google button. */
+.auth-google-only { margin: 10px 0 0; color: #a8a8ae; font-size: .84rem; line-height: 1.5; text-align: center; }
+.auth-google-notice { position: relative; margin: 0 0 14px; padding: 10px 48px 10px 14px; border: 1px solid #5b2a31; border-radius: 12px; background: #2a1518; color: #fda4af; font-size: .86rem; line-height: 1.5; }
+.auth-google-notice p { margin: 0; }
+.auth-google-notice .icon-button { position: absolute; top: 2px; right: 2px; width: 40px; height: 40px; }
+
+/* Review HIGH-1: "This address already has a Nook account" on the sign-in page. */
+.auth-link-required { position: relative; display: grid; gap: 6px; margin: 0 0 16px; padding: 12px 48px 12px 14px; border: 1px solid #624c21; border-radius: 12px; background: #282116; color: #f3ce79; font-size: .86rem; line-height: 1.5; }
+.auth-link-required strong { color: #f7dc9b; }
+.auth-link-required p { margin: 0; color: #e8d3a2; }
+.auth-link-required .icon-button { position: absolute; top: 4px; right: 4px; width: 40px; height: 40px; }
+.google-reauth-form { display: grid; gap: 14px; }
+.google-reauth-form .keys-dialog-actions.inline { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.google-reauth-form .keys-dialog-actions button { min-height: 44px; padding: 0 16px; margin: 0; }
+
+/* Team → member → Google sign-in (admins). */
+.team-google-heading { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 1rem; }
+.team-google-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.team-google-copy { display: flex; gap: 8px; margin: 0 0 10px; color: #c9c9ce; font-size: .88rem; line-height: 1.5; }
+.team-google-copy svg { width: 16px; height: 16px; flex: none; margin-top: 3px; }
+.team-google-counts { margin: 0 0 10px; padding-left: 20px; color: #d6d6d9; font-size: .88rem; line-height: 1.6; }
+/* Q4: the recovery codes shown right after turning two-factor on. */
+.recovery-codes.recovery-codes-dialog { margin: 0; padding: 0; border: 0; }
+.keys-dialog-actions .recovery-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.keys-dialog-actions .recovery-action svg { width: 16px; height: 16px; flex: none; }
+.team-google-warning { color: #f0c46b; font-weight: 600; }
+.team-google-refusal { color: #e8d3a2; }
+.team-google-option { display: flex; gap: 12px; align-items: flex-start; min-height: 44px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #3a3a40; border-radius: 10px; color: #d6d6d9; font-size: .88rem; line-height: 1.5; cursor: pointer; }
+.team-google-option input { width: 20px; height: 20px; flex: none; margin: 2px 0 0; accent-color: #7aa7ff; }
+
+/* Settings → Security → Google sign-in and Google re-authentication (D297, D300). */
+.google-account-card { margin-bottom: 22px; }
+.google-account-card .google-button { width: auto; flex: none; }
+.google-account-icon { display: grid; place-items: center; }
+.google-unlink-copy { margin: 0; color: #b7b7bd; font-size: .88rem; line-height: 1.5; }
+.inline-icon { width: 15px; height: 15px; vertical-align: -2px; margin-right: 6px; }
+.reauth-google { display: grid; gap: 10px; margin: 8px 0; }
+.reauth-google .google-button { width: auto; justify-self: start; }
+.reauth-note { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; color: #b7b7bd; font-size: .84rem; line-height: 1.45; }
+.reauth-note svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.reauth-done { color: #b7e4c7; }
+.settings-google-notice { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 8px 8px 8px 13px; border: 1px solid #2f4a3a; border-radius: 10px; background: #15231b; color: #b7e4c7; font-size: .86rem; }
+.settings-google-notice.error { border-color: #5b2a31; background: #2a1518; color: #fda4af; }
+.settings-google-notice .icon-button { margin-left: auto; width: 40px; height: 40px; flex: none; }
+
 @media (max-width: 760px) {
+  .google-account-card .google-button, .reauth-google .google-button { width: 100%; }
   .password-change-summary .secondary-button { width: 100%; }
   .password-change-form { max-width: none; }
   .password-change-actions > * { flex: 1 1 100%; }

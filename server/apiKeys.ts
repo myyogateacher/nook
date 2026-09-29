@@ -54,7 +54,8 @@ export const grantInput = z.object({
 export type GrantInput = z.infer<typeof grantInput>;
 
 const reauthFields = {
-  password: z.string().min(1).max(256),
+  /** Omitted when the session confirmed the account with Google in the last 5 minutes (D297). */
+  password: z.string().min(1).max(256).optional(),
   totpCode: totpCode.optional(),
   recoveryCode: recoveryCode.optional()
 };
@@ -563,7 +564,8 @@ export function rotateApiKey(userId: string, keyId: string, graceHours: typeof G
 }
 
 /** Revokes one of the caller's keys now (also ends a rotation grace early). Pending proposals go with it. */
-export function revokeOwnKey(userId: string, keyId: string) {
+/** `by`: the owner ("self"), or a Google reset or re-link revoking every key of the account (no acting person). */
+export function revokeOwnKey(userId: string, keyId: string, by: "self" | "google_reset" | "google_relink" = "self") {
   return db.transaction(() => {
     const timestamp = now();
     // The owner is recorded as the actor, so a revoke during a rotation grace reads "self", not "rotation".
@@ -571,7 +573,7 @@ export function revokeOwnKey(userId: string, keyId: string) {
     if (!result.changes) return false;
     const superseded = supersedeProposals(keyId, userId, timestamp);
     audit(userId, null, "mcp.key_revoked", { keyId, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
-    recordAccessEvent({ actorId: userId, via: "web", action: "key.revoked", targetUserId: userId, keyId, meta: { by: "self" } }, timestamp);
+    recordAccessEvent({ actorId: by === "self" ? userId : null, via: "web", action: "key.revoked", targetUserId: userId, keyId, meta: { by } }, timestamp);
     return true;
   })();
 }

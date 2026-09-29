@@ -27,14 +27,14 @@ describe("invite link (fragment form)", () => {
 
   test("strips the fragment from the address bar with replaceState and keeps the entry's state", () => {
     const { calls, history } = fakeHistory({ depth: 0, keep: true });
-    expect(takeInviteFromLocation({ pathname: "/register", hash: `#invite=${token}` }, history)).toEqual({ onRegister: true, token });
+    expect(takeInviteFromLocation({ pathname: "/register", hash: `#invite=${token}` }, history)).toEqual({ onRegister: true, token, googleError: null });
     expect(calls).toEqual([[{ depth: 0, keep: true }, "", "/register"]]);
 
     const other = fakeHistory();
-    expect(takeInviteFromLocation({ pathname: "/notes", hash: `#invite=${token}` }, other.history)).toEqual({ onRegister: false, token: null });
+    expect(takeInviteFromLocation({ pathname: "/notes", hash: `#invite=${token}` }, other.history)).toEqual({ onRegister: false, token: null, googleError: null });
     expect(other.calls).toEqual([]);
     const bare = fakeHistory();
-    expect(takeInviteFromLocation({ pathname: "/register", hash: "" }, bare.history)).toEqual({ onRegister: true, token: null });
+    expect(takeInviteFromLocation({ pathname: "/register", hash: "" }, bare.history)).toEqual({ onRegister: true, token: null, googleError: null });
     expect(bare.calls).toEqual([]);
   });
 

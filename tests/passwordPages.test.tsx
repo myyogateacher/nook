@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseRoute } from "../src/router";
 import { ChangePasswordCard, passwordChangedText } from "../src/auth/ChangePassword";
 import { passwordResetOffered } from "../src/auth/registrationPrompt";
@@ -56,11 +58,14 @@ describe("forgot page (T224)", () => {
   test("neutral copy: the same line for every address, and email off points at an admin", () => {
     expect(FORGOT_SENT_TEXT).toBe("If that address has a verified account, we sent a link. It works for 30 minutes.");
     expect(FORGOT_OFF_TEXT).toContain("Ask an admin");
+    // Q5: before /api/about answers, only a neutral placeholder (no form that google mode would then hide).
     const markup = renderToStaticMarkup(<ForgotPasswordPage onBack={() => undefined} />);
-    expect(markup).toContain("Send reset link");
-    expect(markup).toContain('type="email"');
+    expect(markup).toContain("auth-methods-placeholder");
+    expect(markup).not.toContain('type="email"');
     expect(markup).toContain("Back to sign in");
     expect(markup).not.toMatch(/no account|not found|doesn.t exist/i);
+    const source = readFileSync(join(import.meta.dir, "..", "src", "auth", "passwordPages.tsx"), "utf8");
+    expect(source).toContain("Send reset link");
   });
 });
 
@@ -102,9 +107,13 @@ describe("reset page", () => {
   });
 
   test("with a token it checks first, before any form", () => {
-    const markup = renderToStaticMarkup(<ResetPasswordPage token={"t".repeat(43)} onSignIn={() => undefined} onForgot={() => undefined} />);
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={"t".repeat(43)} about={{ passwordReset: true }} onSignIn={() => undefined} onForgot={() => undefined} />);
     expect(markup).toContain("Checking your link");
     expect(markup).not.toContain("<form");
+    // Q5: with the methods not yet known, a neutral placeholder only.
+    const unknown = renderToStaticMarkup(<ResetPasswordPage token={"t".repeat(43)} onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(unknown).toContain("auth-methods-placeholder");
+    expect(unknown).not.toContain("Checking your link");
   });
 
   test("the second factor goes in the body only when needed", () => {

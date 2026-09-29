@@ -6,6 +6,7 @@ import { Select } from "../ui/Select";
 import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
+import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
   expiryOptions, GRACE_OPTIONS, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
@@ -25,7 +26,7 @@ type Dialog = { kind: "create" } | { kind: "edit"; key: ApiKey } | { kind: "rota
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
-export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined }) {
+export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined; /** Q2: the result of a Google confirmation started here. */ notice?: React.ReactNode }) {
   const [data, setData] = useState<KeyList | null>(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -35,6 +36,10 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const endpoint = `${window.location.origin}/mcp`;
   const configText = JSON.stringify({ mcpServers: { nook: { type: "streamable-http", url: endpoint, headers: { Authorization: `Bearer ${newToken?.token ?? "<YOUR_API_KEY>"}` } } } }, null, 2);
   const guest = role === "guest";
+  // QA U11: an account that confirms with Google does it BEFORE opening New key or Rotate, so the
+  // round trip never loses what was typed into the dialog.
+  const account = useAccountAuth();
+  const needsGoogle = Boolean(account && !asksForPassword(account) && !googleConfirmed(account));
 
   const load = useCallback(() => {
     listKeys().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
@@ -103,6 +108,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const revokedFocusKey = (revokedId: string) => keyAfterRevoke(live.map((key) => key.id), revokedId);
 
   return <section className="settings-content mcp-settings keys-settings" aria-labelledby="keys-heading">
+    {notice}
     <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {status && <p className="keys-status" role="status">{status}</p>}
@@ -113,14 +119,16 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
         <div><h4 ref={headingRef} tabIndex={-1}>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
-        {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken)}><Plus aria-hidden="true" />New key</button>}
+        {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken) || needsGoogle}><Plus aria-hidden="true" />New key</button>}
       </div>
+      {/* Q2: the confirmation state too ("Confirmed with Google until …"), not only the button. */}
+      {!guest && account && !asksForPassword(account) && <GoogleReauthNotice account={account} returnTo="/settings/mcp" />}
       {guest && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
       {role === "viewer" && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
       {data && !data.policy.mcpAllowed && <p className="mcp-role-note" role="note">Team policy does not allow your team role to use MCP keys.</p>}
       {atLimit && <p className="mcp-role-note" role="note">You have {data!.liveCount} live keys, the most team policy allows. Revoke one to create another.</p>}
       <ul ref={liveListRef} className="keys-list" aria-label="API keys">
-        {live.map((key) => <KeyRow key={key.id} apiKey={key} onRotate={() => openDialog({ kind: "rotate", key })} onEdit={() => openDialog({ kind: "edit", key })} onRevoke={() => openDialog({ kind: "revoke", key })} onReview={() => openDialog({ kind: "review", key })} />)}
+        {live.map((key) => <KeyRow key={key.id} apiKey={key} onRotate={needsGoogle ? undefined : () => openDialog({ kind: "rotate", key })} onEdit={() => openDialog({ kind: "edit", key })} onRevoke={() => openDialog({ kind: "revoke", key })} onReview={() => openDialog({ kind: "review", key })} />)}
       </ul>
       {data && !live.length && <p className="keys-empty">No active API keys.</p>}
       {revoked.length > 0 && <details className="keys-revoked"><summary>Revoked in the last 7 days ({revoked.length})</summary><ul className="keys-list">{revoked.map((key) => <KeyRow key={key.id} apiKey={key} />)}</ul></details>}
@@ -188,8 +196,12 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
 }
 
 function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
+  // Wave 35 (D297): accounts without a usable password confirm with Google instead.
+  const account = useAccountAuth();
   return <div className="keys-reauth">
-    <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
+    {asksForPassword(account)
+      ? <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
+      : <GoogleReauthNotice account={account!} returnTo="/settings/mcp" startable={false} />}
     {totpEnabled && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
   </div>;
 }
@@ -218,7 +230,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     setBusy(true);
     setError("");
     try {
-      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: Number(expires), grants, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: Number(expires), grants, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -325,7 +337,7 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
     setBusy(true);
     setError("");
     try {
-      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onRotated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not rotate the key"));

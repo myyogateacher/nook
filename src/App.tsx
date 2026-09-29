@@ -49,6 +49,12 @@ import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from 
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
+import { Avatar } from "./ui/Avatar";
+import { setSelfAvatar } from "./ui/selfAvatar";
+import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
+import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
+import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
+import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
@@ -96,7 +102,8 @@ import { usePreferences, type PreferencesStatus } from "./usePreferences";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown };
+// `notices` (Wave 35 review N2c) comes with /api/auth/me only.
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null } };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 
@@ -126,16 +133,26 @@ function relativeTime(value: string) {
   return formatter.format(Math.round(hours / 24), "day");
 }
 
-function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (session: SessionResponse) => void; onForgotPassword: () => void }) {
+function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: { onAuthenticated: (session: SessionResponse) => void; onForgotPassword: () => void; googleResult?: GoogleSignInResult }) {
   const [registering, setRegistering] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Password form errors stay in the form; Google flow messages get their own notice by the Google
+  // button (QA U6), and link_required its own explanation (review HIGH-1).
   const [error, setError] = useState("");
+  const [googleNotice, setGoogleNotice] = useState(googleResult?.kind === "error" && googleResult.code !== "link_required" ? googleErrorMessage(googleResult.code, googleResult.domain) : "");
+  const [linkRequired, setLinkRequired] = useState(googleResult?.kind === "error" && googleResult.code === "link_required");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [registration, setRegistration] = useState<RegistrationInfo | null | "failed">(null);
-  const signUpPrompt = registrationPrompt(registration === "failed" ? null : registration);
   const fields = useFieldErrors();
+  // Wave 35 (D296): Google proved the account; the Nook code finishes the sign-in.
+  const [googleCode, setGoogleCode] = useState(googleResult?.kind === "code");
+  // QA U2: nothing but a placeholder until /api/about says which methods are on (no flash of the
+  // wrong form); a failed request or an older server shows the password form as before.
+  const methodsKnown = registration !== null;
+  const methods = (registration !== "failed" ? registration?.authMethods : undefined) ?? { password: true, google: false };
+  const signUpPrompt = methods.password ? registrationPrompt(registration === "failed" ? null : registration) : null;
 
   useEffect(() => {
     let live = true;
@@ -184,53 +201,120 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
     }
   }
 
+  async function submitGoogleCode(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    const codeName = useRecoveryCode ? "recoveryCode" : "totpCode";
+    if (fields.show(event.currentTarget, collectProblems({ [codeName]: secondFactorProblem(String(form.get(codeName) ?? ""), useRecoveryCode) }))) {
+      setBusy(false);
+      return;
+    }
+    try {
+      const body = useRecoveryCode ? { recoveryCode: String(form.get("recoveryCode") ?? "").trim() } : { totpCode: String(form.get("totpCode") ?? "").trim() };
+      const result = await api<{ returnTo: string }>("/auth/google/second-factor", { method: "POST", body: JSON.stringify(body) });
+      // A full load of the page the person was heading to; Back never returns to this step.
+      window.location.replace(result.returnTo || "/");
+    } catch (reason) {
+      const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+      const message = reason instanceof ApiError && reason.status === 429 ? "Too many attempts. Try again soon." : reason instanceof Error ? reason.message : "Could not sign in";
+      if (code === "FLOW_EXPIRED" || code === "ACCOUNT_BLOCKED") {
+        setGoogleCode(false);
+        setUseRecoveryCode(false);
+        setGoogleNotice(message);
+      } else setError(message);
+      setBusy(false);
+    }
+  }
+
+  /** QA U7: leave the two-factor step; the pending Google sign-in ends on the server too. */
+  async function cancelGoogleCode() {
+    setBusy(true);
+    await api("/auth/google/cancel", { method: "POST", body: "{}" }).catch(() => undefined);
+    setBusy(false);
+    setGoogleCode(false);
+    setUseRecoveryCode(false);
+    setError("");
+    fields.clear();
+  }
+
+  const heading = googleCode ? "One more step" : registering ? "Create your account" : "Welcome back";
+  const googleButton = methods.google && !needsTotp && <GoogleButton href={googleStartUrl("signin", currentReturnPath())} />;
+
   return (
     <main className="auth-page">
       <section className="auth-card">
         <div className="brand-mark"><Sparkles aria-hidden="true" /></div>
         <div className="auth-heading">
           <span className="eyebrow">Nook</span>
-          <h1>{registering ? "Create your account" : "Welcome back"}</h1>
-          <p>Your private workspace for ideas, passwords, and configuration notes.</p>
+          <h1>{heading}</h1>
+          <p>{googleCode ? "Google confirmed your account. Enter the code from your authenticator app to finish signing in." : "Your private workspace for ideas, passwords, and configuration notes."}</p>
         </div>
-        <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
-          {registering && <label>Name<input name="displayName" autoComplete="name" maxLength={80} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "auth-name-error" : undefined} /><FieldError id="auth-name-error" message={fields.errors.displayName} /></label>}
-          <label>Email<input name="email" type="email" autoComplete="email" aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "auth-email-error" : undefined} /><FieldError id="auth-email-error" message={fields.errors.email} /></label>
-          <div className="auth-password-group">
-            <label htmlFor="auth-password">Password</label>
-            <span className="password-field">
-              <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} maxLength={256} aria-invalid={fields.errors.password ? true : undefined} aria-describedby={fields.errors.password ? "auth-password-error" : undefined} />
-              <button
-                type="button"
-                className="password-visibility-toggle"
-                aria-label={passwordVisible ? "Hide password" : "Show password"}
-                aria-pressed={passwordVisible}
-                onClick={() => setPasswordVisible((visible) => !visible)}
-              >
-                {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-              </button>
-            </span>
-            <FieldError id="auth-password-error" message={fields.errors.password} />
-          </div>
-          {!registering && needsTotp && (useRecoveryCode
-            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="auth-recovery-error" message={fields.errors.recoveryCode} /></label>
-            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
-          {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
-          {!registering && passwordResetOffered(registration) && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
+        {googleCode ? <form onSubmit={submitGoogleCode} className="auth-form" noValidate onChange={() => setError("")}>
+          {useRecoveryCode
+            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="google-recovery-error" message={fields.errors.recoveryCode} /></label>
+            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number from your authenticator app.</small><FieldError id="google-code-error" message={fields.errors.totpCode} /></label>}
+          <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use an authentication code instead" : "Use a recovery code"}</button>
           {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
-        </form>
-        {(registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); fields.clear(); }}>
-          {registering ? "Already have an account? Sign in" : signUpPrompt}
-        </button>}
+          <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
+          <button type="button" className="text-button" onClick={() => void cancelGoogleCode()} disabled={busy}>Cancel and use another account</button>
+        </form> : !methodsKnown ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading sign-in options" /> : <>
+          {googleNotice && <div className="auth-google-notice" role="alert"><p>{googleNotice}{methods.password && googleResult?.kind === "error" && googleResult.code === "link_not_authoritative" ? LINK_NOT_AUTHORITATIVE_PASSWORD : ""}</p><button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice("")}><X /></button></div>}
+          {linkRequired && <div className="auth-link-required" role="alert">
+            <strong>This address already has a Nook account</strong>
+            <p>{linkRequiredText(methods.password)}</p>
+            <button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setLinkRequired(false)}><X /></button>
+          </div>}
+          {googleButton}
+          {googleButton && !methods.password && <p className="auth-google-only">{GOOGLE_ONLY_HINT}</p>}
+          {googleButton && methods.password && <AuthDivider />}
+          {methods.password && <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+            {registering && <label>Name<input name="displayName" autoComplete="name" maxLength={80} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "auth-name-error" : undefined} /><FieldError id="auth-name-error" message={fields.errors.displayName} /></label>}
+            <label>Email<input name="email" type="email" autoComplete="email" aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "auth-email-error" : undefined} /><FieldError id="auth-email-error" message={fields.errors.email} /></label>
+            <div className="auth-password-group">
+              <label htmlFor="auth-password">Password</label>
+              <span className="password-field">
+                <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} maxLength={256} aria-invalid={fields.errors.password ? true : undefined} aria-describedby={fields.errors.password ? "auth-password-error" : undefined} />
+                <button
+                  type="button"
+                  className="password-visibility-toggle"
+                  aria-label={passwordVisible ? "Hide password" : "Show password"}
+                  aria-pressed={passwordVisible}
+                  onClick={() => setPasswordVisible((visible) => !visible)}
+                >
+                  {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                </button>
+              </span>
+              <FieldError id="auth-password-error" message={fields.errors.password} />
+            </div>
+            {!registering && needsTotp && (useRecoveryCode
+              ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="auth-recovery-error" message={fields.errors.recoveryCode} /></label>
+              : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
+            {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
+            {!registering && passwordResetOffered(registration) && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
+          </form>}
+          {methods.password && (registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); fields.clear(); }}>
+            {registering ? "Already have an account? Sign in" : signUpPrompt}
+          </button>}
+        </>}
         <p className="security-note"><Lock /> Your notes stay on this machine.</p>
       </section>
     </main>
   );
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean> }) {
+function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef, googleResult = null }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState, keepOpen?: boolean) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean>; googleResult?: GoogleSettingsResult }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  // Wave 35: how this account signs in and re-authenticates (password, Google, or neither).
+  const { account, reload: reloadAccount } = useAccountAuthLoader();
+  const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
+  // Q2: shown in whichever section the Google round trip started from (Security or API keys).
+  const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
+  const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
+  const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
   const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.14.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
@@ -241,6 +325,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [mcpKeyPending, setMcpKeyPending] = useState(false);
   const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
+  // Q4: the codes shown right after turning two-factor on, until the person says they saved them.
+  const [codesDialog, setCodesDialog] = useState(false);
 
   const guardedClose = useCallback(() => {
     if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
@@ -273,11 +359,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }, []);
 
   useEffect(() => {
-    if (state.setupRequired || nestedDialogOpen) return;
+    if (state.setupRequired || nestedDialogOpen || codesDialog) return;
     const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired, nestedDialogOpen]);
+  }, [guardedClose, state.setupRequired, nestedDialogOpen, codesDialog]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
   // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
@@ -289,7 +375,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const setup = await api<{ secret: string; uri: string }>("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: form.get("password") }) });
+      const setup = await api<{ secret: string; uri: string }>("/auth/totp/setup", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")) }) });
       setSecret(setup.secret);
       setQrCode(await QRCode.toDataURL(setup.uri, { width: 220, margin: 2, color: { dark: "#151515", light: "#ffffff" } }));
     } catch (reason) {
@@ -310,7 +396,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       setQrCode("");
       setRecoveryCodes(next.recoveryCodes);
       setState(next);
-      onSecurityChanged(next);
+      // Q4: Settings stays open on the new recovery codes; "I saved them" finishes as before.
+      onSecurityChanged(next, true);
+      setCodesDialog(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication");
     } finally {
@@ -325,7 +413,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
       setState(next);
       onSecurityChanged(next);
     } catch (reason) {
@@ -347,7 +435,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not reveal recovery codes");
@@ -363,7 +451,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not generate recovery codes");
@@ -379,25 +467,29 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }
 
   return (
+    <AccountAuthContext.Provider value={account}>
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
-        <div><span className="eyebrow">Account</span><h2 id="settings-title">Settings</h2></div>
+        <div className="settings-identity"><Avatar className="app-user-avatar settings-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><div><span className="eyebrow">Account · {session.user.displayName}</span><h2 id="settings-title">Settings</h2></div></div>
         {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
         <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button>{session.user.role !== "guest" && <button className={section === "access" ? "active" : ""} aria-current={section === "access" ? "page" : undefined} onClick={() => selectSection("access")}><Share2 />My access</button>}<button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
-          {!state.setupRequired && <ChangePasswordCard totpEnabled={state.enabled} />}
+          {googleNoticeLine}
+          {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} /> : <PasswordStateCard account={account} />)}
+          {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
           {error && <p className="form-error" role="alert">{error}</p>}
           {state.enabled ? <div className="security-card enabled-card">
-            <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account requires your password and an authentication code at sign in.</small></div></div>
-            {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes.</p><div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
-            <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with your password and a fresh six-digit Authenticator code.</p><div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
+            <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account asks for an authentication code at every sign-in, after your password or Google.</small></div></div>
+            {reauthNotice}
+            {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
+            <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
             {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
-              <h4>Disable authenticator</h4><p>Confirm your password and a current code.</p>
-              <div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
+              <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
+              <div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
             </form>}
           </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
             <strong>Not available on this Nook</strong>
@@ -405,7 +497,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
           </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
             <strong>Authenticator not configured</strong>
             <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
-            <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label>
+            {reauthField ? <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label> : reauthNotice}
             <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
           </form> : <div className="security-card enrollment-card">
             <div className="enrollment-grid">
@@ -414,9 +506,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
             </div>
             <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
           </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
+        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
     </section>
+    {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
+    </AccountAuthContext.Provider>
   );
 }
 
@@ -529,6 +623,8 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
 export function App() {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [checking, setChecking] = useState(true);
+  // Wave 35 (QA U4): headers and sidebar footers show the signed-in person's picture.
+  useEffect(() => { setSelfAvatar(session?.user.avatarUrl ?? null); }, [session?.user.avatarUrl]);
   // Wave 18: /register#invite=<token>. Read once, and the fragment is stripped at once (T136); the
   // token then lives only in this state until the account is created or the visitor leaves.
   const [invite, setInvite] = useState(initialInvite);
@@ -536,6 +632,9 @@ export function App() {
   const [mailLink, setMailLink] = useState(initialMailLink);
   // Wave 30: /forgot-password and /reset-password#token= (the fragment is stripped at once, T220).
   const [passwordLink, setPasswordLink] = useState(initialPasswordLink);
+  // Wave 35: /login#error=… or #google=code after Google, and /settings/…#google=… (read once, stripped at once).
+  const [googleSignIn] = useState(initialGoogleSignInResult);
+  const [googleSettings] = useState(initialGoogleSettingsResult);
   const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -1634,7 +1733,7 @@ export function App() {
     setChecking(false);
   };
   const leaveInvite = () => {
-    setInvite({ onRegister: false, token: null });
+    setInvite({ onRegister: false, token: null, googleError: null });
     pendingRouteRef.current = { app: "home" };
     window.history.replaceState(null, "", "/");
   };
@@ -1671,7 +1770,7 @@ export function App() {
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;
-  if (invite.onRegister && !session) return <InviteRegister token={invite.token} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
+  if (invite.onRegister && !session) return <InviteRegister token={invite.token} googleError={invite.googleError} onSignIn={leaveInvite} onRegister={async (body: InviteRegisterBody) => {
     const result = await api<SessionResponse>("/auth/register", { method: "POST", body: JSON.stringify(body) });
     setCsrfToken(result.csrfToken);
     // After registering, replace /register with Today (§1.6): Back never returns to the used link.
@@ -1681,16 +1780,21 @@ export function App() {
   if (invite.onRegister && session) return <InviteWhileSignedIn displayName={session.user.displayName} onContinue={leaveInvite} onSignOut={() => {
     logout().then(() => window.history.replaceState(null, "", "/register"), (reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }} />;
-  if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} />;
+  if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} googleResult={googleSignIn} />;
 
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
   // lets that one visit through; Back, Forward, and links still follow the toggle.
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp) => {
+  const settingsDialog = settingsOpen && <SettingsDialog session={session} googleResult={googleSettings} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp, keepOpen) => {
     setSession((current) => current ? { ...current, totp } : current);
-    if (!totp.setupRequired) closeSettings();
+    if (!totp.setupRequired && !keepOpen) closeSettings();
   }} />;
-  const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const resetNotice = session.notices?.googleReset ?? null;
+  const dismissResetNotice = () => {
+    setSession((current) => current ? { ...current, notices: { ...current.notices, googleReset: null } } : current);
+    void api("/auth/notices/google-reset/dismiss", { method: "POST", body: "{}" }).catch(() => undefined);
+  };
+  const toastStatus = <>{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
     <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
@@ -1766,7 +1870,7 @@ export function App() {
         </nav>
         <footer className="sidebar-footer">
           <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
-            <strong>{session.user.displayName}</strong>
+            <strong className="footer-identity"><Avatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
             <span><Settings />Settings</span>
           </button>
           {openBin && <button className="footer-bin" onClick={openBin}><Trash2 />Bin</button>}

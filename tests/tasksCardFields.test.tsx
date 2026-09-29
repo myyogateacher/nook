@@ -103,6 +103,7 @@ test("lane cards show every assignee to screen readers and a timed due chip", ()
   expect(markup).toContain("Assigned to Ann and Bo");
   // 13C: the face shows up to three avatars (initials) instead of the first name and "+1".
   expect(markup).toContain("assigned to Ann and Bo");
-  expect(markup).toMatch(/class="task-avatar tone-\d">A<\/span><span class="task-avatar tone-\d">B<\/span>/);
+  // Wave 35: the shared Avatar marks each one decorative too.
+  expect(markup).toMatch(/class="task-avatar tone-\d" aria-hidden="true">A<\/span><span class="task-avatar tone-\d" aria-hidden="true">B<\/span>/);
   expect(markup).toContain(`at ${instantParts("2999-01-01T09:15:00.000Z", viewerTimeZone()).time}`);
 });

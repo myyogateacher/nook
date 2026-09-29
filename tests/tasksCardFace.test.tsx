@@ -73,7 +73,8 @@ test("the face shows flags, the excerpt, the tags that fit then +N, the counts, 
   // The excerpt stands in for the "has a description" icon.
   expect(markup).not.toContain("Has a description");
   expect(markup).toContain('title="Assigned to Asha Rao, Ben, and 2 others"');
-  expect([...markup.matchAll(/class="task-avatar tone-\d( former)?">(\w+)</g)].map((match) => match[2])).toEqual(["AR", "B", "CL"]);
+  // Wave 35: the shared Avatar (src/ui/Avatar.tsx) draws them, with the letters when there is no picture.
+  expect([...markup.matchAll(/class="task-avatar tone-\d( former)?"[^>]*>(\w+)</g)].map((match) => match[2])).toEqual(["AR", "B", "CL"]);
   expect(markup).toContain('class="task-avatar task-avatar-more">+1</span>');
 });
 

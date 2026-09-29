@@ -1,0 +1,163 @@
+# Wave 35: Google sign-in, automatic accounts, avatars, and `AUTH_METHODS`
+
+**Status:** plan of record (2026-09-29). Decisions D289–D300, threats T250–T262. Migration **034** (`google_identities`); 030–033 belong to parallel waves.
+
+**Operator request.** Keep email and password sign-in, add "Continue with Google" that creates the account when registration would allow it, show the Google profile picture instead of the letter avatar, and let the operator choose password only, Google only, or both.
+
+## 1. Decisions
+
+| # | Decision | Rationale |
+| --- | --- | --- |
+| D289 | **OpenID Connect authorization-code flow with PKCE (S256), `state`, and `nonce`, done entirely on the server.** `GET /api/auth/google/start` redirects to Google with `scope=openid email profile`, `response_type=code`, `prompt=select_account`; `GET /api/auth/google/callback` exchanges the code at Google's token endpoint (client secret in the POST body) and validates the ID token: RS256 signature against Google's JWKS through WebCrypto (keys cached for the `Cache-Control: max-age` Google sends, at least 5 min and at most 24 h, refetched once on an unknown `kid`), `iss` ∈ {`https://accounts.google.com`, `accounts.google.com`}, `aud` = our client id (and `azp`, when present, too), `exp` and `iat` with 60 s skew, `nonce` equal to the flow's, `email_verified === true`. No npm dependency (`fetch` + WebCrypto). The redirect URI is `APP_ORIGIN + /api/auth/google/callback`, built only from `config.appOrigin`, never from `Host` or `X-Forwarded-*`. Google's access and ID tokens are never stored or logged; only `sub`, email, name, and picture URL are kept. | The standard, audited flow for a confidential server client; PKCE and nonce close code injection and replay; one origin source closes Host-header redirect poisoning. |
+| D290 | **Configuration.** `AUTH_METHODS` = `password` (default) \| `google` \| `both`. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are required when it includes `google` (the server refuses to start otherwise, like `TOTP_POLICY=required` without its key). `GOOGLE_ALLOWED_DOMAINS` (optional, comma-separated, lower-cased host names) restricts Google sign-in and creation to those email domains. `ALLOWED_EMAILS`, `ALLOW_REGISTRATION`, and `SIGNUP_ROLE` apply to Google exactly as to passwords. Tests (and local QA) point the Google endpoints at a fake issuer with `GOOGLE_OIDC_TEST_BASE_URL`, which the server refuses when `NODE_ENV=production`; the same endpoints are an in-process `config.auth.google.endpoints` object for the suite. | Upgrades behave exactly as before; a half-configured Google login fails loudly at boot rather than at the first click. |
+| D291 | **Flow state lives server side, bound to the browser.** `start` inserts a `google_auth_flows` row keyed by the SHA-256 of a random 32-byte binding token and sets it in an HttpOnly, `SameSite=Lax`, `Path=/api/auth/google` cookie (`nook_google_flow`, 10 min). The row holds the SHA-256 of `state`, the nonce, the PKCE verifier, the intent (`signin` \| `invite` \| `link` \| `reauth`), the validated return path, and for `invite` the invite token's hash, for `link`/`reauth` the signed-in user id. The callback needs the cookie, the matching `state`, an unexpired row, and claims it with one guarded UPDATE (single use), then clears the cookie. A second-factor stage re-uses the row (5 attempts, 5 min). Rows are swept hourly. | `Lax` is needed because Google's redirect back is a cross-site top-level GET (the `Strict` session cookie is not sent on it). The invite token never enters a URL. |
+| D292 | **Account resolution at the callback (revised after the security review, HIGH-1, MEDIUM-1).** (1) An identity with this `sub` → its account. (2) Otherwise an account whose email equals the verified Google email: it is linked **only** when Nook verified that address **and** Google is authoritative for it (a `gmail.com`/`googlemail.com` address with no `hd`, or an `hd` equal to the address's domain), or when an admin's allowance is live (D293); otherwise nothing is linked, created, or changed and the sign-in page gets `link_required`. (3) Otherwise create, only if registration would be allowed for that address: the empty-instance bootstrap (first account is admin, D76, same transaction and `recordBootstrapAdmin`), a live invite (D298), or `ALLOW_REGISTRATION=true` with `SIGNUP_ROLE`. `ALLOWED_EMAILS` and `GOOGLE_ALLOWED_DOMAINS` are checked first for every path, including existing identities. Blocked accounts are refused exactly as password sign-in refuses them (after the identity is proven). Password registration and Google creation share one `createAccount` helper (`server/accounts.ts`). Google-created accounts are email-verified. The display name is Google's `name`, trimmed to 80 characters, or the email's local part; the identity's display address follows Google at each sign-in, the Nook email never does (L8). | One code path for every way in; the sub is stable when a Google address changes (T255); `email_verified` alone does not prove Google owns an address. |
+| D293 | **Linking, and pre-hijacking (revised after the security review, HIGH-1).** There is **no automatic reset and no automatic link** to an account whose address Nook never verified: with email off nothing is ever verified, and a reset would have left a squatter's shares in place. Ways to link: (a) the signed-in owner re-authenticates in Settings → Security → Link Google (password, plus the code with two-factor on), and the Google address must equal the account's; (b) an admin, in Team → member → **Allow Google sign-in**, sets a one-time allowance (`users.google_link_allowed_until`, 24 hours) consumed by the next Google sign-in whose verified, authoritative address equals the account's email; the same dialog offers **Reset this account first**, which runs at once in one transaction: sessions, push subscriptions, API keys, calendar feeds, reset links, the password (sentinel), two-factor, unsubscribe epoch, **and** every owned item in every module back to private with its direct shares, member rows, and group grants deleted, its live invites revoked, and its routines paused (counts shown before and after); (c) the host CLI `server/team-admin.ts allow-google-link <email> [--reset]` and `unlink-google <email>` (the way out for a lone admin and for google-only instances). Every link marks the address verified and sends `security.password_changed` (`google_linked`); allowances, resets, and admin unlinks write `access_events` (`account.google_allowed`, `account.google_reset`, `account.google_unlinked`), an audit row, and `security.account` mail (`google_allowed`, `google_reset` with counts, `google_unlinked`). Admins cannot use either action on their own account through the web. | The admin knows the people; the server cannot tell an owner from a squatter. A reset that leaves sharing in place would keep forwarding the real owner's work to the squatter. |
+| D294 | **Unusable password.** `users.password_hash` stays `NOT NULL`. Accounts created through Google (and accounts reset by D293) store `!unusable:google` (not a PHC string, so no hash can equal it). `verifyPassword(plain, hash)` in `server/passwords.ts` returns `false` for any hash starting with `!` before calling `Bun.password.verify` (which would throw on it), and every verify path (sign-in, re-auth, TOTP routes, key creation, change password) goes through it. Such accounts can set a password only through Forgot password (email on, `AUTH_METHODS` includes password); Settings → Security says so instead of showing a change form. | No schema weakening; one choke point with a test. |
+| D295 | **Method enforcement on the server.** With `AUTH_METHODS=google`: `POST /api/auth/login`, `/register`, `/password-reset/request`, `/check`, `/complete`, and `/password/change` answer 403 `PASSWORD_SIGNIN_DISABLED`; password re-authentication is refused (Google re-auth, D297, is used). With `AUTH_METHODS=password`: every `/api/auth/google/*` route answers 404 `GOOGLE_SIGNIN_DISABLED`. `GET /api/about` adds `authMethods: {password, google}` (instance facts). The host CLIs (`server/team-admin.ts`, `server/reset-totp.ts`) work in every mode; switching to `google` leaves password-only accounts unable to sign in until they use Google with the same verified address (documented). | UI hiding alone is not a control. |
+| D296 | **Two-factor after Google.** An account with TOTP on is not signed in at the callback: the flow row moves to stage `second_factor` (5 min, 5 wrong codes end it) and the browser lands on `/login#google=code`. `POST /api/auth/google/second-factor {totpCode \| recoveryCode}` (Origin and JSON checks, the flow cookie) consumes a code with the same functions and the same `login:<email>`/`login:global` limits as password sign-in, then creates the session and returns the return path. Recovery-code use audits and mails as today. | Google proves the first factor only. |
+| D297 | **Re-authentication with Google (tightened after the review, MEDIUM-2, MEDIUM-3).** Sensitive actions that ask for the password (API key create and rotate, TOTP setup, view or regenerate recovery codes, disable TOTP) accept a Google confirmation **only** when the account's re-authentication method is Google: no usable password, or `AUTH_METHODS=google` (an account with a usable password in `password`/`both` mode must give it). `start?intent=reauth` sends `prompt=login` and `max_age=0`; the callback requires `auth_time` within 5 minutes (60 s skew) and a `sub` that is the account's linked identity, then sets `sessions.reauth_at` for **this** session; it counts for 5 minutes. Linking and unlinking Google in Settings re-authenticate too (L3). `GET /api/auth/account` tells the UI which proof to ask for. | Without it a Google-only account could never create a key or turn on two-factor; a reused Google session is not a re-authentication. |
+| D298 | **Invites.** The invite page offers "Continue with Google" when Google is on. `POST /api/auth/google/invite {token}` (JSON body only, Origin-checked, the same limits as the invite preview) validates the invite, stores its hash in a new flow row, sets the flow cookie, and returns the start URL (`/api/auth/google/start?intent=invite`, no token). At the callback the Google email must match a bound invite's address (`INVITE_EMAIL_MISMATCH`); the role comes from the invite; the invite is claimed inside the account-creating transaction. An existing account signs in instead and the invite is left unused. | The token stays out of URLs, logs, and Referers (T136). |
+| D299 | **Avatars.** The picture URL is saved on the identity at each Google sign-in; when it changed or no file exists, the server downloads it: `https:` only, host `*.googleusercontent.com` (tests add the fake issuer's host), `redirect: "manual"` with at most 2 redirects that must satisfy the same rule, a 5 s timeout, a 1 MiB cap while streaming, and PNG/JPEG/WebP by magic bytes (the `Content-Type` header is ignored). The file is written to `DATA_DIR/avatars/<uuid>` (name never derived from input) and `users.avatar_id` points at it; the old file is removed. A failure never fails the sign-in. `GET /api/users/:id/avatar?v=<avatar_id>` serves it to any signed-in session with the sniffed type, `nosniff`, `Cache-Control: private, max-age=86400`, `ETag`, and 404 for a wrong or old `v`. `avatarUrl` is included only in payloads that already carry that person's name (me, Team list and member, the share picker, the Access sheet, card assignees and the board `users` map), so the unguessable `v` makes the avatar visible exactly where the name is. The client has one `Avatar` component (`src/ui/Avatar.tsx`) that shows the image and falls back to the existing letters when there is no URL or the image fails. The hourly sweep removes avatar files no account points at; backups include `avatars/` (the backup excludes only `backup/` and `documents/.staging`). | No hotlinking, no CSP change, SSRF-safe fetch, and no new authorization rule to keep in step with every module. |
+| D300 | **UX, routes, and history.** The sign-in page renders the controls `/api/about` reports: the password form, the Google button (inline SVG mark, 44 px tall, no remote script), or both with an "or" divider. `start?return=` takes a same-origin path: it must begin with one `/`, contain no `\`, control characters, or `//` prefix, not point into `/api/` or `/login`, and is at most 512 characters; anything else becomes `/`. Success is a `303` to that path; errors are a `303` to `/login#error=<code>` (codes only, no data). The SPA reads the fragment once, strips it (`replaceState` to `/`), and shows a message; a signed-in browser landing there (Back into Google's chooser and picking again) simply sees the app. Settings → Security gains a "Google sign-in" card: linked address and Unlink (only with a usable password and the password method on, confirmed in the app's own dialog), or Link Google. No native `<select>`, `window.confirm`, `alert`, or `prompt` in new code. **CSP is unchanged**: the browser only navigates (top-level) to our own `/api/auth/google/start`, whose 302 goes to Google; `form-action` does not apply and nothing is fetched or embedded off-origin. | Mobile and Back/Forward rules; no sensitive data in URLs. |
+
+Conservative readings taken without a director ruling are listed in the Wave 35 report.
+
+## 2. Data model (migration 034 `google_identities`)
+
+```sql
+CREATE TABLE google_identities (
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL UNIQUE, email TEXT NOT NULL, picture_url TEXT,
+  created_at TEXT NOT NULL, last_login_at TEXT NOT NULL);
+CREATE TABLE google_auth_flows (
+  id TEXT PRIMARY KEY,               -- SHA-256 of the cookie's binding token
+  state_hash TEXT NOT NULL, nonce TEXT NOT NULL, code_verifier TEXT NOT NULL,
+  intent TEXT NOT NULL CHECK (intent IN ('signin','invite','link','reauth')),
+  stage TEXT NOT NULL DEFAULT 'authorize' CHECK (stage IN ('prepared','authorize','second_factor')), -- prepared: an invite posted, start not yet called
+  return_to TEXT NOT NULL, invite_hash TEXT, user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,   -- reauth: the session to confirm
+  client_hash TEXT,                  -- hashed client address: flow caps per client (N1, G1)
+  ended_reason TEXT,                 -- G1: 'evicted' or 'replaced' when a flow ended early
+  failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
+ALTER TABLE users ADD COLUMN avatar_id TEXT;       -- UUID of DATA_DIR/avatars/<id>
+ALTER TABLE sessions ADD COLUMN reauth_at TEXT;    -- D297
+ALTER TABLE users ADD COLUMN google_link_allowed_until TEXT;  -- D293: an admin's one-time, 24-hour allowance (link, or re-link)
+ALTER TABLE users ADD COLUMN google_reset_notice_at TEXT;      -- N2c: shown once after an admin reset
+ALTER TABLE users ADD COLUMN google_reset_notice_json TEXT;    -- N2c: what the reset removed (counts)
+ALTER TABLE users ADD COLUMN google_relink_remove_credentials INTEGER; -- S1: the re-link also removes the password and two-factor (1/0)
+ALTER TABLE users ADD COLUMN google_last_refusal_at TEXT;      -- Q1: the last Google sign-in that could not link
+ALTER TABLE users ADD COLUMN google_last_refusal_reason TEXT;  -- Q1: its reason code
+-- Every column is added only when missing; the migration runs once (the boot-time repair of N7 was
+-- removed in the final round, S6: scratch databases from earlier builds are recreated).
+```
+
+The provider is implied by the table (one provider); a second provider would get its own table or a `provider` column then. One identity per account and one account per `sub`.
+
+## 3. API
+
+| Route | Auth | Answer |
+| --- | --- | --- |
+| `GET /api/auth/google/start?intent=signin\|invite\|link\|reauth&return=/path` | none (link, reauth: session) | 302 to Google; sets `nook_google_flow`. `invite` needs the cookie from the invite route. 429 `RATE_LIMITED`. |
+| `GET /api/auth/google/callback?code&state` | flow cookie | 303 to the return path, `/login#google=code`, or `/login#error=<code>`. |
+| `POST /api/auth/google/second-factor` | flow cookie, Origin, JSON | `{ok, returnTo}` and the session cookie; 401 `TOTP_INVALID`, 400 `FLOW_EXPIRED`, 429. |
+| `POST /api/auth/google/invite {token}` | Origin, JSON | `{start}`; invite errors as the preview. |
+| `POST /api/auth/google/link` | session, CSRF | `{password?, totpCode?, recoveryCode?}` → `{start}` (a prepared link flow for this session); 401 `REAUTH_FAILED`, 428 `TOTP_REQUIRED`, 409 `ALREADY_LINKED`. |
+| `DELETE /api/auth/google` | session, CSRF | Unlink, re-authenticated like the link; 409 `PASSWORD_REQUIRED` without a usable password or with the password method off. |
+| `GET /api/team/:userId/google` | admin | `{linked, allowedUntil, emailVerified, hasPassword, resetPreview, self}`. |
+| `POST /api/team/:userId/google/allow` | admin, CSRF | `{reset: boolean}` → `{allowedUntil, reset: counts \| null}`; 403 `SELF_ACTION`, 409 `ALREADY_LINKED`. |
+| `DELETE /api/team/:userId/google` | admin, CSRF | Unlink a member; 409 `NO_OTHER_SIGN_IN` unless they have a usable password (password method on) or a live allowance; 403 `SELF_ACTION`. |
+| `GET /api/auth/account` | session | `{methods, hasPassword, google: {email} \| null, reauth, reauthUntil}` |
+| `GET /api/users/:id/avatar?v=` | session | the image, or 404. |
+
+Callback error codes (fragment): `denied` (the person cancelled), `expired` (no, used, or old flow), `failed` (exchange or token validation), `unverified` (`email_verified` false), `not_allowed` (`ALLOWED_EMAILS` or `GOOGLE_ALLOWED_DOMAINS`), `signup_closed`, `blocked`, `invite_invalid`, `invite_expired`, `invite_mismatch`, `link_mismatch`, `already_linked`, `link_required` (an account uses this address but may not be linked automatically), `reauth_mismatch`, `reauth_stale` (Google did not ask for the password again). JSON error codes: `PASSWORD_SIGNIN_DISABLED` (403), `GOOGLE_SIGNIN_DISABLED` (404), `FLOW_EXPIRED`, `TOTP_INVALID`, `PASSWORD_REQUIRED`, `REAUTH_FAILED`, `ALREADY_LINKED`, `NOT_LINKED`, `SELF_ACTION`, `NO_OTHER_SIGN_IN`, `ADMIN_ONLY`.
+
+`GET /api/about` adds `authMethods: {password: boolean, google: boolean}`. `user` on `me`, sign-in, and register gains `avatarUrl: string | null`.
+
+## 4. Threats (THREAT_MODEL T250–T268)
+
+T250 login CSRF, T251 state/nonce/code replay, T252 mix-up and token substitution, T253 open redirect through `return`, T254 pre-hijacking, T255 email change at Google, T256 domain restriction bypass through `hd`, T257 avatar fetch SSRF and content sniffing, T258 account enumeration, T259 Google-only lockout, T260 token and code leakage, T261 re-authentication bypass, T262 avatar visibility. Rows and mitigations are in THREAT_MODEL.md.
+
+**`hd` rule (T256).** With `GOOGLE_ALLOWED_DOMAINS` set, the verified email's domain must be listed, and the ID token's `hd` claim must equal that domain, except for `gmail.com` and `googlemail.com`, which have no `hd` (a consumer address with an `hd` claim is refused). The start request also sends `hd=<domain>` as a hint when exactly one domain is listed; the hint is never trusted.
+
+## 5. Tests
+
+A local fake issuer (`tests/support/fakeGoogle.ts`: authorization, token, JWKS, and avatar endpoints, signing RS256 ID tokens with a test key) replaces Google in every test; nothing reaches the network. `tests/googleAuth.test.ts` (in the shared harness, switching `config.auth` per test and restoring it; avatars included), `tests/googleAuthProbe.test.ts` (empty instance and `AUTH_METHODS=google` in a subprocess), `tests/googleMigration.test.ts` (034 and the sentinel), `tests/googleSignInUi.test.tsx` (the shared Avatar and the client helpers), and `tests/config.test.ts`. TEST_PLAN.md "Wave 35" lists them.
+
+## 6. Security review fixes (2026-09-29)
+
+| Finding | Fix |
+| --- | --- |
+| HIGH-1 (automatic pre-hijack reset kept the squatter's sharing; with email off every first Google sign-in would have reset a real account) | No automatic link to an unverified address and no automatic reset (`link_required`); admin allowance with optional full reset including sharing; CLI `allow-google-link [--reset]` and `unlink-google` (D292, D293). |
+| MEDIUM-1 (a consumer Google account can carry a company address) | Linking by email needs Google to be authoritative for the address (`googleAuthoritative`). Creation keeps its rules; with `GOOGLE_ALLOWED_DOMAINS` the matching `hd` was already required. |
+| MEDIUM-2 (a password account could skip the password after a Google confirmation) | Google stands in only when the account's re-authentication method is Google. |
+| MEDIUM-3 (a reused Google session counted as re-authentication) | `prompt=login`, `max_age=0`, and `auth_time` within 5 minutes. |
+| L1 `nbf` | Tokens with `nbf` more than 60 s in the future are refused. |
+| L2 mail on automatic link | Every link sends `google_linked`. |
+| L3 link and unlink without re-auth | Both re-authenticate. |
+| L4 one client could exhaust the global sign-in bucket | Per-client bucket first; global ceilings 2000 (start) and 3000 (callback) a minute; at most 10 live flows per client. |
+| L5 docs | OPERATIONS states the scope of `GOOGLE_ALLOWED_DOMAINS`, the email-off case, and the company setup. |
+| L6 recreated Google account | Admin unlink in Team and the CLI `unlink-google`. |
+| L7 reset offered in google mode | `/api/about` `passwordReset` is false with `AUTH_METHODS=google`. |
+| L8 stale identity address | The identity's `email` follows Google at each sign-in. |
+| L9 junk callback cleared the flow | A state that does not match leaves the flow and its cookie alone. |
+| L10 avatar URL | `Avatar` loads only `/api/users/<uuid>/avatar?v=<uuid>`. |
+
+## 7. End-user QA fixes (2026-09-29)
+
+U1 passwords-off notices on `/forgot-password` and `/reset-password`; U2 a placeholder until the methods are known; U3 Access sheet rows keep the picture; U4 the signed-in person's picture in headers, sidebar footers, and Settings, and comment authors' pictures (web payloads only; card activity, mentions, and the assignee picker's fresh picks still show letters); U5 the Google-only hint; U6 Google messages beside the Google button; U7 **Cancel and use another account** on the code step (`POST /api/auth/google/cancel`); U8 an invite that fails with the wrong Google account returns to the invite page with the invite kept server side (`GET /api/auth/google/invite`, fragment `google-error`); U9 no picture from Google removes the avatar; U10 unchanged generic password error; U11 Google confirmation before New key and Rotate (the two-factor forms already ask for it at the top of the card); U12 a richer fake issuer chooser (tests and local QA only; refused in production).
+
+## 8. Second security review (2026-09-29)
+
+| Finding | Fix |
+| --- | --- |
+| N1 (HIGH, availability: the live-flow cap refused everyone behind one proxy) | At 50 live flows per client address the oldest is evicted (it answers `expired`); a start is never refused for the count. Per client: 120 starts and 180 callbacks a minute; global 2000/3000. `TRUSTED_PROXY_HOPS` (0–5, default 0; the access plan's O-A7 brought forward) picks the N-th `X-Forwarded-For` entry from the right in one helper (`server/clientAddress.ts`) used by every address-keyed limit. |
+| N2 (MEDIUM: admin reset without re-authentication) | Allow, reset, and admin unlink re-authenticate the acting admin (password or Google where that is their method, plus TOTP). The web refuses a reset for verified accounts (`RESET_VERIFIED`) and admins (`RESET_ADMIN`); the CLI keeps the full power. The member gets a one-time notice at the next sign-in; a hook marks where Wave 33's `notifyAccess` goes. |
+| N3 | A Settings link needs a Google account authoritative for the address (`link_mismatch`). |
+| N4 | Self unlink sends `security.account` (`google_unlinked_self`). |
+| N5 | **Allow re-linking** on a linked account: the next authoritative Google sign-in with the same address replaces the identity's `sub` (24 h, single use); `NO_OTHER_SIGN_IN` points at it. |
+| N6 | The reset and the allowance commit in one transaction. |
+| N7 | 034 is idempotent (the boot-time repair was later removed, §9 S6). |
+| N8 | OPERATIONS states the per-address limits, the proxy default, and the authoritative-account rule for Settings links. |
+
+## 9. Final fix round (2026-09-29)
+
+After merging main (v0.13.0 and Wave 33's central access management; migration order …029, 032, 034).
+
+| Item | Fix |
+| --- | --- |
+| S1 (MEDIUM: a re-link kept the previous holder's access) | Completing a re-link runs in one transaction (`completeRelink`, `server/google/linkAdmin.ts`). It deletes sessions and push subscriptions (so `reauth_at` goes too), revokes API keys and calendar feeds, deletes unused reset links, and bumps the unsubscribe epoch. By default (`removeCredentials`, stored in `users.google_relink_remove_credentials` at allow time) it also removes the password and two-factor. Content and sharing stay. The dialog warns that whoever next signs in with Google as the address gets the account and everything in it. It offers **Also remove the password and two-factor** (on by default, only when there is one) and shows the counts before and after. |
+| S2 (MEDIUM: `RESET_ADMIN` bypassed by demoting first) | The web reset also refuses an account whose role changed away from admin in the last 24 hours (`team_events`), with `RESET_ADMIN` and a message saying so. The CLI is unchanged. |
+| S3 | `server/clientAddress.ts` canonicalises addresses (RFC 5952 IPv6, IPv4-mapped in any spelling to IPv4, zone ids and brackets dropped) and buckets IPv6 by /64. |
+| S4 | A full instance-wide bucket refuses before any per-client key is added. The attempt map is capped at 20,000 keys; see F1 below for what it may drop. |
+| S5 | Eviction at the live-flow cap takes `prepared` flows first, then `authorize` ones, oldest first. It never takes a `second_factor` flow, and those no longer count toward the cap. |
+| S6 | The migration `repair` hook is removed: released migrations stay immutable. 034 keeps its idempotent add-column shape, and QA databases from earlier builds are recreated. |
+| S7 | Password sign-in: 20 a minute per client address, 10 per email, 120 instance-wide. Registration (password or Google): 5 per client address, 20 instance-wide. Invite preview (password or Google): 10 per client address, 60 instance-wide. Only attempts that pass the narrower buckets count toward the instance-wide one, and Google's Nook code step shares the sign-in buckets. |
+| S8 | OPERATIONS covers publishing the port on localhost behind a proxy, a table of every limit with its scope, and Tailscale Serve's `X-Forwarded-For`: not verified, with how to check it. With `TRUSTED_PROXY_HOPS=0`, the first request that carries `X-Forwarded-For` logs one warning per process, without the address. |
+| S9 | Self unlink kicks the mail dispatcher. |
+| Section 2 | Bell notices (`access_notices`, ids and counts only) for an admin allow (`google_allowed`), a reset (`google_reset`, what went as bits), a re-linking allowance (`google_relink_allowed`), an admin unlink (`google_unlinked`), and a completed re-link (`google_relinked`, as bits). The one-time sign-in notice stays. Team → Access activity labels the `account.google_*` actions (new `account.google_relinked`) and has a **Google sign-in** filter (`action=accounts`). The Team button reads **Reset account for Google sign-in…**, and its dialog says how it differs from Wave 33's **Reset access**. |
+| Q1 (MEDIUM: an admin allow did nothing for a non-authoritative Google account) | New outcome `link_not_authoritative&domain=<domain>`, used for an allowed link and for a Settings link. Its message: Google cannot confirm this Google account is managed by the domain; use a Workspace account of the domain or the Gmail account itself, or (sign-in page, passwords on) the password. The allowance stays for the right account. The Team card and dialogs state the condition up front and show the last refused Google sign-in: `users.google_last_refusal_at` and `_reason`, holding `link_required`, `link_not_authoritative`, or `already_linked`. |
+| Q2 | Google re-auth results show in the Settings section that started the round trip: API keys shows both the error and the "Confirmed with Google" line. An admin's confirmation from Team → member shows on that member's card. |
+| Q3 | Creating or editing a card comment returns `author_avatar_url`. |
+| Q4 | After two-factor is turned on, Settings stays open, and the recovery codes appear in their own dialog (**Copy all**, **Download**, **I saved them**; a history layer, and a sheet at 390 px). Settings closes only on **I saved them**. |
+| Q5 | `/forgot-password` and `/reset-password` show a neutral placeholder until `/api/about` answers. |
+| Q6 | The reset step of the Allow dialog is a history layer: browser Back returns to the first step, as the dialog's Back does. |
+| Q7 | The assignee picker (options and chips) shows each person's picture (`GET /boards/:b/readers` returns `avatarUrl` on the web). The optimistic assignee row carries it too. Nook has no @-mention picker. |
+
+Migration 034, final shape: `google_identities` and `google_auth_flows` (with `client_hash`) created if missing, the two flow indexes, and the added columns `users.avatar_id`, `sessions.reauth_at`, `users.google_link_allowed_until`, `users.google_reset_notice_at`, `users.google_reset_notice_json`, `users.google_relink_remove_credentials`, `users.google_last_refusal_at`, and `users.google_last_refusal_reason`. Each column is added only when missing. The migration runs once, with no repair at boot.
+
+### Final security confirmation (F1, F2)
+
+| Item | Fix |
+| --- | --- |
+| F1 (MEDIUM: flooding the attempt map reset a victim's per-email counter) | Every bucket is a registered family with a scope (`BUCKET_FAMILIES`, `server/authLimits.ts`); `hit` takes only a registered family. At the cap the map drops only `client`-scope keys, oldest first, never per-email, per-account, per-admin, or instance-wide keys. Google start and callback go through the same helper as sign-in (`limitedWithin`), so a full instance-wide bucket refuses before any per-client key exists. A map full of protected keys refuses new per-client keys (429) and still stores protected ones. THREAT_MODEL T267 states the bound. |
+| F2 (LOW: the CLI re-link always removed the password and two-factor) | `allow-google-link --keep-credentials` keeps them (the default still removes them). The CLI prints what will happen first, refuses the flag for an account that is not linked, and refuses it together with `--reset`. |
+
+### Final QA (G1–G4)
+
+| Item | Fix |
+| --- | --- |
+| G1 (MEDIUM: a burst of anonymous starts blocked invites and Settings links) | Caps apply inside `createFlow`, after the request claimed its prepared flow, so the flow in use is never evicted. `authorize` flows: 50 per client address, anonymous sign-ins evicted first, other `authorize` flows only when none is left. `prepared` flows: their own cap of 20 per client address, one per invite (replaced), 3 per session. `second_factor`: never. An expired or evicted flow answers `flow_expired` ("That took too long. Continue with Google again."); an invite's is prepared again. This replaces S5's order. Residual in THREAT_MODEL T268. |
+| G2 | In google mode the reset page says passwords are off, whatever email says. |
+| G3 | An admin (or CLI) unlink ends every session of the member; a self unlink keeps this session and ends the others. Both dialogs say so. |
+| G4 | Access activity lists only what a Google reset or re-link removed, as a sentence. The re-link dialog with the option off says the password and two-factor stay and the new Google account will be asked for the existing code. |

@@ -4,7 +4,10 @@
 .brand-text { display: flex; flex-direction: column; line-height: 1.1; min-width: 0; }
 .brand-text strong { font-size: .95rem; }
 .app-account { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.app-home-user { min-width: 0; margin-right: 8px; overflow: hidden; color: #9a9aa1; font-size: .83rem; text-overflow: ellipsis; white-space: nowrap; }
+.app-home-user { min-width: 0; margin-right: 8px; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; color: #9a9aa1; font-size: .83rem; white-space: nowrap; }
+.app-home-user-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Wave 35 (QA U4): the signed-in person's picture, or their letter. */
+.app-user-avatar { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #2b271d; color: #f5cf79; font-size: .78rem; font-weight: 750; }
 .app-account-button { min-height: 36px; display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 8px 10px; background: transparent; color: #b2b2b8; font-size: .83rem; cursor: pointer; }
 .app-account-button:hover { background: #222225; color: #fff; }
 .app-account-button svg { width: 16px; flex: none; }
@@ -38,6 +41,9 @@
 .app-page-title { margin: 0; font-size: .95rem; font-weight: 700; letter-spacing: normal; }
 .app-page-name { display: none; }
 @media (max-width: 760px) {
+  /* Wave 35 (QA U4): the name is hidden, the picture (or letter) stays beside Settings. */
+  .app-home-user { display: inline-flex; margin-right: 2px; }
+  .app-home-user-name { display: none; }
   .app-page-header { flex-wrap: wrap; height: auto; min-height: 68px; row-gap: 2px; padding-top: 12px; padding-bottom: 8px; }
   .app-page-name { order: 10; flex: 0 0 100%; display: block; min-width: 0; overflow: hidden; padding-left: 2px; color: var(--yellow); font-size: .72rem; font-weight: 700; letter-spacing: .12em; line-height: 1.4; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 }

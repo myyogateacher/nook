@@ -1,6 +1,7 @@
 import { AlignLeft, CalendarDays, Link2, ListChecks, MessageSquare, OctagonAlert, Paperclip } from "lucide-react";
 import { cardTags, FLAG_LABELS, visibleItems } from "./cardTags";
 import { FlagIcon } from "./TagPicker";
+import { Avatar } from "../ui/Avatar";
 import { assigneeSentence, attachmentCountLabel, cardAssignees, commentCountLabel, dueStatus } from "./taskActions";
 import type { BoardTag, CardSummary } from "./tasksApi";
 
@@ -164,7 +165,7 @@ export function CardFace({ card, tags, done, today, excerptId, rollup, childLabe
         {subtasks}
       </span>}
       {people.length > 0 && <span className="task-card-people" title={assigned}>
-        {shownPeople.shown.map((person) => <span key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`}>{initials(person.display_name)}</span>)}
+        {shownPeople.shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} />)}
         {shownPeople.more > 0 && <span className="task-avatar task-avatar-more">+{shownPeople.more}</span>}
       </span>}
     </span>}

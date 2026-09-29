@@ -3,8 +3,15 @@ import { serveStatic } from "hono/bun";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { ZodError } from "zod";
-import { config, isEmailAllowed, isOriginAllowed } from "./config";
-import { audit, db, ensureDefaultFolder, now, type NoteRow, type UserRow } from "./db";
+import { config, googleAuthEnabled, isEmailAllowed, isOriginAllowed, passwordAuthEnabled } from "./config";
+import { audit, db, now, type NoteRow, type UserRow } from "./db";
+import { createAccount, RegistrationClosedError } from "./accounts";
+import { hashPassword, verifyPassword } from "./passwords";
+import { avatarUrlFor, registerAvatarRoute } from "./avatars";
+import { passwordMethodRefusal } from "./authMethods";
+import { hit, invitePreviewLimited, registerLimited, resetRegistrationRateLimit, signInLimited } from "./authLimits";
+import { registerGoogleAccountRoutes, registerGoogleRoutes } from "./google/routes";
+import { googleResetNotice } from "./google/linkAdmin";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
@@ -45,11 +52,10 @@ import { registerMailPreviewRoutes } from "./mail/preview";
 import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./mail/triggers";
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { passwordResetAvailable, registerPasswordChangeRoute, registerPasswordResetRoutes } from "./passwordFlows";
-import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
+import { warnIfNoActiveAdmin } from "./team/service";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
 import { registerItemAccessRoutes } from "./access/itemAccess";
-import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
-import { applyInviteTemplate } from "./team/templates";
+import { hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
 import { ROLE_READ_ONLY_BODY, roleWriteGate } from "./team/writeGate";
 import {
@@ -80,7 +86,7 @@ import {
   encryptTotpSecret,
   totpUri
 } from "./totp";
-import { consumeRecoveryCode, consumeTotp } from "./reauth";
+import { consumeRecoveryCode, consumeTotp, verifyFirstFactor } from "./reauth";
 
 const app = new Hono<AppEnv>();
 
@@ -141,9 +147,11 @@ app.get("/api/about", (c) => c.json({
   version: config.appVersion, gitSha: config.gitSha,
   hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration,
   // Wave 30: whether "Forgot password?" can mail a link (email on); an instance fact, never per account.
-  passwordReset: passwordResetAvailable(),
+  passwordReset: passwordResetAvailable() && passwordAuthEnabled(),
   // v0.13.0 QA (A7): whether two-factor can be set up here (a TOTP key is configured). Only the flag.
-  twoFactor: config.totpEncryptionKey !== null
+  twoFactor: config.totpEncryptionKey !== null,
+  // Wave 35 (D295): which sign-in methods this instance offers, so the sign-in page shows the right controls.
+  authMethods: { password: passwordAuthEnabled(), google: googleAuthEnabled() }
 }));
 
 app.use("/api/auth/login", async (c, next) => {
@@ -163,26 +171,8 @@ app.use("/api/auth/invite", async (c, next) => {
   await next();
 });
 
-const authAttempts = new Map<string, { count: number; resetAt: number }>();
-function rateLimited(key: string, limit = 10) {
-  const time = Date.now();
-  if (authAttempts.size > 500) {
-    for (const [entryKey, entry] of authAttempts) if (entry.resetAt <= time) authAttempts.delete(entryKey);
-  }
-  const item = authAttempts.get(key);
-  if (!item || item.resetAt <= time) {
-    authAttempts.set(key, { count: 1, resetAt: time + 60_000 });
-    return false;
-  }
-  item.count += 1;
-  return item.count > limit;
-}
-
-/** Test hook: `bun test` runs every file on one server, so the run-wide register:global bucket is shared. */
-export function resetRegistrationRateLimit() {
-  authAttempts.delete("register:global");
-  authAttempts.delete("invite:global");
-}
+// The sign-in limits live in server/authLimits.ts so Google sign-in shares the same buckets (D296).
+export { resetRegistrationRateLimit };
 
 const inviteErrorResponse = (c: Context<AppEnv>, error: InviteError) => c.json({ error: error.message, code: error.code }, error.status);
 
@@ -191,7 +181,7 @@ const inviteErrorResponse = (c: Context<AppEnv>, error: InviteError) => c.json({
  * the URL fragment, which browsers never send), and is never logged.
  */
 app.post("/api/auth/invite", async (c) => {
-  if (rateLimited("invite:global", 30)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+  if (invitePreviewLimited(c)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
   const body = await parseJson(c.req.raw, invitePreviewSchema);
   try {
     return c.json(previewInvite(body.token));
@@ -205,15 +195,20 @@ app.post("/api/auth/invite", async (c) => {
 registerPublicMailRoutes(app);
 // Forgot / reset password (Wave 30, outbound email §A.5): no session, identical answers (T224).
 registerPasswordResetRoutes(app);
+// Google sign-in (Wave 35): start, callback, second factor, and the invite hand-off; no session needed.
+registerGoogleRoutes(app);
 
 app.post("/api/auth/register", async (c) => {
+  // D295: with AUTH_METHODS=google, accounts are created through Google only.
+  const methodRefusal = passwordMethodRefusal(c);
+  if (methodRefusal) return methodRefusal;
   const userCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
   // The body is read first: only it can say whether an invite (D162) opens a closed instance.
   const body = await parseJson(c.req.raw, registerSchema);
   // D162: a valid invite bypasses ALLOW_REGISTRATION and nothing else.
   const inviteHash = body.inviteToken ? hashInviteToken(body.inviteToken) : null;
   if (!inviteHash && !config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
-  if (rateLimited("register:global", 10)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  if (registerLimited(c)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   if (!isEmailAllowed(body.email)) return c.json({ error: "This email is not allowed to create an account" }, 403);
   try {
     // Checked before the account lookup, so a made-up token cannot probe which emails exist.
@@ -224,39 +219,14 @@ app.post("/api/auth/register", async (c) => {
   }
   const exists = db.query("SELECT id FROM users WHERE email = ?").get(body.email);
   if (exists) return c.json({ error: "An account with that email already exists" }, 409);
-  const id = crypto.randomUUID();
-  const passwordHash = await Bun.password.hash(body.password, { algorithm: "argon2id", memoryCost: 65536, timeCost: 3 });
-  let role: UserRow["role"] = "member";
+  const passwordHash = await hashPassword(body.password);
+  let id: string;
+  let role: UserRow["role"];
   try {
-    db.transaction(() => {
-      const currentCount = (db.query("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count;
-      const timestamp = now();
-      // An empty instance ignores any token: its first account is the admin (D163). Otherwise the
-      // invite is re-checked here, in the transaction that claims it.
-      const invite = inviteHash && currentCount > 0 ? inviteForRegistration(inviteHash, body.email, timestamp) : null;
-      if (!invite && !config.allowRegistration && currentCount > 0) throw new HTTPException(403, { message: "Registration is disabled" });
-      // D76: the first account on an empty instance is the admin, and so is an account registered
-      // while no active admin exists (an upgrade where every account was disabled, so migration 017
-      // had nobody to promote). The check and the insert share this transaction, so two concurrent
-      // registrations cannot both become admin. A usable invite implies an active admin (D162).
-      role = currentCount === 0 || !hasActiveAdmin() ? "admin" : invite ? invite.role : config.signupRole;
-      db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, body.email, body.displayName, passwordHash, timestamp, role);
-      if (role === "admin") recordBootstrapAdmin(id, timestamp);
-      ensureDefaultFolder(id);
-      if (invite) {
-        // Single use (T141): a lost race throws INVITE_INVALID and rolls the new account back.
-        claimInvite(invite.id, id, timestamp);
-        // An invite bound to this address proved control of the inbox (D244).
-        if (invite.email !== null) db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(timestamp, id);
-        audit(id, null, "team.invite_accept", { inviteId: invite.id, role });
-        // D286: the groups the invite's access template had when the invite was created, in this same
-        // transaction (a template deleted since leaves template_id NULL: the role only, no groups).
-        applyInviteTemplate(invite, id, timestamp);
-      }
-    })();
+    // The shared creation path (server/accounts.ts): bootstrap admin, invite claim, Default folder.
+    ({ id, role } = createAccount({ email: body.email, displayName: body.displayName, passwordHash, inviteHash, emailVerified: false }));
   } catch (error) {
-    if (error instanceof HTTPException) throw error;
+    if (error instanceof RegistrationClosedError) throw new HTTPException(403, { message: "Registration is disabled" });
     if (error instanceof InviteError) return inviteErrorResponse(c, error);
     if ((error as { code?: string }).code?.includes("CONSTRAINT")) return c.json({ error: "An account with that email already exists" }, 409);
     throw error;
@@ -266,21 +236,25 @@ app.post("/api/auth/register", async (c) => {
   // Everyone else verifies their address before Nook sends them anything but security mail.
   enqueueVerifyMail(id);
   return c.json({
-    user: { id, email: body.email, displayName: body.displayName, role },
+    user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
 
 app.post("/api/auth/login", async (c) => {
+  // D295: with AUTH_METHODS=google, passwords sign nobody in.
+  const methodRefusal = passwordMethodRefusal(c);
+  if (methodRefusal) return methodRefusal;
   const body = await parseJson(c.req.raw, loginSchema);
-  if (rateLimited(`login:${body.email}`) || rateLimited("login:global", 50)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  if (signInLimited(c, body.email)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   // Blocked accounts are looked up too, so the block can be explained, but only after the right
   // password and before any second factor is consumed (T85). The reason is never shown (O11).
   const user = isEmailAllowed(body.email)
     ? db.query("SELECT * FROM users WHERE email = ?").get(body.email) as UserRow | null
     : null;
-  const valid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
+  // verifyPassword refuses the unusable sentinel of Google-only accounts (D294).
+  const valid = user ? await verifyPassword(body.password, user.password_hash) : false;
   if (!user || !valid) {
     audit(user?.id ?? null, null, "auth.login_failed");
     return c.json({ error: "Invalid email or password" }, 401);
@@ -307,7 +281,7 @@ app.post("/api/auth/login", async (c) => {
   const csrfToken = await createSession(c, user.id);
   audit(user.id, null, "auth.login");
   return c.json({
-    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
+    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
     totp: totpState(user)
   });
@@ -317,11 +291,13 @@ app.use("/api/auth/me", requireAuth);
 app.get("/api/auth/me", (c) => {
   const user = c.get("user");
   return c.json({
-    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role },
+    user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken: c.get("csrfToken"),
     totp: totpState(user),
     // UI-only (D92): which modules this user hid. Never used for authorization (T97).
-    preferences: readPreferences(user.id)
+    preferences: readPreferences(user.id),
+    // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
+    notices: { googleReset: googleResetNotice(user.id) }
   });
 });
 
@@ -358,6 +334,9 @@ registerKeyRoutes(app);
 
 // Settings → Security → Change password (Wave 30).
 registerPasswordChangeRoute(app);
+// Settings → Security → Google sign-in and re-authentication state (Wave 35), and avatars (D299).
+registerGoogleAccountRoutes(app);
+registerAvatarRoute(app);
 
 app.get("/api/mcp/keys", (c) => {
   const userId = c.get("user").id;
@@ -398,7 +377,7 @@ app.post("/api/mcp/keys", async (c) => {
   const aliasRefusal = aliasKeyRefusal(c.get("user"), body.scopes ?? ["notes:read"]);
   if (aliasRefusal) return c.json({ error: aliasRefusal.message, code: aliasRefusal.code, ...aliasRefusal.details }, aliasRefusal.status);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
-  const passwordValid = user ? await Bun.password.verify(body.password, user.password_hash) : false;
+  const passwordValid = user ? await verifyFirstFactor(user, body.password, c.get("sessionId")) : false;
   if (!user || !passwordValid) {
     audit(userId, null, "mcp.key_create_failed");
     return c.json({ error: "Invalid password or authentication code" }, 401);
@@ -446,8 +425,8 @@ app.post("/api/auth/totp/setup", async (c) => {
   if (!user) return c.json({ error: "Authentication required" }, 401);
   if (user.totp_enabled_at) return c.json({ error: "Two-factor authentication is already enabled" }, 409);
   if (!config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not configured on this service" }, 503);
-  if (rateLimited(`totp-setup:${user.id}`, 5)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
-  if (!await Bun.password.verify(body.password, user.password_hash)) {
+  if (hit("totp-setup:account", user.id)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
+  if (!await verifyFirstFactor(user, body.password, c.get("sessionId"))) {
     audit(user.id, null, "auth.totp_setup_password_failed");
     return c.json({ error: "Invalid password" }, 400);
   }
@@ -490,7 +469,7 @@ app.post("/api/auth/totp/recovery-codes", async (c) => {
   if (!user?.totp_enabled_at || !user.totp_recovery_codes || !config.totpEncryptionKey) {
     return c.json({ error: "Recovery codes are not available" }, 409);
   }
-  if (!await Bun.password.verify(body.password, user.password_hash) || consumeTotp(user, body.code) === null) {
+  if (!await verifyFirstFactor(user, body.password, c.get("sessionId")) || consumeTotp(user, body.code) === null) {
     audit(user.id, null, "auth.totp_recovery_view_failed");
     return c.json({ error: "Invalid password or authentication code" }, 400);
   }
@@ -508,7 +487,7 @@ app.post("/api/auth/totp/recovery-codes/regenerate", async (c) => {
   const body = await parseJson(c.req.raw, totpRecoveryViewSchema);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
   if (!user?.totp_enabled_at || !config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not enabled" }, 409);
-  if (!await Bun.password.verify(body.password, user.password_hash) || consumeTotp(user, body.code) === null) {
+  if (!await verifyFirstFactor(user, body.password, c.get("sessionId")) || consumeTotp(user, body.code) === null) {
     audit(user.id, null, "auth.totp_recovery_regenerate_failed");
     return c.json({ error: "Invalid password or authentication code" }, 400);
   }
@@ -525,7 +504,7 @@ app.delete("/api/auth/totp", async (c) => {
   const body = await parseJson(c.req.raw, totpDisableSchema);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
   if (!user?.totp_enabled_at) return c.json({ error: "Two-factor authentication is not enabled" }, 409);
-  if (!await Bun.password.verify(body.password, user.password_hash)) return c.json({ error: "Invalid password or authentication code" }, 400);
+  if (!await verifyFirstFactor(user, body.password, c.get("sessionId"))) return c.json({ error: "Invalid password or authentication code" }, 400);
   const acceptedCounter = consumeTotp(user, body.code);
   if (acceptedCounter === null) return c.json({ error: "Invalid or already-used authentication code" }, 400);
   db.transaction(() => {
@@ -545,10 +524,10 @@ app.get("/api/users", (c) => {
   if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
   // With the share_with_guests policy off, guests are left out of the picker (Wave 32, D.2, T213).
   const guests = readPolicies().shareWithGuests ? "" : " AND role <> 'guest'";
-  const users = db.query(`SELECT id, display_name, role FROM users WHERE id != ? AND disabled_at IS NULL${guests} ORDER BY display_name LIMIT 100`)
-    .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"] }>;
+  const users = db.query(`SELECT id, display_name, role, avatar_id FROM users WHERE id != ? AND disabled_at IS NULL${guests} ORDER BY display_name LIMIT 100`)
+    .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"]; avatar_id: string | null }>;
   // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
-  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role })) });
+  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id, user.avatar_id) })) });
 });
 
 app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));

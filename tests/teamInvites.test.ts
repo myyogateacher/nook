@@ -220,9 +220,9 @@ describe("Team invites: preview and register (registration open)", () => {
     expect((await request("/auth/invite", { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify({ token }) })).status).toBe(415);
   });
 
-  test("preview is limited to 30 a minute server-wide", async () => {
+  test("preview is limited to 60 a minute server-wide", async () => {
     resetRegistrationRateLimit();
-    for (let index = 0; index < 30; index += 1) expect((await call(undefined, "POST", "/auth/invite", { token: "y".repeat(43) })).status).toBe(404);
+    for (let index = 0; index < 60; index += 1) expect((await call(undefined, "POST", "/auth/invite", { token: "y".repeat(43) })).status).toBe(404);
     expect((await call(undefined, "POST", "/auth/invite", { token: "y".repeat(43) })).status).toBe(429);
     resetRegistrationRateLimit();
   });

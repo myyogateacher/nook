@@ -1,0 +1,22 @@
+Subject: Google sign-in was removed from your Nook account
+
+Nook · nook.test
+
+SECURITY · SIGN-IN
+Google sign-in was removed
+
+Google sign-in was removed from your Nook account in Settings. Sign in with your email and password from now on.
+
+> Mon 28 Sep 2026, 09:00 (UTC)
+
+If this wasn't you, change your password and ask your admin to check your account.
+
+Review in Settings:
+https://nook.test/settings/security
+
+--
+You got this because it is about your own Nook account.
+Security emails can't be turned off. They tell you about changes to your account.
+Email settings:
+https://nook.test/settings/notifications
+Sent by Nook on nook.test, a self-hosted workspace. No tracking. Nook never asks for your password by email.

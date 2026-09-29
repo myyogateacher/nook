@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Link2Off, Lock, MailX, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
 import { passwordResetOffered, type RegistrationInfo } from "./registrationPrompt";
+import { GOOGLE_ONLY_PASSWORD_TEXT } from "./googleSignIn";
 import { collectProblems, confirmPasswordProblem, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import "./auth.css";
 
@@ -115,13 +116,19 @@ export function secondFactorBody(form: FormData, needsCode: boolean, recovery: b
 
 export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
   const [available, setAvailable] = useState<boolean | null>(null);
+  // QA U1: with AUTH_METHODS=google there is no password to reset.
+  const [googleOnly, setGoogleOnly] = useState(false);
   const [state, setState] = useState<"form" | "working" | "sent">("form");
   const [error, setError] = useState("");
   const fields = useFieldErrors();
   useEffect(() => pageTitle("Forgot password · Nook"), []);
   useEffect(() => {
     let live = true;
-    api<{ passwordReset?: boolean }>("/about").then((info) => { if (live) setAvailable(info.passwordReset === true); }, () => { if (live) setAvailable(true); });
+    api<{ passwordReset?: boolean; authMethods?: { password: boolean } }>("/about").then((info) => {
+      if (!live) return;
+      setGoogleOnly(info.authMethods?.password === false);
+      setAvailable(info.passwordReset === true);
+    }, () => { if (live) setAvailable(true); });
     return () => { live = false; };
   }, []);
 
@@ -140,8 +147,13 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
     }
   }
 
+  // Q5: nothing but a neutral placeholder until /api/about says which methods are on (no flash of the form).
   return <Card>
-    {available === false ? <div className="auth-heading" role="status">
+    {available === null ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading" /> : googleOnly ? <div className="auth-heading" role="status">
+      <span className="eyebrow">Password</span>
+      <h1><KeyRound aria-hidden="true" className="invite-register-icon" />Sign in with Google</h1>
+      <p>{GOOGLE_ONLY_PASSWORD_TEXT}</p>
+    </div> : available === false ? <div className="auth-heading" role="status">
       <span className="eyebrow">Password</span>
       <h1><MailX aria-hidden="true" className="invite-register-icon" />Email is off</h1>
       <p>{FORGOT_OFF_TEXT}</p>
@@ -177,6 +189,7 @@ const DEAD_COPY = {
 
 function deadFrom(reason: unknown): ResetState {
   const code = reason instanceof ApiError ? (reason.payload as { code?: string } | undefined)?.code : undefined;
+  if (code === "PASSWORD_SIGNIN_DISABLED") return { kind: "dead", reason: "error", message: GOOGLE_ONLY_PASSWORD_TEXT };
   if (code === "TOKEN_EXPIRED") return { kind: "dead", reason: "expired" };
   if (code === "TOKEN_INVALID") return { kind: "dead", reason: "invalid" };
   return { kind: "dead", reason: "error", message: reason instanceof Error ? reason.message : "Something went wrong" };
@@ -199,6 +212,7 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
     return () => { live = false; };
   }, [about]);
   const offerNewLink = passwordResetOffered(info);
+  const googleOnly = info !== null && info !== "failed" && info.authMethods?.password === false;
   const [state, setState] = useState<ResetState>(token ? { kind: "checking" } : { kind: "dead", reason: "invalid" });
   const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -243,6 +257,8 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
     }
   }
 
+  // Q5: a neutral placeholder until the instance's methods are known, so google mode never flashes a form or a wrong message.
+  if (!signedIn && info === null) return <Card><div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading" /></Card>;
   return <Card>
     {state.kind === "checking" && <p className="invite-register-status" role="status">Checking your link…</p>}
     {state.kind === "dead" && <>
@@ -250,7 +266,8 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
         <span className="eyebrow">Password</span>
         <h1><Link2Off aria-hidden="true" className="invite-register-icon" />{DEAD_COPY[state.reason].title}</h1>
         <p>{state.reason === "error" ? state.message : signedIn || info === null || offerNewLink ? DEAD_COPY[state.reason].body : DEAD_COPY[state.reason].body.replace(" Ask for a new one.", "")}</p>
-        {!signedIn && info !== null && !offerNewLink && state.reason !== "error" && <p>{RESET_OFF_TEXT}</p>}
+        {/* QA G2: in google mode passwords are what is off, whatever email says. */}
+        {!signedIn && info !== null && !offerNewLink && state.reason !== "error" && <p>{googleOnly ? GOOGLE_ONLY_PASSWORD_TEXT : RESET_OFF_TEXT}</p>}
       </div>
       {(signedIn || offerNewLink) && <div className="auth-form">{signedIn
         ? <button type="button" className="primary-button" onClick={onSignIn}>Open Nook</button>

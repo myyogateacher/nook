@@ -8,14 +8,14 @@ import type { AccessGroup, AccessPerson, AccessPutBody, Audience, ItemAccess, Pi
  * saves. Kept apart from the component so tests/accessSheet.test.tsx can check it without a DOM.
  */
 
-export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean; groupIds?: string[] };
+export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean; groupIds?: string[]; avatarUrl?: string | null };
 export type DraftGroup = Pick<AccessGroup, "id" | "name" | "memberCount" | "guestCount" | "selfAddedCount" | "level">;
 export type Draft = { audience: Audience; audienceLevel: Level | null; people: DraftPerson[]; groups: DraftGroup[] };
 
 export const draftFrom = (access: ItemAccess): Draft => ({
   audience: access.audience,
   audienceLevel: access.audienceLevel ?? null,
-  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}) })),
+  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds, avatarUrl }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}), ...(avatarUrl ? { avatarUrl } : {}) })),
   groups: access.groups.map(({ id, name, memberCount, guestCount, selfAddedCount, level }) => ({ id, name, memberCount, guestCount, selfAddedCount, level }))
 });
 
@@ -90,7 +90,7 @@ export function addPicked(draft: Draft, value: string, access: Pick<ItemAccess, 
   }
   const person = people.find((item) => personValue(item.id) === value);
   if (!person || draft.people.some((item) => item.id === person.id)) return draft;
-  return { ...draft, people: [...draft.people, { id: person.id, displayName: person.displayName, teamRole: person.role ?? "member", level }] };
+  return { ...draft, people: [...draft.people, { id: person.id, displayName: person.displayName, teamRole: person.role ?? "member", level, ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}) }] };
 }
 
 /** What PUT sends. People and groups only for "selected"; managers never send the audience level (D273). */

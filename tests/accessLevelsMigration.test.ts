@@ -36,6 +36,7 @@ const level = (db: Database, table: string, column: string, id: string) =>
 
 describe("migration 029 (access levels)", () => {
   test("is registered after 028", () => {
+    expect(registeredMigrationIds).toContain(29);
     expect(registeredMigrationIds.indexOf(29)).toBe(registeredMigrationIds.indexOf(28) + 1);
   });
 

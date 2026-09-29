@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { audit, db, now } from "./db";
 import { recordAccessEvent, type AccessVia } from "./access/events";
+import { notifyAccess } from "./access/notices";
 import {
   dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, SCOPE_GRANTS, scopeFor, scopeReach, SELECTOR_KINDS,
   type Grant, type GrantModule, type KeyKind, type KeyPermission, type KeySurfaces, type ResourceKind
@@ -586,8 +587,12 @@ export function revokeOwnKey(userId: string, keyId: string) {
   })();
 }
 
-/** POST /api/team/keys/:id/revoke: an admin revokes anyone's key, with a reason only admins and the owner see. */
-export function adminRevokeKey(actorId: string, keyId: string, reason: string) {
+/**
+ * POST /api/team/keys/:id/revoke: an admin revokes anyone's key, with a reason only admins and the
+ * owner see. The owner gets a bell notice (§C.11, Wave 33) unless `notify` is false (Reset access
+ * sends one notice for everything instead).
+ */
+export function adminRevokeKey(actorId: string, keyId: string, reason: string, options: { notify?: boolean; meta?: Record<string, unknown> } = {}) {
   return db.transaction(() => {
     const row = keyById.get(keyId) as KeyRow | null;
     if (!row || row.revoked_at !== null) return null;
@@ -596,7 +601,8 @@ export function adminRevokeKey(actorId: string, keyId: string, reason: string) {
     db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoked_by = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL").run(timestamp, actorId, cleanReason, row.id);
     const superseded = supersedeProposals(row.id, row.user_id, timestamp);
     // Ids only; the reason's length, never its text (T83).
-    recordAccessEvent({ actorId, via: "web", action: "key.revoked", targetUserId: row.user_id, keyId: row.id, meta: { by: "admin", reasonLength: cleanReason.length } }, timestamp);
+    recordAccessEvent({ actorId, via: "web", action: "key.revoked", targetUserId: row.user_id, keyId: row.id, meta: { by: "admin", reasonLength: cleanReason.length, ...options.meta } }, timestamp);
+    if (options.notify !== false) notifyAccess({ userId: row.user_id, kind: "key_revoked", actorId, keyId: row.id }, timestamp);
     audit(actorId, null, "team.key_revoked", { keyId: row.id, targetId: row.user_id, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
     return { keyId: row.id, ownerId: row.user_id, revokedAt: timestamp };
   })();
@@ -742,6 +748,29 @@ export function listApiKeys(userId: string) {
 const userRole = (userId: string) => (db.query("SELECT role FROM users WHERE id = ?").get(userId) as { role: Role } | null)?.role ?? null;
 
 /** One of the caller's keys (any state), or null. */
+/**
+ * The Access sheet's "N of your API keys can reach this" (Wave 33, §C.5): the owner's keys that
+ * reach the item right now, by the same rules a call uses. A key counts when it is usable (active,
+ * or still in its rotation grace; never revoked, expired, paused, or blocked by policy) and holds an
+ * active grant (allowed by the owner's role and the policy's modules) on the module over "all" or
+ * on this very item.
+ */
+export function keysReachingItem(ownerId: string, module: GrantModule, resourceKind: string, resourceId: string) {
+  const rows = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.user_id = ? AND k.revoked_at IS NULL`).all(ownerId) as KeyRow[];
+  const policies = readPolicies();
+  let count = 0;
+  for (const row of rows) {
+    const { state } = keyState(row, policies);
+    if (state !== "active" && state !== "grace") continue;
+    const modules = activeModules(row.role, policies);
+    const reaches = loadGrants(row.id).some((grant) => grant.module === module
+      && (grant.resourceId === null || (grant.resourceKind === resourceKind && grant.resourceId === resourceId))
+      && grantInactiveReason(grant, row.role, modules, row.user_id) === null);
+    if (reaches) count += 1;
+  }
+  return count;
+}
+
 export function ownApiKey(userId: string, keyId: string) {
   const row = ownKey(userId, keyId);
   if (!row) return null;

@@ -62,6 +62,7 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - Roles: **admin**, **member**, **viewer** (reads what is shared with them or with everyone, changes nothing), and **guest** (reads only what is shared with them by name). Read-only roles are enforced on the server, not just hidden in the app.
 - Admins block and unblock accounts, sign them out everywhere, and see activity. Admins never see anyone's private content.
 - New accounts get `SIGNUP_ROLE` (default `guest`). A host CLI (`server/team-admin.ts`) recovers from a lockout.
+- **Central access**: Team → a member → **Access** shows everything a person can open, per module and through what (direct, a group, or everyone), with titles hidden for items the admin cannot open. Admins can only take access away (remove, lower, leave a group, revoke keys, or **Reset access**), each confirmed, logged in **Team → Access activity**, and announced on the owner's bell. **Team → Templates** gives invites a role and groups. Everyone but guests sees their own in **Settings → My access**.
 
 ### Everywhere
 
@@ -94,7 +95,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.12.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -103,6 +104,17 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.13.0
+
+- **Passwords**: change your password in **Settings → Security** with your current password, plus a two-factor code when you use one; your other devices are signed out. With email on, **Forgot password?** on the sign-in page mails a single-use link that works for 30 minutes, and a security email says when a password was changed or reset. With email off there is no self-service reset and the links are hidden. Settings also says when two-factor cannot be set up because this Nook has no TOTP key.
+- **Groups**: admins create groups in **Team → Groups** (`/team/groups`) and decide who is in them; owners share items with a group, and its members follow as people join or leave.
+- **Levels**: each person or group gets a level: **Can view**, **Can comment** (boards), **Can edit**, or **Manager** (boards, collections, and calendars). People who can edit a note write its draft and publish it. Files and task views stay view-only for other people.
+- **One Access sheet**: the **Share** button on notes, folders, files, boards, task views, collections, and calendars opens the same Access sheet. It warns before a change of audience drops people, and asks before discarding unsaved changes.
+- **Sharing with guests**: **Team → Policies** has a switch for sharing with guests. While it is off, new shares that would reach a guest are refused, whether directly, through a group, by adding a guest to a group that already has shares, or by changing such a member to the guest role. What is already shared stays until its owner changes it, and can be lowered or removed but not raised.
+- **Fixes**: viewers, commenters, and guests no longer see card actions they cannot use. On a page loaded directly, Back closes an open dialog at every width; dropdowns and pickers are their own Back step; Board settings and the Calendars sheet stay open under the dialogs they open. New Notes folders and links use the app's own name dialog instead of browser prompts. A routine's "due" state now follows the same clock as its next run time.
+- **API keys**: structure tools on boards (rename and recolour tags, WIP limits, create and start sprints) work through a key only for the board's owner; a manager's key is refused. Creating a board tag now needs the edit level. No new MCP tools.
+- Migration 029 runs on the first boot, so back up first. Some owner powers move to managers; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.12.0
 

@@ -69,6 +69,20 @@ export function itemLevel(kind: AccessKind, id: string, userId: string): ItemLev
   }
 }
 
+/**
+ * `canReadItem` for many items and one viewer (the member access page, T218): folders are read
+ * once as the viewer's folder list instead of once per row; the other kinds are one indexed query
+ * each, as before.
+ */
+export function readabilityChecker(viewerId: string) {
+  let folders: Set<string> | null = null;
+  return (kind: AccessKind, id: string) => {
+    if (kind !== "folder") return canReadItem(kind, id, viewerId);
+    folders ??= new Set(listReadableFolders(viewerId).map((folder) => folder.id));
+    return folders.has(id);
+  };
+}
+
 /** §C.10 for one item and a session: ok, NOT_FOUND for no access (never disclosed), READ_ONLY below `needed`. */
 export function authorizeItem(kind: AccessKind, id: string, userId: string, needed: ItemLevel): "ok" | "NOT_FOUND" | "READ_ONLY" {
   const level = itemLevel(kind, id, userId);
@@ -91,12 +105,12 @@ export const ITEM_TABLES: Record<AccessKind, { table: string; title: string; lab
  * An item as `viewerId` may see it: its title only when they can read it, otherwise the owner's name
  * and the kind ("Board owned by Carol"). Null when the item no longer exists.
  */
-export function presentItem(kind: AccessKind, id: string, viewerId: string) {
+export function presentItem(kind: AccessKind, id: string, viewerId: string, readableKnown?: (kind: AccessKind, id: string) => boolean) {
   const { table, title, label } = ITEM_TABLES[kind];
   const row = db.query(`SELECT t.${title} AS title, t.owner_id, u.display_name AS owner_name FROM ${table} t JOIN users u ON u.id = t.owner_id WHERE t.id = ?`)
     .get(id) as { title: string; owner_id: string; owner_name: string } | null;
   if (!row) return null;
-  const readable = canReadItem(kind, id, viewerId);
+  const readable = readableKnown ? readableKnown(kind, id) : canReadItem(kind, id, viewerId);
   return {
     kind,
     title: readable ? row.title : `${label} owned by ${row.owner_name}`,

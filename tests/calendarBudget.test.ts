@@ -102,13 +102,18 @@ describe("range API work budget (T66)", () => {
     expect(nextColumns((db.query("SELECT id FROM events WHERE calendar_id = ? AND title = 'Rare' LIMIT 1").get(calendarId) as { id: string }).id).next_occurrence_utc)
       .toBe("2099-01-01T00:00:00.000Z");
 
-    const range = rangeFor("2027-06-01", "2027-07-01", "UTC");
+    // June of next year: the bounds were computed from now, so the range must lie ahead of it.
+    const year = new Date().getUTCFullYear() + 1;
+    const range = rangeFor(`${year}-06-01`, `${year}-07-01`, "UTC");
+    const mondays = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(year, 5, index + 1)))
+      .filter((day) => day.getUTCDay() === 1).map((day) => day.toISOString().slice(0, 10));
     listOccurrences(user.userId, range, [calendarId]);
     const started = performance.now();
     const result = listOccurrences(user.userId, range, [calendarId]);
     const elapsed = performance.now() - started;
     expect(result.truncated).toBe(false);
-    expect(result.occurrences.map((item) => item.date)).toEqual(["2027-06-07", "2027-06-14", "2027-06-21", "2027-06-28"]);
+    expect(mondays.length).toBeGreaterThanOrEqual(4);
+    expect(result.occurrences.map((item) => item.date)).toEqual(mondays);
     expect(elapsed).toBeLessThan(50);
 
     // A range before the bounds were computed cannot use them; the row budget caps the work.

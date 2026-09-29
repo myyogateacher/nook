@@ -19,7 +19,9 @@ export type Route =
   // `email` (Wave 28): the admin Email log at /team/email, the same way.
   // `keys` and `policies` (Wave 31): Team → Keys at /team/keys and Team → Policies at /team/policies, the same way.
   // `groups` (Wave 32): Team → Groups at /team/groups, and one group at /team/groups/:groupId.
-  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string }
+  // Wave 33: a member's access page at /team/:userId/access (`access` with a userId), Team → Templates
+  // at /team/templates, and Team → Access activity at /team/activity.
+  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string; access?: true; templates?: true; activity?: true }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
@@ -142,6 +144,9 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "team" && rest[0] === "groups" && rest.length <= 2) {
     return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, groups: true, groupId: rest[1]!.toLowerCase() } : { app: "team", userId: null, groups: true };
   }
+  if (app === "team" && rest.length === 1 && rest[0] === "templates") return { app: "team", userId: null, templates: true };
+  if (app === "team" && rest.length === 1 && rest[0] === "activity") return { app: "team", userId: null, activity: true };
+  if (app === "team" && rest.length === 2 && rest[1] === "access" && isRouteId(rest[0]!)) return { app: "team", userId: rest[0]!.toLowerCase(), access: true };
   if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
   if (app === "inbox") return parseInbox(rest);
   if (app === "whiteboards") {
@@ -193,7 +198,7 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}` : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
@@ -215,7 +220,8 @@ function formatTasksHome(home: TasksHome) {
  * (Home for a deep link), and `parseRoute` reads the path as Home. Back closes the dialog and
  * Forward reopens it, because opening it pushes this entry.
  */
-export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "notifications", "about"] as const;
+// `access` (Wave 33): Settings → My access, read-only, every role but guest.
+export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notifications", "about"] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
 export function parseSettingsPath(pathname: string): SettingsSection | null {
@@ -225,7 +231,7 @@ export function parseSettingsPath(pathname: string): SettingsSection | null {
 
 export const settingsPath = (section: SettingsSection) => `/settings/${section}`;
 
-const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", notifications: "Notifications", about: "About" };
+const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", about: "About" };
 
 /** The document title while Settings is open: "Settings · Notifications · Nook". */
 export const settingsDocumentTitle = (section: SettingsSection) => `Settings · ${SETTINGS_SECTION_NAMES[section]} · Nook`;

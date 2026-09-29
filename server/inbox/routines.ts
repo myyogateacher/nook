@@ -194,15 +194,15 @@ function ownedRoutineRow(ownerId: string, routineId: string) {
   return row;
 }
 
-export function listRoutines(ownerId: string) {
-  abandonExpiredRuns(Date.now(), ownerId);
+export function listRoutines(ownerId: string, nowMs = Date.now()) {
+  abandonExpiredRuns(nowMs, ownerId);
   const rows = db.query(`${routineSelect} WHERE r.owner_id = ? ORDER BY r.name_fold`).all(ownerId) as Array<RoutineRow & Record<string, string | null>>;
-  return { routines: rows.map((row) => present(row)) };
+  return { routines: rows.map((row) => present(row, nowMs)) };
 }
 
-export function getRoutine(ownerId: string, routineId: string) {
-  abandonExpiredRuns(Date.now(), ownerId);
-  return { routine: present(ownedRoutineRow(ownerId, routineId)) };
+export function getRoutine(ownerId: string, routineId: string, nowMs = Date.now()) {
+  abandonExpiredRuns(nowMs, ownerId);
+  return { routine: present(ownedRoutineRow(ownerId, routineId), nowMs) };
 }
 
 function requireWriter(ownerId: string) {
@@ -240,7 +240,7 @@ export function createRoutine(ownerId: string, input: RoutineInput, nowMs = Date
     if (isUniqueViolation(error)) throw takenError();
     throw error;
   }
-  return getRoutine(ownerId, id);
+  return getRoutine(ownerId, id, nowMs);
 }
 
 const routineInputOf = (row: RoutineRow): RoutineInput => ({
@@ -284,16 +284,16 @@ export function updateRoutine(ownerId: string, routineId: string, patch: Routine
     if (isUniqueViolation(error)) throw takenError();
     throw error;
   }
-  return getRoutine(ownerId, row.id);
+  return getRoutine(ownerId, row.id, nowMs);
 }
 
-/** Pause or resume without a revision (a toggle; the routine's other fields are untouched). */
 /** The latest slot a run of this routine took (an abandoned run leaves its slot due, D154). */
 function lastRunSlot(routineId: string) {
   const row = db.query("SELECT MAX(slot_at) AS slot FROM routine_runs WHERE routine_id = ? AND status != 'abandoned' AND slot_at IS NOT NULL").get(routineId) as { slot: string | null };
   return row.slot ? Date.parse(row.slot) : null;
 }
 
+/** Pause or resume without a revision (a toggle; the routine's other fields are untouched). */
 export function setRoutineEnabled(ownerId: string, routineId: string, enabled: boolean, nowMs = Date.now()) {
   requireWriter(ownerId);
   const row = ownedRoutineRow(ownerId, routineId);

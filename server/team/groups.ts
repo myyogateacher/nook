@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { audit, db, now } from "../db";
 import { recordAccessEvent } from "../access/events";
+import { notifyAccess } from "../access/notices";
 import { presentItem } from "../access/effective";
 import { isLevel, type AccessKind } from "../access/levels";
 import { parseJson, uuid } from "../validation";
@@ -202,10 +203,7 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       const placeholders = added.map(() => "?").join(",");
       const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...added) as Array<{ id: string }>;
       if (valid.length !== added.length) throw new GroupError(400, "INVALID_MEMBERS", "One or more people were not found");
-      if (row.grant_count > 0 && !readPolicies().shareWithGuests
-        && db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${placeholders}) LIMIT 1`).get(...added)) {
-        throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
-      }
+      if (guestJoinRefused(groupId, added)) throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
     }
     const timestamp = now();
     const insert = db.query("INSERT INTO group_members (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)");
@@ -213,15 +211,40 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
     for (const userId of added) {
       insert.run(groupId, userId, actorId, timestamp);
       recordAccessEvent({ actorId, via: "web", action: "group.member_added", groupId, targetUserId: userId, meta: userId === actorId ? { self: true } : null }, timestamp);
+      // The bell (§C.11, Wave 33); nobody is told about their own change.
+      notifyAccess({ userId, kind: "group_added", actorId, groupId }, timestamp);
     }
     for (const userId of removed) {
       remove.run(groupId, userId);
       recordAccessEvent({ actorId, via: "web", action: "group.member_removed", groupId, targetUserId: userId, meta: userId === actorId ? { self: true } : null }, timestamp);
+      notifyAccess({ userId, kind: "group_removed", actorId, groupId }, timestamp);
     }
     db.query("UPDATE user_groups SET updated_at = ?, revision = revision + 1 WHERE id = ?").run(timestamp, groupId);
     if (added.length || removed.length) audit(actorId, null, "group.members_changed", { groupId, added: added.length, removed: removed.length, selfAdded: added.includes(actorId) });
     return { added: added.length, removed: removed.length, selfAdded: added.includes(actorId) };
   })();
+}
+
+/**
+ * The one guest rule for joining a group (T213), shared by Team → Groups, access templates on
+ * invite acceptance, and applying a template to someone (Wave 33): with `share_with_guests` off,
+ * a guest may not join a group that has any grant. Removing people is never refused.
+ */
+export function guestJoinRefused(groupId: string, userIds: readonly string[]) {
+  if (!userIds.length || readPolicies().shareWithGuests) return false;
+  if (!db.query("SELECT 1 FROM group_grants WHERE group_id = ? LIMIT 1").get(groupId)) return false;
+  return Boolean(db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${userIds.map(() => "?").join(",")}) LIMIT 1`).get(...userIds));
+}
+
+/**
+ * Of `groupIds`, the groups a guest could not join right now (`guestJoinRefused` for a guest): with
+ * `share_with_guests` off, those that have any grant. Names only, for admins (Wave 33 QA, Q2).
+ */
+export function guestRefusedGroups(groupIds: readonly string[]): Array<{ id: string; name: string }> {
+  if (!groupIds.length || readPolicies().shareWithGuests) return [];
+  const placeholders = groupIds.map(() => "?").join(",");
+  return db.query(`SELECT g.id, g.name FROM user_groups g WHERE g.id IN (${placeholders})
+    AND EXISTS (SELECT 1 FROM group_grants gg WHERE gg.group_id = g.id) ORDER BY g.name COLLATE NOCASE`).all(...groupIds) as Array<{ id: string; name: string }>;
 }
 
 /** Whether a group has a guest in it (the `share_with_guests` policy, D.2). */

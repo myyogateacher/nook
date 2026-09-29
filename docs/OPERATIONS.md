@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.12.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -45,6 +45,12 @@ A role change applies to the account's next request. `set-role` refuses to demot
 ### API key policies
 
 API keys ("Nook keys", migration 025) are governed by team policies that admins set in **Team → Policies** and that the server checks on every key call. Defaults: new keys expire after 90 days and at most 365; an expiry is **not** required yet, so keys created before migration 025 (which have none) keep working; 10 live keys per person; MCP for admins, members, and viewers; REST (arriving later) for admins and members; every module allowed for every role. Turning on **Require an expiry** or lowering the longest lifetime **blocks** keys that break the rule (`403 KEY_POLICY` on `/mcp`) without revoking them, so loosening the policy brings them back; the page previews how many keys a change blocks. Plan to turn on Require an expiry in the next release and ask people to rotate old keys first (Team → Keys, state **No expiry**, lists them). Team → Keys also revokes any key with a reason the owner sees. Policies, key creation, rotation, narrowing, and revocation are recorded in the append-only `access_events` table (ids, counts, and setting names only; never secrets or reasons). Keys never change policies, keys, or sharing.
+
+### Central access management
+
+Admins see what one person can open from **Team → a member → Access** (`/team/<id>/access`): per module, what is shared with them directly, through groups, and with everyone, plus their groups, API keys, calendar feeds, and routines. Titles of items the admin cannot open themselves stay hidden ("Board owned by Carol"). From there admins can only take access away: remove or lower a direct share, take the person out of a group, revoke a key, or **Reset access** (every direct share, group membership, key, and calendar feed, and pauses routines; their own items and everything shared with everyone stay). Owners get a line on their bell when an admin removes or lowers someone's access to their item, so offboarding is visible to them and reversible by sharing again. **Team → Templates** holds a team role plus groups; pick one on an invite and the new account joins those groups when it registers. **Team → Access activity** lists key, group, item-access, policy, and template changes. Everyone but guests sees their own access in **Settings → My access**.
+
+The rows on the access page carry short-lived handles sealed with a key that exists only in the running server, so an admin page left open across a restart simply asks for a reload. Migration **032** (`access_central`) adds the table behind those bell lines (`access_notices`, ids and counts only, swept after 30 days like reminders), stores on each invite the groups its template had when the invite was created (editing a template later changes only new invites), and adds an index for the activity view; back up before upgrading, as for any migration.
 
 ### Two-factor authentication
 
@@ -140,7 +146,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_ALLOW_HTTP_LINKS` | `false` | `true` lets mail go out when `APP_ORIGIN` is a non-localhost `http://` address (LAN or Tailscale without HTTPS). Links in mail are then unencrypted. |
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
-| `APP_VERSION` | `0.12.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.13.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -220,6 +226,20 @@ curl http://localhost:2026/api/health
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
 **Upgrading to the release with Whiteboards:** back up first with `./scripts/backup.sh --force`. Migration 030 (`whiteboards`) runs once on the first boot and only adds tables (boards, snapshots for a later release, and the whiteboard search index); nothing existing changes, and it can only be undone by restoring that backup. Whiteboards is a new row in Settings → Modules, on by default. Nook keys can hold `whiteboards:read` and `whiteboards:write` for new keys; if an admin saved Team → Policies before this release, the per-role key modules there do not include Whiteboards until an admin ticks it.
+
+**Upgrading to 0.13.0:** back up first with `./scripts/backup.sh --force`. Migration 029 (access levels) runs once on the first boot and can only be undone by restoring that backup. It keeps existing collection and calendar editors editing: people shared with as editors keep the edit level. Existing board members become editors, as before. Nobody becomes a manager by upgrading; only an owner can make one. API keys gain no new powers from this release. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.13.0`, and restart as above.
+
+Powers that moved from the owner to managers (the web API answers 403 `MANAGER_REQUIRED` to everyone else):
+
+- **Boards:** rename the board and change its structure settings (levels, sprints on or off, sprint defaults); add, rename, and reorder columns, set a column's state (including done) and WIP limit, and delete empty columns; rename, recolour, and delete tags; create, edit, start, complete, and delete sprints.
+- **Collections:** rename and change the icon; edit fields; create, edit, and delete saved views.
+- **Calendars:** rename and change colour.
+- **Boards, collections, and calendars:** open the Access sheet and share with people and groups up to the edit level.
+- **Still the owner's alone:** deleting the item, the Bin and deleting forever, the older audience-wide sharing routes, changing the audience or its level, and adding, changing, or removing managers.
+- **Unchanged:** collection CSV import stays at the edit level.
+- **Narrowed:** creating a board tag now needs the edit level (it used to need only read access).
+
+A client or script that matched the error code `OWNER_ONLY` for these structure refusals now receives `MANAGER_REQUIRED` on the web API; MCP still reports `OWNER_ONLY`. Through an API key, board structure tools (renaming and recolouring tags, WIP limits, creating and starting sprints) stay with the board's owner: a manager's key is refused. `/api/about` gained `passwordReset` (whether **Forgot password?** can send a link) and `twoFactor` (whether two-factor can be set up on this instance).
 
 **Upgrading to 0.12.0:** back up first with `./scripts/backup.sh --force`. Migrations 025 (access keys, grants and policies) and 028 (email digests, bounce tracking and share log) run once on the first boot and can only be undone by restoring that backup. Existing MCP keys are converted to grants with the same reach; nothing widens. They have no expiry and show **No expiry**; a team policy that requires an expiry blocks them until they get one or the rule is loosened. Migration 025 also creates the tables later access waves use (groups, per-person levels, templates) with defaults that change nothing, and `/api/mcp/keys` keeps working for one release as an alias of `/api/keys`. Bounce and complaint handling is optional: add `RESEND_WEBHOOK_SECRET` to `.env` and point a Resend webhook at `/api/mail/webhook` (see [Bounces and complaints](#bounces-and-complaints-optional-resend-webhook) above); without it the endpoint returns 404. Pull, rebuild with `APP_VERSION=0.12.0`, and restart as above.
 

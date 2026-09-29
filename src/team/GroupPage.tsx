@@ -13,6 +13,20 @@ type TeamPerson = { id: string; displayName: string; role: Role; status: "active
 
 const staleMessage = "Someone else changed this group. It now shows the latest.";
 const isStale = (reason: unknown) => reason instanceof ApiError && reason.status === 409 && (reason.payload as { code?: unknown } | null)?.code === "GROUP_CHANGED";
+const isGuestRefusal = (reason: unknown) => reason instanceof ApiError && reason.status === 400 && (reason.payload as { code?: unknown } | null)?.code === "GUEST_SHARE_DISABLED";
+const guestRefusedMessage = "Sharing with guests is turned off, and this group is shared with items, so guests cannot be added.";
+
+/**
+ * Active people not yet in the group, for the member picker. With `guestAddRefused` (T213) guests
+ * stay listed but disabled, with the reason, rather than failing after they are picked.
+ */
+export function groupCandidates(group: Pick<GroupDetail, "members" | "guestAddRefused">, people: readonly TeamPerson[]): Option[] {
+  const inGroup = new Set(group.members.map((member) => member.id));
+  return people.filter((person) => person.status === "active" && !inGroup.has(person.id)).map((person) => {
+    const refused = group.guestAddRefused && person.role === "guest";
+    return { value: person.id, label: person.displayName, disabled: refused, description: `${ROLE_LABELS[person.role]}${person.isYou ? " · You" : ""}${refused ? " · Sharing with guests is off" : ""}` };
+  });
+}
 
 /**
  * One group at /team/groups/:groupId (Wave 32, access plan §C.6, §E): members (add with a
@@ -62,6 +76,10 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
       if (isStale(reason)) {
         flash(staleMessage);
         void load();
+      } else if (isGuestRefusal(reason)) {
+        // The policy or the group's grants changed since the page loaded: say why and show the latest.
+        flash(guestRefusedMessage);
+        void load();
       } else flash(reason instanceof Error ? reason.message : "Could not change the members");
     } finally {
       setBusy(false);
@@ -77,8 +95,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
   if (!group) return <p className="team-loading" role="status">Loading the group…</p>;
 
   const inGroup = new Set(group.members.map((member) => member.id));
-  const candidates: Option[] = members.filter((member) => member.status === "active" && !inGroup.has(member.id))
-    .map((member) => ({ value: member.id, label: member.displayName, description: `${ROLE_LABELS[member.role]}${member.isYou ? " · You" : ""}` }));
+  const candidates = groupCandidates(group, members);
 
   return <article className="team-detail team-group-page" aria-labelledby="team-group-title">
     <button type="button" className="team-back team-back-visible" onClick={onBack}><ChevronLeft />Groups</button>
@@ -100,6 +117,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
       <p className="team-muted">Owners who share with this group reach everyone here. Guests in a group can only view.</p>
       <Combobox value={[]} onChange={(picked) => { if (picked[0]) void saveMembers([...inGroup, picked[0]], "Added to the group"); }}
         options={candidates} label="Add people" placeholder="Add people…" emptyText="Everyone is already in this group" disabled={busy} />
+      {group.guestAddRefused && <p className="team-muted">{guestRefusedMessage} Guests already here stay until you remove them.</p>}
       {group.members.length === 0 ? <p className="team-muted">Nobody is in this group yet.</p> : <ul className="group-member-list" aria-label="Members">
         {group.members.map((member) => <li key={member.id} className="group-member-row">
           <span className="team-row-copy">

@@ -173,6 +173,7 @@ describe("GET/PUT …/access", () => {
     await putAccess(owner, path, { audience: "selected", people: [{ id: manager.userId, level: "manage" }, { id: other.userId, level: "manage" }] });
     const seen = (await send(manager, "GET", path)).body;
     expect(seen.yourLevel).toBe("manage");
+    expect(seen.youId).toBe(manager.userId);
     expect(seen.levels).toEqual(["view", "comment", "edit"]);
     const managers = [{ id: manager.userId, level: "manage" }, { id: other.userId, level: "manage" }];
     expect((await putAccess(manager, path, { audience: "selected", people: [...managers, { id: newcomer.userId, level: "edit" }] })).status).toBe(200);

@@ -128,6 +128,15 @@ describe("Access sheet rendering", () => {
     expect(html).toContain('aria-label="Remove Bob"');
   });
 
+  test("a manager's own row says to ask the owner instead of offering a change that fails (MANAGER_CAP)", () => {
+    const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops sprint" onClose={() => undefined} onSaved={() => undefined}
+      initial={{ access: access({ yourLevel: "manage", youId: "u-alice", levels: ["view", "comment", "edit"] }), people, groups }} />);
+    expect(html).toContain("Ask the owner to change your access");
+    expect(html).toContain("Team role: Member · You");
+    expect(html).not.toContain('aria-label="Remove Alice"');
+    expect(html).not.toContain("Only the owner changes managers</small>");
+  });
+
   test("everyone signed in shows its level picker; loading shows a status", () => {
     const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops" onClose={() => undefined} onSaved={() => undefined}
       initial={{ access: access({ audience: "all_users", people: [], groups: [] }) }} />);

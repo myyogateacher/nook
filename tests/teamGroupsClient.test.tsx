@@ -33,6 +33,19 @@ describe("Team groups on the client", () => {
     expect(memberCountLabel(3) + guestCountLabel(2)).toBe("3 people · includes 2 guests");
   });
 
+  test("the member picker disables guests, with the reason, while the guest policy refuses them (T213)", async () => {
+    const { groupCandidates } = await import("../src/team/GroupPage");
+    const people = [
+      { id: "m", displayName: "Mia", role: "member" as const, status: "active" as const, isYou: false },
+      { id: "g", displayName: "Gus", role: "guest" as const, status: "active" as const, isYou: false },
+      { id: "b", displayName: "Bo", role: "guest" as const, status: "blocked" as const, isYou: false }
+    ];
+    const refused = groupCandidates({ members: [], guestAddRefused: true }, people);
+    expect(refused.map((option) => [option.value, option.disabled])).toEqual([["m", false], ["g", true]]);
+    expect(refused[1]!.description).toBe("Guest · Sharing with guests is off");
+    expect(groupCandidates({ members: [], guestAddRefused: false }, people).every((option) => !option.disabled)).toBe(true);
+  });
+
   test("the groups pane renders its loading state with a Team back button for phones and no native select", async () => {
     const { TeamGroups } = await import("../src/team/TeamGroups");
     const html = renderToStaticMarkup(<TeamGroups onBack={() => undefined} onOpenGroup={() => undefined} flash={() => undefined} />);

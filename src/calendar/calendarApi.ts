@@ -104,9 +104,6 @@ export const listCalendars = () => api<{ calendars: CalendarSummary[] }>("/calen
 export const createCalendar = (name: string, color: CalendarColor) => api<{ calendar: CalendarSummary }>("/calendars", { method: "POST", body: json({ name, color }) });
 export const updateCalendar = (id: string, patch: { name?: string; color?: CalendarColor }) => api<{ calendar: CalendarSummary }>(`/calendars/${id}`, { method: "PATCH", body: json(patch) });
 export const deleteCalendar = (id: string) => api<{ ok: true; purgeAfter: string }>(`/calendars/${id}`, { method: "DELETE", body: "{}" });
-export const getCalendarSharing = (id: string) => api<{ visibility: Visibility; shareRole: ShareRole; users: Array<{ id: string; display_name: string }> }>(`/calendars/${id}/sharing`);
-export const saveCalendarSharing = (id: string, visibility: Visibility, shareRole: ShareRole, userIds: string[]) =>
-  api<{ ok: true }>(`/calendars/${id}/sharing`, { method: "PUT", body: json({ visibility, shareRole, userIds: visibility === "selected" ? userIds : [] }) });
 
 export function listOccurrences(from: string, to: string, options: { calendarIds?: string[]; includeTasks?: boolean } = {}) {
   const params = new URLSearchParams({ from, to, tz: viewerTimeZone() });

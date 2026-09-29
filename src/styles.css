@@ -26,6 +26,9 @@ button { color: inherit; }
 button:focus-visible, input:focus-visible, [contenteditable]:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 
 .loading-page, .auth-page { min-height: 100dvh; display: grid; place-items: center; background: radial-gradient(circle at 50% 0%, #242019 0, #0e0e10 34rem, #09090a 75%); }
+/* The body never scrolls: a tall sign-in form on a short (landscape) phone scrolls inside the page, and
+   "safe" centring keeps its top reachable when it is taller than the screen (P0 audit). */
+.auth-page { height: 100dvh; overflow-y: auto; overscroll-behavior-y: contain; place-items: safe center; padding-block: 12px; }
 .loading-page { gap: 14px; align-content: center; color: var(--muted); }
 .brand-mark { width: 48px; height: 48px; border-radius: 15px; display: grid; place-items: center; background: var(--yellow); color: #2a210e; box-shadow: 0 16px 50px rgb(246 196 83 / 18%); }
 .brand-mark svg { width: 23px; }

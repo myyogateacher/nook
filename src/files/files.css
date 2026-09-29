@@ -11,7 +11,9 @@
 .file-preview-close { margin-right: -6px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-.file-pane { position: relative; }
+/* Desktop only: on phones the pane keeps the shared absolute panel box (inset 0 0 61px), so its list
+   scrolls inside it (P0 audit: `relative` here let the pane grow past the screen on phones). */
+@media (min-width: 761px) { .file-pane { position: relative; } }
 .file-pane .note-heading h1 { margin-right: 0; margin-bottom: 8px; }
 .file-header-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
 .file-count { margin-right: auto; color: #77777e; font-size: .78rem; }

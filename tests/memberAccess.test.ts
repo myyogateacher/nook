@@ -127,6 +127,8 @@ describe("the member access page", () => {
     const guest = await user("Central list guest", "guest");
     const guestSummary = await send(admin, "GET", `/team/members/${guest.userId}/access`);
     expect(guestSummary.body.kinds.every((row: { audience: number }) => row.audience === 0)).toBe(true);
+    // The suite shares one database: an everyone calendar would show up in other files' lists.
+    db.query("UPDATE calendars SET visibility = 'private' WHERE id = ?").run(everyone);
   });
 
   test("handles are opaque, bound to the admin and the person, and refused when tampered with", async () => {
@@ -273,6 +275,8 @@ describe("admin reductions (D268)", () => {
     expect(own.some((title: string) => title.includes("revoked your API key"))).toBe(false);
     const event = db.query("SELECT meta_json FROM access_events WHERE action = 'access.reset' AND target_user_id = ?").get(target.userId) as { meta_json: string };
     expect(JSON.parse(event.meta_json)).toEqual({ directShares: 3, groups: 1, keys: 1, feeds: 1, routines: 0 });
+    // The suite shares one database: an everyone board would show up in other files' lists.
+    db.query("UPDATE boards SET visibility = 'private' WHERE id = ?").run(everyone);
   });
 
   test("an admin revoking a key from Team → Keys puts a notice on the owner's bell", async () => {

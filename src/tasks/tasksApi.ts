@@ -33,7 +33,7 @@ export type BoardSummary = {
 export type BoardColumn = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; wip_limit?: number | null; created_at: string; updated_at: string };
 
 /** An assignee (D102). `can_read` 0: they lost access to the board ("Former member"); they can only be removed. */
-export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1 };
+export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1; /** Wave 35 (D299): the same-origin picture, when the payload has it. */ avatar_url?: string | null };
 
 /** The Collections option palette (D109); `gray` is the default. */
 export const TAG_COLORS = ["gray", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"] as const;
@@ -112,7 +112,7 @@ export const updateBoardStructure = (boardId: string, structure: BoardStructure)
  * and one board-level `users` map names every assignee once.
  */
 export type BoardPayloadCard = Omit<CardSummary, "board_id" | "assignees"> & { assignee_ids: string[] };
-export type BoardPayload = Omit<BoardDetail, "cards"> & { cards: BoardPayloadCard[]; users: Record<string, { display_name: string; can_read: 0 | 1 }> };
+export type BoardPayload = Omit<BoardDetail, "cards"> & { cards: BoardPayloadCard[]; users: Record<string, { display_name: string; can_read: 0 | 1; avatar_url?: string | null }> };
 
 /** Rebuilds the in-memory card shape (`board_id`, `assignees[]`) from the trimmed payload. */
 export function hydrateBoard(payload: BoardPayload): BoardDetail {
@@ -122,7 +122,7 @@ export function hydrateBoard(payload: BoardPayload): BoardDetail {
     cards: cards.map(({ assignee_ids, ...card }) => ({
       ...card,
       board_id: payload.board.id,
-      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0 }))
+      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0, ...(users[id]?.avatar_url ? { avatar_url: users[id]!.avatar_url } : {}) }))
     }))
   };
 }

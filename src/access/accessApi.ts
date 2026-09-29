@@ -5,7 +5,7 @@ import type { AccessKind, Level } from "./accessLevels";
 /** GET/PUT …/access (Wave 32, access plan §C.5, docs/plan/API_CONTRACTS.md § Access). */
 export type Audience = "private" | "selected" | "all_users" | "inherit";
 
-export type AccessPerson = { id: string; displayName: string; teamRole: Role; kind: "person" | "service"; level: Level; via: "direct"; blocked: boolean };
+export type AccessPerson = { id: string; displayName: string; teamRole: Role; kind: "person" | "service"; level: Level; via: "direct"; blocked: boolean; avatarUrl?: string | null };
 export type AccessGroup = { id: string; name: string; memberCount: number; guestCount: number; selfAddedCount: number; level: Level };
 
 export type ItemAccess = {
@@ -36,7 +36,7 @@ export type AccessPutBody = {
 };
 
 /** The picker's directories: people who can be shared with, and groups (names and counts only). */
-export type PickerPerson = { id: string; displayName: string; role?: Role };
+export type PickerPerson = { id: string; displayName: string; role?: Role; avatarUrl?: string | null };
 export type PickerGroup = { id: string; name: string; memberCount: number; guestCount: number };
 
 const BASES: Record<AccessKind, string> = {

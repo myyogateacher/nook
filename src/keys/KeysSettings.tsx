@@ -6,6 +6,7 @@ import { Select } from "../ui/Select";
 import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
+import { asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
   expiryOptions, GRACE_OPTIONS, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
@@ -188,8 +189,12 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
 }
 
 function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
+  // Wave 35 (D297): accounts without a usable password confirm with Google instead.
+  const account = useAccountAuth();
   return <div className="keys-reauth">
-    <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
+    {asksForPassword(account)
+      ? <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
+      : <GoogleReauthNotice account={account!} returnTo="/settings/mcp" />}
     {totpEnabled && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
   </div>;
 }
@@ -218,7 +223,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     setBusy(true);
     setError("");
     try {
-      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: Number(expires), grants, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: Number(expires), grants, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -325,7 +330,7 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
     setBusy(true);
     setError("");
     try {
-      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onRotated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not rotate the key"));

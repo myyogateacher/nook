@@ -3,6 +3,7 @@ import { Share2, TriangleAlert, UsersRound, X } from "lucide-react";
 import { ApiError } from "../api";
 import { trapTabKey } from "../files/Dialog";
 import { Select } from "../ui/Select";
+import { Avatar } from "../ui/Avatar";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { ROLE_LABELS } from "../team/teamRoles";
 import { getAccess, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
@@ -168,7 +169,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
                 const yours = person.id === access.youId;
                 const cap = roleCapHint(person.teamRole);
                 return <li key={`p-${person.id}`} className="access-row">
-                  <span className="access-avatar" aria-hidden="true">{person.displayName.trim().charAt(0).toUpperCase() || "?"}</span>
+                  <Avatar className="access-avatar" name={person.displayName} url={person.avatarUrl} />
                   <span className="access-row-copy">
                     <strong>{person.displayName}</strong>
                     <small>Team role: {ROLE_LABELS[person.teamRole]}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>

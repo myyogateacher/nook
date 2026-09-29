@@ -8,6 +8,7 @@ import { relativeTime } from "../files/format";
 import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { Select } from "../ui/Select";
+import { Avatar } from "../ui/Avatar";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
@@ -16,7 +17,7 @@ import { TeamKeys } from "./TeamKeys";
 import { TeamPolicies } from "./TeamPolicies";
 import { TeamGroups } from "./TeamGroups";
 import { GroupPage } from "./GroupPage";
-import { eventLabel, filterTeam, joinedLabel, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
+import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 
@@ -300,7 +301,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         {!loadError && visible.length > 0 && <ul className="team-list" aria-label="Team members">
           {visible.map((member) => <li key={member.id}>
             <button type="button" className={`team-row${member.id === routeUserId ? " selected" : ""}${member.status === "blocked" ? " blocked" : ""}`} aria-current={member.id === routeUserId ? "page" : undefined} onClick={() => { if (member.id !== routeUserId) go(member.id); }}>
-              <span className="team-avatar" aria-hidden="true">{initialOf(member.displayName)}</span>
+              <Avatar className="team-avatar" name={member.displayName} url={member.avatarUrl} />
               <span className="team-row-copy">
                 <span className="team-row-title">
                   <strong>{member.displayName}</strong>
@@ -374,7 +375,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen }
   return <article className="team-detail">
     <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
     <header className="team-detail-header">
-      <span className="team-avatar large" aria-hidden="true">{initialOf(member.displayName)}</span>
+      <Avatar className="team-avatar large" name={member.displayName} url={member.avatarUrl} />
       <div>
         <h2>{member.displayName}{member.isYou && <span className="team-tag">You</span>}</h2>
         {admin && member.email && <p className="team-detail-email">{member.email}</p>}

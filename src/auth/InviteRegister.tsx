@@ -3,6 +3,8 @@ import { Eye, EyeOff, Link2Off, Lock, LogOut, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../team/teamRoles";
 import type { InviteRole } from "../team/teamApi";
+import { AuthDivider, GoogleButton } from "./googleSignIn";
+import type { RegistrationInfo } from "./registrationPrompt";
 
 export type InvitePreview = { role: InviteRole; emailHint: string | null; expiresAt: string; inviterName: string };
 export type InviteRegisterBody = { email: string; displayName: string; password: string; inviteToken: string };
@@ -42,6 +44,30 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
+  // Wave 35 (D298): which ways to join this Nook offers; unknown means the password form only, as before.
+  const [methods, setMethods] = useState<{ password: boolean; google: boolean }>({ password: true, google: false });
+
+  useEffect(() => {
+    let live = true;
+    api<RegistrationInfo>("/about").then((info) => { if (live && info.authMethods) setMethods(info.authMethods); }, () => undefined);
+    return () => { live = false; };
+  }, []);
+
+  /** The token goes to the server in a JSON body and waits there; the start URL carries no token (T136). */
+  async function continueWithGoogle() {
+    if (!token) return;
+    setBusy(true);
+    setError("");
+    try {
+      const { start } = await api<{ start: string }>("/auth/google/invite", { method: "POST", body: JSON.stringify({ token }) });
+      window.location.assign(start);
+    } catch (reason) {
+      const code = codeOf(reason);
+      if (code === "INVITE_INVALID" || code === "INVITE_EXPIRED") setState(deadState(reason));
+      else setError(reason instanceof Error ? reason.message : "Could not continue with Google");
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!token) return;
@@ -86,7 +112,11 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
           <p className="invite-register-role">{ROLE_DESCRIPTIONS[state.preview.role]}.</p>
           <p className="invite-register-expiry">The link works once, until {new Date(state.preview.expiresAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}.</p>
         </div>
-        <form onSubmit={submit} className="auth-form">
+        {methods.google && <GoogleButton onClick={() => void continueWithGoogle()} disabled={busy} />}
+        {methods.google && state.preview.emailHint && <p className="invite-google-hint">Choose the Google account for {state.preview.emailHint}.</p>}
+        {methods.google && methods.password && <AuthDivider />}
+        {!methods.password && error && <p className="form-error" role="alert">{error}</p>}
+        {methods.password && <form onSubmit={submit} className="auth-form">
           <label>Name<input name="displayName" autoComplete="name" required maxLength={80} disabled={busy} /></label>
           <label>Email<input name="email" type="email" autoComplete="email" required maxLength={254} disabled={busy} aria-describedby={state.preview.emailHint ? "invite-email-hint" : undefined} />
             {state.preview.emailHint && <small id="invite-email-hint">This invite is for {state.preview.emailHint}. Use that address.</small>}
@@ -102,7 +132,7 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Create account"}</button>
-        </form>
+        </form>}
       </>}
       <button type="button" className="text-button" onClick={onSignIn}>Already have an account? Sign in</button>
       <p className="security-note"><Lock /> Your notes stay on this machine.</p>

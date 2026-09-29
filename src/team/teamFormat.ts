@@ -44,7 +44,8 @@ export function statusLabel(member: TeamMember) {
   return member.blockedAt && member.blockedBy === null ? "Blocked (before Team)" : "Blocked";
 }
 
-export const initialOf = (name: string) => (name.trim()[0] ?? "?").toLocaleUpperCase();
+/** The letter avatar's letter; the Avatar component (src/ui/Avatar.tsx) draws it. */
+export { avatarInitial as initialOf } from "../ui/Avatar";
 
 const roleName = (role: Role | null) => (role ? ROLE_LABELS[role] : "none");
 

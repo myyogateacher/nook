@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, origin, request, spareEmail, type Session } from "./support/harness";
 import { startFakeGoogle, type FakeGoogle, type FakeIdentity, type TokenTweaks } from "./support/fakeGoogle";
+import { retireUsersAfterFile } from "./support/retireUsers";
 const { config, googleEndpoints } = await import("../server/config");
 const { resetJwksCache, exchangeCode, OidcError } = await import("../server/google/oidc");
 const { avatarWorkSettled } = await import("../server/google/routes");
@@ -16,7 +17,8 @@ const { UNUSABLE_PASSWORD } = await import("../server/passwords");
 const { totpCodeAt, totpCounter } = await import("../server/totp");
 
 let fake: FakeGoogle;
-const suiteStarted = new Date().toISOString();
+// This file creates many accounts: they are blocked when it ends, so Team lists elsewhere stay short.
+retireUsersAfterFile();
 const saved = { auth: structuredClone(config.auth), allowRegistration: config.allowRegistration, signupRole: config.signupRole };
 
 beforeAll(async () => {
@@ -28,20 +30,6 @@ beforeAll(async () => {
   }
 });
 afterAll(() => {
-  // The run shares one database and the Team list shows at most 500 people: remove this file's accounts.
-  const ids = (db.query("SELECT id FROM users WHERE created_at >= ?").all(suiteStarted) as Array<{ id: string }>).map((row) => row.id);
-  for (const id of ids) {
-    try {
-      db.transaction(() => {
-        db.query("DELETE FROM team_events WHERE target_user_id = ? OR actor_id = ?").run(id, id);
-        db.query("UPDATE team_invites SET used_by = NULL WHERE used_by = ?").run(id);
-        db.query("DELETE FROM team_invites WHERE created_by = ?").run(id);
-        db.query("DELETE FROM users WHERE id = ?").run(id);
-      })();
-    } catch {
-      // Something else points at it; leaving one account behind is harmless.
-    }
-  }
   Object.assign(config.auth, structuredClone(saved.auth));
   config.allowRegistration = saved.allowRegistration;
   config.signupRole = saved.signupRole;
@@ -98,6 +86,11 @@ async function me(cookie: string | null) {
 }
 
 const userRow = (email: string) => db.query("SELECT * FROM users WHERE email = ?").get(email) as Record<string, any> | null;
+/** The account row without the admin-facing record of the last refused Google sign-in (Q1). */
+const accountState = (email: string) => {
+  const { google_last_refusal_at: _at, google_last_refusal_reason: _reason, ...rest } = userRow(email)!;
+  return JSON.stringify(rest);
+};
 const audits = (userId: string, event: string) => (db.query("SELECT COUNT(*) AS count FROM audit_log WHERE actor_id = ? AND event_type = ?").get(userId, event) as { count: number }).count;
 const verify = (session: Session) => db.query("UPDATE users SET email_verified_at = ? WHERE id = ?").run(new Date().toISOString(), session.userId);
 
@@ -333,14 +326,15 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
       await enableTotpFor(squatter);
       const folder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(squatter.userId) as { id: string }).id;
       expect((await request(`/folders/${folder}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [friend.userId] }) }, squatter)).status).toBe(200);
-      const before = JSON.stringify(userRow(squatter.email));
+      const before = accountState(squatter.email);
 
       const victim = workspace(squatter.email);
       const refused = await googleSignIn(victim);
       expect(refused.location).toBe("/login#error=link_required");
       expect(refused.session).toBeNull();
       // Nothing changed: the account, its session, its password, its key, and its share.
-      expect(JSON.stringify(userRow(squatter.email))).toBe(before);
+      expect(accountState(squatter.email)).toBe(before);
+      expect(userRow(squatter.email)!.google_last_refusal_reason).toBe("link_required");
       expect((await me(squatter.cookie)).status).toBe(200);
       expect(db.query("SELECT 1 FROM folder_shares WHERE folder_id = ? AND user_id = ?").get(folder, friend.userId)).not.toBeNull();
       expect(db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(squatter.userId)).toBeNull();
@@ -381,8 +375,11 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     expect((await allow(person)).status).toBe(200);
     expect((await me(person.cookie)).status).toBe(200);
     expect((await passwordLogin(person.email, person.password)).status).toBe(200);
-    // A consumer account with this company address is still not authoritative.
-    expect((await googleSignIn(identityFor(person.email))).location).toBe("/login#error=link_required");
+    // A consumer account with this company address is still not authoritative (Q1: it says so, and
+    // the allowance stays for the right account).
+    expect((await googleSignIn(identityFor(person.email))).location).toBe("/login#error=link_not_authoritative&domain=example.test");
+    expect(userRow(person.email)).toMatchObject({ google_last_refusal_reason: "link_not_authoritative" });
+    expect(userRow(person.email)!.google_link_allowed_until).not.toBeNull();
     const identity = workspace(person.email);
     expect((await googleSignIn(identity)).location).toBe("/");
     expect((await me(person.cookie)).status).toBe(200);
@@ -503,7 +500,123 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     expect(again.notices.googleReset).toBeNull();
   });
 
-  test.todo("N2c (Wave 33): the reset also reaches the member's bell through notifyAccess (access_notices, migration 032)");
+  test("section 2: allow, reset, re-link allowance, admin unlink, and a completed re-link reach the member's bell", async () => {
+    const admin = await adminUser();
+    const notices = (userId: string) => db.query("SELECT kind, actor_id, count FROM access_notices WHERE user_id = ? ORDER BY created_at, rowid").all(userId) as Array<{ kind: string; actor_id: string | null; count: number | null }>;
+    const allow = (target: Session | string, body: Record<string, unknown> = {}) => request(`/team/${typeof target === "string" ? target : target.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false, password: admin.password, ...body }) }, admin);
+
+    const plain = await createUser("Bell allow");
+    expect((await allow(plain)).status).toBe(200);
+    expect(notices(plain.userId)).toEqual([{ kind: "google_allowed", actor_id: admin.userId, count: null }]);
+
+    const squatter = await createUser("Bell reset");
+    expect((await allow(squatter, { reset: true })).status).toBe(200);
+    const reset = notices(squatter.userId);
+    expect(reset.map((row) => row.kind)).toEqual(["google_reset"]);
+    const { googleResetParts } = await import("../server/access/notices");
+    expect(googleResetParts(reset[0]!.count!)).toEqual(["signed-in sessions", "the password"]);
+    // The bell line lists what went, never a title or an address.
+    const bell = await (await fetch(`${origin}/api/auth/me`, { headers: { Cookie: (await googleSignIn(workspace(squatter.email))).session! } })).json() as { csrfToken: string };
+    expect(bell.csrfToken).toBeTruthy();
+
+    // Linked by Google; the admin unlinks (the person keeps the password), then allows re-linking.
+    const linked = await createUser("Bell unlink");
+    verify(linked);
+    expect((await googleSignIn(workspace(linked.email))).session).toBeTruthy();
+    expect((await request(`/team/${linked.userId}/google`, { method: "DELETE", body: JSON.stringify({ password: admin.password }) }, admin)).status).toBe(200);
+    expect((await googleSignIn(workspace(linked.email))).session).toBeTruthy();
+    expect((await allow(linked)).status).toBe(200);
+    expect((await googleSignIn(workspace(linked.email))).session).toBeTruthy();
+    expect(notices(linked.userId).map((row) => row.kind)).toEqual(["google_unlinked", "google_relink_allowed", "google_relinked"]);
+    const relinked = notices(linked.userId).at(-1)!;
+    expect(relinked.actor_id).toBeNull();
+    expect(googleResetParts(relinked.count!)).toEqual(["signed-in sessions", "the password"]);
+
+    // Team → Access activity lists the Google actions under their own category.
+    const activity = await (await request(`/team/activity?action=accounts&user=${linked.userId}`, {}, admin)).json() as { events: Array<{ action: string }> };
+    expect(activity.events.map((event) => event.action)).toEqual(expect.arrayContaining(["account.google_unlinked", "account.google_allowed", "account.google_relinked"]));
+  });
+
+  test("S1: a completed re-link ends the previous holder's sessions, keys, feeds, and reset links; content and shares stay", async () => {
+    const admin = await adminUser();
+    const person = await createUser("Relink revokes");
+    const friend = await createUser("Relink friend");
+    verify(person);
+    const oldGoogle = workspace(person.email);
+    const oldSession = (await googleSignIn(oldGoogle)).session!;
+    expect(oldSession).toBeTruthy();
+    const key = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "old holder", scopes: ["notes:read"], password: person.password }) }, person);
+    expect(key.status).toBe(201);
+    const calendar = await (await request("/calendars", { method: "POST", body: JSON.stringify({ name: "Relink", color: "green" }) }, person)).json() as { calendar: { id: string } };
+    expect((await request(`/calendars/${calendar.calendar.id}/feeds`, { method: "POST", body: JSON.stringify({ detail: "busy" }) }, person)).status).toBe(201);
+    db.query("INSERT INTO auth_tokens (id, user_id, purpose, token_hash, email_at_issue, created_at, expires_at) VALUES (?, ?, 'password_reset', ?, ?, ?, ?)")
+      .run(crypto.randomUUID(), person.userId, "a".repeat(64), person.email, new Date().toISOString(), new Date(Date.now() + 3_600_000).toISOString());
+    const folder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(person.userId) as { id: string }).id;
+    expect((await request(`/folders/${folder}/sharing`, { method: "PUT", body: JSON.stringify({ visibility: "selected", userIds: [friend.userId] }) }, person)).status).toBe(200);
+    expect((await request("/notes", { method: "POST", body: JSON.stringify({ folderId: folder }) }, person)).ok).toBe(true);
+    const notesBefore = db.query("SELECT COUNT(*) AS count FROM notes WHERE owner_id = ?").get(person.userId) as { count: number };
+    expect(notesBefore.count).toBeGreaterThan(0);
+
+    const state = await (await request(`/team/${person.userId}/google`, {}, admin)).json() as { relinkPreview: Record<string, number> };
+    expect(state.relinkPreview).toMatchObject({ sessions: 2, keys: 1, feeds: 1, password: 1, twoFactor: 0 });
+    const allowed = await request(`/team/${person.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false, password: admin.password }) }, admin);
+    expect(await allowed.json()).toMatchObject({ relink: true, removeCredentials: true, relinkPreview: { sessions: 2, keys: 1, feeds: 1, password: 1 } });
+
+    const moved = await googleSignIn(workspace(person.email));
+    expect((await me(moved.session)).body.user.id).toBe(person.userId);
+    expect((await me(oldSession)).status).toBe(401);
+    expect((await me(person.cookie)).status).toBe(401);
+    expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").get(person.userId)).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM calendar_feeds WHERE user_id = ? AND revoked_at IS NULL").get(person.userId)).toEqual({ count: 0 });
+    expect(db.query("SELECT COUNT(*) AS count FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").get(person.userId)).toEqual({ count: 0 });
+    // Default on: the password is gone too.
+    expect(userRow(person.email)!.password_hash).toBe(UNUSABLE_PASSWORD);
+    expect((await passwordLogin(person.email, person.password)).status).toBe(401);
+    // Content and sharing stay.
+    expect(db.query("SELECT 1 FROM folder_shares WHERE folder_id = ? AND user_id = ?").get(folder, friend.userId)).not.toBeNull();
+    expect(db.query("SELECT COUNT(*) AS count FROM notes WHERE owner_id = ?").get(person.userId)).toEqual(notesBefore);
+    expect(audits(person.userId, "auth.google_relinked")).toBe(1);
+  });
+
+  test("S1: with the option off, a re-link keeps the password and two-factor (sessions still end)", async () => {
+    const admin = await adminUser();
+    const person = await createUser("Relink keeps");
+    verify(person);
+    const { secret } = await enableTotpFor(person);
+    const oldGoogle = workspace(person.email);
+    const first = await googleSignIn(oldGoogle);
+    const code = await fetch(`${origin}/api/auth/google/second-factor`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", Cookie: cookieOf(first.response, "nook_google_flow")! }, body: JSON.stringify({ totpCode: totpCodeAt(secret, totpCounter()) }) });
+    expect(code.status).toBe(200);
+    const allowed = await request(`/team/${person.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: false, removeCredentials: false, password: admin.password }) }, admin);
+    expect(await allowed.json()).toMatchObject({ relink: true, removeCredentials: false, relinkPreview: { password: 0, twoFactor: 0 } });
+    const moved = await googleSignIn(workspace(person.email));
+    // Two-factor is still on: the new Google account needs the Nook code.
+    expect(moved.location).toBe("/login#google=code");
+    expect((await me(person.cookie)).status).toBe(401);
+    const row = userRow(person.email)!;
+    expect(row.password_hash).not.toBe(UNUSABLE_PASSWORD);
+    expect(row.totp_enabled_at).not.toBeNull();
+    expect(row.google_relink_remove_credentials).toBeNull();
+  });
+
+  test("S2: an admin demoted in the last 24 hours cannot be reset on the web", async () => {
+    const admin = await adminUser();
+    const former = await adminUser();
+    const demoted = await request(`/team/${former.userId}/role`, { method: "PUT", body: JSON.stringify({ role: "member", expectedRole: "admin" }) }, admin);
+    expect(demoted.status).toBe(200);
+    expect(userRow(former.email)!.role).toBe("member");
+    const refused = await request(`/team/${former.userId}/google/allow`, { method: "POST", body: JSON.stringify({ reset: true, password: admin.password }) }, admin);
+    const body = await refused.json() as { code: string; error: string };
+    expect({ status: refused.status, code: body.code }).toEqual({ status: 403, code: "RESET_ADMIN" });
+    expect(body.error).toContain("in the last 24 hours");
+    const state = await (await request(`/team/${former.userId}/google`, {}, admin)).json() as { resetAllowed: boolean; resetRefusal: { code: string } | null };
+    expect(state).toMatchObject({ resetAllowed: false, resetRefusal: { code: "RESET_ADMIN" } });
+    // A day later (team_events is append-only, so the clock moves instead) it is an ordinary member again.
+    const { webResetRefusal } = await import("../server/google/linkAdmin");
+    const row = { id: former.userId, role: "member", email_verified_at: null };
+    expect(webResetRefusal(row)?.code).toBe("RESET_ADMIN");
+    expect(webResetRefusal(row, Date.now() + 25 * 3_600_000)).toBeNull();
+  });
 
   test("the host CLI allows (with reset) and unlinks", async () => {
     const person = await createUser("CLI person");
@@ -597,6 +710,39 @@ async function enableTotpFor(session: Session) {
 }
 
 describe("two-factor after Google (D296)", () => {
+  test("S7: the Nook code step shares the password sign-in buckets, per address and per email", async () => {
+    const limits = await import("../server/authLimits");
+    const savedHops = config.trustedProxyHops;
+    config.trustedProxyHops = 1;
+    limits.setClientLimitsForTests(true);
+    limits.resetSignInRateLimit();
+    try {
+      const person = await createUser("Shared buckets");
+      verify(person);
+      const { secret } = await enableTotpFor(person);
+      const identity = workspace(person.email);
+      const codeStep = async (from: string) => {
+        const started = await googleSignIn(identity);
+        expect(started.location).toBe("/login#google=code");
+        return fetch(`${origin}/api/auth/google/second-factor`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", "X-Forwarded-For": from, Cookie: cookieOf(started.response, "nook_google_flow")! }, body: JSON.stringify({ totpCode: "000000" }) });
+      };
+      const passwordFrom = (from: string, email: string) => fetch(`${origin}/api/auth/login`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", "X-Forwarded-For": from }, body: JSON.stringify({ email, password: "not the password" }) });
+      // One address used its 20 password attempts: its Google code step is refused too.
+      for (let index = 0; index < 20; index += 1) expect((await passwordFrom("198.51.100.77", spareEmail())).status).toBe(401);
+      const byAddress = await codeStep("198.51.100.77");
+      expect({ status: byAddress.status, code: (await byAddress.json() as { code: string }).code }).toEqual({ status: 429, code: "RATE_LIMITED" });
+      // The email's 10 attempts (password and code steps alike) are used up from elsewhere.
+      limits.resetSignInRateLimit();
+      for (let index = 0; index < 10; index += 1) expect((await passwordFrom(`203.0.113.${index + 60}`, person.email)).status).toBe(401);
+      expect((await codeStep("198.51.100.78")).status).toBe(429);
+      expect(totpCodeAt(secret, totpCounter())).toMatch(/^\d{6}$/);
+    } finally {
+      config.trustedProxyHops = savedHops;
+      limits.setClientLimitsForTests(false);
+      limits.resetSignInRateLimit();
+    }
+  });
+
   test("a TOTP account needs its code before a session exists; wrong codes end the flow at five", async () => {
     const person = await createUser("Google two-factor");
     verify(person);
@@ -759,7 +905,8 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2,
     };
     expect((await linkWith(identityFor(spareEmail()))).location).toBe("/settings/security#google-error=link_mismatch");
     // N3: a consumer Google account carrying a company address is not its owner.
-    expect((await linkWith(identityFor(person.email))).location).toBe("/settings/security#google-error=link_mismatch");
+    // Q1: the right address on an account Google does not vouch for says so, with the domain.
+    expect((await linkWith(identityFor(person.email))).location).toBe("/settings/security#google-error=link_not_authoritative&domain=example.test");
     const linked = await linkWith(workspace(person.email));
     expect(linked.location).toBe("/settings/security#google=linked");
     expect((await me(person.cookie)).status).toBe(200);
@@ -801,6 +948,26 @@ describe("review LOW fixes", () => {
     expect(live).toBe(50);
     const evicted = await fetch(fake.authorize(first.location, identityFor(spareEmail())), { redirect: "manual", headers: { Cookie: first.flowCookie! } });
     expect(evicted.headers.get("location")).toBe("/login#error=expired");
+  });
+
+  test("S5: eviction takes prepared flows first, then authorize ones, oldest first, and never a second-factor flow", async () => {
+    const { evictOldestFlows } = await import("../server/google/flows");
+    const client = "s5-client";
+    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const insert = (id: string, stage: string, minutesAgo: number) => db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, client_hash, created_at, expires_at)
+      VALUES (?, ?, 'n', 'v', 'signin', ?, '/', ?, ?, ?)`).run(id, crypto.randomUUID(), stage, client, at(minutesAgo), new Date(Date.now() + 600_000).toISOString());
+    insert("s5-factor-old", "second_factor", 9);
+    insert("s5-authorize-old", "authorize", 8);
+    insert("s5-prepared-new", "prepared", 1);
+    insert("s5-authorize-new", "authorize", 2);
+    insert("s5-prepared-old", "prepared", 7);
+    const live = () => (db.query("SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL ORDER BY id").all(client) as Array<{ id: string }>).map((row) => row.id);
+    expect(evictOldestFlows(client, 3)).toBe(1);
+    expect(live()).toEqual(["s5-authorize-new", "s5-authorize-old", "s5-factor-old", "s5-prepared-new"]);
+    expect(evictOldestFlows(client, 1)).toBe(2);
+    expect(live()).toEqual(["s5-authorize-new", "s5-factor-old"]);
+    expect(evictOldestFlows(client, 0)).toBe(1);
+    expect(live()).toEqual(["s5-factor-old"]);
   });
 
   test("L7: /api/about offers no password reset in google mode", async () => {

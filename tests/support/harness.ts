@@ -57,6 +57,9 @@ process.env.MIN_FREE_DISK_BYTES = "0";
 
 const serverModule = await import("../../server/index");
 export const serverOptions = serverModule.default;
+// Every test request comes from one address: the per-client sign-in, registration, and invite
+// buckets (S7) are covered in tests/authLimits.test.ts and off everywhere else.
+(await import("../../server/authLimits")).setClientLimitsForTests(false);
 export const { db } = await import("../../server/db");
 export const server = Bun.serve(serverOptions);
 

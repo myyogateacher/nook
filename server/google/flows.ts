@@ -53,15 +53,22 @@ type NewFlow = { intent: FlowIntent; stage: FlowRow["stage"]; returnTo: string; 
  */
 export const LIVE_FLOWS_PER_CLIENT = 50;
 
-/** Marks the client's oldest unfinished flows used until at most `keep` remain. Returns how many went. */
+/**
+ * Marks the client's unfinished flows used until at most `keep` remain; returns how many went. S5:
+ * `prepared` flows (nothing sent to Google yet) go first, then `authorize` ones, oldest first; a
+ * `second_factor` flow (Google already said yes) is never evicted.
+ */
 export function evictOldestFlows(clientHash: string, keep: number, nowMs = Date.now()) {
   const at = new Date(nowMs).toISOString();
+  const live = (db.query(`SELECT COUNT(*) AS count FROM google_auth_flows
+    WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'`).get(clientHash, at) as { count: number }).count;
+  if (live <= keep) return 0;
   return db.query(`UPDATE google_auth_flows SET used_at = ? WHERE id IN (
-      SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ?
-      ORDER BY created_at DESC, rowid DESC LIMIT -1 OFFSET ?)`).run(at, clientHash, at, keep).changes;
+      SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'
+      ORDER BY CASE stage WHEN 'prepared' THEN 0 ELSE 1 END, created_at, rowid LIMIT ?)`).run(at, clientHash, at, live - keep).changes;
 }
 export function liveFlowsForClient(clientHash: string, nowMs = Date.now()) {
-  return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ?").get(clientHash, new Date(nowMs).toISOString()) as { count: number }).count;
+  return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'").get(clientHash, new Date(nowMs).toISOString()) as { count: number }).count;
 }
 
 /**

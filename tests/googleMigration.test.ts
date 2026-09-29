@@ -13,7 +13,7 @@ describe("migration 034 google_identities (Wave 35)", () => {
     expect(registeredMigrationIds).toContain(34);
     expect(columns(db, "google_identities")).toEqual(["id", "user_id", "subject", "email", "picture_url", "created_at", "last_login_at"]);
     expect(columns(db, "google_auth_flows")).toEqual(expect.arrayContaining(["session_id", "client_hash"]));
-    expect(columns(db, "users")).toEqual(expect.arrayContaining(["avatar_id", "google_link_allowed_until"]));
+    expect(columns(db, "users")).toEqual(expect.arrayContaining(["avatar_id", "google_link_allowed_until", "google_relink_remove_credentials", "google_last_refusal_at", "google_last_refusal_reason"]));
     expect(columns(db, "sessions")).toContain("reauth_at");
     const at = new Date().toISOString();
     db.query("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES ('u1', 'a@nook.test', 'A', ?, ?)").run(UNUSABLE_PASSWORD, at);
@@ -43,21 +43,6 @@ describe("migration 034 google_identities (Wave 35)", () => {
     expect(db.query("SELECT reauth_at FROM sessions WHERE id = 's1'").get()).toEqual({ reauth_at: null });
     // Running again changes nothing.
     runMigrations(db);
-    expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE id = 34").get()).toEqual({ count: 1 });
-  });
-});
-
-describe("migration 034 repair (review N7)", () => {
-  test("a database that recorded an earlier shape of 034 gets the missing columns at the next boot", () => {
-    const db = new Database(":memory:", { strict: true });
-    runMigrations(db);
-    // The first shape of 034 on this branch: no client_hash, no allowance or notice columns.
-    db.exec(`DROP INDEX google_auth_flows_client; ALTER TABLE google_auth_flows DROP COLUMN client_hash;
-      ALTER TABLE users DROP COLUMN google_link_allowed_until; ALTER TABLE users DROP COLUMN google_reset_notice_at; ALTER TABLE users DROP COLUMN google_reset_notice_json;`);
-    expect(columns(db, "google_auth_flows")).not.toContain("client_hash");
-    runMigrations(db);
-    expect(columns(db, "google_auth_flows")).toContain("client_hash");
-    expect(columns(db, "users")).toEqual(expect.arrayContaining(["google_link_allowed_until", "google_reset_notice_at", "google_reset_notice_json"]));
     expect(db.query("SELECT COUNT(*) AS count FROM schema_migrations WHERE id = 34").get()).toEqual({ count: 1 });
   });
 });

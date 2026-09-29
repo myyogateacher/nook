@@ -4,11 +4,6 @@ export type Migration = {
   id: number;
   name: string;
   up: (db: Database) => void;
-  /**
-   * Optional, idempotent: runs at every boot once the migration is recorded, for a migration whose
-   * shape changed before release (Wave 35's 034, review N7). Never used for released migrations.
-   */
-  repair?: (db: Database) => void;
 };
 
 export function addColumn(db: Database, table: string, column: string, definition: string) {

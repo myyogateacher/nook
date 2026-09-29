@@ -44,8 +44,8 @@ function apply034(db: Parameters<Migration["up"]>[0]) {
         used_at TEXT
       );
     `);
-    // Every column is added only when missing, so this also repairs a database that ran an earlier
-    // shape of 034 on the Wave 35 branch (review N7); production never ran 034 before release.
+    // Every column is added only when missing (S6: no boot-time repair; a scratch database that ran
+    // an earlier shape of 034 on the Wave 35 branch is recreated).
     addColumn(db, "google_auth_flows", "client_hash", "TEXT");
     db.exec(`
       CREATE INDEX IF NOT EXISTS google_auth_flows_expiry ON google_auth_flows(expires_at);
@@ -59,11 +59,15 @@ function apply034(db: Parameters<Migration["up"]>[0]) {
     // When an admin reset the account (N2c): shown once at the next sign-in, cleared when read.
     addColumn(db, "users", "google_reset_notice_at", "TEXT");
     addColumn(db, "users", "google_reset_notice_json", "TEXT");
+    // A re-linking allowance also removes the password and two-factor at the re-link (S1), 1 or 0.
+    addColumn(db, "users", "google_relink_remove_credentials", "INTEGER");
+    // The last Google sign-in that could not link this account, for the admin (Q1): when, and why.
+    addColumn(db, "users", "google_last_refusal_at", "TEXT");
+    addColumn(db, "users", "google_last_refusal_reason", "TEXT");
 }
 
 export const googleIdentitiesMigration: Migration = {
   id: 34,
   name: "google_identities",
-  up: apply034,
-  repair: apply034
+  up: apply034
 };

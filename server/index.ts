@@ -9,7 +9,7 @@ import { createAccount, RegistrationClosedError } from "./accounts";
 import { hashPassword, verifyPassword } from "./passwords";
 import { avatarUrlFor, registerAvatarRoute } from "./avatars";
 import { passwordMethodRefusal } from "./authMethods";
-import { rateLimited, resetRegistrationRateLimit } from "./authLimits";
+import { invitePreviewLimited, rateLimited, registerLimited, resetRegistrationRateLimit, signInLimited } from "./authLimits";
 import { registerGoogleAccountRoutes, registerGoogleRoutes } from "./google/routes";
 import { googleResetNotice } from "./google/linkAdmin";
 import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety, type AppEnv } from "./auth";
@@ -181,7 +181,7 @@ const inviteErrorResponse = (c: Context<AppEnv>, error: InviteError) => c.json({
  * the URL fragment, which browsers never send), and is never logged.
  */
 app.post("/api/auth/invite", async (c) => {
-  if (rateLimited("invite:global", 30)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+  if (invitePreviewLimited(c)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
   const body = await parseJson(c.req.raw, invitePreviewSchema);
   try {
     return c.json(previewInvite(body.token));
@@ -208,7 +208,7 @@ app.post("/api/auth/register", async (c) => {
   // D162: a valid invite bypasses ALLOW_REGISTRATION and nothing else.
   const inviteHash = body.inviteToken ? hashInviteToken(body.inviteToken) : null;
   if (!inviteHash && !config.allowRegistration && userCount > 0) return c.json({ error: "Registration is disabled" }, 403);
-  if (rateLimited("register:global", 10)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  if (registerLimited(c)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   if (!isEmailAllowed(body.email)) return c.json({ error: "This email is not allowed to create an account" }, 403);
   try {
     // Checked before the account lookup, so a made-up token cannot probe which emails exist.
@@ -247,7 +247,7 @@ app.post("/api/auth/login", async (c) => {
   const methodRefusal = passwordMethodRefusal(c);
   if (methodRefusal) return methodRefusal;
   const body = await parseJson(c.req.raw, loginSchema);
-  if (rateLimited(`login:${body.email}`) || rateLimited("login:global", 50)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
+  if (signInLimited(c, body.email)) return c.json({ error: "Too many attempts. Try again soon." }, 429);
   // Blocked accounts are looked up too, so the block can be explained, but only after the right
   // password and before any second factor is consumed (T85). The reason is never shown (O11).
   const user = isEmailAllowed(body.email)

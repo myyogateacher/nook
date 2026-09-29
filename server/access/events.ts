@@ -29,6 +29,7 @@ export type AccessAction =
   | "account.google_allowed"
   | "account.google_reset"
   | "account.google_unlinked"
+  | "account.google_relinked"
   // Central management (Wave 33, D268, D286): admin reductions, Reset access, and templates.
   | "access.share_removed"
   | "access.share_lowered"
@@ -78,14 +79,15 @@ export function keyEvents(keyId: string, limit = 20): AccessEventRow[] {
 // ------------------------------------------------------------------ Team → Access activity (Wave 33)
 
 /** The action families the activity view filters by (§C.6: person, group, key, and action). */
-export const ACTIVITY_CATEGORIES = ["keys", "groups", "items", "policies", "templates"] as const;
+export const ACTIVITY_CATEGORIES = ["keys", "groups", "items", "policies", "templates", "accounts"] as const;
 export type ActivityCategory = typeof ACTIVITY_CATEGORIES[number];
 const CATEGORY_SQL: Record<ActivityCategory, string> = {
   keys: "e.action LIKE 'key.%'",
   groups: "e.action LIKE 'group.%'",
   items: "(e.action LIKE 'item.%' OR e.action LIKE 'access.%')",
   policies: "e.action LIKE 'policy.%'",
-  templates: "e.action LIKE 'template.%'"
+  templates: "e.action LIKE 'template.%'",
+  accounts: "e.action LIKE 'account.%'"
 };
 export const ACTIVITY_PAGE = 50;
 

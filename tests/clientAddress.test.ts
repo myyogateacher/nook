@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 // server/config.ts reads the environment once for the whole run: the harness must set it first.
 import "./support/harness";
-const { clientAddress, normalizeIp } = await import("../server/clientAddress");
+const { addressBucket, clientAddress, forwardedWarningLogged, normalizeIp, resetForwardedWarning } = await import("../server/clientAddress");
 
 /**
  * TRUSTED_PROXY_HOPS (Wave 35 review N1): the client address for rate limits and audits. Requests go
@@ -40,12 +40,53 @@ describe("client address behind trusted proxies (N1b)", () => {
     expect(await addressFor(1, "")).toBe("unknown");
   });
 
-  test("IPv6 and IPv4-mapped forms are normalised", async () => {
-    expect(await addressFor(1, "2001:DB8::1")).toBe("2001:db8::1");
-    expect(await addressFor(1, "[2001:db8::2]")).toBe("2001:db8::2");
-    expect(await addressFor(1, "::ffff:192.0.2.7")).toBe("192.0.2.7");
-    expect(normalizeIp("::FFFF:10.1.2.3")).toBe("10.1.2.3");
+  test("S3: every spelling of one address is one canonical form", () => {
+    const pairs: Array<[string, string]> = [
+      ["2001:DB8::1", "2001:db8::1"],
+      ["2001:db8:0:0:0:0:0:1", "2001:db8::1"],
+      ["2001:0db8:0000:0000::0001", "2001:db8::1"],
+      ["[2001:db8::1]", "2001:db8::1"],
+      ["fe80::1%eth0", "fe80::1"],
+      ["[fe80::1%25eth0]", "fe80::1"],
+      ["2001:db8:0:0:1:0:0:1", "2001:db8::1:0:0:1"],
+      ["::ffff:192.0.2.7", "192.0.2.7"],
+      ["::FFFF:c000:0207", "192.0.2.7"],
+      ["0:0:0:0:0:ffff:192.0.2.7", "192.0.2.7"],
+      ["0000:0000:0000:0000:0000:FFFF:C000:0207", "192.0.2.7"],
+      ["::ffff:10.1.2.3", "10.1.2.3"]
+    ];
+    for (const [spelling, canonical] of pairs) expect([spelling, normalizeIp(spelling)]).toEqual([spelling, canonical]);
     expect(normalizeIp("999.1.1.1")).toBeNull();
+    expect(normalizeIp("not-an-address")).toBeNull();
+  });
+
+  test("S3: IPv6 counts by its /64; IPv4 by the address", async () => {
+    expect(addressBucket("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(addressBucket("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe("2001:db8:1:2::/64");
+    expect(addressBucket("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
+    expect(addressBucket("::ffff:192.0.2.7")).toBe("192.0.2.7");
+    expect(await addressFor(1, "2001:DB8::1")).toBe("2001:db8::/64");
+    expect(await addressFor(1, "[2001:db8::2]")).toBe("2001:db8::/64");
+    expect(await addressFor(1, "::ffff:192.0.2.7")).toBe("192.0.2.7");
+  });
+
+  test("S8: with hops 0, a forwarded request logs one warning per process, without the address", async () => {
+    resetForwardedWarning();
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.join(" ")); };
+    try {
+      await addressFor(0);
+      expect(forwardedWarningLogged()).toBe(false);
+      await addressFor(0, "203.0.113.9");
+      await addressFor(0, "198.51.100.1");
+      await addressFor(1, "203.0.113.9");
+    } finally {
+      console.warn = original;
+    }
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("TRUSTED_PROXY_HOPS is 0");
+    expect(warnings[0]).not.toContain("203.0.113.9");
   });
 
   test("TRUSTED_PROXY_HOPS is validated at startup (integer 0–5)", () => {

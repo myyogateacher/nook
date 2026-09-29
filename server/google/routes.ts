@@ -4,7 +4,7 @@ import { clientAddress } from "../clientAddress";
 import { z } from "zod";
 import { createSession, readSession, type AppEnv } from "../auth";
 import { createAccount, openRegistrationFor, RegistrationClosedError } from "../accounts";
-import { rateLimited } from "../authLimits";
+import { invitePreviewLimited, rateLimited, registerLimited, signInLimited } from "../authLimits";
 import { googleMethodRefusal } from "../authMethods";
 import { avatarUrlFor, clearAvatar, storeAvatarFromUrl } from "../avatars";
 import { config, isEmailAllowed, isOriginAllowed, passwordAuthEnabled } from "../config";
@@ -15,7 +15,7 @@ import { mailAccountEvent, mailPasswordChanged, mailTwoFactor } from "../mail/tr
 import { isUsablePasswordHash, UNUSABLE_PASSWORD } from "../passwords";
 import { consumeRecoveryCode, consumeTotp, googleReauthUntil, reauthMethod, verifyReauth } from "../reauth";
 import { can } from "../team/roles";
-import { dismissGoogleResetNotice, allowGoogleLink, checkAllowGoogleLink, checkUnlinkGoogle, consumeGoogleLinkAllowance, googleAdminState, googleResetPreview, GoogleLinkError, unlinkGoogleForAccount } from "./linkAdmin";
+import { dismissGoogleResetNotice, allowGoogleLink, checkAllowGoogleLink, checkUnlinkGoogle, completeRelink, consumeGoogleLinkAllowance, emailDomain, googleAdminState, googleResetPreview, GoogleLinkError, hasGoogleLinkAllowance, recordGoogleRefusal, relinkRemovesCredentials, unlinkGoogleForAccount } from "./linkAdmin";
 import { hashInviteToken, InviteError, previewInvite, previewInviteHash } from "../team/invites";
 import { invitePreviewSchema, parseJson, recoveryCode, totpCode, uuid } from "../validation";
 import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, evictOldestFlows, LIVE_FLOWS_PER_CLIENT, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
@@ -48,7 +48,9 @@ const safeEqual = (left: string, right: string) => left.length === right.length 
 const toLogin = (c: Context, fragment: string) => c.redirect(`/login#${fragment}`, 303);
 
 /** Where a flow's failure goes: back to Settings for link and reauth, else the sign-in page. */
-function failTo(c: Context, flow: Pick<FlowRow, "intent" | "return_to" | "invite_hash"> | null, code: string) {
+function failTo(c: Context, flow: Pick<FlowRow, "intent" | "return_to" | "invite_hash"> | null, code: string, domain?: string) {
+  // Q1: `link_not_authoritative` names the address's domain, so the page can say which Google account works.
+  if (domain) code = `${code}&domain=${encodeURIComponent(domain)}`;
   if (flow && (flow.intent === "link" || flow.intent === "reauth")) return c.redirect(`${flow.return_to}#google-error=${code}`, 303);
   // QA U8: an invite that is still good goes back to the invite page with the message; its hash is
   // prepared again server side (the token never enters a URL), so another Google account can be tried.
@@ -218,7 +220,11 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       const user = flow.user_id ? userById(flow.user_id) : null;
       if (!user || user.disabled_at !== null) return failTo(c, flow, "expired");
       // N3: the Google account must be the address's owner too (authoritative), not only carry it.
-      if (user.email.toLowerCase() !== claims.email || !googleAuthoritative(claims)) return failTo(c, flow, "link_mismatch");
+      if (user.email.toLowerCase() !== claims.email) return failTo(c, flow, "link_mismatch");
+      if (!googleAuthoritative(claims)) {
+        recordGoogleRefusal(user.id, "link_not_authoritative");
+        return failTo(c, flow, "link_not_authoritative", emailDomain(user.email));
+      }
       const bySub = identityBySub(claims.sub);
       if ((bySub && bySub.user_id !== user.id) || (!bySub && identityOfUser(user.id))) return failTo(c, flow, "already_linked");
       const identityId = bySub?.id ?? linkIdentity(user, claims, "settings");
@@ -249,14 +255,22 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
         // A different Google account already holds this Nook account (for example a recreated Google
         // account). An admin's re-linking allowance (N5) lets this authoritative sign-in replace it.
         const held = identityOfUser(existing.id);
+        const authoritative = googleAuthoritative(claims);
+        if (existing.disabled_at === null && !authoritative && hasGoogleLinkAllowance(existing.id)) {
+          // Q1: an admin allowed this link, but Google does not say this Google account owns the
+          // address; the allowance stays for a sign-in with the right account.
+          recordGoogleRefusal(existing.id, "link_not_authoritative");
+          audit(existing.id, null, "auth.google_link_required", { authoritative });
+          return failTo(c, flow, "link_not_authoritative", emailDomain(existing.email));
+        }
         if (held) {
-          if (existing.disabled_at !== null || !googleAuthoritative(claims) || !consumeGoogleLinkAllowance(existing.id)) return failTo(c, flow, existing.disabled_at !== null ? "blocked" : "already_linked");
-          db.transaction(() => {
-            db.query("UPDATE google_identities SET subject = ?, email = ?, picture_url = NULL, last_login_at = ? WHERE id = ?").run(claims.sub, claims.email, now(), held.id);
-            mailPasswordChanged(existing.id, "google_linked");
-            audit(existing.id, null, "auth.google_relinked");
-          })();
-          kickMailDispatch();
+          if (existing.disabled_at !== null) return failTo(c, flow, "blocked");
+          if (!authoritative || !consumeGoogleLinkAllowance(existing.id)) {
+            recordGoogleRefusal(existing.id, "already_linked");
+            return failTo(c, flow, "already_linked");
+          }
+          // S1: the new Google account takes over, and whatever the previous holder could still use goes.
+          completeRelink(existing.id, held.id, { sub: claims.sub, email: claims.email }, relinkRemovesCredentials(existing.id));
         }
         if (existing.disabled_at !== null) {
           audit(existing.id, null, "auth.login_blocked", { via: "google" });
@@ -268,13 +282,13 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
         // HIGH-1, MEDIUM-1: never link by email to an address Nook has not verified, or one Google is
         // not authoritative for, and never reset anything here. An admin's allowance (Team or the
         // host CLI) or a signed-in link from Settings is the way forward.
-        const authoritative = googleAuthoritative(claims);
         if (authoritative && consumeGoogleLinkAllowance(existing.id)) {
           linkIdentity(existing, claims, "allowance");
         } else if (authoritative && existing.email_verified_at !== null) {
           linkIdentity(existing, claims, "signin");
         } else {
           audit(existing.id, null, "auth.google_link_required", { authoritative });
+          recordGoogleRefusal(existing.id, "link_required");
           return failTo(c, flow, "link_required");
         }
         user = userById(existing.id);
@@ -282,7 +296,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       } else {
         const inviteHash = flow.intent === "invite" ? flow.invite_hash : null;
         if (!inviteHash && !openRegistrationFor()) return failTo(c, flow, "signup_closed");
-        if (rateLimited("register:global", 10)) return failTo(c, flow, "rate_limited");
+        if (registerLimited(c)) return failTo(c, flow, "rate_limited");
         try {
           const account = createAccount({
             email: claims.email,
@@ -316,7 +330,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
     refreshPicture(user.id, identity.id, created ? null : identity.picture_url, claims.picture);
     if (user.totp_enabled_at) {
       // D296: Google is one factor; the session waits for the Nook code.
-      createFlow(c, { intent: flow.intent, stage: "second_factor", returnTo: flow.return_to, userId: user.id, ttlMs: SECOND_FACTOR_TTL_MS });
+      createFlow(c, { intent: flow.intent, stage: "second_factor", returnTo: flow.return_to, userId: user.id, ttlMs: SECOND_FACTOR_TTL_MS, clientHash: sha256Hex(`google-client:${clientAddress(c)}`) });
       return toLogin(c, "google=code");
     }
     await createSession(c, user.id);
@@ -339,7 +353,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
     const user = userById(flow.user_id);
     if (!user) return expired();
     // The same buckets as password sign-in (D296).
-    if (rateLimited(`login:${user.email}`) || rateLimited("login:global", 50)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (signInLimited(c, user.email)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     if (user.disabled_at !== null) {
       claimFlow(flow.id);
       clearFlowCookie(c);
@@ -401,7 +415,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
     if (off) return off;
     const refusal = publicPostRefusal(c);
     if (refusal) return refusal;
-    if (rateLimited("invite:global", 30)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
+    if (invitePreviewLimited(c)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
     const body = await parseJson(c.req.raw, invitePreviewSchema);
     try {
       previewInvite(body.token);
@@ -481,6 +495,8 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
       // N4: the same security mail as an admin or CLI unlink.
       mailAccountEvent(user.id, "google_unlinked_self", null);
     })();
+    // S9: send it now, as the admin and CLI unlinks do.
+    kickMailDispatch();
     await clearAvatar(user.id);
     return c.json({ ok: true });
   });
@@ -534,7 +550,7 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
       // N2a: the acting admin re-authenticates in this request, as for API keys.
       const reauth = await adminReauth(c, body, "google_allow");
       if (reauth) return reauth;
-      return c.json(allowGoogleLink(actor, targetId, { reset: body.reset, via: "web" }));
+      return c.json(allowGoogleLink(actor, targetId, { reset: body.reset, via: "web", removeCredentials: body.removeCredentials }));
     } catch (error) {
       return linkError(c, error);
     }
@@ -559,5 +575,6 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
 
 const reauthBodySchema = z.object({ password: z.string().min(1).max(256).optional(), totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
   .refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
-const allowSchema = z.object({ reset: z.boolean(), password: z.string().min(1).max(256).optional(), totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
+// S1: `removeCredentials` (re-linking only, default true) also removes the password and two-factor at the re-link.
+const allowSchema = z.object({ reset: z.boolean(), removeCredentials: z.boolean().optional(), password: z.string().min(1).max(256).optional(), totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
   .refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");

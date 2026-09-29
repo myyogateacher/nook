@@ -1,4 +1,5 @@
 import { recordAccessEvent, type AccessVia } from "../access/events";
+import { googleResetMask, notifyAccess } from "../access/notices";
 import { SHARE_TABLES } from "../access/shares";
 import { revokeOwnKey } from "../apiKeys";
 import { clearAvatar } from "../avatars";
@@ -7,7 +8,7 @@ import { passwordAuthEnabled } from "../config";
 import { audit, db, now } from "../db";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { kickMailDispatch } from "../mail/dispatcher";
-import { mailAccountEvent } from "../mail/triggers";
+import { mailAccountEvent, mailPasswordChanged } from "../mail/triggers";
 import { bumpUnsubscribeEpoch } from "../mail/unsubscribe";
 import { isUsablePasswordHash, UNUSABLE_PASSWORD } from "../passwords";
 
@@ -61,27 +62,25 @@ export type ResetCounts = {
   twoFactor: number;
 };
 
-type Target = { id: string; email: string; role: string; password_hash: string; totp_enabled_at: string | null; disabled_at: string | null; google_link_allowed_until: string | null; email_verified_at: string | null };
-const targetRow = (userId: string) => db.query("SELECT id, email, role, password_hash, totp_enabled_at, disabled_at, google_link_allowed_until, email_verified_at FROM users WHERE id = ?").get(userId) as Target | null;
+type Target = { id: string; email: string; role: string; password_hash: string; totp_enabled_at: string | null; disabled_at: string | null; google_link_allowed_until: string | null; email_verified_at: string | null; google_last_refusal_at: string | null; google_last_refusal_reason: string | null };
+const targetRow = (userId: string) => db.query("SELECT id, email, role, password_hash, totp_enabled_at, disabled_at, google_link_allowed_until, email_verified_at, google_last_refusal_at, google_last_refusal_reason FROM users WHERE id = ?").get(userId) as Target | null;
 
 /**
  * Why the web may not reset this account (N2b), or null: a verified address means Nook knows the
  * account's owner, and an admin's reset of another admin is a takeover path. The host CLI may.
  */
-export function webResetRefusal(target: Pick<Target, "email_verified_at" | "role">): GoogleLinkError | null {
+export function webResetRefusal(target: Pick<Target, "id" | "email_verified_at" | "role">, nowMs = Date.now()): GoogleLinkError | null {
   if (target.role === "admin") return new GoogleLinkError(403, "RESET_ADMIN", "Admin accounts cannot be reset here. Use the host command line if you must.");
+  // S2: demoting first does not get around it: an account that was an admin in the last 24 hours
+  // (its role changed away from admin) is treated as an admin.
+  const since = new Date(nowMs - 24 * 3_600_000).toISOString();
+  if (db.query("SELECT 1 FROM team_events WHERE target_user_id = ? AND action = 'role_change' AND from_role = 'admin' AND created_at > ?").get(target.id, since)) {
+    return new GoogleLinkError(403, "RESET_ADMIN", "This account was an admin in the last 24 hours, so it cannot be reset here. Use the host command line if you must.");
+  }
   if (target.email_verified_at !== null) return new GoogleLinkError(409, "RESET_VERIFIED", "This account's address is verified, so its owner is known: allow Google sign-in without a reset.");
   return null;
 }
 
-/**
- * Wave 33 hook (N2c): once `access_notices` (migration 032) and `notifyAccess` are on main, call
- * `notifyAccess(userId, { kind: "google_reset", counts })` here so the member also sees the reset in
- * the bell. Until then the one-time sign-in notice (users.google_reset_notice_*) carries it.
- */
-function notifyAccessAfterReset(_userId: string, _counts: ResetCounts) {
-  // TODO(Wave 33): notifyAccess(_userId, { kind: "google_reset", counts: _counts });
-}
 
 /** Test hook (N6): throws after the reset and before the allowance, inside the one transaction. */
 let failAfterReset = false;
@@ -156,7 +155,8 @@ export function resetAccountForGoogle(userId: string, actor: Actor, via: AccessV
     mailAccountEvent(userId, "google_reset", actor?.id ?? null, { ...counts });
     // N2c: shown once at the member's next sign-in, dismissed when read.
     db.query("UPDATE users SET google_reset_notice_at = ?, google_reset_notice_json = ? WHERE id = ?").run(at, JSON.stringify(counts), userId);
-    notifyAccessAfterReset(userId, counts);
+    // Section 2: the bell too (Wave 33), with what was removed as a bitmask.
+    notifyAccess({ userId, kind: "google_reset", actorId: actor?.id ?? null, count: googleResetMask(counts) }, at);
   })();
   kickMailDispatch();
   return counts;
@@ -183,28 +183,95 @@ export function checkAllowGoogleLink(actor: Actor, targetId: string, options: { 
   return { relink };
 }
 
-export function allowGoogleLink(actor: Actor, targetId: string, options: { reset: boolean; via: AccessVia }) {
+export function allowGoogleLink(actor: Actor, targetId: string, options: { reset: boolean; via: AccessVia; removeCredentials?: boolean }) {
   const { relink } = checkAllowGoogleLink(actor, targetId, options);
+  // S1: a re-link revokes sessions, keys, feeds, and reset links; by default it also removes the
+  // password and two-factor, which the previous holder may know.
+  const removeCredentials = relink ? options.removeCredentials !== false : false;
   const until = new Date(Date.now() + GOOGLE_LINK_ALLOWANCE_MS).toISOString();
   // N6: the reset and the allowance commit together, or neither does.
   const reset = db.transaction(() => {
     const counts = options.reset ? resetAccountForGoogle(targetId, actor, options.via) : null;
     if (failAfterReset) throw new Error("Injected failure after the reset (test)");
-    db.query("UPDATE users SET google_link_allowed_until = ? WHERE id = ?").run(until, targetId);
-    audit(actor?.id ?? null, null, "team.google_link_allowed", { targetId, via: options.via, reset: Boolean(counts), relink });
-    recordAccessEvent({ actorId: actor?.id ?? null, via: options.via, action: "account.google_allowed", targetUserId: targetId, meta: { reset: Boolean(counts), relink } });
-    // The reset mails its own summary.
-    if (!counts) mailAccountEvent(targetId, "google_allowed", actor?.id ?? null);
+    db.query("UPDATE users SET google_link_allowed_until = ?, google_relink_remove_credentials = ? WHERE id = ?").run(until, relink ? (removeCredentials ? 1 : 0) : null, targetId);
+    audit(actor?.id ?? null, null, "team.google_link_allowed", { targetId, via: options.via, reset: Boolean(counts), relink, removeCredentials });
+    recordAccessEvent({ actorId: actor?.id ?? null, via: options.via, action: "account.google_allowed", targetUserId: targetId, meta: { reset: Boolean(counts), relink, removeCredentials } });
+    // The reset mails and notifies its own summary.
+    if (!counts) {
+      mailAccountEvent(targetId, "google_allowed", actor?.id ?? null);
+      notifyAccess({ userId: targetId, kind: relink ? "google_relink_allowed" : "google_allowed", actorId: actor?.id ?? null });
+    }
     return counts;
   })();
   kickMailDispatch();
-  return { allowedUntil: until, reset, relink };
+  return { allowedUntil: until, reset, relink, removeCredentials, relinkPreview: relink ? relinkPreview(targetId, removeCredentials) : null };
+}
+
+export type RelinkCounts = { sessions: number; keys: number; feeds: number; password: number; twoFactor: number };
+
+/** What a completed re-link removes (S1): shown before the admin confirms, and in the result. */
+export function relinkPreview(userId: string, removeCredentials: boolean): RelinkCounts {
+  const user = targetRow(userId);
+  return {
+    sessions: count("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?", userId),
+    keys: count("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL", userId),
+    feeds: count("SELECT COUNT(*) AS count FROM calendar_feeds WHERE user_id = ? AND revoked_at IS NULL", userId),
+    password: removeCredentials && user && isUsablePasswordHash(user.password_hash) ? 1 : 0,
+    twoFactor: removeCredentials && user?.totp_enabled_at ? 1 : 0
+  };
+}
+
+/**
+ * Completes a re-link (N5, S1): the new Google account takes over the identity, and whatever the
+ * previous holder could still use goes: sessions, push subscriptions, Google confirmations, API keys,
+ * calendar feeds, and reset links, plus the password and two-factor when the admin chose so. The
+ * account's content and sharing stay. One transaction; call after the allowance was consumed.
+ */
+export function completeRelink(userId: string, identityId: string, google: { sub: string; email: string }, removeCredentials: boolean) {
+  const counts = relinkPreview(userId, removeCredentials);
+  db.transaction(() => {
+    const at = now();
+    db.query("UPDATE google_identities SET subject = ?, email = ?, picture_url = NULL, last_login_at = ? WHERE id = ?").run(google.sub, google.email, at, identityId);
+    db.query("DELETE FROM sessions WHERE user_id = ?").run(userId);
+    revokeUserPushSubscriptions(userId, "google_relinked");
+    for (const { id } of db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>) revokeOwnKey(userId, id);
+    db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(at, userId);
+    db.query("DELETE FROM auth_tokens WHERE user_id = ? AND purpose = 'password_reset' AND used_at IS NULL").run(userId);
+    if (removeCredentials) {
+      db.query(`UPDATE users SET password_hash = ?, totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL
+        WHERE id = ?`).run(UNUSABLE_PASSWORD, userId);
+    }
+    db.query("UPDATE users SET google_relink_remove_credentials = NULL WHERE id = ?").run(userId);
+    bumpUnsubscribeEpoch(userId);
+    audit(userId, null, "auth.google_relinked", { ...counts });
+    recordAccessEvent({ actorId: null, via: "web", action: "account.google_relinked", targetUserId: userId, meta: { ...counts } }, at);
+    mailPasswordChanged(userId, "google_linked");
+    notifyAccess({ userId, kind: "google_relinked", actorId: null, count: googleResetMask(counts) }, at);
+  })();
+  kickMailDispatch();
+  return counts;
+}
+
+/** Whether this re-link also removes the password and two-factor (the admin's choice, S1). */
+export const relinkRemovesCredentials = (userId: string) =>
+  ((db.query("SELECT google_relink_remove_credentials AS flag FROM users WHERE id = ?").get(userId) as { flag: number | null } | null)?.flag ?? 1) === 1;
+
+/** Q1: remembers the last Google sign-in that could not link this account (time and reason code only). */
+export function recordGoogleRefusal(userId: string, reason: string) {
+  db.query("UPDATE users SET google_last_refusal_at = ?, google_last_refusal_reason = ? WHERE id = ?").run(now(), reason, userId);
 }
 
 /**
  * Consumes a live allowance for `userId` (one guarded UPDATE). True when this sign-in may link. A
  * blocked account's allowance is never used (the caller refuses blocked accounts first).
  */
+/** Whether a live allowance waits for this account (without spending it). */
+export function hasGoogleLinkAllowance(userId: string, nowMs = Date.now()) {
+  return db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL AND google_link_allowed_until > ?").get(userId, new Date(nowMs).toISOString()) !== null;
+}
+
+export const emailDomain = (email: string) => email.slice(email.lastIndexOf("@") + 1).toLowerCase();
+
 export function consumeGoogleLinkAllowance(userId: string, nowMs = Date.now()) {
   const at = new Date(nowMs).toISOString();
   return db.query("UPDATE users SET google_link_allowed_until = NULL WHERE id = ? AND disabled_at IS NULL AND google_link_allowed_until IS NOT NULL AND google_link_allowed_until > ?").run(userId, at).changes === 1;
@@ -244,6 +311,7 @@ export async function unlinkGoogleForAccount(actor: Actor, targetId: string, via
     audit(actor?.id ?? null, null, "team.google_unlinked", { targetId, via });
     recordAccessEvent({ actorId: actor?.id ?? null, via, action: "account.google_unlinked", targetUserId: targetId });
     mailAccountEvent(targetId, "google_unlinked", actor?.id ?? null);
+    notifyAccess({ userId: targetId, kind: "google_unlinked", actorId: actor?.id ?? null });
   })();
   kickMailDispatch();
   await clearAvatar(targetId);
@@ -281,6 +349,13 @@ export function googleAdminState(targetId: string) {
     hasPassword: isUsablePasswordHash(user.password_hash),
     /** Whether the web offers "Reset this account first", and why not (N2b). */
     resetAllowed: !identity && refusal === null,
-    resetRefusal: refusal ? { code: refusal.code, message: refusal.message } : null
+    resetRefusal: refusal ? { code: refusal.code, message: refusal.message } : null,
+    /** Q1: the last Google sign-in that could not link this account, and why (a reason code). */
+    lastRefusal: user.google_last_refusal_at ? { at: user.google_last_refusal_at, reason: user.google_last_refusal_reason } : null,
+    /** The address's domain, so the dialog can say which Google accounts can link. */
+    domain: emailDomain(user.email),
+    /** S1: what a re-link would remove, with and without the password and two-factor. */
+    relinkPreview: identity ? relinkPreview(targetId, true) : null,
+    hasTwoFactor: user.totp_enabled_at !== null
   };
 }

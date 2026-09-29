@@ -403,6 +403,36 @@ describe("review fixes (Wave 33)", () => {
     expect(keysReachingItem(owner.userId, "tasks", "board", id)).toBe(0);
   });
 
+  test("the order depends on the viewer and the person, so two people's pages never line up; the same page is stable (follow-up P1)", async () => {
+    const admin = await user("Order mix admin", "admin");
+    const first = await user("Order mix first");
+    const second = await user("Order mix second");
+    const at = new Date().toISOString();
+    // 20 folders of one owner (the admin, so the ids show on the admin page) shared with both people.
+    const ids: string[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const id = crypto.randomUUID();
+      ids.push(id);
+      db.query("INSERT INTO folders (id, owner_id, parent_id, name, is_default, visibility, created_at, updated_at) VALUES (?, ?, NULL, ?, 0, 'selected', ?, ?)").run(id, admin.userId, `Mixed ${index}`, at, at);
+      for (const person of [first, second]) db.query("INSERT INTO folder_shares (folder_id, user_id, created_at, level) VALUES (?, ?, ?, 'view')").run(id, person.userId, at);
+    }
+    const order = async (viewer: Session, path: string) => (await send(viewer, "GET", path)).body.items.map((item: { id: string }) => item.id) as string[];
+    const adminFirst = await order(admin, `/team/members/${first.userId}/access?kind=folder`);
+    const adminSecond = await order(admin, `/team/members/${second.userId}/access?kind=folder`);
+    const selfFirst = await order(first, "/me/access?kind=folder");
+    expect([...adminFirst].sort()).toEqual([...ids].sort());
+    expect([...adminSecond].sort()).toEqual([...ids].sort());
+    // 20 items: an equal order by chance is 1 in 20! (about 4e-19).
+    expect(adminSecond).not.toEqual(adminFirst);
+    expect(selfFirst).not.toEqual(adminFirst);
+    // Stable: the same page twice comes in the same order.
+    expect(await order(admin, `/team/members/${first.userId}/access?kind=folder`)).toEqual(adminFirst);
+    expect(await order(first, "/me/access?kind=folder")).toEqual(selfFirst);
+    // And the keys themselves differ per person and per viewer.
+    expect(itemSortKey(admin.userId, first.userId, ids[0]!)).not.toBe(itemSortKey(admin.userId, second.userId, ids[0]!));
+    expect(itemSortKey(first.userId, first.userId, ids[0]!)).not.toBe(itemSortKey(admin.userId, first.userId, ids[0]!));
+  });
+
   test("one row per item with every way the person reaches it, ordered by owner then a keyed hash, never by id (R3)", async () => {
     const admin = await user("Order admin", "admin");
     const zed = await user("Zed order owner");
@@ -421,7 +451,7 @@ describe("review fixes (Wave 33)", () => {
     expect(page.body.items).toHaveLength(5);
     // Amy's boards first, among themselves in keyed-hash order; then Zed's one row with both sources.
     expect(page.body.items.slice(0, 4).map((item: { owner: { displayName: string } }) => item.owner.displayName)).toEqual(Array(4).fill("Amy order owner"));
-    const expectedAmy = [...amyBoards].sort((left, right) => itemSortKey(left) < itemSortKey(right) ? -1 : 1);
+    const expectedAmy = [...amyBoards].sort((left, right) => itemSortKey(target.userId, target.userId, left) < itemSortKey(target.userId, target.userId, right) ? -1 : 1);
     const selfPage = await send(target, "GET", "/me/access?kind=board");
     expect(selfPage.body.items.slice(0, 4).map((item: { id: string }) => item.id)).toEqual(expectedAmy);
     const last = page.body.items[4];

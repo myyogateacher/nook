@@ -198,7 +198,7 @@ export function accessItems(viewerId: string, userId: string, kind: AccessKind, 
     .all({ userId, kind }) as GrantRow[];
   const byItem = new Map<string, { id: string; sort: PageCursor; grants: GrantRow[] }>();
   for (const row of rows) {
-    const entry = byItem.get(row.resource_id) ?? { id: row.resource_id, sort: { owner: row.owner_name.toLocaleLowerCase("en"), key: itemSortKey(row.resource_id) }, grants: [] };
+    const entry = byItem.get(row.resource_id) ?? { id: row.resource_id, sort: { owner: row.owner_name.toLocaleLowerCase("en"), key: itemSortKey(viewerId, userId, row.resource_id) }, grants: [] };
     entry.grants.push(row);
     byItem.set(row.resource_id, entry);
   }

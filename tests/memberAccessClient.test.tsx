@@ -118,6 +118,8 @@ describe("central access on the client", () => {
     expect(templateHint(template, "guest")).toBe(`They join Lobby when they register. Skipped for a guest: Ops. ${guestRefusalReason(["Ops"])}`);
     expect(templateHint({ ...template, groups: template.groups.map((group) => ({ ...group, guestRefused: false })) }, "guest")).toBe("They join Ops, Lobby when they register.");
     expect(templateLabel({ name: "Guests", groupCount: 2, edited: false, guestSkipped: ["Ops"] })).toBe("Template: Guests (2 groups). A guest skips Ops: sharing with guests is off and it is shared with items");
+    expect(templateLabel({ name: "Ops", groupCount: 1, deletedGroupCount: 1, edited: false })).toBe("Template: Ops (1 group; 1 was deleted since)");
+    expect(templateLabel({ name: "Ops", groupCount: 0, deletedGroupCount: 2, edited: true })).toBe("Template: Ops (as it was when invited: 0 groups; 2 were deleted since; edited since)");
   });
 
   test("the activity page offers Person, Group, Key, and Change filters with custom dropdowns (Q1)", async () => {

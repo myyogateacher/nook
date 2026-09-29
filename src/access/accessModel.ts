@@ -1,6 +1,6 @@
 import type { Option } from "../ui/Select";
 import { ROLE_LABELS, type Role } from "../team/teamRoles";
-import { LEVEL_LABELS, levelDescription, type AccessKind, type Level } from "./accessLevels";
+import { LEVEL_LABELS, levelDescription, levelRank, type AccessKind, type Level } from "./accessLevels";
 import type { AccessGroup, AccessPerson, AccessPutBody, Audience, ItemAccess, PickerGroup, PickerPerson } from "./accessApi";
 
 /**
@@ -8,14 +8,14 @@ import type { AccessGroup, AccessPerson, AccessPutBody, Audience, ItemAccess, Pi
  * saves. Kept apart from the component so tests/accessSheet.test.tsx can check it without a DOM.
  */
 
-export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean };
+export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean; groupIds?: string[] };
 export type DraftGroup = Pick<AccessGroup, "id" | "name" | "memberCount" | "guestCount" | "selfAddedCount" | "level">;
 export type Draft = { audience: Audience; audienceLevel: Level | null; people: DraftPerson[]; groups: DraftGroup[] };
 
 export const draftFrom = (access: ItemAccess): Draft => ({
   audience: access.audience,
   audienceLevel: access.audienceLevel ?? null,
-  people: access.people.map(({ id, displayName, teamRole, level, blocked }) => ({ id, displayName, teamRole, level, blocked })),
+  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}) })),
   groups: access.groups.map(({ id, name, memberCount, guestCount, selfAddedCount, level }) => ({ id, name, memberCount, guestCount, selfAddedCount, level }))
 });
 
@@ -112,6 +112,78 @@ export function saveBlocker(draft: Draft) {
 
 export function isDirty(draft: Draft, access: ItemAccess) {
   return JSON.stringify(toPutBody(draft, access)) !== JSON.stringify(toPutBody(draftFrom(access), access));
+}
+
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Rows kept from before sharing with guests was turned off (T213, not retroactive): a saved guest
+ * person or a saved group that includes a guest, while the policy is off. They save unchanged,
+ * lowered, or removed, but cannot be raised (400 GUEST_SHARE_DISABLED). Returns the saved level.
+ */
+export function keptGuestLevel(access: Pick<ItemAccess, "shareWithGuests" | "people" | "groups">, row: { type: "person" | "group"; id: string }): Level | null {
+  if (access.shareWithGuests) return null;
+  if (row.type === "person") {
+    const saved = access.people.find((person) => person.id === row.id);
+    return saved && saved.teamRole === "guest" ? saved.level : null;
+  }
+  const saved = access.groups.find((group) => group.id === row.id);
+  return saved && saved.guestCount > 0 ? saved.level : null;
+}
+
+/** The levels up to `max`: what a kept guest row may still be set to. */
+export const levelsUpTo = (levels: readonly Level[], max: Level) => levels.filter((level) => levelRank(level) <= levelRank(max));
+
+export const KEPT_GUEST_NOTE = "Kept from before guest sharing was turned off";
+export const KEPT_GUEST_REASON = "Can be lowered or removed, not raised";
+
+/**
+ * B9: the most a person also gets through a listed group, when it is more than their own row (the
+ * highest level wins, D266). Nothing for read-only Team roles: their role caps both (D71).
+ */
+export function groupBoost(person: DraftPerson, groups: readonly DraftGroup[]): { level: Level; group: string } | null {
+  if (roleCapHint(person.teamRole) || !person.groupIds?.length) return null;
+  let best: { level: Level; group: string } | null = null;
+  for (const group of groups) {
+    if (!person.groupIds.includes(group.id) || levelRank(group.level) <= levelRank(person.level)) continue;
+    if (!best || levelRank(group.level) > levelRank(best.level)) best = { level: group.level, group: group.name };
+  }
+  return best;
+}
+
+/**
+ * B3: saving another audience clears every person and group row (the stored model keeps rows only
+ * for "People and groups I choose"). How many saved rows would lose their access, or null when none.
+ */
+export function audienceLoss(draft: Pick<Draft, "audience">, access: Pick<ItemAccess, "audience" | "people" | "groups">) {
+  if (access.audience !== "selected" || draft.audience === "selected") return null;
+  const people = access.people.length;
+  const groups = access.groups.length;
+  return people || groups ? { people, groups } : null;
+}
+
+export function audienceLossMessage(loss: { people: number; groups: number }, audience: Audience) {
+  const who = [loss.people ? count(loss.people, "person", "people") : "", loss.groups ? count(loss.groups, "group", "groups") : ""].filter(Boolean).join(" and ");
+  const plural = loss.people + loss.groups > 1;
+  const next = audience === "private" ? "Only you will be able to open it."
+    : audience === "all_users" ? "Everyone signed in can open it instead, at the level you chose; their own levels are gone."
+    : "It will use its folder's access instead.";
+  return `${who} will lose the access you gave ${plural ? "them" : "it"} here. ${next} Choosing People and groups again later starts from an empty list.`;
+}
+
+/** The ids the server named in a 400 GUEST_SHARE_DISABLED, when it did. */
+export function guestRefusal(payload: unknown): { people: string[]; groups: string[] } | null {
+  const guests = payload && typeof payload === "object" ? (payload as { guests?: unknown }).guests : null;
+  if (!guests || typeof guests !== "object") return null;
+  const list = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const refused = { people: list((guests as { people?: unknown }).people), groups: list((guests as { groups?: unknown }).groups) };
+  return refused.people.length || refused.groups.length ? refused : null;
+}
+
+export function guestRefusalMessage(names: readonly string[]) {
+  if (!names.length) return accessErrorMessage("GUEST_SHARE_DISABLED", "");
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `Sharing with guests is turned off for this Nook, so ${list} cannot be added or given more access. Remove ${names.length === 1 ? "it" : "them"}, or set the level back.`;
 }
 
 /** The server's error codes as the sheet says them. */

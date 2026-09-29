@@ -59,6 +59,7 @@ Calendars with agenda and month views, repeating events, links to notes, cards, 
 - Admins block and unblock accounts, sign them out everywhere, and see activity. Admins never see anyone's private content.
 - New accounts get `SIGNUP_ROLE` (default `guest`). A host CLI (`server/team-admin.ts`) recovers from a lockout.
 - **Sign in with Google** (optional): `AUTH_METHODS=password|google|both` chooses the methods, enforced on the server. Google accounts are created automatically when registration would allow it (the first account, an invite, or open registration), `GOOGLE_ALLOWED_DOMAINS` limits them to your company domains, two-factor still applies, and Google profile pictures replace the letter avatars (downloaded and served by Nook itself). Setup: [docs/OPERATIONS.md](docs/OPERATIONS.md#google-sign-in).
+- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
 
 ### Everywhere
 

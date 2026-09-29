@@ -354,7 +354,7 @@ Plan of record: [research/2026-09-28-access-management-api-keys.md](research/202
 
 ### Google sign-in and avatars (Wave 35)
 
-Revised after the security review (2026-09-29): see WAVE_35_GOOGLE_SIGNIN.md §6. Rate limits (L4): per client first, generous global ceilings, at most 10 live flows per client; behind a reverse proxy every client shares the proxy's address (Nook has no trusted-proxy setting yet), so the per-client limits then act for the proxy as a whole.
+Revised after the security review (2026-09-29): see WAVE_35_GOOGLE_SIGNIN.md §6. Rate limits (L4, N1): per client address first (120 starts, 180 callbacks a minute), generous global ceilings, at most 50 live flows per address with the oldest evicted, never a refused start. `TRUSTED_PROXY_HOPS` selects the address from the right of `X-Forwarded-For` (rate limits and logs only). Admin Google actions re-authenticate the acting admin, and the web reset is limited to unverified non-admin accounts (N2).
 
 Plan of record: [WAVE_35_GOOGLE_SIGNIN.md](WAVE_35_GOOGLE_SIGNIN.md) (D289–D300).
 

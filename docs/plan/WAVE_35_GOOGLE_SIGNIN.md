@@ -41,7 +41,11 @@ CREATE TABLE google_auth_flows (
   failures INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
 ALTER TABLE users ADD COLUMN avatar_id TEXT;       -- UUID of DATA_DIR/avatars/<id>
 ALTER TABLE sessions ADD COLUMN reauth_at TEXT;    -- D297
-ALTER TABLE users ADD COLUMN google_link_allowed_until TEXT;  -- D293: an admin's one-time, 24-hour allowance
+ALTER TABLE users ADD COLUMN google_link_allowed_until TEXT;  -- D293: an admin's one-time, 24-hour allowance (link, or re-link)
+ALTER TABLE users ADD COLUMN google_reset_notice_at TEXT;      -- N2c: shown once after an admin reset
+ALTER TABLE users ADD COLUMN google_reset_notice_json TEXT;    -- N2c: what the reset removed (counts)
+-- Every column is added only when missing, and 034 re-applies itself at boot (Migration.repair) so a
+-- database that recorded an earlier shape on this branch is repaired (N7).
 ```
 
 The provider is implied by the table (one provider); a second provider would get its own table or a `provider` column then. One identity per account and one account per `sub`.
@@ -98,3 +102,16 @@ A local fake issuer (`tests/support/fakeGoogle.ts`: authorization, token, JWKS, 
 ## 7. End-user QA fixes (2026-09-29)
 
 U1 passwords-off notices on `/forgot-password` and `/reset-password`; U2 a placeholder until the methods are known; U3 Access sheet rows keep the picture; U4 the signed-in person's picture in headers, sidebar footers, and Settings, and comment authors' pictures (web payloads only; card activity, mentions, and the assignee picker's fresh picks still show letters); U5 the Google-only hint; U6 Google messages beside the Google button; U7 **Cancel and use another account** on the code step (`POST /api/auth/google/cancel`); U8 an invite that fails with the wrong Google account returns to the invite page with the invite kept server side (`GET /api/auth/google/invite`, fragment `google-error`); U9 no picture from Google removes the avatar; U10 unchanged generic password error; U11 Google confirmation before New key and Rotate (the two-factor forms already ask for it at the top of the card); U12 a richer fake issuer chooser (tests and local QA only; refused in production).
+
+## 8. Second security review (2026-09-29)
+
+| Finding | Fix |
+| --- | --- |
+| N1 (HIGH, availability: the live-flow cap refused everyone behind one proxy) | At 50 live flows per client address the oldest is evicted (it answers `expired`); a start is never refused for the count. Per client: 120 starts and 180 callbacks a minute; global 2000/3000. `TRUSTED_PROXY_HOPS` (0–5, default 0; the access plan's O-A7 brought forward) picks the N-th `X-Forwarded-For` entry from the right in one helper (`server/clientAddress.ts`) used by every address-keyed limit. |
+| N2 (MEDIUM: admin reset without re-authentication) | Allow, reset, and admin unlink re-authenticate the acting admin (password or Google where that is their method, plus TOTP). The web refuses a reset for verified accounts (`RESET_VERIFIED`) and admins (`RESET_ADMIN`); the CLI keeps the full power. The member gets a one-time notice at the next sign-in; a hook marks where Wave 33's `notifyAccess` goes. |
+| N3 | A Settings link needs a Google account authoritative for the address (`link_mismatch`). |
+| N4 | Self unlink sends `security.account` (`google_unlinked_self`). |
+| N5 | **Allow re-linking** on a linked account: the next authoritative Google sign-in with the same address replaces the identity's `sub` (24 h, single use); `NO_OTHER_SIGN_IN` points at it. |
+| N6 | The reset and the allowance commit in one transaction. |
+| N7 | 034 is idempotent and repairs itself at boot. |
+| N8 | OPERATIONS states the per-address limits, the proxy default, and the authoritative-account rule for Settings links. |

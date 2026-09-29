@@ -128,7 +128,7 @@ span.task-filter-chip-body { cursor: default; }
   .task-filter-date input, .task-filter-date .secondary-button, .task-filter-clear { min-height: 44px; }
   .task-filter-done { width: 44px; height: 44px; }
   .task-filter-text { min-height: 44px; min-width: 0; flex: 1 1 180px; }
-  .task-filter-text input { font-size: 1rem; }
+  .task-filter-text input { min-height: 40px; align-self: stretch; font-size: 1rem; }
 }
 
 /* Board calendar view (§4.5a): the shared grid (calendar.css) plus card chips and the tray. */

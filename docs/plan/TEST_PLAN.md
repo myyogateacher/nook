@@ -794,6 +794,10 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 - [x] `tests/historyDialogs.test.ts` (C2): the Due picker registers no history guard of its own; its `DropdownSurface` (popup or phone sheet) is the one layer.
 - [x] Browser (headless Chrome, 1280 × 800 and 390 × 844, a scratch instance; in-app /tasks → board, the board by URL in a fresh tab, and after a reload): Board settings → Share board, Back shows settings again, Back closes settings, Forward stays on the board, Back from a fresh tab then leaves to `about:blank`; a changed audience makes Back ask Discard / Keep editing, Back on it keeps editing, Discard returns to settings; the sheet's Close and Escape return to settings; Rename… then Back returns to settings. Due picker in a card: Back closes the picker once, the card stays. Calendars → Share: Back shows Calendars, Back closes it. `/team/policies` by URL with a change: Back asks and stays (C3).
 
+## Carry-overs after v0.13.0
+
+- [x] `tests/noNativeSelect.test.ts` and `tests/useConfirm.test.tsx` (C1, D91): no `window.confirm` or bare `confirm(` in `src/`; the unsaved API key (closing Settings by button, Escape, scrim, or Back; switching section; Manage team), disabling two-factor, replacing recovery codes, discarding a draft or a never-published note, Bin Delete forever and Empty Bin, and leaving Files during uploads ask in the app's confirm (`src/ui/useConfirm.tsx`): a history layer (Back is Cancel), Escape cancels, Enter confirms, focus returns to the opener. No `beforeunload` prompt: closing the tab is not guarded.
+
 ## Manual QA (§M), required at the W4 and W5 gates
 
 Run in desktop Chromium, desktop Firefox, a mobile viewport (DevTools device mode at 390×844), and at least one real phone browser over the LAN or Tailscale origin.

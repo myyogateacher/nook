@@ -26,8 +26,7 @@ test("the allowlist only names files that still have a native select", async () 
   }
 });
 
-// D91 (v0.13.0 QA, A3): no native prompt or alert anywhere in the client. The remaining
-// window.confirm calls are scheduled separately and are not checked here.
+// D91 (v0.13.0 QA, A3; C1 in v0.14): no native prompt, alert, or confirm anywhere in the client.
 test("no native prompt or alert in the client", async () => {
   const offenders: string[] = [];
   for await (const path of new Glob("**/*.{ts,tsx}").scan({ cwd: root })) {
@@ -37,6 +36,34 @@ test("no native prompt or alert in the client", async () => {
     });
   }
   expect(offenders).toEqual([]);
+});
+
+/** Offending lines for a native confirm in `source`; a bare `confirm(` counts unless the file defines its own `confirm`. */
+function nativeConfirmLines(source: string) {
+  const ownConfirm = /\b(function|const|let)\s+confirm\b/.test(source);
+  const lines: number[] = [];
+  source.split("\n").forEach((line, index) => {
+    if (/^\s*(\/\/|\/?\*)/.test(line)) return;
+    if (/\b(window|globalThis|self)\s*\.\s*confirm\b/.test(line) || (!ownConfirm && /(^|[^\w.$])confirm\(/.test(line))) lines.push(index + 1);
+  });
+  return lines;
+}
+
+test("no native confirm in the client (C1: every confirm is the app's own dialog)", async () => {
+  const offenders: string[] = [];
+  for await (const path of new Glob("**/*.{ts,tsx}").scan({ cwd: root })) {
+    const source = await Bun.file(join(root, path)).text();
+    for (const line of nativeConfirmLines(source)) offenders.push(`src/${path}:${line}`);
+  }
+  expect(offenders).toEqual([]);
+});
+
+test("the native confirm check catches window.confirm and a bare confirm, not a local confirm()", () => {
+  expect(nativeConfirmLines('if (!window.confirm("Leave?")) return;')).toEqual([1]);
+  expect(nativeConfirmLines('ok = globalThis.confirm("x");')).toEqual([1]);
+  expect(nativeConfirmLines('if (!confirm("Leave?")) return;')).toEqual([1]);
+  expect(nativeConfirmLines("async function confirm() {}\nvoid confirm();")).toEqual([]);
+  expect(nativeConfirmLines("await ask(unsavedKeyConfirm(\"close\"));\nonConfirm();")).toEqual([]);
 });
 
 test("Notes → New folder and Add link use the app's name dialog as a history layer (A3)", async () => {

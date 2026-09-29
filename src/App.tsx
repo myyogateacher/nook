@@ -75,6 +75,7 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
+import { useConfirm } from "./ui/useConfirm";
 import { NameDialog } from "./files/RenameDialog";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
@@ -240,14 +241,15 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
   const [mcpKeyPending, setMcpKeyPending] = useState(false);
   const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
+  const { ask, confirmOpen, confirmElement } = useConfirm();
 
-  const guardedClose = useCallback(() => {
-    if (mcpKeyPending && !window.confirm("This API key is shown only once. Close settings without saving it?")) return;
+  const guardedClose = useCallback(async () => {
+    if (mcpKeyPending && !await ask(unsavedKeyConfirm("close"))) return;
     onClose();
-  }, [mcpKeyPending, onClose]);
+  }, [ask, mcpKeyPending, onClose]);
 
-  function selectSection(next: SettingsSection) {
-    if (next !== "mcp" && mcpKeyPending && !window.confirm("This API key is shown only once. Leave this section without saving it?")) return;
+  async function selectSection(next: SettingsSection) {
+    if (next !== "mcp" && mcpKeyPending && !await ask(unsavedKeyConfirm("section"))) return;
     setSection(next);
     onSectionChange?.(next);
   }
@@ -272,11 +274,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   }, []);
 
   useEffect(() => {
-    if (state.setupRequired || nestedDialogOpen) return;
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") guardedClose(); };
+    if (state.setupRequired || nestedDialogOpen || confirmOpen) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) void guardedClose(); };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired, nestedDialogOpen]);
+  }, [guardedClose, state.setupRequired, nestedDialogOpen, confirmOpen]);
 
   useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
   // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
@@ -319,11 +321,12 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   async function disable(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!window.confirm("Disable two-factor authentication for this account?")) return;
+    // Read the form before the confirm: the event's target is gone once it has been answered.
+    const form = new FormData(event.currentTarget);
+    if (!await ask({ title: "Disable two-factor authentication?", message: "Signing in to this account will need only the password.", confirmLabel: "Disable", danger: true })) return;
     setBusy(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
       const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
       setState(next);
       onSecurityChanged(next);
@@ -357,11 +360,11 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   async function regenerateRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (recoveryCodes.length && !window.confirm("Generate new recovery codes? Every previous recovery code will stop working.")) return;
+    const form = new FormData(event.currentTarget);
+    if (recoveryCodes.length && !await ask({ title: "Generate new recovery codes?", message: "Every previous recovery code will stop working.", confirmLabel: "Generate new codes", danger: true })) return;
     setBusy(true);
     setError("");
     try {
-      const form = new FormData(event.currentTarget);
       const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ password: form.get("password"), code: form.get("code") }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
@@ -381,10 +384,10 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header className="settings-header">
         <div><span className="eyebrow">Account</span><h2 id="settings-title">Settings</h2></div>
-        {!state.setupRequired && <button className="icon-button" onClick={guardedClose} aria-label="Close settings"><X /></button>}
+        {!state.setupRequired && <button className="icon-button" onClick={() => { void guardedClose(); }} aria-label="Close settings"><X /></button>}
       </header>
       <div className="settings-body">
-        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => selectSection("security")}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => selectSection("modules")}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => selectSection("mcp")}><KeyRound />API keys</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => selectSection("notifications")}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => selectSection("about")}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { if (!mcpKeyPending || window.confirm("This API key is shown only once. Leave settings without saving it?")) onManageTeam(); }}><Users />Manage team</button>}</>}</nav>
+        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => { void selectSection("security"); }}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => { void selectSection("modules"); }}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => { void selectSection("mcp"); }}><KeyRound />API keys</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => { void selectSection("notifications"); }}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => { void selectSection("about"); }}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { void (async () => { if (!mcpKeyPending || await ask(unsavedKeyConfirm("leave"))) onManageTeam(); })(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
           {!state.setupRequired && <ChangePasswordCard totpEnabled={state.enabled} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
@@ -415,8 +418,22 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
           </div>}
         </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
       </div>
+      {confirmElement}
     </section>
   );
+}
+
+/**
+ * The confirm for leaving an API key that is shown only once (C1): closing Settings (button, Escape,
+ * scrim, Back), switching section, or "Manage team". Closing the browser tab is not guarded.
+ */
+export function unsavedKeyConfirm(action: "close" | "section" | "leave") {
+  return {
+    title: "Leave without saving the key?",
+    message: `This API key is shown only once. ${action === "section" ? "Leave this section" : action === "close" ? "Close Settings" : "Leave Settings"} without copying it? You would have to rotate or create a key again.`,
+    confirmLabel: action === "section" ? "Leave section" : action === "close" ? "Close without saving" : "Leave without saving",
+    danger: true
+  };
 }
 
 function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
@@ -570,6 +587,8 @@ export function App() {
   settingsOpenRef.current = settingsOpen;
   // True while Settings shows a new MCP key that is shown only once.
   const settingsPendingRef = useRef(false);
+  // The app's own confirms (C1): leaving Settings with an unsaved key, discarding a draft.
+  const appConfirm = useConfirm();
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
@@ -1145,7 +1164,13 @@ export function App() {
       : markdown.trim() === ""
         ? "Discard this empty note?"
         : `This note was never published. Move “${note.title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
-    if (!window.confirm(message)) return;
+    const confirmed = await appConfirm.ask({
+      title: !removesNote ? "Discard this draft?" : markdown.trim() === "" ? "Discard this empty note?" : "Move this note to the Bin?",
+      message,
+      confirmLabel: !removesNote ? "Discard draft" : markdown.trim() === "" ? "Discard" : "Move to Bin",
+      danger: true
+    });
+    if (!confirmed || switchingRef.current) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1439,9 +1464,16 @@ export function App() {
         return;
       }
       if (settingsOpenRef.current) {
-        if (settingsPendingRef.current && !window.confirm("This API key is shown only once. Close settings without saving it?")) {
+        if (settingsPendingRef.current) {
+          // Stay on Settings and ask; leaving repeats the move once the key no longer holds it.
+          const direction = dialogPopDirection(previousDepth, poppedDepth) ?? "back";
           historyDepthRef.current = previousDepth;
-          undoDialogPop(dialogPopDirection(previousDepth, poppedDepth) ?? "back");
+          undoDialogPop(direction);
+          void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => {
+            if (!leave || !settingsOpenRef.current) return;
+            settingsPendingRef.current = false;
+            window.history.go(direction === "back" ? -1 : 1);
+          });
           return;
         }
         settingsPendingRef.current = false;
@@ -1575,6 +1607,13 @@ export function App() {
     window.history.replaceState(rest, "", over);
   }
 
+  /** A click outside Settings: asks first while a new key is still on screen (C1). */
+  function requestCloseSettings() {
+    if (session?.totp.setupRequired) return;
+    if (!settingsPendingRef.current) return closeSettings();
+    void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => { if (leave && settingsOpenRef.current) closeSettings(); });
+  }
+
   function signOut() {
     logout().catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }
@@ -1689,7 +1728,7 @@ export function App() {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) closeSettings();
   }} />;
-  const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const toastStatus = <>{appConfirm.confirmElement}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
     <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
@@ -1721,7 +1760,7 @@ export function App() {
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}
-    {settingsOpen && <button className="panel-scrim" onClick={() => closeSettings()} aria-label="Close panel" />}
+    {settingsOpen && <button className="panel-scrim" onClick={requestCloseSettings} aria-label="Close panel" />}
     {toastStatus}
   </InboxNavContext.Provider></TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
@@ -1907,7 +1946,7 @@ export function App() {
       {settingsDialog}
       {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired
         ? <div className="panel-scrim" aria-hidden="true" />
-        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) closeSettings(); }} aria-label="Close panel" />)}
+        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) requestCloseSettings(); }} aria-label="Close panel" />)}
       {toastStatus}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>

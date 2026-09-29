@@ -4,6 +4,7 @@ import { ApiError } from "../api";
 import { AccountActions, AppPageName } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
 import { useDialogSentinel } from "../historyDialogs";
+import { useConfirm } from "../ui/useConfirm";
 import { relativeTime } from "../files/format";
 import type { BinItem } from "../types";
 import { deleteBinItem, emptyBin, listBin, restoreBinItem } from "./binApi";
@@ -66,6 +67,8 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   // Items whose Delete forever request failed or is still finishing. A 404 on the next
   // attempt then means the earlier one completed.
   const retriedDeletesRef = useRef(new Set<string>());
+  // Delete forever and Empty Bin ask in the app's own dialog, a history layer (C1).
+  const { ask, confirmElement } = useConfirm();
 
   const load = useCallback(async () => {
     const generation = ++loadGenerationRef.current;
@@ -141,8 +144,10 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   }
 
   async function deleteForever(item: BinItem) {
+    // From the item's sheet, focus goes back to the row's ⋯ button the sheet opened from.
+    const opener = sheetKey ? sheetReturnFocusRef.current : undefined;
     setSheetKey(null);
-    if (!window.confirm(deleteForeverConfirm(binItemLabel(item)))) return;
+    if (!await ask({ title: "Delete forever?", message: deleteForeverConfirm(binItemLabel(item)), confirmLabel: "Delete forever", danger: true, opener })) return;
     setItemPending(item, "delete");
     try {
       const result = await deleteBinItem(item);
@@ -179,7 +184,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
   }
 
   async function emptyAll() {
-    if (!all.length || !window.confirm(emptyBinConfirm(all.length))) return;
+    if (!all.length || !await ask({ title: "Empty the Bin?", message: emptyBinConfirm(all.length), confirmLabel: "Empty Bin", danger: true })) return;
     setEmptying(true);
     try {
       const result = await emptyBin();
@@ -287,5 +292,6 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
         <button onClick={closeSheet}>Cancel</button>
       </div>
     </>}
+    {confirmElement}
   </main>;
 }

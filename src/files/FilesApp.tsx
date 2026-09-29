@@ -6,6 +6,7 @@ import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useConfirm } from "../ui/useConfirm";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { HeaderInboxButton } from "../AppShell";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
@@ -259,6 +260,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   const selected = documents.find((item) => item.id === documentId) ?? (extraDocument?.id === documentId ? extraDocument : null);
   const folderTitle = folder === "all" ? "All files" : folder === "shared" ? "Shared with me" : currentFolder?.name ?? "Folder";
   const pendingUploads = queue.items.filter((item) => item.status === "queued" || item.status === "uploading").length;
+  const { ask: askLeave, confirmElement: leaveConfirm } = useConfirm();
   const summary = uploadQueueSummary(queue);
   const emptyCopy = filesEmptyState(folder === "all" ? { kind: "all" } : folder === "shared" ? { kind: "shared" } : { kind: "folder", name: currentFolder?.name ?? "this folder", owned: currentFolder?.is_owner === 1, ownerName: currentFolder?.owner_name ?? "Its owner" });
 
@@ -561,8 +563,14 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
     showPanel(fallback, true);
   }
 
-  function leaveFiles(action: () => void) {
-    if (pendingUploads && !window.confirm("Uploads still in progress will be canceled. Leave Files?")) return;
+  // Leaving Files in the app while uploads run asks first (C1). Closing the browser tab is not guarded.
+  async function leaveFiles(action: () => void) {
+    if (pendingUploads && !await askLeave({
+      title: "Leave Files?",
+      message: `${pendingUploads === 1 ? "An upload is" : `${pendingUploads} uploads are`} still in progress and will be canceled if you leave.`,
+      confirmLabel: "Leave and cancel",
+      danger: true
+    })) return;
     action();
   }
 
@@ -620,11 +628,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
   return <main className={`workspace files-workspace${collapsed ? " nav-collapsed" : ""}${selected ? " preview-open" : ""}`} data-mobile-panel={panel === "files" ? "notes" : panel === "preview" ? "editor" : "folders"}>
     <aside className="folder-pane" id="file-folders">
       <header className="sidebar-header">
-        <button className="sidebar-brand sidebar-home-button" onClick={() => leaveFiles(onHome)} aria-label="Open Nook home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
+        <button className="sidebar-brand sidebar-home-button" onClick={() => { void leaveFiles(onHome); }} aria-label="Open Nook home" title="Back to Home"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Files</strong></span></button>
         <button className="icon-button desktop-only" onClick={() => setCollapsed(true)} aria-label="Collapse folders sidebar" aria-controls="file-folders" aria-expanded={!collapsed} title="Collapse folders"><PanelLeftClose /></button>
       </header>
       <nav className="folder-nav" aria-label="File folders">
-        <button className="nav-home" onClick={() => leaveFiles(onHome)} title="Back to Home"><House /><span>Home</span></button>
+        <button className="nav-home" onClick={() => { void leaveFiles(onHome); }} title="Back to Home"><House /><span>Home</span></button>
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
         <div className="nav-label"><span>Folders</span>{canWrite && <button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
@@ -650,8 +658,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
           <strong>{displayName}</strong>
           <span><Settings />Settings</span>
         </button>
-        {onBin && <button className="footer-bin" onClick={() => leaveFiles(onBin)}><Trash2 />Bin</button>}
-        <button className="footer-signout" onClick={() => leaveFiles(onSignOut)}><LogOut />Sign out</button>
+        {onBin && <button className="footer-bin" onClick={() => { void leaveFiles(onBin); }}><Trash2 />Bin</button>}
+        <button className="footer-signout" onClick={() => { void leaveFiles(onSignOut); }}><LogOut />Sign out</button>
       </footer>
     </aside>
 
@@ -794,5 +802,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
       <button className={panel === "files" ? "active" : ""} onClick={() => showPanel("files")}><Files />Files</button>
       <button className={panel === "preview" ? "active" : ""} disabled={!selected} onClick={() => showPanel("preview")}><Sparkles />Preview</button>
     </nav>
+    {leaveConfirm}
   </main>;
 }

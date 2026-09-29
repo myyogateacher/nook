@@ -3,6 +3,9 @@ import { createUser, db, request, type Session } from "./support/harness";
 import { EVENT_CREATES_PER_MINUTE, listOccurrences, reconcileEventNextOccurrences, resetEventCreateLimit } from "../server/calendar/service";
 import { rangeFor } from "../server/calendar/recurrence";
 
+// Fixture dates sit a few years ahead of the current year (C12), so they never fall into the past.
+const Y = new Date().getUTCFullYear() + 5;
+
 const send = (session: Session, method: string, path: string, body?: unknown) =>
   request(path, { method, body: body === undefined ? "{}" : JSON.stringify(body) }, session);
 
@@ -55,19 +58,19 @@ describe("range API work budget (T66)", () => {
     resetEventCreateLimit();
     const user = await createUser("Budget bound");
     const calendarId = await newCalendar(user);
-    const created = await send(user, "POST", `/calendars/${calendarId}/events`, timed({ startLocal: "2030-01-07T09:00", repeat: { freq: "weekly", interval: 1 } }));
+    const created = await send(user, "POST", `/calendars/${calendarId}/events`, timed({ startLocal: `${Y - 1}-01-07T09:00`, repeat: { freq: "weekly", interval: 1 } }));
     const event = ((await created.json()) as { event: { id: string; revision: number } }).event;
-    expect(nextColumns(event.id).next_occurrence_utc).toBe("2030-01-07T09:00:00.000Z");
-    const patched = await send(user, "PATCH", `/events/${event.id}`, { startLocal: "2031-01-06T10:00", revision: event.revision });
+    expect(nextColumns(event.id).next_occurrence_utc).toBe(`${Y - 1}-01-07T09:00:00.000Z`);
+    const patched = await send(user, "PATCH", `/events/${event.id}`, { startLocal: `${Y}-01-06T10:00`, revision: event.revision });
     expect(patched.status).toBe(200);
-    expect(nextColumns(event.id).next_occurrence_utc).toBe("2031-01-06T10:00:00.000Z");
+    expect(nextColumns(event.id).next_occurrence_utc).toBe(`${Y}-01-06T10:00:00.000Z`);
     // A write that bumps the revision without refreshing the bound makes it stale: the row is
     // expanded again, and the boot reconcile recomputes it.
-    db.query("UPDATE events SET start_local = '2030-06-03T10:00', start_utc = '2030-06-03T10:00:00.000Z', revision = revision + 1 WHERE id = ?").run(event.id);
-    const listed = listOccurrences(user.userId, rangeFor("2030-06-01", "2030-06-08", "UTC"), [calendarId]);
-    expect(listed.occurrences.map((item) => item.date)).toEqual(["2030-06-03"]);
+    db.query(`UPDATE events SET start_local = '${Y - 1}-06-03T10:00', start_utc = '${Y - 1}-06-03T10:00:00.000Z', revision = revision + 1 WHERE id = ?`).run(event.id);
+    const listed = listOccurrences(user.userId, rangeFor(`${Y - 1}-06-01`, `${Y - 1}-06-08`, "UTC"), [calendarId]);
+    expect(listed.occurrences.map((item) => item.date)).toEqual([`${Y - 1}-06-03`]);
     await reconcileEventNextOccurrences();
-    expect(nextColumns(event.id).next_occurrence_utc).toBe("2030-06-03T10:00:00.000Z");
+    expect(nextColumns(event.id).next_occurrence_utc).toBe(`${Y - 1}-06-03T10:00:00.000Z`);
   });
 
   test("at the 1000-instance cap the soonest occurrences are kept, whatever the series order (L3)", async () => {

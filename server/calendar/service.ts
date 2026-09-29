@@ -2,7 +2,9 @@ import { purgeAfterFrom } from "../bin";
 import { audit, db, now } from "../db";
 import {
   calendarLevel,
+  calendarLevels,
   calendarRole,
+  calendarRoleFor,
   readableCalendar,
   readableCalendarPredicate,
   readableEvent,
@@ -117,7 +119,14 @@ export function listCalendars(userId: string) {
   if (canWriteContent(userId)) ensurePersonalCalendar(userId);
   const rows = db.query(`${summarySelect} WHERE ${readableCalendarPredicate} ORDER BY is_owner DESC, k.name COLLATE NOCASE, k.id`)
     .all({ userId }) as Array<Omit<CalendarSummary, "role" | "level">>;
-  return { calendars: rows.map((row) => withRole(row, userId)) };
+  // The page's levels in three queries, and the Team role once, not per calendar (C10).
+  const levels = calendarLevels(rows, userId);
+  let canWrite: boolean | undefined;
+  const canWriteOnce = () => canWrite ??= canWriteContent(userId);
+  return { calendars: rows.map((row) => {
+    const level = levels.get(row.id) ?? calendarLevel(row, userId);
+    return { ...row, role: calendarRoleFor(level, canWriteOnce), level };
+  }) };
 }
 
 export function ensurePersonalCalendar(userId: string) {

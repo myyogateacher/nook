@@ -17,7 +17,8 @@
 .notification-dot { width: 8px; height: 8px; border-radius: 999px; background: transparent; }
 .notification-item.unread .notification-dot { background: var(--yellow); }
 .notification-copy { min-width: 0; display: grid; gap: 3px; }
-.notification-copy strong { overflow: hidden; color: #ededee; font-size: .9rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+/* Q3: a notice wraps to up to three lines instead of being cut off ("added you to a group that has sin…"). */
+.notification-copy strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; color: #ededee; font-size: .9rem; font-weight: 600; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; }
 .notification-item:not(.unread) .notification-copy strong { color: #b7b7bd; font-weight: 500; }
 .notification-copy small { color: #7c7c83; font-size: .74rem; }
 .notification-empty { margin: 0; padding: 18px 16px; color: #8d8d94; font-size: .86rem; line-height: 1.5; }

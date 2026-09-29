@@ -145,7 +145,7 @@ describe("wiring", () => {
   test("the sign-in form links to /forgot-password; Settings shows the card; signed-out Back/Forward is handled", async () => {
     const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
     expect(source).toContain('href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>');
-    expect(source).toContain("<ChangePasswordCard totpEnabled={state.enabled} />");
+    expect(source).toContain("<ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} />");
     expect(source).toContain('window.history.pushState({ nookPasswordPage: "forgot" }, "", FORGOT_PATH)');
     expect(source).toMatch(/if \(session\) return;\n\s+const onPopState = \(event: PopStateEvent\) => \{\n\s+if \(resetLinkEvents\.has\(event\)\) return;\n\s+const link = takePasswordLinkFromLocation\(\);/);
     // Signed in, a Back onto an old /forgot-password entry shows the app, not the signed-out page (QA).

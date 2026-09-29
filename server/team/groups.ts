@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { audit, db, now } from "../db";
 import { recordAccessEvent } from "../access/events";
 import { notifyAccess } from "../access/notices";
-import { presentItem } from "../access/effective";
+import { presentItems } from "../access/batchItems";
 import { isLevel, type AccessKind } from "../access/levels";
 import { parseJson, uuid } from "../validation";
 import { can, type Role } from "./roles";
@@ -111,8 +111,11 @@ function groupHistory(groupId: string): GroupHistoryRow[] {
 function groupItems(groupId: string, viewerId: string) {
   const grants = db.query("SELECT resource_kind, resource_id, level FROM group_grants WHERE group_id = ? AND resource_kind <> 'vault' ORDER BY created_at, resource_id LIMIT ?")
     .all(groupId, ITEMS_LIMIT + 1) as Array<{ resource_kind: AccessKind; resource_id: string; level: string }>;
-  const items = grants.slice(0, ITEMS_LIMIT).flatMap((grant) => {
-    const item = presentItem(grant.resource_kind, grant.resource_id, viewerId);
+  const page = grants.slice(0, ITEMS_LIMIT);
+  // Titles and readability for the whole page in a few queries per kind, not per grant (C10b).
+  const presented = presentItems(page.map((grant) => ({ kind: grant.resource_kind, id: grant.resource_id })), viewerId);
+  const items = page.flatMap((grant) => {
+    const item = presented.get(`${grant.resource_kind}:${grant.resource_id}`) ?? null;
     return item && isLevel(grant.level) ? [{ ...item, level: grant.level }] : [];
   });
   return { items, truncated: grants.length > ITEMS_LIMIT };

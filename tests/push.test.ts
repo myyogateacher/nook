@@ -5,6 +5,8 @@ import { createUser, dataDir, db, origin, request, type Session } from "./suppor
 
 const push = await import("../server/calendar/push");
 const reminders = await import("../server/calendar/reminders");
+// Fixture dates sit five years ahead of the current year (C12), so they never fall into the past.
+const Y = new Date().getUTCFullYear() + 5;
 
 async function json<T>(response: Response) {
   return (await response.json()) as T;
@@ -67,7 +69,7 @@ describe("push configuration", () => {
 
   test("the VAPID JWT is ES256, scoped to the push origin, and verifies with the public key", async () => {
     const keys = await push.createVapidKeys();
-    const now = Date.parse("2031-01-01T00:00:00Z");
+    const now = Date.parse(`${Y}-01-01T00:00:00Z`);
     const header = await push.vapidAuthorization("https://fcm.googleapis.com/fcm/send/abc", keys, "mailto:ops@example.test", now);
     const match = /^vapid t=([^.]+)\.([^.]+)\.([^,]+), k=(.+)$/.exec(header);
     expect(match).not.toBeNull();
@@ -176,11 +178,11 @@ describe("subscriptions and delivery", () => {
     await push.initPush({ setting: "true", keys: await push.createVapidKeys() });
     const user = await createUser("Push delivery");
     expect((await send(user, "POST", "/push/subscriptions", subscription(endpoint("delivery")))).status).toBe(201);
-    expect((await send(user, "POST", "/reminders", { title: "Push me", fireAt: "2032-02-01T09:00", tz: "UTC" })).status).toBe(201);
-    expect((await send(user, "POST", "/reminders", { title: "And me", fireAt: "2032-02-01T09:00", tz: "UTC" })).status).toBe(201);
+    expect((await send(user, "POST", "/reminders", { title: "Push me", fireAt: `${Y + 1}-02-01T09:00`, tz: "UTC" })).status).toBe(201);
+    expect((await send(user, "POST", "/reminders", { title: "And me", fireAt: `${Y + 1}-02-01T09:00`, tz: "UTC" })).status).toBe(201);
     // A slow resolver stands in for a loaded machine: a fixed sleep here raced delivery.
     push.pushNet.resolve = async () => { await Bun.sleep(80); return ["142.250.1.1"]; };
-    expect(reminders.runDispatch({ nowMs: Date.parse("2032-02-01T09:00:10Z") })?.notified).toBe(2);
+    expect(reminders.runDispatch({ nowMs: Date.parse(`${Y + 1}-02-01T09:00:10Z`) })?.notified).toBe(2);
     // The dispatcher starts delivery synchronously; an empty call resolves when the queue drains.
     await push.deliverNotifications([]);
     expect(sent.length).toBe(1);

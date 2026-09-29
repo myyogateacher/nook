@@ -97,15 +97,28 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.15.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.16.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
-Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Internal identifiers such as `mynotes.sqlite`, the `mynotes` container, `MYNOTES_DATA_DIR`, and the `mynotes-*` backup archives keep the original prefix for compatibility.
+Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Every environment variable (email, push, limits) is listed in [docs/OPERATIONS.md](docs/OPERATIONS.md#configuration). Internal identifiers such as `mynotes.sqlite`, the `mynotes` container, `MYNOTES_DATA_DIR`, and the `mynotes-*` backup archives keep the original prefix for compatibility.
 
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.16.0
+
+- **Long pages scroll again (fix)**: Team pages (members, Policies, Keys, Access activity, Groups, Templates, Invites, a member's Access page, the email log), the Bin, Inbox, Routines, Notifications, the Calendar month on a computer, the Files list and grid on phones, and the sign-in pages on a phone held sideways could not be scrolled with the mouse wheel, touch, or the keyboard, so controls below the first screen (for example **Save policies**) could only be reached with the Tab key. They all scroll now.
+- **Faster loading**: the app's files are now cached by the browser and sent compressed. Files whose names change with each release are kept for a year; the app page, the service worker, and the manifest are checked on every load, so a new release is picked up at once. In our measurement, loading Home the first time dropped from about 1.9 MB to about 0.42 MB, and a reload from about 1.9 MB to under 1 KB. Nothing to configure.
+- **No more browser pop-ups**: every confirmation (an API key you have not saved yet, discarding a draft, **Delete forever** and **Empty Bin**, leaving Files during an upload, turning off two-factor, new recovery codes) uses Nook's own dialog, which fits on phones and closes with the Back button. Leaving Files with the browser's Back button during an upload now asks first.
+- **API keys**: creating or rotating a key offers **No expiry**, unless the team policy requires an expiry, in which case the choice is disabled and says why. While that policy is on, a key without an expiry is blocked (not revoked), and its row says "Rotate it to give it one." The API keys page is now **Settings → API keys** at `/settings/keys`; old `/settings/mcp` links still open it.
+- **Notes**: **Move to folder…** moves the open note, on a computer (toolbar) and on a phone (the ⋯ menu).
+- **Today**: Today asks once whether you want the morning email digest (**Every morning**, **Mondays only**, or **No thanks**). It appears only when email is on, your address is verified, your account is at least a week old, the digest is off, and you have not answered before.
+- **Calendar and Files**: a muted calendar says **Muted** in words, not only with an icon; the Calendar header has a **Bin** button like the other apps; the Files list/grid toggle is larger on phones.
+- **Access**: after sharing with a guest is refused, the Access sheet marks the guest rows that were kept right away; notices and invites word deleted groups and invite templates more clearly; the key filter in **Team → Access activity** shows the owner of keys that are no longer live.
+- **Smaller fixes**: Back no longer repeats a step after you delete the note or file you were viewing; lists of boards, collections, and calendars need fewer database queries; a request for a missing file with an extension (such as `/favicon.ico`) now answers 404 instead of the app page; `/robots.txt` asks search engines not to index Nook; and if the app fails to load, a short message suggests reloading instead of an empty page.
+- Migration 035 runs on the first boot, so back up first. No new settings and no new MCP tools; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.15.0
 

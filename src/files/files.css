@@ -11,7 +11,9 @@
 .file-preview-close { margin-right: -6px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-.file-pane { position: relative; }
+/* Desktop only: on phones the pane keeps the shared absolute panel box (inset 0 0 61px), so its list
+   scrolls inside it (P0 audit: `relative` here let the pane grow past the screen on phones). */
+@media (min-width: 761px) { .file-pane { position: relative; } }
 .file-pane .note-heading h1 { margin-right: 0; margin-bottom: 8px; }
 .file-header-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; }
 .file-count { margin-right: auto; color: #77777e; font-size: .78rem; }
@@ -87,6 +89,8 @@
 /* A dialog that takes focus itself (no focusable child yet) shows no ring on its whole box. */
 .file-dialog:focus, .side-panel:focus { outline: none; }
 .file-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 16px 10px 20px; }
+/* Q3: the dialog close button is a 40 px target on desktop (44 px on phones, below). */
+.file-dialog-header .icon-button { width: 40px; height: 40px; }
 .file-dialog-header > div { min-width: 0; }
 .file-dialog-header h2 { margin: 4px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.1rem; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .file-dialog-copy { margin: 0; padding: 4px 20px 8px; color: #b7b7bd; font-size: .88rem; line-height: 1.55; overflow-wrap: anywhere; }
@@ -208,7 +212,8 @@
 .file-tile .file-row-meta { gap: 8px; }
 .file-tile .file-row-shared { flex: none; margin-left: auto; }
 @media (max-width: 760px) {
-  .file-view-toggle .icon-button { width: 40px; height: 40px; }
+  /* Each view button is a 44 px phone target (C7), like the other phone controls. */
+  .file-view-toggle .icon-button { width: 44px; height: 44px; }
   .file-list.file-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .file-grid .file-row-item { position: relative; display: block; }
   .file-grid .file-row-more { position: absolute; top: 12px; right: 12px; border-radius: 10px; background: rgb(17 17 19 / 82%); }

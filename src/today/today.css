@@ -66,6 +66,18 @@
 .today-load-error h2, .today-load-error p { margin: 0; }
 .today-load-error p { color: #b9a4a1; }
 .today-load-error .primary-button { display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; }
+/* The one-time email digest prompt (D248). */
+.today-digest-prompt { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; margin: 0 0 24px; border: 1px solid #3a3322; border-radius: 16px; padding: 18px 52px 18px 18px; background: #17150f; }
+.today-digest-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: #2b261b; color: var(--yellow); }
+.today-digest-icon svg { width: 20px; height: 20px; }
+.today-digest-copy { display: grid; gap: 8px; min-width: 0; }
+.today-digest-copy h2 { margin: 0; font-size: 1.05rem; letter-spacing: -.01em; }
+.today-digest-copy p { margin: 0; color: #b7b7bd; font-size: .9rem; line-height: 1.5; }
+.today-digest-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.today-digest-actions button { min-height: 40px; padding: 0 14px; }
+.today-digest-close { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; }
+.today-digest-done { margin: 0 0 24px; color: #cfcfd4; font-size: .9rem; }
+.today-digest-done:focus { outline: none; }
 .today-storage { display: grid; gap: 8px; }
 .today-storage-summary { margin: 0; color: #f2f2f3; font-size: 1.2rem; font-weight: 650; letter-spacing: -.02em; }
 .today-meter { height: 8px; overflow: hidden; border-radius: 999px; background: #232327; }
@@ -90,6 +102,9 @@
   .today-toolbar-title { flex-basis: 100%; }
   .today-refresh, .today-retry, .today-customize, .today-load-error .primary-button { min-height: 44px; }
   .today-customize-extra { display: none; }
+  .today-digest-prompt { grid-template-columns: minmax(0, 1fr); padding: 16px 56px 16px 16px; }
+  .today-digest-actions button { min-height: 44px; flex: 1 1 auto; }
+  .today-digest-close { width: 44px; height: 44px; top: 8px; right: 8px; }
   .today-groups { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .today-group-cards { gap: 8px; }
   .today-section { padding: 16px 12px 8px; }

@@ -896,20 +896,20 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2,
     let account = await (await fetch(`${origin}/api/auth/account`, { headers: { Cookie: session } })).json() as { reauth: string; reauthUntil: string | null; hasPassword: boolean; google: { email: string } };
     expect(account).toMatchObject({ reauth: "google", reauthUntil: null, hasPassword: false, google: { email } });
     // MEDIUM-3: the request forces a new Google login.
-    const started = await start("?intent=reauth&return=/settings/mcp", { Cookie: session });
+    const started = await start("?intent=reauth&return=/settings/keys", { Cookie: session });
     const params = new URL(started.location).searchParams;
     expect(params.get("prompt")).toBe("login");
     expect(params.get("max_age")).toBe("0");
     // A reauth with a different Google account is refused.
-    const wrong = await googleSignIn(identityFor(spareEmail()), { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session } });
-    expect(wrong.location).toBe("/settings/mcp#google-error=reauth_mismatch");
+    const wrong = await googleSignIn(identityFor(spareEmail()), { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session } });
+    expect(wrong.location).toBe("/settings/keys#google-error=reauth_mismatch");
     // An old or missing auth_time is not a re-authentication.
-    const stale = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session }, tweaks: { claims: { auth_time: Math.floor(Date.now() / 1000) - 600 } } });
-    expect(stale.location).toBe("/settings/mcp#google-error=reauth_stale");
-    const missing = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session }, tweaks: { claims: { auth_time: undefined } } });
-    expect(missing.location).toBe("/settings/mcp#google-error=reauth_stale");
-    const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/mcp", headers: { Cookie: session } });
-    expect(confirmed.location).toBe("/settings/mcp#google=reauthed");
+    const stale = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session }, tweaks: { claims: { auth_time: Math.floor(Date.now() / 1000) - 600 } } });
+    expect(stale.location).toBe("/settings/keys#google-error=reauth_stale");
+    const missing = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session }, tweaks: { claims: { auth_time: undefined } } });
+    expect(missing.location).toBe("/settings/keys#google-error=reauth_stale");
+    const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session } });
+    expect(confirmed.location).toBe("/settings/keys#google=reauthed");
     expect(confirmed.session).toBeNull();
     account = await (await fetch(`${origin}/api/auth/account`, { headers: { Cookie: session } })).json() as typeof account;
     expect(account.reauthUntil).not.toBeNull();

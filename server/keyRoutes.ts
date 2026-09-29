@@ -65,7 +65,7 @@ async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>, statu
  * role, policy (surfaces, expiry cap, modules), grants (scopes by role, access to chosen items),
  * then the count. Shared with the `/api/mcp/keys` alias. Returns the validated grants and days.
  */
-export function precheckKeyCreate(user: { id: string; role: Role }, input: { surfaces: "mcp" | "rest" | "both"; expiresInDays?: number; grants: readonly GrantInput[] }) {
+export function precheckKeyCreate(user: { id: string; role: Role }, input: { surfaces: "mcp" | "rest" | "both"; expiresInDays?: number | null; grants: readonly GrantInput[] }) {
   const policies = readPolicies();
   const days = checkCreatePolicy(user.id, user.role, input, policies);
   const grants = validateGrants(user.id, user.role, input.grants, policies);
@@ -149,7 +149,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     // Refusals that need no password come first, so no code is consumed: missing key, already
     // rotating, and the creation checks (role, policy, count; review L1).
     try {
-      checkRotation(user.id, id, body.graceHours);
+      checkRotation(user.id, id, body.graceHours, body.expiresInDays);
     } catch (error) {
       if (error instanceof KeyError) return keyError(c, error);
       throw error;
@@ -161,7 +161,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     }
     if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
     return run(c, () => {
-      const rotated = rotateApiKey(user.id, id, body.graceHours);
+      const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays);
       // A rotation makes a new secret, so it gets the same security mail as a new key.
       mailApiKeyCreated(user.id, rotated.id);
       return { key: { ...ownApiKey(user.id, rotated.id), token: rotated.token }, oldKey: ownApiKey(user.id, id) };

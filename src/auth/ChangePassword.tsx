@@ -17,7 +17,17 @@ export function passwordChangedText(signedOut: number) {
   return `Password changed. ${signedOut} other ${signedOut === 1 ? "session was" : "sessions were"} signed out.`;
 }
 
-export function ChangePasswordCard({ totpEnabled }: { totpEnabled: boolean }) {
+/**
+ * The hint under the form (QA v0.13.0): "Forgot password?" only where it exists, that is when
+ * `/api/about` says `passwordReset` (email on); otherwise the way out is an admin.
+ */
+export function forgotCurrentHint(passwordReset: boolean) {
+  return passwordReset
+    ? "Use at least 12 characters. Forgot the current one? Sign out and use “Forgot password?”."
+    : "Use at least 12 characters. Forgot the current one? Email is off on this Nook, so ask an admin.";
+}
+
+export function ChangePasswordCard({ totpEnabled, passwordReset = false }: { totpEnabled: boolean; passwordReset?: boolean }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -69,7 +79,7 @@ export function ChangePasswordCard({ totpEnabled }: { totpEnabled: boolean }) {
       <PasswordInput name="newPassword" label="New password" autoComplete="new-password" disabled={busy} error={fields.errors.newPassword} />
       <PasswordInput name="confirmPassword" label="Confirm new password" autoComplete="new-password" disabled={busy} error={fields.errors.confirmPassword} />
       {totpEnabled && <SecondFactorField recovery={recovery} disabled={busy} error={fields.errors[secondFactorName(recovery)]} onToggle={() => { setRecovery((value) => !value); setError(""); fields.clear(); }} />}
-      <small className="password-change-hint">Use at least 12 characters. Forgot the current one? Sign out and use “Forgot password?”.</small>
+      <small className="password-change-hint">{forgotCurrentHint(passwordReset)}</small>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="password-change-actions">
         <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Change password"}</button>

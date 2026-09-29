@@ -29,7 +29,7 @@ export const apiKeyCreatedTemplate = defineTemplate<{ keyName: string; scopes: s
         context([{ title: `“${name}”`, meta: `Created ${formatInstant(data.at, ctx.tz)}` }, { title: "Permissions", meta: cleanLine(data.scopes, 300, "None") }], { tone: "security" }),
         paragraph("If this wasn't you, sign in and revoke the key, then change your password, or ask your admin.")
       ],
-      action: { label: "Review in Settings", href: appLink(paths.settings("mcp")) },
+      action: { label: "Review in Settings", href: appLink(paths.settings("keys")) },
       footer: securityFooter()
     });
   },
@@ -213,7 +213,7 @@ export const passwordChangedTemplate = defineTemplate<{ event: PasswordEvent; at
       blocks: [
         context([
           { title: formatInstant(data.at, ctx.tz) },
-          { title: "Review your API keys", meta: "Keys keep working after a password change. Revoke any you do not recognise.", href: appLink(paths.settings("mcp")) }
+          { title: "Review your API keys", meta: "Keys keep working after a password change. Revoke any you do not recognise.", href: appLink(paths.settings("keys")) }
         ], { tone: "security" }),
         paragraph("If this wasn't you, reset your password from the sign-in page at once, then ask your admin to check your account.")
       ],

@@ -47,7 +47,7 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
   const full = (column: BoardColumn) => !canEnterColumn(cards, column, card.id);
   const firstOpen = columns.findIndex((column) => !full(column));
 
-  async function confirm() {
+  async function confirmAction() {
     if (!target) return;
     setBusy(true);
     setError(null);
@@ -120,7 +120,7 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className="primary-button" onClick={() => { void confirm(); }} disabled={!target || busy}>{busy ? "Moving…" : target ? `Move to ${place === "top" ? "top" : "bottom"} of ${target.name}` : "Move"}</button>
+      <button className="primary-button" onClick={() => { void confirmAction(); }} disabled={!target || busy}>{busy ? "Moving…" : target ? `Move to ${place === "top" ? "top" : "bottom"} of ${target.name}` : "Move"}</button>
     </footer>
   </ModalDialog>;
 }

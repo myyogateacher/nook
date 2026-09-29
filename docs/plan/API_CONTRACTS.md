@@ -1260,7 +1260,7 @@ Guests get **404** on every Team route. Members and viewers read; every write ne
 | --- | --- | --- | --- |
 | `GET /api/team` | | 200 `{ me: { id, role }, users: TeamMember[] }`, active before blocked, then admin, member, viewer, guest, then name; at most 500 | 404 (guest) |
 | `GET /api/team/:userId` | | 200 `{ member: TeamMember & { events?: TeamEvent[] } }`; `events` (latest 50) for admins only | 404 |
-| `PUT /api/team/:userId/role` | `{ role, expectedRole }` (strict: any other field → 400) | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN` |
+| `PUT /api/team/:userId/role` | `{ role, expectedRole }` (strict: any other field → 400) | 200 `{ changed, role, member }`; `changed: false` when `role` equals the current role (no event) | 409 `ROLE_CHANGED` `{ currentRole }` (compare-and-swap on `expectedRole`, T79), `LAST_ADMIN`; 400 `GUEST_SHARE_DISABLED` (to `guest` while `share_with_guests` is off and the person is in a group with a grant, Wave 32 T213) |
 | `POST /api/team/:userId/block` | `{ reason?: string ≤ 200 }` (strict: any other field → 400) | 200 `{ blockedAt, sessionsRevoked, mcpKeysPaused, member }` | 409 `SELF_ACTION`, `ALREADY_BLOCKED`, `LAST_ADMIN`, `ROLE_CHANGED` |
 | `POST /api/team/:userId/unblock` | `{}` | 200 `{ ok: true, member }` | 409 `NOT_BLOCKED` |
 | `POST /api/team/:userId/sessions/revoke` | `{}` | 200 `{ sessionsRevoked, member }` | 409 `SELF_ACTION` (use Sign out) |
@@ -1718,7 +1718,7 @@ What each level does: **view** reads; **comment** (boards) also comments and rea
 | `GET /api/team/groups/:groupId` | admin | | 200 `{ group: GroupDetail }` | 404 |
 | `PATCH /api/team/groups/:groupId` | admin | `{ name?, description?, revision }` | 200 `{ group }` | 400, 404, 409 `GROUP_CHANGED` (CAS), 409 `NAME_TAKEN` |
 | `DELETE /api/team/groups/:groupId` | admin | `{ revision? }` | 200 `{ ok, removedGrants, removedMembers }`: its grants and memberships go with it | 404, 409 `GROUP_CHANGED` |
-| `PUT /api/team/groups/:groupId/members` | admin | `{ userIds: uuid[] ≤ 500, revision }` | 200 `{ added, removed, selfAdded, group }` | 400 `INVALID_MEMBERS` (unknown or blocked accounts), 404, 409 `GROUP_CHANGED` |
+| `PUT /api/team/groups/:groupId/members` | admin | `{ userIds: uuid[] ≤ 500, revision }` | 200 `{ added, removed, selfAdded, group }` | 400 `INVALID_MEMBERS` (unknown or blocked accounts), 400 `GUEST_SHARE_DISABLED` (policy `share_with_guests` off, the group has at least one grant, and the change adds a guest; T213), 404, 409 `GROUP_CHANGED` |
 
 ```ts
 type GroupSummary = { id; name; description: string | null; memberCount; guestCount; grantCount; revision; createdAt; updatedAt };
@@ -1727,10 +1727,13 @@ type GroupDetail = GroupSummary & {
   items: { kind: AccessKind; title: string; titleHidden: boolean; owner: { id; displayName }; id?: string; level }[];  // ≤ 200; title and id only when the admin can open the item (D269)
   truncated: boolean;
   history: { id; action; createdAt; actor; target; self: boolean }[];                                                  // newest 50 access_events
+  guestAddRefused: boolean;                                                                                            // share_with_guests off and grantCount > 0: guests cannot be added
 };
 ```
 
 An admin adding themselves is allowed (O-A1) and flagged: `selfAdded` on the member, `self: true` on the history row and in `access_events` meta. Every change writes `access_events` (`group.created`, `group.updated`, `group.deleted`, `group.member_added`, `group.member_removed`; ids only) and an audit row. Writes use the Team write limit (30 a minute). Groups are admin-only: the `groups_member_create` policy stays stored only (O-A2, off). There are no group-management MCP tools.
+
+**Guests and the policy (T213).** With `share_with_guests` off, `PUT …/members` refuses a change that adds a guest to a group with at least one grant (400 `GUEST_SHARE_DISABLED`, the sharing routes' shape); removals always work, guests already in the group stay, and a group without grants still takes guests (sharing it is then refused). `PUT /api/team/:userId/role` to `guest` is refused the same way while the person is in a group with a grant (remove them from it first). The policy is **not retroactive**: turning it off revokes nothing, so shares with guests made before (direct, or through groups guests were already in, or direct shares of someone later made a guest) stay until their owner or an admin removes them.
 
 ### Item access (the Access sheet)
 
@@ -1757,7 +1760,7 @@ type AccessPut = { audience; audienceLevel?: Level; people: { id; level }[] ≤ 
 - **Managers (D273, T207)**: 403 `MANAGER_CAP` for any change to the audience or its level, or to the set of `manage` rows (they cannot grant, change, or remove a manager, themselves included).
 - **Mail and audit.** People newly added by name get the "shared with you" mail (groups are not mailed). `access_events` `item.access_changed` and audit `item.access_changed` carry `{ kind, audience, peopleCount, groupCount, asManager? }`, never titles or user ids.
 
-**Older sharing routes.** `GET/PUT …/sharing` keep working: they keep each existing person's level (new people get the module default; the collection and calendar route's one `role` still applies to everyone it names, except managers), leave group grants untouched, and honour `share_with_guests`. With the policy off, `GET /api/users` leaves guests out.
+**Older sharing routes.** `GET/PUT …/sharing` keep working: they keep each existing person's level (new people get the module default; the collection and calendar route's one `role` still applies to everyone it names, except managers), leave group grants untouched, and honour `share_with_guests`. With the policy off, `GET /api/users` leaves guests out. The policy never revokes shares that already reach guests (see Groups above).
 
 **Write gate.** `PUT …/access` is not allowlisted: viewers and guests get 403 `ROLE_READ_ONLY`.
 

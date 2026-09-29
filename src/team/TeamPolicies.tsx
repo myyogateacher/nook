@@ -154,7 +154,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
 
       <fieldset className="policies-section" disabled={busy}>
         <legend>Sharing</legend>
-        <p>Off: nobody can share with a guest, directly or through a group that includes one, and guests are left out of the people list. What is already shared stays until its owner changes it.</p>
+        <p>Off: nobody can share with a guest, directly or through a group that includes one, nobody becomes a guest inside a group that is shared with items (by being added or by a role change), and guests are left out of the people list. Existing shares with guests stay until they are removed.</p>
         <label className="policies-switch"><span>Allow sharing with guests</span><input type="checkbox" checked={draft.shareWithGuests} onChange={onCheckedChange((checked) => set("shareWithGuests", checked))} /></label>
       </fieldset>
 

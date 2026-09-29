@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseRoute } from "../src/router";
 import { ChangePasswordCard, passwordChangedText } from "../src/auth/ChangePassword";
-import { FORGOT_OFF_TEXT, FORGOT_SENT_TEXT, ForgotPasswordPage, ResetPasswordPage, secondFactorBody, takeNewResetLink, takePasswordLinkFromLocation } from "../src/auth/passwordPages";
+import { passwordResetOffered } from "../src/auth/registrationPrompt";
+import { FORGOT_OFF_TEXT, FORGOT_SENT_TEXT, ForgotPasswordPage, RESET_OFF_TEXT, ResetPasswordPage, secondFactorBody, takeNewResetLink, takePasswordLinkFromLocation } from "../src/auth/passwordPages";
 
 /** Client pieces of Wave 30: the forgot / reset pages, the Settings card, and their wiring. */
 
@@ -65,9 +66,32 @@ describe("forgot page (T224)", () => {
 
 describe("reset page", () => {
   test("without a token it says the link is not valid and offers a new one", () => {
-    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} onSignIn={() => undefined} onForgot={() => undefined} />);
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: true }} onSignIn={() => undefined} onForgot={() => undefined} />);
     expect(markup).toContain("This link is not valid");
     expect(markup).toContain("Ask for a new link");
+    // /about failed: offered, as the forgot page assumes email is on then.
+    expect(renderToStaticMarkup(<ResetPasswordPage token={null} about="failed" onSignIn={() => undefined} onForgot={() => undefined} />)).toContain("Ask for a new link");
+  });
+
+  test("with email off a dead link offers no new link and says why (A6)", () => {
+    const markup = renderToStaticMarkup(<ResetPasswordPage token={null} about={{ passwordReset: false }} onSignIn={() => undefined} onForgot={() => undefined} />);
+    expect(markup).toContain("This link is not valid");
+    expect(markup).not.toContain("Ask for a new link");
+    expect(markup).not.toContain("Ask for a new one.");
+    expect(markup).toContain(RESET_OFF_TEXT);
+    expect(markup).toContain("Back to sign in");
+    // Until /about answers, nothing is offered.
+    expect(renderToStaticMarkup(<ResetPasswordPage token={null} onSignIn={() => undefined} onForgot={() => undefined} />)).not.toContain("Ask for a new link");
+  });
+
+  test("the sign-in page offers Forgot password? only when email is on (A6)", async () => {
+    expect(passwordResetOffered(null)).toBe(false);
+    expect(passwordResetOffered({ passwordReset: false })).toBe(false);
+    expect(passwordResetOffered({ passwordReset: true })).toBe(true);
+    expect(passwordResetOffered({})).toBe(true);
+    expect(passwordResetOffered("failed")).toBe(true);
+    const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    expect(source).toContain("{!registering && passwordResetOffered(registration) && <a className=\"inline-auth-switch forgot-password-link\"");
   });
 
   test("signed in on this browser, a dead link offers Open Nook instead of the forgot page", () => {

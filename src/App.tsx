@@ -45,7 +45,7 @@ import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
-import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
+import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
@@ -129,13 +129,13 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
-  const signUpPrompt = registrationPrompt(registration);
+  const [registration, setRegistration] = useState<RegistrationInfo | null | "failed">(null);
+  const signUpPrompt = registrationPrompt(registration === "failed" ? null : registration);
   const fields = useFieldErrors();
 
   useEffect(() => {
     let live = true;
-    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => undefined);
+    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => { if (live) setRegistration("failed"); });
     return () => { live = false; };
   }, []);
 
@@ -212,7 +212,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
             ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="auth-recovery-error" message={fields.errors.recoveryCode} /></label>
             : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
           {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
-          {!registering && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
+          {!registering && passwordResetOffered(registration) && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
         </form>

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Link2Off, Lock, MailX, Sparkles } from "lucide-react";
 import { api, ApiError } from "../api";
+import { passwordResetOffered, type RegistrationInfo } from "./registrationPrompt";
 import { collectProblems, confirmPasswordProblem, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import "./auth.css";
 
@@ -181,8 +182,23 @@ function deadFrom(reason: unknown): ResetState {
   return { kind: "dead", reason: "error", message: reason instanceof Error ? reason.message : "Something went wrong" };
 }
 
-/** `signedIn`: someone is signed in on this browser (the link still works; it signs them out too). */
-export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false }: { token: string | null; onSignIn: () => void; onForgot: () => void; signedIn?: boolean }) {
+/** With email off, a dead link cannot be replaced by mail (A6). */
+export const RESET_OFF_TEXT = "Email is off on this Nook, so it cannot send a new link. Ask an admin of this Nook to help you back in.";
+
+/**
+ * `signedIn`: someone is signed in on this browser (the link still works; it signs them out too).
+ * `about`: what /api/about said (tests); the page asks it otherwise, to offer a new link only when
+ * email is on (A6).
+ */
+export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false, about }: { token: string | null; onSignIn: () => void; onForgot: () => void; signedIn?: boolean; about?: RegistrationInfo | "failed" }) {
+  const [info, setInfo] = useState<RegistrationInfo | null | "failed">(about ?? null);
+  useEffect(() => {
+    if (about !== undefined) return undefined;
+    let live = true;
+    api<RegistrationInfo>("/about").then((result) => { if (live) setInfo(result); }, () => { if (live) setInfo("failed"); });
+    return () => { live = false; };
+  }, [about]);
+  const offerNewLink = passwordResetOffered(info);
   const [state, setState] = useState<ResetState>(token ? { kind: "checking" } : { kind: "dead", reason: "invalid" });
   const [recovery, setRecovery] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -233,11 +249,12 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false 
       <div className="auth-heading" role="alert">
         <span className="eyebrow">Password</span>
         <h1><Link2Off aria-hidden="true" className="invite-register-icon" />{DEAD_COPY[state.reason].title}</h1>
-        <p>{state.reason === "error" ? state.message : DEAD_COPY[state.reason].body}</p>
+        <p>{state.reason === "error" ? state.message : signedIn || info === null || offerNewLink ? DEAD_COPY[state.reason].body : DEAD_COPY[state.reason].body.replace(" Ask for a new one.", "")}</p>
+        {!signedIn && info !== null && !offerNewLink && state.reason !== "error" && <p>{RESET_OFF_TEXT}</p>}
       </div>
-      <div className="auth-form">{signedIn
+      {(signedIn || offerNewLink) && <div className="auth-form">{signedIn
         ? <button type="button" className="primary-button" onClick={onSignIn}>Open Nook</button>
-        : <button type="button" className="primary-button" onClick={onForgot}>Ask for a new link</button>}</div>
+        : <button type="button" className="primary-button" onClick={onForgot}>Ask for a new link</button>}</div>}
     </>}
     {state.kind === "done" && <>
       <div className="auth-heading" role="status">

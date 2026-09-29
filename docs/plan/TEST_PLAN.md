@@ -783,6 +783,7 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 - [x] `tests/noNativeSelect.test.ts` (A3, D91): no native `prompt` or `alert` anywhere in `src/`; Notes → New folder and the editor's Add link use the Files name dialog (validation, Enter submits, Escape and Back close it, a history layer).
 - [x] `tests/authFieldChecks.test.tsx` (A4): the change-password, reset-password, forgot-password, sign-in, register, and invite forms set `noValidate` and check their own fields (12 to 256 characters, matching confirmation, email, a six-digit or recovery code), showing each problem under its field; a server error is cleared when the form changes or is sent again.
 - [x] `tests/passwordPages.test.tsx` (A5): a second reset link pasted into a tab already on `/reset-password` (a same-document move: popstate, then hashchange) is read, checked, and stripped from the address bar as on the first load; the route handlers skip that event.
+- [x] `tests/passwordPages.test.tsx` (A6): with `/api/about` `passwordReset: false`, the sign-in page shows no "Forgot password?" and a dead reset link offers no "Ask for a new link" (it says email is off instead); `/forgot-password` visited directly still explains it. Nothing is offered until `/api/about` answers; a failed request offers both, as the forgot page assumes email is on then.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

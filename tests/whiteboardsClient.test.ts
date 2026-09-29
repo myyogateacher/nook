@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { AUTOSAVE_DEBOUNCE_MS, AUTOSAVE_MAX_WAIT_MS, autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, mayCaptureEdit, maySendCapture, nextSaveDelay, pendingCopyAction, pendingSyncAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState, type Capture } from "../src/whiteboards/autosave";
 import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, openExcalidrawLayer, restoreMessage, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
-import { markBoardOpen, isBoardOpen, syncPendingCopies, type SyncDeps } from "../src/whiteboards/pendingSync";
-import { ApiError } from "../src/api";
+import { installSyncTriggers, markBoardOpen, isBoardOpen, nextSyncTimer, pendingSyncDeps, requestPendingSync, setPendingSyncUser, stopPendingSyncTimer, syncPendingCopies, SYNC_TIMER_MAX_MS, SYNC_TIMER_MS, type SyncDeps } from "../src/whiteboards/pendingSync";
+import { ApiError, noteRequestOutcome, onApiRecovered } from "../src/api";
+import { installChunkReload, onBeforeChunkReload, resetChunkReloadForTests, BEFORE_RELOAD_MS } from "../src/chunkReload";
 import { canonicalSceneJson, emptyScene, type CanonicalScene } from "../shared/whiteboardScene";
 import { pendingKey } from "../src/whiteboards/pendingStore";
 import { formatRoute, parseRoute } from "../src/router";
@@ -351,5 +352,89 @@ describe("QA E2, E6: the layer watcher and the restore wording", () => {
     expect(restoreMessage({ createdAt: "t1", elementCount: 3 }, 0, at)).toBe("Switch to the version from [t1], which has 3 shapes; the current one has 0 shapes. You can switch back the same way.");
     expect(restoreMessage({ createdAt: "t2", elementCount: 0 }, 1, at)).toBe("Switch to the version from [t2], which has 0 shapes; the current one has 1 shape. You can switch back the same way.");
     expect(restoreMessage(null, 2, at)).not.toMatch(/removed/);
+  });
+});
+
+describe("QA F1: sending kept drawings never depends on one event", () => {
+  test("the timer: 30 s after a run that sent something, doubling to 5 minutes after runs that could not; none when nothing is pending or nobody is signed in", () => {
+    const sent = { sent: ["a"], stopped: null } as const;
+    const offline = { sent: [], stopped: "offline" } as const;
+    expect(nextSyncTimer(sent, 1, 3)).toEqual({ delay: SYNC_TIMER_MS, streak: 0 });
+    let streak = 0;
+    const delays: number[] = [];
+    for (let run = 0; run < 7; run += 1) {
+      const next = nextSyncTimer(offline, 2, streak);
+      delays.push(next.delay!);
+      streak = next.streak;
+    }
+    expect(delays).toEqual([30_000, 60_000, 120_000, 240_000, SYNC_TIMER_MAX_MS, SYNC_TIMER_MAX_MS, SYNC_TIMER_MAX_MS]);
+    // A 429 backs off the same way; so do runs with only copies that wait for their board's next open.
+    expect(nextSyncTimer({ sent: [], stopped: "rate-limited" }, 1, 0).delay).toBe(SYNC_TIMER_MS);
+    expect(nextSyncTimer({ sent: [], stopped: null }, 1, 1).delay).toBe(60_000);
+    // Nothing pending, or signed out: no timer, and the streak starts over.
+    expect(nextSyncTimer(offline, 0, 4)).toEqual({ delay: null, streak: 0 });
+    expect(nextSyncTimer({ sent: [], stopped: "signed-out" }, 3, 4)).toEqual({ delay: null, streak: 0 });
+  });
+
+  test("each trigger runs the sync: online, the tab shown again, focus, and the first success after a failed request", () => {
+    const listeners = new Map<string, Set<() => void>>();
+    const target = {
+      addEventListener: (name: string, listener: () => void) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name)!.add(listener); },
+      removeEventListener: (name: string, listener: () => void) => { listeners.get(name)?.delete(listener); }
+    };
+    const doc = { ...target, visibilityState: "hidden" as DocumentVisibilityState };
+    const fire = (name: string) => { for (const listener of [...(listeners.get(name) ?? [])]) listener(); };
+    let runs = 0;
+    const remove = installSyncTriggers(target as never, doc as never, () => { runs += 1; }, onApiRecovered);
+    fire("online");
+    expect(runs).toBe(1);
+    fire("focus");
+    expect(runs).toBe(2);
+    fire("visibilitychange");
+    expect(runs).toBe(2);
+    doc.visibilityState = "visible";
+    fire("visibilitychange");
+    expect(runs).toBe(3);
+    // Successes alone say nothing; the first success after a failure does, once.
+    noteRequestOutcome(true);
+    expect(runs).toBe(3);
+    noteRequestOutcome(false);
+    noteRequestOutcome(false);
+    noteRequestOutcome(true);
+    noteRequestOutcome(true);
+    expect(runs).toBe(4);
+    remove();
+    fire("online"); fire("focus"); fire("visibilitychange");
+    noteRequestOutcome(false); noteRequestOutcome(true);
+    expect(runs).toBe(4);
+  });
+
+  test("the real deps run only for the person signed in, and not after sign-out", async () => {
+    setPendingSyncUser(null);
+    const nobody = await requestPendingSync(() => pendingSyncDeps("u-sync"));
+    expect(nobody?.stopped).toBe("signed-out");
+    setPendingSyncUser("someone-else");
+    expect((await requestPendingSync(() => pendingSyncDeps("u-sync")))?.stopped).toBe("signed-out");
+    setPendingSyncUser(null);
+    stopPendingSyncTimer();
+  });
+});
+
+describe("Wave 23 QA 1c: a chunk reload keeps unsaved whiteboard edits", () => {
+  test("the reload waits for the hooks (the pending copy is written first); without hooks it is immediate", async () => {
+    resetChunkReloadForTests();
+    const calls: string[] = [];
+    const listeners: Array<(event: { preventDefault: () => void }) => void> = [];
+    const target = { addEventListener: ((_name: string, listener: never) => { listeners.push(listener); }) as never, sessionStorage: { getItem: () => null, setItem: () => undefined }, location: { href: "https://nook.test/whiteboards/b1", reload: () => { calls.push("reload"); }, replace: () => undefined } as never };
+    installChunkReload(target);
+    const remove = onBeforeChunkReload(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); calls.push("pending copy written"); });
+    listeners.at(-1)!({ preventDefault: () => undefined });
+    expect(calls).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(calls).toEqual(["pending copy written", "reload"]);
+    remove();
+    // A hook that never finishes does not hold the reload past BEFORE_RELOAD_MS.
+    expect(BEFORE_RELOAD_MS).toBeLessThanOrEqual(2000);
+    resetChunkReloadForTests();
   });
 });

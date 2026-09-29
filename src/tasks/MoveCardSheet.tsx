@@ -25,12 +25,17 @@ type MoveCardSheetProps = {
   };
   /** The card's ⋯ menu: "Copy link" copies its permalink without opening the card, then closes the sheet. */
   onCopyLink?: () => void;
+  /**
+   * The caller may not change this card (below Can edit on the board, or a read-only Team role):
+   * the ⋯ menu offers Copy link only, never Move (which the server would refuse, READ_ONLY).
+   */
+  readOnly?: boolean;
 };
 
 // "Move to…": a dialog on desktop, a full-screen sheet on phones. Lists the board's columns and
 // Top or Bottom; the current column is allowed, so a card can jump to the top or bottom of its own.
 // A column at its WIP limit is listed but disabled.
-export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, parentPicker, onCopyLink }: MoveCardSheetProps) {
+export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, parentPicker, onCopyLink, readOnly = false }: MoveCardSheetProps) {
   const [picking, setPicking] = useState(false);
   // Back on the "Set epic…" list returns to Move to… (as its Back to columns button does), not the board.
   useHistoryDialogGuard(picking, () => setPicking(false));
@@ -59,6 +64,18 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
     setBusy(true);
     await parentPicker.onPick(parentId);
     onCancel();
+  }
+
+  if (readOnly) {
+    return <ModalDialog title={card.title} eyebrow="Card" onClose={onCancel} variant="sheet">
+      {onCopyLink && <div className="move-list task-move-parent">
+        <button className="move-option" autoFocus onClick={() => { onCopyLink(); onCancel(); }}><LinkIcon aria-hidden="true" /><span>Copy link<small>A link to this card</small></span></button>
+      </div>}
+      <p className="task-cal-help">You can read this card here but not move or change it.</p>
+      <footer className="file-dialog-actions">
+        <button className="secondary-button" onClick={onCancel}>Close</button>
+      </footer>
+    </ModalDialog>;
   }
 
   if (picking && parentPicker) {

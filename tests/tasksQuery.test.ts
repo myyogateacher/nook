@@ -97,6 +97,22 @@ describe("POST /api/tasks/query: access (T115, T116)", () => {
     expect(titles(await query(w.bob, { q: "assignee:me" }))).toEqual([]);
   });
 
+  test("each card carries the caller's level on its board, so the web offers Move only at Can edit (QA v0.13.0 B2)", async () => {
+    const w = await world("Levels");
+    const levelOf = (result: { body: Record<string, any> }, title: string) => mine(result).find((card) => card.title === title)?.board_level;
+    expect(levelOf(await query(w.alice, { q: "" }), "Groceries")).toBe("owner");
+    // Bob was added by the older sharing route: Can edit (D38).
+    expect(levelOf(await query(w.bob, { q: "" }), "Plan trip")).toBe("edit");
+    db.query("UPDATE board_members SET level = 'comment' WHERE board_id = ? AND user_id = ?").run(w.shared.id, w.bob.userId);
+    expect(levelOf(await query(w.bob, { q: "" }), "Plan trip")).toBe("comment");
+    // A view run as Bob says the same.
+    const view = await call(w.bob, "POST", "/views", { name: "Levels view", query: `board:${w.shared.id}` });
+    expect(view.status).toBe(201);
+    const run = await call(w.bob, "GET", `/views/${view.body.view.id}/cards?tz=UTC`);
+    expect(run.status).toBe(200);
+    expect(levelOf(run, "Plan trip")).toBe("comment");
+  });
+
   test("refs name readable boards, columns, and users, and mark the rest", async () => {
     const w = await world("Refs");
     const result = await query(w.alice, { q: `board:${w.home.id},${w.secret.id} assignee:${w.bob.userId},${crypto.randomUUID()}` });

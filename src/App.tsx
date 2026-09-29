@@ -108,6 +108,9 @@ const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "title-desc", label: "Title Z–A" }
 ];
 
+/** Settings → Security when the instance has no TOTP key (A7): nothing to set up. */
+export const TWO_FACTOR_OFF_TEXT = "Two-factor authentication has not been set up for this Nook, so it cannot be turned on for your account yet. Ask an admin of this Nook.";
+
 /** Popstate events a pasted reset link took (A5): the route handlers leave them alone. */
 const resetLinkEvents = new WeakSet<Event>();
 
@@ -227,7 +230,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
 
 function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean> }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [appInfo, setAppInfo] = useState({ version: "0.12.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.12.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -265,7 +268,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
-    api<{ version: string; gitSha: string }>("/about").then(setAppInfo).catch(() => undefined);
+    api<{ version: string; gitSha: string; twoFactor?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -395,6 +398,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
               <h4>Disable authenticator</h4><p>Confirm your password and a current code.</p>
               <div><input name="password" type="password" autoComplete="current-password" placeholder="Password" required /><input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
             </form>}
+          </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
+            <strong>Not available on this Nook</strong>
+            <p>{TWO_FACTOR_OFF_TEXT}</p>
           </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
             <strong>Authenticator not configured</strong>
             <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>

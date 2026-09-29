@@ -202,3 +202,6 @@
 @media (max-width: 760px) {
   .team-groups-new { width: 100%; justify-content: center; }
 }
+
+/* A group's "Add people…" field: a 40 px input inside the 44 px field (it was 30 px, QA v0.13.0). */
+@media (max-width: 760px) { .team-group-page .ui-combobox-field .ui-combobox-input { min-height: 40px; } }

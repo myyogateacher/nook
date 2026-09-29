@@ -270,7 +270,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       </div>
       <span className="collection-count">{rowCountLabel(rows.total)}</span>
       {!editable && <span className="collection-role role-viewer"><Eye aria-hidden="true" />{roleLabel(role)}</span>}
-      {role === "editor" && <span className="collection-role role-editor">{roleLabel(role)}</span>}
+      {editable && role === "editor" && <span className="collection-role role-editor">{roleLabel(role, collection.level)}</span>}
       <span className="collection-header-actions collection-data-actions">
         {editable && <button className="icon-button" onClick={() => setDialog({ kind: "import" })} aria-haspopup="dialog" aria-label="Import CSV" title="Import CSV"><Upload /></button>}
         <a className="icon-button" href={exportUrl(collectionId, viewId)} download aria-label="Export CSV" title="Export CSV"><Download /></a>

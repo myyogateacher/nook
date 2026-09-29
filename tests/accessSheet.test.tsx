@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AccessSheet } from "../src/access/AccessSheet";
 import type { ItemAccess, PickerGroup, PickerPerson } from "../src/access/accessApi";
-import { accessErrorMessage, addPicked, audienceOptions, defaultLevelFor, draftFrom, isDirty, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody } from "../src/access/accessModel";
+import { accessErrorMessage, addPicked, audienceLoss, audienceLossMessage, audienceOptions, defaultLevelFor, draftFrom, groupBoost, guestRefusal, guestRefusalMessage, isDirty, keptGuestLevel, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody } from "../src/access/accessModel";
 import { levelAtLeast, levelDescription } from "../src/access/accessLevels";
 
 /**
@@ -144,6 +144,79 @@ describe("Access sheet rendering", () => {
     expect(html).not.toContain("Add people or groups");
     const loading = renderToStaticMarkup(<AccessSheet kind="note" id="n1" title="Plan" onClose={() => undefined} onSaved={() => undefined} />);
     expect(loading).toContain("Loading who has access…");
+  });
+
+  test("with guest sharing off, kept guest rows are marked and cannot be raised (QA v0.13.0 B1)", () => {
+    const off = access({ shareWithGuests: false, people: [...access().people, { id: "u-gina", displayName: "Gina", teamRole: "guest", kind: "person", level: "view", via: "direct", blocked: false }],
+      groups: [{ id: "g-ops", name: "Ops", memberCount: 6, guestCount: 2, selfAddedCount: 0, level: "comment" }, { id: "g-eng", name: "Engineering", memberCount: 3, guestCount: 0, selfAddedCount: 0, level: "view" }] });
+    expect(keptGuestLevel(off, { type: "group", id: "g-ops" })).toBe("comment");
+    expect(keptGuestLevel(off, { type: "group", id: "g-eng" })).toBeNull();
+    expect(keptGuestLevel(off, { type: "person", id: "u-gina" })).toBe("view");
+    expect(keptGuestLevel(off, { type: "person", id: "u-bob" })).toBeNull();
+    expect(keptGuestLevel(access(), { type: "group", id: "g-ops" })).toBeNull();
+    expect(levelsUpTo(["view", "comment", "edit", "manage"], "comment")).toEqual(["view", "comment"]);
+    const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops sprint" onClose={() => undefined} onSaved={() => undefined} initial={{ access: off, people, groups }} />);
+    expect(html.match(/Kept from before guest sharing was turned off/g)?.length).toBe(2);
+    expect(html).toContain("Guests already listed keep their access; they cannot be added or given more.");
+    // A kept row at the lowest level has nothing to choose: text with the reason.
+    const lowest = access({ shareWithGuests: false, groups: [{ id: "g-ops", name: "Ops", memberCount: 6, guestCount: 2, selfAddedCount: 0, level: "view" }] });
+    expect(renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops" onClose={() => undefined} onSaved={() => undefined} initial={{ access: lowest, people, groups }} />))
+      .toContain("Can be lowered or removed, not raised");
+    // The refusal names the rows the server pointed at.
+    expect(guestRefusal({ code: "GUEST_SHARE_DISABLED", guests: { people: ["u-gina"], groups: ["g-ops"] } })).toEqual({ people: ["u-gina"], groups: ["g-ops"] });
+    expect(guestRefusal({ code: "GUEST_SHARE_DISABLED" })).toBeNull();
+    expect(guestRefusalMessage(["Ops", "Gina"])).toBe("Sharing with guests is turned off for this Nook, so Ops and Gina cannot be added or given more access. Remove them, or set the level back.");
+    expect(guestRefusalMessage([])).toContain("Sharing with guests is turned off");
+  });
+
+  test("switching away from people and groups asks with the count before saving, and switching back restores them (B3)", () => {
+    const saved = access();
+    expect(audienceLoss({ audience: "all_users" }, saved)).toEqual({ people: 2, groups: 1 });
+    expect(audienceLoss({ audience: "selected" }, saved)).toBeNull();
+    expect(audienceLoss({ audience: "private" }, access({ people: [], groups: [] }))).toBeNull();
+    expect(audienceLoss({ audience: "selected" }, access({ audience: "all_users" }))).toBeNull();
+    expect(audienceLossMessage({ people: 2, groups: 1 }, "private")).toMatch(/^2 people and 1 group will lose the access you gave them here\. Only you will be able to open it\./);
+    expect(audienceLossMessage({ people: 1, groups: 0 }, "all_users")).toMatch(/^1 person will lose the access you gave it here\. Everyone signed in can open it instead/);
+    // The draft keeps the rows while unsaved: back to "People and groups I choose" shows them again.
+    const draft = draftFrom(saved);
+    const away = { ...draft, audience: "private" as const };
+    expect(toPutBody(away, saved).people).toEqual([]);
+    expect(toPutBody({ ...away, audience: "selected" }, saved)).toEqual(toPutBody(draft, saved));
+    const sheet = readFileSync(join(import.meta.dir, "..", "src", "access", "AccessSheet.tsx"), "utf8");
+    expect(sheet).toContain('title="Remove individual access?"');
+    expect(sheet).toContain("const loss = audienceLoss(draft, access);");
+  });
+
+  test("unsaved changes: Close, Escape, and Back ask Discard or Keep editing through history layers (B4)", () => {
+    const sheet = readFileSync(join(import.meta.dir, "..", "src", "access", "AccessSheet.tsx"), "utf8");
+    expect(sheet).toContain("useHistoryDialogGuard(dirty && prompt === null, askDiscard, { blocked: busy })");
+    expect(sheet).toContain("useHistoryDialogGuard(prompt !== null, keepEditing, { blocked: busy })");
+    expect(sheet).toContain('confirmLabel="Discard" cancelLabel="Keep editing"');
+    expect(sheet).not.toMatch(/window\.(confirm|alert|prompt)|beforeunload/);
+  });
+
+  test("single-level kinds show the level as text with their own line; task views are not described as files (B5)", () => {
+    expect(levelDescription("task_view", "view")).toBe("Run the saved view; cards show only from boards they can open");
+    expect(levelDescription("document", "view")).toBe("Open and download");
+    expect(levelDescription("folder", "view")).not.toBe(levelDescription("note", "view"));
+    const view = access({ kind: "task_view", levels: ["view"], audienceLevel: undefined, audienceLevels: undefined, groups: [],
+      people: [{ id: "u-dan", displayName: "Dan", teamRole: "member", kind: "person", level: "view", via: "direct", blocked: false }] });
+    const html = renderToStaticMarkup(<AccessSheet kind="task_view" id="v1" title="My view" onClose={() => undefined} onSaved={() => undefined} initial={{ access: view, people, groups }} />);
+    expect(html).toContain("Run the saved view; cards show only from boards they can open");
+    expect(html).not.toContain("Open and download");
+    expect(html).not.toContain('aria-label="What Dan can do"');
+  });
+
+  test("a person whose group gives more says so (B9)", () => {
+    const withGroup = access({ people: [{ id: "u-dan", displayName: "Dan", teamRole: "member", kind: "person", level: "comment", via: "direct", blocked: false, groupIds: ["g-ops"] },
+      { id: "u-bob", displayName: "Bob", teamRole: "viewer", kind: "person", level: "view", via: "direct", blocked: false, groupIds: ["g-ops"] }] });
+    const draft = draftFrom(withGroup);
+    expect(groupBoost(draft.people[0]!, draft.groups)).toEqual({ level: "edit", group: "Ops" });
+    // A viewer's role caps both: no hint.
+    expect(groupBoost(draft.people[1]!, draft.groups)).toBeNull();
+    expect(groupBoost({ ...draft.people[0]!, level: "manage" }, draft.groups)).toBeNull();
+    const html = renderToStaticMarkup(<AccessSheet kind="board" id="b1" title="Ops" onClose={() => undefined} onSaved={() => undefined} initial={{ access: withGroup, people, groups }} />);
+    expect(html).toContain("Also Can edit through Ops; the higher level applies");
   });
 
   test("every share entry point opens the Access sheet; the old panels are gone; Notes guard their own Back", () => {

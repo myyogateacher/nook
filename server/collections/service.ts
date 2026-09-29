@@ -34,7 +34,7 @@ import { indexRow, reindexCollection } from "./search";
 import { COLLECTION_TEMPLATES, DEFAULT_FIELDS, templateById } from "./templates";
 import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
-import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 
 /**
@@ -256,7 +256,7 @@ export async function putSharing(userId: string, collectionId: string, input: { 
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) throw new CollectionError(400, "One or more users were not found");
   }
-  if (input.visibility === "selected" && guestShareBlocked(uniqueIds)) throw new CollectionError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
+  if (input.visibility === "selected" && legacyGuestShareBlocked("collection", collectionId, legacyShareLevels("collection", collectionId, uniqueIds, shareRoleToLevel(input.role), true))) throw new CollectionError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withCollectionLock(collectionId, () => {
     requireOwnedCollection(collectionId, userId);
     db.transaction(() => {

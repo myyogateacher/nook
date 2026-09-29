@@ -1,6 +1,7 @@
 // Pure display and input helpers for collection values. No DOM or network access, so they are
 // unit tested directly. The server remains the authority: these only mirror its rules for early
 // feedback.
+import type { ItemLevel } from "../access/accessLevels";
 import type { CollectionRow, FieldDefinition, FieldType, FieldValue, OptionColor } from "./collectionsApi";
 
 export const FIELD_TYPE_LABELS: Record<FieldType, string> = {
@@ -153,8 +154,20 @@ export const rowCountLabel = (count: number) => count === 1 ? "1 row" : `${count
 export const collectionBinMessage = (collection: { name: string; row_count: number }) =>
   `Move “${collection.name}” and its ${rowCountLabel(collection.row_count)} to the Bin? Everyone it is shared with loses access. You can restore it for 30 days.`;
 
-export function roleLabel(role: "owner" | "editor" | "viewer") {
-  return role === "owner" ? "Owner" : role === "editor" ? "Can edit" : "View only";
+/** The caller's access as a badge: a manager (Wave 32, D273) is "Manager", not "Can edit" (QA v0.13.0 B6). */
+export function roleLabel(role: "owner" | "editor" | "viewer", level?: ItemLevel) {
+  return role === "owner" ? "Owner" : level === "manage" ? "Manager" : role === "editor" ? "Can edit" : "View only";
+}
+
+/**
+ * What the owner's list says about sharing (QA v0.13.0 B6). `share_role` is the level of everyone
+ * signed in only; people and groups each have their own level (a manager, an editor), so a chosen
+ * audience does not claim one level for all of them.
+ */
+export function ownerSharingLabel(visibility: "private" | "selected" | "all_users", shareRole: "viewer" | "editor") {
+  if (visibility === "private") return "Private";
+  if (visibility === "all_users") return `Shared with everyone · ${shareRole === "editor" ? "can edit" : "view only"}`;
+  return "Shared with people you chose";
 }
 
 /** Filter operators per field type (mirrors server/collections/query.ts OPERATORS). */

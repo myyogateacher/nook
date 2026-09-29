@@ -217,6 +217,73 @@ describe("GET/PUT …/access", () => {
     await send(admin, "DELETE", `/team/groups/${groupId}`, {});
   });
 
+  test("share_with_guests off refuses only what a save adds; rows from before save unchanged, lowered, or removed (T213)", async () => {
+    const admin = await user("Guest diff admin", "admin");
+    const owner = await user("Guest diff owner");
+    const member = await user("Guest diff member");
+    const other = await user("Guest diff other");
+    const guest = await user("Guest diff guest", "guest");
+    const guest2 = await user("Guest diff guest two", "guest");
+    const guestGroup = await group(admin, [member, guest]);
+    const otherGuestGroup = await group(admin, [guest2]);
+    const board = (await send(owner, "POST", "/tasks/boards", { name: "Guest diff board" })).body.board.id as string;
+    const path = `/tasks/boards/${board}/access`;
+    const setPolicy = (on: boolean) => on
+      ? db.query("DELETE FROM team_settings WHERE key = 'share_with_guests'").run()
+      : db.query("INSERT OR REPLACE INTO team_settings (key, value_json, updated_at) VALUES ('share_with_guests', 'false', ?)").run(new Date().toISOString());
+    // Shared with guests while the policy was on.
+    const first = await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "edit" }], people: [{ id: guest.userId, level: "comment" }] });
+    expect(first.status).toBe(200);
+    // B9: each listed person says which listed groups they are also in.
+    expect(first.body.people).toEqual([expect.objectContaining({ id: guest.userId, groupIds: [guestGroup] })]);
+    setPolicy(false);
+    try {
+      const kept = { groups: [{ id: guestGroup, level: "edit" }], people: [{ id: guest.userId, level: "comment" }] };
+      // The QA repro: the owner adds another member next to the kept guest group.
+      const added = await putAccess(owner, path, { audience: "selected", groups: kept.groups, people: [...kept.people, { id: other.userId, level: "edit" }] });
+      expect(added.status).toBe(200);
+      expect(added.body.groups).toEqual([expect.objectContaining({ id: guestGroup, level: "edit", guestCount: 1 })]);
+      const current = { groups: kept.groups, people: [...kept.people, { id: other.userId, level: "edit" }] };
+      // Adding a guest, adding a group with a guest, and raising a kept guest row are refused, with the rows named.
+      const newGuest = await putAccess(owner, path, { audience: "selected", ...current, people: [...current.people, { id: guest2.userId, level: "view" }] });
+      expect({ status: newGuest.status, code: newGuest.body.code, guests: newGuest.body.guests }).toEqual({ status: 400, code: "GUEST_SHARE_DISABLED", guests: { people: [guest2.userId], groups: [] } });
+      const newGroup = await putAccess(owner, path, { audience: "selected", ...current, groups: [...current.groups, { id: otherGuestGroup, level: "view" }] });
+      expect({ status: newGroup.status, guests: newGroup.body.guests }).toEqual({ status: 400, guests: { people: [], groups: [otherGuestGroup] } });
+      const raisedGroup = await putAccess(owner, path, { audience: "selected", people: current.people, groups: [{ id: guestGroup, level: "manage" }] });
+      expect({ status: raisedGroup.status, guests: raisedGroup.body.guests }).toEqual({ status: 400, guests: { people: [], groups: [guestGroup] } });
+      const raisedPerson = await putAccess(owner, path, { audience: "selected", groups: current.groups, people: [{ id: guest.userId, level: "edit" }, { id: other.userId, level: "edit" }] });
+      expect({ status: raisedPerson.status, guests: raisedPerson.body.guests }).toEqual({ status: 400, guests: { people: [guest.userId], groups: [] } });
+      // Lowering and removing always save.
+      expect((await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "comment" }], people: [{ id: guest.userId, level: "view" }, { id: other.userId, level: "edit" }] })).status).toBe(200);
+      expect((await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "comment" }], people: [{ id: other.userId, level: "edit" }] })).status).toBe(200);
+      // Once removed, the guest counts as new again.
+      expect((await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "comment" }], people: [{ id: other.userId, level: "edit" }, { id: guest.userId, level: "view" }] })).status).toBe(400);
+      expect((await putAccess(owner, path, { audience: "selected", people: [{ id: other.userId, level: "edit" }] })).status).toBe(200);
+      expect((await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "view" }], people: [{ id: other.userId, level: "edit" }] })).status).toBe(400);
+
+      // The older /sharing route: a kept guest stays; a new one is refused.
+      const view = (await send(owner, "POST", "/tasks/views", { name: "Guest diff view", query: "" })).body.view.id as string;
+      setPolicy(true);
+      expect((await send(owner, "PUT", `/tasks/views/${view}/sharing`, { visibility: "selected", userIds: [guest.userId] })).status).toBe(200);
+      setPolicy(false);
+      expect((await send(owner, "PUT", `/tasks/views/${view}/sharing`, { visibility: "selected", userIds: [guest.userId, other.userId] })).status).toBe(200);
+      expect((await send(owner, "PUT", `/tasks/views/${view}/sharing`, { visibility: "selected", userIds: [guest.userId, other.userId, guest2.userId] })).body.code).toBe("GUEST_SHARE_DISABLED");
+      const collection = (await newCollection(owner, { name: "Guest diff collection", fields: [{ name: "Name", type: "text" }] })).id;
+      setPolicy(true);
+      expect((await send(owner, "PUT", `/collections/${collection}/sharing`, { visibility: "selected", userIds: [guest.userId], role: "viewer" })).status).toBe(200);
+      setPolicy(false);
+      expect((await send(owner, "PUT", `/collections/${collection}/sharing`, { visibility: "selected", userIds: [guest.userId, other.userId], role: "viewer" })).status).toBe(200);
+      // The old route's one role would raise the kept guest to edit.
+      expect((await send(owner, "PUT", `/collections/${collection}/sharing`, { visibility: "selected", userIds: [guest.userId], role: "editor" })).body.code).toBe("GUEST_SHARE_DISABLED");
+    } finally {
+      setPolicy(true);
+    }
+    // With the policy on, everything saves.
+    expect((await putAccess(owner, path, { audience: "selected", groups: [{ id: guestGroup, level: "manage" }, { id: otherGuestGroup, level: "edit" }], people: [{ id: guest2.userId, level: "edit" }] })).status).toBe(200);
+    await send(admin, "DELETE", `/team/groups/${guestGroup}`, {});
+    await send(admin, "DELETE", `/team/groups/${otherGuestGroup}`, {});
+  });
+
   test("the audit keeps counts only, and read-only roles cannot save", async () => {
     const owner = await user("Audit owner");
     const person = await user("Audit person");

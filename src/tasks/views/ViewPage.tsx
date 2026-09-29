@@ -4,6 +4,7 @@ import { format } from "../../../shared/taskQuery";
 import { ApiError } from "../../api";
 import { ConfirmDialog, ModalDialog } from "../../files/Dialog";
 import { NameDialog } from "../../files/RenameDialog";
+import { useIsPhone } from "../../ui/Listbox";
 import { useHistoryDialogGuard } from "../../ui/useHistoryDialogGuard";
 import { taskErrorCode, taskErrorMessage } from "../tasksApi";
 import { viewerTimeZone, type TaskNotify } from "../taskActions";
@@ -48,6 +49,8 @@ const displayOf = (query: HomeQuery) => ({ layout: query.layout, group: query.gr
  */
 export function ViewPage({ userId, viewId, query, onQuery, directory, notify, onOpenCard, onOpenView, onBack, onDeleted, onMissing }: ViewPageProps) {
   const isNew = viewId === NEW_VIEW;
+  // The empty state names the control on screen: "Filters" folds "+ Filter" away on phones (QA v0.13.0 B10).
+  const phone = useIsPhone();
   const [view, setView] = useState<TaskView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<ViewDialog | null>(null);
@@ -225,7 +228,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       idle={<div className="bin-state task-home-empty">
         <span className="bin-state-icon"><Filter /></span>
         <h2>{readOnly ? "This view has no filter yet" : "Add a filter to see cards"}</h2>
-        <p>{readOnly ? "Its owner has not chosen a board, person, state, or other filter." : "Choose a board, a person, a state, a tag, or a due date with + Filter. Views search across every board you can open, so they start with at least one filter."}</p>
+        <p>{readOnly ? "Its owner has not chosen a board, person, state, or other filter." : `Choose a board, a person, a state, a tag, or a due date with ${phone ? "Filters" : "+ Filter"}. Views search across every board you can open, so they start with at least one filter.`}</p>
       </div>}
       emptyText="No cards on your boards match this view." />}
 

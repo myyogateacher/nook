@@ -58,3 +58,15 @@
   .access-audience-row > .ui-select-root { margin-left: 0; }
   .access-actions button { flex: 1; }
 }
+
+/* Confirms over the sheet (discard changes, saving another audience): above the sheet's z-index 61. */
+.sheet-confirm-layer > :is(.panel-scrim, .file-dialog) { z-index: 70; }
+
+/* Rows kept from before guest sharing was turned off, a group giving more, and rows a save was refused for (T213). */
+.access-row-copy .access-kept { color: #c9a85c; }
+.access-row-copy .access-boost { color: #9cc0f5; white-space: normal; }
+.access-row-copy .access-row-refused { color: #f3a3ae; white-space: normal; }
+.access-row.refused { border-color: #7a2f3a; background: #22171a; }
+
+/* 44 px tap target for "Add people or groups…" (the shared field is 44 px on phones; its input was 30). */
+@media (max-width: 760px) { .access-picker .ui-combobox-field .ui-combobox-input { min-height: 40px; } }

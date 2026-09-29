@@ -32,6 +32,8 @@ type BoardCalendarProps = {
   /** PATCH `{ dueOn }` with the card's revision; `null` clears the date (and its time). */
   onSetDue: (card: BoardCard, dueOn: string | null) => void;
   filtered: boolean;
+  /** Below Can edit on the board, or a read-only Team role: no drag, no Alt+Arrow, no Set due date. */
+  readOnly?: boolean;
 };
 
 const CHIPS_PER_DAY = 3;
@@ -44,8 +46,10 @@ type Sheet = { kind: "tray" } | { kind: "due"; cardId: string };
  * card drags to a day (its date shifts, its time and zone stay) or to the tray (no date); Alt+Arrow
  * moves a focused card a day or a week; "Set due date…" works everywhere, and is the phone's way.
  */
-export function BoardCalendar({ board, cards, layout, month: routeMonth, today, viewerZone, onMonth, onLayout, onOpenCard, onSetDue, filtered }: BoardCalendarProps) {
+export function BoardCalendar({ board, cards, layout, month: routeMonth, today, viewerZone, onMonth, onLayout, onOpenCard, onSetDue, filtered, readOnly = false }: BoardCalendarProps) {
   const phone = useIsPhone();
+  // Drag and Alt+Arrow change the due date: only for people who can edit cards.
+  const movable = !phone && !readOnly;
   const calendarEnabled = useModuleEnabled("calendar");
   const month = resolveMonth(routeMonth, today);
   const [selected, setSelected] = useState<string | null>(null);
@@ -79,7 +83,7 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
       onOpenCard(card);
       return;
     }
-    const delta = event.altKey && !event.ctrlKey && !event.metaKey ? keyboardDayDelta(event.key) : null;
+    const delta = !readOnly && event.altKey && !event.ctrlKey && !event.metaKey ? keyboardDayDelta(event.key) : null;
     const shown = displayedDay(card, viewerZone);
     if (delta === null || !shown || !card.due_on) return;
     event.preventDefault();
@@ -98,8 +102,8 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
   };
 
   const chip = (card: BoardCard) => <div key={card.id} className={`task-cal-chip${done.has(card.column_id) ? " done" : ""}`} tabIndex={0} role="button"
-    data-card-id={card.id} data-open-card={card.id} draggable={!phone} aria-label={chipLabel(card)} aria-roledescription="Draggable card"
-    aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown" aria-describedby="task-cal-keys"
+    data-card-id={card.id} data-open-card={card.id} draggable={movable} aria-label={chipLabel(card)} aria-roledescription={readOnly ? "Card" : "Draggable card"}
+    aria-keyshortcuts={readOnly ? undefined : "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"} aria-describedby={readOnly ? undefined : "task-cal-keys"}
     title={chipLabel(card)}
     onDragStart={(event) => { event.dataTransfer.setData(CARD_DRAG_TYPE, card.id); event.dataTransfer.effectAllowed = "move"; }}
     onClick={() => onOpenCard(card)} onKeyDown={(event) => chipKeyDown(event, card)}>
@@ -110,14 +114,14 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
 
   // A full row (day list, agenda, tray): opens the card, with "Set due date…" beside it.
   const row = (card: BoardCard) => <div className={`task-cal-row${done.has(card.column_id) ? " done" : ""}`} data-card-id={card.id}>
-    <button type="button" className="task-cal-row-open" data-open-card={card.id} onClick={() => onOpenCard(card)} draggable={!phone}
+    <button type="button" className="task-cal-row-open" data-open-card={card.id} onClick={() => onOpenCard(card)} draggable={movable}
       onDragStart={(event: ReactDragEvent<HTMLButtonElement>) => { event.dataTransfer.setData(CARD_DRAG_TYPE, card.id); event.dataTransfer.effectAllowed = "move"; }}
-      onKeyDown={(event) => chipKeyDown(event, card)} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown">
+      onKeyDown={(event) => chipKeyDown(event, card)} aria-keyshortcuts={readOnly ? undefined : "Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"}>
       <span className="task-cal-row-time">{displayedTime(card, viewerZone) ?? (card.due_on ? "All day" : "")}</span>
       <span className="task-cal-row-title"><FlagIcons flags={card.flags} /><span>{card.title}</span></span>
       <small>{board.columns.find((column) => column.id === card.column_id)?.name}</small>
     </button>
-    <button type="button" className="icon-button task-cal-row-due" onClick={() => openDueDialog(card)} aria-haspopup="dialog" aria-label={`Set due date for “${card.title}”`} title="Set due date…"><CalendarClock /></button>
+    {!readOnly && <button type="button" className="icon-button task-cal-row-due" onClick={() => openDueDialog(card)} aria-haspopup="dialog" aria-label={`Set due date for “${card.title}”`} title="Set due date…"><CalendarClock /></button>}
   </div>;
 
   const tray = <div className="task-cal-tray-list">
@@ -150,7 +154,7 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
             }}
             onShiftMonth={(delta) => onMonth(shiftMonth(month, delta))}
             onToday={() => { setSelected(null); onMonth(null); }}
-            drop={phone ? undefined : { accepts: (types) => isCardDrag(types), type: CARD_DRAG_TYPE, onDropOnDay: (target, payload) => dropOn(target, payload) }}
+            drop={!movable ? undefined : { accepts: (types) => isCardDrag(types), type: CARD_DRAG_TYPE, onDropOnDay: (target, payload) => dropOn(target, payload) }}
             renderDots={(cell) => (byDay.get(cell) ?? []).slice(0, 3).map((card) => <span key={card.id} className={`calendar-dot task-cal-dot${card.flags.length ? " flagged" : ""}`} />)}
             renderDay={(cell) => {
               const items = byDay.get(cell) ?? [];
@@ -171,18 +175,18 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
             empty={<p className="task-cal-note">{filtered ? "No matching cards have a due date." : "No cards have a due date yet."}</p>} />}
       </div>
       {!phone && <aside className={`task-cal-tray${trayOver ? " drop-target" : ""}`} aria-labelledby="task-cal-tray-title"
-        onDragOver={(event) => { if (!isCardDrag(event.dataTransfer.types)) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setTrayOver(true); }}
+        onDragOver={(event) => { if (readOnly || !isCardDrag(event.dataTransfer.types)) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; setTrayOver(true); }}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setTrayOver(false); }}
-        onDrop={(event) => { if (!isCardDrag(event.dataTransfer.types)) return; event.preventDefault(); setTrayOver(false); dropOn(null, event.dataTransfer.getData(CARD_DRAG_TYPE)); }}>
+        onDrop={(event) => { if (readOnly || !isCardDrag(event.dataTransfer.types)) return; event.preventDefault(); setTrayOver(false); dropOn(null, event.dataTransfer.getData(CARD_DRAG_TYPE)); }}>
         <h3 id="task-cal-tray-title">Unscheduled <span className="task-group-count">{unscheduled.length}</span></h3>
-        <p className="task-cal-help">Cards without a due date. Drag one onto a day to schedule it.</p>
+        <p className="task-cal-help">{readOnly ? "Cards without a due date." : "Cards without a due date. Drag one onto a day to schedule it."}</p>
         {tray}
       </aside>}
     </div>
 
     {sheet?.kind === "tray" && <ModalDialog title={`Unscheduled (${unscheduled.length})`} eyebrow="Board calendar" variant="sheet" onClose={() => setSheet(null)}>
       <div className="task-cal-sheet">
-        <p className="task-cal-help">Cards without a due date. Use Set due date to schedule one.</p>
+        <p className="task-cal-help">{readOnly ? "Cards without a due date." : "Cards without a due date. Use Set due date to schedule one."}</p>
         {tray}
       </div>
     </ModalDialog>}

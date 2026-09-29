@@ -114,7 +114,38 @@ async function fileFor(root: string, pathname: string) {
 /** A precompressed twin, under the same rules as the file itself. */
 const twin = (root: string, path: string) => realFileInside(root, path);
 
-const etagOf = (size: number, mtimeMs: number, encoding: Encoding) => `"${size.toString(36)}-${Math.floor(mtimeMs).toString(36)}${encoding === "identity" ? "" : `-${encoding}`}"`;
+/**
+ * ETags come from the bytes (review L1): a short SHA-256 of each file and each precompressed twin,
+ * computed once per path, size, and mtime. Two releases never share an index.html ETag, even when
+ * a build normalises timestamps and the sizes happen to match.
+ */
+const hashes = new Map<string, string>();
+const HASH_CACHE_LIMIT = 2000;
+async function contentTag(path: string, size: number, mtimeMs: number) {
+  const key = `${path}\0${size}\0${mtimeMs}`;
+  const known = hashes.get(key);
+  if (known) return known;
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(await Bun.file(path).arrayBuffer());
+  const tag = hasher.digest("base64url").slice(0, 22);
+  if (hashes.size >= HASH_CACHE_LIMIT) hashes.clear();
+  hashes.set(key, tag);
+  return tag;
+}
+const etagOf = (tag: string, encoding: Encoding) => `"${tag}${encoding === "identity" ? "" : `-${encoding}`}"`;
+
+/**
+ * Whether a Range may be honoured (review L2): without If-Range always; with it, only when it names
+ * the current representation, by strong ETag or by the exact Last-Modified date.
+ */
+export function ifRangeMatches(ifRange: string | null, etag: string, mtimeMs: number) {
+  if (ifRange === null) return true;
+  const value = ifRange.trim();
+  if (value.startsWith("W/")) return false;
+  if (value.startsWith("\"")) return value === etag;
+  const date = Date.parse(value);
+  return Number.isFinite(date) && Math.floor(mtimeMs / 1000) * 1000 === date;
+}
 
 function notModified(request: Request, etag: string, mtimeMs: number) {
   const ifNoneMatch = request.headers.get("If-None-Match");
@@ -154,7 +185,9 @@ export async function serveStaticFile(request: Request, pathname: string, root: 
   let servedPath = pathname;
   if (!found.path) {
     // A missing hashed or asset file is a real 404 (never HTML under a script's name); anything else is a client route.
-    if (pathname.startsWith("/assets/") || pathname === "/index.html") return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": REVALIDATE } });
+    // So is a missing file with an extension anywhere (/robots.txt, /favicon.ico, /x.png; review L5):
+    // only extension-less paths are client routes.
+    if (pathname.startsWith("/assets/") || pathname === "/index.html" || /\.[A-Za-z0-9]{1,10}$/.test(pathname)) return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": REVALIDATE } });
     found = await fileFor(root, "/index.html");
     servedPath = "/index.html";
     if (found.refused || !found.path) return new Response("Not found", { status: 404 });
@@ -163,7 +196,9 @@ export async function serveStaticFile(request: Request, pathname: string, root: 
   const extension = extname(path).toLowerCase();
   const type = TYPES[extension] ?? "application/octet-stream";
   const compressible = COMPRESSIBLE.has(extension);
-  const range = request.headers.get("Range");
+  const identityEtag = etagOf(await contentTag(path, size, mtimeMs), "identity");
+  // A Range whose If-Range no longer matches is dropped: the whole current file is sent (L2).
+  const range = ifRangeMatches(request.headers.get("If-Range"), identityEtag, mtimeMs) ? request.headers.get("Range") : null;
   let twins: { br: Awaited<ReturnType<typeof twin>>; gzip: Awaited<ReturnType<typeof twin>> } = { br: null, gzip: null };
   // A range applies to the plain file; ranges of compressed twins are not offered.
   const encoding = compressible && !range
@@ -176,7 +211,7 @@ export async function serveStaticFile(request: Request, pathname: string, root: 
   const chosen = encoding === "br" ? twins.br : encoding === "gzip" ? twins.gzip : null;
   const bodyPath = chosen?.path ?? path;
   const bodyInfo = chosen ?? { size, mtimeMs };
-  const etag = etagOf(bodyInfo.size, mtimeMs, encoding);
+  const etag = chosen ? etagOf(await contentTag(chosen.path, chosen.size, chosen.mtimeMs), encoding) : identityEtag;
   const headers = new Headers({
     "Content-Type": type,
     "Cache-Control": isHashedAsset(servedPath) ? IMMUTABLE : REVALIDATE,
@@ -195,6 +230,8 @@ export async function serveStaticFile(request: Request, pathname: string, root: 
     const wanted = parseRange(range, size);
     if (wanted === "invalid") {
       headers.set("Content-Range", `bytes */${size}`);
+      // An empty body claims no type (L5).
+      headers.delete("Content-Type");
       return new Response(null, { status: 416, headers });
     }
     if (wanted) {

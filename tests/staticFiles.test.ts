@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliCompressSync, gzipSync } from "node:zlib";
-import { IMMUTABLE, isHashedAsset, negotiateEncoding, parseRange, REVALIDATE, serveStaticFile } from "../server/staticFiles";
+import { IMMUTABLE, ifRangeMatches, isHashedAsset, negotiateEncoding, parseRange, REVALIDATE, serveStaticFile } from "../server/staticFiles";
 
 /**
  * C14: production static files. Hashed assets are cached for a year, everything else revalidates
@@ -47,7 +47,7 @@ describe("cache headers", () => {
     for (const path of ["/index.html", "/", "/sw.js", "/manifest.webmanifest"]) {
       const response = await get(path);
       expect(response.headers.get("Cache-Control")).toBe(REVALIDATE);
-      expect(response.headers.get("ETag")).toMatch(/^"[a-z0-9-]+"$/);
+      expect(response.headers.get("ETag")).toMatch(/^"[A-Za-z0-9_-]{22}"$/);
       expect(response.headers.get("Last-Modified")).toBeTruthy();
     }
     expect((await get("/")).headers.get("Content-Type")).toBe("text/html; charset=utf-8");
@@ -216,8 +216,10 @@ describe("hardening (C14 second pass)", () => {
     // A twin that points outside is ignored: the plain file is sent instead.
     writeFileSync(join(root, "plain.txt"), "plain ".repeat(100));
     symlinkSync(outsideFile, join(root, "plain.txt.br"));
-    // The outside link is not a file here: the path falls back to index.html, never the outside text.
-    expect(await (await get("/leak.txt")).text()).toBe(html);
+    // The outside link is not a file here: a missing file with an extension, so 404, never the outside text.
+    const leak = await get("/leak.txt");
+    expect(leak.status).toBe(404);
+    expect(await leak.text()).not.toContain("outside");
     expect(await (await get("/alias.js")).text()).toContain("addEventListener('push'");
     const plain = await get("/plain.txt", { "Accept-Encoding": "br" });
     expect(plain.headers.get("Content-Encoding")).toBeNull();
@@ -225,28 +227,105 @@ describe("hardening (C14 second pass)", () => {
   });
 });
 
-describe("reload once after a release (C14)", () => {
-  test("a failed chunk reloads the page once, and not again within the guard", async () => {
-    const { RELOAD_GUARD_KEY, RELOAD_GUARD_MS, shouldReloadForChunk, installChunkReload } = await import("../src/chunkReload");
+describe("review fixes (L1, L2, L5)", () => {
+  test("L1: ETags come from the content: equal size and mtime, different bytes, different ETags", async () => {
+    const { utimesSync } = await import("node:fs");
+    const second = mkdtempSync(join(tmpdir(), "nook-dist-b-"));
+    try {
+      writeFileSync(join(second, "index.html"), html.replace("Nook", "Kood"));
+      const when = new Date("2026-01-01T00:00:00Z");
+      utimesSync(join(root, "index.html"), when, when);
+      utimesSync(join(second, "index.html"), when, when);
+      const a = await get("/index.html");
+      const b = await serveStaticFile(new Request("http://localhost/index.html"), "/index.html", second);
+      expect(a.headers.get("Last-Modified")).toBe(b!.headers.get("Last-Modified"));
+      expect(a.headers.get("ETag")).not.toBe(b!.headers.get("ETag"));
+      // Stable for the same bytes.
+      expect((await get("/index.html")).headers.get("ETag")).toBe(a.headers.get("ETag"));
+    } finally {
+      rmSync(second, { recursive: true, force: true });
+    }
+  });
+
+  test("L2: If-Range keeps the range only when it names the current file", async () => {
+    const whole = await get("/assets/index-BvuYDGo0.js");
+    const etag = whole.headers.get("ETag")!;
+    const modified = whole.headers.get("Last-Modified")!;
+    expect((await get("/assets/index-BvuYDGo0.js", { Range: "bytes=0-4", "If-Range": etag })).status).toBe(206);
+    expect((await get("/assets/index-BvuYDGo0.js", { Range: "bytes=0-4", "If-Range": modified })).status).toBe(206);
+    for (const stale of ['"old-tag"', `W/${etag}`, "Wed, 01 Jan 2020 00:00:00 GMT", "not a date"]) {
+      const response = await get("/assets/index-BvuYDGo0.js", { Range: "bytes=0-4", "If-Range": stale });
+      expect({ stale, status: response.status }).toEqual({ stale, status: 200 });
+      expect(await response.text()).toBe(script);
+    }
+    expect(ifRangeMatches(null, etag, 0)).toBe(true);
+  });
+
+  test("L5: a 416 claims no type; a missing file with an extension is 404; client routes still get the app", async () => {
+    const unsatisfiable = await get("/assets/index-BvuYDGo0.js", { Range: "bytes=999999-" });
+    expect(unsatisfiable.status).toBe(416);
+    expect(unsatisfiable.headers.get("Content-Type")).toBeNull();
+    for (const path of ["/nonsense.png", "/favicon.ico", "/robots.txt", "/deep/path/file.js"]) {
+      const response = await get(path);
+      expect({ path, status: response.status, type: response.headers.get("Content-Type") }).toEqual({ path, status: 404, type: "text/plain; charset=utf-8" });
+    }
+    for (const path of ["/notes", "/team/policies", "/calendar/month/2026-09"]) expect(await (await get(path)).text()).toBe(html);
+  });
+
+  test("the app ships a robots.txt that disallows everything (a private app)", async () => {
+    const robots = await Bun.file(new URL("../public/robots.txt", import.meta.url)).text();
+    expect(robots).toContain("User-agent: *");
+    expect(robots).toContain("Disallow: /");
+  });
+});
+
+describe("reload once after a release (C14, review L3)", () => {
+  test("with sessionStorage: one reload, then none within the guard", async () => {
+    const { RELOAD_GUARD_KEY, RELOAD_GUARD_MS, reloadDecision } = await import("../src/chunkReload");
     const store = new Map<string, string>();
     const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
-    expect(shouldReloadForChunk(storage, 1_000_000)).toBe(true);
+    expect(reloadDecision(storage, "https://nook.test/notes", 1_000_000)).toBe("reload");
     expect(store.get(RELOAD_GUARD_KEY)).toBe("1000000");
-    expect(shouldReloadForChunk(storage, 1_000_000 + 5_000)).toBe(false);
-    expect(shouldReloadForChunk(storage, 1_000_000 + RELOAD_GUARD_MS + 1)).toBe(true);
-    // Storage that throws (private mode) still allows the one reload.
-    expect(shouldReloadForChunk({ getItem: () => { throw new Error("denied"); }, setItem: () => undefined })).toBe(true);
-    // The listener reloads and keeps Vite from rethrowing; a second error inside the guard does neither.
+    expect(reloadDecision(storage, "https://nook.test/notes", 1_000_000 + 5_000)).toBeNull();
+    expect(reloadDecision(storage, "https://nook.test/notes", 1_000_000 + RELOAD_GUARD_MS + 1)).toBe("reload");
+  });
+
+  test("without sessionStorage: one reload to a marked address, never a second, and the marker is cleared after load", async () => {
+    const { clearReloadMarker, reloadDecision, withReloadMarker, installChunkReload, resetChunkReloadForTests } = await import("../src/chunkReload");
+    const throwing = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    expect(reloadDecision(null, "https://nook.test/notes?q=x", 1)).toBe("marker");
+    expect(reloadDecision(throwing, "https://nook.test/notes", 1)).toBe("marker");
+    const marked = withReloadMarker("https://nook.test/notes?q=x", true);
+    expect(marked).toBe("https://nook.test/notes?q=x&reloaded=1");
+    // The reloaded page fails again: no second reload, the error shows instead.
+    expect(reloadDecision(null, marked, 2)).toBeNull();
+    expect(reloadDecision(throwing, marked, 2)).toBeNull();
+    // After a successful load the marker leaves the address bar, in place.
+    const replaced: string[] = [];
+    clearReloadMarker({ state: { keep: 1 }, replaceState: (_state: unknown, _title: string, url?: string | URL | null) => { replaced.push(String(url)); } }, marked);
+    expect(replaced).toEqual(["https://nook.test/notes?q=x"]);
+    // The listener: one navigation per page even when several chunks fail at once.
+    resetChunkReloadForTests();
     let handler: ((event: { preventDefault: () => void }) => void) | null = null;
-    let reloads = 0;
-    let prevented = 0;
-    const session = new Map<string, string>();
-    installChunkReload({ addEventListener: ((_name: string, listener: never) => { handler = listener; }) as never, location: { reload: () => { reloads += 1; } } as never,
-      sessionStorage: { getItem: (key: string) => session.get(key) ?? null, setItem: (key: string, value: string) => { session.set(key, value); } } as never });
-    handler!({ preventDefault: () => { prevented += 1; } });
-    handler!({ preventDefault: () => { prevented += 1; } });
-    expect({ reloads, prevented }).toEqual({ reloads: 1, prevented: 1 });
+    const calls: string[] = [];
+    installChunkReload({ addEventListener: ((_name: string, listener: never) => { handler = listener; }) as never,
+      location: { href: "https://nook.test/notes", reload: () => { calls.push("reload"); }, replace: (url: string) => { calls.push(`replace ${url}`); } } as never });
+    handler!({ preventDefault: () => undefined });
+    handler!({ preventDefault: () => undefined });
+    expect(calls).toEqual(["replace https://nook.test/notes?reloaded=1"]);
+    resetChunkReloadForTests();
+  });
+
+  test("the app entry installs the guard, clears the marker, and removes the boot fallback; index.html has one without inline script", async () => {
     const main = await Bun.file(new URL("../src/main.tsx", import.meta.url)).text();
     expect(main).toContain("installChunkReload();");
+    expect(main).toContain("clearReloadMarker();");
+    expect(main).toContain('document.getElementById("boot-fallback")?.remove();');
+    const index = await Bun.file(new URL("../index.html", import.meta.url)).text();
+    expect(index).toContain('id="boot-fallback"');
+    expect(index).toContain("<noscript>");
+    expect(index).toContain("animation: boot-fallback-show 0s linear 8s forwards");
+    // The only script is the module entry: nothing inline for the CSP to refuse.
+    expect(index.match(/<script\b[^>]*>/g)).toEqual(['<script type="module" src="/src/main.tsx">']);
   });
 });

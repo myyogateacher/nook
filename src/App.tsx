@@ -75,6 +75,8 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
+import { NameDialog } from "./files/RenameDialog";
+import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
@@ -552,6 +554,9 @@ export function App() {
   const settingsPendingRef = useRef(false);
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
+  // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const newFolderTriggerRef = useRef<HTMLElement | null>(null);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
@@ -889,11 +894,24 @@ export function App() {
     return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited, mcpDraft: Boolean(note?.draftMcpKeyName) }), publish: () => publish(reloadCurrent) });
   }
 
-  async function createFolder() {
-    const name = window.prompt("Folder name");
-    if (!name?.trim()) return;
-    await api("/folders", { method: "POST", body: JSON.stringify({ name: name.trim(), parentId: null }) });
+  function openNewFolder(trigger: HTMLElement) {
+    newFolderTriggerRef.current = trigger;
+    setNewFolderOpen(true);
+  }
+
+  const closeNewFolder = useCallback(() => {
+    setNewFolderOpen(false);
+    const trigger = newFolderTriggerRef.current;
+    newFolderTriggerRef.current = null;
+    if (trigger?.isConnected) trigger.focus();
+  }, []);
+  useHistoryDialogGuard(newFolderOpen, closeNewFolder);
+
+  async function createFolder(name: string) {
+    const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
     await loadNavigation();
+    closeNewFolder();
+    flash(`Created folder ${folder.name}`);
   }
 
   async function createNote() {
@@ -1684,7 +1702,7 @@ export function App() {
           <button className="nav-home" onClick={() => { void openHome(); }} title="Back to Home"><House /><span>Home</span></button>
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
-          <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={createFolder} aria-label="New folder"><FolderPlus /></button>}</div>
+          <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
           {folders.map((folder) => <div className="folder-entry" key={folder.id}>
             <button
               className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
@@ -1836,6 +1854,17 @@ export function App() {
           setDeletingNote(null);
           void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
         }} />}
+      {newFolderOpen && <NameDialog
+        title="New folder"
+        eyebrow="Notes"
+        label="Folder name"
+        initialValue=""
+        submitLabel="Create folder"
+        hint="Up to 120 characters."
+        validate={validateFolderName}
+        onSubmit={createFolder}
+        onCancel={closeNewFolder}
+      />}
       {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder access updated"); }} />}
       {settingsDialog}
       {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired

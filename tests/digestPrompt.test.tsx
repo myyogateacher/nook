@@ -83,6 +83,22 @@ describe("Today digest prompt (D248)", () => {
     expect(readEmailPrefs(unverified.userId).digest).toBe("off");
   });
 
+  test("viewers and guests can answer and dismiss their own prompt (review M1: the read-only gate allows it)", async () => {
+    for (const role of ["viewer", "guest"] as const) {
+      const dismisser = await person(`Prompt ${role} dismiss`);
+      db.query("UPDATE users SET role = ? WHERE id = ?").run(role, dismisser.userId);
+      expect(await shown(dismisser)).toBe(true);
+      const dismissed = await call(dismisser, "POST", "/mail/digest-prompt", { choice: "dismiss" });
+      expect({ role, status: dismissed.status }).toEqual({ role, status: 200 });
+      expect(await shown(dismisser)).toBe(false);
+      const chooser = await person(`Prompt ${role} weekly`);
+      db.query("UPDATE users SET role = ? WHERE id = ?").run(role, chooser.userId);
+      const chosen = await call(chooser, "POST", "/mail/digest-prompt", { choice: "weekly", tz: "UTC" });
+      expect({ role, status: chosen.status, digest: chosen.body.digest }).toEqual({ role, status: 200, digest: "weekly" });
+      expect(await shown(chooser)).toBe(false);
+    }
+  });
+
   test("a cadence chosen in Settings first also settles the prompt", async () => {
     const settings = await person("Prompt via settings");
     expect((await call(settings, "PUT", "/mail/settings", { enabled: true, categories: CATEGORIES, digest: "weekly", digestLocalTime: "07:00", quietHours: null, tz: "UTC", revision: 0 })).status).toBe(200);

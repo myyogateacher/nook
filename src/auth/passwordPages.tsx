@@ -32,6 +32,16 @@ export function takePasswordLinkFromLocation(location: Pick<Location, "pathname"
   return { kind: "reset", token: raw && TOKEN.test(raw) ? raw : null };
 }
 
+/**
+ * A reset link pasted into a tab already on /reset-password is a same-document move (popstate, then
+ * hashchange), not a page load (A5). Returns the new link, read and stripped as on the first load,
+ * when the location is /reset-password with a fragment; null otherwise.
+ */
+export function takeNewResetLink(location: Pick<Location, "pathname" | "hash"> = window.location, history: Pick<History, "state" | "replaceState"> = window.history): PasswordLink {
+  if (!location.hash || location.pathname.replace(/\/$/, "") !== RESET_PATH) return null;
+  return takePasswordLinkFromLocation(location, history);
+}
+
 let initial: PasswordLink | undefined;
 /** The password page on the page's first URL, read (and stripped) once per page load. */
 export function initialPasswordLink() {

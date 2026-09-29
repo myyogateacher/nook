@@ -47,7 +47,7 @@ import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./
 import { initialInvite } from "./auth/inviteLink";
 import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
-import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takePasswordLinkFromLocation } from "./auth/passwordPages";
+import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
@@ -107,6 +107,9 @@ const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "title-asc", label: "Title A–Z" },
   { value: "title-desc", label: "Title Z–A" }
 ];
+
+/** Popstate events a pasted reset link took (A5): the route handlers leave them alone. */
+const resetLinkEvents = new WeakSet<Event>();
 
 function relativeTime(value: string) {
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
@@ -647,10 +650,29 @@ export function App() {
       .finally(() => setChecking(false));
   }, []);
 
+  // A second reset link pasted into a tab on /reset-password (A5): the fragment changes without a
+  // load. Registered once, before the popstate handlers below, so it reads the fragment first; they
+  // skip the event it took.
+  useEffect(() => {
+    const onMove = (event: Event) => {
+      const link = takeNewResetLink();
+      if (!link) return;
+      resetLinkEvents.add(event);
+      setPasswordLink(link);
+    };
+    window.addEventListener("popstate", onMove);
+    window.addEventListener("hashchange", onMove);
+    return () => {
+      window.removeEventListener("popstate", onMove);
+      window.removeEventListener("hashchange", onMove);
+    };
+  }, []);
+
   // Signed out, Back and Forward move between sign in and /forgot-password (Wave 30).
   useEffect(() => {
     if (session) return;
-    const onPopState = () => {
+    const onPopState = (event: PopStateEvent) => {
+      if (resetLinkEvents.has(event)) return;
       const link = takePasswordLinkFromLocation();
       setPasswordLink(link?.kind === "forgot" ? link : null);
     };
@@ -1394,6 +1416,7 @@ export function App() {
   useEffect(() => {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
+      if (resetLinkEvents.has(event)) return;
       const poppedDepth = readHistoryDepth(event.state);
       const previousDepth = recordPopDepth(historyDepthRef, poppedDepth);
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
@@ -1637,7 +1660,7 @@ export function App() {
   };
   // Signed in, /forgot-password (a Back onto an old entry) is just Home; a reset link still opens.
   if (passwordLink?.kind === "forgot" && !session) return <ForgotPasswordPage onBack={leaveForgotPassword} />;
-  if (passwordLink?.kind === "reset") return <ResetPasswordPage token={passwordLink.token} signedIn={Boolean(session)} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
+  if (passwordLink?.kind === "reset") return <ResetPasswordPage key={passwordLink.token ?? ""} token={passwordLink.token} signedIn={Boolean(session)} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;

@@ -10,7 +10,7 @@ import type { Folder } from "../types";
 import { whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
 import { AUTOSAVE_DEBOUNCE_MS, autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, pendingCopyAction, shouldSave, THUMBNAIL_INTERVAL_MS } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
-import { changeKey, closedExcalidrawLayers, EXCALIDRAW_LAYER_SELECTOR, excalidrawLayerOpen, hasUnsupportedElements, linkTarget, sceneForLoad, sceneForSave } from "./historyGuard";
+import { changeKey, closedExcalidrawLayers, EXCALIDRAW_LAYER_SELECTOR, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, sceneForLoad, sceneForSave } from "./historyGuard";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
 import { announceThumbnail, createWhiteboard, getWhiteboard, putWhiteboardThumbnail, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
 
@@ -168,6 +168,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
           dispatch({ type: "conflict", revision: payload.revision ?? state.baseRevision });
           writePendingNow();
           if (mounted.current) setLayer({ kind: "conflict" });
+        } else if (reason instanceof ApiError && reason.status === 429) {
+          // Too many saves this minute (review L11): wait as the server says, keep the pending copy.
+          const retryAfter = typeof (reason.payload as { retryAfter?: unknown } | null)?.retryAfter === "number" ? (reason.payload as { retryAfter: number }).retryAfter : 30;
+          dispatch({ type: "failed", retryAfterMs: retryAfter * 1000, message: "Saving paused for a moment, kept on this device" });
+          writePendingNow();
         } else if (reason instanceof ApiError && (reason.status === 400 || reason.status === 413 || reason.status === 404 || reason.status === 403)) {
           dispatch({ type: "rejected", message: reason.message });
           writePendingNow();
@@ -215,9 +220,19 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   /** Waits for the save to finish, at most three seconds; true when nothing is left unsaved. */
   const flush = useCallback(async () => {
     const deadline = Date.now() + LEAVE_FLUSH_MS;
+    // At most two save attempts: offline, a failed request returns at once, and retrying in a
+    // loop would flood the network; the pending copy keeps the work instead.
+    let attempts = 0;
     while (hasPendingWork(stateRef.current) && Date.now() < deadline) {
       if (stateRef.current.status === "conflict" || stateRef.current.status === "rejected") break;
-      await Promise.race([savingRef.current ?? runSave(), new Promise((resolve) => window.setTimeout(resolve, 250))]);
+      const remaining = new Promise((resolve) => window.setTimeout(resolve, Math.max(0, deadline - Date.now())));
+      if (savingRef.current) {
+        await Promise.race([savingRef.current, remaining]);
+        continue;
+      }
+      if (attempts >= 2) break;
+      attempts += 1;
+      await Promise.race([runSave(), remaining]);
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     }
     return !hasPendingWork(stateRef.current);
@@ -241,9 +256,17 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (excalidrawLayerOpen(appState as never)) setExcalidrawLayer(true);
     const loose = elements as ReadonlyArray<Record<string, unknown>>;
     if (hasUnsupportedElements(loose)) {
-      // Images arrive in Wave 24 (D198): a dropped or pasted image is removed before it is ever saved.
-      apiRef.current?.updateScene({ elements: (elements as never[]).filter((element: { type?: string }) => element.type !== "image") as never });
+      // Images arrive in Wave 24 (D198); embeds and AI frames never (D199). Anything outside the
+      // supported types is removed before it is ever saved (review L2).
+      apiRef.current?.updateScene({ elements: (elements as never[]).filter((element) => isKeptElement(element as Record<string, unknown>)) as never });
       flash("Images and embeds are not supported on whiteboards yet");
+      return;
+    }
+    // Review L5: the shape library (and its "Browse libraries" link to a third-party site) is not
+    // offered; the sidebar opens only on its search tab.
+    const sidebar = (appState as { openSidebar?: { name?: string; tab?: string } | null }).openSidebar;
+    if (sidebar && sidebar.tab !== "search") {
+      apiRef.current?.updateScene({ appState: { openSidebar: sidebar.name ? { name: sidebar.name, tab: "search" } : null } as never });
       return;
     }
     const key = changeKey(loose, appState as unknown as Record<string, unknown>);
@@ -275,6 +298,9 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   }, [hasCanvas]);
   useHistoryDialogGuard(excalidrawLayer && layer === null, () => {
     apiRef.current?.updateScene({ appState: closedExcalidrawLayers() as never });
+    // The guard is spent: mark the layer closed so the next overlay arms a fresh guard (the DOM
+    // watcher sets it again if anything is still open).
+    setExcalidrawLayer(false);
     // Layers that keep their state elsewhere close on Escape, as they do from the keyboard.
     window.requestAnimationFrame(() => {
       const stage = stageRef.current;

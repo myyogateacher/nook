@@ -78,6 +78,8 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   const [view, setView] = useState<ViewMode>(() => readView(userId));
   const [dialog, setDialog] = useState<BoardDialog | null>(null);
   const [creating, setCreating] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const generation = useRef(0);
@@ -102,9 +104,10 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     const current = ++generation.current;
     setLoadError(null);
     try {
-      const [{ whiteboards }, { folders: loaded }] = await Promise.all([listWhiteboards(folderFilter), api<{ folders: Folder[] }>("/folders")]);
+      const [{ whiteboards, nextCursor: more }, { folders: loaded }] = await Promise.all([listWhiteboards(folderFilter), api<{ folders: Folder[] }>("/folders")]);
       if (current !== generation.current) return;
       setBoards(whiteboards);
+      setNextCursor(more);
       setFolders(loaded);
     } catch (reason) {
       if (current === generation.current) setLoadError(messageOf(reason, "Could not load your whiteboards"));
@@ -134,6 +137,22 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     else if (action.kind === "replace") go(action.route, true);
     else onHome();
   }, [go, onHome]);
+
+  async function loadMore() {
+    if (!nextCursor) return;
+    const current = generation.current;
+    setLoadingMore(true);
+    try {
+      const page = await listWhiteboards(folderFilter, nextCursor);
+      if (current !== generation.current) return;
+      setBoards((existing) => [...(existing ?? []), ...page.whiteboards.filter((board) => !(existing ?? []).some((item) => item.id === board.id))]);
+      setNextCursor(page.nextCursor);
+    } catch (reason) {
+      flash(messageOf(reason, "Could not load more whiteboards"));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const chooseView = (next: ViewMode) => {
     setView(next);
@@ -182,6 +201,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   }
 
   const count = boards?.length ?? 0;
+  const countLabel = nextCursor ? `${count}+` : String(count);
   const heading = route.folder === "shared" ? "Shared with me" : route.folder === "all" ? "All whiteboards" : folders.find((folder) => folder.id === route.folder)?.name ?? "Folder";
 
   return <main className="app-page whiteboards-app">
@@ -193,7 +213,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     <ReadOnlyBanner />
     <section className="whiteboards-body" aria-labelledby="whiteboards-title">
       <div className="whiteboards-toolbar">
-        <h1 id="whiteboards-title">{heading}{boards && <span className="whiteboards-count"> · {count}</span>}</h1>
+        <h1 id="whiteboards-title">{heading}{boards && <span className="whiteboards-count"> · {countLabel}</span>}</h1>
         <div className="whiteboards-controls">
           <Select label="Show" value={route.folder} onChange={(value) => { if (value !== route.folder) go(whiteboardsRoute(value)); }} options={folderOptions} className="whiteboards-folder-select" />
           <div className="whiteboards-view-toggle" role="group" aria-label="Layout">
@@ -238,6 +258,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
           </li>;
         })}
       </ul>}
+      {!loadError && boards && nextCursor && <button type="button" className="secondary-button whiteboards-more" onClick={() => { void loadMore(); }} disabled={loadingMore}>{loadingMore ? "Loading…" : "Show more"}</button>}
     </section>
 
     <BoardDialogs dialog={dialog} folders={folders} flash={flash}

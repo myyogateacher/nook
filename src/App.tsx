@@ -82,6 +82,7 @@ import { NameDialog } from "./files/RenameDialog";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
+import { clearPendingForUser, countPendingForUser } from "./whiteboards/pendingStore";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
@@ -487,6 +488,12 @@ function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: 
 export function NoteDeleteConfirm({ title, onConfirm, onCancel }: { title: string; onConfirm: () => void; onCancel: () => void }) {
   useHistoryDialogGuard(true, onCancel);
   return <ConfirmDialog title="Move to the Bin?" message={noteDeleteMessage(title)} confirmLabel="Move to Bin" danger onConfirm={onConfirm} onCancel={onCancel} />;
+}
+
+/** Sign-out with unsaved whiteboard copies on this device (review L4): the app's confirm, closed by Back. */
+function SignOutPendingConfirm({ count, onConfirm, onCancel }: { count: number; onConfirm: () => void; onCancel: () => void }) {
+  useHistoryDialogGuard(true, onCancel);
+  return <ConfirmDialog title="Sign out and discard unsaved drawings?" message={`${count === 1 ? "One whiteboard has" : `${count} whiteboards have`} changes that are not saved yet and are kept only on this device. Signing out deletes them. Open the whiteboard while online to save them first.`} confirmLabel="Sign out and discard" danger onConfirm={onConfirm} onCancel={onCancel} />;
 }
 
 export const noteDeleteMessage = (title: string) => `Move “${title || "Untitled"}” to the Bin? You can restore it for 30 days.`;
@@ -1579,14 +1586,27 @@ export function App() {
     window.history.replaceState(rest, "", over);
   }
 
+  // Review L4: unsaved whiteboard copies on this device are deleted at sign-out; if there are any,
+  // the app's own confirm says so first (never a native dialog).
+  const [signOutPending, setSignOutPending] = useState<number | null>(null);
   function signOut() {
+    const userId = session?.user.id;
+    (userId ? countPendingForUser(userId) : Promise.resolve(0)).then((count) => {
+      if (count > 0) setSignOutPending(count);
+      else return logout();
+    }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+  }
+  function confirmSignOut() {
+    setSignOutPending(null);
     logout().catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
   }
 
   async function logout() {
+    const signedOutUserId = session?.user.id ?? null;
     // T69: forget this device's push subscription and service worker while the session still works.
     await forgetThisDevice();
     await api("/auth/logout", { method: "POST", body: "{}" });
+    if (signedOutUserId) await clearPendingForUser(signedOutUserId);
     sessionUserRef.current = null;
     noteLoadGenerationRef.current += 1;
     setCsrfToken("");
@@ -1693,7 +1713,7 @@ export function App() {
     setSession((current) => current ? { ...current, totp } : current);
     if (!totp.setupRequired) closeSettings();
   }} />;
-  const toastStatus = <>{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const toastStatus = <>{signOutPending !== null && <SignOutPendingConfirm count={signOutPending} onConfirm={confirmSignOut} onCancel={() => setSignOutPending(null)} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{moduleOffHint(moduleHint)}</p>
     <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>

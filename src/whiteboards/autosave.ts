@@ -38,7 +38,8 @@ export type AutosaveEvent =
   | { type: "saveStarted" }
   | { type: "saved"; revision: number }
   | { type: "conflict"; revision: number }
-  | { type: "failed" }
+  /** A network error or 5xx; or 429 with the server's Retry-After and a message (review L11). */
+  | { type: "failed"; retryAfterMs?: number; message?: string }
   | { type: "rejected"; message: string }
   /** After Reload latest (or a copy was saved): start over from the server's revision, nothing unsaved. */
   | { type: "reset"; revision: number };
@@ -69,8 +70,10 @@ export function autosaveReducer(state: AutosaveState, event: AutosaveEvent): Aut
     }
     case "conflict":
       return { ...state, status: "conflict", savingVersion: null, serverRevision: event.revision };
-    case "failed":
-      return { ...state, status: "offline", savingVersion: null, retryMs: state.retryMs ? Math.min(RETRY_MAX_MS, state.retryMs * 2) : RETRY_MIN_MS };
+    case "failed": {
+      const backoff = state.retryMs ? Math.min(RETRY_MAX_MS, state.retryMs * 2) : RETRY_MIN_MS;
+      return { ...state, status: "offline", savingVersion: null, retryMs: Math.max(backoff, Math.min(event.retryAfterMs ?? 0, 5 * RETRY_MAX_MS)), message: event.message ?? null };
+    }
     case "rejected":
       return { ...state, status: "rejected", savingVersion: null, message: event.message };
     case "reset":
@@ -90,7 +93,7 @@ export function autosaveLabel(state: AutosaveState): string {
     case "idle": return "Saved";
     case "dirty": return "Unsaved changes";
     case "saving": return "Saving…";
-    case "offline": return "Offline, kept on this device";
+    case "offline": return state.message ?? "Offline, kept on this device";
     case "conflict": return "Conflict";
     case "rejected": return "Not saved";
   }

@@ -49,9 +49,12 @@ export function sceneForSave(elements: readonly LooseElement[], appState: Record
   });
 }
 
-/** Whether a set of elements holds anything the board cannot keep (an image dropped or pasted in). */
-export const hasUnsupportedElements = (elements: readonly LooseElement[]) =>
-  elements.some((element) => element.isDeleted !== true && (element.type === "image" || !(ELEMENT_TYPES as readonly string[]).includes(String(element.type))));
+/** An element a Wave 23 board keeps: a supported type other than image (deleted ones are harmless). */
+export const isKeptElement = (element: LooseElement) =>
+  element.isDeleted === true || (element.type !== "image" && (ELEMENT_TYPES as readonly string[]).includes(String(element.type)));
+
+/** Whether a set of elements holds anything the board cannot keep (an image, embed, or AI frame dropped or pasted in). */
+export const hasUnsupportedElements = (elements: readonly LooseElement[]) => !elements.every(isKeptElement);
 
 /** A cheap change key for onChange: element versions plus the kept appState keys. */
 export function changeKey(elements: readonly LooseElement[], appState: Record<string, unknown>) {

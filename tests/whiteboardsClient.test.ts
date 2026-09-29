@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, pendingCopyAction, RETRY_MAX_MS, RETRY_MIN_MS, shouldSave, type AutosaveEvent, type AutosaveState } from "../src/whiteboards/autosave";
-import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, linkTarget, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
+import { changeKey, closedExcalidrawLayers, excalidrawLayerOpen, hasUnsupportedElements, isKeptElement, linkTarget, sceneForLoad, sceneForSave } from "../src/whiteboards/historyGuard";
 import { pendingKey } from "../src/whiteboards/pendingStore";
 import { formatRoute, parseRoute } from "../src/router";
 import { whiteboardsBackAction, whiteboardsRoute } from "../src/whiteboardsRoute";
@@ -55,6 +55,15 @@ describe("whiteboard autosave state machine", () => {
     expect(state).toMatchObject({ status: "idle", retryMs: 0, baseRevision: 3 });
   });
 
+  test("429 waits as long as the server says, with its own label, and keeps the edit (review L11)", () => {
+    const throttled = run([{ type: "edited" }, { type: "saveStarted" }, { type: "failed", retryAfterMs: 45_000, message: "Saving paused for a moment, kept on this device" }]);
+    expect(throttled).toMatchObject({ status: "offline", retryMs: 45_000 });
+    expect(autosaveLabel(throttled)).toBe("Saving paused for a moment, kept on this device");
+    expect(hasPendingWork(throttled)).toBe(true);
+    const recovered = run([{ type: "saveStarted" }, { type: "saved", revision: 2 }], throttled);
+    expect(recovered).toMatchObject({ status: "idle", message: null });
+  });
+
   test("400 or 413 is rejected with the reason and no retry, until the next edit", () => {
     const rejected = run([{ type: "edited" }, { type: "saveStarted" }, { type: "rejected", message: "Too many elements" }]);
     expect(rejected).toMatchObject({ status: "rejected", message: "Too many elements" });
@@ -95,6 +104,9 @@ describe("whiteboard history and save helpers", () => {
     expect(result.scene.appState).toEqual({ viewBackgroundColor: "#fafafa", gridSize: 20 });
     expect(result.scene.files).toEqual({});
     expect(hasUnsupportedElements([{ type: "image" }])).toBe(true);
+    expect(hasUnsupportedElements([{ type: "embeddable" }])).toBe(true);
+    expect(hasUnsupportedElements([{ type: "magicframe" }])).toBe(true);
+    expect([{ type: "rectangle" }, { type: "embeddable" }, { type: "image" }, { type: "magicframe", isDeleted: true }].filter(isKeptElement).map((element) => element.type)).toEqual(["rectangle", "magicframe"]);
     expect(hasUnsupportedElements([{ type: "image", isDeleted: true }, { type: "text" }])).toBe(false);
   });
 

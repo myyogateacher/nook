@@ -82,7 +82,7 @@ button.whiteboard-title:hover { background: #222225; }
 .whiteboard-stage > .excalidraw, .whiteboard-stage .excalidraw.excalidraw-container { height: 100%; }
 .whiteboard-conflict-actions { flex-wrap: wrap; }
 /* Spike G4: pinch over Excalidraw's overlays (the library sidebar is full screen on a phone) must not zoom the page. */
-.whiteboard-stage .excalidraw .sidebar, .whiteboard-stage .excalidraw .Modal { touch-action: pan-x pan-y; }
+.whiteboard-stage .excalidraw .sidebar, .excalidraw .Modal { touch-action: pan-x pan-y; }
 /* Q12: the shape library is hidden in this version (no public library browser, D209). */
 .whiteboard-stage .excalidraw .default-sidebar-trigger, .whiteboard-stage .excalidraw .sidebar-trigger { display: none !important; }
 @media (max-width: 760px) {
@@ -90,5 +90,14 @@ button.whiteboard-title:hover { background: #222225; }
   .whiteboard-status span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
 button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padding: 0 8px; background: #2a2113; cursor: pointer; }
-/* No embeds (D199, T163): Web Embed is hidden from the extra tools; embeddable elements are never saved. */
-.whiteboard-stage .excalidraw [data-testid="toolbar-embeddable"] { display: none !important; }
+/*
+ * No embeds (D199, T163): Web Embed is hidden from the extra tools; embeddable elements are never
+ * saved. In 0.18.1 "Mermaid to Excalidraw" shares its test id, so only the item right after Frame is
+ * hidden; Mermaid stays under "Generate" (local only, CSP-clean).
+ */
+.whiteboard-stage .excalidraw [data-testid="toolbar-frame"] + [data-testid="toolbar-embeddable"] { display: none !important; }
+.whiteboards-more { display: block; min-height: 42px; margin: 18px auto 0; padding: 0 18px; }
+/* No links that leave Nook (review): the Help dialog keeps its keyboard shortcuts, not its docs, blog, GitHub, and YouTube links. */
+.excalidraw .HelpDialog__header { display: none !important; }
+/* Review L5: the sidebar offers only its search tab; the library tab (and its links to libraries.excalidraw.com) is not offered. */
+.whiteboard-stage .excalidraw .sidebar-tab-trigger[id$="-trigger-library"] { display: none !important; }

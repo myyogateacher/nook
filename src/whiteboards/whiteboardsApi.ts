@@ -14,8 +14,9 @@ export type WhiteboardSummary = DocumentSummary & {
 
 export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true };
 
-export const listWhiteboards = (folder: "all" | "shared" | string = "all") =>
-  api<{ whiteboards: WhiteboardSummary[] }>(`/whiteboards?folder=${encodeURIComponent(folder)}`);
+/** One page (at most 500, newest edit first); pass `nextCursor` back for the next. */
+export const listWhiteboards = (folder: "all" | "shared" | string = "all", cursor: string | null = null) =>
+  api<{ whiteboards: WhiteboardSummary[]; nextCursor: string | null }>(`/whiteboards?folder=${encodeURIComponent(folder)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
 
 export const getWhiteboard = (id: string) => api<{ whiteboard: WhiteboardSummary; scene: CanonicalScene }>(`/whiteboards/${encodeURIComponent(id)}`);
 

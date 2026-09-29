@@ -63,3 +63,18 @@ export async function writePending(userId: string, boardId: string, entry: Pendi
 export async function clearPending(userId: string, boardId: string) {
   await run("readwrite", (store) => store.delete(pendingKey(userId, boardId)));
 }
+
+/** Every key of `userId`'s pending copies (review L4). */
+const userRange = (userId: string) => IDBKeyRange.bound(`nook.whiteboard.pending.${userId}.`, `nook.whiteboard.pending.${userId}.\uffff`);
+
+/** How many unsaved whiteboard copies `userId` has on this device (0 when the database is unavailable). */
+export async function countPendingForUser(userId: string): Promise<number> {
+  if (typeof IDBKeyRange === "undefined") return 0;
+  return (await run<number>("readonly", (store) => store.count(userRange(userId)))) ?? 0;
+}
+
+/** Sign-out (review L4): the signed-out person's unsaved drawings never stay on a shared device. */
+export async function clearPendingForUser(userId: string) {
+  if (typeof IDBKeyRange === "undefined") return;
+  await run("readwrite", (store) => store.delete(userRange(userId)));
+}

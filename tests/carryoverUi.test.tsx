@@ -44,6 +44,26 @@ describe("C11a: the change-password hint offers Forgot password? only when it ex
   });
 });
 
+describe("C11c: Move to folder… for the open note, on phones and desktop", () => {
+  test("the Files Move sheet, as a history layer, from the toolbar and the phone ⋯ menu", async () => {
+    const app = await read("App.tsx");
+    expect(app).toContain("useHistoryDialogGuard(movingNote, closeMoveNote);");
+    expect(app).toContain('aria-label="Move to folder…" title="Move to folder"><FolderInput /></button>');
+    expect(app).toContain("<FolderInput />Move to folder…</button>");
+    expect(app).toMatch(/movingNote && note && <MoveSheet[\s\S]*?itemLabel="note"[\s\S]*?onMove=\{async \(folder\) => \{ await moveNote\(note\.id, folder\); closeMoveNote\(\); \}\}/);
+  });
+
+  test("the sheet names the note and lists owned folders with the current one disabled", async () => {
+    const { MoveSheet } = await import("../src/files/MoveSheet");
+    const folder = (id: string, name: string, extra = {}) => ({ id, name, owner_id: "u", is_owner: 1, is_default: 0, parent_id: null, visibility: "private", created_at: "", updated_at: "", ...extra }) as never;
+    const markup = renderToStaticMarkup(<MoveSheet document={{ name: "Plans", folder_id: "f1" }} itemLabel="note" folders={[folder("f1", "Default", { is_default: 1 }), folder("f2", "Archive"), folder("f3", "Theirs", { is_owner: 0 })]} onMove={async () => undefined} onCancel={() => undefined} />);
+    expect(markup).toContain("Move “Plans”");
+    expect(markup).toContain("Archive");
+    expect(markup).toContain("Current folder");
+    expect(markup).not.toContain("Theirs");
+  });
+});
+
 describe("C7: the Files list/grid toggle is a phone-sized target", () => {
   test("each view button is 44 px at phone widths (32 px on desktop)", async () => {
     const css = await read("files/files.css");

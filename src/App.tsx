@@ -19,6 +19,7 @@ import {
   History,
   Info,
   KeyRound,
+  FolderInput,
   LayoutGrid,
   Lock,
   LogOut,
@@ -77,6 +78,7 @@ import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
 import { useConfirm } from "./ui/useConfirm";
 import { NameDialog } from "./files/RenameDialog";
+import { MoveSheet } from "./files/MoveSheet";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
@@ -963,6 +965,23 @@ export function App() {
     if (trigger?.isConnected) trigger.focus();
   }, []);
   useHistoryDialogGuard(newFolderOpen, closeNewFolder);
+
+  // Move to folder… (QA v0.13.0): the Files Move sheet for the open note, so phones (no drag and
+  // drop) can file a note too. A history layer; focus goes back to the control that opened it.
+  const [movingNote, setMovingNote] = useState(false);
+  const moveTriggerRef = useRef<HTMLElement | null>(null);
+  function openMoveNote(trigger: HTMLElement | null) {
+    moveTriggerRef.current = trigger;
+    setMobileActions(false);
+    setMovingNote(true);
+  }
+  const closeMoveNote = useCallback(() => {
+    setMovingNote(false);
+    const trigger = moveTriggerRef.current;
+    moveTriggerRef.current = null;
+    window.requestAnimationFrame(() => { if (trigger?.isConnected) trigger.focus(); });
+  }, []);
+  useHistoryDialogGuard(movingNote, closeMoveNote);
 
   async function createFolder(name: string) {
     const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
@@ -1905,6 +1924,7 @@ export function App() {
             <div className="toolbar-actions">
               <button className="icon-button" onClick={() => setPanel("history")} aria-label="Version history"><History /></button>
               <button className="icon-button" onClick={downloadPdf} aria-label="Download as PDF" title="Download as PDF"><FileDown /></button>
+              {note.isOwner && canWrite && <button className="icon-button" disabled={editorLocked} onClick={(event) => openMoveNote(event.currentTarget)} aria-label="Move to folder…" title="Move to folder"><FolderInput /></button>}
               {note.isOwner && canWrite && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && canWrite && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
               {hasPublishableDelta && canWrite && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
@@ -1913,6 +1933,7 @@ export function App() {
             {mobileActions && <div className="mobile-actions-menu">
               <button onClick={() => { setPanel("history"); setMobileActions(false); }}><History />Version history</button>
               <button onClick={() => { setMobileActions(false); downloadPdf(); }}><FileDown />Download as PDF</button>
+              {note.isOwner && canWrite && <button disabled={editorLocked} onClick={() => openMoveNote(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"))}><FolderInput />Move to folder…</button>}
               {note.isOwner && canWrite && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
               {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(); }}><X />Discard draft</button>}
               {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
@@ -1934,6 +1955,13 @@ export function App() {
           setDeletingNote(null);
           void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
         }} />}
+      {movingNote && note && <MoveSheet
+        document={{ name: note.title.trim() || "Untitled", folder_id: note.folder_id }}
+        itemLabel="note"
+        folders={folders}
+        onMove={async (folder) => { await moveNote(note.id, folder); closeMoveNote(); }}
+        onCancel={closeMoveNote}
+      />}
       {newFolderOpen && <NameDialog
         title="New folder"
         eyebrow="Notes"

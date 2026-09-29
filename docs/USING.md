@@ -85,7 +85,7 @@ Everything starts private. To share a note, folder, file, board, task view, coll
 
 ## Notes
 
-Notes are Markdown documents organised in folders. Edits begin as drafts that save automatically; **Publish** records an immutable version that can be compared with others or restored. Notes start private; share a note or a whole folder from the [Access sheet](#sharing-and-access). A note's own sharing takes precedence over its folder's. People at **Can edit** on a note (or its folder) write its draft and publish new versions under their own name; only the owner shares, moves, restores versions, or deletes it.
+Notes are Markdown documents organised in folders. Edits begin as drafts that save automatically; **Publish** records an immutable version that can be compared with others or restored. Notes start private; share a note or a whole folder from the [Access sheet](#sharing-and-access). A note's own sharing takes precedence over its folder's. People at **Can edit** on a note (or its folder) write its draft and publish new versions under their own name; only the owner shares, moves, restores versions, or deletes it. To move a note, drag it onto a folder, or use **Move to folder…** in the note's toolbar (in its ⋯ menu on a phone).
 
 ### Editor
 

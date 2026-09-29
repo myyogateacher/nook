@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SheetConfirm } from "../access/SheetConfirm";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { ChevronLeft, RotateCcw, TriangleAlert } from "lucide-react";
 import { ApiError } from "../api";
 import { relativeTime } from "../files/format";
@@ -25,6 +27,23 @@ export function impactLine(impact: PolicyImpact | null, dirty: boolean) {
   if (impact.narrowed) parts.push(`${impact.narrowed} ${impact.narrowed === 1 ? "key" : "keys"} ${dirty ? "would lose" : "lose"} at least one module`);
   if (!parts.length) return `No live key ${dirty ? "would be" : "is"} blocked or narrowed (${impact.liveKeys} live).`;
   return `${parts.join("; ")}. Blocked keys are not revoked: loosening the policy brings them back.`;
+}
+
+/** The policies whose values differ between two states. */
+export function changedPolicies(saved: Policies, draft: Policies) {
+  return (Object.keys(draft) as Array<keyof Policies>).filter((key) => JSON.stringify(saved[key]) !== JSON.stringify(draft[key]));
+}
+
+/**
+ * The line above Save for a change to sharing with guests alone (QA v0.13.0 B10): what it does to
+ * sharing, not a key count. Null when keys change too (the key impact line applies).
+ */
+export function sharingImpactLine(saved: Policies, draft: Policies) {
+  const changed = changedPolicies(saved, draft);
+  if (changed.length !== 1 || changed[0] !== "shareWithGuests") return null;
+  return draft.shareWithGuests
+    ? "Guests can be shared with again, directly and through groups. No API key is affected."
+    : "New shares with guests will be refused. Shares that already reach guests stay until they are removed. No API key is affected.";
 }
 
 /** A whole-number field that commits on every valid keystroke and snaps into range on blur. */
@@ -66,19 +85,37 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
   useEffect(() => { document.title = "Policies · Team · Nook"; }, []);
 
   const dirty = Boolean(state && draft && JSON.stringify(state.policies) !== JSON.stringify(draft));
+  const sharingOnly = state && draft ? sharingImpactLine(state.policies, draft) : null;
+
+  // Unsaved changes (QA v0.13.0 B4): Back, and the Team button, ask Discard or Keep editing first.
+  // Back is caught by a history guard (the browser's step is undone), so the page stays behind the prompt.
+  const [leaving, setLeaving] = useState(false);
+  const [discarded, setDiscarded] = useState(false);
+  const askLeave = useCallback(() => setLeaving(true), []);
+  useHistoryDialogGuard(dirty && !leaving && !busy, askLeave);
+  const keepEditing = useCallback(() => setLeaving(false), []);
+  useHistoryDialogGuard(leaving, keepEditing);
+  const requestBack = () => { if (dirty) setLeaving(true); else onBack(); };
+  // Leave once the discarded draft has rendered, so the guards above are gone before Back runs.
+  useEffect(() => {
+    if (!discarded || dirty) return;
+    setDiscarded(false);
+    onBack();
+  }, [dirty, discarded, onBack]);
+
   const invalid = draft ? draft.keyDefaultDays > draft.keyMaxDays ? "The default lifetime cannot be longer than the maximum." : null : null;
 
   // The live impact preview, 300 ms after the last change.
   useEffect(() => {
     if (!draft || !state || invalid) return undefined;
-    if (!dirty) { setImpact(state.impact); return undefined; }
+    if (!dirty || sharingOnly) { setImpact(state.impact); return undefined; }
     const current = ++previewGeneration.current;
     setImpact(null);
     const timer = setTimeout(() => {
       previewPolicies(draft).then((result) => { if (current === previewGeneration.current) setImpact(result.impact); }, () => undefined);
     }, 300);
     return () => clearTimeout(timer);
-  }, [dirty, draft, invalid, state]);
+  }, [dirty, draft, invalid, sharingOnly, state]);
 
   const set = <K extends keyof Policies>(field: K, value: Policies[K]) => setDraft((current) => current ? { ...current, [field]: value } : current);
   const toggleRole = (field: "mcpRoles" | "restRoles", role: (typeof KEY_ROLES)[number], on: boolean) =>
@@ -109,7 +146,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
   const moduleOptions = GRANT_MODULES.map((value) => ({ value, label: MODULE_LABELS[value] }));
 
   return <article className="team-detail team-policies" aria-labelledby="team-policies-title">
-    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
+    <button type="button" className="team-back" onClick={requestBack}><ChevronLeft />Team</button>
     <header className="team-invites-header">
       <div>
         <h2 id="team-policies-title">Policies</h2>
@@ -158,12 +195,14 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
         <label className="policies-switch"><span>Allow sharing with guests</span><input type="checkbox" checked={draft.shareWithGuests} onChange={onCheckedChange((checked) => set("shareWithGuests", checked))} /></label>
       </fieldset>
 
-      <p className={`policies-impact${impact && impact.blocked ? " warn" : ""}`} role="status" aria-live="polite">{invalid ?? impactLine(impact, dirty)}</p>
+      <p className={`policies-impact${impact && impact.blocked && !sharingOnly ? " warn" : ""}`} role="status" aria-live="polite">{invalid ?? sharingOnly ?? impactLine(impact, dirty)}</p>
       {formError && <p className="form-error" role="alert">{formError}</p>}
       <div className="policies-actions">
         <button type="button" className="secondary-button" disabled={busy || !dirty} onClick={() => { if (state) setDraft(state.policies); }}>Discard changes</button>
         <button type="submit" className="primary-button" disabled={busy || !dirty || Boolean(invalid)}>{busy ? "Saving…" : "Save policies"}</button>
       </div>
     </form>}
+    {leaving && <SheetConfirm title="Discard changes?" message="Your changes to the policies are not saved." confirmLabel="Discard" cancelLabel="Keep editing" danger
+      onConfirm={() => { setLeaving(false); if (state) setDraft(state.policies); setDiscarded(true); }} onCancel={keepEditing} />}
   </article>;
 }

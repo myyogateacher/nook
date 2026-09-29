@@ -45,14 +45,14 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
       <div className="calendar-event-when">
       <label className="calendar-field calendar-event-title">
         <span>Title</span>
-        <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus required />
+        <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus required aria-label="Event title" />
       </label>
       <label className="calendar-toggle">
-        <input type="checkbox" checked={form.allDay} onChange={(event) => set("allDay", event.target.checked)} />
+        <input type="checkbox" checked={form.allDay} onChange={(event) => set("allDay", event.target.checked)} aria-label="All day" />
         <span>All day</span>
       </label>
       <div className="calendar-field-row">
-        <label className="calendar-field"><span>Starts</span><input type="date" value={form.startDate} onChange={(event) => {
+        <label className="calendar-field"><span>Starts</span><input type="date" aria-label="Start date" value={form.startDate} onChange={(event) => {
           // Moving the start moves the end with it, keeping the length.
           const start = event.target.value;
           if (!start) return;
@@ -60,11 +60,11 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
           const end = Number.isFinite(shift) ? new Date(Date.parse(`${form.endDate}T00:00Z`) + shift * 86_400_000).toISOString().slice(0, 10) : start;
           onChange({ ...form, startDate: start, endDate: end < start ? start : end });
         }} required /></label>
-        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" value={form.startTime} onChange={(event) => set("startTime", event.target.value)} required /></label>}
+        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="Start time" value={form.startTime} onChange={(event) => set("startTime", event.target.value)} required /></label>}
       </div>
       <div className="calendar-field-row">
-        <label className="calendar-field"><span>Ends</span><input type="date" value={form.endDate} min={form.startDate} onChange={(event) => set("endDate", event.target.value)} required /></label>
-        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" value={form.endTime} onChange={(event) => set("endTime", event.target.value)} required /></label>}
+        <label className="calendar-field"><span>Ends</span><input type="date" aria-label="End date" value={form.endDate} min={form.startDate} onChange={(event) => set("endDate", event.target.value)} required /></label>
+        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="End time" value={form.endTime} onChange={(event) => set("endTime", event.target.value)} required /></label>}
       </div>
       {!form.allDay && <p className="calendar-hint">Time zone: {form.tz}</p>}
       <button type="button" className="calendar-repeat-button" onClick={onRepeat}>
@@ -79,11 +79,11 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
       </div>}
       <label className="calendar-field">
         <span>Location</span>
-        <input value={form.location} maxLength={200} onChange={(event) => set("location", event.target.value)} />
+        <input value={form.location} maxLength={200} onChange={(event) => set("location", event.target.value)} aria-label="Location" />
       </label>
       <label className="calendar-field calendar-event-notes">
         <span>Notes</span>
-        <textarea value={form.description} rows={4} onChange={(event) => set("description", event.target.value)} />
+        <textarea value={form.description} rows={4} onChange={(event) => set("description", event.target.value)} aria-label="Notes" />
       </label>
       </div>
       {error && <p className="file-dialog-error" role="alert">{error}{conflict && <> <button type="button" className="calendar-link-button" onClick={onReload}>Load their changes</button></>}</p>}

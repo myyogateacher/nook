@@ -38,6 +38,11 @@ type BoardColumnViewProps = {
   emptyText?: string;
   /** Hierarchy (17A): parent and subtask chips, and nesting by drag onto a card one level up (D128). */
   nesting?: ColumnNesting;
+  /**
+   * Below Can edit on this board, or a read-only Team role (Wave 32, from the board's `level`): no
+   * drag, no Alt+Arrow moves, and no Add a card. The ⋯ menu stays (Copy link).
+   */
+  readOnly?: boolean;
 };
 
 /** Which slot a pointer at `clientY` points to among the column's card elements (the dragged one excluded). */
@@ -51,7 +56,7 @@ function dropIndexFor(list: HTMLElement, clientY: number, draggingId: string | n
 }
 
 export function BoardColumnView(props: BoardColumnViewProps) {
-  const { column, cards, owner, isFirst, isLast, draggingId, dropIndex } = props;
+  const { column, cards, owner, isFirst, isLast, draggingId, dropIndex, readOnly = false } = props;
   const listRef = useRef<HTMLUListElement>(null);
   const others = cards.filter((card) => card.id !== draggingId);
   const today = localDateString();
@@ -66,6 +71,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   }
 
   function dragOver(event: ReactDragEvent<HTMLElement>) {
+    if (readOnly) return;
     if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
     const nestTarget = nestTargetOf(event);
     props.nesting?.onNestOver(nestTarget);
@@ -87,6 +93,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   }
 
   function drop(event: ReactDragEvent<HTMLElement>) {
+    if (readOnly) return;
     if (!isCardDrag(event.dataTransfer.types) || !listRef.current) return;
     const nestTarget = nestTargetOf(event);
     if (nestTarget && draggingId) {
@@ -103,7 +110,7 @@ export function BoardColumnView(props: BoardColumnViewProps) {
   }
 
   function cardKeyDown(event: ReactKeyboardEvent<HTMLElement>, card: CardSummary) {
-    if (!event.altKey || event.ctrlKey || event.metaKey || !isMoveKey(event.key)) return;
+    if (readOnly || !event.altKey || event.ctrlKey || event.metaKey || !isMoveKey(event.key)) return;
     event.preventDefault();
     props.onKeyMove(card, event.key);
   }
@@ -148,13 +155,14 @@ export function BoardColumnView(props: BoardColumnViewProps) {
           data-nest-label={nesting ? props.nesting!.nestLabel(card.id) : undefined}
           tabIndex={0}
           data-card-id={card.id}
-          draggable
+          draggable={!readOnly}
           role="group"
           aria-label={cardFaceLabel(face)}
-          aria-roledescription="Draggable card"
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"
-          aria-describedby={card.description_excerpt?.trim() ? `${excerptId} task-card-keys` : "task-card-keys"}
+          aria-roledescription={readOnly ? "Card" : "Draggable card"}
+          aria-keyshortcuts={readOnly ? undefined : "Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight"}
+          aria-describedby={readOnly ? card.description_excerpt?.trim() ? excerptId : undefined : card.description_excerpt?.trim() ? `${excerptId} task-card-keys` : "task-card-keys"}
           onDragStart={(event) => {
+            if (readOnly) { event.preventDefault(); return; }
             event.dataTransfer.setData(CARD_DRAG_TYPE, card.id);
             event.dataTransfer.effectAllowed = "move";
             props.onDragStart(card);
@@ -182,8 +190,8 @@ export function BoardColumnView(props: BoardColumnViewProps) {
       {dropIndex !== null && dropIndex >= others.length && <li className="task-drop-indicator" aria-hidden="true" />}
       {!cards.length && dropIndex === null && <li className="task-column-empty">{count > 0 ? props.emptyText ?? "No matching cards" : "No cards yet"}</li>}
     </ul>
-    <footer className="task-column-footer">
+    {!readOnly && <footer className="task-column-footer">
       <button className="task-add-card" onClick={props.onAddCard} aria-haspopup="dialog" aria-label={`Add a card to ${column.name}`}><Plus />Add a card</button>
-    </footer>
+    </footer>}
   </section>;
 }

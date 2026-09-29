@@ -25,9 +25,15 @@ export function levelDescription(kind: AccessKind, level: Level): string {
     case "calendar":
       return { view: "See events", comment: "See events", edit: "Add and change events, not the calendar or sharing", manage: "Also rename, colour, and sharing up to Can edit" }[level];
     case "note":
-    case "folder":
       return level === "edit" ? "Write the draft and publish; never share, move, or delete" : "Read the published note";
-    default:
+    case "folder":
+      return level === "edit" ? "Also write and publish the notes that use its access; never share, move, or delete" : "Read the notes and files that use the folder's access";
+    case "task_view":
+      return "Run the saved view; cards show only from boards they can open";
+    case "document":
       return "Open and download";
   }
 }
+
+/** Compares levels on the ladder (view < comment < edit < manage). */
+export const levelRank = (level: ItemLevel) => RANK[level];

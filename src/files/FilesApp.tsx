@@ -5,6 +5,7 @@ import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel } from "../historyDialogs";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { NotificationBell } from "../notifications/NotificationBell";
 import { HeaderInboxButton } from "../AppShell";
 import { readFilesHistorySnapshot, type FilesNavigationSnapshot, type FilesPanel } from "../filesNavigation";
@@ -146,6 +147,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
     window.addEventListener("keydown", closeSort);
     return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
   }, [sortOpen]);
+  // The sort menu is a history layer like any dropdown (D69): Back closes only the menu.
+  useHistoryDialogGuard(sortOpen, () => setSortOpen(false));
 
   // Files dropped outside the list would make the browser navigate to them; swallow those drops.
   useEffect(() => {

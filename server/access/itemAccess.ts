@@ -12,7 +12,7 @@ import { parseJson, uuid } from "../validation";
 import { itemLevel } from "./effective";
 import { recordAccessEvent } from "./events";
 import { AUDIENCE_LEVELS, KIND_LEVELS, LEVELS, isLevel, levelToShareRole, shareRoleToLevel, type AccessKind, type ItemLevel, type Level } from "./levels";
-import { directShares, guestShareBlocked, GUEST_SHARE_DISABLED, writeDirectShares } from "./shares";
+import { directShares, guestShareAdditions, GUEST_SHARE_DISABLED, writeDirectShares } from "./shares";
 
 /**
  * The item access API behind the Access sheet (access plan §C.5, §C.7, D270–D275, T204, T207,
@@ -25,7 +25,9 @@ import { directShares, guestShareBlocked, GUEST_SHARE_DISABLED, writeDirectShare
  *   revision column): a stale one gets 409 ACCESS_CHANGED with the current access (no lost updates).
  * - Managers (D273, T207) change people and groups up to `edit`: they cannot grant or remove
  *   `manage`, and cannot change the audience or its level.
- * - The `share_with_guests` policy refuses shares that would reach a guest (400 GUEST_SHARE_DISABLED).
+ * - The `share_with_guests` policy refuses a save that newly adds a guest, a group with a guest, or
+ *   raises one of them (400 GUEST_SHARE_DISABLED with the offending ids); rows kept from before the
+ *   policy was turned off save unchanged, lowered, or removed (T213, not retroactive).
  * - One transaction replaces the direct rows and the group grants; `access_events` records counts only.
  *
  * The older `PUT …/sharing` routes keep working next to it (server/access/shares.ts).
@@ -211,6 +213,14 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     ? db.query(`SELECT id, display_name, role, kind, disabled_at FROM users WHERE id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: string; display_name: string; role: Role; kind: "person" | "service"; disabled_at: string | null }>
     : [];
   const offered = KIND_LEVELS[kind].filter((level) => yourLevel === "owner" || level !== "manage");
+  // Which of this item's granted groups each listed person is in, so the sheet can say when a group
+  // gives them more than their own row (the highest level wins, D266). The groups are listed already.
+  const memberOf = new Map<string, string[]>();
+  if (ids.length && groups.length) {
+    const rows = db.query(`SELECT user_id, group_id FROM group_members WHERE group_id IN (${groups.map(() => "?").join(",")}) AND user_id IN (${ids.map(() => "?").join(",")})`)
+      .all(...groups.map((group) => group.id), ...ids) as Array<{ user_id: string; group_id: string }>;
+    for (const row of rows) memberOf.set(row.user_id, [...(memberOf.get(row.user_id) ?? []), row.group_id]);
+  }
   return {
     etag: etagOf(state, direct, groups),
     kind,
@@ -218,7 +228,7 @@ export function readAccess(kind: AccessKind, id: string, userId: string) {
     owner: { id: state.ownerId, displayName: state.ownerName },
     audience: state.audience,
     ...(AUDIENCE_LEVELS[kind] ? { audienceLevel: state.audienceLevel, audienceLevels: AUDIENCE_LEVELS[kind] } : {}),
-    people: users.map((user) => ({ id: user.id, displayName: user.display_name, teamRole: user.role, kind: user.kind, level: direct.get(user.id)!, via: "direct" as const, blocked: user.disabled_at !== null }))
+    people: users.map((user) => ({ id: user.id, displayName: user.display_name, teamRole: user.role, kind: user.kind, level: direct.get(user.id)!, via: "direct" as const, blocked: user.disabled_at !== null, groupIds: memberOf.get(user.id) ?? [] }))
       .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: "base" })),
     groups: groups.map((group) => ({ id: group.id, name: group.name, memberCount: group.member_count, guestCount: group.guest_count, selfAddedCount: group.self_added, level: group.level })),
     levels: offered,
@@ -250,7 +260,7 @@ export async function writeAccess(kind: AccessKind, id: string, userId: string, 
       }
       const people = dedupe(body.people.map((entry) => ({ id: entry.id.toLowerCase(), level: entry.level })));
       const groups = dedupe(body.groups.map((entry) => ({ id: entry.id.toLowerCase(), level: entry.level })));
-      validate(kind, current, body, people, groups, userId);
+      validate(kind, id, current, body, people, groups, userId);
       const selected = body.audience === "selected";
       const before = [...directShares(kind, id).keys()];
       writeDirectShares(kind, id, selected ? people.map((entry) => ({ userId: entry.id, level: entry.level })) : []);
@@ -277,7 +287,7 @@ function dedupe(entries: Array<{ id: string; level: Level }>) {
   return [...byId].map(([id, level]) => ({ id, level }));
 }
 
-function validate(kind: AccessKind, current: ItemAccess, body: AccessPut, people: Array<{ id: string; level: Level }>, groups: Array<{ id: string; level: Level }>, userId: string) {
+function validate(kind: AccessKind, id: string, current: ItemAccess, body: AccessPut, people: Array<{ id: string; level: Level }>, groups: Array<{ id: string; level: Level }>, userId: string) {
   const invalid = (message: string, code = "INVALID") => new AccessError(400, code, message);
   if (body.audience === "inherit" && !current.inheritable) throw invalid("Only notes and files can use their folder's access");
   if (body.audienceLevel !== undefined) {
@@ -299,9 +309,8 @@ function validate(kind: AccessKind, current: ItemAccess, body: AccessPut, people
     const found = db.query(`SELECT id FROM user_groups WHERE id IN (${groups.map(() => "?").join(",")})`).all(...groups.map((group) => group.id)) as Array<{ id: string }>;
     if (found.length !== groups.length) throw invalid("One or more groups were not found");
   }
-  if (body.audience === "selected" && guestShareBlocked(people.map((entry) => entry.id), groups.map((entry) => entry.id))) {
-    throw new AccessError(400, GUEST_SHARE_DISABLED.code, GUEST_SHARE_DISABLED.error);
-  }
+  const guests = body.audience === "selected" ? guestShareAdditions(kind, id, people, groups) : null;
+  if (guests) throw new AccessError(400, GUEST_SHARE_DISABLED.code, GUEST_SHARE_DISABLED.error, { guests });
   if (current.yourLevel === "manage") managerCaps(current, body, people, groups, userId);
 }
 

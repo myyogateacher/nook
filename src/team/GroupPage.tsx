@@ -6,7 +6,7 @@ import { KeysDialog } from "../keys/KeysDialog";
 import { Combobox } from "../ui/Combobox";
 import type { Option } from "../ui/Select";
 import { GroupFormDialog } from "./TeamGroups";
-import { deleteGroup, getGroup, groupEventLabel, guestCountLabel, KIND_LABELS, LEVEL_LABELS, memberCountLabel, patchGroup, putGroupMembers, type GroupDetail } from "./groupsApi";
+import { deleteGroup, deleteGroupMessage, getGroup, groupEventLabel, guestCountLabel, KIND_LABELS, LEVEL_LABELS, memberCountLabel, patchGroup, putGroupMembers, type GroupDetail } from "./groupsApi";
 import { ROLE_LABELS, type Role } from "./teamRoles";
 
 type TeamPerson = { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
@@ -175,7 +175,6 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
 function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: GroupDetail; onClose: () => void; onDeleted: () => void; onStale: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const shares = group.grantCount === 1 ? "1 item" : `${group.grantCount} items`;
   async function confirm() {
     setBusy(true);
     setError("");
@@ -188,7 +187,7 @@ function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: Grou
       setBusy(false);
     }
   }
-  return <KeysDialog title={`Delete ${group.name}?`} description={`${memberCountLabel(group.memberCount)} lose what owners shared with the group: ${shares}. Their own and directly shared items are not affected. This cannot be undone.`} onClose={onClose} busy={busy}>
+  return <KeysDialog title={`Delete ${group.name}?`} description={deleteGroupMessage(group.memberCount, group.grantCount)} onClose={onClose} busy={busy}>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

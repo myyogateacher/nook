@@ -28,7 +28,7 @@ import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
-import { addCardRefusal, canEnterColumn, cardCountLabel, columnBadge, columnFullMessage, validateBoardName, validateColumnName } from "./taskActions";
+import { addCardRefusal, canEnterColumn, cardCountLabel, cardsReadOnly, columnBadge, columnFullMessage, validateBoardName, validateColumnName } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
 import { ColumnStateField } from "./views/ColumnStateField";
 import { columnState } from "./home/homeApi";
@@ -65,7 +65,6 @@ import {
   type CardSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
-import { levelAtLeast } from "../access/accessLevels";
 
 type BoardViewProps = {
   userId: string;
@@ -97,7 +96,9 @@ type BoardViewProps = {
 };
 
 type BoardDialog =
-  | { kind: "rename" | "share" | "addColumn" | "deleteBoard" | "settings" }
+  | { kind: "settings" }
+  // `overSettings`: opened from Board settings, which stays open underneath (one Back, one layer).
+  | { kind: "rename" | "share" | "addColumn" | "deleteBoard"; overSettings?: boolean }
   | { kind: "columnMenu" | "renameColumn" | "deleteColumn" | "wipLimit"; columnId: string }
   | { kind: "moveCard"; cardId: string }
   | { kind: "completeSprint"; sprintId: string }
@@ -182,6 +183,26 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   // Dialogs over the Sprints sheet (Complete, New sprint) are the board's dialog: Back closes only them.
   useHistoryDialogGuard(dialog !== null, closeDialog);
 
+  // Rename, Share, Add column, and Move to Bin opened from Board settings are a layer above it: the
+  // settings sheet stays mounted (its unsaved structure draft too), and closing the layer by Back,
+  // Close, Escape, the scrim, Cancel, or a successful save shows it again; the next Back closes it.
+  // This guard registers after the board's, so it is asked first (historyDialogs.ts).
+  const overSettings = dialog !== null && "overSettings" in dialog && dialog.overSettings === true;
+  const settingsChildOpenerRef = useRef<HTMLElement | null>(null);
+  const backToSettings = useCallback(() => {
+    setDialog({ kind: "settings" });
+    const target = settingsChildOpenerRef.current;
+    settingsChildOpenerRef.current = null;
+    if (target) window.setTimeout(() => { if (target.isConnected) target.focus(); }, 0);
+  }, []);
+  useHistoryDialogGuard(overSettings, backToSettings);
+  const openOverSettings = (kind: "rename" | "share" | "addColumn" | "deleteBoard") => {
+    settingsChildOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDialog({ kind, overSettings: true });
+  };
+  /** Closes the top layer: back to Board settings when it is underneath, else the board. */
+  const closeLayer = overSettings ? backToSettings : closeDialog;
+
   const openDialog = (next: BoardDialog, trigger?: HTMLElement | null) => {
     returnFocusRef.current = trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setDialog(next);
@@ -199,7 +220,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
 
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
-  const readOnly = roleReadOnly || !levelAtLeast(board?.level, "edit");
+  const readOnly = cardsReadOnly(roleReadOnly, board?.level);
   // Managers (Wave 32, D273) change the structure, columns, tags, sprints, and sharing up to Can edit.
   const canManage = !roleReadOnly && (owner || board?.level === "manage");
   // The tab names the board, and the open card before it (QA 0.9.0).
@@ -411,14 +432,14 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   async function rename(name: string) {
     const { board: saved } = await renameBoard(boardId, name);
     setDetail((current) => current ? { ...current, board: saved } : current);
-    closeDialog();
+    closeLayer();
     notify(`Renamed to “${saved.name}”`);
   }
 
   async function addColumn(name: string) {
     const { columns: saved } = await createColumn(boardId, name);
     setDetail((current) => current ? { ...current, columns: saved } : current);
-    closeDialog();
+    closeLayer();
     notify(`Added column ${name}`);
   }
 
@@ -462,7 +483,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         restoreTaskItem("board", boardId).then(() => onOpenBoard(boardId), (reason) => notify(taskErrorMessage(reason, "Could not restore the board")));
       } });
     } catch (reason) {
-      closeDialog();
+      closeLayer();
       notify(taskErrorMessage(reason, "Could not delete the board"));
     } finally {
       setDeleting(false);
@@ -521,7 +542,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <h1 id="task-board-title" title={board?.name}>{board?.name ?? "Loading…"}</h1>
       </div>
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
-      {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
+      {detail && !readOnly && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
       {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
       {board && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
@@ -559,7 +580,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       <BoardCalendar board={data} cards={result.cards} layout={query.cal} month={query.month} today={viewContext.today} viewerZone={viewContext.timeZone} filtered={filtered}
         onMonth={(month) => onQueryChange(withBoardQuery(query, { month }))}
         onLayout={(cal) => onQueryChange(withBoardQuery(query, { cal }), { push: true })}
-        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} />
+        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} readOnly={readOnly} />
     </div>}
     {detail && view === "board" && <nav className="task-column-tabs" aria-label="Columns">
       {columns.map((column, index) => {
@@ -584,6 +605,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         hiddenNote={hidden.note ? { text: hidden.note, onShowAll: showAllLevels } : undefined}
         emptyText={filtered ? "No matching cards" : sprintScoped && !lane.length ? (sprints.selection?.kind === "backlog" ? "Nothing from the backlog here" : "Nothing from this sprint here") : hidden.hint ?? "No matching cards"}
         nesting={hierarchy.nesting}
+        readOnly={readOnly}
         tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
@@ -655,9 +677,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       sprints={sprints.enabled ? sprints.sprints : undefined}
       initialSprintId={sprints.composerSprintId}
     />}
-    {dialog?.kind === "settings" && board && <BoardSettingsSheet board={board} owner={canManage} isOwner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
-      onClose={closeDialog} notify={notify}
-      onRename={() => setDialog({ kind: "rename" })} onShare={() => setDialog({ kind: "share" })} onDelete={() => setDialog({ kind: "deleteBoard" })} onAddColumn={() => setDialog({ kind: "addColumn" })}
+    {(dialog?.kind === "settings" || overSettings) && board && <BoardSettingsSheet board={board} owner={canManage} isOwner={owner} showAllLevels={hierarchy.showAll} onShowAllLevels={hierarchy.setShowAll}
+      onClose={closeDialog} notify={notify} suspended={overSettings}
+      onRename={() => openOverSettings("rename")} onShare={() => openOverSettings("share")} onDelete={() => openOverSettings("deleteBoard")} onAddColumn={() => openOverSettings("addColumn")}
       onStructureSaved={(saved) => setDetail((current) => current ? { ...current, board: saved } : current)}
       sprintsSection={<SprintDefaultsSection defaults={sprints.defaults} owner={canManage} onSave={sprints.saveDefaults} onManage={() => { closeDialog(); onOpenSprints?.(); }} />} />}
     {sprintsOpen && sprints.enabled && board && onCloseSprints && <SprintsSheet boardName={board.name} onClose={onCloseSprints} suspended={dialog !== null}>
@@ -684,14 +706,14 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
           returnFocusRef.current = null;
         }} />;
     })()}
-    {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeDialog} />}
-    {dialog?.kind === "share" && board && <AccessSheet kind="board" id={board.id} title={board.name} onClose={closeDialog} onSaved={() => {
-      closeDialog();
+    {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeLayer} />}
+    {dialog?.kind === "share" && board && <AccessSheet kind="board" id={board.id} title={board.name} onClose={closeLayer} onSaved={() => {
+      closeLayer();
       notify("Access updated");
       void load();
     }} />}
-    {dialog?.kind === "deleteBoard" && board && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", board.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void removeBoard(); }} onCancel={closeDialog} />}
-    {dialog?.kind === "addColumn" && <NameDialog title="Add column" eyebrow={board?.name ?? "Board"} label="Column name" initialValue="" submitLabel="Add column" hint="Up to 60 characters. It is added at the end." validate={(value) => validateColumnName(value)} onSubmit={addColumn} onCancel={closeDialog} />}
+    {dialog?.kind === "deleteBoard" && board && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", board.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void removeBoard(); }} onCancel={closeLayer} />}
+    {dialog?.kind === "addColumn" && <NameDialog title="Add column" eyebrow={board?.name ?? "Board"} label="Column name" initialValue="" submitLabel="Add column" hint="Up to 60 characters. It is added at the end." validate={(value) => validateColumnName(value)} onSubmit={addColumn} onCancel={closeLayer} />}
     {dialog?.kind === "columnMenu" && dialogColumn && <ModalDialog title={dialogColumn.name} eyebrow="Column" onClose={closeDialog}>
       <div className="move-list task-menu">
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "renameColumn", columnId: dialogColumn.id })}><Pencil aria-hidden="true" /><span>Rename</span></button>
@@ -720,7 +742,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)}
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} readOnly={readOnly} parentPicker={readOnly ? undefined : hierarchy.parentPicker(dialogCard)}
       onCopyLink={() => { void copyCardLink(boardId, dialogCard.id, notify); }} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);

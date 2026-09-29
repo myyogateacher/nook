@@ -49,7 +49,7 @@ import { mailApiKeyCreated, mailShared, mailTwoFactor, shareMembers } from "./ma
 import { enqueueVerifyMail, registerMailLogRoutes, registerMailRoutes, registerPublicMailRoutes } from "./mail/routes";
 import { passwordResetAvailable, registerPasswordChangeRoute, registerPasswordResetRoutes } from "./passwordFlows";
 import { hasActiveAdmin, recordBootstrapAdmin, warnIfNoActiveAdmin } from "./team/service";
-import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
+import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "./access/shares";
 import { registerItemAccessRoutes } from "./access/itemAccess";
 import { claimInvite, hashInviteToken, InviteError, inviteForRegistration, previewInvite } from "./team/invites";
 import { can, mcpScopesForRole } from "./team/roles";
@@ -143,7 +143,9 @@ app.get("/api/about", (c) => c.json({
   version: config.appVersion, gitSha: config.gitSha,
   hasUsers: db.query("SELECT 1 FROM users LIMIT 1").get() !== null, openRegistration: config.allowRegistration,
   // Wave 30: whether "Forgot password?" can mail a link (email on); an instance fact, never per account.
-  passwordReset: passwordResetAvailable()
+  passwordReset: passwordResetAvailable(),
+  // v0.13.0 QA (A7): whether two-factor can be set up here (a TOTP key is configured). Only the flag.
+  twoFactor: config.totpEncryptionKey !== null
 }));
 
 app.use("/api/auth/login", async (c, next) => {
@@ -606,7 +608,7 @@ app.put("/api/folders/:id/sharing", async (c) => {
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
-  if (body.visibility === "selected" && guestShareBlocked(uniqueIds)) return c.json(GUEST_SHARE_DISABLED, 400);
+  if (body.visibility === "selected" && legacyGuestShareBlocked("folder", id, legacyShareLevels("folder", id, uniqueIds, "view"))) return c.json(GUEST_SHARE_DISABLED, 400);
   db.transaction(() => {
     const before = shareMembers("folder_shares", "folder_id", id);
     // Levels are kept for people already shared with (D272); group grants are left as they are.
@@ -829,7 +831,7 @@ app.put("/api/notes/:id/sharing", async (c) => {
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) return c.json({ error: "One or more users were not found" }, 400);
   }
-  if (body.visibility === "selected" && guestShareBlocked(uniqueIds)) return c.json(GUEST_SHARE_DISABLED, 400);
+  if (body.visibility === "selected" && legacyGuestShareBlocked("note", id, legacyShareLevels("note", id, uniqueIds, "view"))) return c.json(GUEST_SHARE_DISABLED, 400);
   // Ownership and the Bin check run under the note lock, so a note binned or purged
   // meanwhile is refused instead of having its retained shares rewritten.
   return withNoteLock(id, async () => {

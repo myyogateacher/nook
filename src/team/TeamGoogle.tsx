@@ -87,17 +87,19 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
     setBusy(false);
   }
   const until = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  const submitButton = (label: string, danger = false) => <button type="submit" form={formId} className={danger ? "danger-button" : "primary-button"} disabled={busy}>{busy ? "Please wait…" : label}</button>;
-  const cancel = <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>;
+  // Distinct keys: React must not turn the clicked "Reset this account first…" button into the submit
+  // button during the same click (a type change before the default action would submit the form).
+  const submitButton = (label: string, danger = false) => <button key={`submit-${step}`} type="submit" form={formId} className={danger ? "danger-button" : "primary-button"} disabled={busy}>{busy ? "Please wait…" : label}</button>;
+  const cancel = <button key="cancel" type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>;
   const titles: Record<Step, string> = { choose: "Allow Google sign-in?", relink: "Allow re-linking?", reset: `Reset ${name}'s account?`, done: result?.relink ? "Re-linking allowed" : "Google sign-in allowed", unlink: "Unlink Google?" };
   const descriptions: Partial<Record<Step, string>> = {
     choose: `The next Google sign-in with ${name}'s address links this account and confirms the address. It works once, within 24 hours.`,
     relink: `For a new Google account: the next Google sign-in with ${state.linked?.email ?? "this address"} replaces the linked one, once, within 24 hours. The old Google account keeps working until then.`,
     unlink: `${name} will no longer sign in with ${state.linked?.email ?? "Google"}.`
   };
-  const footer = step === "done" ? <button type="button" className="primary-button" onClick={close}>Done</button>
-    : step === "choose" ? <>{cancel}{state.resetAllowed && <button type="button" className="secondary-button" onClick={() => open("reset")} disabled={busy}>Reset this account first…</button>}{submitButton("Allow Google sign-in")}</>
-      : step === "reset" ? <><button type="button" className="secondary-button" onClick={() => open("choose")} disabled={busy}>Back</button>{submitButton("Reset and allow", true)}</>
+  const footer = step === "done" ? <button key="done" type="button" className="primary-button" onClick={close}>Done</button>
+    : step === "choose" ? <>{cancel}{state.resetAllowed && <button key="reset-first" type="button" className="secondary-button" onClick={() => open("reset")} disabled={busy}>Reset this account first…</button>}{submitButton("Allow Google sign-in")}</>
+      : step === "reset" ? <><button key="back" type="button" className="secondary-button" onClick={() => open("choose")} disabled={busy}>Back</button>{submitButton("Reset and allow", true)}</>
         : step === "relink" ? <>{cancel}{submitButton("Allow re-linking")}</>
           : <>{cancel}{submitButton("Unlink Google", true)}</>;
 

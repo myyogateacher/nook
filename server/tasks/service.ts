@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { withResourceLock } from "../storage";
-import { boardLevel, readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardRow, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
+import { boardLevel, boardLevels, readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardRow, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
 import { atLeast, type ItemLevel } from "../access/levels";
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
@@ -85,8 +85,8 @@ const boardSummarySelect = `
 `;
 
 type BoardSummaryRow = Omit<BoardSummary, "structure" | "level"> & { structure_json: string };
-const withStructure = ({ structure_json, ...row }: BoardSummaryRow, userId: string): BoardSummary => ({
-  ...row, level: boardLevel({ ...row, deleted_at: null }, userId), structure: parseStructure(structure_json)
+const withStructure = ({ structure_json, ...row }: BoardSummaryRow, userId: string, level?: ItemLevel): BoardSummary => ({
+  ...row, level: level ?? boardLevel({ ...row, deleted_at: null }, userId), structure: parseStructure(structure_json)
 });
 
 export function boardSummary(boardId: string, userId: string) {
@@ -95,8 +95,11 @@ export function boardSummary(boardId: string, userId: string) {
 }
 
 export function listBoards(userId: string) {
-  return (db.query(`${boardSummarySelect} WHERE ${readableBoardPredicate} ORDER BY is_owner DESC, b.name COLLATE NOCASE, b.id LIMIT 500`)
-    .all({ userId }) as BoardSummaryRow[]).map((row) => withStructure(row, userId));
+  const rows = db.query(`${boardSummarySelect} WHERE ${readableBoardPredicate} ORDER BY is_owner DESC, b.name COLLATE NOCASE, b.id LIMIT 500`)
+    .all({ userId }) as BoardSummaryRow[];
+  // The page's levels in three queries, not three per board (C10).
+  const levels = boardLevels(rows, userId);
+  return rows.map((row) => withStructure(row, userId, levels.get(row.id)));
 }
 
 export function listColumns(boardId: string) {

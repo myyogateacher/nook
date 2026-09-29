@@ -805,6 +805,7 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 - [x] `tests/carryoverUi.test.tsx` (C7): the Files **List view** / **Grid view** buttons are 44 × 44 px at 390 px (they were 40 px; 32 px on desktop).
 - [x] `tests/carryoverUi.test.tsx` (C8): Calendar's header shows **Bin** with its count like Tasks, Collections, and Inbox (the label hides at 390 px, the 44 px icon stays), and not when the Bin module is off.
 - [x] `tests/tasksQueryPerf.test.ts` (C9): the 150 ms budget holds for the median of 15 timed runs after 3 untimed warm-up runs instead of the p95 of 20 (nearly the slowest run, which one busy-machine hiccup failed); each case prints its median and p95.
+- [x] `tests/listLevels.test.ts` (C10, review L6): `listBoards`, `listCollections`, and `listCalendars` work out the caller's level for the page with one role query, one direct-share query, and one group-grant query (`server/access/batchLevels.ts`), so 7 and 70 items cost the same number of statements (the per-item path cost 44 for 70 boards); for a matrix of owned, `all_users` at each audience level, direct shares at each level, group grants, direct plus group, and group grants on `all_users` items, under the member, admin, viewer, and guest roles, every level (and the `role` word) equals the per-item resolver's.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

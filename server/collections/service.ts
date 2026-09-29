@@ -5,7 +5,9 @@ import { withResourceLock } from "../storage";
 import { planInsert, POSITION_STEP, type Positioned } from "../tasks/boardOrder";
 import {
   collectionLevel,
+  collectionLevels,
   collectionRole,
+  collectionRoleFor,
   readableCollection,
   readableCollectionPredicate,
   readableRow,
@@ -144,10 +146,11 @@ const summarySelect = `
 `;
 type SummaryRow = Omit<CollectionSummary, "role" | "level" | "field_count"> & { schema_json: string; schema_version: number };
 
-function toDetail(row: SummaryRow, userId: string): CollectionDetail {
+function toDetail(row: SummaryRow, userId: string, known?: { level: ItemLevel; canWrite: () => boolean }): CollectionDetail {
   const { schema_json, ...rest } = row;
   const fields = parseStoredSchema(schema_json).fields;
-  return { ...rest, role: collectionRole(row, userId), level: collectionLevel(row, userId), field_count: fields.length, fields };
+  const level = known?.level ?? collectionLevel(row, userId);
+  return { ...rest, role: known ? collectionRoleFor(level, known.canWrite) : collectionRole(row, userId), level, field_count: fields.length, fields };
 }
 
 export function collectionDetail(collectionId: string, userId: string) {
@@ -157,8 +160,12 @@ export function collectionDetail(collectionId: string, userId: string) {
 
 export function listCollections(userId: string): CollectionSummary[] {
   const rows = db.query(`${summarySelect} WHERE ${readableCollectionPredicate} ORDER BY is_owner DESC, c.name COLLATE NOCASE, c.id LIMIT 500`).all({ userId }) as SummaryRow[];
+  // The page's levels in three queries, and the Team role once, not per collection (C10).
+  const levels = collectionLevels(rows, userId);
+  let canWrite: boolean | undefined;
+  const canWriteOnce = () => canWrite ??= canWriteContent(userId);
   return rows.map((row) => {
-    const { fields: _fields, schema_version: _version, ...summary } = toDetail(row, userId);
+    const { fields: _fields, schema_version: _version, ...summary } = toDetail(row, userId, { level: levels.get(row.id) ?? collectionLevel(row, userId), canWrite: canWriteOnce });
     return summary;
   });
 }

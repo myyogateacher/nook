@@ -80,7 +80,7 @@ describe("access templates", () => {
     expect((await send(admin, "POST", "/team/invites", { role: "viewer", templateId: crypto.randomUUID() })).body.code).toBe("TEMPLATE_NOT_FOUND");
     const invite = await send(admin, "POST", "/team/invites", { role: "viewer", templateId: template.id });
     expect(invite.status).toBe(201);
-    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name });
+    expect(invite.body.invite.template).toEqual({ id: template.id, name: template.name, groupCount: 2, edited: false });
     expect((await send(admin, "GET", "/team/templates")).body.templates.find((row: { id: string }) => row.id === template.id).liveInvites).toBe(1);
     // A group deleted meanwhile is skipped; the other one is joined.
     await send(admin, "DELETE", `/team/groups/${second}`, {});
@@ -95,6 +95,30 @@ describe("access templates", () => {
     const applied = db.query("SELECT actor_id, meta_json FROM access_events WHERE action = 'template.applied' AND target_user_id = ?").get(userId) as { actor_id: string; meta_json: string };
     expect(applied.actor_id).toBe(admin.userId);
     expect(JSON.parse(applied.meta_json)).toEqual({ templateId: template.id, added: 1, skipped: 1 });
+  });
+
+  test("editing a template never changes an invite already sent: registration gets the groups it had then, the invite's role, and the inviting admin as adder (review R1)", async () => {
+    const adminA = await user("Snapshot admin A", "admin");
+    const adminB = await user("Snapshot admin B", "admin");
+    const original = await group(adminA);
+    const later = await group(adminB);
+    const template = (await send(adminA, "POST", "/team/templates", { name: `Snapshot ${tag()}`, role: "member", groupIds: [original] })).body.template;
+    const invite = (await send(adminA, "POST", "/team/invites", { role: "member", templateId: template.id })).body;
+    expect(invite.invite.template).toMatchObject({ id: template.id, name: template.name, groupCount: 1, edited: false });
+    // Admin B changes the template's groups, role, and name after the invite went out.
+    const edited = await send(adminB, "PATCH", `/team/templates/${template.id}`, { name: `${template.name} v2`, role: "viewer", groupIds: [later], revision: 1 });
+    expect(edited.status).toBe(200);
+    const listed = (await send(adminA, "GET", "/team/invites")).body.invites.find((row: { id: string }) => row.id === invite.invite.id);
+    expect(listed.template).toEqual({ id: template.id, name: template.name, groupCount: 1, edited: true });
+    const registered = await registerWith({ email: spareEmail(), inviteToken: invite.token });
+    expect(registered.status).toBe(201);
+    expect(registered.body.user.role).toBe("member");
+    const userId = registered.body.user.id as string;
+    expect(groupsOf(userId)).toEqual([original]);
+    expect(db.query("SELECT added_by FROM group_members WHERE group_id = ? AND user_id = ?").get(original, userId)).toEqual({ added_by: adminA.userId });
+    // A new invite takes the edited template.
+    const next = (await send(adminA, "POST", "/team/invites", { role: "viewer", templateId: template.id })).body;
+    expect(next.invite.template).toMatchObject({ name: `${template.name} v2`, groupCount: 1, edited: false });
   });
 
   test("deleting a template leaves its invites working, with their role and no groups", async () => {

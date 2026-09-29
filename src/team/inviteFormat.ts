@@ -56,3 +56,9 @@ export function mailOutcomeLabel(outcome: MailOutcome, address: string | null) {
 export function inviteLimitHint(liveCount: number, liveLimit: number) {
   return liveCount >= liveLimit ? `${liveLimit} invites are live, the most Nook allows. Revoke one or wait for one to expire.` : null;
 }
+
+/** An invite's template line (Wave 33, D286): the snapshot it applies, and whether the template changed since. */
+export function templateLabel(template: { name: string; groupCount: number; edited: boolean }) {
+  const groups = `${template.groupCount} ${template.groupCount === 1 ? "group" : "groups"}`;
+  return template.edited ? `Template: ${template.name} (as it was when invited: ${groups}; edited since)` : `Template: ${template.name} (${groups})`;
+}

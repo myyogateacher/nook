@@ -5,7 +5,7 @@ import { relativeTime } from "../files/format";
 import { Select, type Option } from "../ui/Select";
 import { listTemplates, type AccessTemplate } from "../access/memberAccessApi";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, type ExpiryDays } from "./inviteFormat";
+import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, templateLabel, type ExpiryDays } from "./inviteFormat";
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 
@@ -78,7 +78,7 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
         {(invite.email || invite.note || invite.template) && <p className="team-invite-label">
           {invite.email && <span>Only {invite.email}</span>}
           {invite.note && <span className="team-invite-note">{invite.note}</span>}
-          {invite.template && <span>Template: {invite.template.name}</span>}
+          {invite.template && <span>{templateLabel(invite.template)}</span>}
         </p>}
         <p className="team-invite-meta">
           <span>{inviteTimeLabel(invite)}</span>

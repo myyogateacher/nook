@@ -17,6 +17,7 @@ import { mailEnabled, sendMail, type MailOutcome } from "../mail";
 import { inviteEmail } from "./inviteEmail";
 import { logSentMail } from "../mail/outbox";
 import { can, type Role } from "./roles";
+import { templateSnapshot } from "./templates";
 
 export const INVITE_ROLES = ["member", "viewer", "guest"] as const;
 export type InviteRole = typeof INVITE_ROLES[number];
@@ -90,13 +91,13 @@ export type TeamInvite = {
   usedAt: string | null;
   revokedAt: string | null;
   /** The access template applied on acceptance (Wave 33, D286); null when none, or once it is deleted. */
-  template: { id: string; name: string } | null;
+  template: { id: string; name: string; groupCount: number; edited: boolean } | null;
 };
 
-type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; template_id: string | null; template_name: string | null };
+type ListedRow = TeamInviteRow & { created_by_name: string | null; used_by_name: string | null; seq: number; current_template_revision: number | null };
 
 const listSelect = `
-  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name, t.name AS template_name
+  SELECT i.*, i.rowid AS seq, c.display_name AS created_by_name, u.display_name AS used_by_name, t.revision AS current_template_revision
   FROM team_invites i LEFT JOIN users c ON c.id = i.created_by LEFT JOIN users u ON u.id = i.used_by LEFT JOIN access_templates t ON t.id = i.template_id`;
 
 function present(row: ListedRow, at: string): TeamInvite {
@@ -113,7 +114,12 @@ function present(row: ListedRow, at: string): TeamInvite {
     usedBy: row.used_by && row.used_by_name !== null ? { id: row.used_by, displayName: row.used_by_name } : null,
     usedAt: row.used_at,
     revokedAt: row.revoked_at,
-    template: row.template_id && row.template_name !== null ? { id: row.template_id, name: row.template_name } : null
+    // The snapshot this invite applies; `edited` when the template changed since (the invite does not follow it).
+    template: row.template_id && row.template_name ? {
+      id: row.template_id, name: row.template_name,
+      groupCount: row.template_group_ids ? (JSON.parse(row.template_group_ids) as unknown[]).length : 0,
+      edited: row.current_template_revision !== null && row.current_template_revision !== row.template_revision
+    } : null
   };
 }
 
@@ -180,14 +186,16 @@ export function createInvite(actor: Actor, input: CreateInviteInput, origin: str
     if (email && db.query("SELECT 1 FROM users WHERE email = ?").get(email)) throw new InviteError(409, "ACCOUNT_EXISTS", "An account with that email already exists");
     if (liveCount(createdAt) >= LIVE_INVITE_LIMIT) throw new InviteError(409, "INVITE_LIMIT", `This Nook already has ${LIVE_INVITE_LIMIT} live invites. Revoke one or wait for one to expire.`);
     // D286: a template's role must be the invite's role, so the admin sees exactly what the link grants.
+    // The template is snapshotted (groups, name, revision): acceptance applies what the admin saw.
     const templateId = input.templateId?.toLowerCase() ?? null;
+    const snapshot = templateId ? templateSnapshot(templateId) : null;
     if (templateId) {
-      const template = db.query("SELECT role FROM access_templates WHERE id = ?").get(templateId) as { role: InviteRole } | null;
-      if (!template) throw new InviteError(404, "TEMPLATE_NOT_FOUND", "That access template no longer exists");
-      if (template.role !== input.role) throw new InviteError(400, "TEMPLATE_ROLE_MISMATCH", "The invite's role must match the template's role");
+      if (!snapshot) throw new InviteError(404, "TEMPLATE_NOT_FOUND", "That access template no longer exists");
+      if (snapshot.role !== input.role) throw new InviteError(400, "TEMPLATE_ROLE_MISMATCH", "The invite's role must match the template's role");
     }
-    db.query(`INSERT INTO team_invites (id, token_hash, token_prefix, email, role, note, created_by, created_at, expires_at, template_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, hashInviteToken(token), token.slice(0, 6), email, input.role, note, actor.id, createdAt, expiresAt, templateId);
+    db.query(`INSERT INTO team_invites (id, token_hash, token_prefix, email, role, note, created_by, created_at, expires_at, template_id, template_group_ids, template_name, template_revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, hashInviteToken(token), token.slice(0, 6), email, input.role, note, actor.id, createdAt, expiresAt, templateId,
+      snapshot ? JSON.stringify(snapshot.groupIds) : null, snapshot?.name ?? null, snapshot?.revision ?? null);
     audit(actor.id, null, "team.invite_create", { inviteId: id, role: input.role, ...(templateId ? { templateId } : {}) });
     return db.query(`${listSelect} WHERE i.id = ?`).get(id) as ListedRow;
   })();

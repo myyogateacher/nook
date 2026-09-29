@@ -57,6 +57,10 @@ export type TeamInviteRow = {
   revoked_by: string | null;
   /** 025; applied on acceptance from Wave 33 (D286). */
   template_id?: string | null;
+  /** 032: the template's group ids, name, and revision when the invite was created (D286). */
+  template_group_ids?: string | null;
+  template_name?: string | null;
+  template_revision?: number | null;
 };
 
 export type NoteRow = {

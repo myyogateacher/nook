@@ -131,22 +131,20 @@ export function deleteTemplate(actorId: string, id: string, revision?: number) {
   })();
 }
 
+type JoinOptions = { notify: boolean; timestamp?: string; guests: "skip" | "refuse" };
+
 /**
- * Adds `userId` to the template's groups that still exist and have room. Call inside the caller's
- * transaction (registration, or the admin's apply). `actorId` is who added them: the invite's admin
- * on registration. Returns how many groups were joined and skipped.
+ * Adds `userId` to `groupIds` that still exist and have room. Call inside the caller's transaction
+ * (registration, or the admin's apply). `actorId` is who added them: the invite's admin on
+ * registration. The same guest rule as Team → Groups (T213): with share_with_guests off a guest
+ * never joins a group that has grants. Registration skips that group (the account is still
+ * created); applying a template to someone refuses as a whole, before anything is added.
  */
-export function applyTemplateGroups(actorId: string | null, userId: string, templateId: string, options: { notify: boolean; timestamp?: string; guests: "skip" | "refuse" }) {
-  const row = rowById(templateId);
-  if (!row) return null;
+function joinGroups(actorId: string | null, userId: string, groupIds: readonly string[], templateId: string, options: JoinOptions) {
   const timestamp = options.timestamp ?? now();
   let added = 0;
   let skipped = 0;
   let guestRefused = 0;
-  // The same guest rule as Team → Groups (T213): with share_with_guests off a guest never joins a
-  // group that has grants. Registration skips that group (the account is still created); applying
-  // a template to someone refuses as a whole, before anything is added.
-  const groupIds = groupIdsOf(row);
   if (options.guests === "refuse" && groupIds.some((groupId) => guestJoinRefused(groupId, [userId]))) {
     throw new TemplateError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
   }
@@ -162,7 +160,32 @@ export function applyTemplateGroups(actorId: string | null, userId: string, temp
     if (options.notify) notifyAccess({ userId, kind: "group_added", actorId, groupId }, timestamp);
   }
   recordAccessEvent({ actorId, via: "web", action: "template.applied", targetUserId: userId, meta: { templateId, added, skipped, ...(guestRefused ? { guestRefused } : {}) } }, timestamp);
-  return { added, skipped, guestRefused, templateName: row.name, role: row.role };
+  return { added, skipped, guestRefused };
+}
+
+/** The template as it is now (apply-to-member). Null when it does not exist. */
+export function applyTemplateGroups(actorId: string | null, userId: string, templateId: string, options: JoinOptions) {
+  const row = rowById(templateId);
+  if (!row) return null;
+  return { ...joinGroups(actorId, userId, groupIdsOf(row), templateId, options), templateName: row.name, role: row.role };
+}
+
+/** What an invite stores about its template at creation (D286): the snapshot acceptance applies. */
+export function templateSnapshot(templateId: string) {
+  const row = rowById(templateId);
+  return row ? { role: row.role, groupIds: groupIdsOf(row), name: row.name, revision: row.revision } : null;
+}
+
+/**
+ * Invite acceptance, inside the registration transaction: the groups the template had when the
+ * invite was created, never the template's current ones (editing a template does not change
+ * invites already sent), added by the invite's admin. A deleted template (`template_id` NULL)
+ * adds nothing: the invite keeps its role only. Guests skip granted groups (T213).
+ */
+export function applyInviteTemplate(invite: { created_by: string | null; template_id?: string | null; template_group_ids?: string | null }, userId: string, timestamp: string) {
+  if (!invite.template_id || !invite.template_group_ids) return null;
+  const groupIds = (JSON.parse(invite.template_group_ids) as unknown[]).filter((value): value is string => typeof value === "string");
+  return joinGroups(invite.created_by, userId, groupIds, invite.template_id, { notify: false, timestamp, guests: "skip" });
 }
 
 /** From the member access page: the template's groups for an existing person (never their role). */

@@ -73,7 +73,7 @@ export function Templates({ onBack, flash }: { onBack: () => void; flash: (messa
           <span className="team-row-meta">
             <span className={`team-role-chip ${template.role}`}><span className="sr-only">Team role: </span>{ROLE_LABELS[template.role]}</span>
             <span>{template.groups.length ? template.groups.map((group) => group.name).join(", ") : "No groups"}</span>
-            {template.liveInvites > 0 && <span>{template.liveInvites} live {template.liveInvites === 1 ? "invite" : "invites"}</span>}
+            <span>{template.liveInvites ? `${template.liveInvites} live ${template.liveInvites === 1 ? "invite carries" : "invites carry"} it` : "No live invites"}</span>
           </span>
         </span>
         <span className="template-row-actions">
@@ -116,7 +116,7 @@ function TemplateFormDialog({ template, groups, onClose, onSaved, onStale }: { t
       <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} required autoFocus disabled={busy} /></label>
       <div className="keys-select-field"><span id="template-role">Team role</span><Select<TemplateRole> labelledBy="template-role" label="Team role" value={role} options={templateRoleOptions()} onChange={setRole} disabled={busy} /></div>
       <div className="keys-select-field"><span>Groups</span><Combobox multiple value={groupIds} onChange={setGroupIds} options={groupOptions} label="Groups" placeholder="Add groups…" emptyText={groups.length ? "No more groups" : "Create groups in Team → Groups first"} disabled={busy} maxSelected={20} /></div>
-      <p className="team-muted">Invites that use this template must have the same role. Changing it later does not change invites already sent.</p>
+      <p className="team-muted">Invites that use this template must have the same role. Each invite keeps the groups this template had when the invite was created; editing it later changes only new invites, and deleting it leaves live invites with their role and no groups.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

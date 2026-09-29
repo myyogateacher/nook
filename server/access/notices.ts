@@ -1,6 +1,8 @@
 import { db, now } from "../db";
 import { presentItem } from "./effective";
-import { ACCESS_KINDS, type AccessKind } from "./levels";
+import { ACCESS_KINDS, type AccessKind, type Level } from "./levels";
+
+const LEVEL_WORDS: Record<Level, string> = { view: "Can view", comment: "Can comment", edit: "Can edit", manage: "Manager" };
 
 /**
  * Bell notices about access (Wave 33, access plan §C.11, migration 032): the owner hears when an
@@ -23,22 +25,24 @@ export type AccessNotice = {
   groupId?: string | null;
   keyId?: string | null;
   count?: number | null;
+  /** The new level of a lowered share. */
+  level?: Level | null;
 };
 
-const insert = db.query(`INSERT INTO access_notices (id, user_id, kind, actor_id, target_user_id, resource_kind, resource_id, group_id, key_id, count, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+const insert = db.query(`INSERT INTO access_notices (id, user_id, kind, actor_id, target_user_id, resource_kind, resource_id, group_id, key_id, count, level, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 /** Queues one bell notice; a notice to the actor about their own action is dropped. Call inside the action's transaction. */
 export function notifyAccess(notice: AccessNotice, timestamp = now()) {
   if (notice.actorId !== null && notice.actorId === notice.userId) return false;
   insert.run(crypto.randomUUID(), notice.userId, notice.kind, notice.actorId, notice.targetUserId ?? null, notice.resource?.kind ?? null, notice.resource?.id ?? null,
-    notice.groupId ?? null, notice.keyId ?? null, notice.count ?? null, timestamp);
+    notice.groupId ?? null, notice.keyId ?? null, notice.count ?? null, notice.level ?? null, timestamp);
   return true;
 }
 
 type NoticeRow = {
   id: string; kind: string; actor_name: string | null; target_name: string | null; resource_kind: string | null; resource_id: string | null;
-  group_name: string | null; key_name: string | null; count: number | null; created_at: string; read_at: string | null;
+  group_name: string | null; key_name: string | null; count: number | null; level: string | null; created_at: string; read_at: string | null;
 };
 
 /**
@@ -58,7 +62,7 @@ function line(row: NoticeRow, recipientId: string) {
   const group = row.group_name ? `“${row.group_name}”` : "a group that was deleted";
   switch (row.kind) {
     case "share_removed": return `${actor} removed ${target}'s access to ${itemText}`;
-    case "share_lowered": return `${actor} lowered ${target}'s access to ${itemText} to Can view or less`;
+    case "share_lowered": return `${actor} lowered ${target}'s access to ${itemText}${row.level && row.level in LEVEL_WORDS ? ` to ${LEVEL_WORDS[row.level as Level]}` : ""}`;
     case "access_reset": return `${actor} reset ${target}'s access, including ${row.count ?? 0} of your items`;
     case "access_reset_self": return `${actor} reset your access: direct shares, groups, API keys, and calendar feeds`;
     case "group_added": return `${actor} added you to the group ${group}`;
@@ -73,7 +77,7 @@ export type AccessNoticeItem = { id: string; title: string; href: string; late: 
 /** The newest `limit` notices for the bell, shaped like calendar notifications. */
 export function listAccessNotices(userId: string, options: { unread: boolean; limit: number }): AccessNoticeItem[] {
   const rows = db.query(`SELECT n.id, n.kind, a.display_name AS actor_name, t.display_name AS target_name, n.resource_kind, n.resource_id,
-      g.name AS group_name, k.name AS key_name, n.count, n.created_at, n.read_at
+      g.name AS group_name, k.name AS key_name, n.count, n.level, n.created_at, n.read_at
     FROM access_notices n LEFT JOIN users a ON a.id = n.actor_id LEFT JOIN users t ON t.id = n.target_user_id
       LEFT JOIN user_groups g ON g.id = n.group_id LEFT JOIN mcp_api_keys k ON k.id = n.key_id AND k.user_id = n.user_id
     WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)

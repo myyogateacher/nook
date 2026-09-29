@@ -54,8 +54,8 @@ export type TeamInvite = {
   usedBy: { id: string; displayName: string } | null;
   usedAt: string | null;
   revokedAt: string | null;
-  /** The access template applied on acceptance (Wave 33, D286), or null. */
-  template?: { id: string; name: string } | null;
+  /** The template snapshot this invite applies: its name and group count when the invite was made; `edited` when the template changed since. */
+  template?: { id: string; name: string; groupCount: number; edited: boolean } | null;
 };
 
 /** `emailEnabled`: whether mail is configured on the server (RESEND_API_KEY and MAIL_FROM). */

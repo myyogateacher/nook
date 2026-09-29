@@ -26,7 +26,7 @@ import { emailMigration } from "./026_email";
 import { proposalBaseMigration } from "./027_proposal_base";
 import { emailDigestsMigration } from "./028_email_digests";
 import { accessLevelsMigration } from "./029_access_levels";
-import { accessNoticesMigration } from "./032_access_notices";
+import { accessCentralMigration } from "./032_access_central";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -40,8 +40,8 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   emailDigestsMigration,
   // 029 (access levels: member levels in line with share_role) needs 012, 013, and 025.
   accessLevelsMigration,
-  // 030 and 031 are reserved for parallel waves. 032 (access notices, Wave 33) needs only 001.
-  accessNoticesMigration
+  // 030 and 031 are reserved for parallel waves. 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
+  accessCentralMigration
 ];
 
 /**

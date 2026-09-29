@@ -137,4 +137,19 @@ describe("central access on the client", () => {
     const invites = readFileSync(new URL("../src/team/TeamInvites.tsx", import.meta.url), "utf8");
     expect(invites).toContain("<form onSubmit={submit} noValidate>");
   });
+
+  test("New group: the Name field gets focus, an empty name is checked inline, and the delete copy agrees in number (v0.13.0 verification QA)", async () => {
+    const { deleteGroupMessage } = await import("../src/team/groupsApi");
+    expect(deleteGroupMessage(1, 0)).toBe("Nothing is shared with this group, so its 1 person loses no access. This cannot be undone.");
+    expect(deleteGroupMessage(2, 0)).toBe("Nothing is shared with this group, so its 2 people lose no access. This cannot be undone.");
+    const { readFileSync } = await import("node:fs");
+    const groups = readFileSync(new URL("../src/team/TeamGroups.tsx", import.meta.url), "utf8");
+    expect(groups).toContain('<form className="keys-form" onSubmit={submit} noValidate>');
+    expect(groups).toContain("Give the group a name.");
+    expect(groups).toContain("maxLength={60} autoFocus");
+    expect(groups).not.toMatch(/<input[^>]*\brequired\b/);
+    // The dialog shell leaves focus on a field that asked for it, and focuses Close otherwise.
+    const dialog = readFileSync(new URL("../src/keys/KeysDialog.tsx", import.meta.url), "utf8");
+    expect(dialog).toContain("dialogRef.current?.contains(active)");
+  });
 });

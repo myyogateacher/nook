@@ -164,6 +164,10 @@ describe("authorization and version workflow", () => {
     expect(stored.totp_secret.startsWith("v1:")).toBe(true);
     expect(stored.totp_secret).not.toContain(setup.secret);
 
+    // A code from the previous 30 s window is accepted only while the server is still one window on:
+    // near the end of a window, wait for the next one so a slow request cannot cross it.
+    const windowLeftMs = 30_000 - (Date.now() % 30_000);
+    if (windowLeftMs < 2_000) await Bun.sleep(windowLeftMs + 50);
     const previousCode = totpCodeAt(setup.secret, totpCounter() - 1);
     const enable = await request("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: previousCode }) }, owner);
     expect(enable.status).toBe(200);

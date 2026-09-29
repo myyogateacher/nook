@@ -797,6 +797,7 @@ Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outb
 ## Carry-overs after v0.13.0
 
 - [x] `tests/noNativeSelect.test.ts` and `tests/useConfirm.test.tsx` (C1, D91): no `window.confirm` or bare `confirm(` in `src/`; the unsaved API key (closing Settings by button, Escape, scrim, or Back; switching section; Manage team), disabling two-factor, replacing recovery codes, discarding a draft or a never-published note, Bin Delete forever and Empty Bin, and leaving Files during uploads ask in the app's confirm (`src/ui/useConfirm.tsx`): a history layer (Back is Cancel), Escape cancels, Enter confirms, focus returns to the opener. No `beforeunload` prompt: closing the tab is not guarded.
+- [x] `tests/apiKeys.test.ts` and `tests/keysClient.test.tsx` (C2): `expiresInDays: null` creates a key with no expiry (listed, working, in Team → Keys' **No expiry** filter) and rotates to one; with `key_require_expiry` on it is 403 `KEY_POLICY` before the password on create and rotate; `key_max_days` still caps dated choices; PATCH never gives a dated key no expiry. The create and rotate dialogs list **No expiry** after the day choices, disabled with "Team policy requires an expiry" when required; a rotation starts on the key's own lifetime; a key row reads **No expiry**.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

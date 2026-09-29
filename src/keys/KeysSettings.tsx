@@ -7,7 +7,7 @@ import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
 import {
-  expiryOptions, GRACE_OPTIONS, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
+  expiryChoices, expiryDays, GRACE_OPTIONS, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
 import { createKey, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyList, type NarrowBody } from "./keysApi";
@@ -132,11 +132,18 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     <HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>
     {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
-    {dialog?.kind === "rotate" && <RotateKeyDialog apiKey={dialog.key} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
+    {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
     {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id)); setStatus(`${dialog.key.name} was revoked.`); }} />}
     {dialog?.kind === "review" && <McpBinnedReview keyId={dialog.key.id} keyName={dialog.key.name} onClose={() => closeDialogAfterReload(dialog.key.id)} onRevoke={() => setDialog({ kind: "revoke", key: dialog.key })} />}
     </HistoryDialogReopen.Provider>
   </section>;
+}
+
+/** The line under an Expires choice: the policy cap, and why "No expiry" is off when it is. */
+export function expiryNote(policy: Pick<PolicySummary, "keyMaxDays" | "keyRequireExpiry">) {
+  return policy.keyRequireExpiry
+    ? `Team policy allows at most ${policy.keyMaxDays} days and requires an expiry.`
+    : `Team policy allows at most ${policy.keyMaxDays} days, or no expiry.`;
 }
 
 /** The live key to focus after one is revoked: the next one down, else the one above, else none. */
@@ -149,7 +156,7 @@ export function keyAfterRevoke(liveIds: readonly string[], revokedId: string): s
 }
 
 function keyPolicyLine(policy: PolicySummary, liveCount: number) {
-  return `${liveCount} of ${policy.keysPerUser} live keys. New keys expire after at most ${policy.keyMaxDays} days (team policy).`;
+  return `${liveCount} of ${policy.keysPerUser} live keys. New keys expire after at most ${policy.keyMaxDays} days${policy.keyRequireExpiry ? "" : ", or never"} (team policy).`;
 }
 
 /** 14 bars, one per day, oldest first; decorative with a text alternative. */
@@ -218,7 +225,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     setBusy(true);
     setError("");
     try {
-      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: Number(expires), grants, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, password, ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -232,7 +239,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} placeholder="What it is for" disabled={busy} autoComplete="off" /></label>
       <div className="keys-select-field"><span id="keys-surface-label">Where it is used</span><Select<KeySurfaces> labelledBy="keys-surface-label" label="Where it is used" value={surfaces} options={surfaceOptions} onChange={setSurfaces} disabled={busy} /></div>
       <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
-      <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={expiryOptions(policy)} onChange={setExpires} disabled={busy} /><small>Team policy allows at most {policy.keyMaxDays} days.</small></div>
+      <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
@@ -267,7 +274,9 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   const daysLeft = apiKey.expiresAt ? Math.max(1, Math.ceil((Date.parse(apiKey.expiresAt) - Date.now()) / 86_400_000)) : null;
   const expiryChoices = [
     { value: "keep", label: daysLeft === null ? "Keep: no expiry" : `Keep: ${daysLeft} ${daysLeft === 1 ? "day" : "days"} left` },
-    ...[1, 7, 30, 90].filter((days) => daysLeft === null || days < daysLeft).map((days) => ({ value: String(days), label: days === 1 ? "Expire in 1 day" : `Expire in ${days} days` }))
+    ...[1, 7, 30, 90].filter((days) => daysLeft === null || days < daysLeft).map((days) => ({ value: String(days), label: days === 1 ? "Expire in 1 day" : `Expire in ${days} days` })),
+    // Editing only narrows (D278): a dated key gets no expiry by rotating, which asks for the password.
+    ...(daysLeft === null ? [] : [{ value: "no-expiry", label: "No expiry", description: "Rotate the key to give it no expiry", disabled: true }])
   ];
   const surfaceChoices = apiKey.surfaces === "both"
     ? (["both", "mcp", "rest"] as const).map((value) => ({ value, label: SURFACE_LABELS[value] }))
@@ -313,8 +322,9 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   </KeysDialog>;
 }
 
-function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: ApiKey; totpEnabled: boolean; onClose: () => void; onRotated: (key: ApiKey & { token: string }) => void }) {
+function RotateKeyDialog({ apiKey, policy, totpEnabled, onClose, onRotated }: { apiKey: ApiKey; policy: PolicySummary; totpEnabled: boolean; onClose: () => void; onRotated: (key: ApiKey & { token: string }) => void }) {
   const [grace, setGrace] = useState<string>("24");
+  const [expires, setExpires] = useState(() => rotationExpiryDefault(apiKey, policy));
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -325,7 +335,7 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
     setBusy(true);
     setError("");
     try {
-      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, password, ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires), password, ...(totpEnabled ? { totpCode: code } : {}) });
       onRotated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not rotate the key"));
@@ -336,6 +346,7 @@ function RotateKeyDialog({ apiKey, totpEnabled, onClose, onRotated }: { apiKey: 
   return <KeysDialog title={`Rotate ${apiKey.name}?`} description="You get a new secret with the same permissions and a fresh lifetime. Routines that use this key move to the new one. Update your clients before the old key stops." onClose={onClose} busy={busy}>
     <form className="keys-form" onSubmit={submit}>
       <div className="keys-select-field"><span id="keys-grace-label">Old key</span><Select labelledBy="keys-grace-label" label="Old key" value={grace} options={GRACE_OPTIONS.map((option) => ({ ...option }))} onChange={setGrace} disabled={busy} /></div>
+      <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">

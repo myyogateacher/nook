@@ -205,6 +205,36 @@ export function expiryOptions(policy: Pick<PolicySummary, "keyMaxDays" | "keyDef
   return days.map((value) => ({ value: String(value), label: value === 365 ? "1 year" : value === 1 ? "1 day" : `${value} days`, description: value === policy.keyDefaultDays ? "Team default" : undefined }));
 }
 
+/** The Expires value for "No expiry" (C2). */
+export const NO_EXPIRY = "none";
+
+/**
+ * The day choices plus "No expiry" (C2), for creating and rotating a key. With `key_require_expiry`
+ * on, "No expiry" stays listed but disabled, with the reason; `key_max_days` still caps the days.
+ */
+export function expiryChoices(policy: Pick<PolicySummary, "keyMaxDays" | "keyDefaultDays" | "keyRequireExpiry">) {
+  return [
+    ...expiryOptions(policy).map((option) => ({ ...option, disabled: false })),
+    { value: NO_EXPIRY, label: "No expiry", description: policy.keyRequireExpiry ? "Team policy requires an expiry" : "Works until you revoke it", disabled: policy.keyRequireExpiry }
+  ];
+}
+
+/** The request's `expiresInDays` for an Expires value: null for "No expiry". */
+export const expiryDays = (value: string): number | null => value === NO_EXPIRY ? null : Number(value);
+
+/**
+ * The Expires choice a rotation starts on: the key's own lifetime (capped by policy), "No expiry"
+ * for a key without one when policy allows it, else the team default.
+ */
+export function rotationExpiryDefault(key: { createdAt: string; expiresAt: string | null }, policy: Pick<PolicySummary, "keyMaxDays" | "keyDefaultDays" | "keyRequireExpiry">) {
+  if (key.expiresAt === null) return policy.keyRequireExpiry ? String(policy.keyDefaultDays) : NO_EXPIRY;
+  const lifetime = Math.max(1, Math.round((Date.parse(key.expiresAt) - Date.parse(key.createdAt)) / DAY));
+  const capped = Math.min(lifetime, policy.keyMaxDays);
+  const offered = expiryOptions(policy).map((option) => Number(option.value));
+  // The closest offered choice at or under the lifetime, so the Select always shows a real option.
+  return String([...offered].reverse().find((days) => days <= capped) ?? offered[0] ?? policy.keyDefaultDays);
+}
+
 export type KeyState = "active" | "grace" | "expired" | "blocked" | "paused" | "revoked";
 
 const DAY = 86_400_000;

@@ -20,15 +20,15 @@ export type Reauth = { password: string; totpCode?: string };
 
 export const listKeys = () => api<KeyList>("/keys");
 
-export const createKey = (body: { name: string; description?: string | null; surfaces: KeySurfaces; expiresInDays: number; grants: GrantPayload[] } & Reauth) =>
+export const createKey = (body: { name: string; description?: string | null; surfaces: KeySurfaces; expiresInDays: number | null; grants: GrantPayload[] } & Reauth) =>
   api<{ key: ApiKey & { token: string } }>("/keys", { method: "POST", body: JSON.stringify(body) });
 
-export type NarrowBody = { name?: string; description?: string | null; surfaces?: KeySurfaces; expiresInDays?: number; grants?: GrantPayload[]; limits?: { callsPerMinute?: number | null; writesPerMinute?: number | null } };
+export type NarrowBody = { name?: string; description?: string | null; surfaces?: KeySurfaces; expiresInDays?: number | null; grants?: GrantPayload[]; limits?: { callsPerMinute?: number | null; writesPerMinute?: number | null } };
 
 export const narrowKey = (id: string, body: NarrowBody) =>
   api<{ changed: string[]; key: ApiKey }>(`/keys/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
-export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168 } & Reauth) =>
+export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168; expiresInDays?: number | null } & Reauth) =>
   api<{ key: ApiKey & { token: string }; oldKey: ApiKey }>(`/keys/${id}/rotate`, { method: "POST", body: JSON.stringify(body) });
 
 export const revokeKey = (id: string) => api<{ ok: true }>(`/keys/${id}`, { method: "DELETE", body: "{}" });

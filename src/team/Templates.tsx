@@ -134,7 +134,7 @@ function TemplateFormDialog({ template, groups, onClose, onSaved, onStale }: { t
 function DeleteTemplateDialog({ template, onClose, onDone }: { template: AccessTemplate; onClose: () => void; onDone: (message: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function confirm() {
+  async function confirmAction() {
     setBusy(true);
     setError("");
     try {
@@ -150,7 +150,7 @@ function DeleteTemplateDialog({ template, onClose, onDone }: { template: AccessT
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-      <button type="button" className="primary-button danger" onClick={() => { void confirm(); }} disabled={busy}>{busy ? "Deleting…" : "Delete template"}</button>
+      <button type="button" className="primary-button danger" onClick={() => { void confirmAction(); }} disabled={busy}>{busy ? "Deleting…" : "Delete template"}</button>
     </div>
   </KeysDialog>;
 }

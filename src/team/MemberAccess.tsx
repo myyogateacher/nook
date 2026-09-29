@@ -158,7 +158,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
 
   let title: string;
   let body: ReactNode;
-  let confirm: string;
+  let confirmLabel: string;
   let action: () => Promise<string | null>;
   let danger = true;
   switch (dialog.kind) {
@@ -169,7 +169,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       body = viaGroup
         ? <p>{name} loses everything owners shared with {source.group?.name ?? "this group"}, not only {itemRef(row)}. Their own items and direct shares stay. They are told.</p>
         : <p>{name} can no longer open {itemRef(row)} {row.sources.some((other) => other.via === "group") ? `through a direct share; they keep what ${row.sources.filter((other) => other.via === "group").map((other) => other.group?.name ?? "a group").join(", ")} gives them` : "unless it is shared with them another way"}. The owner is told and can share it again.</p>;
-      confirm = viaGroup ? "Remove from group" : "Remove access";
+      confirmLabel = viaGroup ? "Remove from group" : "Remove access";
       action = async () => {
         const removed = await removeMemberAccess(userId, source.handle!);
         return removed.removed === "group" ? `${name} was removed from ${source.group?.name ?? "the group"}` : `${name}'s direct share was removed`;
@@ -179,7 +179,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
     case "lower":
       title = `Lower ${name}'s access to ${LEVEL_WORDS[dialog.level]}?`;
       body = <p>{name} keeps access to {itemRef(dialog.row)}, at {LEVEL_WORDS[dialog.level]} instead of {LEVEL_WORDS[dialog.source.level]} through their direct share. The owner is told and can change it back.</p>;
-      confirm = "Lower access";
+      confirmLabel = "Lower access";
       action = async () => {
         await lowerMemberAccess(userId, dialog.source.handle!, dialog.level);
         return `${name} now has ${LEVEL_WORDS[dialog.level]}`;
@@ -188,7 +188,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
     case "group":
       title = `Remove ${name} from ${dialog.group.name}?`;
       body = <p>{name} loses everything owners shared with {dialog.group.name}. They are told. You can add them back from the group's page.</p>;
-      confirm = "Remove from group";
+      confirmLabel = "Remove from group";
       action = async () => {
         await removeMemberFromGroup(userId, dialog.group.id);
         return `${name} was removed from ${dialog.group.name}`;
@@ -197,7 +197,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
     case "key":
       title = `Revoke ${name}'s key “${dialog.key.name}”?`;
       body = <label className="keys-input">Reason (the owner sees it)<textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} rows={2} disabled={busy} /></label>;
-      confirm = "Revoke key";
+      confirmLabel = "Revoke key";
       action = async () => {
         if (!reason.trim()) {
           setError("Say why, so the owner knows.");
@@ -213,7 +213,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       body = templateRefusal
         ? <p className="form-error" role="alert">{name} is a guest, so this template cannot be applied: {guestRefusalReason(templateRefusal)} Remove those groups from the template, or turn on sharing with guests in Team → Policies.</p>
         : <p>{dialog.template.groups.length ? `${name} joins ${dialog.template.groups.map((group) => group.name).join(", ")}, and so reaches what owners shared with those groups.` : "This template has no groups, so nothing changes."} Their team role stays {ROLE_LABELS[summary.member.role]}. They are told.</p>;
-      confirm = "Add to groups";
+      confirmLabel = "Add to groups";
       confirmDisabled = templateRefusal !== null;
       action = async () => {
         const applied = await applyTemplateToMember(userId, dialog.template.id);
@@ -234,7 +234,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
           </ul>
           <p>Their own items and what is shared with everyone stay. Each owner is told once. This cannot be undone here; owners can share again.</p>
         </>;
-      confirm = result ? "Done" : "Reset access";
+      confirmLabel = result ? "Done" : "Reset access";
       danger = !result;
       action = async () => {
         if (result) return `${name}'s access was reset`;
@@ -250,7 +250,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         {!result && <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>}
-        <button type="button" className={`primary-button${danger ? " danger" : ""}`} onClick={() => { void run(action); }} disabled={busy || confirmDisabled}>{busy ? "Working…" : confirm}</button>
+        <button type="button" className={`primary-button${danger ? " danger" : ""}`} onClick={() => { void run(action); }} disabled={busy || confirmDisabled}>{busy ? "Working…" : confirmLabel}</button>
       </div>
     </div>
   </KeysDialog>;

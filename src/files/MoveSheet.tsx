@@ -22,7 +22,7 @@ export function MoveSheet({ document, itemLabel = "file", folders, onMove, onCan
   const [error, setError] = useState<string | null>(null);
   const folder = folders.find((item) => item.id === chosen) ?? null;
 
-  async function confirm() {
+  async function confirmAction() {
     if (!folder) return;
     setBusy(true);
     setError(null);
@@ -54,7 +54,7 @@ export function MoveSheet({ document, itemLabel = "file", folders, onMove, onCan
     {error && <p className="file-dialog-error" role="alert">{error}</p>}
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
-      <button className="primary-button" onClick={() => { void confirm(); }} disabled={!folder || busy}>{busy ? "Moving…" : folder ? `Move to ${folder.name}` : "Move"}</button>
+      <button className="primary-button" onClick={() => { void confirmAction(); }} disabled={!folder || busy}>{busy ? "Moving…" : folder ? `Move to ${folder.name}` : "Move"}</button>
     </footer>
   </ModalDialog>;
 }

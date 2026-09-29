@@ -389,7 +389,7 @@ export function revokeCopy(key: Pick<ApiKey, "name" | "prefix" | "state" | "pend
 function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClose: () => void; onRevoked: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function confirm() {
+  async function confirmAction() {
     setBusy(true);
     setError("");
     try {
@@ -402,7 +402,7 @@ function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClo
   }
   const copy = revokeCopy(apiKey);
   return <KeysDialog title={copy.title} description={copy.description} onClose={onClose} busy={busy}
-    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirm} disabled={busy}>{busy ? "Revoking…" : apiKey.state === "grace" ? "Revoke old key" : "Revoke key"}</button></>}>
+    footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirmAction} disabled={busy}>{busy ? "Revoking…" : apiKey.state === "grace" ? "Revoke old key" : "Revoke key"}</button></>}>
     {error && <p className="form-error" role="alert">{error}</p>}
   </KeysDialog>;
 }

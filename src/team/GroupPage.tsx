@@ -175,7 +175,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
 function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: GroupDetail; onClose: () => void; onDeleted: () => void; onStale: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  async function confirm() {
+  async function confirmAction() {
     setBusy(true);
     setError("");
     try {
@@ -191,7 +191,7 @@ function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: Grou
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-      <button type="button" className="primary-button danger" onClick={() => { void confirm(); }} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button>
+      <button type="button" className="primary-button danger" onClick={() => { void confirmAction(); }} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button>
     </div>
   </KeysDialog>;
 }

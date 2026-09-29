@@ -124,7 +124,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
   const [reloadKey, setReloadKey] = useState(0);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [repeatOpen, setRepeatOpen] = useState(false);
-  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [pendingConfirm, setConfirm] = useState<Confirm | null>(null);
   const [calendarsOpen, setCalendarsOpen] = useState(false);
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
   const [feeds, setFeeds] = useState<CalendarSummary | null>(null);
@@ -195,7 +195,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
   // ---- dialogs ---------------------------------------------------------------------------------
 
   // The event sheet, its Repeat sheet, and the Discard prompt guard themselves, one layer at a time (EventSheet.tsx).
-  const dialogOpen = (confirm !== null && confirm.kind !== "discard") || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
+  const dialogOpen = (pendingConfirm !== null && pendingConfirm.kind !== "discard") || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
   const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
   // Each layer hands focus back to what opened it: the Calendars button, the Add reminder button,
   // and, for the Share, Subscribe, and Move-to-Bin layers that replace the Calendars sheet, that
@@ -204,7 +204,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
   useReturnFocus(reminderPicker !== null, ".calendar-link-add");
   useReturnFocus(sharing !== null);
   useReturnFocus(feeds !== null);
-  useReturnFocus(confirm?.kind === "deleteCalendar", ".calendar-list .calendar-visibility");
+  useReturnFocus(pendingConfirm?.kind === "deleteCalendar", ".calendar-list .calendar-visibility");
 
   function closeSheet() {
     setSheet(null);
@@ -221,7 +221,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
     // Share, Subscribe, and Move to Bin replace the Calendars sheet, which comes back when they close.
     // Back off the landing-entry sentinel closes only that layer: the Calendars sheet is still open,
     // so the sentinel goes back under it and the next Back closes it (one Back, one layer).
-    if (forced && calendarsOpen && (sharing || feeds || confirm?.kind === "deleteCalendar") && holdDialogSentinel()) {
+    if (forced && calendarsOpen && (sharing || feeds || pendingConfirm?.kind === "deleteCalendar") && holdDialogSentinel()) {
       if (sharing) setSharing(null);
       else if (feeds) setFeeds(null);
       else setConfirm(null);
@@ -247,7 +247,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
       setCalendarsOpen(false);
       return;
     }
-    if (confirm) setConfirm(null);
+    if (pendingConfirm) setConfirm(null);
     else if (picker) setPicker(null);
     else if (reminderPicker) setReminderPicker(null);
     else if (sharing) setSharing(null);
@@ -329,24 +329,24 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
   }
 
   async function confirmAction() {
-    if (!confirm) return;
-    if (confirm.kind === "discard") {
+    if (!pendingConfirm) return;
+    if (pendingConfirm.kind === "discard") {
       setConfirm(null);
       closeSheet();
       return;
     }
     setBusy(true);
     try {
-      if (confirm.kind === "deleteEvent") {
-        await deleteEvent(confirm.data.event.id);
+      if (pendingConfirm.kind === "deleteEvent") {
+        await deleteEvent(pendingConfirm.data.event.id);
         setConfirm(null);
         flash("Moved to the Bin");
         setReloadKey((value) => value + 1);
         back();
       } else {
-        await deleteCalendar(confirm.calendar.id);
+        await deleteCalendar(pendingConfirm.calendar.id);
         setConfirm(null);
-        flash(`Moved “${confirm.calendar.name}” to the Bin`);
+        flash(`Moved “${pendingConfirm.calendar.name}” to the Bin`);
         await loadCalendars();
         setReloadKey((value) => value + 1);
       }
@@ -505,7 +505,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
       {calendars === null ? <p className="calendar-loading" role="status"><CalendarDays />Loading your calendars…</p> : content}
     </div>
 
-    {sheet && !repeatOpen && confirm?.kind !== "discard" && <EventSheet
+    {sheet && !repeatOpen && pendingConfirm?.kind !== "discard" && <EventSheet
       mode={sheet.mode}
       form={sheet.form}
       calendars={writableAll}
@@ -526,7 +526,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
       onDone={(repeat) => { setSheet((current) => current && { ...current, form: { ...current.form, repeat } }); setRepeatOpen(false); }}
       onCancel={() => setRepeatOpen(false)}
     />}
-    {calendarsOpen && !sharing && !feeds && !confirm && calendars && <CalendarsDialog
+    {calendarsOpen && !sharing && !feeds && !pendingConfirm && calendars && <CalendarsDialog
       calendars={calendars}
       hidden={hidden}
       busy={busy}
@@ -544,8 +544,8 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onBi
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
     {sharing && <AccessSheet kind="calendar" id={sharing.id} title={sharing.name} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Access updated"); void loadCalendars(); }} />}
-    {confirm?.kind === "discard" && <DiscardEventPrompt onDiscard={() => { void confirmAction(); }} onKeep={keepEditing} />}
-    {confirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${confirm.data.event.title}”${confirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
-    {confirm?.kind === "deleteCalendar" && <ConfirmDialog title="Move calendar to the Bin?" message={`Move “${confirm.calendar.name}” and its events to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
+    {pendingConfirm?.kind === "discard" && <DiscardEventPrompt onDiscard={() => { void confirmAction(); }} onKeep={keepEditing} />}
+    {pendingConfirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${pendingConfirm.data.event.title}”${pendingConfirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
+    {pendingConfirm?.kind === "deleteCalendar" && <ConfirmDialog title="Move calendar to the Bin?" message={`Move “${pendingConfirm.calendar.name}” and its events to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
   </main>;
 }

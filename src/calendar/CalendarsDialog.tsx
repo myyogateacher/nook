@@ -25,8 +25,12 @@ type CalendarsDialogProps = {
   onToggleTasks: () => void;
 };
 
+// The owner's line: the everyone-signed-in level only for that audience; chosen people and groups
+// each have their own level (a manager among them), so it claims none for them (QA v0.13.0 B6).
 const roleLabel = (calendar: CalendarSummary) => calendar.role === "owner"
-  ? calendar.visibility === "private" ? "Private" : calendar.share_role === "editor" ? "Shared · others can edit" : "Shared · others can view"
+  ? calendar.visibility === "private" ? "Private" : calendar.visibility === "all_users"
+    ? calendar.share_role === "editor" ? "Shared with everyone · others can edit" : "Shared with everyone · others can view"
+    : "Shared with people you chose"
   : `${calendar.owner_name} · ${calendar.level === "manage" ? "you manage it" : calendar.role === "editor" ? "you can edit" : "view only"}`;
 
 /** Show or hide calendars, and (for owners) rename, recolour, share, or bin them. Pushes no history entry. */

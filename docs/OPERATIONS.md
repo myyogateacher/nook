@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.14.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -146,7 +146,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_ALLOW_HTTP_LINKS` | `false` | `true` lets mail go out when `APP_ORIGIN` is a non-localhost `http://` address (LAN or Tailscale without HTTPS). Links in mail are then unencrypted. |
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
-| `APP_VERSION` | `0.13.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.14.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -221,6 +221,18 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.14.0:** back up first with `./scripts/backup.sh --force`. Migration 032 (central access: the table behind access notices on the bell, the snapshot of an access template stored on each invite, and an index for the Access activity page) runs once on the first boot and can only be undone by restoring that backup. It only adds; nobody's access changes by upgrading. Migration numbers 030 and 031 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected and those migrations will run on a later upgrade. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.14.0`, and restart as above.
+
+New admin powers (see [Central access management](#central-access-management) above):
+
+- **See:** admins can now see what each member can reach, per kind and through what (shared directly, through a group, or with everyone signed in), plus their groups and API keys. Items the admin cannot open are listed without their title, and admins still cannot open those items.
+- **Reduce:** admins can lower a level, remove a direct share, take a person out of a group, or **Reset access** (direct shares, group memberships, API keys, and calendar feeds removed or revoked, routines paused; items the person owns stay). Each asks for confirmation and is recorded in **Team → Access activity**.
+- **Not grant:** nothing on the member's Access page grants or raises access.
+- **Owners are told:** the owner gets a line on the bell when an admin lowers or removes someone's access to their items, or resets that person's access.
+- **Templates:** **Team → Templates** gives an invite a role and groups; the invite keeps the template as it was when the invite was made.
+
+The web API gains `/api/team/members/:id/access` (member access, reductions, and reset), `/api/team/templates` (access templates), `/api/team/activity` (access activity), and `/api/me/access` (your own access, for every role but guest); `POST /api/team/invites` accepts `templateId`. There are no new MCP tools, and API keys cannot manage access.
 
 **Upgrading to 0.13.0:** back up first with `./scripts/backup.sh --force`. Migration 029 (access levels) runs once on the first boot and can only be undone by restoring that backup. It keeps existing collection and calendar editors editing: people shared with as editors keep the edit level. Existing board members become editors, as before. Nobody becomes a manager by upgrading; only an owner can make one. API keys gain no new powers from this release. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.13.0`, and restart as above.
 

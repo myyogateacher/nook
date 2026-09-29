@@ -91,7 +91,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.13.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.14.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -100,6 +100,18 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Inte
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.14.0
+
+- **Member access**: admins open **Team → a member → Access** to see everything that person can reach, per kind, one row per item with each way they reach it (shared directly or through a group), plus how many items are shared with everyone signed in, their groups, and their API keys. Items the admin cannot open are shown without their title, as "Board owned by" and the owner's name.
+- **Reduce only**: from that page admins can lower a level, remove a direct share, or take the person out of a group. Each change asks for confirmation, is recorded, and tells the item's owner or the person on the bell. Nothing on the page grants or raises access.
+- **Reset access**: removes a person's direct shares and group memberships, revokes their API keys and calendar feeds, and pauses their routines, with counts shown before and after. Items the person owns are untouched. It is not offered on your own account.
+- **My access**: **Settings → My access** (`/settings/access`) shows, read-only, what you can reach and through what. Guests do not have it.
+- **Access templates**: **Team → Templates** holds a role and groups. Pick one on an invite and the new account joins those groups when it registers. An invite keeps the template as it was when the invite was made, so later edits do not change invites already sent; deleting a template leaves its invites working with their role and no groups. Applying a template to an existing member adds its groups and never changes their role. With sharing with guests off, a guest skips groups that have items shared with them.
+- **Access activity**: **Team → Access activity** shows who changed whose access, filtered by person, group, key, and kind of change.
+- **Bell**: the bell now tells you when you are added to or removed from a group, when an admin lowers, removes, or resets access (to your items, or yours), and when an admin revokes your API key. The Access sheet tells an owner how many of their API keys can reach the item.
+- **Fixes**: the New group dialog focuses the name and checks it inline; wording fixes. No new MCP tools, and API keys cannot manage access.
+- Migration 032 runs on the first boot, so back up first. Admins gain new powers to see and reduce access; see [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.13.0
 

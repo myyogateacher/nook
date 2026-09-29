@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 
 /**
@@ -11,6 +11,17 @@ import { extname, join, resolve, sep } from "node:path";
  * conditional requests (304) and single byte ranges (206/416) on the plain file. Paths are decoded
  * and must stay inside the root: anything else is refused (404). Unknown paths outside `/assets/`
  * are client routes and get index.html. API and file-content routes never reach this handler.
+ *
+ * Edge cases, decided once: a Range request is always answered from the plain file (206, no
+ * Content-Encoding), never from a compressed twin; `identity;q=0` without an acceptable twin still
+ * gets the plain file (browsers never send it; a 406 would only break odd clients); HEAD sends the
+ * chosen representation's headers. Paths longer than 1024 characters, NUL bytes, backslashes, and
+ * any dot segment or dotfile (`.env`, `.git`) are refused, and a symlink (file or twin) is followed
+ * only when its real location stays inside the real dist directory.
+ *
+ * The service worker (`/sw.js`, registered with scope `/` from the root, so no
+ * Service-Worker-Allowed header is needed) and the web app manifest are `no-cache` like every
+ * non-hashed file, with `text/javascript` and `application/manifest+json`: never immutable.
  */
 
 const TYPES: Record<string, string> = {
@@ -51,7 +62,8 @@ type Encoding = "br" | "gzip" | "identity";
 export function negotiateEncoding(header: string | null | undefined, available: { br: boolean; gzip: boolean }): Encoding {
   if (!header) return "identity";
   const accepted = new Map<string, number>();
-  for (const part of header.split(",")) {
+  // A pathological header costs nothing: only the first 32 entries of the first 1 KB are read.
+  for (const part of header.slice(0, 1024).split(",").slice(0, 32)) {
     const [name, ...params] = part.trim().toLowerCase().split(";");
     if (!name) continue;
     const q = params.map((param) => param.trim()).find((param) => param.startsWith("q="));
@@ -65,32 +77,42 @@ export function negotiateEncoding(header: string | null | undefined, available: 
 }
 
 /** The file for `pathname` inside `root`, or null when it is not a safe path to a regular file. */
+/** Longest request path considered; longer ones are refused before any file system call. */
+export const MAX_PATH_LENGTH = 1024;
+
+const within = (root: string, target: string) => target === root || target.startsWith(root + sep);
+
+/** The real path of `path` when it is a regular file whose real location is inside the real root (symlinks never lead out). */
+async function realFileInside(root: string, path: string) {
+  try {
+    const [realRoot, real] = await Promise.all([realpath(root), realpath(path)]);
+    if (!within(realRoot, real)) return null;
+    const info = await stat(real);
+    return info.isFile() ? { path: real, size: info.size, mtimeMs: info.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+
 async function fileFor(root: string, pathname: string) {
+  if (pathname.length > MAX_PATH_LENGTH) return { refused: true as const };
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
   } catch {
     return { refused: true as const };
   }
-  // No NUL, no backslashes, and no dot segments before or after decoding.
-  if (decoded.includes("\0") || decoded.includes("\\") || decoded.split("/").some((segment) => segment === ".." || segment === ".")) return { refused: true as const };
+  // No NUL, no backslashes, no dot segments, and no dotfiles (".env", ".git"), before or after decoding.
+  // Decoding happens once: "%252e%252e" stays the literal name "%2e%2e", which no file has.
+  if (decoded.includes("\0") || decoded.includes("\\") || decoded.split("/").some((segment) => segment.startsWith("."))) return { refused: true as const };
   const target = resolve(root, `.${decoded}`);
-  if (target !== root && !target.startsWith(root + sep)) return { refused: true as const };
-  try {
-    const info = await stat(target);
-    return info.isFile() ? { refused: false as const, path: target, size: info.size, mtimeMs: info.mtimeMs } : { refused: false as const, path: null };
-  } catch {
-    return { refused: false as const, path: null };
-  }
+  if (!within(root, target)) return { refused: true as const };
+  const file = await realFileInside(root, target);
+  return file ? { refused: false as const, ...file } : { refused: false as const, path: null };
 }
 
-async function exists(path: string) {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-}
+/** A precompressed twin, under the same rules as the file itself. */
+const twin = (root: string, path: string) => realFileInside(root, path);
 
 const etagOf = (size: number, mtimeMs: number, encoding: Encoding) => `"${size.toString(36)}-${Math.floor(mtimeMs).toString(36)}${encoding === "identity" ? "" : `-${encoding}`}"`;
 
@@ -142,12 +164,18 @@ export async function serveStaticFile(request: Request, pathname: string, root: 
   const type = TYPES[extension] ?? "application/octet-stream";
   const compressible = COMPRESSIBLE.has(extension);
   const range = request.headers.get("Range");
+  let twins: { br: Awaited<ReturnType<typeof twin>>; gzip: Awaited<ReturnType<typeof twin>> } = { br: null, gzip: null };
   // A range applies to the plain file; ranges of compressed twins are not offered.
   const encoding = compressible && !range
-    ? negotiateEncoding(request.headers.get("Accept-Encoding"), { br: await exists(`${path}.br`), gzip: await exists(`${path}.gz`) })
+    ? await (async () => {
+      const [br, gzip] = await Promise.all([twin(root, `${path}.br`), twin(root, `${path}.gz`)]);
+      twins = { br, gzip };
+      return negotiateEncoding(request.headers.get("Accept-Encoding"), { br: br !== null, gzip: gzip !== null });
+    })()
     : "identity";
-  const bodyPath = encoding === "br" ? `${path}.br` : encoding === "gzip" ? `${path}.gz` : path;
-  const bodyInfo = encoding === "identity" ? { size, mtimeMs } : await stat(bodyPath);
+  const chosen = encoding === "br" ? twins.br : encoding === "gzip" ? twins.gzip : null;
+  const bodyPath = chosen?.path ?? path;
+  const bodyInfo = chosen ?? { size, mtimeMs };
   const etag = etagOf(bodyInfo.size, mtimeMs, encoding);
   const headers = new Headers({
     "Content-Type": type,

@@ -34,6 +34,8 @@ export type FlowRow = {
   created_at: string;
   expires_at: string;
   used_at: string | null;
+  /** Why an unfinished flow ended early: "evicted" (a cap made room) or "replaced" (a newer flow for the same invite). */
+  ended_reason?: string | null;
 };
 
 function setFlowCookie(c: Context, token: string, ttlMs: number) {
@@ -47,28 +49,63 @@ export function clearFlowCookie(c: Context) {
 type NewFlow = { intent: FlowIntent; stage: FlowRow["stage"]; returnTo: string; inviteHash?: string | null; userId?: string | null; sessionId?: string | null; ttlMs?: number; clientHash?: string | null };
 
 /**
- * Live (unused, unexpired) flows one client address holds at most (L4, N1). At the cap the oldest
- * is evicted, never the new start refused: behind a proxy with TRUSTED_PROXY_HOPS=0 every visitor
- * shares one address, and refusing would let anyone stop everyone's sign-in.
+ * Caps on unfinished flows (L4, N1, QA G1). At a cap the oldest flow of the right class is evicted;
+ * a new flow is never refused, since behind a proxy with TRUSTED_PROXY_HOPS=0 every visitor shares
+ * one address and refusing would let anyone stop everyone's sign-in. Eviction runs inside
+ * `createFlow`, after the request has claimed the prepared flow it uses, so the flow a request is
+ * about to use is never evicted.
+ *
+ * - `authorize` flows: at most 50 per client address. Anonymous sign-ins (intent `signin`, cheap to
+ *   create) go first, oldest first; other `authorize` flows (invite, link, re-auth) only when no
+ *   anonymous one is left.
+ * - `prepared` flows (need a valid invite token or a signed-in, re-authenticated session): their own
+ *   cap of 20 per client address, evicted only among themselves; one live prepared flow per invite
+ *   (a new one replaces the old); at most 3 per session for Settings links.
+ * - Re-auth and link `authorize` flows: at most 3 per session.
+ * - `second_factor` flows (Google already said yes) are never evicted and count toward no cap.
  */
 export const LIVE_FLOWS_PER_CLIENT = 50;
+export const PREPARED_FLOWS_PER_CLIENT = 20;
+export const FLOWS_PER_SESSION = 3;
 
-/**
- * Marks the client's unfinished flows used until at most `keep` remain; returns how many went. S5:
- * `prepared` flows (nothing sent to Google yet) go first, then `authorize` ones, oldest first; a
- * `second_factor` flow (Google already said yes) is never evicted.
- */
-export function evictOldestFlows(clientHash: string, keep: number, nowMs = Date.now()) {
-  const at = new Date(nowMs).toISOString();
-  const live = (db.query(`SELECT COUNT(*) AS count FROM google_auth_flows
-    WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'`).get(clientHash, at) as { count: number }).count;
-  if (live <= keep) return 0;
-  return db.query(`UPDATE google_auth_flows SET used_at = ? WHERE id IN (
-      SELECT id FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'
-      ORDER BY CASE stage WHEN 'prepared' THEN 0 ELSE 1 END, created_at, rowid LIMIT ?)`).run(at, clientHash, at, live - keep).changes;
+function endFlows(ids: string[], reason: "evicted" | "replaced", at: string) {
+  const end = db.query("UPDATE google_auth_flows SET used_at = ?, ended_reason = ? WHERE id = ? AND used_at IS NULL");
+  let changes = 0;
+  for (const id of ids) changes += end.run(at, reason, id).changes;
+  return changes;
 }
-export function liveFlowsForClient(clientHash: string, nowMs = Date.now()) {
-  return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND used_at IS NULL AND expires_at > ? AND stage <> 'second_factor'").get(clientHash, new Date(nowMs).toISOString()) as { count: number }).count;
+
+/** Ends the oldest live flows matching `where` until at most `keep` remain; `order` ranks classes (kept first). */
+function trimFlows(where: string, params: Array<string>, keep: number, order: string | null, at: string) {
+  const ids = (db.query(`SELECT id FROM google_auth_flows WHERE ${where} AND used_at IS NULL AND expires_at > ? ORDER BY ${order ? `${order}, ` : ""}created_at DESC, rowid DESC`)
+    .all(...params, at) as Array<{ id: string }>).map((row) => row.id);
+  // The list runs from the most worth keeping to the least; everything past `keep` goes.
+  return endFlows(ids.slice(Math.max(0, keep)), "evicted", at);
+}
+
+/** Makes room for one more flow of this kind (see above); returns how many flows were evicted. */
+export function makeRoomForFlow(input: { stage: FlowRow["stage"]; clientHash?: string | null; sessionId?: string | null; inviteHash?: string | null }, nowMs = Date.now()) {
+  const at = new Date(nowMs).toISOString();
+  let evicted = 0;
+  if (input.stage === "second_factor") return 0;
+  if (input.stage === "prepared") {
+    if (input.inviteHash) {
+      const same = (db.query("SELECT id FROM google_auth_flows WHERE stage = 'prepared' AND invite_hash = ? AND used_at IS NULL AND expires_at > ?").all(input.inviteHash, at) as Array<{ id: string }>).map((row) => row.id);
+      endFlows(same, "replaced", at);
+    }
+    if (input.sessionId) evicted += trimFlows("stage = 'prepared' AND session_id = ?", [input.sessionId], FLOWS_PER_SESSION - 1, null, at);
+    if (input.clientHash) evicted += trimFlows("stage = 'prepared' AND client_hash = ?", [input.clientHash], PREPARED_FLOWS_PER_CLIENT - 1, null, at);
+    return evicted;
+  }
+  if (input.sessionId) evicted += trimFlows("stage = 'authorize' AND session_id = ?", [input.sessionId], FLOWS_PER_SESSION - 1, null, at);
+  // Keep order: non-anonymous first (kept longest), then anonymous sign-ins; newest first within each.
+  if (input.clientHash) evicted += trimFlows("stage = 'authorize' AND client_hash = ?", [input.clientHash], LIVE_FLOWS_PER_CLIENT - 1, "CASE intent WHEN 'signin' THEN 1 ELSE 0 END", at);
+  return evicted;
+}
+
+/** Test and diagnostics: live flows of one stage for a client address. */
+export function liveFlowsForClient(clientHash: string, stage: FlowRow["stage"] = "authorize", nowMs = Date.now()) {
+  return (db.query("SELECT COUNT(*) AS count FROM google_auth_flows WHERE client_hash = ? AND stage = ? AND used_at IS NULL AND expires_at > ?").get(clientHash, stage, new Date(nowMs).toISOString()) as { count: number }).count;
 }
 
 /**
@@ -83,6 +120,7 @@ export function createFlow(c: Context, input: NewFlow) {
   const verifier = randomToken(48);
   const ttlMs = input.ttlMs ?? FLOW_TTL_MS;
   const nowMs = Date.now();
+  makeRoomForFlow(input, nowMs);
   db.query(`INSERT INTO google_auth_flows (id, state_hash, nonce, code_verifier, intent, stage, return_to, invite_hash, user_id, session_id, client_hash, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     sha256Hex(token), sha256Hex(state), nonce, verifier, input.intent, input.stage, input.returnTo,
@@ -99,6 +137,20 @@ export function readFlow(c: Context, nowMs = Date.now()) {
   const row = db.query("SELECT * FROM google_auth_flows WHERE id = ?").get(sha256Hex(token)) as FlowRow | null;
   if (!row || row.used_at !== null || Date.parse(row.expires_at) <= nowMs) return null;
   return row;
+}
+
+/**
+ * Why this browser's flow cookie no longer finds a live flow (QA G1d): "gone" (no cookie, no row, or a
+ * normal single use: T251 answers `expired` as before), or "ended" (the flow expired, was evicted at a
+ * cap, or was replaced), which the pages explain as "That took too long" and, for an invite, recover.
+ */
+export function endedFlow(c: Context, nowMs = Date.now()): FlowRow | null {
+  const token = getCookie(c, FLOW_COOKIE);
+  if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return null;
+  const row = db.query("SELECT * FROM google_auth_flows WHERE id = ?").get(sha256Hex(token)) as FlowRow | null;
+  if (!row) return null;
+  const ended = row.used_at !== null ? row.ended_reason === "evicted" || row.ended_reason === "replaced" : Date.parse(row.expires_at) <= nowMs;
+  return ended ? row : null;
 }
 
 /** Claims a flow: one guarded UPDATE, so a replay or a race finds it used (T251). */

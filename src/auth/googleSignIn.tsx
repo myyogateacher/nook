@@ -86,6 +86,8 @@ export function initialGoogleTeamResult() {
 const MESSAGES: Record<string, string> = {
   denied: "Google sign-in was cancelled.",
   expired: "That sign-in took too long or was already used. Try again.",
+  // QA G1d: the round trip expired or was pushed out by other sign-ins; an invite stays usable.
+  flow_expired: "That took too long. Continue with Google again.",
   failed: "Google sign-in did not complete. Try again.",
   unverified: "Google has not verified this account's email address, so it cannot be used here.",
   not_allowed: "This Google account cannot sign in to this Nook. Ask your admin.",

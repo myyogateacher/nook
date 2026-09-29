@@ -47,6 +47,8 @@ function apply034(db: Parameters<Migration["up"]>[0]) {
     // Every column is added only when missing (S6: no boot-time repair; a scratch database that ran
     // an earlier shape of 034 on the Wave 35 branch is recreated).
     addColumn(db, "google_auth_flows", "client_hash", "TEXT");
+    // QA G1: why an unfinished flow ended early ('evicted' at a cap, 'replaced' by a newer one for the same invite).
+    addColumn(db, "google_auth_flows", "ended_reason", "TEXT");
     db.exec(`
       CREATE INDEX IF NOT EXISTS google_auth_flows_expiry ON google_auth_flows(expires_at);
       CREATE INDEX IF NOT EXISTS google_auth_flows_client ON google_auth_flows(client_hash, expires_at);

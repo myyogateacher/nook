@@ -18,7 +18,7 @@ import { can } from "../team/roles";
 import { dismissGoogleResetNotice, allowGoogleLink, checkAllowGoogleLink, checkUnlinkGoogle, completeRelink, consumeGoogleLinkAllowance, emailDomain, googleAdminState, googleResetPreview, GoogleLinkError, hasGoogleLinkAllowance, recordGoogleRefusal, relinkRemovesCredentials, unlinkGoogleForAccount } from "./linkAdmin";
 import { hashInviteToken, InviteError, previewInvite, previewInviteHash } from "../team/invites";
 import { invitePreviewSchema, parseJson, recoveryCode, totpCode, uuid } from "../validation";
-import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, evictOldestFlows, LIVE_FLOWS_PER_CLIENT, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
+import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, endedFlow, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
 import { authorizationUrl, domainAllowed, exchangeCode, freshAuthTime, googleAuthoritative, OidcError, sha256Hex, verifyIdToken, type GoogleClaims } from "./oidc";
 
 /**
@@ -144,18 +144,22 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
     const off = googleMethodRefusal(c);
     if (off) return off;
     // L4, F1b: a full instance-wide bucket refuses first (no per-client key is created then); then the
-    // per-client bucket, so one client cannot use up the (generous) global one; and a cap on the live
-    // flows a client holds.
+    // per-client bucket, so one client cannot use up the (generous) global one.
     if (googleStartLimited(c)) return toLogin(c, "error=rate_limited");
     const clientHash = sha256Hex(`google-client:${clientAddress(c)}`);
-    // N1: at the per-client cap the client's oldest unfinished flow is evicted (it answers `expired`
-    // and that browser starts again); a start is never refused for the live-flow count.
-    evictOldestFlows(clientHash, LIVE_FLOWS_PER_CLIENT - 1);
+    // N1, QA G1: the caps on unfinished flows are applied inside createFlow, after this request has
+    // claimed the prepared flow it uses, so that flow is never the one evicted (flows.ts).
     const intent = (c.req.query("intent") ?? "signin") as FlowIntent;
     if (!INTENTS.includes(intent)) return toLogin(c, "error=failed");
     if (intent === "invite") {
       // The invite was posted to /invite first; its hash waits in a prepared flow (D298).
       const prepared = readFlow(c);
+      if (!prepared) {
+        // G1d: the prepared flow expired or was pushed out: the invite is still good, so prepare it
+        // again and say it took too long, never that the invite was used.
+        const ended = endedFlow(c);
+        if (ended?.stage === "prepared" && ended.intent === "invite" && ended.invite_hash) return failTo(c, ended, "flow_expired");
+      }
       if (!prepared || prepared.stage !== "prepared" || prepared.intent !== "invite" || !prepared.invite_hash || !claimFlow(prepared.id)) return toLogin(c, "error=invite_invalid");
       const flow = createFlow(c, { intent, stage: "authorize", returnTo: prepared.return_to, inviteHash: prepared.invite_hash, clientHash });
       return c.redirect(authorizationUrl(flow), 302);
@@ -166,7 +170,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       const prepared = readFlow(c);
       const session = readSession(c);
       if (!prepared || prepared.stage !== "prepared" || prepared.intent !== "link" || !session || prepared.session_id !== session.sessionId || prepared.user_id !== session.user.id || !claimFlow(prepared.id)) {
-        return c.redirect("/settings/security#google-error=expired", 303);
+        return c.redirect(`/settings/security#google-error=${!prepared && endedFlow(c)?.intent === "link" ? "flow_expired" : "expired"}`, 303);
       }
       const flow = createFlow(c, { intent, stage: "authorize", returnTo: prepared.return_to, userId: session.user.id, sessionId: session.sessionId, clientHash });
       return c.redirect(authorizationUrl({ ...flow, loginHint: session.user.email }), 302);
@@ -195,6 +199,13 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
     // T250/T251: this browser's own flow, the matching state, unused and unexpired, claimed once.
     // L9: a junk or foreign state leaves the browser's own in-progress flow (and its cookie) alone.
     if (!flow || flow.stage !== "authorize" || !safeEqual(sha256Hex(state), flow.state_hash) || !claimFlow(flow.id)) {
+      // G1d: this browser's own round trip, but its flow expired or was pushed out at a cap: say it
+      // took too long; an invite goes back to the invite page, still usable.
+      const ended = flow ? null : endedFlow(c);
+      if (ended?.stage === "authorize" && safeEqual(sha256Hex(state), ended.state_hash)) {
+        clearFlowCookie(c);
+        return failTo(c, ended, "flow_expired");
+      }
       return toLogin(c, "error=expired");
     }
     clearFlowCookie(c);
@@ -488,17 +499,21 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
       return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
     }
     if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
-    db.transaction(() => {
+    // QA G3: the person just re-authenticated here, so this session stays (its Google confirmation
+    // ends); every other session of the account ends.
+    const sessionsEnded = db.transaction(() => {
       db.query("DELETE FROM google_identities WHERE id = ?").run(identity.id);
+      const ended = db.query("DELETE FROM sessions WHERE user_id = ? AND id <> ?").run(user.id, c.get("sessionId")).changes;
       db.query("UPDATE sessions SET reauth_at = NULL WHERE user_id = ?").run(user.id);
-      audit(user.id, null, "auth.google_unlinked");
+      audit(user.id, null, "auth.google_unlinked", { otherSessionsEnded: ended });
       // N4: the same security mail as an admin or CLI unlink.
       mailAccountEvent(user.id, "google_unlinked_self", null);
+      return ended;
     })();
     // S9: send it now, as the admin and CLI unlinks do.
     kickMailDispatch();
     await clearAvatar(user.id);
-    return c.json({ ok: true });
+    return c.json({ ok: true, otherSessionsEnded: sessionsEnded });
   });
 
   // N2c: the member read the one-time reset notice.

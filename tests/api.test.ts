@@ -226,7 +226,11 @@ describe("authorization and version workflow", () => {
     const reader = await register("Reader");
 
     const folderResponse = await request("/folders", {}, owner);
-    const ownerFolders = ((await folderResponse.json()) as { folders: Array<{ id: string; name: string; is_default: number }> }).folders;
+    const listedFolders = ((await folderResponse.json()) as { folders: Array<{ id: string; name: string; is_default: number; is_owner: number; visibility: string }> }).folders;
+    // The suite shares one database: folders other files shared with all users are listed too, so
+    // check the new user's own folders, and that nothing else reaches them but all-users folders.
+    const ownerFolders = listedFolders.filter((folder) => folder.is_owner === 1);
+    expect(listedFolders.filter((folder) => folder.is_owner !== 1).every((folder) => folder.visibility === "all_users")).toBe(true);
     expect(ownerFolders).toHaveLength(1);
     expect(ownerFolders[0]?.name).toBe("Default");
     expect(ownerFolders[0]?.is_default).toBe(1);

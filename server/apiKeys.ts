@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { audit, db, now } from "./db";
 import { recordAccessEvent, type AccessVia } from "./access/events";
+import { notifyAccess } from "./access/notices";
 import {
   dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, SCOPE_GRANTS, scopeFor, scopeReach, SELECTOR_KINDS,
   type Grant, type GrantModule, type KeyKind, type KeyPermission, type KeySurfaces, type ResourceKind
@@ -575,8 +576,12 @@ export function revokeOwnKey(userId: string, keyId: string) {
   })();
 }
 
-/** POST /api/team/keys/:id/revoke: an admin revokes anyone's key, with a reason only admins and the owner see. */
-export function adminRevokeKey(actorId: string, keyId: string, reason: string) {
+/**
+ * POST /api/team/keys/:id/revoke: an admin revokes anyone's key, with a reason only admins and the
+ * owner see. The owner gets a bell notice (§C.11, Wave 33) unless `notify` is false (Reset access
+ * sends one notice for everything instead).
+ */
+export function adminRevokeKey(actorId: string, keyId: string, reason: string, options: { notify?: boolean; meta?: Record<string, unknown> } = {}) {
   return db.transaction(() => {
     const row = keyById.get(keyId) as KeyRow | null;
     if (!row || row.revoked_at !== null) return null;
@@ -585,7 +590,8 @@ export function adminRevokeKey(actorId: string, keyId: string, reason: string) {
     db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoked_by = ?, revoke_reason = ? WHERE id = ? AND revoked_at IS NULL").run(timestamp, actorId, cleanReason, row.id);
     const superseded = supersedeProposals(row.id, row.user_id, timestamp);
     // Ids only; the reason's length, never its text (T83).
-    recordAccessEvent({ actorId, via: "web", action: "key.revoked", targetUserId: row.user_id, keyId: row.id, meta: { by: "admin", reasonLength: cleanReason.length } }, timestamp);
+    recordAccessEvent({ actorId, via: "web", action: "key.revoked", targetUserId: row.user_id, keyId: row.id, meta: { by: "admin", reasonLength: cleanReason.length, ...options.meta } }, timestamp);
+    if (options.notify !== false) notifyAccess({ userId: row.user_id, kind: "key_revoked", actorId, keyId: row.id }, timestamp);
     audit(actorId, null, "team.key_revoked", { keyId: row.id, targetId: row.user_id, ...(superseded ? { proposalsSuperseded: superseded } : {}) });
     return { keyId: row.id, ownerId: row.user_id, revokedAt: timestamp };
   })();

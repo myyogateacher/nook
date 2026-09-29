@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { audit, db, now } from "../db";
 import { recordAccessEvent } from "../access/events";
+import { notifyAccess } from "../access/notices";
 import { presentItem } from "../access/effective";
 import { isLevel, type AccessKind } from "../access/levels";
 import { parseJson, uuid } from "../validation";
@@ -201,10 +202,13 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
     for (const userId of added) {
       insert.run(groupId, userId, actorId, timestamp);
       recordAccessEvent({ actorId, via: "web", action: "group.member_added", groupId, targetUserId: userId, meta: userId === actorId ? { self: true } : null }, timestamp);
+      // The bell (§C.11, Wave 33); nobody is told about their own change.
+      notifyAccess({ userId, kind: "group_added", actorId, groupId }, timestamp);
     }
     for (const userId of removed) {
       remove.run(groupId, userId);
       recordAccessEvent({ actorId, via: "web", action: "group.member_removed", groupId, targetUserId: userId, meta: userId === actorId ? { self: true } : null }, timestamp);
+      notifyAccess({ userId, kind: "group_removed", actorId, groupId }, timestamp);
     }
     db.query("UPDATE user_groups SET updated_at = ?, revision = revision + 1 WHERE id = ?").run(timestamp, groupId);
     if (added.length || removed.length) audit(actorId, null, "group.members_changed", { groupId, added: added.length, removed: removed.length, selfAdded: added.includes(actorId) });

@@ -31,6 +31,19 @@ describe("C8: Calendar's header has the Bin button, as the other modules do", ()
   });
 });
 
+describe("C11a: the change-password hint offers Forgot password? only when it exists", () => {
+  test("with /api/about passwordReset it points at Forgot password?; without it, at an admin", async () => {
+    const { forgotCurrentHint } = await import("../src/auth/ChangePassword");
+    expect(forgotCurrentHint(true)).toContain("Sign out and use “Forgot password?”.");
+    expect(forgotCurrentHint(false)).not.toContain("Forgot password?");
+    expect(forgotCurrentHint(false)).toContain("ask an admin");
+    const app = await read("App.tsx");
+    expect(app).toContain("<ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} />");
+    const card = await read("auth/ChangePassword.tsx");
+    expect(card).toContain('<small className="password-change-hint">{forgotCurrentHint(passwordReset)}</small>');
+  });
+});
+
 describe("C7: the Files list/grid toggle is a phone-sized target", () => {
   test("each view button is 44 px at phone widths (32 px on desktop)", async () => {
     const css = await read("files/files.css");

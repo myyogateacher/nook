@@ -231,7 +231,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword }: { onAuthenticated: (s
 
 function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean> }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.13.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.13.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -270,7 +270,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
-    api<{ version: string; gitSha: string; twoFactor?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
+    api<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -389,7 +389,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       <div className="settings-body">
         <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => { void selectSection("security"); }}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => { void selectSection("modules"); }}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => { void selectSection("mcp"); }}><KeyRound />API keys</button><button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => { void selectSection("notifications"); }}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => { void selectSection("about"); }}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { void (async () => { if (!mcpKeyPending || await ask(unsavedKeyConfirm("leave"))) onManageTeam(); })(); }}><Users />Manage team</button>}</>}</nav>
         {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
-          {!state.setupRequired && <ChangePasswordCard totpEnabled={state.enabled} />}
+          {!state.setupRequired && <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} />}
           <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
           {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
           {error && <p className="form-error" role="alert">{error}</p>}

@@ -18,7 +18,7 @@ import { flagsForBoard, flagsForCard, listBoardTags, replaceCardFlags, replaceCa
 import { audienceAllUsersFor } from "../team/roles";
 import { dateInZone, validTimeZone } from "../today/registry";
 import { mailShared, shareMembers } from "../mail/triggers";
-import { GUEST_SHARE_DISABLED, guestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
+import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { groupGrantExists } from "../access/groups";
 
 /**
@@ -385,7 +385,7 @@ export async function putSharing(userId: string, boardId: string, visibility: Bo
     const validUsers = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...uniqueIds);
     if (validUsers.length !== uniqueIds.length) throw new TaskError(400, "One or more users were not found");
   }
-  if (visibility === "selected" && guestShareBlocked(uniqueIds)) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
+  if (visibility === "selected" && legacyGuestShareBlocked("board", boardId, legacyShareLevels("board", boardId, uniqueIds, "edit"))) throw new TaskError(400, GUEST_SHARE_DISABLED.error, GUEST_SHARE_DISABLED.code);
   return withBoardLock(boardId, () => {
     requireOwnedBoard(boardId, userId);
     db.transaction(() => {

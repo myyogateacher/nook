@@ -1,9 +1,9 @@
-import { useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Check, X } from "lucide-react";
 import { trapTabKey } from "../files/Dialog";
 import { groupRuns } from "./listNavigation";
 import { correctForContainingBlock, placePopover } from "./popoverPosition";
-import { DesktopHistoryLayers, useHistoryDialogGuard } from "./useHistoryDialogGuard";
+import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 // The list shared by Select and Combobox (D91, D114): a fixed-position popup under the trigger on
 // desktop, a bottom sheet with 44 px rows on phones (≤ 760 px). Both render inside the owner's
@@ -137,8 +137,9 @@ export function DropdownSurface(props: SurfaceProps) {
 
 function DropdownPopup({ anchorRef, onClose, search, footer, children }: SurfaceProps) {
   const popupRef = useRef<HTMLDivElement>(null);
-  // Inside a host that keeps desktop history layers (the routine sheet), Back closes only this popup.
-  useHistoryDialogGuard(useContext(DesktopHistoryLayers), onClose);
+  // D69 at every width: the popup is its own history layer, so Back closes only this popup and
+  // leaves the dialog, sheet, or page under it as it was (as the phone sheet does).
+  useHistoryDialogGuard(true, onClose);
   const [placed, setPlaced] = useState(false);
   useLayoutEffect(() => {
     const place = () => {
@@ -193,7 +194,7 @@ function DropdownPopup({ anchorRef, onClose, search, footer, children }: Surface
 }
 
 function DropdownSheet({ title, onClose, search, footer, children }: SurfaceProps) {
-  // D69: Back closes only this sheet; at depth 0 on a phone it holds the sentinel entry.
+  // D69: Back closes only this sheet; on the entry the page was loaded on it holds the sentinel entry.
   useHistoryDialogGuard(true, onClose);
   return <div className="ui-sheet-layer">
     <button type="button" className="ui-sheet-scrim" aria-label="Close" tabIndex={-1} onClick={onClose} />

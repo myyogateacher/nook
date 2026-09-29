@@ -1,4 +1,5 @@
 import { api } from "../../api";
+import { levelAtLeast, type ItemLevel } from "../../access/accessLevels";
 import type { TaskState } from "../../../shared/taskQuery";
 import type { BoardColumn, BoardVisibility, CardAssignee, TagColor } from "../tasksApi";
 import type { HomeGroup, HomeLayout, HomeSort } from "./homeUrl";
@@ -28,7 +29,15 @@ export type QueriedCard = {
   flags: string[];
   created_at: string;
   updated_at: string;
+  /** The caller's level on the card's board (Wave 32): below edit the card offers no Move. Older servers omit it. */
+  board_level?: ItemLevel;
 };
+
+/**
+ * Whether the results may offer "Move to…" on this card: a writing Team role and at least Can edit on
+ * its board, as the server returns it (commenters and viewers get READ_ONLY on a move).
+ */
+export const canChangeCard = (card: Pick<QueriedCard, "board_level">, roleReadOnly: boolean) => !roleReadOnly && levelAtLeast(card.board_level, "edit");
 
 /** What the query's ids mean to this viewer (T116): a board, column, or tag they cannot read is `restricted`, with no name. */
 export type QueryRefs = {

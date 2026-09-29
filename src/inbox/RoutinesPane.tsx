@@ -5,7 +5,7 @@ import { trapTabKey, useDialogFocus } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { Combobox } from "../ui/Combobox";
 import { Select, type Option } from "../ui/Select";
-import { DesktopHistoryLayers, useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import {
   createRoutine,
   deleteRoutine,
@@ -258,7 +258,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
   const readOnly = !canWrite;
   const sheetRef = useRef<HTMLDivElement>(null);
   // D69 at every width (2i): a deep link's Back closes an open dropdown, then a confirm, then the sheet.
-  useHistoryDialogGuard(true, onClose, { desktop: true });
+  useHistoryDialogGuard(true, onClose);
   useDialogFocus(sheetRef);
   useEffect(() => { setForm(formOf(routine)); setError(""); }, [routine]);
   useEffect(() => {
@@ -322,7 +322,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
     }
   }
 
-  return <DesktopHistoryLayers.Provider value={true}>
+  return <>
     <button type="button" className="panel-scrim inbox-dialog-scrim" onClick={() => { if (!busy) onClose(); }} aria-label="Close" tabIndex={-1} />
     <div ref={sheetRef} tabIndex={-1} className="inbox-dialog inbox-sheet" role="dialog" aria-modal="true" aria-labelledby="routine-sheet-title" onKeyDown={trapTabKey}>
       <header>
@@ -394,7 +394,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
       </section>}
     </div>
     {confirmDelete && routine && <DeleteConfirm name={routine.name} busy={busy} onClose={() => setConfirmDelete(false)} onConfirm={() => { void remove(); }} />}
-  </DesktopHistoryLayers.Provider>;
+  </>;
 }
 
 function DeleteConfirm({ name, busy, onClose, onConfirm }: { name: string; busy: boolean; onClose: () => void; onConfirm: () => void }) {

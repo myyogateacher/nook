@@ -1,4 +1,12 @@
 // Pure helpers for the Tasks UI: name validation that mirrors the server rules.
+import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
+
+/**
+ * Whether cards on a board are read-only for the caller (Wave 32, §D.3): a read-only Team role, or a
+ * board level below Can edit as the server returns it (`board.level`). Then no Move, drag, Alt+Arrow,
+ * New card, Add a card, or due-date change is offered; commenters still comment and react.
+ */
+export const cardsReadOnly = (roleReadOnly: boolean, level: ItemLevel | undefined) => roleReadOnly || !levelAtLeast(level, "edit");
 export type NameCheck = { ok: true; name: string; changed: boolean } | { ok: false; error: string };
 
 // C0/C1 controls and bidi overrides, as refused by server/tasks/routes.ts.

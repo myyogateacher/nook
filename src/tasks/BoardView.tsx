@@ -28,7 +28,7 @@ import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute } from "../router";
 import { tasksRoute } from "../tasksRoute";
 import { columnIndexFor, createTasksHistoryState } from "../tasksNavigation";
-import { addCardRefusal, canEnterColumn, cardCountLabel, columnBadge, columnFullMessage, validateBoardName, validateColumnName } from "./taskActions";
+import { addCardRefusal, canEnterColumn, cardCountLabel, cardsReadOnly, columnBadge, columnFullMessage, validateBoardName, validateColumnName } from "./taskActions";
 import { WipLimitDialog } from "./WipLimitDialog";
 import { ColumnStateField } from "./views/ColumnStateField";
 import { columnState } from "./home/homeApi";
@@ -65,7 +65,6 @@ import {
   type CardSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
-import { levelAtLeast } from "../access/accessLevels";
 
 type BoardViewProps = {
   userId: string;
@@ -199,7 +198,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
 
   const board = detail?.board ?? null;
   const owner = board?.is_owner === 1;
-  const readOnly = roleReadOnly || !levelAtLeast(board?.level, "edit");
+  const readOnly = cardsReadOnly(roleReadOnly, board?.level);
   // Managers (Wave 32, D273) change the structure, columns, tags, sprints, and sharing up to Can edit.
   const canManage = !roleReadOnly && (owner || board?.level === "manage");
   // The tab names the board, and the open card before it (QA 0.9.0).
@@ -521,7 +520,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <h1 id="task-board-title" title={board?.name}>{board?.name ?? "Loading…"}</h1>
       </div>
       {board && <span className="task-board-count">{cardCountLabel(board.card_count)}</span>}
-      {detail && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
+      {detail && !readOnly && <button className="primary-button task-new-card" onClick={() => setComposer({ columnId: null })} aria-haspopup="dialog" aria-label="New card" title="New card"><Plus /><span>New card</span></button>}
       {detail && <BoardViewSwitch value={view} onChange={(next) => onQueryChange(withBoardQuery(query, { view: next }), { push: true })} />}
       {board && <span className="task-board-actions">
         <button className="icon-button" onClick={(event) => openDialog({ kind: "settings" }, event.currentTarget)} aria-haspopup="dialog" aria-label="Board settings" title="Board settings"><Settings2 /></button>
@@ -559,7 +558,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       <BoardCalendar board={data} cards={result.cards} layout={query.cal} month={query.month} today={viewContext.today} viewerZone={viewContext.timeZone} filtered={filtered}
         onMonth={(month) => onQueryChange(withBoardQuery(query, { month }))}
         onLayout={(cal) => onQueryChange(withBoardQuery(query, { cal }), { push: true })}
-        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} />
+        onOpenCard={(card) => onOpenCard(card.id)} onSetDue={(card, dueOn) => { void setDue(card.id, dueOn); }} readOnly={readOnly} />
     </div>}
     {detail && view === "board" && <nav className="task-column-tabs" aria-label="Columns">
       {columns.map((column, index) => {
@@ -584,6 +583,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         hiddenNote={hidden.note ? { text: hidden.note, onShowAll: showAllLevels } : undefined}
         emptyText={filtered ? "No matching cards" : sprintScoped && !lane.length ? (sprints.selection?.kind === "backlog" ? "Nothing from the backlog here" : "Nothing from this sprint here") : hidden.hint ?? "No matching cards"}
         nesting={hierarchy.nesting}
+        readOnly={readOnly}
         tags={detail.tags}
         owner={owner}
         isFirst={index === 0}
@@ -720,7 +720,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onConfirm={() => { void removeColumn(dialogColumn.id); }}
       onCancel={closeDialog}
     />}
-    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} parentPicker={hierarchy.parentPicker(dialogCard)}
+    {dialog?.kind === "moveCard" && dialogCard && <MoveCardSheet card={dialogCard} columns={columns} cards={cards} onCancel={closeDialog} readOnly={readOnly} parentPicker={readOnly ? undefined : hierarchy.parentPicker(dialogCard)}
       onCopyLink={() => { void copyCardLink(boardId, dialogCard.id, notify); }} onMove={async (columnId, place) => {
       const current = detailRef.current;
       setDialog(null);

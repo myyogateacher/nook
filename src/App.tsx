@@ -45,9 +45,9 @@ import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
-import { registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
+import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
 import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPages";
-import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takePasswordLinkFromLocation } from "./auth/passwordPages";
+import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { GoogleAccountCard, googleSettingsNotice, PasswordStateCard } from "./auth/GoogleAccountCard";
@@ -78,6 +78,9 @@ import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, star
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
 import { ConfirmDialog } from "./files/Dialog";
+import { NameDialog } from "./files/RenameDialog";
+import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
+import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
@@ -108,6 +111,12 @@ const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
   { value: "title-desc", label: "Title Z–A" }
 ];
 
+/** Settings → Security when the instance has no TOTP key (A7): nothing to set up. */
+export const TWO_FACTOR_OFF_TEXT = "Two-factor authentication has not been set up for this Nook, so it cannot be turned on for your account yet. Ask an admin of this Nook.";
+
+/** Popstate events a pasted reset link took (A5): the route handlers leave them alone. */
+const resetLinkEvents = new WeakSet<Event>();
+
 function relativeTime(value: string) {
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
   const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
@@ -126,24 +135,31 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
   const [needsTotp, setNeedsTotp] = useState(false);
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [registration, setRegistration] = useState<RegistrationInfo | null>(null);
+  const [registration, setRegistration] = useState<RegistrationInfo | null | "failed">(null);
+  const fields = useFieldErrors();
   // Wave 35 (D296): Google proved the account; the Nook code finishes the sign-in.
   const [googleCode, setGoogleCode] = useState(googleResult?.kind === "code");
-  // Unknown (loading, or an older server): the password form as before, and no Google button.
-  const methods = registration?.authMethods ?? { password: true, google: false };
-  const signUpPrompt = methods.password ? registrationPrompt(registration) : null;
+  // Unknown (loading, failed, or an older server): the password form as before, and no Google button.
+  const methods = (registration !== "failed" ? registration?.authMethods : undefined) ?? { password: true, google: false };
+  const signUpPrompt = methods.password ? registrationPrompt(registration === "failed" ? null : registration) : null;
 
   useEffect(() => {
     let live = true;
-    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => undefined);
+    api<RegistrationInfo>("/about").then((info) => { if (live) setRegistration(info); }, () => { if (live) setRegistration("failed"); });
     return () => { live = false; };
   }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const text = (name: string) => String(form.get(name) ?? "");
+    const codeName = useRecoveryCode ? "recoveryCode" : "totpCode";
+    const problems = collectProblems(registering
+      ? { displayName: text("displayName").trim() ? null : "Enter your name.", email: emailProblem(text("email")), password: newPasswordProblem(text("password")) }
+      : { email: emailProblem(text("email")), password: text("password") ? null : "Enter your password.", [codeName]: needsTotp ? secondFactorProblem(text(codeName), useRecoveryCode) : null });
+    if (fields.show(event.currentTarget, problems)) return;
+    setBusy(true);
     try {
       const payload = registering
         ? { email: form.get("email"), password: form.get("password"), displayName: form.get("displayName") }
@@ -179,6 +195,11 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const codeName = useRecoveryCode ? "recoveryCode" : "totpCode";
+    if (fields.show(event.currentTarget, collectProblems({ [codeName]: secondFactorProblem(String(form.get(codeName) ?? ""), useRecoveryCode) }))) {
+      setBusy(false);
+      return;
+    }
     try {
       const body = useRecoveryCode ? { recoveryCode: String(form.get("recoveryCode") ?? "").trim() } : { totpCode: String(form.get("totpCode") ?? "").trim() };
       const result = await api<{ returnTo: string }>("/auth/google/second-factor", { method: "POST", body: JSON.stringify(body) });
@@ -207,24 +228,24 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
           <h1>{heading}</h1>
           <p>{googleCode ? "Google confirmed your account. Enter the code from your authenticator app to finish signing in." : "Your private workspace for ideas, passwords, and configuration notes."}</p>
         </div>
-        {googleCode ? <form onSubmit={submitGoogleCode} className="auth-form">
+        {googleCode ? <form onSubmit={submitGoogleCode} className="auth-form" noValidate onChange={() => setError("")}>
           {useRecoveryCode
-            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
-            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number from your authenticator app.</small></label>}
-          <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); }}>{useRecoveryCode ? "Use an authentication code instead" : "Use a recovery code"}</button>
+            ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="google-recovery-error" message={fields.errors.recoveryCode} /></label>
+            : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number from your authenticator app.</small><FieldError id="google-code-error" message={fields.errors.totpCode} /></label>}
+          <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use an authentication code instead" : "Use a recovery code"}</button>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
         </form> : <>
           {googleButton}
           {googleButton && methods.password && <AuthDivider />}
           {!methods.password && error && <p className="form-error" role="alert">{error}</p>}
-          {methods.password && <form onSubmit={submit} className="auth-form">
-            {registering && <label>Name<input name="displayName" autoComplete="name" required maxLength={80} /></label>}
-            <label>Email<input name="email" type="email" autoComplete="email" required /></label>
+          {methods.password && <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+            {registering && <label>Name<input name="displayName" autoComplete="name" maxLength={80} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "auth-name-error" : undefined} /><FieldError id="auth-name-error" message={fields.errors.displayName} /></label>}
+            <label>Email<input name="email" type="email" autoComplete="email" aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "auth-email-error" : undefined} /><FieldError id="auth-email-error" message={fields.errors.email} /></label>
             <div className="auth-password-group">
               <label htmlFor="auth-password">Password</label>
               <span className="password-field">
-                <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? 12 : 1} />
+                <input id="auth-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete={registering ? "new-password" : "current-password"} maxLength={256} aria-invalid={fields.errors.password ? true : undefined} aria-describedby={fields.errors.password ? "auth-password-error" : undefined} />
                 <button
                   type="button"
                   className="password-visibility-toggle"
@@ -235,16 +256,17 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
                   {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
                 </button>
               </span>
+              <FieldError id="auth-password-error" message={fields.errors.password} />
             </div>
             {!registering && needsTotp && (useRecoveryCode
-              ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" minLength={10} maxLength={32} required autoFocus /><small>Enter one complete backup recovery code. Each code works once.</small></label>
-              : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small></label>)}
-            {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
-            {!registering && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
+              ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="auth-recovery-error" message={fields.errors.recoveryCode} /></label>
+              : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
+            {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
+            {!registering && passwordResetOffered(registration) && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
             {error && <p className="form-error" role="alert">{error}</p>}
             <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
           </form>}
-          {methods.password && (registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); }}>
+          {methods.password && (registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); fields.clear(); }}>
             {registering ? "Already have an account? Sign in" : signUpPrompt}
           </button>}
         </>}
@@ -261,7 +283,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
-  const [appInfo, setAppInfo] = useState({ version: "0.12.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean }>({ version: "0.12.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -299,7 +321,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
-    api<{ version: string; gitSha: string }>("/about").then(setAppInfo).catch(() => undefined);
+    api<{ version: string; gitSha: string; twoFactor?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -433,6 +455,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
               <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
               <div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
             </form>}
+          </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
+            <strong>Not available on this Nook</strong>
+            <p>{TWO_FACTOR_OFF_TEXT}</p>
           </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
             <strong>Authenticator not configured</strong>
             <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
@@ -608,6 +633,9 @@ export function App() {
   const settingsPendingRef = useRef(false);
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
+  // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const newFolderTriggerRef = useRef<HTMLElement | null>(null);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
@@ -689,10 +717,29 @@ export function App() {
       .finally(() => setChecking(false));
   }, []);
 
+  // A second reset link pasted into a tab on /reset-password (A5): the fragment changes without a
+  // load. Registered once, before the popstate handlers below, so it reads the fragment first; they
+  // skip the event it took.
+  useEffect(() => {
+    const onMove = (event: Event) => {
+      const link = takeNewResetLink();
+      if (!link) return;
+      resetLinkEvents.add(event);
+      setPasswordLink(link);
+    };
+    window.addEventListener("popstate", onMove);
+    window.addEventListener("hashchange", onMove);
+    return () => {
+      window.removeEventListener("popstate", onMove);
+      window.removeEventListener("hashchange", onMove);
+    };
+  }, []);
+
   // Signed out, Back and Forward move between sign in and /forgot-password (Wave 30).
   useEffect(() => {
     if (session) return;
-    const onPopState = () => {
+    const onPopState = (event: PopStateEvent) => {
+      if (resetLinkEvents.has(event)) return;
       const link = takePasswordLinkFromLocation();
       setPasswordLink(link?.kind === "forgot" ? link : null);
     };
@@ -792,6 +839,8 @@ export function App() {
     window.addEventListener("keydown", closeSort);
     return () => { window.removeEventListener("click", closeSort); window.removeEventListener("keydown", closeSort); };
   }, [sortOpen]);
+  // The sort menu is a history layer like any dropdown (D69): Back closes only the menu.
+  useHistoryDialogGuard(sortOpen, () => setSortOpen(false));
 
   const saveDraft = useCallback(async () => {
     if (savingPromiseRef.current) await savingPromiseRef.current;
@@ -943,11 +992,24 @@ export function App() {
     return finalizeOpenNote({ removeEmptyNewNote, hasPublishableDelta: shouldAutoPublish({ ...publishInput, sessionEdited, mcpDraft: Boolean(note?.draftMcpKeyName) }), publish: () => publish(reloadCurrent) });
   }
 
-  async function createFolder() {
-    const name = window.prompt("Folder name");
-    if (!name?.trim()) return;
-    await api("/folders", { method: "POST", body: JSON.stringify({ name: name.trim(), parentId: null }) });
+  function openNewFolder(trigger: HTMLElement) {
+    newFolderTriggerRef.current = trigger;
+    setNewFolderOpen(true);
+  }
+
+  const closeNewFolder = useCallback(() => {
+    setNewFolderOpen(false);
+    const trigger = newFolderTriggerRef.current;
+    newFolderTriggerRef.current = null;
+    if (trigger?.isConnected) trigger.focus();
+  }, []);
+  useHistoryDialogGuard(newFolderOpen, closeNewFolder);
+
+  async function createFolder(name: string) {
+    const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
     await loadNavigation();
+    closeNewFolder();
+    flash(`Created folder ${folder.name}`);
   }
 
   async function createNote() {
@@ -1421,6 +1483,7 @@ export function App() {
   useEffect(() => {
     if (!session) return;
     const onPopState = (event: PopStateEvent) => {
+      if (resetLinkEvents.has(event)) return;
       const poppedDepth = readHistoryDepth(event.state);
       const previousDepth = recordPopDepth(historyDepthRef, poppedDepth);
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
@@ -1664,7 +1727,7 @@ export function App() {
   };
   // Signed in, /forgot-password (a Back onto an old entry) is just Home; a reset link still opens.
   if (passwordLink?.kind === "forgot" && !session) return <ForgotPasswordPage onBack={leaveForgotPassword} />;
-  if (passwordLink?.kind === "reset") return <ResetPasswordPage token={passwordLink.token} signedIn={Boolean(session)} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
+  if (passwordLink?.kind === "reset") return <ResetPasswordPage key={passwordLink.token ?? ""} token={passwordLink.token} signedIn={Boolean(session)} onForgot={openForgotFromReset} onSignIn={leavePasswordReset} />;
   if (mailLink?.kind === "verify") return <VerifyEmailPage token={mailLink.token} signedIn={Boolean(session)} onContinue={leaveMailLink} />;
   // "Manage all email settings" loads the Settings deep link (signing in first when needed).
   if (mailLink?.kind === "unsubscribe") return <UnsubscribePage token={mailLink.token} onContinue={leaveMailLink} onManage={() => window.location.assign(settingsPath("notifications"))} />;
@@ -1738,7 +1801,7 @@ export function App() {
           <button className="nav-home" onClick={() => { void openHome(); }} title="Back to Home"><House /><span>Home</span></button>
           <button className={selectedFolder === "all" ? "active" : ""} onClick={() => { void selectFolder("all"); }}><Archive /><span>All notes</span><b>{notes.length}</b></button>
           <button className={selectedFolder === "shared" ? "active" : ""} onClick={() => { void selectFolder("shared"); }}><Users /><span>Shared with me</span><b>{notes.filter((item) => item.is_owner === 0).length}</b></button>
-          <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={createFolder} aria-label="New folder"><FolderPlus /></button>}</div>
+          <div className="nav-label"><span>Folders</span>{canWrite && <button onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
           {folders.map((folder) => <div className="folder-entry" key={folder.id}>
             <button
               className={`folder-link${selectedFolder === folder.id ? " active" : ""}${dropFolderId === folder.id ? " drop-target" : ""}`}
@@ -1890,6 +1953,17 @@ export function App() {
           setDeletingNote(null);
           void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
         }} />}
+      {newFolderOpen && <NameDialog
+        title="New folder"
+        eyebrow="Notes"
+        label="Folder name"
+        initialValue=""
+        submitLabel="Create folder"
+        hint="Up to 120 characters."
+        validate={validateFolderName}
+        onSubmit={createFolder}
+        onCancel={closeNewFolder}
+      />}
       {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder access updated"); }} />}
       {settingsDialog}
       {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired

@@ -9,7 +9,7 @@ import { useDialogLayer } from "./dialogLayers";
 import { CollectionIcon } from "./icons";
 import { AccessSheet } from "../access/AccessSheet";
 import { NewCollectionDialog } from "./NewCollectionDialog";
-import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName } from "./values";
+import { collectionBinMessage, ownerSharingLabel, roleLabel, rowCountLabel, validateCollectionName } from "./values";
 import { useRole } from "../team/roleAccess";
 
 type CollectionListProps = {
@@ -42,8 +42,8 @@ export function CollectionListRow({ collection, onOpen, onAction }: CollectionLi
           <span>{rowCountLabel(collection.row_count)}</span>
           <time dateTime={collection.updated_at}>Updated {relativeTime(collection.updated_at)}</time>
           {collection.is_owner === 0
-            ? <><span className="owner-badge">{collection.owner_name}</span><span className={`collection-role role-${collection.role}`}>{roleLabel(collection.role)}</span></>
-            : collection.visibility !== "private" && <span className="collection-shared"><Users aria-hidden="true" />Shared · {collection.share_role === "editor" ? "can edit" : "view only"}</span>}
+            ? <><span className="owner-badge">{collection.owner_name}</span><span className={`collection-role role-${collection.role}`}>{roleLabel(collection.role, collection.level)}</span></>
+            : collection.visibility !== "private" && <span className="collection-shared"><Users aria-hidden="true" />{ownerSharingLabel(collection.visibility, collection.share_role)}</span>}
         </span>
       </span>
     </button>

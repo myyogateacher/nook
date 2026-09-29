@@ -5,6 +5,7 @@ import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../team/teamRoles";
 import type { InviteRole } from "../team/teamApi";
 import { AuthDivider, GoogleButton } from "./googleSignIn";
 import type { RegistrationInfo } from "./registrationPrompt";
+import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, useFieldErrors } from "./fieldChecks";
 
 export type InvitePreview = { role: InviteRole; emailHint: string | null; expiresAt: string; inviterName: string };
 export type InviteRegisterBody = { email: string; displayName: string; password: string; inviteToken: string };
@@ -44,6 +45,7 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const fields = useFieldErrors();
   // Wave 35 (D298): which ways to join this Nook offers; unknown means the password form only, as before.
   const [methods, setMethods] = useState<{ password: boolean; google: boolean }>({ password: true, google: false });
 
@@ -83,8 +85,10 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
     event.preventDefault();
     if (!token) return;
     const form = new FormData(event.currentTarget);
-    setBusy(true);
+    const text = (name: string) => String(form.get(name) ?? "");
     setError("");
+    if (fields.show(event.currentTarget, collectProblems({ displayName: text("displayName").trim() ? null : "Enter your name.", email: emailProblem(text("email")), password: newPasswordProblem(text("password")) }))) return;
+    setBusy(true);
     try {
       await onRegister({ email: String(form.get("email") ?? ""), displayName: String(form.get("displayName") ?? ""), password: String(form.get("password") ?? ""), inviteToken: token });
     } catch (reason) {
@@ -116,19 +120,21 @@ export function InviteRegister({ token, onRegister, onSignIn }: {
         {methods.google && state.preview.emailHint && <p className="invite-google-hint">Choose the Google account for {state.preview.emailHint}.</p>}
         {methods.google && methods.password && <AuthDivider />}
         {!methods.password && error && <p className="form-error" role="alert">{error}</p>}
-        {methods.password && <form onSubmit={submit} className="auth-form">
-          <label>Name<input name="displayName" autoComplete="name" required maxLength={80} disabled={busy} /></label>
-          <label>Email<input name="email" type="email" autoComplete="email" required maxLength={254} disabled={busy} aria-describedby={state.preview.emailHint ? "invite-email-hint" : undefined} />
+        {methods.password && <form onSubmit={submit} className="auth-form" noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
+          <label>Name<input name="displayName" autoComplete="name" maxLength={80} disabled={busy} aria-invalid={fields.errors.displayName ? true : undefined} aria-describedby={fields.errors.displayName ? "invite-name-error" : undefined} /><FieldError id="invite-name-error" message={fields.errors.displayName} /></label>
+          <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} disabled={busy} aria-invalid={fields.errors.email ? true : undefined} aria-describedby={[state.preview.emailHint ? "invite-email-hint" : "", fields.errors.email ? "invite-email-error" : ""].filter(Boolean).join(" ") || undefined} />
             {state.preview.emailHint && <small id="invite-email-hint">This invite is for {state.preview.emailHint}. Use that address.</small>}
+            <FieldError id="invite-email-error" message={fields.errors.email} />
           </label>
           <div className="auth-password-group">
             <label htmlFor="invite-password">Password</label>
             <span className="password-field">
-              <input id="invite-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete="new-password" required minLength={12} maxLength={256} disabled={busy} />
+              <input id="invite-password" name="password" type={passwordVisible ? "text" : "password"} autoComplete="new-password" maxLength={256} disabled={busy} aria-invalid={fields.errors.password ? true : undefined} aria-describedby={fields.errors.password ? "invite-password-error" : undefined} />
               <button type="button" className="password-visibility-toggle" aria-label={passwordVisible ? "Hide password" : "Show password"} aria-pressed={passwordVisible} onClick={() => setPasswordVisible((visible) => !visible)}>
                 {passwordVisible ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
               </button>
             </span>
+            <FieldError id="invite-password-error" message={fields.errors.password} />
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Create account"}</button>

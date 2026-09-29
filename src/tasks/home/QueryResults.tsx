@@ -3,7 +3,8 @@ import { CalendarDays, ChevronDown, ChevronRight, Ellipsis, KanbanSquare } from 
 import { Avatars, FlagIcons, shortTimestamp } from "../boardViewParts";
 import type { BoardCard } from "../boardQuery";
 import { cardCountLabel, dueStatus } from "../taskActions";
-import type { QueriedCard } from "./homeApi";
+import { useRole } from "../../team/roleAccess";
+import { canChangeCard, type QueriedCard } from "./homeApi";
 import { groupResults, STATE_LABELS, stateLanes } from "./homeResults";
 import type { HomeGroup, HomeLayout } from "./homeUrl";
 
@@ -42,6 +43,9 @@ function Tags({ card, max = 2 }: { card: QueriedCard; max?: number }) {
 const people = (card: QueriedCard) => card.assignees.map((person) => person.can_read === 1 ? person.display_name : `${person.display_name} (no access)`);
 
 function MoreButton({ card, onMoveCard, className }: { card: QueriedCard; onMoveCard: QueryResultsProps["onMoveCard"]; className: string }) {
+  // Read-only roles, and boards the caller only views or comments on: nothing to move (READ_ONLY).
+  const { readOnly } = useRole();
+  if (!canChangeCard(card, readOnly)) return null;
   return <button type="button" className={`icon-button ${className}`} onClick={(event) => onMoveCard(card, event.currentTarget)} aria-haspopup="dialog" aria-label={`Move “${card.title}”`} title="Move to…"><Ellipsis /></button>;
 }
 

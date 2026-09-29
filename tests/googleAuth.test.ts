@@ -647,6 +647,35 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     expect(cli("allow-google-link", "nobody@nook.test").exitCode).not.toBe(0);
   }, 30_000);
 
+  test("F2: the host CLI re-link says what will happen; --keep-credentials keeps the password and two-factor", async () => {
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    // Default: the re-link removes them.
+    const removed = await createUser("CLI relink removes");
+    verify(removed);
+    expect((await googleSignIn(workspace(removed.email))).session).toBeTruthy();
+    const byDefault = cli("allow-google-link", removed.email);
+    expect(byDefault.exitCode).toBe(0);
+    expect(byDefault.stdout.toString()).toContain("the password and two-factor are removed (use --keep-credentials to keep them)");
+    expect((await googleSignIn(workspace(removed.email))).location).toBe("/");
+    expect(userRow(removed.email)!.password_hash).toBe(UNUSABLE_PASSWORD);
+    // --keep-credentials: sessions end, the password stays.
+    const kept = await createUser("CLI relink keeps");
+    verify(kept);
+    expect((await googleSignIn(workspace(kept.email))).session).toBeTruthy();
+    const keeping = cli("allow-google-link", kept.email, "--keep-credentials");
+    expect(keeping.exitCode).toBe(0);
+    expect(keeping.stdout.toString()).toContain("the password and two-factor are kept (--keep-credentials)");
+    expect((await googleSignIn(workspace(kept.email))).location).toBe("/");
+    expect(userRow(kept.email)!.password_hash).not.toBe(UNUSABLE_PASSWORD);
+    expect((await me(kept.cookie)).status).toBe(401);
+    expect((await passwordLogin(kept.email, kept.password)).status).toBe(200);
+    // The flag means nothing without a linked account, and does not combine with --reset.
+    const unlinked = await createUser("CLI not linked");
+    expect(cli("allow-google-link", unlinked.email, "--keep-credentials").exitCode).toBe(2);
+    expect(cli("allow-google-link", unlinked.email, "--reset", "--keep-credentials").exitCode).toBe(2);
+    expect(userRow(unlinked.email)!.google_link_allowed_until).toBeNull();
+  }, 60_000);
+
   test("a blocked account is refused after Google proves the address, and is not linked", async () => {
     const person = await createUser("Blocked Google");
     verify(person);

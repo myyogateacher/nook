@@ -73,7 +73,7 @@ Callback error codes (fragment): `denied` (the person cancelled), `expired` (no,
 
 `GET /api/about` adds `authMethods: {password: boolean, google: boolean}`. `user` on `me`, sign-in, and register gains `avatarUrl: string | null`.
 
-## 4. Threats (THREAT_MODEL T250–T266)
+## 4. Threats (THREAT_MODEL T250–T267)
 
 T250 login CSRF, T251 state/nonce/code replay, T252 mix-up and token substitution, T253 open redirect through `return`, T254 pre-hijacking, T255 email change at Google, T256 domain restriction bypass through `hd`, T257 avatar fetch SSRF and content sniffing, T258 account enumeration, T259 Google-only lockout, T260 token and code leakage, T261 re-authentication bypass, T262 avatar visibility. Rows and mitigations are in THREAT_MODEL.md.
 
@@ -128,7 +128,7 @@ After merging main (v0.13.0 and Wave 33's central access management; migration o
 | S1 (MEDIUM: a re-link kept the previous holder's access) | Completing a re-link runs in one transaction (`completeRelink`, `server/google/linkAdmin.ts`). It deletes sessions and push subscriptions (so `reauth_at` goes too), revokes API keys and calendar feeds, deletes unused reset links, and bumps the unsubscribe epoch. By default (`removeCredentials`, stored in `users.google_relink_remove_credentials` at allow time) it also removes the password and two-factor. Content and sharing stay. The dialog warns that whoever next signs in with Google as the address gets the account and everything in it. It offers **Also remove the password and two-factor** (on by default, only when there is one) and shows the counts before and after. |
 | S2 (MEDIUM: `RESET_ADMIN` bypassed by demoting first) | The web reset also refuses an account whose role changed away from admin in the last 24 hours (`team_events`), with `RESET_ADMIN` and a message saying so. The CLI is unchanged. |
 | S3 | `server/clientAddress.ts` canonicalises addresses (RFC 5952 IPv6, IPv4-mapped in any spelling to IPv4, zone ids and brackets dropped) and buckets IPv6 by /64. |
-| S4 | A full instance-wide bucket refuses before any per-client key is added. The attempt map is capped at 20,000 keys: the oldest scoped keys are dropped first, instance-wide keys never. |
+| S4 | A full instance-wide bucket refuses before any per-client key is added. The attempt map is capped at 20,000 keys; see F1 below for what it may drop. |
 | S5 | Eviction at the live-flow cap takes `prepared` flows first, then `authorize` ones, oldest first. It never takes a `second_factor` flow, and those no longer count toward the cap. |
 | S6 | The migration `repair` hook is removed: released migrations stay immutable. 034 keeps its idempotent add-column shape, and QA databases from earlier builds are recreated. |
 | S7 | Password sign-in: 20 a minute per client address, 10 per email, 120 instance-wide. Registration (password or Google): 5 per client address, 20 instance-wide. Invite preview (password or Google): 10 per client address, 60 instance-wide. Only attempts that pass the narrower buckets count toward the instance-wide one, and Google's Nook code step shares the sign-in buckets. |
@@ -144,3 +144,10 @@ After merging main (v0.13.0 and Wave 33's central access management; migration o
 | Q7 | The assignee picker (options and chips) shows each person's picture (`GET /boards/:b/readers` returns `avatarUrl` on the web). The optimistic assignee row carries it too. Nook has no @-mention picker. |
 
 Migration 034, final shape: `google_identities` and `google_auth_flows` (with `client_hash`) created if missing, the two flow indexes, and the added columns `users.avatar_id`, `sessions.reauth_at`, `users.google_link_allowed_until`, `users.google_reset_notice_at`, `users.google_reset_notice_json`, `users.google_relink_remove_credentials`, `users.google_last_refusal_at`, and `users.google_last_refusal_reason`. Each column is added only when missing. The migration runs once, with no repair at boot.
+
+### Final security confirmation (F1, F2)
+
+| Item | Fix |
+| --- | --- |
+| F1 (MEDIUM: flooding the attempt map reset a victim's per-email counter) | Every bucket is a registered family with a scope (`BUCKET_FAMILIES`, `server/authLimits.ts`); `hit` takes only a registered family. At the cap the map drops only `client`-scope keys, oldest first, never per-email, per-account, per-admin, or instance-wide keys. Google start and callback go through the same helper as sign-in (`limitedWithin`), so a full instance-wide bucket refuses before any per-client key exists. A map full of protected keys refuses new per-client keys (429) and still stores protected ones. THREAT_MODEL T267 states the bound. |
+| F2 (LOW: the CLI re-link always removed the password and two-factor) | `allow-google-link --keep-credentials` keeps them (the default still removes them). The CLI prints what will happen first, refuses the flag for an account that is not linked, and refuses it together with `--reset`. |

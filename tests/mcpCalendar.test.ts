@@ -228,9 +228,9 @@ describe("MCP calendar tools", () => {
     expect((await callTool(stranger, "create_reminder", { eventId: s.eventId, offsetMinutes: 30 })).value.code).toBe("NOT_FOUND");
     expect((await callTool(viewer, "create_reminder", { eventId: s.privateEventId, offsetMinutes: 30 })).value.code).toBe("NOT_FOUND");
     expect((await callTool(viewer, "create_reminder", { eventId: s.eventId, offsetMinutes: 30, tz: "Europe/Berlin" })).value.code).toBe("REMINDER_EXISTS");
-    expect((await callTool(viewer, "create_reminder", { eventId: s.eventId, title: "Both", fireAt: "2030-01-01T09:00" })).value.code).toBe("INVALID");
-    const standalone = await callTool(stranger, "create_reminder", { title: "Call mum", fireAt: "2030-01-01T09:00", tz: "Europe/London" });
-    expect(standalone.value).toMatchObject({ nextFireAt: "2030-01-01T09:00:00.000Z", eventId: null });
+    expect((await callTool(viewer, "create_reminder", { eventId: s.eventId, title: "Both", fireAt: `${Y + 1}-01-01T09:00` })).value.code).toBe("INVALID");
+    const standalone = await callTool(stranger, "create_reminder", { title: "Call mum", fireAt: `${Y + 1}-01-01T09:00`, tz: "Europe/London" });
+    expect(standalone.value).toMatchObject({ nextFireAt: `${Y + 1}-01-01T09:00:00.000Z`, eventId: null });
     expect((await callTool(stranger, "create_reminder", { title: "Past", fireAt: "2020-01-01T09:00" })).value.code).toBe("INVALID");
   });
 

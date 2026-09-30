@@ -478,7 +478,7 @@ describe("review: migration 037", () => {
     expect(bytes()).toBe(0);
     database.query("INSERT INTO users (id, email, display_name, password_hash, created_at, kind) VALUES ('bot', 'bot@integration.invalid', 'Bot', '!', ?, 'service')").run(at);
     expect(() => database.query("INSERT INTO vault_members (vault_id, user_id, role, added_at) VALUES ('v1', 'bot', 'member', ?)").run(at)).toThrow("PERSON_ONLY");
-    expect(registeredMigrationIds.at(-1)).toBe(37);
+    expect(registeredMigrationIds.indexOf(37)).toBe(registeredMigrationIds.indexOf(36) + 1);
     database.close();
   });
 });

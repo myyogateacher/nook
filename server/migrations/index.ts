@@ -34,6 +34,7 @@ import { googleIdentitiesMigration } from "./034_google_identities";
 import { todayDigestPromptMigration } from "./035_today_digest_prompt";
 import { serviceAccountsMigration } from "./036_service_accounts";
 import { vaultSharingMigration } from "./037_vault_sharing";
+import { vaultKeysMigration } from "./038_vault_keys";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -63,7 +64,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // 036 (service accounts, Wave 36: description, kind and role triggers) needs 001, 017, 025, and 034.
   serviceAccountsMigration,
   // 037 (vault sharing, Wave 26: the protected-environment window, stored bytes, integrations never members) needs 001, 031, and 036.
-  vaultSharingMigration
+  vaultSharingMigration,
+  // 038 (vault keys, Wave 27: the protected-environment flag, flag and grant-shape triggers) needs 025, 031, and 036.
+  vaultKeysMigration
 ];
 
 /**

@@ -349,8 +349,7 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
     secret: data.secrets.find((item) => item.id === dialog.secretId), env: envs.find((env) => env.id === dialog.envId)
   } : null;
   const canCreate = canWrite && envs.some(canWriteEnv);
-  // Access for owners and environment admins; Import where you write; Export where you read.
-  const canManageAccess = canWrite && (vault.role === "owner" || envs.some((env) => env.level === "admin"));
+  // Access for everyone who reads (managers edit it); Import where you write; Export where you read.
   const canExport = envs.some((env) => env.level !== "none");
 
   return <>
@@ -367,7 +366,8 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
     </div>
     {vault.description && <p className="vault-description">{vault.description}</p>}
     <div className="vault-page-actions">
-      {canManageAccess && <button type="button" className="secondary-button vault-inline-button" onClick={() => onOpenPage("access", vault.name)}><UsersRound />Access</button>}
+      {/* Everyone who reads the vault opens Access (QA M1): managers get the grid, others Keys with access. */}
+      <button type="button" className="secondary-button vault-inline-button" onClick={() => onOpenPage("access", vault.name)}><UsersRound />Access</button>
       <button type="button" className="secondary-button vault-inline-button" onClick={() => onOpenPage("activity", vault.name)}><History />Activity</button>
       {canCreate && <button type="button" className="secondary-button vault-inline-button" aria-haspopup="dialog" onClick={() => setDialog({ kind: "import" })}><Upload />Import</button>}
       {canExport && <button type="button" className="secondary-button vault-inline-button" aria-haspopup="dialog" onClick={() => setDialog({ kind: "export" })}><Download />Export</button>}

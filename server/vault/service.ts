@@ -2,10 +2,10 @@ import { db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import {
   atLeast, envLevel, requireEnvGrant, requireEnvLevel, requireOwner, requireUnlocked, requireVault, readableVaultIds, roleCap, vaultAccess, vaultGrant,
-  VaultError, vaultNotFound, visibleEnvironments, type EnvRow, type VaultAccess, type VaultActor, type VaultLevel, type VaultVia
+  VaultError, vaultNotFound, viaOf, visibleEnvironments, type EnvRow, type VaultAccess, type VaultActor, type VaultLevel, type VaultVia
 } from "./access";
 import { insertVaultKey, openSecretComment, openValue, sealSecretComment, sealValue, VaultIntegrityError } from "./crypto";
-import { chargeVault } from "./limits";
+import { chargeActor } from "./limits";
 import { DEFAULT_ENVIRONMENTS, parseLoginValue, VAULT_BOUNDS, type CellStatus, type SecretType } from "../../shared/vault";
 
 /**
@@ -17,8 +17,10 @@ import { DEFAULT_ENVIRONMENTS, parseLoginValue, VAULT_BOUNDS, type CellStatus, t
  *
  * Wave 26 adds members and groups (server/vault/members.ts), the protected-environment window
  * (enforced where access.ts mints grants), import and export (transfer.ts), DEK rotation
- * (rotation.ts), the Activity view (events.ts), and the per-person byte quota (`enforceQuota`);
- * `nkv_` keys, REST v1, and MCP tools are Wave 27.
+ * (rotation.ts), the Activity view (events.ts), and the per-person byte quota (`enforceQuota`).
+ * Wave 27 lets `nkv_` vault keys call the same functions (REST `/api/v1/vault/*` and the vault MCP
+ * tools): the actor is then the key, whose levels access.ts computes, whose reads and writes charge
+ * the key's own buckets, and whose events carry its id and surface (`via: api | mcp`).
  */
 
 export type EnvironmentSummary = { id: string; slug: string; name: string; position: number; protected: boolean; level: VaultLevel };
@@ -47,10 +49,24 @@ type ValueRow = { secret_id: string; env_id: string; value_ct: string; comment_c
 // ---------------------------------------------------------------------------------------------
 // Events (ids and counts only, never values or names)
 
-export function recordVaultEvent(vaultId: string, actorId: string | null, event: string, detail: { secretId?: string | null; envId?: string | null; count?: number | null; targetId?: string | null; level?: string | null } = {}, via: VaultVia = "session") {
-  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, via, event, secret_id, env_id, count, target_id, level, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), vaultId, actorId, via, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, detail.targetId ?? null, detail.level ?? null, now());
+/**
+ * One `vault_events` row. `actor` is a person's id (or null), or a VaultActor: a key's events carry
+ * its id and surface (`via: api | mcp`) with its creator as the person (Wave 27).
+ */
+const keyLabel = db.query("SELECT name, key_prefix FROM mcp_api_keys WHERE id = ?");
+
+export function recordVaultEvent(vaultId: string, actor: string | null | VaultActor, event: string, detail: { secretId?: string | null; envId?: string | null; count?: number | null; targetId?: string | null; level?: string | null } = {}, via: VaultVia = "session") {
+  const actorId = actor === null || typeof actor === "string" ? actor : actor.userId;
+  const keyId = actor !== null && typeof actor === "object" && actor.kind === "key" ? actor.keyId : null;
+  const recordedVia = actor !== null && typeof actor === "object" ? viaOf(actor) : via;
+  // The key's name and prefix as they are now (review L5): a later rename never re-labels this event.
+  const key = keyId ? keyLabel.get(keyId) as { name: string; key_prefix: string } | null : null;
+  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, key_name, key_prefix, via, event, secret_id, env_id, count, target_id, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), vaultId, actorId, keyId, key?.name ?? null, key?.key_prefix ?? null, recordedVia, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, detail.targetId ?? null, detail.level ?? null, now());
 }
+
+/** The key acting, for the `*_via_key` columns, or null for a person. */
+const viaKey = (actor: VaultActor) => actor.kind === "key" ? actor.keyId : null;
 
 /**
  * `vault_events` retention (T195, review L5), run by the hourly sweeper: rows older than 90 days
@@ -71,7 +87,7 @@ export function sweepVaultEvents(nowMs = Date.now()): number {
  * A ciphertext that does not open under its own ids (T189): audited, then a 500 `VAULT_INTEGRITY`
  * that names nothing. Never a silent value.
  */
-export function integrity<T>(vaultId: string, actorId: string, detail: { secretId?: string; envId?: string }, operation: () => T): T {
+export function integrity<T>(vaultId: string, actorId: string | VaultActor, detail: { secretId?: string; envId?: string }, operation: () => T): T {
   try {
     return operation();
   } catch (error) {
@@ -156,7 +172,7 @@ export function createVault(actor: VaultActor, input: { name: string; descriptio
   // T195 (review L5): vaults in the Bin count too, so binning and recreating cannot grow storage past the bound.
   const owned = (db.query("SELECT COUNT(*) AS count FROM vaults WHERE owner_id = ?").get(actor.userId) as { count: number }).count;
   if (owned >= VAULT_BOUNDS.ownedVaults) throw new VaultError(409, "LIMIT_REACHED", `You can own up to ${VAULT_BOUNDS.ownedVaults} vaults, counting those in the Bin`);
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const id = crypto.randomUUID();
   const timestamp = now();
   db.transaction(() => {
@@ -168,7 +184,7 @@ export function createVault(actor: VaultActor, input: { name: string; descriptio
       db.query("INSERT INTO vault_environments (id, vault_id, slug, name, position, protected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(crypto.randomUUID(), id, env.slug, env.name, index, env.protected ? 1 : 0, timestamp);
     });
-    recordVaultEvent(id, actor.userId, "vault.create", { count: environments.length });
+    recordVaultEvent(id, actor, "vault.create", { count: environments.length });
   })();
   return getVault(actor, id);
 }
@@ -178,12 +194,12 @@ const revisionChanged = (current: number) => new VaultError(409, "REVISION_CHANG
 export function updateVault(actor: VaultActor, vaultId: string, input: { name?: string; description?: string; expectedRevision: number }): VaultSummary {
   const access = requireVault(actor, vaultId);
   requireOwner(access);
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   db.transaction(() => {
     const result = db.query(`UPDATE vaults SET name = COALESCE(?, name), description = COALESCE(?, description), revision = revision + 1, updated_at = ?
       WHERE id = ? AND revision = ? AND deleted_at IS NULL`).run(input.name ?? null, input.description ?? null, now(), vaultId, input.expectedRevision);
     if (result.changes !== 1) throw revisionChanged(access.vault.revision);
-    recordVaultEvent(vaultId, actor.userId, "vault.update");
+    recordVaultEvent(vaultId, actor, "vault.update");
   })();
   return getVault(actor, vaultId);
 }
@@ -192,11 +208,11 @@ export function updateVault(actor: VaultActor, vaultId: string, input: { name?: 
 export function deleteVault(actor: VaultActor, vaultId: string) {
   const access = requireVault(actor, vaultId);
   requireOwner(access);
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const deletedAt = new Date();
   db.transaction(() => {
     db.query("UPDATE vaults SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL").run(deletedAt.toISOString(), actor.userId, purgeAfterFrom(deletedAt), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "vault.delete");
+    recordVaultEvent(vaultId, actor, "vault.delete");
   })();
   return { ok: true, binned: true };
 }
@@ -210,14 +226,14 @@ export function createEnvironment(actor: VaultActor, vaultId: string, input: New
   requireOwner(access);
   if (access.environments.length >= VAULT_BOUNDS.environments) throw new VaultError(409, "LIMIT_REACHED", `A vault has at most ${VAULT_BOUNDS.environments} environments`);
   if (access.environments.some((env) => env.slug === input.slug)) throw new VaultError(409, "SLUG_TAKEN", "Another environment already has this short name");
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const id = crypto.randomUUID();
   const position = Math.max(-1, ...access.environments.map((env) => env.position)) + 1;
   db.transaction(() => {
     db.query("INSERT INTO vault_environments (id, vault_id, slug, name, position, protected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(id, vaultId, input.slug, input.name, position, input.protected ? 1 : 0, now());
     db.query("UPDATE vaults SET revision = revision + 1, updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "env.create", { envId: id });
+    recordVaultEvent(vaultId, actor, "env.create", { envId: id });
   })();
   const created = requireVault(actor, vaultId);
   return environmentSummaries(created).find((env) => env.id === id)!;
@@ -229,13 +245,13 @@ export function updateEnvironment(actor: VaultActor, vaultId: string, envId: str
   if (input.protected !== undefined) requireOwner(access);
   // Lifting protection is what the window protects: it needs the window itself (D226).
   if (input.protected === false && env.protected === 1) requireUnlocked(access, [envId]);
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   db.transaction(() => {
     db.query("UPDATE vault_environments SET name = COALESCE(?, name), protected = COALESCE(?, protected) WHERE id = ? AND vault_id = ? AND deleted_at IS NULL")
       .run(input.name ?? null, input.protected === undefined ? null : input.protected ? 1 : 0, envId, vaultId);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
     const changedProtection = input.protected !== undefined && (input.protected ? 1 : 0) !== env.protected;
-    recordVaultEvent(vaultId, actor.userId, changedProtection ? (input.protected ? "env.protect" : "env.unprotect") : "env.update", { envId });
+    recordVaultEvent(vaultId, actor, changedProtection ? (input.protected ? "env.protect" : "env.unprotect") : "env.update", { envId });
   })();
   return environmentSummaries(requireVault(actor, vaultId)).find((env) => env.id === envId)!;
 }
@@ -247,12 +263,12 @@ export function reorderEnvironments(actor: VaultActor, vaultId: string, ids: str
   if (ids.length !== live.length || new Set(ids).size !== ids.length || !ids.every((id) => live.includes(id))) {
     throw new VaultError(400, "INVALID", "Send every environment of this vault exactly once");
   }
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   db.transaction(() => {
     const bumped = db.query("UPDATE vaults SET revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?").run(now(), vaultId, expectedRevision);
     if (bumped.changes !== 1) throw revisionChanged(access.vault.revision);
     ids.forEach((id, index) => db.query("UPDATE vault_environments SET position = ? WHERE id = ? AND vault_id = ?").run(index, id, vaultId));
-    recordVaultEvent(vaultId, actor.userId, "env.reorder", { count: ids.length });
+    recordVaultEvent(vaultId, actor, "env.reorder", { count: ids.length });
   })();
   return getVault(actor, vaultId);
 }
@@ -262,13 +278,13 @@ export function deleteEnvironment(actor: VaultActor, vaultId: string, envId: str
   const access = requireVault(actor, vaultId);
   requireEnvGrant(access, envId, "admin");
   if (access.environments.length <= 1) throw new VaultError(409, "LAST_ENVIRONMENT", "A vault keeps at least one environment");
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const deletedAt = new Date();
   db.transaction(() => {
     db.query("UPDATE vault_environments SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND vault_id = ? AND deleted_at IS NULL")
       .run(deletedAt.toISOString(), actor.userId, purgeAfterFrom(deletedAt), envId, vaultId);
     db.query("UPDATE vaults SET revision = revision + 1, updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "env.delete", { envId });
+    recordVaultEvent(vaultId, actor, "env.delete", { envId });
   })();
   return { ok: true, binned: true };
 }
@@ -372,21 +388,33 @@ export function listSecrets(actor: VaultActor, vaultId: string, options: { q?: s
  * recorded. Create and update answer with `writtenSecret`: they return the comment the caller just
  * wrote, which is not a read.
  */
-export function getSecret(actor: VaultActor, vaultId: string, secretId: string) {
+export function getSecret(actor: VaultActor, vaultId: string, secretId: string, options: { charged?: boolean } = {}) {
   const access = requireVault(actor, vaultId);
   const row = liveSecret(access, secretId);
   if (row.comment_ct === null) return secretDetail(access, row);
   vaultGrant(access, "read");
-  chargeVault("read", actor.userId);
+  // `charged`: the caller already charged this read (the MCP value read that returns the comment
+  // with the value, review L3); the opening is still audited.
+  if (!options.charged) chargeActor(actor, "read");
   const detail = secretDetail(access, row);
-  recordVaultEvent(vaultId, actor.userId, "comment.read", { secretId, count: 1 });
+  recordVaultEvent(vaultId, actor, "comment.read", { secretId, count: 1 });
   return detail;
 }
 
 function secretDetail(access: VaultAccess, row: SecretRow) {
   const grant = vaultGrant(access, "read");
-  const comment = integrity(access.vault.id, access.actor.userId, { secretId: row.id }, () => openSecretComment(grant, { secretId: row.id, commentCt: row.comment_ct, generation: row.comment_generation }));
+  const comment = integrity(access.vault.id, access.actor, { secretId: row.id }, () => openSecretComment(grant, { secretId: row.id, commentCt: row.comment_ct, generation: row.comment_generation }));
   return { vault: summarize(access), secret: { ...toSummary(row, cellsFor(access, [row.id]).get(row.id)!), comment } };
+}
+
+/**
+ * The secret's metadata only: name, type, tags, whether it has a comment, and per-environment status.
+ * Nothing is decrypted, so nothing is charged or recorded (the vault MCP tools without value reads).
+ */
+export function secretMetadata(actor: VaultActor, vaultId: string, secretId: string) {
+  const access = requireVault(actor, vaultId);
+  const row = liveSecret(access, secretId);
+  return { vault: summarize(access), secret: toSummary(row, cellsFor(access, [row.id]).get(row.id)!) };
 }
 
 /** After a create or an update: the secret as the caller just wrote it (no read charge, no event). */
@@ -430,16 +458,16 @@ export function createSecret(actor: VaultActor, vaultId: string, input: { name: 
   const stored = (db.query("SELECT COUNT(*) AS count FROM vault_secrets WHERE vault_id = ?").get(vaultId) as { count: number }).count;
   if (stored >= VAULT_BOUNDS.secretsPerVault) throw new VaultError(409, "LIMIT_REACHED", `A vault holds at most ${VAULT_BOUNDS.secretsPerVault} secrets, counting those in the Bin`);
   if (nameTaken(vaultId, input.name, null)) throw nameTakenError();
-  chargeVault("write", actor.userId, 1 + valueEntries.length);
+  chargeActor(actor, "write", 1 + valueEntries.length);
   const id = crypto.randomUUID();
   const timestamp = now();
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const comment = sealSecretComment(secretGrant, id, input.comment ?? null);
-    db.query(`INSERT INTO vault_secrets (id, vault_id, name, type, comment_ct, comment_generation, tags, revision, created_by, created_at, updated_by, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`).run(id, vaultId, input.name, input.type, comment.commentCt, comment.generation, JSON.stringify(input.tags ?? []), actor.userId, timestamp, actor.userId, timestamp);
+    db.query(`INSERT INTO vault_secrets (id, vault_id, name, type, comment_ct, comment_generation, tags, revision, created_by, created_via_key, created_at, updated_by, updated_via_key, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)`).run(id, vaultId, input.name, input.type, comment.commentCt, comment.generation, JSON.stringify(input.tags ?? []), actor.userId, viaKey(actor), timestamp, actor.userId, viaKey(actor), timestamp);
     valueEntries.forEach(([envId, entry], index) => writeValueLocked(access, valueGrants[index]!, id, envId, entry.value, entry.comment ?? null, 0));
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(timestamp, vaultId);
-    recordVaultEvent(vaultId, actor.userId, "secret.create", { secretId: id, count: valueEntries.length });
+    recordVaultEvent(vaultId, actor, "secret.create", { secretId: id, count: valueEntries.length });
   }))();
   return writtenSecret(actor, vaultId, id);
 }
@@ -453,7 +481,7 @@ export function updateSecret(actor: VaultActor, vaultId: string, secretId: strin
   if (input.type !== undefined && input.type !== row.type && db.query("SELECT 1 FROM vault_value_versions WHERE secret_id = ? LIMIT 1").get(secretId)) {
     throw new VaultError(409, "TYPE_HAS_VALUES", "The type can change only while the secret has no values or history");
   }
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const grant = vaultGrant(access, "write");
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const comment = input.comment === undefined ? null : sealSecretComment(grant, secretId, input.comment);
@@ -467,7 +495,7 @@ export function updateSecret(actor: VaultActor, vaultId: string, secretId: strin
     );
     // `changes` also counts 037's byte trigger on `vaults`: zero means the revision moved.
     if (result.changes === 0) throw revisionChanged(row.revision);
-    recordVaultEvent(vaultId, actor.userId, "secret.update", { secretId });
+    recordVaultEvent(vaultId, actor, "secret.update", { secretId });
   }))();
   return writtenSecret(actor, vaultId, secretId);
 }
@@ -478,12 +506,12 @@ export function deleteSecret(actor: VaultActor, vaultId: string, secretId: strin
   requireWriteEverywhere(access, secretId);
   // Deleting takes its values along: a protected environment's value needs the window (D226).
   requireUnlocked(access, (db.query("SELECT env_id FROM vault_values WHERE secret_id = ?").all(secretId) as Array<{ env_id: string }>).map((row) => row.env_id));
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const deletedAt = new Date();
   db.transaction(() => {
     db.query("UPDATE vault_secrets SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ? AND deleted_at IS NULL").run(deletedAt.toISOString(), actor.userId, purgeAfterFrom(deletedAt), secretId);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "secret.delete", { secretId });
+    recordVaultEvent(vaultId, actor, "secret.delete", { secretId });
   })();
   return { ok: true, binned: true };
 }
@@ -519,12 +547,13 @@ export function writeValueLocked(access: VaultAccess, grant: ReturnType<typeof r
   const sealed = sealValue(grant, { secretId, envId, version }, value, comment);
   const timestamp = now();
   const userId = access.actor.userId;
-  db.query(`INSERT INTO vault_values (secret_id, env_id, value_ct, comment_ct, generation, version, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  const keyId = viaKey(access.actor);
+  db.query(`INSERT INTO vault_values (secret_id, env_id, value_ct, comment_ct, generation, version, updated_by, updated_via_key, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(secret_id, env_id) DO UPDATE SET value_ct = excluded.value_ct, comment_ct = excluded.comment_ct, generation = excluded.generation,
-      version = excluded.version, updated_by = excluded.updated_by, updated_via_key = NULL, updated_at = excluded.updated_at`)
-    .run(secretId, envId, sealed.valueCt, sealed.commentCt, sealed.generation, version, userId, timestamp);
-  db.query("INSERT INTO vault_value_versions (secret_id, env_id, version, value_ct, comment_ct, cleared, generation, created_by, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)")
-    .run(secretId, envId, version, sealed.valueCt, sealed.commentCt, sealed.generation, userId, timestamp);
+      version = excluded.version, updated_by = excluded.updated_by, updated_via_key = excluded.updated_via_key, updated_at = excluded.updated_at`)
+    .run(secretId, envId, sealed.valueCt, sealed.commentCt, sealed.generation, version, userId, keyId, timestamp);
+  db.query("INSERT INTO vault_value_versions (secret_id, env_id, version, value_ct, comment_ct, cleared, generation, created_by, created_via_key, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)")
+    .run(secretId, envId, version, sealed.valueCt, sealed.commentCt, sealed.generation, userId, keyId, timestamp);
   trimVersions(secretId, envId, version);
   return version;
 }
@@ -544,11 +573,11 @@ export function setValue(actor: VaultActor, vaultId: string, secretId: string, e
   const secret = liveSecret(access, secretId);
   const grant = requireEnvGrant(access, envId, "write");
   checkValueForType(secret.type, input.value);
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const version = writeValueLocked(access, grant, secretId, envId, input.value, input.comment ?? null, input.expectedVersion);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "value.write", { secretId, envId, count: version });
+    recordVaultEvent(vaultId, actor, "value.write", { secretId, envId, count: version });
   }))();
   return valueResult(secretId, envId);
 }
@@ -563,7 +592,7 @@ export function setValues(actor: VaultActor, vaultId: string, secretId: string, 
   if (new Set(entries.map((entry) => entry.envId)).size !== entries.length) throw new VaultError(400, "INVALID", "Each environment may appear once");
   const grants = entries.map((entry) => requireEnvGrant(access, entry.envId, "write"));
   for (const entry of entries) checkValueForType(secret.type, entry.value);
-  chargeVault("write", actor.userId, entries.length);
+  chargeActor(actor, "write", entries.length);
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     // Every environment's version is checked before anything is written, and the refusal names all
     // that moved, so "Load the latest" can refresh each of them at once (QA Q2).
@@ -574,7 +603,7 @@ export function setValues(actor: VaultActor, vaultId: string, secretId: string, 
     if (changed.length > 0) throw valuesChanged(changed);
     entries.forEach((entry, index) => {
       writeValueLocked(access, grants[index]!, secretId, entry.envId, entry.value, entry.comment ?? null, entry.expectedVersion);
-      recordVaultEvent(vaultId, actor.userId, "value.write", { secretId, envId: entry.envId });
+      recordVaultEvent(vaultId, actor, "value.write", { secretId, envId: entry.envId });
     });
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
   }))();
@@ -586,7 +615,7 @@ export function clearValue(actor: VaultActor, vaultId: string, secretId: string,
   const access = requireVault(actor, vaultId);
   liveSecret(access, secretId);
   const grant = requireEnvGrant(access, envId, "write");
-  chargeVault("write", actor.userId);
+  chargeActor(actor, "write");
   const version = db.transaction(() => {
     const current = currentVersion(secretId, envId);
     if (!current.set) throw new VaultError(404, "VALUE_NOT_SET", "This environment has no value to clear");
@@ -597,7 +626,7 @@ export function clearValue(actor: VaultActor, vaultId: string, secretId: string,
       .run(secretId, envId, next, access.vault.current_generation, grant.actorId, now());
     trimVersions(secretId, envId, next);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "value.clear", { secretId, envId });
+    recordVaultEvent(vaultId, actor, "value.clear", { secretId, envId });
     return next;
   })();
   return { ok: true, version };
@@ -609,16 +638,19 @@ export function storedValue(secretId: string, envId: string): ValueRow | null {
 
 export type RevealedValue = ValueResult & { value: string; comment: string | null };
 
-/** Reads one value (§7 Read value): read level on its environment; audited `value.read`; rate-limited. */
-export function readValue(actor: VaultActor, vaultId: string, secretId: string, envId: string): RevealedValue {
+/**
+ * Reads one value (§7 Read value): read level on its environment; audited `value.read`; rate-limited.
+ * `mcpValue` (a vault key's MCP value read, T191) also charges the key's hourly MCP value bucket.
+ */
+export function readValue(actor: VaultActor, vaultId: string, secretId: string, envId: string, options: { mcpValue?: boolean } = {}): RevealedValue {
   const access = requireVault(actor, vaultId);
   liveSecret(access, secretId);
   const grant = requireEnvGrant(access, envId, "read");
   const row = storedValue(secretId, envId);
   if (!row) throw new VaultError(404, "VALUE_NOT_SET", "This environment has no value");
-  chargeVault("read", actor.userId);
-  const opened = integrity(vaultId, actor.userId, { secretId, envId }, () => openValue(grant, { secretId, envId, version: row.version, generation: row.generation, valueCt: row.value_ct, commentCt: row.comment_ct }));
-  recordVaultEvent(vaultId, actor.userId, "value.read", { secretId, envId, count: 1 });
+  chargeActor(actor, "read", 1, { mcpValue: options.mcpValue });
+  const opened = integrity(vaultId, actor, { secretId, envId }, () => openValue(grant, { secretId, envId, version: row.version, generation: row.generation, valueCt: row.value_ct, commentCt: row.comment_ct }));
+  recordVaultEvent(vaultId, actor, "value.read", { secretId, envId, count: 1 });
   return { ...valueResult(secretId, envId), ...opened };
 }
 
@@ -632,14 +664,14 @@ export function revealCells(actor: VaultActor, vaultId: string, cells: Array<{ s
   // A protected environment in the batch needs the window (D226): the whole batch is refused with
   // the environments named, rather than those cells quietly coming back unavailable.
   requireUnlocked(access, [...new Set(cells.map((cell) => cell.envId))].filter((envId) => atLeast(envLevel(access, envId), "read")));
-  chargeVault("read", actor.userId, Math.max(1, cells.length));
+  chargeActor(actor, "read", Math.max(1, cells.length));
   const results = cells.map((cell) => {
     try {
       liveSecret(access, cell.secretId);
       const grant = requireEnvGrant(access, cell.envId, "read");
       const row = storedValue(cell.secretId, cell.envId);
       if (!row) return { ...cell, status: "unavailable" as const };
-      const opened = integrity(vaultId, actor.userId, cell, () => openValue(grant, { ...cell, version: row.version, generation: row.generation, valueCt: row.value_ct, commentCt: row.comment_ct }));
+      const opened = integrity(vaultId, actor, cell, () => openValue(grant, { ...cell, version: row.version, generation: row.generation, valueCt: row.value_ct, commentCt: row.comment_ct }));
       return { ...cell, status: "ok" as const, version: row.version, ...opened };
     } catch (error) {
       if (error instanceof VaultError && error.status !== 500) return { ...cell, status: "unavailable" as const };
@@ -647,7 +679,7 @@ export function revealCells(actor: VaultActor, vaultId: string, cells: Array<{ s
     }
   });
   const opened = results.filter((result) => result.status === "ok").length;
-  if (opened > 0) recordVaultEvent(vaultId, actor.userId, "value.read", { count: opened });
+  if (opened > 0) recordVaultEvent(vaultId, actor, "value.read", { count: opened });
   return { cells: results };
 }
 
@@ -677,9 +709,9 @@ export function readVersion(actor: VaultActor, vaultId: string, secretId: string
   const grant = requireEnvGrant(access, envId, "read");
   const row = storedVersion(secretId, envId, version);
   if (row.cleared === 1 || row.value_ct === null) return { version, cleared: true, value: null, comment: null, createdAt: row.created_at };
-  chargeVault("read", actor.userId);
-  const opened = integrity(vaultId, actor.userId, { secretId, envId }, () => openValue(grant, { secretId, envId, version, generation: row.generation, valueCt: row.value_ct!, commentCt: row.comment_ct }));
-  recordVaultEvent(vaultId, actor.userId, "version.read", { secretId, envId, count: version });
+  chargeActor(actor, "read");
+  const opened = integrity(vaultId, actor, { secretId, envId }, () => openValue(grant, { secretId, envId, version, generation: row.generation, valueCt: row.value_ct!, commentCt: row.comment_ct }));
+  recordVaultEvent(vaultId, actor, "version.read", { secretId, envId, count: version });
   return { version, cleared: false, ...opened, createdAt: row.created_at };
 }
 
@@ -690,13 +722,13 @@ export function restoreVersion(actor: VaultActor, vaultId: string, secretId: str
   const grant = requireEnvGrant(access, envId, "write");
   const row = storedVersion(secretId, envId, version);
   if (row.cleared === 1 || row.value_ct === null) throw new VaultError(409, "VERSION_CLEARED", "That version cleared the value; there is nothing to restore");
-  chargeVault("write", actor.userId);
-  const opened = integrity(vaultId, actor.userId, { secretId, envId }, () => openValue(grant, { secretId, envId, version, generation: row.generation, valueCt: row.value_ct!, commentCt: row.comment_ct }));
+  chargeActor(actor, "write");
+  const opened = integrity(vaultId, actor, { secretId, envId }, () => openValue(grant, { secretId, envId, version, generation: row.generation, valueCt: row.value_ct!, commentCt: row.comment_ct }));
   checkValueForType(secret.type, opened.value);
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     writeValueLocked(access, grant, secretId, envId, opened.value, opened.comment, expectedVersion);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
-    recordVaultEvent(vaultId, actor.userId, "value.restore", { secretId, envId, count: version });
+    recordVaultEvent(vaultId, actor, "value.restore", { secretId, envId, count: version });
   }))();
   return valueResult(secretId, envId);
 }

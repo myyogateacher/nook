@@ -609,6 +609,8 @@ const ROUTES = (s) => [
   ["Settings · Modules", "/settings/modules", null, HUB],
   ["Settings · API keys", "/settings/keys", null, HUB],
   ["Settings · New key (many permissions)", "/settings/keys", async (page) => { await tapText(page, "button", "New key"); await page.waitForSelector(".keys-dialog"); for (let index = 0; index < 8; index += 1) await tapText(page, ".keys-dialog button", "Add permission").catch(() => undefined); }, { scope: ".keys-dialog" }],
+  // Wave 27: a vault key's grant builder with many rows, the vault settings, and the MCP warning.
+  ...(s.vault ? [["Settings · New vault key (many vaults)", "/settings/keys", async (page) => { await tapText(page, "button", "New key"); await page.waitForSelector(".keys-dialog"); await tapText(page, ".keys-dialog [role=combobox]", "General key"); await tapText(page, "[role=option]", "Vault key"); await page.waitForSelector(".vault-grant-builder .grant-row"); for (let index = 0; index < 8; index += 1) await tapText(page, ".keys-dialog button", "Add vault access").catch(() => undefined); }, { ...HUB, scope: ".keys-dialog" }]] : []),
   ["Settings · My access", "/settings/access", null, HUB],
   ["Settings · Notifications", "/settings/notifications", null, HUB],
   ["Settings · About", "/settings/about", null, HUB],

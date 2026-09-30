@@ -150,9 +150,19 @@ export function scopesSummary(json: string) {
 }
 
 function resolveKeyCreated(payload: Payload, recipient: Recipient): Resolution {
-  const key = db.query("SELECT name, scopes, created_at FROM mcp_api_keys WHERE id = ? AND user_id = ?").get(String(payload.keyId ?? ""), recipient.id) as { name: string; scopes: string; created_at: string } | null;
+  const key = db.query("SELECT id, name, scopes, created_at, kind, allow_mcp_value_reads, vault_protected_access FROM mcp_api_keys WHERE id = ? AND user_id = ?").get(String(payload.keyId ?? ""), recipient.id) as { id: string; name: string; scopes: string; created_at: string; kind: string; allow_mcp_value_reads: number; vault_protected_access: number } | null;
   if (!key) return { skip: "empty" };
+  if (key.kind === "vault") return { data: { keyName: key.name, scopes: vaultKeySummary(key), at: key.created_at } };
   return { data: { keyName: key.name, scopes: scopesSummary(key.scopes), at: key.created_at } };
+}
+
+/** A vault key's permissions for the security mail (Wave 27): counts and flags, never a vault's name (D223). */
+function vaultKeySummary(key: { id: string; allow_mcp_value_reads: number; vault_protected_access: number }) {
+  const rows = db.query("SELECT permission, COUNT(DISTINCT resource_id) AS vaults FROM api_key_grants WHERE key_id = ? AND module = 'vault' GROUP BY permission").all(key.id) as Array<{ permission: string; vaults: number }>;
+  const parts = rows.map((row) => `${row.permission === "write" ? "read and write" : "read"} in ${row.vaults} vault${row.vaults === 1 ? "" : "s"}`);
+  if (key.allow_mcp_value_reads === 1) parts.push("values over MCP");
+  if (key.vault_protected_access === 1) parts.push("protected environments");
+  return `Vault key: ${parts.join(" · ") || "no vaults"}`;
 }
 
 function resolveRoleChanged(payload: Payload, recipient: Recipient): Resolution {

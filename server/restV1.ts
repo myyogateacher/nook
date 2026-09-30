@@ -10,6 +10,7 @@ import { consumeMcpLimits, MCP_LIMITS, MCP_USER_LIMITS } from "./mcpRateLimit";
 import { mcpToolSpecs, runTool, toolVisible, visibleTools } from "./mcpTools";
 import type { McpErrorCode, McpKeyContext } from "./mcpToolKit";
 import { readBoundedBody } from "./validation";
+import { handleVaultRest, matchVaultRoute } from "./vault/rest";
 
 /**
  * The REST surface `/api/v1` (Wave 34, access plan D280, O-A12, T210): the MCP tools over plain
@@ -182,6 +183,21 @@ async function handle(c: Context<AppEnv>): Promise<Response> {
   const method = c.req.method;
   // No CORS: a preflight gets no Access-Control-* headers, so browsers on other sites stop there.
   if (method === "OPTIONS") return refuse(405, "Method not allowed", "METHOD_NOT_ALLOWED");
+  // The vault's resource routes (Wave 27, D220): vault keys only, and vault keys only there (T217).
+  if (path === "/api/v1/vault" || path.startsWith("/api/v1/vault/")) {
+    const subpath = path.slice("/api/v1/vault".length);
+    const matched = matchVaultRoute(subpath);
+    if (!matched) return refuse(404, "Not found", "NOT_FOUND");
+    const allowedMethods = matched.methods.includes("GET") ? [...matched.methods, "HEAD"] : matched.methods;
+    if (!allowedMethods.includes(method)) return refuse(405, "Method not allowed", "METHOD_NOT_ALLOWED", {}, { Allow: matched.methods.join(", ") });
+    const auth = authenticateKeyRequest(c.req.raw, { surface: "rest", clientIp: clientIp(c) });
+    if (auth instanceof Response) return auth;
+    if (auth.actor.kind !== "vault") {
+      countKeyUsage(auth.id, "denied", "rest");
+      return refuse(403, "This API key cannot use the vault API. Create a vault key (nkv_) in Settings → API keys.", "KEY_POLICY");
+    }
+    return withRestSlot(() => handleVaultRest(c.req.raw, url, subpath, auth));
+  }
   const toolMatch = /^\/api\/v1\/tools\/([a-z_]{1,64})$/.exec(path);
   const route = path === "/api/v1/me" ? "me" : path === "/api/v1/tools" ? "tools" : toolMatch ? "tool" : null;
   if (!route) return refuse(404, "Not found", "NOT_FOUND");
@@ -190,6 +206,11 @@ async function handle(c: Context<AppEnv>): Promise<Response> {
 
   const auth = authenticateKeyRequest(c.req.raw, { surface: "rest", clientIp: clientIp(c) });
   if (auth instanceof Response) return auth;
+  // A vault key works only on /api/v1/vault/* (and the vault MCP tools), never on the general tools (T217).
+  if (auth.actor.kind === "vault") {
+    countKeyUsage(auth.id, "denied", "rest");
+    return refuse(403, "A vault key (nkv_) works only on /api/v1/vault/* and the vault MCP tools.", "KEY_POLICY");
+  }
 
   return withRestSlot(async () => {
     const key = liveContext(auth);

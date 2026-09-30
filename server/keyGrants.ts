@@ -24,7 +24,19 @@ export type KeyKind = "general" | "vault";
 export type KeySurfaces = "mcp" | "rest" | "both";
 export const KEY_SURFACES: readonly KeySurfaces[] = ["mcp", "rest", "both"];
 
-export type Grant = { module: GrantModule; permission: KeyPermission; resourceKind: ResourceKind | null; resourceId: string | null };
+/**
+ * One grant row. `envId` is for vault grants only (Wave 27, D264): one environment of the vault the
+ * grant names, or null/absent for every environment of it (protected ones excepted, see
+ * server/vault/access.ts).
+ */
+export type Grant = {
+  module: GrantModule; permission: KeyPermission; resourceKind: ResourceKind | null; resourceId: string | null; envId?: string | null;
+  /** Vault grants naming an environment (Wave 27 fixes, L2): it was protected when the grant was made on a key allowed protected environments. */
+  protectedAtGrant?: boolean;
+};
+
+/** The permissions a vault key's grants may hold (Wave 27): read, and write (which implies read). */
+export const VAULT_KEY_PERMISSIONS = ["read", "write"] as const;
 
 /** Every MCP scope and the grant it is (D262). Wave 19 scopes included; later modules add a row. */
 export const SCOPE_GRANTS: Record<McpScope, { module: GrantModule; permission: KeyPermission }> = {
@@ -172,7 +184,7 @@ export function isNarrowing(current: readonly Grant[], next: readonly Grant[]) {
 }
 
 /** A stable identity for one grant row, for de-duplicating. */
-export const grantKey = (grant: Grant) => `${grant.module}:${grant.permission}:${grant.resourceKind ?? "*"}:${grant.resourceId ?? "*"}`;
+export const grantKey = (grant: Grant) => `${grant.module}:${grant.permission}:${grant.resourceKind ?? "*"}:${grant.resourceId ?? "*"}:${grant.envId ?? "*"}`;
 
 /** Removes exact duplicate grants, keeping the first of each. */
 export function dedupeGrants(grants: readonly Grant[]): Grant[] {

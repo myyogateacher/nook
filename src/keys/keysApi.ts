@@ -2,6 +2,7 @@ import { createContext, useContext } from "react";
 import { api } from "../api";
 import { KIND_LABELS, resourceToken, type GrantModule, type GrantPayload, type KeyGrantView, type KeyState, type KeySurfaces, type PolicySummary, type ResourceKind } from "./keyGrants";
 import type { McpScope } from "../mcpPermissions";
+import type { VaultGrantPayload } from "./vaultKeyGrants";
 
 /** `/api/keys` (access plan §C.7). */
 
@@ -18,6 +19,10 @@ export type ApiKey = {
   ipRestricted?: boolean; ipAllowlist?: string[];
   /** Pending Inbox suggestions from this key (GET /api/keys only). */
   pendingProposals?: number;
+  /** Wave 27: a vault key's flags (values over MCP, protected environments); null for general keys. */
+  vault?: { allowMcpValueReads: boolean; protectedAccess: boolean } | null;
+  /** Vault keys (review L4): counts for Team → Keys, where grants carry no vault or environment ids. */
+  vaultCounts?: { vaults: number; writeVaults: number } | null;
 };
 
 export type KeyList = { keys: ApiKey[]; policy: PolicySummary; liveCount: number };
@@ -28,17 +33,22 @@ export const listKeys = () => api<KeyList>("/keys");
 
 /** One of the caller's key events (GET /api/keys/:id): ids, counts, and short words only. */
 export type KeyEvent = { id: string; action: string; via: string; createdAt: string; meta: Record<string, unknown> | null };
-export const keyEvents = (id: string) => api<{ events: KeyEvent[] }>(`/keys/${id}`).then((result) => result.events);
+/** Wave 27: a vault key's own vault events (what it did, where), for its Recent activity. */
+export type VaultKeyEvent = { id: string; event: string; via: string; count: number | null; createdAt: string; vault: { id: string; name: string } | null; environment: { id: string; name: string } | null };
+export const keyEvents = (id: string) => api<{ events: KeyEvent[]; vaultEvents?: VaultKeyEvent[] }>(`/keys/${id}`).then((result) => result.events);
+export const keyDetailEvents = (id: string) => api<{ events: KeyEvent[]; vaultEvents?: VaultKeyEvent[] }>(`/keys/${id}`);
 
-export const createKey = (body: { name: string; description?: string | null; surfaces: KeySurfaces; expiresInDays: number | null; grants: GrantPayload[]; ipAllowlist?: string[] } & Reauth) =>
+export type VaultKeyFields = { kind?: "general" | "vault"; allowMcpValueReads?: boolean; protectedAccess?: boolean };
+
+export const createKey = (body: { name: string; description?: string | null; surfaces: KeySurfaces; expiresInDays: number | null; grants: Array<GrantPayload | VaultGrantPayload>; ipAllowlist?: string[] } & VaultKeyFields & Reauth) =>
   api<{ key: ApiKey & { token: string } }>("/keys", { method: "POST", body: JSON.stringify(body) });
 
-export type NarrowBody = { name?: string; description?: string | null; surfaces?: KeySurfaces; expiresInDays?: number | null; grants?: GrantPayload[]; limits?: { callsPerMinute?: number | null; writesPerMinute?: number | null }; ipAllowlist?: string[] };
+export type NarrowBody = { name?: string; description?: string | null; surfaces?: KeySurfaces; expiresInDays?: number | null; grants?: Array<GrantPayload | VaultGrantPayload>; limits?: { callsPerMinute?: number | null; writesPerMinute?: number | null }; ipAllowlist?: string[]; allowMcpValueReads?: boolean; protectedAccess?: boolean };
 
 export const narrowKey = (id: string, body: NarrowBody) =>
   api<{ changed: string[]; key: ApiKey }>(`/keys/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
-export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168; expiresInDays?: number | null; grants?: GrantPayload[]; surfaces?: KeySurfaces; ipAllowlist?: string[] | null } & Reauth) =>
+export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168; expiresInDays?: number | null; grants?: Array<GrantPayload | VaultGrantPayload>; surfaces?: KeySurfaces; ipAllowlist?: string[] | null; allowMcpValueReads?: boolean; protectedAccess?: boolean } & Reauth) =>
   api<{ key: ApiKey & { token: string }; oldKey: ApiKey }>(`/keys/${id}/rotate`, { method: "POST", body: JSON.stringify(body) });
 
 export const revokeKey = (id: string) => api<{ ok: true }>(`/keys/${id}`, { method: "DELETE", body: "{}" });
@@ -157,7 +167,7 @@ export type InventoryKey = ApiKey & { owner: { id: string; displayName: string; 
 export type Inventory = { keys: InventoryKey[]; nextCursor: string | null; summary: { live: number; noExpiry: number; matching?: number } };
 export type InventoryState = "active" | "expiring" | "no_expiry" | "blocked" | "grace" | "unused" | "expired";
 
-export function listInventory(filter: { owner?: string; module?: GrantModule; state?: InventoryState; cursor?: string; surface?: "mcp" | "rest"; ipRestricted?: "true" | "false" }) {
+export function listInventory(filter: { owner?: string; module?: GrantModule; state?: InventoryState; cursor?: string; surface?: "mcp" | "rest"; ipRestricted?: "true" | "false"; kind?: "general" | "vault" }) {
   const params = new URLSearchParams();
   for (const [name, value] of Object.entries(filter)) if (value) params.set(name, value);
   const query = params.toString();

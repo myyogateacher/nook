@@ -190,18 +190,27 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
 export type KeyGrantView = {
   module: GrantModule; permission: KeyPermission;
   resource: { kind: ResourceKind; id: string; name: string | null } | null;
-  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | null;
+  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | "binned" | null;
+} | {
+  /** Wave 27: a vault key's grant (vault, and one environment or every one). */
+  module: "vault"; permission: "read" | "write";
+  resource: { kind: "vault"; id: string; name: string | null } | null;
+  env?: { id: string; name: string | null; protected: boolean } | null;
+  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | "binned" | null;
 };
+type GeneralGrantView = Extract<KeyGrantView, { module: GrantModule }>;
 
-const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access", unavailable: "no longer available: keys hold only your own views" } as const;
+const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access", unavailable: "no longer available: keys hold only your own views", binned: "in the Bin" } as const;
 
 /**
  * The chips of a key row: one per module and permission, naming the chosen items (or "all"),
  * with inactive grants marked and why (T201).
  */
 export function grantChips(grants: readonly KeyGrantView[]) {
-  const groups = new Map<string, KeyGrantView[]>();
+  // Vault grants (Wave 27) have their own chips: vaultGrantChips in vaultKeyGrants.ts.
+  const groups = new Map<string, GeneralGrantView[]>();
   for (const grant of grants) {
+    if (grant.module === "vault") continue;
     const id = `${grant.module}:${grant.permission}:${grant.resource ? "chosen" : "all"}`;
     groups.set(id, [...(groups.get(id) ?? []), grant]);
   }
@@ -303,6 +312,8 @@ export function keyEventLine(event: { action: string; meta: Record<string, unkno
     case "key.revoked": return meta.by === "admin" ? "Revoked by an admin" : "Revoked";
     case "key.grace_ended": return "Rotation grace ended";
     case "key.policy_blocked": return `Blocked by team policy${surface}`;
+    case "key.vault.limited": return `Hit a vault limit${surface}`;
+    case "key.vault.volume": return `Read more than ${typeof meta.threshold === "number" ? meta.threshold : 500} values today${surface}`;
     case "key.denied": {
       const from = typeof meta.clientPrefix === "string" ? `, from ${meta.clientPrefix}` : "";
       return `Refused${surface}: ${DENIAL_LINE[String(meta.reason)] ?? "not allowed"}${from}`;

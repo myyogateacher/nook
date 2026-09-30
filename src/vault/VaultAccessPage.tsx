@@ -11,7 +11,8 @@ import { repeatDelta, useLeaveGuard } from "../ui/useLeaveGuard";
 import { ROLE_LABELS, isRole } from "../team/teamRoles";
 import type { EnvLevel } from "../../shared/vault";
 import { errorCode, messageOf } from "./VaultDialogs";
-import { getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironment, type SheetGroup, type SheetPerson, type VaultAccessSheet } from "./vaultApi";
+import { getVault, getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironment, type SheetGroup, type SheetPerson, type VaultAccessSheet } from "./vaultApi";
+import { VaultKeysSection } from "./VaultKeysSection";
 
 /**
  * Who has access to one vault, at /vault/:id/access (vault plan §10 Access; D214–D216, V-O3; Wave 26).
@@ -25,6 +26,8 @@ import { getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironme
  * Unsaved changes ask before Back or Forward leaves (the leave guard). An owner who hands the vault
  * over in one save (another person made owner, themselves made a member) no longer manages it: the
  * page then leaves for the vault, or for the list when they can no longer read it (`onHandedOver`).
+ * Members who manage nothing (Wave 27 QA M1) get a read-only page instead: who manages access, and
+ * "Keys with access" (the count and their own keys), never the grid.
  */
 
 /** Not a failure a retry fixes (QA L3): members who manage nothing get this, and no Try again. */
@@ -34,7 +37,7 @@ export const NOT_A_MANAGER = "Only the vault's owners and environment admins man
 export function notOffered(person: Pick<PickerPerson, "id" | "displayName" | "kind" | "role">): Option {
   return {
     value: `person:${person.id}`, label: person.displayName, disabled: true, group: "Not offered",
-    description: person.kind === "service" ? "Integrations cannot be vault members yet; vault keys for machines arrive later" : "Guests never get vault access"
+    description: person.kind === "service" ? "Integrations cannot be vault members; machines use vault keys (Settings → API keys)" : "Guests never get vault access"
   };
 }
 
@@ -42,6 +45,26 @@ export const ENV_LEVEL_LABELS: Record<EnvLevel, string> = { none: "No access", r
 const LEVEL_DESCRIPTIONS: Record<EnvLevel, string> = { none: "Cannot see this environment", read: "See and copy values", write: "Also set, clear, and import values", admin: "Also rename and delete it, and give read or write" };
 
 type Draft = { people: SheetPerson[]; groups: SheetGroup[] };
+
+/**
+ * The Access page for a member who manages nothing (Wave 27 QA M1): no grid, the reason, and Keys
+ * with access, where the server sends the count and the member's own keys only.
+ */
+export function VaultAccessReadOnly({ vaultId, name, environments, onBack, onOpenActivity }: {
+  vaultId: string; name: string; environments: ReadonlyArray<{ id: string; name: string }>; onBack: () => void; onOpenActivity: () => void;
+}) {
+  return <>
+    <div className="vault-toolbar">
+      <button type="button" className="icon-button vault-back" onClick={onBack} aria-label={`Back to ${name}`} title={`Back to ${name}`}><ChevronLeft /></button>
+      <h1 className="vault-title" title={name}>Access<span className="vault-count"> · {name}</span></h1>
+    </div>
+    <p className="vault-honest"><ShieldAlert aria-hidden="true" />{NOT_A_MANAGER} Below: how many API keys reach this vault, and your own.</p>
+    <div className="vault-access-actions">
+      <button type="button" className="secondary-button" onClick={onOpenActivity}><History />Your activity</button>
+    </div>
+    <VaultKeysSection vaultId={vaultId} environments={environments} />
+  </>;
+}
 
 const draftOf = (sheet: VaultAccessSheet): Draft => ({ people: sheet.people.map((person) => ({ ...person, levels: { ...person.levels } })), groups: sheet.groups.map((group) => ({ ...group, levels: { ...group.levels } })) });
 const bodyOf = (draft: Draft): AccessPutBody => ({
@@ -92,6 +115,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
   const [people, setPeople] = useState<PickerPerson[]>([]);
   const [groups, setGroups] = useState<PickerGroup[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [readOnly, setReadOnly] = useState<{ name: string; environments: Array<{ id: string; name: string }> } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // The parent passes a new onMissing on every render (opening a dialog re-renders it): keep it in
@@ -120,13 +144,24 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
       }
     } catch (reason) {
       if (errorCode(reason) === "NOT_FOUND") onMissingRef.current();
-      else setError(errorCode(reason) === "VAULT_LEVEL" ? NOT_A_MANAGER : messageOf(reason, "Could not load who has access"));
+      else if (errorCode(reason) === "VAULT_LEVEL") {
+        // A reader who manages nothing: the read-only page (QA M1).
+        try {
+          const { vault } = await getVault(vaultId);
+          setReadOnly({ name: vault.name, environments: vault.environments.filter((env) => env.level !== "none").map((env) => ({ id: env.id, name: env.name })) });
+        } catch {
+          setError(NOT_A_MANAGER);
+        }
+      } else setError(messageOf(reason, "Could not load who has access"));
     }
   }, [vaultId]);
   useEffect(() => { void load(); }, [load]);
-  const ready = sheet !== null || error !== null;
+  const ready = sheet !== null || error !== null || readOnly !== null;
   useLayoutEffect(() => { if (ready) onReady(); }, [ready, onReady]);
-  useEffect(() => { if (sheet) document.title = `Access · ${sheet.vault.name} · Vault · Nook`; }, [sheet]);
+  useEffect(() => {
+    const name = sheet?.vault.name ?? readOnly?.name;
+    if (name) document.title = `Access · ${name} · Vault · Nook`;
+  }, [sheet, readOnly]);
 
   const dirty = Boolean(sheet && draft && !sameDraft(draft, draftOf(sheet)));
   const dirtyRef = useRef(dirty);
@@ -163,6 +198,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
     setTimeout(() => whenHistorySettled(onBack), 0);
   };
 
+  if (readOnly) return <VaultAccessReadOnly vaultId={vaultId} name={readOnly.name} environments={readOnly.environments} onBack={onBack} onOpenActivity={() => onOpenActivity(null)} />;
   if (error) return <div className="vault-state" role="alert"><h1>Could not open who has access</h1><p>{error}</p>{error !== NOT_A_MANAGER && <button className="secondary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>}<button className="secondary-button" onClick={onBack}>Back to the vault</button></div>;
   if (!sheet || !draft) return <p className="vault-loading" role="status">Loading…</p>;
 
@@ -236,7 +272,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
         setSaveError("Someone else changed who has access. This shows the latest now; make your change again.");
         return;
       }
-      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "PERSON_BLOCKED" ? "A blocked account cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members yet." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
+      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "PERSON_BLOCKED" ? "A blocked account cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members; machines use vault keys." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
     }
   }
 
@@ -309,12 +345,13 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
       </li>)}
     </ul>}
 
-    {people.some((person) => person.kind === "service") && owner && <p className="file-dialog-hint vault-access-note"><Bot className="vault-hint-icon" aria-hidden="true" />Integrations cannot be vault members; vault keys for machines arrive later.</p>}
+    {people.some((person) => person.kind === "service") && owner && <p className="file-dialog-hint vault-access-note"><Bot className="vault-hint-icon" aria-hidden="true" />Integrations cannot be vault members. For machines, make a vault key in Settings → API keys.</p>}
     {saveError && <p className="form-error" role="alert">{saveError}</p>}
     <div className="vault-access-actions">
       {dirty && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setDraft(draftOf(sheet)); setSaveError(null); }}>Discard changes</button>}
       <button type="button" className="secondary-button" onClick={() => onOpenActivity(null)}><History />Activity</button>
       <button type="button" className="primary-button vault-primary" disabled={busy || !dirty} onClick={() => { void save(); }}>{busy ? "Saving…" : "Save"}</button>
     </div>
+    <VaultKeysSection vaultId={vaultId} environments={envs} />
   </>;
 }

@@ -216,3 +216,11 @@
   .vault-access-actions button { flex: 1 1 auto; justify-content: center; min-height: 44px; }
   .vault-activity-filters { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Wave 27: "Keys with access" on the Access page */
+.vault-keys-section { display: grid; gap: 8px; margin-top: 18px; min-width: 0; }
+.vault-keys-section h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: #ededee; font-size: .95rem; }
+.vault-keys-section h2 svg { width: 16px; height: 16px; }
+.vault-keys-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.vault-keys-list code { color: #9a9aa1; font-size: .74rem; overflow-wrap: anywhere; }
+.vault-keys-list .vault-card-meta { margin: 0; overflow-wrap: anywhere; }

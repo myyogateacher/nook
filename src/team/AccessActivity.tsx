@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, History, RotateCcw, TriangleAlert } from "lucide-react";
 import { relativeTime } from "../files/format";
 import { Select, type Option } from "../ui/Select";
-import { activityLabel, listAccessActivity, type ActivityCategory, type ActivityEvent } from "../access/memberAccessApi";
+import { activityLabel, LEVEL_WORDS, listAccessActivity, resetLines, type AccessLevel, type ActivityCategory, type ActivityEvent } from "../access/memberAccessApi";
 import { listGroups, type GroupSummary } from "./groupsApi";
 import { listInventory, type InventoryKey } from "../keys/keysApi";
 import "../keys/keys.css";
@@ -43,23 +43,75 @@ export function googleRemovedLine(meta: Record<string, unknown>) {
   return `Removed ${list}.`;
 }
 
-const metaLine = (event: ActivityEvent) => {
-  if (!event.meta) return null;
-  if (event.action === "account.google_reset" || event.action === "account.google_relinked") return googleRemovedLine(event.meta);
-  const parts: string[] = [];
+/** "a", "a and b", "a, b, and c". */
+const listWords = (parts: string[]) => parts.length <= 1 ? parts[0] ?? "" : parts.length === 2 ? `${parts[0]} and ${parts[1]}` : `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+const counted = (value: number, one: string, many: string) => `${value} ${value === 1 ? one : many}`;
+const levelWords = (value: unknown) => typeof value === "string" && value in LEVEL_WORDS ? `“${LEVEL_WORDS[value as AccessLevel]}”` : null;
+const ROLE_WORDS: Record<string, string> = { admin: "Admin", member: "Member", viewer: "Viewer", guest: "Guest" };
+
+/**
+ * F10 (v0.16.0 QA): the detail under an Access activity line, as a sentence. It used to be a raw
+ * list ("direct shares: 3 · groups: 1", "audience: all users"); each action now says what it meant.
+ */
+export function metaLine(event: ActivityEvent): string | null {
   const meta = event.meta;
-  if (typeof meta.from === "string" && typeof meta.to === "string") parts.push(`${meta.from} → ${meta.to}`);
-  for (const key of ["directShares", "groups", "sessions", "keys", "feeds", "items", "shares", "groupGrants", "invites", "routines", "peopleCount", "groupCount", "added", "skipped", "memberCount", "grantCount"] as const) {
-    if (typeof meta[key] === "number") parts.push(`${key.replace(/([A-Z])/g, " $1").toLowerCase()}: ${meta[key]}`);
+  if (!meta) return null;
+  const count = (key: string) => typeof meta[key] === "number" ? meta[key] as number : 0;
+  switch (event.action) {
+    case "account.google_reset":
+    case "account.google_relinked":
+      return googleRemovedLine(meta);
+    case "account.google_allowed":
+      return meta.relink === true ? meta.removeCredentials === false ? "The password and two-factor stay after the re-link." : "The password and two-factor are removed at the re-link." : null;
+    case "access.reset": {
+      const parts = resetLines({ directShares: count("directShares"), groups: count("groups"), keys: count("keys"), feeds: count("feeds"), routines: count("routines") });
+      return parts.length ? `Removed ${listWords(parts)}.` : "Nothing needed removing.";
+    }
+    case "access.share_lowered": {
+      const from = levelWords(meta.from);
+      const to = levelWords(meta.to);
+      return from && to ? `From ${from} to ${to}.` : null;
+    }
+    case "access.share_removed": {
+      const level = levelWords(meta.level);
+      return level ? `They had ${level}.` : null;
+    }
+    case "item.access_changed": {
+      const manager = meta.asManager === true ? " Changed by a manager, not the owner." : "";
+      if (meta.audience === "private") return `Now private.${manager}`;
+      if (meta.audience === "all_users") return `Now open to everyone on this Nook.${manager}`;
+      if (meta.audience === "inherit") return `Now follows its folder's access.${manager}`;
+      if (meta.audience === "selected") {
+        const parts = [count("peopleCount") ? counted(count("peopleCount"), "person", "people") : "", count("groupCount") ? counted(count("groupCount"), "group", "groups") : ""].filter(Boolean);
+        return `${parts.length ? `Now shared with ${listWords(parts)}.` : "Now shared with nobody yet."}${manager}`;
+      }
+      return manager.trim() || null;
+    }
+    case "group.deleted": {
+      const parts = [counted(count("memberCount"), "person", "people"), `${counted(count("grantCount"), "item", "items")} shared with it`];
+      return `It had ${listWords(parts)}.`;
+    }
+    case "group.member_added":
+      return meta.from === "template" ? "Added by a template." : null;
+    case "group.member_removed":
+      return meta.from === "reset" ? "Part of Reset access." : meta.from === "member_access" ? "From Team → this person's access." : null;
+    case "template.created": {
+      const role = typeof meta.role === "string" ? ROLE_WORDS[meta.role] ?? null : null;
+      const groups = count("groupCount") ? ` and ${counted(count("groupCount"), "group", "groups")}` : "";
+      return role ? `New people get the ${role} role${groups}.` : null;
+    }
+    case "template.applied": {
+      const parts = [count("added") ? `Added to ${counted(count("added"), "group", "groups")}` : "", count("skipped") ? `${counted(count("skipped"), "group was", "groups were")} skipped` : ""].filter(Boolean);
+      return parts.length ? `${parts.join("; ")}.` : null;
+    }
+    case "template.deleted":
+      return count("liveInvites") ? `${counted(count("liveInvites"), "live invite", "live invites")} used it.` : null;
+    case "key.rotated":
+      return count("graceHours") ? `The old key keeps working for ${counted(count("graceHours"), "hour", "hours")}.` : null;
+    default:
+      return null;
   }
-  // Google sign-in (Wave 35): what went with the password and two-factor.
-  if (meta.password === 1) parts.push("password removed");
-  if (meta.twoFactor === 1) parts.push("two-factor removed");
-  if (meta.relink === true) parts.push(meta.removeCredentials === false ? "keeps password and two-factor" : "removes password and two-factor at re-link");
-  if (typeof meta.audience === "string") parts.push(`audience: ${meta.audience.replace("_", " ")}`);
-  if (meta.self === true) parts.push("added themselves");
-  return parts.length ? parts.join(" · ") : null;
-};
+}
 
 /** A key that is no longer live, in the Key filter (C15b): its owner when the event names one, and its prefix. */
 export const pastKeyDescription = (entry: { prefix: string | null; owner: string | null }) =>

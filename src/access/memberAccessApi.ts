@@ -208,4 +208,5 @@ const keyName = (event: ActivityEvent) => event.key?.name ? `“${event.key.name
 const groupName = (event: ActivityEvent) => event.group?.name ? `“${event.group.name}”` : "a deleted group";
 const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? event.item.title.replace(/^(\w)/, (letter) => letter.toLowerCase()).replace(/^/, "a ") : `“${event.item.title}”`;
 
-export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => row.action))(event);
+/** F10: an action this build does not know still reads as a sentence, never as its code. */
+export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => `${who(row)} changed access`))(event);

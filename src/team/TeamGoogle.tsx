@@ -85,6 +85,9 @@ export function resetLines(counts: ResetCounts) {
 type Step = "choose" | "relink" | "reset" | "done" | "unlink";
 type Outcome = { allowedUntil: string; reset: ResetCounts | null; relink?: boolean; removeCredentials?: boolean; relinkPreview?: RelinkCounts | null };
 
+/** Whether the Team → member Google card asks for its state: only once the account says Google sign-in is on. */
+export const googleCardShown = (account: { methods?: { google?: boolean } } | null) => account?.methods?.google === true;
+
 export function TeamGoogleCard({ userId, name }: { userId: string; name: string }) {
   const [state, setState] = useState<GoogleAdminState | null>(null);
   const [step, setStep] = useState<Step | null>(null);
@@ -103,11 +106,15 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
   // Q6: the reset step is its own history layer over the Allow dialog: Back returns to the first step,
   // as the dialog's own Back button does.
   useHistoryDialogGuard(step === "reset", () => { setError(""); fields.clear(); setStep("choose"); }, { blocked: busy });
+  // F3 (v0.18 follow-ups): with Google sign-in off the route answers 404, so it is not asked at all
+  // and the card stays hidden (no console error, no dead card).
+  const googleOn = googleCardShown(account);
   const load = useCallback(() => {
+    if (!googleOn) return;
     api<GoogleAdminState>(`/team/${userId}/google`).then(setState, () => setState(null));
-  }, [userId]);
+  }, [googleOn, userId]);
   useEffect(() => { load(); }, [load]);
-  if (!state || !account) return null;
+  if (!state || !account || !googleOn) return null;
   const twoFactor = account.twoFactor === true;
   const domain = state.domain ?? "";
   // S1: the option appears only when there is a password or two-factor to remove.

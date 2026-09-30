@@ -98,7 +98,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.16.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.17.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -107,6 +107,20 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.17.0
+
+- **Whiteboards**: a new app for sketches, diagrams, and floor plans, built on the Excalidraw editor: shapes, arrows, lines, freehand drawing, text, colours, undo and redo, and Mermaid diagrams turned into shapes. The editor ships inside Nook and runs entirely from your own server: it makes no requests to other sites, its fonts are included, and the content security policy is unchanged. A browser downloads it only when someone opens a board.
+- **Boards live in Files**: each board is a `.excalidraw` file in one of your folders and appears in the Files list with its own icon. You can rename it, move it to another folder, download the `.excalidraw` file, export a PNG, or delete it to the Bin and restore it from there. Boards count toward your storage.
+- **Saving**: changes save by themselves, at the latest every 5 seconds while you keep drawing. When the connection drops, a copy of your unsaved work is kept on the device and sent when the connection returns, even if you do not reopen the board. Leaving the page right after drawing keeps the change.
+- **Two devices**: if a board changed on another device, Nook asks whether to **Reload latest** or **Save mine as a copy**; nothing is overwritten silently.
+- **Safety net**: when a save empties a board, or leaves a board of 10 or more shapes with fewer than half of them, the version before is kept (the newest five per board), and the owner can bring it back with **Restore previous version**.
+- **Sharing**: share a board with people and groups through the Access sheet. Only the owner edits; everyone else gets a view-only canvas with a banner naming the owner.
+- **Search**: board names and the text on boards are indexed. For now you can search them through the web API and the MCP tool `list_whiteboards`; the Search screen in the app does not show whiteboards yet.
+- **Around the app**: Settings → Modules has a Whiteboards row (on by default), Today lists recent whiteboards, and on phones pinching zooms the canvas, not the page.
+- **API keys and MCP**: two new key permissions, **Read whiteboards** and **Create whiteboards**, and a key can be limited to chosen boards. New MCP tools `list_whiteboards`, `read_whiteboard`, and `create_whiteboard`; no tool edits, deletes, or shares a board. Existing keys gain nothing.
+- **Not in this release**: images on the canvas, links from shapes to Nook items, embedding a board in a note, a full version history, importing `.excalidraw` files as boards, SVG export, and a whiteboards filter in the Search screen.
+- Migration 030 runs on the first boot, so back up first. The Docker image grows by about 26 MB. No new settings; if you ever changed the key modules in **Team → Policies**, tick Whiteboards there before keys can use it. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.16.0
 

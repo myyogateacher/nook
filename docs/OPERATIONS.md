@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.16.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.17.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -234,7 +234,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.16.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.17.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -266,7 +266,9 @@ The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files
 
 **Web Push.** Pushes carry no content: a push only wakes the device, whose service worker then fetches unread notifications from Nook with the user's session, so push services see timing only. Outbound requests go only to allowlisted push-service hosts over https on port 443, never to IP literals or private addresses, with no redirects and a 5-second timeout. Each user may register 10 devices; a device is removed when the push service reports it gone (404 or 410) and paused after 5 failed deliveries. `push/vapid.json` is included in backups. If it is lost, a new key pair is created at the next boot and each device must enable push again in Settings → Notifications.
 
-**Whiteboards.** A whiteboard is a Files document whose bytes are its current scene, a canonical `.excalidraw` JSON object of at most 4 MiB under `documents/objects/<object-id>`. Each save writes a new object and removes the old one after the database switches to it; a crash in between leaves an orphan that the hourly sweeper removes after an hour. Boards count against the owner's quota like any file (their thumbnails, at most 128 KiB each, live in SQLite and are not counted). The Excalidraw editor and its self-hosted fonts add about 21 MB to the image's `dist/` (fonts about 13 MB, of which the Xiaolai CJK font is about 12.7 MB); the editor is downloaded by a browser only when someone opens a board.
+**Whiteboards.** A whiteboard is a Files document whose bytes are its current scene, a canonical `.excalidraw` JSON object of at most 4 MiB under `documents/objects/<object-id>`. Each save writes a new object and removes the old one after the database switches to it; a crash in between leaves an orphan that the hourly sweeper removes after an hour. Boards count against the owner's quota like any file, together with their kept previous versions and their thumbnails (at most 128 KiB each, stored in SQLite). The Excalidraw editor and its self-hosted fonts add about 21 MB to the image's `dist/`, about 26 MB with the compressed copies Nook serves (fonts about 13 MB, of which the Xiaolai CJK font is about 12.7 MB); the editor is downloaded by a browser only when someone opens a board.
+
+**Whiteboard safety snapshots.** The `whiteboard_snapshots` table (created by migration 030) is in use since whiteboards shipped: a save that empties a board, or takes a board of 10 or more elements to fewer than half of them, keeps the scene it replaces as a snapshot, and **Restore previous version** keeps the scene it replaces too; at most 5 are kept per board, only the owner sees and restores them, and they count toward the owner's quota.
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 
@@ -313,7 +315,20 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-**Upgrading to the release with Whiteboards:** back up first with `./scripts/backup.sh --force`. Migration 030 (`whiteboards`) runs once on the first boot and only adds tables (boards, snapshots for a later release, and the whiteboard search index); nothing existing changes, and it can only be undone by restoring that backup. Whiteboards is a new row in Settings → Modules, on by default. Nook keys can hold `whiteboards:read` and `whiteboards:write` for new keys; if an admin saved Team → Policies before this release, the per-role key modules there do not include Whiteboards until an admin ticks it.
+**Upgrading to 0.17.0:** back up first with `./scripts/backup.sh --force`. Migration 030 (whiteboards: the `whiteboards` table, one row per board next to its Files entry; `whiteboard_snapshots`, the kept previous versions; and `whiteboard_search` with the full-text index `whiteboard_fts`) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing existing changes. Its number is lower than migrations your instance already applied (032, 034, and 035): that is expected, because the app applies each migration by its own number. Migration numbers 031 and 033 are intentionally not used yet. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.17.0`, and restart as above.
+
+What an admin should know:
+
+- **Image size and page loads:** the Docker image grows by about 26 MB: the editor's fonts (about 13 MB, of which the Chinese, Japanese, and Korean handwriting font is about 12.7 MB), the canvas code, and the compressed copies Nook serves. People who never open a whiteboard download nothing extra; the first board someone opens downloads the canvas, about 266 KB compressed in our measurement, and fonts as needed. Nothing is fetched from other sites, and the content security policy is unchanged.
+- **Disk use:** boards, their kept previous versions (at most five per board), and their thumbnails count toward each person's storage quota like any file. A board's scene is at most 4 MiB.
+- **The new dependency:** `@excalidraw/excalidraw` 0.18.1 (MIT licence), pinned to that exact version. It is used at build time and shipped inside the app bundle, so the production image's `node_modules` does not carry it. The build patches a few places in it (self-hosted fonts instead of a font CDN, and no copy-as-SVG), and the build fails if a patch stops applying, so upgrading it is a deliberate step. Building from source needs network access to the package registry, as before.
+- **Turning it off:** each person can turn Whiteboards off in Settings → Modules (on by default); that hides the app, its Today section, and the **Open whiteboard** action in Files for them, and their boards still appear in Files as `.excalidraw` downloads. There is no instance-wide switch.
+- **API keys:** there are two new key permissions, **Read whiteboards** (`whiteboards:read`) and **Create whiteboards** (`whiteboards:write`, which only creates empty, private boards), and a key can be limited to chosen boards. Existing keys gain nothing. If an admin ever changed the modules for a role's keys in **Team → Policies**, the saved list does not include Whiteboards: tick it there before that role's keys can use whiteboards. If those lists were never changed, the defaults include it.
+- **MCP:** new tools `list_whiteboards` (which can also search board names and text), `read_whiteboard`, and `create_whiteboard`. No tool edits, deletes, or shares a board.
+- **Limits:** per person per minute, 120 saves, 30 thumbnails, and 30 new boards (past them the app waits and retries). A scene may hold at most 5,000 shapes, 10,000 points per shape and 200,000 per board, and 20,000 characters per text and 1 MiB of text per board.
+- **Not in this release:** images on the canvas, links from shapes to Nook items, embedding a board in a note, a full version history, importing `.excalidraw` files as boards (an uploaded one stays an ordinary file), SVG export, and a whiteboards filter in the Search screen.
+
+The web API gains `/api/whiteboards` (create and list), `/api/whiteboards/:id` (read), `/api/whiteboards/:id/scene` (save), `/api/whiteboards/:id/thumbnail`, `/api/whiteboards/:id/previous-version`, and `/api/whiteboards/:id/restore-previous`; Files and Bin summaries gain `kind` (`"file"` or `"whiteboard"`), and `GET /api/search` accepts `scope=whiteboards`.
 
 **Upgrading to 0.16.0:** back up first with `./scripts/backup.sh --force`. Migration 035 (the Today digest offer: one new nullable column, `email_prefs.digest_prompt_at`, recording when a person answered or dismissed the offer) runs once on the first boot and can only be undone by restoring that backup. It only adds; nobody's email settings change by upgrading. Migration numbers 030, 031, and 033 are intentionally not used yet: they belong to features that ship later, and the app applies each migration by its own number, so the gap is expected. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.16.0`, and restart as above.
 

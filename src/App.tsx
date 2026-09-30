@@ -83,7 +83,7 @@ import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undo
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
-import { OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
+import { clearCardSummaries, OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
@@ -1868,6 +1868,7 @@ export function App() {
     await forgetThisDevice();
     await api("/auth/logout", { method: "POST", body: "{}" });
     if (signedOutUserId) await clearPendingForUser(signedOutUserId);
+    clearCardSummaries();
     sessionUserRef.current = null;
     noteLoadGenerationRef.current += 1;
     setCsrfToken("");
@@ -1898,6 +1899,7 @@ export function App() {
 
   if (checking) return <main className="loading-page"><div className="brand-mark"><Sparkles /></div><span>Opening Nook…</span></main>;
   const acceptSession = (result: SessionResponse) => {
+    if (sessionUserRef.current !== result.user.id) clearCardSummaries();
     sessionUserRef.current = result.user.id;
     noteLoadGenerationRef.current += 1;
     cancelPendingAutosave();

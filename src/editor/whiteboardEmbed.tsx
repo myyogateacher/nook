@@ -61,6 +61,14 @@ export function cardSummary(id: string) {
   return value;
 }
 
+/**
+ * Review L3: forgets every card summary. Called at sign-out and sign-in (the app does not reload),
+ * so the next person on this tab never sees a board name the previous one could read.
+ */
+export function clearCardSummaries() {
+  summaries.clear();
+}
+
 function WhiteboardEmbedCard({ node, selected }: NodeViewProps) {
   const id = String(node.attrs.id ?? "");
   const [state, setState] = useState<{ id: string; board: WhiteboardCardSummary | null } | null>(null);

@@ -68,6 +68,43 @@ If a user loses their authenticator, the local machine administrator can reset t
 docker compose exec mynotes bun server/reset-totp.ts user@example.com
 ```
 
+### Vault
+
+The Vault keeps a team's secrets (API keys, database URLs, passwords) per environment. Its values and comments are encrypted at rest with AES-256-GCM under a data key per vault, and those data keys are wrapped by one server key, `VAULT_ENCRYPTION_KEY`. **Encrypted at rest; anyone with the server and its key can read every secret.** It is not end-to-end encryption: the server decrypts a value whenever someone allowed to read it asks. Names, environment names, and tags are stored in plain text.
+
+The module is off until the key is set. Generate one, different from `TOTP_ENCRYPTION_KEY`:
+
+```sh
+openssl rand -base64 32
+```
+
+Set it as `VAULT_ENCRYPTION_KEY` in `.env`, or put it in a root-only file (or a Docker secret) and set `VAULT_ENCRYPTION_KEY_FILE` to that file's absolute path; not both. Nook refuses to start when the key is malformed, equal to `TOTP_ENCRYPTION_KEY`, or in a file inside `DATA_DIR` (the backup script archives that directory). At startup it logs one line: the vault is on, off because no key is set, or off because the key does not open the vaults stored here (the rest of Nook keeps running). Without the key, admins see a "not configured" screen in the Vault and everyone else does not see the module at all.
+
+**Keep the key away from the backup location.** Backups hold only ciphertext and wrapped keys, so a stolen archive alone reveals nothing, but an archive together with the key reveals every secret. Store the key somewhere other than where the archives go (a password manager, a separate secrets store, a different machine), unlike the general advice for `.env` below.
+
+**Losing the key loses every vault.** There is no recovery without it: restoring a backup needs the key the vaults were created with. Check a key against the stored vaults at any time (it prints counts only):
+
+```sh
+docker compose exec mynotes bun server/vault-admin.ts verify-key
+```
+
+**Rotating the key** re-wraps the data keys only (seconds; values are not re-encrypted). Take a backup, stop the app so nothing reads with the old key, run the rotation with both keys, then replace the key and start again:
+
+```sh
+./scripts/backup.sh --force
+docker compose stop mynotes
+docker compose run --rm -e VAULT_ENCRYPTION_KEY_NEW="$(openssl rand -base64 32)" mynotes bun server/vault-admin.ts rotate-kek
+```
+
+Copy the new key from your shell before it scrolls away (or generate it into a file first and pass `VAULT_ENCRYPTION_KEY_NEW_FILE`), put it in place of `VAULT_ENCRYPTION_KEY`, start the app, and run `verify-key`. The old key opens nothing afterwards; archives taken before the rotation still need the old key, so keep it until those archives have rotated out.
+
+What else to know:
+
+- Deleted vaults, environments, and secrets stay in the Bin for 30 days. Deleting a vault forever deletes its data key, so nothing of it can be decrypted again; older backup archives keep the ciphertext (and the old wrapped key) for up to about five weeks, as for notes. After a leak, rotate the real credentials upstream: the vault cannot take back values someone already read.
+- The database runs with `PRAGMA secure_delete = ON` (all modules), so deleted rows are overwritten instead of lingering in free pages.
+- In this release vaults have one member, their owner. Members and per-environment access, protected environments with re-authentication, import and export, vault API keys (`nkv_…`), REST, and MCP tools arrive in later releases. Admins get no access to other people's vaults.
+- Every reveal, copy, write, clear, and restore is recorded in the vault's own event log (ids and counts only, never values). Reads and writes are limited to 300 each per 10 minutes per person; the limits survive a restart.
+
 ### Passwords
 
 People change their own password in **Settings → Security** (current password plus a two-factor code when they use one; other sessions are signed out). With email on, **Forgot password?** on the sign-in page mails a 30-minute, single-use link to an existing, unblocked, **verified** address; the answer is the same whether or not an account exists, and a reset on a two-factor account still needs a code or recovery code. A reset signs the account out everywhere and removes its push subscriptions; API keys are not revoked (the security email links to them). Requests are limited in memory like sign-in: 3 an hour per address and 10 an hour per client address. The link is built from `APP_ORIGIN`, never the request's Host header, so set it correctly behind a proxy.
@@ -220,6 +257,8 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `TRUSTED_PROXY_ADDRESSES` | empty | The proxies' own addresses or CIDR ranges, comma-separated (for example `127.0.0.1,172.16.0.0/12`). When set, `X-Forwarded-For` is read only from connections coming from these addresses; anyone reaching Nook's port directly is seen as themselves. Empty: the header is trusted from any connection (a startup warning says so). Checked at startup. |
 | `GOOGLE_ALLOWED_DOMAINS` | empty | Comma-separated email domains allowed to sign in or be created with Google (the Workspace `hd` claim must match). Empty allows any verified Google address. |
 | `TOTP_ENCRYPTION_KEY` | empty | Base64-encoded 32-byte key. Required when `TOTP_POLICY=required`. |
+| `VAULT_ENCRYPTION_KEY` | empty | The Vault's key: base64 of 32 bytes (`openssl rand -base64 32`), different from `TOTP_ENCRYPTION_KEY`. Empty keeps the Vault off. Keep it away from the backup location (see *Vault*). Never logged. |
+| `VAULT_ENCRYPTION_KEY_FILE` | empty | Instead of `VAULT_ENCRYPTION_KEY`: the absolute path of a file holding the key (a Docker secret or a root-only file), outside `DATA_DIR`. Setting both refuses to start. |
 | `SESSION_DAYS` | `14` | Session lifetime in days, at least 1. |
 | `MAX_MARKDOWN_BYTES` | `2000000` | Largest note body, at least 1024 bytes. |
 | `MAX_UPLOAD_BYTES` | `104857600` (100 MiB) | Largest single file. Integer from `1048576` (1 MiB) to `2147483648` (2 GiB). Bun's request body cap is this (or 2.1 MB, whichever is larger) plus 1 MiB; JSON bodies stay limited to 2.1 MB. |
@@ -304,7 +343,7 @@ The archive contains the data directory contents at its root, so no path rearran
 
 - Archives include `documents/objects` but not `documents/.staging`. Archive size and the time the app is stopped grow with the stored files (gzip gains little on already-compressed media), and five archives multiply that disk use.
 - Items in the Bin are included like live ones. A note or file deleted forever (or expired from the Bin) can survive in older archives for up to about five weeks, until those archives rotate out.
-- The backup intentionally does not include `.env`. Store it securely alongside your backups, especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments.
+- The backup intentionally does not include `.env`. Store it securely alongside your backups, especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments. **The exception is `VAULT_ENCRYPTION_KEY`:** keep it somewhere other than the backups, because an archive together with that key reveals every vault secret, and a restore needs the same key (see *Vault*). Vault values are in the archive only as ciphertext.
 
 ## Upgrades
 
@@ -317,6 +356,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to the release with the Vault (Wave 25):** back up first with `./scripts/backup.sh --force`. Migration 031 (the Vault's tables) runs once on the first boot; it only adds tables, and its number is lower than 032–035, which your instance already applied (expected: each migration is applied by its own number). The Vault stays off until you set `VAULT_ENCRYPTION_KEY` or `VAULT_ENCRYPTION_KEY_FILE` (see *Vault*); nothing else changes. From this release SQLite runs with `secure_delete` on, which makes deletes a little slower and overwrites deleted rows.
 
 **Upgrading to 0.18.0:** back up first with `./scripts/backup.sh --force`. Migration 033 (key use per surface: when each API key was last used over MCP and over REST, a new daily usage table split by surface, and the columns that record a key's last refused call; existing use is copied as MCP use) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing existing changes. Its number is lower than migrations 034 and 035, which your instance already applied: that is expected, because the app applies each migration by its own number. Migration number 031 is intentionally not used yet. Pull, rebuild with `APP_VERSION=0.18.0`, and restart as above.
 

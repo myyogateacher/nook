@@ -1579,6 +1579,60 @@ type CanonicalScene = {
 
 `whiteboards:write` implies `whiteboards:read`; viewers hold read only, guests nothing. There are no scene-editing, delete, share, or key tools (D205, T170); descriptions say board text is untrusted data. **Nook keys:** the pair maps to grant module `whiteboards`; a grant may name chosen boards (selector kind `whiteboard`). Such a key sees `list_whiteboards` (filtered to those boards before paging) and `read_whiteboard` on them only; `create_whiteboard` names no board and is hidden from it. The access plan's `folder` selector for whiteboards is not offered yet.
 
+## Vault (Wave 25, Vault A)
+
+Plan: `docs/plan/research/2026-09-28-password-vault-module.md` §5–§7 (D211–D230, T180–T199). Migration **031** (`vault`; the plan's 024 was taken) adds `vaults`, `vault_keys`, `vault_environments`, `vault_members`, `vault_env_access`, `vault_secrets`, `vault_values`, `vault_value_versions`, `vault_events`, and `vault_rate_limits`. There are no vault key tables: `nkv_` keys will be `mcp_api_keys.kind = 'vault'` with `api_key_grants` rows carrying `env_id` (access plan D264), from Wave 27. **Wave 25 has no API keys, no `/api/v1/vault`, and no MCP tools**: vaults are owner-only (one member, its creator).
+
+**Encryption** (D211–D213): `VAULT_ENCRYPTION_KEY` (or `VAULT_ENCRYPTION_KEY_FILE`) wraps one random 256-bit data key per vault and generation (`vault_keys.wrapped_dek`, AAD `nook:vault-dek:v1:<vaultId>:<generation>`). Values, value comments, and secret comments are AES-256-GCM under the data key, stored as `v1:<nonce>:<tag>:<ciphertext>` with the AAD `nook:vault-value:v1:<vaultId>:<secretId>:<envId>:<version>`, `nook:vault-value-comment:v1:…` (same ids), or `nook:vault-secret-comment:v1:<vaultId>:<secretId>`. Names, descriptions, environment names and short names, and tags are plaintext (D222). Without a key the module is off: every route below except `GET /api/vault/status` answers 503 `VAULT_DISABLED`. A key that does not open the stored data keys at startup also turns the module off (the app keeps running).
+
+**Common rules.** Session only (`requireAuth`, Origin, JSON, `X-CSRF-Token` on writes), `Cache-Control: no-store`. Guests get 404 on every read; the role gate refuses every write from viewers and guests with 403 `ROLE_READ_ONLY` before any lookup, except a viewer's `POST …/reveal` (a read sent as POST). A missing, binned, or unreadable vault, environment, secret, or version is the same 404 `NOT_FOUND` (admins get no implicit access, D73); a level too low on an environment the caller can see is 403 `VAULT_LEVEL`. Validation errors are 400 `INVALID` with field paths only; no error body carries a value or echoes input. A ciphertext that does not open under its own ids is 500 `VAULT_INTEGRITY` (audited as `integrity.fail`). Rate limits (persistent in SQLite, sliding window): value reads and reveals 300 per 10 minutes per person (a reveal batch counts each cell), writes 300 per 10 minutes; 429 `RATE_LIMITED` with `retryAfterSeconds` and `Retry-After`.
+
+Bounds (D227): vault name 1–80, description ≤ 500, environment name 1–40, short name `^[a-z0-9][a-z0-9-]{0,31}$`, secret name 1–128 (one line, unique per vault ignoring case), at most 10 tags of 1–32 characters without spaces or commas, a value ≤ 64 KiB and a comment ≤ 2 KiB of UTF-8 (413 `TOO_LARGE`; no NUL), 20 environments per vault, 1,000 live secrets per vault, 100 owned vaults per person, 20 versions kept per secret and environment.
+
+```ts
+type Environment = { id; slug; name; position: number; protected: boolean; level: "none" | "read" | "write" | "admin" };
+type VaultSummary = { id; name; description; role: "owner" | "member"; revision: number; createdAt; updatedAt; secretCount: number; environments: Environment[] };
+type ValueCell = { status: "set" | "empty" | "no-access"; version: number | null; updatedAt: string | null; updatedBy: string | null };
+type SecretSummary = { id; name; type: "value" | "login" | "note"; tags: string[]; hasComment: boolean; revision: number; createdAt; updatedAt; updatedBy: string | null; values: Record<envId, ValueCell> };
+type ValueResult = { secretId; envId; version: number; updatedAt; updatedBy: string | null };
+```
+
+A `login` value is the JSON string `{"username","password","url"}` (each a string); the type of a secret can change only while it has no values or history (409 `TYPE_HAS_VALUES`). `protected` is stored (new vaults mark `prod`) for the Wave 26 re-authentication window; Wave 25 does not enforce it.
+
+| Endpoint | Who | Body | Success | Errors |
+| --- | --- | --- | --- | --- |
+| `GET /api/vault/status` | members, viewers, admins | | 200 `{ enabled, reason }`; `reason` (`unset` or `key_mismatch`) only for admins, otherwise null | 404 for guests |
+| `GET /api/vault/vaults` | readers | | 200 `{ vaults: VaultSummary[] }` (the caller's, by name) | |
+| `POST /api/vault/vaults` | members and admins | `{ name, description?, environments?: [{ slug, name, protected? }] (1–20) }`; default dev, staging, prod (protected) | 201 `{ vault }`: the caller is its only owner; a new data key is wrapped | 409 `SLUG_TAKEN`, `LIMIT_REACHED` |
+| `GET /api/vault/vaults/:v` | readers | | 200 `{ vault }` | 404 |
+| `PATCH /api/vault/vaults/:v` | owner | `{ name?, description?, expectedRevision }` | 200 `{ vault }` (revision + 1) | 409 `REVISION_CHANGED` with `currentRevision` |
+| `DELETE /api/vault/vaults/:v` | owner | | 200 `{ ok, binned: true }` (Bin, 30 days) | |
+| `POST /api/vault/vaults/:v/environments` | owner | `{ slug, name, protected? }` | 201 `{ environment }` | 409 `SLUG_TAKEN`, `LIMIT_REACHED` |
+| `PATCH /api/vault/vaults/:v/environments/:e` | env admin (`protected`: owner) | `{ name?, protected? }` | 200 `{ environment }` | |
+| `PUT /api/vault/vaults/:v/environments/order` | owner | `{ ids: every live environment once, expectedRevision }` | 200 `{ vault }` | 400, 409 `REVISION_CHANGED` |
+| `DELETE /api/vault/vaults/:v/environments/:e` | env admin | | 200 `{ ok, binned: true }`; its values go with it | 409 `LAST_ENVIRONMENT` |
+| `GET /api/vault/vaults/:v/secrets?q=&tag=&cursor=` | readers | | 200 `{ vault, secrets: SecretSummary[], nextCursor }`: pages of 200 by name; `q` matches names and tags; never values or comments | 400 `INVALID_CURSOR` |
+| `POST /api/vault/vaults/:v/secrets` | write on ≥ 1 environment | `{ name, type?, comment?, tags?, values?: { [envId]: { value, comment? } } (≤ 20, write on each) }` | 201 `{ vault, secret }` (with its decrypted `comment`) | 409 `NAME_TAKEN`, `LIMIT_REACHED`; 400 `INVALID_VALUE` |
+| `GET /api/vault/vaults/:v/secrets/:s` | readers | | 200 `{ vault, secret: SecretSummary & { comment } }` | |
+| `PATCH /api/vault/vaults/:v/secrets/:s` | write on every environment where it has a value (D216) | `{ name?, type?, comment? (null clears), tags?, expectedRevision }` | 200 as GET | 409 `REVISION_CHANGED`, `NAME_TAKEN`, `TYPE_HAS_VALUES` |
+| `DELETE /api/vault/vaults/:v/secrets/:s` | as PATCH | | 200 `{ ok, binned: true }` | |
+| `GET /api/vault/vaults/:v/secrets/:s/values/:e` | read on `:e` | | 200 `{ value: ValueResult & { value, comment } }`, `ETag: "v<version>"`; audited `value.read` | 404 `VALUE_NOT_SET` |
+| `PUT /api/vault/vaults/:v/secrets/:s/values/:e` | write on `:e` | `{ value, comment?, expectedVersion }` (0 when never set, or the version a clear left) | 200 `{ value: ValueResult }` (version + 1; kept in history, trimmed to 20) | 409 `VALUE_CHANGED` with `currentVersion`; 400 `INVALID_VALUE` |
+| `PUT /api/vault/vaults/:v/secrets/:s/values` | write on each | `{ values: [{ envId, value, comment?, expectedVersion }] (1–20) }`: "apply to other environments", all or nothing | 200 `{ values: ValueResult[] }` | as PUT |
+| `DELETE /api/vault/vaults/:v/secrets/:s/values/:e?expectedVersion=` | write on `:e` | | 200 `{ ok, version }`: a cleared version; history keeps the earlier ones | 404 `VALUE_NOT_SET`, 409 `VALUE_CHANGED` |
+| `POST /api/vault/vaults/:v/reveal` | per cell (viewers allowed) | `{ cells: [{ secretId, envId }] (1–100) }` | 200 `{ cells: [{ secretId, envId, status: "ok", version, value, comment } \| { secretId, envId, status: "unavailable" }] }`; one `value.read` event with the count | |
+| `GET /api/vault/vaults/:v/secrets/:s/values/:e/versions` | read on `:e` | | 200 `{ current: { version, set }, versions: [{ version, cleared, createdAt, createdBy }] }` (metadata only) | |
+| `GET /api/vault/vaults/:v/secrets/:s/values/:e/versions/:n` | read on `:e` | | 200 `{ version: { version, cleared, value, comment, createdAt } }`; audited `version.read` | 404 |
+| `POST /api/vault/vaults/:v/secrets/:s/values/:e/versions/:n/restore` | write on `:e` | `{ expectedVersion }` | 200 `{ value: ValueResult }`: the old value as a new version | 409 `VALUE_CHANGED`, `VERSION_CLEARED` |
+
+**Bin** (D225): the existing `/api/bin` lists, restores, and purges the types `vault`, `vault_environment`, and `vault_secret` (`folder_name` is the vault's name; `vault` rows say "Vault"). Owners restore and purge; whoever binned an environment or secret restores it while they still hold write there. A restore whose name or short name was taken meanwhile is 409 `NAME_TAKEN`; one whose vault is binned is 409 `PARENT_IN_BIN`. A purge is a tombstone and then one transaction; a vault's purge deletes its `vault_keys` (crypto-shred) and its events. Binned items are invisible on every other route.
+
+**`vault_events`** (append-only): `vault.create/update/delete/restore`, `env.create/update/reorder/delete/restore/purge`, `secret.create/update/delete/restore/purge`, `value.write/clear/restore/read`, `version.read`, `integrity.fail`, `kek.rotate` (via `cli`); ids and counts only. There is no activity route in Wave 25.
+
+**Host CLI** `server/vault-admin.ts`: `verify-key` (exit 0 when the key opens every stored data key, 1 when not, 2 on a usage error) and `rotate-kek` (re-wraps every data key from `VAULT_ENCRYPTION_KEY` to `VAULT_ENCRYPTION_KEY_NEW`, or the `_FILE` forms, in one transaction). Both print counts only.
+
+**`/api/auth/me`, sign-in, and registration** gain `features: { vault: boolean }`: false for guests, and for everyone but admins while the module is off. It only decides what the app shows (T97).
+
 ## Email (Waves 28–30)
 
 Plan of record: [research/2026-09-28-outbound-email.md](research/2026-09-28-outbound-email.md) (D231–D260), Wave 28 / E1, Wave 29 / E2 (digests, reminders by email, event changed/cancelled, sprints, Bin clean-up, webhooks and suppression, mutes), and Wave 30 / E3 (change and reset password). Email is off unless Resend is configured and links can work (OPERATIONS → Email); while it is off nothing is queued and the routes below answer as described. There are **no MCP tools** for email (D255): preferences are account settings, like push devices.

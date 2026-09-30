@@ -39,6 +39,7 @@ export const paths = {
   file: (documentId: string) => `/files/${id(documentId)}`,
   filesShared: () => "/files/shared",
   collection: (collectionId: string) => `/collections/${id(collectionId)}`,
+  vault: (vaultId: string) => `/vault/${id(vaultId)}`,
   calendar: () => "/calendar",
   event: (eventId: string) => `/calendar/event/${id(eventId)}`,
   notifications: () => "/notifications",

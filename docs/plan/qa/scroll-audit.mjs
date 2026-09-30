@@ -208,6 +208,14 @@ async function seed() {
       const created = await api(admin, "POST", `/vault/vaults/${vault.id}/secrets`, { name: `SCROLL_SECRET_${String(index).padStart(2, "0")}`, tags: ["scroll"], values: { [environments[0].id]: { value: `scroll value ${index}` } } });
       if (index === 0) secretId = created.body.secret.id;
     }
+    // Wave 26: shared with the seeded members (the Access grid is people × environments), and 21
+    // versions of one value (the history dialog), which also fills the Activity page.
+    const sheet = await api(admin, "GET", `/vault/vaults/${vault.id}/access`);
+    await api(admin, "PUT", `/vault/vaults/${vault.id}/access`, {
+      people: [{ id: admin.userId, role: "owner", levels: {} }, ...seeded.members.slice(0, 10).map((member) => ({ id: member.userId, role: "member", levels: { [environments[0].id]: "read", [environments[1].id]: "write" } }))],
+      groups: []
+    }, { "If-Match": sheet.body.etag });
+    for (let version = 1; version <= 21; version += 1) await api(admin, "PUT", `/vault/vaults/${vault.id}/secrets/${secretId}/values/${environments[0].id}`, { value: `scroll value v${version}`, expectedVersion: version });
     seeded.vault = { id: vault.id, envId: environments[1].id, secretId };
   }
   admin.browserContext().close();
@@ -541,7 +549,13 @@ const ROUTES = (s) => [
     ["Vault grid (60 secrets, 9 environments)", `/vault/${s.vault.id}`],
     ["Vault environment cards", `/vault/${s.vault.id}/env/${s.vault.envId}`],
     ["Vault secret (9 environments)", `/vault/${s.vault.id}/secrets/${s.vault.secretId}`],
-    ["Vault settings sheet (9 environments)", `/vault/${s.vault.id}`, async (page) => { await tapText(page, "button", "Vault settings"); await page.waitForSelector(".vault-settings"); }, { scope: ".vault-settings" }]
+    ["Vault settings sheet (9 environments)", `/vault/${s.vault.id}`, async (page) => { await tapText(page, "button", "Vault settings"); await page.waitForSelector(".vault-settings"); }, { scope: ".vault-settings" }],
+    // Wave 26: who has access (11 people × 9 environments), Activity, Import, Export, and a value's history.
+    ["Vault access (11 people, 9 environments)", `/vault/${s.vault.id}/access`],
+    ["Vault activity", `/vault/${s.vault.id}/activity`],
+    ["Vault import sheet", `/vault/${s.vault.id}`, async (page) => { await tapText(page, "button", "Import"); await page.waitForSelector(".vault-import"); }, { scope: ".vault-import" }],
+    ["Vault export sheet", `/vault/${s.vault.id}`, async (page) => { await tapText(page, "button", "Export"); await page.waitForSelector(".vault-export"); }, { scope: ".vault-export" }],
+    ["Vault history dialog (21 versions)", `/vault/${s.vault.id}/secrets/${s.vault.secretId}`, async (page) => { await tapText(page, "button", "History of"); await page.waitForSelector(".vault-history"); }, { scope: ".vault-history" }]
   ] : []),
   ["Inbox", "/inbox", null, { split: true, check: splitPanes }],
   ["Inbox routines", "/inbox/routines"],

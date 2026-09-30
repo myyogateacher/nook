@@ -31,6 +31,15 @@ export function kindBreakdown(counts: Pick<KindCount, "direct" | "groupItems" | 
 }
 export type ResetCounts = { directShares: number; groups: number; keys: number; feeds: number; routines: number };
 
+/**
+ * One vault membership (Wave 26): the vault's name only when the viewer can open it (else "Vault
+ * owned by …", D269), the vault role, and the level per environment. `handle` on the admin page only.
+ */
+export type VaultAccessRow = {
+  title: string; titleHidden: boolean; owner: { displayName: string }; role: "owner" | "member"; via: "direct" | "group";
+  environments: Array<{ name: string; level: "none" | "read" | "write" | "admin" }>; active: boolean; handle?: string;
+};
+
 export type AccessSummary = {
   member: { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
   groups: Array<{ id: string; name: string; grantCount: number; memberCount: number; addedAt: string; addedBy: { id: string; displayName: string } | null; selfAdded: boolean }>;
@@ -38,6 +47,8 @@ export type AccessSummary = {
   feeds: { live: number };
   routines: { enabled: number };
   kinds: KindCount[];
+  /** Wave 26: vault memberships (older servers omit it). */
+  vaults?: VaultAccessRow[];
   resetCounts: ResetCounts;
   pageSize: number;
 };
@@ -238,7 +249,12 @@ export const DENIAL_TEXT: Record<string, string> = {
 
 const keyName = (event: ActivityEvent) => event.key?.name ? `“${event.key.name}”` : "(deleted)";
 const groupName = (event: ActivityEvent) => event.group?.name ? `“${event.group.name}”` : "a deleted group";
-const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? event.item.title.replace(/^(\w)/, (letter) => letter.toLowerCase()).replace(/^/, "a ") : `“${event.item.title}”`;
+/** A hidden title in a sentence: "Board owned by Carol" → "a board owned by Carol"; "A vault" stays "a vault" (QA L5). */
+export function hiddenItemPhrase(title: string) {
+  const lowered = title.replace(/^(\w)/, (letter) => letter.toLowerCase());
+  return /^an? /.test(lowered) ? lowered : `a ${lowered}`;
+}
+const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? hiddenItemPhrase(event.item.title) : `“${event.item.title}”`;
 
 /** F10: an action this build does not know still reads as a sentence, never as its code. */
 export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => `${who(row)} changed access`))(event);

@@ -17,12 +17,15 @@ export const markAllRead = () => api<{ ok: true; updated: number }>("/notificati
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
- * The in-app path a notification opens. Only the two shapes the server builds are followed, and
- * only same-origin paths (T68): anything else opens the notifications list.
+ * The in-app path a notification opens. Only the shapes the server builds are followed, and only
+ * same-origin paths (T68): anything else opens the notifications list.
  */
 export function safeNotificationPath(href: string) {
   // Proposal notifications (agent inbox D159) open the Inbox.
   if (href === "/inbox") return "/inbox";
+  // "Shared the vault … with you" (Wave 26) opens that vault.
+  const vault = /^\/vault\/([^/?#]+)$/.exec(href);
+  if (vault && idPattern.test(vault[1]!)) return `/vault/${vault[1]!.toLowerCase()}`;
   const match = /^\/calendar\/event\/([^/?#]+)$/.exec(href);
   return match && idPattern.test(match[1]!) ? `/calendar/event/${match[1]!.toLowerCase()}` : "/notifications";
 }

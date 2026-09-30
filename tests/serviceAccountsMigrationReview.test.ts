@@ -37,9 +37,9 @@ const identity = (db: Database, userId: string) =>
     .run(crypto.randomUUID(), userId, `sub-${crypto.randomUUID()}`, at, at);
 
 describe("review: migration 036 (service accounts) on an upgraded database", () => {
-  test("is the last registered migration and the only one after 035", () => {
-    expect(registeredMigrationIds.at(-1)).toBe(36);
-    expect(registeredMigrationIds.filter((id) => id > 35)).toEqual([36]);
+  test("follows 035 directly; only 037 (vault sharing, Wave 26) comes after it", () => {
+    expect(registeredMigrationIds.indexOf(36)).toBe(registeredMigrationIds.indexOf(35) + 1);
+    expect(registeredMigrationIds.filter((id) => id > 35)).toEqual([36, 37]);
   });
 
   test("upgrades a 035 database with people in it, re-runs as a no-op, and leaves person flows alone", () => {

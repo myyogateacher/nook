@@ -20,6 +20,11 @@ export const VAULT_BOUNDS = {
   versionsKept: 20,
   revealBatch: 100,
   applyBatch: 20,
+  /** People per vault (D227); groups are bounded separately (20). */
+  members: 50,
+  /** Entries per import (D227, §6.4) and the largest file the client reads (1 MiB). */
+  importEntries: 500,
+  importFileBytes: 1024 * 1024,
   secretsPage: 200
 } as const;
 

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, History, KeyRound, Pencil, Plus, RefreshCw, Trash2, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Eye, EyeOff, History, KeyRound, LogOut, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { ApiError } from "../api";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
@@ -8,8 +8,9 @@ import type { ConfirmRequest } from "../ui/useConfirm";
 import { DEFAULT_ENVIRONMENTS, formatLoginValue, isTag, parseLoginValue, SECRET_TYPES, SLUG_PATTERN, utf8Length, VAULT_BOUNDS, type SecretType } from "../../shared/vault";
 import { DEFAULT_GENERATOR, generate, GENERATOR_BOUNDS, strengthLabel, type GeneratorKind, type GeneratorOptions } from "./generator";
 import { MASK, useEditorMask, type Revealed } from "./reveal";
+import { useVaultReauth } from "./VaultReauth";
 import {
-  createEnvironment, createSecret, createVault, deleteEnvironment, deleteVault, getVault, readValue, reorderEnvironments, setValue, setValues, updateEnvironment, updateSecret, updateVault,
+  createEnvironment, createSecret, createVault, deleteEnvironment, deleteVault, getVault, leaveVault, readValue, reorderEnvironments, rotateVault, setValue, setValues, updateEnvironment, updateSecret, updateVault,
   type SecretDetail, type SecretSummary, type VaultEnvironment, type VaultSummary
 } from "./vaultApi";
 
@@ -61,6 +62,14 @@ function parseTagInput(text: string): { tags: string[]; error: string | null } {
 // ---------------------------------------------------------------------------------------------
 // New vault
 
+/** What the New vault sheet says about protected environments (QA L4): which ones, and what it means. */
+export function protectedHint(envs: ReadonlyArray<{ name: string; slug: string; protected: boolean }>) {
+  const names = envs.filter((env) => env.protected).map((env) => `${env.name.trim() || env.slug}${env.slug ? ` (${env.slug})` : ""}`);
+  if (!names.length) return null;
+  const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${list} ${names.length === 1 ? "is" : "are"} protected: opening ${names.length === 1 ? "it" : "them"} asks for your password again. You can change this in the vault's settings.`;
+}
+
 type EnvDraft = { key: string; slug: string; name: string; protected: boolean };
 
 export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; onCreated: (vault: VaultSummary) => void }) {
@@ -106,6 +115,7 @@ export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; 
         </li>)}
       </ul>
       {envs.length < VAULT_BOUNDS.environments && <button type="button" className="secondary-button vault-inline-button" onClick={() => setEnvs((current) => [...current, { key: crypto.randomUUID(), slug: "", name: "", protected: false }])}><Plus />Add environment</button>}
+      {protectedHint(envs) && <p className="file-dialog-hint">{protectedHint(envs)}</p>}
       <p className="file-dialog-hint">Names and tags are not encrypted. Put anything sensitive in a value or a comment.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">
@@ -133,6 +143,7 @@ export function NewSecretDialog({ vault, initialEnvId, onCancel, onCreated }: { 
   const [error, setError] = useState<string | null>(null);
   const ids = { name: useId(), value: useId(), comment: useId(), tags: useId(), type: useId(), env: useId() };
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
+  const run = useVaultReauth();
 
   const payload = type === "login" ? (login.username || login.password || login.url ? formatLoginValue(login) : "") : value;
   async function submit(event: FormEvent) {
@@ -144,10 +155,10 @@ export function NewSecretDialog({ vault, initialEnvId, onCancel, onCreated }: { 
     setBusy(true);
     setError(null);
     try {
-      const { secret } = await createSecret(vault.id, {
+      const { secret } = await run(() => createSecret(vault.id, {
         name: name.trim(), type, comment: comment.trim() || null, tags: tags.tags,
         ...(payload && envId ? { values: { [envId]: { value: payload } } } : {})
-      });
+      }));
       onCreated(secret);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the secret"));
@@ -307,6 +318,7 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
   const valueId = useId();
   const commentId = useId();
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
+  const run = useVaultReauth();
   const others = vault.environments.filter((item) => item.id !== env.id && canWriteEnv(item));
   const envName = (envId: string) => vault.environments.find((item) => item.id === envId)?.name ?? "Another environment";
 
@@ -314,7 +326,7 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
     setLoading(true);
     setError(null);
     try {
-      const { value: current } = await readValue(vault.id, secret.id, env.id);
+      const { value: current } = await run(() => readValue(vault.id, secret.id, env.id));
       if (secret.type === "login") setLogin(parseLoginValue(current.value) ?? { username: "", password: current.value, url: "" });
       else setValueText(current.value);
       setComment(current.comment ?? "");
@@ -340,12 +352,12 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
     setError(null);
     try {
       if (applyTo.length === 0) {
-        await setValue(vault.id, secret.id, env.id, { value: payload, comment: comment.trim() || null, expectedVersion });
+        await run(() => setValue(vault.id, secret.id, env.id, { value: payload, comment: comment.trim() || null, expectedVersion }));
       } else {
-        await setValues(vault.id, secret.id, [
+        await run(() => setValues(vault.id, secret.id, [
           { envId: env.id, value: payload, comment: comment.trim() || null, expectedVersion },
           ...applyTo.map((envId) => ({ envId, value: payload, comment: comment.trim() || null, expectedVersion: openedVersions[envId] ?? 0 }))
-        ]);
+        ]));
       }
       onSaved(applyTo.length ? `Saved in ${applyTo.length + 1} environments` : `Saved in ${env.name}`);
     } catch (reason) {
@@ -427,14 +439,14 @@ export function Masked() {
   return <span className="vault-masked"><span aria-hidden="true">{MASK}</span><span className="sr-only">hidden value</span></span>;
 }
 
-export function CellDialog({ vault, secret, env, revealed, onReveal, onHide, onCopy, onEdit, onClear, onOpenSecret, onClose }: {
+export function CellDialog({ vault, secret, env, revealed, onReveal, onHide, onCopy, onEdit, onClear, onHistory, onOpenSecret, onClose }: {
   vault: VaultSummary; secret: SecretSummary; env: VaultEnvironment; revealed: Revealed | null;
-  onReveal: () => void; onHide: () => void; onCopy: () => void; onEdit: () => void; onClear: () => void; onOpenSecret: () => void; onClose: () => void;
+  onReveal: () => void; onHide: () => void; onCopy: () => void; onEdit: () => void; onClear: () => void; onHistory: () => void; onOpenSecret: () => void; onClose: () => void;
 }) {
   useHistoryDialogGuard(true, onClose);
   const cell = secret.values[env.id];
   const set = cell?.status === "set";
-  return <ModalDialog title={`${secret.name} · ${env.name}`} eyebrow={vault.name} onClose={onClose} className="vault-dialog vault-cell-dialog">
+  return <ModalDialog title={`${secret.name} · ${env.name}`} eyebrow={`${vault.name}${env.protected ? " · protected environment" : ""}`} onClose={onClose} className="vault-dialog vault-cell-dialog">
     <div className="vault-cell-body">
       {set ? (revealed ? <RevealedText type={secret.type} revealed={revealed} /> : <Masked />) : <p className="file-dialog-hint">Not set in {env.name}.</p>}
       {revealed?.comment && <p className="vault-value-comment">{revealed.comment}</p>}
@@ -445,7 +457,8 @@ export function CellDialog({ vault, secret, env, revealed, onReveal, onHide, onC
       {set && <button type="button" className="secondary-button" onClick={onCopy}><Copy />Copy</button>}
       {canWriteEnv(env) && <button type="button" className="secondary-button" onClick={onEdit}><Pencil />{set ? "Edit" : "Set value"}</button>}
       {set && canWriteEnv(env) && <button type="button" className="danger-button" onClick={onClear}><Trash2 />Clear</button>}
-      <button type="button" className="secondary-button" onClick={onOpenSecret}><History />Details</button>
+      {(cell?.version ?? 0) > 0 && <button type="button" className="secondary-button" onClick={onHistory} aria-haspopup="dialog"><History />History</button>}
+      <button type="button" className="secondary-button" onClick={onOpenSecret}><Pencil />Details</button>
     </footer>
   </ModalDialog>;
 }
@@ -506,10 +519,11 @@ export function SecretMetaDialog({ vault, secret, onCancel, onSaved }: { vault: 
 // ---------------------------------------------------------------------------------------------
 // Vault settings: name, description, environments (owner), and delete
 
-export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask, flash }: {
-  vault: VaultSummary; onCancel: () => void; onChanged: (vault: VaultSummary) => void; onDeleted: () => void;
+export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onLeft, ask, flash }: {
+  vault: VaultSummary; onCancel: () => void; onChanged: (vault: VaultSummary) => void; onDeleted: () => void; onLeft: () => void;
   ask: (request: ConfirmRequest) => Promise<boolean>; flash: (message: string) => void;
 }) {
+  const withReauth = useVaultReauth();
   const owner = vault.role === "owner";
   const [current, setCurrent] = useState(vault);
   const [name, setName] = useState(vault.name);
@@ -562,12 +576,23 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask
         {current.environments.map((env, index) => <li key={env.id}>
           <input aria-label={`Name of ${env.slug}`} value={names[env.id] ?? env.name} maxLength={VAULT_BOUNDS.envName} disabled={busy || env.level !== "admin"} autoComplete="off" onChange={(event) => { const value = event.target.value; setNames((all) => ({ ...all, [env.id]: value })); }} />
           <span className="vault-slug">{env.slug}</span>
+          {owner && <label className="vault-check vault-protect-toggle" title="Protected: values need a fresh re-authentication (15 minutes)">
+            <input type="checkbox" checked={env.protected} disabled={busy} aria-label={`Protect ${env.name}`} onChange={(event) => {
+              const next = event.target.checked;
+              void withReauth(async () => { await updateEnvironment(vault.id, env.id, { protected: next }); }).then(async () => {
+                const refreshedVault = (await getVault(vault.id)).vault;
+                setCurrent(refreshedVault);
+                onChanged(refreshedVault);
+                flash(next ? `${env.name} is protected` : `${env.name} is no longer protected`);
+              }, (reason) => setError(messageOf(reason, "Could not change protection")));
+            }} /><ShieldCheck aria-hidden="true" /><span className="sr-only">Protected</span>
+          </label>}
           {env.level === "admin" && (names[env.id] ?? env.name).trim() !== env.name && <button type="button" className="secondary-button vault-inline-button" disabled={busy || !(names[env.id] ?? "").trim()} onClick={() => { void run(async () => { await updateEnvironment(vault.id, env.id, { name: (names[env.id] ?? "").trim() }); return refreshed(); }, "Renamed"); }}>Save</button>}
           {owner && <button type="button" className="icon-button" aria-label={`Move ${env.name} up`} disabled={busy || index === 0} onClick={() => move(index, -1)}><ArrowUp /></button>}
           {owner && <button type="button" className="icon-button" aria-label={`Move ${env.name} down`} disabled={busy || index === current.environments.length - 1} onClick={() => move(index, 1)}><ArrowDown /></button>}
           {env.level === "admin" && <button type="button" className="icon-button" aria-label={`Delete ${env.name}`} disabled={busy || current.environments.length <= 1} onClick={() => {
             void ask({ title: `Delete ${env.name}?`, message: `${env.name} and its values move to the Bin for 30 days. Restoring it brings the values back.`, confirmLabel: "Move to Bin", danger: true }).then((confirmed) => {
-              if (confirmed) void run(async () => { await deleteEnvironment(vault.id, env.id); return refreshed(); }, `Moved ${env.name} to the Bin`);
+              if (confirmed) void run(async () => { await withReauth(() => deleteEnvironment(vault.id, env.id)); return refreshed(); }, `Moved ${env.name} to the Bin`);
             });
           }}><Trash2 /></button>}
         </li>)}
@@ -582,6 +607,25 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask
         <button type="submit" className="secondary-button vault-inline-button" disabled={busy}><Plus />Add</button>
       </form>}
       {error && <p className="form-error" role="alert">{error}</p>}
+      {owner && <p className="file-dialog-hint"><ShieldCheck className="vault-hint-icon" aria-hidden="true" />A checked shield marks a protected environment: revealing, editing, importing, or exporting its values needs you to confirm it's you (valid 15 minutes).</p>}
+      {owner && <div className="vault-settings-block">
+        <span className="vault-field-label">Data key</span>
+        <p className="file-dialog-hint">Rotating starts a new data key for this vault and re-encrypts its values in the background. It protects old backups; it does not take back what someone already read. Removing someone rotates it for you.</p>
+        <button type="button" className="secondary-button vault-inline-button" disabled={busy} onClick={() => {
+          void ask({ title: "Rotate the data key?", message: "New values use the new key at once; existing ones move over in the background, and stay readable meanwhile.", confirmLabel: "Rotate" }).then(async (confirmed) => {
+            if (!confirmed) return;
+            setBusy(true);
+            try {
+              const { rotation } = await rotateVault(vault.id);
+              flash(rotation.done ? "Rotated the data key" : `Rotating the data key: ${rotation.pendingRows} stored values are moving to it in the background`);
+            } catch (reason) {
+              setError(messageOf(reason, "Could not rotate the key"));
+            } finally {
+              setBusy(false);
+            }
+          });
+        }}><RefreshCw />Rotate data key</button>
+      </div>}
       <p className="file-dialog-hint"><KeyRound className="vault-hint-icon" aria-hidden="true" />Encrypted at rest; anyone with the server and its key can read every secret. Names, short names, and tags are not encrypted.</p>
       <footer className="file-dialog-actions vault-settings-actions">
         {owner && <button type="button" className="danger-button" disabled={busy} onClick={() => {
@@ -597,6 +641,19 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask
             }
           });
         }}><Trash2 />Delete vault</button>}
+        {!owner && vault.via !== "group" && <button type="button" className="danger-button" disabled={busy} onClick={() => {
+          void ask({ title: `Leave ${current.name}?`, message: "You lose access to every environment of this vault. An owner can add you again.", confirmLabel: "Leave vault", danger: true }).then(async (confirmed) => {
+            if (!confirmed) return;
+            setBusy(true);
+            try {
+              await leaveVault(vault.id);
+              onLeft();
+            } catch (reason) {
+              setError(messageOf(reason, "Could not leave the vault"));
+              setBusy(false);
+            }
+          });
+        }}><LogOut />Leave vault</button>}
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Done</button>
       </footer>
     </div>

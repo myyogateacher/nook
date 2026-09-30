@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request } from "./support/harness";
-import { call, newSecret, newVault, resetVaultLimits } from "./support/vault";
+import { call, newSecret, newVault, resetVaultLimits, unlock } from "./support/vault";
 
 const { sweepBin } = await import("../server/bin");
 const { chargeVault, VAULT_LIMITS } = await import("../server/vault/limits");
@@ -28,6 +28,8 @@ describe("vaults and environments", () => {
 
   test("custom environments, rename with CAS, add, rename, reorder, and the last environment stays", async () => {
     const owner = await createUser("Env owner");
+    // "live" is protected: binning it needs the window (Wave 26, D226).
+    await unlock(owner);
     const created = await call(owner, "POST", "/vaults", { name: "Custom", environments: [{ slug: "local", name: "Local" }, { slug: "live", name: "Live", protected: true }] });
     expect(created.status).toBe(201);
     const vault = created.body.vault;

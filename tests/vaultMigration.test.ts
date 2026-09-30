@@ -19,7 +19,8 @@ async function releasedWithout(id: number) {
     const module = await import(join(dir, file)) as Record<string, unknown>;
     for (const value of Object.values(module)) if (value && typeof value === "object" && "up" in value && "id" in value) found.push(value as Migration);
   }
-  return found.filter((migration) => migration.id !== id && registeredMigrationIds.includes(migration.id)).sort((a, b) => a.id - b.id);
+  // A v0.18.0-shaped database predates 037 (Wave 26), which needs 031 itself.
+  return found.filter((migration) => migration.id !== id && migration.id <= 36 && registeredMigrationIds.includes(migration.id)).sort((a, b) => a.id - b.id);
 }
 
 const TABLES = ["vaults", "vault_keys", "vault_environments", "vault_members", "vault_env_access", "vault_secrets", "vault_values", "vault_value_versions", "vault_events", "vault_rate_limits"];

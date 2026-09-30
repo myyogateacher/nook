@@ -264,6 +264,25 @@ export function takeDialogSentinelEntry(state: unknown) {
  * returned release pops it once the last dialog closed by any means other than Back. The pop waits a
  * tick so a dialog that replaces another keeps the same sentinel.
  */
+/**
+ * Runs `callback` once every guarded dialog has closed and its sentinel entry (if one was pushed on
+ * the landing entry) has been popped, so a navigation that replaces the current entry replaces the
+ * page's own entry rather than the sentinel (QA L6: leaving a vault from its settings on a deep link
+ * left a duplicate entry). Waits at most a few ticks for the release, then for the history to settle.
+ */
+export function afterDialogsReleased(callback: () => void, schedule: (step: () => void) => void = (step) => { setTimeout(step, 0); }) {
+  let tries = 0;
+  const step = () => {
+    if ((openDialogs > 0 || releaseTimer !== null || pendingSentinelPop !== null) && tries < 20) {
+      tries += 1;
+      schedule(step);
+      return;
+    }
+    whenHistorySettled(callback);
+  };
+  schedule(step);
+}
+
 export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv()) {
   openDialogs += 1;
   if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }

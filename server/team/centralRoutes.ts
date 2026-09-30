@@ -5,6 +5,7 @@ import { presentItem, readabilityChecker } from "../access/effective";
 import { ACTIVITY_CATEGORIES, listAccessActivity } from "../access/events";
 import { ACCESS_KINDS, LEVELS, type AccessKind } from "../access/levels";
 import { parseJson, uuid } from "../validation";
+import { vaultTitleFor } from "../vault/access";
 import { accessItems, accessSummary, lowerAccess, MemberAccessError, removeAccess, removeFromGroup, resetAccess } from "./memberAccess";
 import { applyTemplateToMember, createTemplate, createTemplateSchema, deleteTemplate, deleteTemplateSchema, listTemplates, patchTemplate, patchTemplateSchema, TemplateError } from "./templates";
 
@@ -164,7 +165,12 @@ export function registerCentralAccessRoutes(app: Hono<AppEnv>, gates: { read: Ga
     if (!query.success) return invalid(c);
     const viewerId = c.get("user").id;
     const readable = readabilityChecker(viewerId);
-    const present = (kind: string, id: string) => (ACCESS_KINDS as readonly string[]).includes(kind) ? presentItem(kind as AccessKind, id, viewerId, readable) : { kind, title: "An item", titleHidden: true };
+    const present = (kind: string, id: string) => {
+      if ((ACCESS_KINDS as readonly string[]).includes(kind)) return presentItem(kind as AccessKind, id, viewerId, readable);
+      // Vaults (Wave 26): the name only for an admin who can open the vault themselves (D73, D269).
+      const vault = kind === "vault" ? vaultTitleFor(viewerId, id) : null;
+      return vault ? { kind, title: vault, titleHidden: false } : { kind, title: kind === "vault" ? "A vault" : "An item", titleHidden: true };
+    };
     const { user, group, key, action, cursor } = query.data;
     c.header("Cache-Control", "no-store");
     return c.json(listAccessActivity({ userId: user, groupId: group, keyId: key, category: action, cursor }, present));

@@ -3,7 +3,7 @@ import { config } from "../config";
 import { keyFilter } from "../keyResources";
 import { withAuditContext } from "../db";
 import { restoreItem } from "../bin";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { keyMayRead } from "../keyReach";
 import { collectionCreateSchema } from "./routes";
 import { COLLECTION_TEMPLATES } from "./templates";
@@ -125,7 +125,7 @@ function translateFilters(schema: CollectionSchema, filters: FilterInput[] | und
     const value = filter.value === undefined ? undefined : field.type === "select" || field.type === "multi_select" ? translateValue(field, filter.value) : filter.value;
     // The API's own filter shape bounds operators and value sizes before the query builder runs.
     const parsed = filterSpec.safeParse({ fieldId: field.id, op: filter.op, ...(value === undefined ? {} : { value }) });
-    if (!parsed.success) throw new McpToolError("INVALID", `Invalid filter on “${field.name}”`, { details: parsed.error.issues.map((issue) => issue.message) });
+    if (!parsed.success) throw new McpToolError("INVALID", `Invalid filter on “${field.name}”`, { details: issueDetails(parsed.error.issues) });
     return parsed.data as FilterSpec;
   });
 }
@@ -316,7 +316,7 @@ export const collectionTools: McpToolSpec[] = [
     handler: async (args, key) => {
       if ((args.templateId === undefined) === (args.fields === undefined)) throw new McpToolError("INVALID", "Give exactly one of templateId and fields");
       const parsed = collectionCreateSchema.safeParse(args);
-      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
       return service(key, () => {
         const { collection } = createCollection(key.userId, { ...parsed.data, fields: parsed.data.fields as Parameters<typeof createCollection>[1]["fields"] });
         return {

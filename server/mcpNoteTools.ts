@@ -5,7 +5,7 @@ import { config } from "./config";
 import { db, withAuditContext } from "./db";
 import { createFolder, FolderError } from "./folders";
 import { forgetSeenDraft, seenDraft } from "./mcpSeenDrafts";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
 import { DraftActionError, moveNoteToBin, publishDraft } from "./noteDrafts";
 import { withNoteLock } from "./storage";
 import { folderSchema } from "./validation";
@@ -77,7 +77,7 @@ export const noteManageTools: McpToolSpec[] = [
     inputSchema: z.object({ name: z.string().min(1).max(120), parentId: uuid.optional().describe("A folder the user owns") }).strict(),
     handler: ({ name, parentId }, key) => {
       const parsed = folderSchema.safeParse({ name, parentId });
-      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
       try {
         return { folder: viaKey(key, () => createFolder(key.userId, parsed.data.name, parsed.data.parentId ?? null)) };
       } catch (error) {

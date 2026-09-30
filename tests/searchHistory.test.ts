@@ -39,3 +39,22 @@ test("search starts at two characters and never puts more than 200 in the reques
   expect(params.get("folder")).toBe("shared");
   expect(params.get("scope")).toBe("notes");
 });
+
+test("a phone search's own entry is marked, and clearing the search unwinds it like Back (Wave 34 verification N2)", async () => {
+  const { isSearchPushedEntry, markSearchPushed } = await import("../src/search/searchHistory");
+  const pushed = markSearchPushed(withSearchHint("user-1", { query: "ab", all: false }, { kept: 1 }));
+  expect(isSearchPushedEntry(pushed)).toBe(true);
+  expect(pushed.kept).toBe(1);
+  // Later hint updates on that entry keep the mark; other entries never have it.
+  expect(isSearchPushedEntry(withSearchHint("user-1", { query: "", all: false }, pushed))).toBe(true);
+  expect(isSearchPushedEntry(withSearchHint("user-1", { query: "ab", all: false }, null))).toBe(false);
+  expect(isSearchPushedEntry(null)).toBe(false);
+  const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+  const clear = app.slice(app.indexOf("function clearSearch()"), app.indexOf("function onSearchKeyDown"));
+  expect(clear).toContain("isSearchPushedEntry(window.history.state)");
+  expect(clear).toContain("window.history.back()");
+  // Escape and the clear button both go through clearSearch.
+  expect(app).toMatch(/event\.key === "Escape"\) \{\s*if \(!query\) return;\s*event\.preventDefault\(\);\s*clearSearch\(\);/);
+  expect(app).toContain("onClick={() => { clearSearch(); searchInputRef.current?.focus(); }}");
+  expect(app).toContain("pushState(markSearchPushed(");
+});

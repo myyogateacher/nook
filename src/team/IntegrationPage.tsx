@@ -14,6 +14,10 @@ import {
   type IntegrationDetail, type IntegrationRole
 } from "./integrationsApi";
 import { eventLabel } from "./teamFormat";
+import { hubDocumentTitle } from "../router";
+import { googleIntegrationResultFor } from "../auth/googleSignIn";
+import { googleSettingsNotice } from "../auth/GoogleAccountCard";
+import { GoogleReturnNotice } from "./TeamGoogle";
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
@@ -55,6 +59,11 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
     }
   }, [onKeyPendingChange]);
   const { ask, confirmElement } = useConfirm();
+  // Review L6: an admin's Google confirmation started from this page's keys comes back here; its result shows over the keys.
+  const [returned, setReturned] = useState(() => {
+    const result = googleIntegrationResultFor(integrationId);
+    return result ? googleSettingsNotice(result) : null;
+  });
   const generation = useRef(0);
   const keysApi = useMemo(() => integrationKeysApi(integrationId), [integrationId]);
 
@@ -75,7 +84,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
     }
   }, [flash, integrationId, onDeleted]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (integration) document.title = `${integration.displayName} · Integrations · Nook`; }, [integration]);
+  useEffect(() => { if (integration) document.title = hubDocumentTitle(integration.displayName); }, [integration]);
 
   async function act(operation: () => Promise<{ integration: IntegrationDetail }>, message: string) {
     setBusy(true);
@@ -181,7 +190,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
     </section>}
 
     {!retired && <KeysApiContext.Provider value={keysApi}>
-      <KeysSettings key={keysVersion} integration={{ name: integration.displayName }} role={integration.role} totpEnabled={totpEnabled} onPendingChange={pendingChanged} reopenOnForward={false} />
+      <KeysSettings key={keysVersion} notice={returned && <GoogleReturnNotice notice={returned} onDismiss={() => setReturned(null)} />} integration={{ name: integration.displayName }} role={integration.role} totpEnabled={totpEnabled} onPendingChange={pendingChanged} reopenOnForward={false} />
     </KeysApiContext.Provider>}
 
     <section className="team-card" aria-labelledby="integration-facts-heading">

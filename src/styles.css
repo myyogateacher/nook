@@ -222,14 +222,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .side-panel > header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 18px 18px 15px 22px; border-bottom: 1px solid var(--border); }
 .side-panel h2 { margin: 4px 0 0; font-size: 1.25rem; letter-spacing: -.025em; }
 .panel-scrim { position: fixed; z-index: 30; inset: 0; border: 0; background: rgb(0 0 0 / 35%); }
-.settings-dialog { position: fixed; z-index: 41; inset: clamp(24px, 7vh, 78px) clamp(24px, 8vw, 140px); width: min(1040px, calc(100vw - 48px)); max-height: 780px; margin: auto; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #36363b; border-radius: 18px; background: #141416; box-shadow: 0 32px 110px rgb(0 0 0 / 68%); }
-.settings-header { min-height: 82px; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); }
-.settings-header h2 { margin: 4px 0 0; font-size: 1.35rem; }
-.settings-body { min-height: 0; flex: 1; display: grid; grid-template-columns: 230px minmax(0, 1fr); }
-.settings-nav { padding: 18px 12px; border-right: 1px solid var(--border); background: #101012; }
-.settings-nav button { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 0 12px; background: transparent; color: #a7a7ad; text-align: left; cursor: pointer; }
-.settings-nav button.active { background: #29251b; color: #f6ce73; }
-.settings-nav svg { width: 18px; height: 18px; flex: none; }
 .settings-content { min-width: 0; overflow-y: auto; padding: 32px clamp(24px, 4vw, 48px) 44px; }
 .settings-section-heading { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 24px; }
 .settings-section-heading h3 { margin: 2px 0 7px; font-size: 1.3rem; }
@@ -344,9 +336,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
 .new-api-key > div { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.new-api-key .secondary-button { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.new-api-key .secondary-button { min-height: 38px; display: flex; flex: none; align-items: center; gap: 7px; padding: 0 12px; white-space: nowrap; }
 .new-api-key .secondary-button svg { width: 15px; }
-.new-api-key .text-button { margin: 0; }
+/* QA Q8: "I saved this key" reads as a button beside Copy key, not a full-width link. */
+.new-api-key .text-button { width: auto; min-height: 38px; margin: 0; padding: 0 12px; border: 1px solid #4a4129; border-radius: 8px; white-space: nowrap; }
 .mcp-key-list { display: grid; border-top: 1px solid #29292d; }
 .mcp-key-list > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 13px 0; border-bottom: 1px solid #29292d; }
 .mcp-key-list .key-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #202024; color: #aaaab0; }
@@ -445,18 +438,12 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mobile-tabbar button.active { color: var(--yellow); }
   .mobile-tabbar svg { width: 19px; height: 19px; }
   .side-panel { position: fixed; bottom: calc(61px + env(safe-area-inset-bottom)); width: 100%; border-left: 0; }
-  .settings-dialog { inset: 0 0 calc(61px + env(safe-area-inset-bottom)); width: 100%; max-height: none; border: 0; border-radius: 0; }
-  .settings-body { display: block; overflow-y: auto; }
-  .settings-nav { display: flex; overflow-x: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .settings-nav { position: sticky; z-index: 2; top: 0; background: #101012; }
-  .settings-nav button { width: auto; min-width: 130px; }
-  .settings-nav button.active { box-shadow: inset 0 -2px 0 #f6ce73; }
   .settings-content { overflow: visible; padding: 22px 18px 36px; }
   .mcp-endpoint { grid-template-columns: 1fr; }
   .mcp-endpoint > div + div { border-left: 0; border-top: 1px solid #2b2b2f; }
   .mcp-key-form { grid-template-columns: 1fr; }
-  /* 5b: 44 px phone targets in Settings (Close, Copy endpoint, Revoke, Create API key). */
-  .settings-header .icon-button, .mcp-endpoint .icon-button { width: 44px; height: 44px; }
+  /* 5b: 44 px phone targets in Settings (Copy endpoint, Revoke, Create API key). */
+  .mcp-endpoint .icon-button { width: 44px; height: 44px; }
   .mcp-key-list .text-danger { min-height: 44px; padding: 0 10px; }
   .mcp-key-form .primary-button { min-height: 44px; }
   .enrollment-grid { grid-template-columns: 1fr; }

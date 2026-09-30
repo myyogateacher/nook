@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronLeft, ChevronRight, History, House, KeyRound, LayoutTemplate, Link2, LogOut, Mail, RotateCcw, Scale, Search, ShieldAlert, ShieldCheck, Sparkles, TriangleAlert, UserCheck, UserX, Users, UsersRound, X } from "lucide-react";
+import { ChevronLeft, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, TriangleAlert, UserCheck, UserX, Users, X, ChevronRight } from "lucide-react";
 import { ApiError } from "../api";
-import { AccountActions, useBinCount, AppPageName } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
-import { popStateClosedDialog } from "../historyDialogs";
-import { parseRoute, type Route } from "../router";
+import { hubDocumentTitle, type Route } from "../router";
 import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
 import { TeamGoogleCard } from "./TeamGoogle";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { repeatDelta, useLeaveGuard } from "../ui/useLeaveGuard";
-import { useConfirm } from "../ui/useConfirm";
-import { unsavedKeyConfirm } from "../keys/unsavedKeyConfirm";
-import { whenHistorySettled, type PopDirection } from "../historyDialogs";
 import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
 import { TeamEmailLog } from "./TeamEmailLog";
@@ -31,20 +25,26 @@ import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, sta
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 
+/** The history-free navigation the Settings hub hands Team: it moves the hub's route and the URL together. */
 type TeamNavigate = (route: Route, options?: { replace?: boolean }) => void;
 
-type TeamAppProps = {
-  displayName: string;
+type TeamSectionProps = {
+  /** The Team route on screen (the hub owns it; Back and Forward change it there). */
+  route: Extract<Route, { app: "team" }>;
   /** The signed-in user's role; the server enforces it regardless. */
   role: Role;
   /** The signed-in user's two-factor state (an admin creating an integration's key re-authenticates). */
   totpEnabled?: boolean;
   navigate: TeamNavigate;
   flash: (message: string) => void;
-  onHome: () => void;
-  onBin?: () => void;
-  onSettings: () => void;
-  onSignOut: () => void;
+  /** Where a section's own back button goes when nothing in this visit is below it: the hub's list. */
+  onLeave: () => void;
+  /**
+   * The hub's leave guard (review R4): runs `leave` now, or once the person chose to leave an
+   * integration's new key behind. The hub also guards its nav, Home, Bin, sign-out, and Back/Forward.
+   */
+  guardLeave: (leave: () => void) => void;
+  onKeyPendingChange: (pending: boolean) => void;
 };
 
 type Dialog =
@@ -56,11 +56,6 @@ type Dialog =
 /** Which pane the detail side shows: a member, Invites, the Email log, Keys, or Policies (the last four admins only). */
 type TeamView = { userId: string | null; invites: boolean; email?: boolean; keys?: boolean; policies?: boolean; groups?: boolean; groupId?: string | null; access?: boolean; templates?: boolean; activity?: boolean; integrations?: boolean; integrationId?: string | null };
 
-const currentView = (): TeamView => {
-  const route = parseRoute(window.location.pathname);
-  return route.app === "team" ? viewOf(route) : { userId: null, invites: false, email: false };
-};
-
 function viewOf(route: Extract<Route, { app: "team" }>): TeamView {
   return {
     userId: route.userId, invites: route.invites === true, email: route.email === true, keys: route.keys === true, policies: route.policies === true, groups: route.groups === true, groupId: route.groupId ?? null,
@@ -70,12 +65,14 @@ function viewOf(route: Extract<Route, { app: "team" }>): TeamView {
 }
 
 /**
- * /team/invites, /team/email, /team/keys, /team/policies, /team/groups, /team/templates,
- * /team/activity, and /team/:userId/access are for admins; anyone else has the URL replaced with
- * /team (QA note 10, 3f).
+ * Invites, Email log, Keys, Policies, Groups, Templates, Access activity, Integrations, and a
+ * member's access page are for admins; anyone else has the URL replaced with Team → Members (QA note 10, 3f).
  */
 export const replacesInvitesRoute = (view: TeamView, role: Role) => (view.invites || view.email === true || view.keys === true || view.policies === true || view.groups === true
   || view.templates === true || view.activity === true || view.access === true || view.integrations === true) && !canManageTeam(role);
+
+/** QA Q7: the toast when an admin-only Team URL opens Members for someone else. */
+export const ADMINS_ONLY_HINT = "That section is for admins";
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
@@ -86,12 +83,6 @@ function formatDate(value: string) {
   return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-/**
- * Team (docs/plan/research/2026-09-26-team-module.md §6): the list at /team and one member at
- * /team/:userId, both history entries. Dialogs push none (D18): Back closes a dialog first, then
- * leaves the member for the list, then the list for Home. Desktop shows the two side by side.
- * Members and viewers see names and roles only; admins also manage roles and blocks.
- */
 /** What a role change means for the account, from the permission matrix (Team plan §2.2). */
 function roleChangeBody(member: { displayName: string; role: Role; isYou: boolean }, to: Role) {
   if (to === "admin") return "Admins can change anyone's team role, block accounts, and sign accounts out. They still cannot open anyone's private content.";
@@ -103,28 +94,37 @@ function roleChangeBody(member: { displayName: string; role: Role; isYou: boolea
   return `${lead}${who} can create, edit, and share notes, files, tasks, collections, and events.`;
 }
 
-export function TeamApp({ displayName, role, totpEnabled = false, navigate, flash, onHome, onBin, onSettings, onSignOut }: TeamAppProps) {
+/**
+ * Team inside the Settings hub (Wave 37; docs/plan/research/2026-09-26-team-module.md §6). Members is
+ * the list at /settings/team/members beside one member at /settings/team/members/:userId, both history
+ * entries; every other section (Invites, Groups, Integrations, Keys, Policies, Templates, Access
+ * activity, Email log) fills the section on its own, and its pages below (a group, an integration, a
+ * member's access) are entries too. Dialogs push none (D18): Back closes a dialog first. Members and
+ * viewers see names and roles only; admins also manage roles and blocks.
+ */
+export function TeamSection({ route, role, totpEnabled = false, navigate, flash, onLeave, guardLeave, onKeyPendingChange }: TeamSectionProps) {
   const admin = canManageTeam(role);
-  const binCount = useBinCount(Boolean(onBin));
-  const [view, setView] = useState<TeamView>(currentView);
+  const view = useMemo(() => viewOf(route), [route]);
   const routeUserId = view.userId;
-  // Wave 18: /team/invites (admins); anyone else who lands there sees the list.
+  // Wave 18: Invites (admins); anyone else who lands there sees the list.
   const routeInvites = view.invites && admin;
-  // Wave 28: /team/email, the admin Email log, in the same pane.
+  // Wave 28: the admin Email log.
   const routeEmail = view.email === true && admin;
-  // Wave 31: /team/keys and /team/policies (admins), in the same pane.
+  // Wave 31: Keys and Policies (admins).
   const routeKeys = view.keys === true && admin;
   const routePolicies = view.policies === true && admin;
-  // Wave 32: /team/groups and /team/groups/:groupId (admins), in the same pane.
+  // Wave 32: Groups and one group (admins).
   const routeGroups = view.groups === true && admin;
   const routeGroupId = routeGroups ? view.groupId ?? null : null;
-  // Wave 33: a member's access page, Templates, and Access activity (admins), in the same pane.
+  // Wave 33: a member's access page, Templates, and Access activity (admins).
   const routeAccess = view.access === true && admin && routeUserId !== null;
   const routeTemplates = view.templates === true && admin;
   const routeActivity = view.activity === true && admin;
-  // Wave 36: /team/integrations and /team/integrations/:integrationId (admins), in the same pane.
+  // Wave 36: Integrations and one integration (admins).
   const routeIntegrations = view.integrations === true && admin;
   const routeIntegrationId = routeIntegrations ? view.integrationId ?? null : null;
+  // Members is the list beside a member; every other section fills the hub's section on its own.
+  const membersSection = !(routeInvites || routeEmail || routeKeys || routePolicies || routeGroups || routeTemplates || routeActivity || routeIntegrations || routeAccess);
   // F1: on a computer the details pane scrolls on its own; a newly chosen row starts at its top.
   const detailPaneRef = useRef<HTMLElement>(null);
   const paneKey = [routeUserId, routeInvites, routeEmail, routeKeys, routePolicies, routeGroups, routeGroupId, routeAccess, routeTemplates, routeActivity, routeIntegrations, routeIntegrationId].join("|");
@@ -140,46 +140,10 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const routeRef = useRef<string | null>(routeUserId);
-  // The Back rule treats the Invites panel like an open member (deep link → list).
+  // The Back rule treats a section like an open member (deep link → list).
   routeRef.current = routeUserId ?? (routeInvites ? "invites" : routeEmail ? "email" : routeKeys ? "keys" : routePolicies ? "policies" : routeGroups ? "groups" : routeTemplates ? "templates" : routeActivity ? "activity" : routeIntegrations ? "integrations" : null);
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
-
-  // Review R4: an integration's new key is shown only once. While it is on screen, leaving its page
-  // (← Integrations, another row, Home, Bin, sign out, or browser Back/Forward) asks first, with the
-  // same confirm as Settings → API keys.
-  const [keyPending, setKeyPending] = useState(false);
-  const keyPendingRef = useRef(false);
-  const onKeyPendingChange = useCallback((pending: boolean) => { keyPendingRef.current = pending; setKeyPending(pending); }, []);
-  const leaveConfirm = useConfirm();
-  const askLeave = leaveConfirm.ask;
-  /** Runs `leave` now, or once the person chose to leave the key behind. */
-  const guardLeave = useCallback((leave: () => void) => {
-    if (!keyPendingRef.current) return leave();
-    void askLeave(unsavedKeyConfirm("integration")).then((confirmed) => {
-      if (!confirmed || !keyPendingRef.current) return;
-      onKeyPendingChange(false);
-      leave();
-    });
-  }, [askLeave, onKeyPendingChange]);
-  // Browser Back or Forward: undone, then asked; leaving repeats the move once the guard let go.
-  const repeatMove = useRef<PopDirection | null>(null);
-  useLeaveGuard(keyPending && !leaveConfirm.confirmOpen, (direction) => {
-    void askLeave(unsavedKeyConfirm("integration")).then((confirmed) => {
-      if (!confirmed || !keyPendingRef.current) return;
-      repeatMove.current = direction;
-      onKeyPendingChange(false);
-    });
-  });
-  useEffect(() => {
-    const direction = repeatMove.current;
-    if (keyPending || !direction) return undefined;
-    repeatMove.current = null;
-    // After the guard's sentinel (if any) is popped: its release is queued before this runs.
-    let cancel = () => undefined as void;
-    const timer = setTimeout(() => { cancel = whenHistorySettled(() => window.history.go(repeatDelta(direction))); }, 0);
-    return () => { clearTimeout(timer); cancel(); };
-  }, [keyPending]);
 
   const loadList = useCallback(async () => {
     const generation = ++listGeneration.current;
@@ -209,27 +173,9 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
   useEffect(() => { if (admin) void loadInvites(); }, [admin, loadInvites]);
 
   const go = useCallback((userId: string | null, replace = false) => {
-    setView({ userId, invites: false, email: false });
     navigateRef.current({ app: "team", userId }, { replace });
   }, []);
-  const openInvites = useCallback(() => {
-    setView({ userId: null, invites: true, email: false });
-    navigateRef.current({ app: "team", userId: null, invites: true });
-  }, []);
-  const openEmailLog = useCallback(() => {
-    setView({ userId: null, invites: false, email: true });
-    navigateRef.current({ app: "team", userId: null, email: true });
-  }, []);
-  const openKeys = useCallback(() => {
-    setView({ userId: null, invites: false, keys: true });
-    navigateRef.current({ app: "team", userId: null, keys: true });
-  }, []);
-  const openPolicies = useCallback(() => {
-    setView({ userId: null, invites: false, policies: true });
-    navigateRef.current({ app: "team", userId: null, policies: true });
-  }, []);
   const openGroups = useCallback((groupId: string | null = null, replace = false) => {
-    setView({ userId: null, invites: false, groups: true, groupId });
     navigateRef.current(groupId ? { app: "team", userId: null, groups: true, groupId } : { app: "team", userId: null, groups: true }, { replace });
   }, []);
   // From a group back to Groups: one step back when this visit opened it, else replace (a deep link).
@@ -237,16 +183,7 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
     if (readHistoryDepth(window.history.state) > 0) window.history.back();
     else openGroups(null, true);
   }, [openGroups]);
-  const openTemplates = useCallback(() => {
-    setView({ userId: null, invites: false, templates: true });
-    navigateRef.current({ app: "team", userId: null, templates: true });
-  }, []);
-  const openActivity = useCallback(() => {
-    setView({ userId: null, invites: false, activity: true });
-    navigateRef.current({ app: "team", userId: null, activity: true });
-  }, []);
   const openIntegrations = useCallback((integrationId: string | null = null, replace = false) => {
-    setView({ userId: null, invites: false, integrations: true, integrationId });
     navigateRef.current(integrationId ? { app: "team", userId: null, integrations: true, integrationId } : { app: "team", userId: null, integrations: true }, { replace });
   }, []);
   // From an integration back to Integrations: one step back when this visit opened it, else replace (a deep link).
@@ -255,7 +192,6 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
     else openIntegrations(null, true);
   }, [openIntegrations]);
   const openAccess = useCallback((userId: string) => {
-    setView({ userId, invites: false, access: true });
     navigateRef.current({ app: "team", userId, access: true });
   }, []);
   // From a member's access back to the member: one step back when this visit opened it, else replace.
@@ -266,20 +202,10 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
 
   useEffect(() => {
     if (!replacesInvitesRoute(view, role)) return;
-    setView({ userId: null, invites: false, email: false });
+    // QA Q7: say why the screen is Members instead of the section the URL named.
+    flash(ADMINS_ONLY_HINT);
     navigateRef.current({ app: "team", userId: null }, { replace: true });
-  }, [role, view]);
-
-  // Back/Forward between the list and a member (a dialog open at the time only closes).
-  useEffect(() => {
-    const onPopState = (event: PopStateEvent) => {
-      if (popStateClosedDialog(event)) return;
-      const route = parseRoute(window.location.pathname);
-      if (route.app === "team") setView(viewOf(route));
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
+  }, [flash, role, view]);
 
   // The member on the URL. A missing one falls back to the list with a toast.
   useEffect(() => {
@@ -301,15 +227,15 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
 
   useEffect(() => {
     if (routeEmail || routeKeys || routePolicies || routeGroups || routeAccess || routeTemplates || routeActivity || routeIntegrations) return;
-    document.title = detail && routeUserId === detail.id ? `${detail.displayName} · Team · Nook` : routeInvites ? "Invites · Team · Nook" : "Team · Nook";
+    document.title = hubDocumentTitle(detail && routeUserId === detail.id ? detail.displayName : routeInvites ? "Invites" : "Members");
   }, [detail, routeAccess, routeActivity, routeEmail, routeGroups, routeInvites, routeIntegrations, routeKeys, routePolicies, routeTemplates, routeUserId]);
 
   const back = useCallback(() => {
     const action = teamBackAction(routeRef.current, readHistoryDepth(window.history.state));
     if (action.kind === "history") window.history.back();
     else if (action.kind === "list") go(null, true);
-    else onHome();
-  }, [go, onHome]);
+    else onLeave();
+  }, [go, onLeave]);
 
   /** A write answered with the member's new state: show it and refresh the list. */
   const applied = useCallback((member: TeamMemberDetail, message: string) => {
@@ -323,160 +249,114 @@ export function TeamApp({ displayName, role, totpEnabled = false, navigate, flas
   const visible = useMemo(() => filterTeam(all, filter, query), [all, filter, query]);
   const chips = useMemo(() => teamFilters(all, admin), [all, admin]);
 
-  return <main className={`app-page team-app${routeUserId || routeInvites || routeEmail || routeKeys || routePolicies || routeGroups || routeTemplates || routeActivity || routeIntegrations ? " team-detail-open" : ""}`}>
-    <header className="app-page-header">
-      <button className="app-home-button" onClick={() => guardLeave(onHome)}><House />Home</button>
-      <span className="app-home-brand"><span className="brand-dot"><Sparkles /></span><span className="brand-text"><strong>Team</strong></span></span><AppPageName name="Team" />
-      <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={() => guardLeave(onSignOut)} onBin={onBin ? () => guardLeave(onBin) : undefined} binCount={binCount} />
-    </header>
+  const dialogs = dialog && detail && <TeamDialog
+    dialog={dialog}
+    member={detail}
+    onClose={() => setDialog(null)}
+    onDone={applied}
+    onStale={(message) => {
+      setDialog(null);
+      flash(message);
+      void loadList();
+      getTeamMember(detail.id).then(({ member }) => setDetail(member), () => undefined);
+    }}
+  />;
 
-    {!visibleToRole ? <div className="team-layout team-unavailable"><div className="team-state">
-      <span className="team-state-icon"><Users /></span>
-      <h2>Team is not available for your account</h2>
-      <p>Ask an admin if you need to see who else uses this Nook.</p>
-      <button className="primary-button" onClick={onHome}><House />Home</button>
-    </div></div> : <div className="team-layout split-layout">
-      <section className="team-list-pane split-pane" aria-labelledby="team-title">
-        <div className="team-intro">
-          <span className="eyebrow">Team</span>
-          <h1 id="team-title">Team</h1>
-          <p>{admin ? "Everyone with an account on this Nook. Change team roles, block or unblock accounts, and sign accounts out everywhere. Admins never see anyone's private content." : "Everyone with an account on this Nook and their team role."}</p>
-        </div>
+  if (!visibleToRole) return <div className="settings-content settings-team-content team-unavailable"><div className="team-state">
+    <span className="team-state-icon"><Users /></span>
+    <h2>Team is not available for your account</h2>
+    <p>Ask an admin if you need to see who else uses this Nook.</p>
+  </div></div>;
 
-        <label className="team-search">
-          <Search aria-hidden="true" />
-          <span className="sr-only">Search the team</span>
-          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={admin ? "Search names or emails" : "Search names"} maxLength={120} />
-        </label>
+  // Every section but Members: one column in the hub's section scroller.
+  if (!membersSection) return <div className="settings-content settings-team-content" aria-label={routeInvites ? "Invites" : routeEmail ? "Email log" : routeKeys ? "Keys" : routePolicies ? "Policies" : routeGroupId ? "Group" : routeGroups ? "Groups" : routeTemplates ? "Templates" : routeActivity ? "Access activity" : routeIntegrationId ? "Integration" : routeIntegrations ? "Integrations" : "Access"} role="region">
+    {routeAccess && routeUserId
+      ? <MemberAccess key={routeUserId} userId={routeUserId} onBack={() => closeAccess(routeUserId)} flash={flash} />
+      : routeIntegrationId
+      ? <IntegrationPage key={routeIntegrationId} integrationId={routeIntegrationId} totpEnabled={totpEnabled} onBack={() => guardLeave(closeIntegration)} onDeleted={() => openIntegrations(null, true)} onKeyPendingChange={onKeyPendingChange} flash={flash} />
+      : routeIntegrations
+      ? <TeamIntegrations onBack={back} onOpen={(integrationId) => openIntegrations(integrationId)} flash={flash} />
+      : routeTemplates
+      ? <Templates onBack={back} flash={flash} />
+      : routeActivity
+      ? <AccessActivity members={all} onBack={back} />
+      : routeEmail
+      ? <TeamEmailLog onBack={back} flash={flash} />
+      : routeKeys
+      ? <TeamKeys members={all} onBack={back} flash={flash} />
+      : routePolicies
+      ? <TeamPolicies onBack={back} flash={flash} />
+      : routeGroupId
+      ? <GroupPage key={routeGroupId} groupId={routeGroupId} members={all} onBack={closeGroup} onDeleted={() => openGroups(null, true)} flash={flash} />
+      : routeGroups
+      ? <TeamGroups onBack={back} onOpenGroup={(groupId) => openGroups(groupId)} flash={flash} />
+      : <TeamInvites data={invites} error={invitesError} onBack={back} onReload={() => { void loadInvites(); void loadList(); }} onOpenMember={(userId) => go(userId)} flash={flash} />}
+    {dialogs}
+  </div>;
 
-        <div className="team-filters" role="group" aria-label="Show">
-          {chips.map(({ value, label, count }) => <button key={value} type="button" className={`team-chip${filter === value ? " active" : ""}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>
-            {label}{members && <b>{count}</b>}
-          </button>)}
-        </div>
+  return <div className={`team-app team-layout split-layout${routeUserId ? " team-detail-open" : ""}`}>
+    <section className="team-list-pane split-pane" aria-label="Team list">
+      <div className="team-intro">
+        <p>{admin ? "Everyone with an account on this Nook. Change team roles, block or unblock accounts, and sign accounts out everywhere. Admins never see anyone's private content." : "Everyone with an account on this Nook and their team role."}</p>
+      </div>
 
-        {admin && <button type="button" className={`team-invites-row${routeInvites ? " selected" : ""}`} aria-current={routeInvites ? "page" : undefined} onClick={() => { if (!routeInvites) guardLeave(openInvites); }}>
-          <span className="team-invites-icon" aria-hidden="true"><Link2 /></span>
-          <span className="team-row-copy"><strong>Invites</strong><span className="team-row-meta">{invites ? `${invites.liveCount} live` : "Links to add people"}</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeEmail ? " selected" : ""}`} aria-current={routeEmail ? "page" : undefined} onClick={() => { if (!routeEmail) guardLeave(openEmailLog); }}>
-          <span className="team-invites-icon" aria-hidden="true"><Mail /></span>
-          <span className="team-row-copy"><strong>Email log</strong><span className="team-row-meta">What Nook emailed, and how it went</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeKeys ? " selected" : ""}`} aria-current={routeKeys ? "page" : undefined} onClick={() => { if (!routeKeys) guardLeave(openKeys); }}>
-          <span className="team-invites-icon" aria-hidden="true"><KeyRound /></span>
-          <span className="team-row-copy"><strong>Keys</strong><span className="team-row-meta">Every API key on this Nook</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routePolicies ? " selected" : ""}`} aria-current={routePolicies ? "page" : undefined} onClick={() => { if (!routePolicies) guardLeave(openPolicies); }}>
-          <span className="team-invites-icon" aria-hidden="true"><Scale /></span>
-          <span className="team-row-copy"><strong>Policies</strong><span className="team-row-meta">Key lifetime and where keys work</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeGroups ? " selected" : ""}`} aria-current={routeGroups && !routeGroupId ? "page" : undefined} onClick={() => { if (!routeGroups || routeGroupId) guardLeave(() => openGroups()); }}>
-          <span className="team-invites-icon" aria-hidden="true"><UsersRound /></span>
-          <span className="team-row-copy"><strong>Groups</strong><span className="team-row-meta">Share with a team at once; you decide who is in it</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeIntegrations ? " selected" : ""}`} aria-current={routeIntegrations && !routeIntegrationId ? "page" : undefined} onClick={() => { if (!routeIntegrations || routeIntegrationId) guardLeave(() => openIntegrations()); }}>
-          <span className="team-invites-icon" aria-hidden="true"><Bot /></span>
-          <span className="team-row-copy"><strong>Integrations</strong><span className="team-row-meta">Accounts for AI clients and scripts, with their keys</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeTemplates ? " selected" : ""}`} aria-current={routeTemplates ? "page" : undefined} onClick={() => { if (!routeTemplates) guardLeave(openTemplates); }}>
-          <span className="team-invites-icon" aria-hidden="true"><LayoutTemplate /></span>
-          <span className="team-row-copy"><strong>Templates</strong><span className="team-row-meta">A role and groups for new people</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
-        {admin && <button type="button" className={`team-invites-row${routeActivity ? " selected" : ""}`} aria-current={routeActivity ? "page" : undefined} onClick={() => { if (!routeActivity) guardLeave(openActivity); }}>
-          <span className="team-invites-icon" aria-hidden="true"><History /></span>
-          <span className="team-row-copy"><strong>Access activity</strong><span className="team-row-meta">Who changed keys, groups, and access</span></span>
-          <ChevronRight aria-hidden="true" />
-        </button>}
+      <label className="team-search">
+        <Search aria-hidden="true" />
+        <span className="sr-only">Search the team</span>
+        <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={admin ? "Search names or emails" : "Search names"} maxLength={120} />
+      </label>
 
-        {loadError && <div className="team-state team-error" role="alert">
-          <span className="team-state-icon"><TriangleAlert /></span>
-          <h2>Could not load the team</h2>
-          <p>{loadError}</p>
-          <button className="primary-button" onClick={() => { void loadList(); }}><RotateCcw />Try again</button>
-        </div>}
-        {!loadError && !members && <p className="team-loading" role="status">Loading the team…</p>}
-        {!loadError && members && !visible.length && <div className="team-state">
-          <span className="team-state-icon"><Users /></span>
-          <h2>{query.trim() ? "Nobody matches that search." : "Nobody here yet."}</h2>
-        </div>}
-        {!loadError && visible.length > 0 && <ul className="team-list" aria-label="Team members">
-          {visible.map((member) => <li key={member.id}>
-            <button type="button" className={`team-row${member.id === routeUserId ? " selected" : ""}${member.status === "blocked" ? " blocked" : ""}`} aria-current={member.id === routeUserId ? "page" : undefined} onClick={() => { if (member.id !== routeUserId) guardLeave(() => go(member.id)); }}>
-              <Avatar className="team-avatar" name={member.displayName} url={member.avatarUrl} />
-              <span className="team-row-copy">
-                <span className="team-row-title">
-                  <strong>{member.displayName}</strong>
-                  {member.isYou && <span className="team-tag">You</span>}
-                  {admin && isNewAccount(member.createdAt) && <span className="team-tag new">New</span>}
-                </span>
-                {admin && <span className="team-row-meta">
-                  <span className="team-row-email">{member.email}</span>
-                  {member.lastSeenAt ? <span>Seen {relativeTime(member.lastSeenAt)}</span> : <span>Not signed in</span>}
-                </span>}
+      <div className="team-filters" role="group" aria-label="Show">
+        {chips.map(({ value, label, count }) => <button key={value} type="button" className={`team-chip${filter === value ? " active" : ""}`} aria-pressed={filter === value} onClick={() => setFilter(value)}>
+          {label}{members && <b>{count}</b>}
+        </button>)}
+      </div>
+
+      {loadError && <div className="team-state team-error" role="alert">
+        <span className="team-state-icon"><TriangleAlert /></span>
+        <h2>Could not load the team</h2>
+        <p>{loadError}</p>
+        <button className="primary-button" onClick={() => { void loadList(); }}><RotateCcw />Try again</button>
+      </div>}
+      {!loadError && !members && <p className="team-loading" role="status">Loading the team…</p>}
+      {!loadError && members && !visible.length && <div className="team-state">
+        <span className="team-state-icon"><Users /></span>
+        <h2>{query.trim() ? "Nobody matches that search." : "Nobody here yet."}</h2>
+      </div>}
+      {!loadError && visible.length > 0 && <ul className="team-list" aria-label="Team members">
+        {visible.map((member) => <li key={member.id}>
+          <button type="button" className={`team-row${member.id === routeUserId ? " selected" : ""}${member.status === "blocked" ? " blocked" : ""}`} aria-current={member.id === routeUserId ? "page" : undefined} onClick={() => { if (member.id !== routeUserId) guardLeave(() => go(member.id)); }}>
+            <Avatar className="team-avatar" name={member.displayName} url={member.avatarUrl} />
+            <span className="team-row-copy">
+              <span className="team-row-title">
+                <strong>{member.displayName}</strong>
+                {member.isYou && <span className="team-tag">You</span>}
+                {admin && isNewAccount(member.createdAt) && <span className="team-tag new">New</span>}
               </span>
-              <span className="team-row-chips">
-                <span className={`team-role-chip ${member.role}`}><span className="sr-only">Team role: </span>{ROLE_LABELS[member.role]}</span>
-                {member.status === "blocked" && <span className="team-status-chip">{statusLabel(member)}</span>}
-                {admin && member.emailAllowed === false && <span className="team-status-chip warn">Not on allowlist</span>}
-              </span>
-            </button>
-          </li>)}
-        </ul>}
-      </section>
+              {admin && <span className="team-row-meta">
+                <span className="team-row-email">{member.email}</span>
+                {member.lastSeenAt ? <span>Seen {relativeTime(member.lastSeenAt)}</span> : <span>Not signed in</span>}
+              </span>}
+            </span>
+            <span className="team-row-chips">
+              <span className={`team-role-chip ${member.role}`}><span className="sr-only">Team role: </span>{ROLE_LABELS[member.role]}</span>
+              {member.status === "blocked" && <span className="team-status-chip">{statusLabel(member)}</span>}
+              {admin && member.emailAllowed === false && <span className="team-status-chip warn">Not on allowlist</span>}
+            </span>
+          </button>
+        </li>)}
+      </ul>}
+    </section>
 
-      <section ref={detailPaneRef} className="team-detail-pane split-pane" aria-label={routeInvites ? "Invites" : routeEmail ? "Email log" : routeKeys ? "Keys" : routePolicies ? "Policies" : routeGroupId ? "Group" : routeGroups ? "Groups" : routeTemplates ? "Templates" : routeActivity ? "Access activity" : routeIntegrationId ? "Integration" : routeIntegrations ? "Integrations" : routeAccess ? "Access" : "Team member"}>
-        {routeAccess && routeUserId
-          ? <MemberAccess key={routeUserId} userId={routeUserId} onBack={() => closeAccess(routeUserId)} flash={flash} />
-          : routeIntegrationId
-          ? <IntegrationPage key={routeIntegrationId} integrationId={routeIntegrationId} totpEnabled={totpEnabled} onBack={() => guardLeave(closeIntegration)} onDeleted={() => openIntegrations(null, true)} onKeyPendingChange={onKeyPendingChange} flash={flash} />
-          : routeIntegrations
-          ? <TeamIntegrations onBack={back} onOpen={(integrationId) => openIntegrations(integrationId)} flash={flash} />
-          : routeTemplates
-          ? <Templates onBack={back} flash={flash} />
-          : routeActivity
-          ? <AccessActivity members={all} onBack={back} />
-          : routeEmail
-          ? <TeamEmailLog onBack={back} flash={flash} />
-          : routeKeys
-          ? <TeamKeys members={all} onBack={back} flash={flash} />
-          : routePolicies
-          ? <TeamPolicies onBack={back} flash={flash} />
-          : routeGroupId
-          ? <GroupPage key={routeGroupId} groupId={routeGroupId} members={all} onBack={closeGroup} onDeleted={() => openGroups(null, true)} flash={flash} />
-          : routeGroups
-          ? <TeamGroups onBack={back} onOpenGroup={(groupId) => openGroups(groupId)} flash={flash} />
-          : routeInvites
-          ? <TeamInvites data={invites} error={invitesError} onBack={back} onReload={() => { void loadInvites(); void loadList(); }} onOpenMember={(userId) => go(userId)} flash={flash} />
-          : routeUserId && detail?.id === routeUserId
-          ? <MemberDetail member={detail} members={all} admin={admin} onBack={back} onAction={setDialog} onRoleChosen={(to) => setDialog({ kind: "role", to })} onOpenAccess={() => openAccess(detail.id)} />
-          : routeUserId
-            ? <p className="team-loading" role="status">Loading…</p>
-            : <div className="team-placeholder"><Users aria-hidden="true" /><p>Choose someone to see their team role{admin ? ", account details, and activity" : ""}.</p></div>}
-      </section>
-    </div>}
-
-    {dialog && detail && <TeamDialog
-      dialog={dialog}
-      member={detail}
-      onClose={() => setDialog(null)}
-      onDone={applied}
-      onStale={(message) => {
-        setDialog(null);
-        flash(message);
-        void loadList();
-        getTeamMember(detail.id).then(({ member }) => setDetail(member), () => undefined);
-      }}
-    />}
-    {leaveConfirm.confirmElement}
-  </main>;
+    <section ref={detailPaneRef} className="team-detail-pane split-pane" aria-label="Team member">
+      {routeUserId && detail?.id === routeUserId
+        ? <MemberDetail member={detail} members={all} admin={admin} onBack={back} onAction={setDialog} onRoleChosen={(to) => setDialog({ kind: "role", to })} onOpenAccess={() => openAccess(detail.id)} />
+        : routeUserId
+          ? <p className="team-loading" role="status">Loading…</p>
+          : <div className="team-placeholder"><Users aria-hidden="true" /><p>Choose someone to see their team role{admin ? ", account details, and activity" : ""}.</p></div>}
+    </section>
+    {dialogs}
+  </div>;
 }
 
 function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, onOpenAccess }: {
@@ -494,7 +374,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
   const keys = member.mcpKeys?.live ?? 0;
 
   return <article className="team-detail">
-    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
+    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Members</button>
     <header className="team-detail-header">
       <Avatar className="team-avatar large" name={member.displayName} url={member.avatarUrl} />
       <div>

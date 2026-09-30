@@ -8,6 +8,7 @@ import { adminRevokeKey, listInventory, type Inventory, type InventoryKey, type 
 import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { listIntegrations, type Integration } from "./integrationsApi";
 import "../keys/keys.css";
+import { hubDocumentTitle } from "../router";
 
 /**
  * Team → Keys at /team/keys (Wave 31, access plan §C.6, §E), admins only: every live key across
@@ -74,7 +75,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     }
   }, [ipLimited, module, owner, state, surface]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { document.title = "Keys · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Keys"); }, []);
 
   const ownerOptions: Option[] = [{ value: "all", label: "Everyone" }, ...members.map((member) => ({ value: member.id, label: member.displayName })),
     // Wave 36: integrations own keys too.

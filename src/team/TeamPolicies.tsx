@@ -9,6 +9,9 @@ import { onCheckedChange } from "../ui/checkedChange";
 import { GRANT_MODULES, MODULE_LABELS, type GrantModule } from "../keys/keyGrants";
 import { getPolicies, previewPolicies, savePolicies, type Policies, type PolicyImpact, type PolicyState } from "../keys/keysApi";
 import "../keys/keys.css";
+import { hubDocumentTitle } from "../router";
+import { useBeforeHubLeave } from "../settings/hubLeave";
+import { whenHistorySettled } from "../historyDialogs";
 
 /**
  * Team → Policies at /team/policies (Wave 31, access plan D285, §C.6), admins only: key lifetime,
@@ -90,25 +93,37 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { document.title = "Policies · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Policies"); }, []);
 
   const dirty = Boolean(state && draft && JSON.stringify(state.policies) !== JSON.stringify(draft));
   const sharingOnly = state && draft ? sharingImpactLine(state.policies, draft) : null;
 
-  // Unsaved changes (QA v0.13.0 B4): Back, and the Team button, ask Discard or Keep editing first.
+  // Unsaved changes (QA v0.13.0 B4): Back, and every in-app way out, ask Discard or Keep editing first.
   // Back is caught by a history guard (the browser's step is undone), so the page stays behind the prompt.
   const [leaving, setLeaving] = useState(false);
   const [discarded, setDiscarded] = useState(false);
-  const askLeave = useCallback(() => setLeaving(true), []);
+  // The move asked about: this page's own back link, or (review L1) one of the Settings hub's (its nav,
+  // the phone back arrow, Home, Bin, Inbox, the bell, sign-out), run once the draft is discarded.
+  const pendingLeaveRef = useRef<(() => void) | null>(null);
+  const askLeave = useCallback(() => { pendingLeaveRef.current = null; setLeaving(true); }, []);
   useHistoryDialogGuard(dirty && !leaving && !busy, askLeave);
-  const keepEditing = useCallback(() => setLeaving(false), []);
+  const keepEditing = useCallback(() => { pendingLeaveRef.current = null; setLeaving(false); }, []);
   useHistoryDialogGuard(leaving, keepEditing);
-  const requestBack = () => { if (dirty) setLeaving(true); else onBack(); };
-  // Leave once the discarded draft has rendered, so the guards above are gone before Back runs.
+  const requestBack = () => { if (dirty) { pendingLeaveRef.current = onBack; setLeaving(true); } else onBack(); };
+  useBeforeHubLeave((leave) => {
+    if (!dirty) return false;
+    pendingLeaveRef.current = leave;
+    setLeaving(true);
+    return true;
+  });
+  // Leave once the discarded draft has rendered and the guards above let go (their sentinel, on a deep
+  // link, is popped first), so the move lands on the page's own entry.
   useEffect(() => {
     if (!discarded || dirty) return;
     setDiscarded(false);
-    onBack();
+    const leave = pendingLeaveRef.current ?? onBack;
+    pendingLeaveRef.current = null;
+    window.setTimeout(() => { whenHistorySettled(leave); }, 0);
   }, [dirty, discarded, onBack]);
 
   const invalid = draft ? draft.keyDefaultDays > draft.keyMaxDays ? "The default lifetime cannot be longer than the maximum." : null : null;

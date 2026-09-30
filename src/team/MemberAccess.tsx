@@ -12,6 +12,7 @@ import {
 } from "../access/memberAccessApi";
 import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
+import { hubDocumentTitle } from "../router";
 
 /**
  * A member's access at /team/:userId/access (Wave 33, access plan §C.6, §E, D268, D269), admins
@@ -56,7 +57,7 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
   }, [userId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { listTemplates().then((result) => setTemplates(result.templates), () => setTemplates([])); }, []);
-  useEffect(() => { if (summary) document.title = `${summary.member.displayName} · Access · Team · Nook`; }, [summary]);
+  useEffect(() => { if (summary) document.title = hubDocumentTitle(`${summary.member.displayName}'s access`); }, [summary]);
 
   const loadPage = useCallback((kind: AccessKind, cursor?: string | null) => getMemberAccessPage(userId, kind, cursor), [userId]);
   const changed = useCallback((message: string) => {

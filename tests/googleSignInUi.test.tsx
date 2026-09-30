@@ -227,12 +227,12 @@ describe("end-user QA fixes (U1–U11)", () => {
 
   test("U4: the header, sidebar footers, Settings, and comments draw the shared Avatar", () => {
     expect(readFileSync(join(src, "AppShell.tsx"), "utf8")).toContain('<Avatar className="app-user-avatar"');
-    expect(app()).toContain('className="app-user-avatar settings-avatar"');
+    expect(readFileSync(join(src, "settings", "SettingsHub.tsx"), "utf8")).toContain('className="app-user-avatar settings-avatar"');
     expect(app()).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "files", "FilesApp.tsx"), "utf8")).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
     const shell = readFileSync(join(src, "appShell.css"), "utf8");
-    expect(shell.slice(shell.lastIndexOf("@media (max-width: 760px)"))).toContain(".app-home-user { display: inline-flex; margin-right: 2px; }");
+    expect(shell.slice(shell.lastIndexOf("@media (max-width: 760px)"))).toContain(".app-home-user { display: inline-flex; margin: 0 2px; }");
   });
 
   test("U5–U7: the Google-only hint, Google messages beside the button, and a way out of the code step", () => {
@@ -322,7 +322,8 @@ describe("final fix round (S1, Q1, Q2, Q4, Q6, Q7, section 2)", () => {
     expect(recoveryCodesText(["AAAAA-BBBBB", "CCCCC-DDDDD"])).toContain("AAAAA-BBBBB\nCCCCC-DDDDD\n");
     expect(typeof RecoveryCodesDialog).toBe("function");
     const app = readFileSync(join(src, "App.tsx"), "utf8");
-    expect(app).toContain("onSecurityChanged(next, true);");
+    // Wave 37: Settings is a page, so it stays; while setup was required the rest opens after "saved".
+    expect(app).toContain("if (!next.setupRequired && !setupRequired) onSecurityChanged(next);");
     expect(app).toContain("<RecoveryCodesDialog codes={recoveryCodes}");
   });
 

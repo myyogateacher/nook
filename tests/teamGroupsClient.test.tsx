@@ -13,8 +13,8 @@ describe("Team groups on the client", () => {
     expect(parseRoute(`/team/groups/${groupId.toUpperCase()}`)).toEqual({ app: "team", userId: null, groups: true, groupId });
     expect(parseRoute("/team/groups/not-an-id")).toEqual({ app: "team", userId: null, groups: true });
     expect(parseRoute(`/team/groups/${groupId}/extra`)).toEqual({ app: "team", userId: null });
-    expect(formatRoute({ app: "team", userId: null, groups: true })).toBe("/team/groups");
-    expect(formatRoute({ app: "team", userId: null, groups: true, groupId })).toBe(`/team/groups/${groupId}`);
+    expect(formatRoute({ app: "team", userId: null, groups: true })).toBe("/settings/team/groups");
+    expect(formatRoute({ app: "team", userId: null, groups: true, groupId })).toBe(`/settings/team/groups/${groupId}`);
   });
 
   test("only admins stay on the groups pane", () => {

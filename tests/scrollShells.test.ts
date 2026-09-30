@@ -24,13 +24,13 @@ test("the body stays fixed, so every shell below must scroll on its own", async 
   expect(rule(await read("styles.css"), "body")).toContain("overflow: hidden");
 });
 
-test("module pages without their own shell (Team, Bin, Inbox, Notifications, Calendar) scroll as a page with a fixed header", async () => {
+test("module pages without their own shell (Settings and Team, Bin, Inbox, Notifications, Calendar) scroll as a page with a fixed header", async () => {
   const shell = await read("appShell.css");
   const page = rule(shell, ".app-page:not(.tasks-app):not(.collections-app)");
   expect(bounded(page)).toBe(true);
   expect(rule(shell, ".app-page:not(.tasks-app):not(.collections-app) > .app-page-header")).toContain("position: sticky");
   // Each of those modules renders the `app-page` root the rule matches.
-  for (const [file, root] of [["team/TeamApp.tsx", "app-page team-app"], ["bin/BinApp.tsx", "app-page bin-app"], ["inbox/InboxApp.tsx", "app-page inbox-app"], ["notifications/NotificationsApp.tsx", "app-page notifications-app"], ["calendar/CalendarApp.tsx", "app-page calendar-app"]] as const) {
+  for (const [file, root] of [["settings/SettingsHub.tsx", "app-page settings-hub"], ["bin/BinApp.tsx", "app-page bin-app"], ["inbox/InboxApp.tsx", "app-page inbox-app"], ["notifications/NotificationsApp.tsx", "app-page notifications-app"], ["calendar/CalendarApp.tsx", "app-page calendar-app"]] as const) {
     expect({ file, root: (await read(file)).includes(root) }).toEqual({ file, root: true });
   }
 });
@@ -103,7 +103,7 @@ test("F1: two-pane pages (Team and its sections, Inbox proposals) scroll each pa
   // Phones keep the page scroller: the split rules live only in the computer media query.
   expect(shell.replace(desktop, "")).not.toContain(".split-pane {");
   const team = await read("team/TeamApp.tsx");
-  expect(team).toContain(`<div className="team-layout split-layout">`);
+  expect(team).toContain(`team-app team-layout split-layout`);
   expect(team).toContain(`className="team-list-pane split-pane"`);
   expect(team).toContain(`className="team-detail-pane split-pane"`);
   // A newly chosen row (member, invites, groups, templates, keys, email log, ...) opens at the pane's top.
@@ -125,4 +125,29 @@ test("Vault (Wave 25): every screen scrolls as a page with a fixed header; a wid
   expect(grid).toContain("max-width: 100%");
   // Long dialogs (many environments) scroll inside the dialog, not the page behind it.
   expect(rule(vault, ".vault-dialog .vault-form")).toContain("overflow-y: auto");
+});
+
+test("Wave 37: the Settings hub scrolls its nav and its section on their own on a computer, as one page on phones", async () => {
+  const hub = await read("settings/settingsHub.css");
+  const desktop = /@media \(min-width: 761px\) \{[\s\S]*?\n\}/.exec(hub)?.[0] ?? "";
+  // The page stops scrolling on a computer; the layout under the header fills the rest.
+  expect(rule(desktop, ".app-page.settings-hub:not(.tasks-app):not(.collections-app)")).toContain("overflow: hidden");
+  const layout = rule(desktop, ".settings-hub-layout") ?? "";
+  expect(layout).toContain("flex: 1 1 auto");
+  expect(layout).toContain("min-height: 0");
+  // The nav and each account section (and Team sections other than Members) are bounded scrollers.
+  expect(rule(desktop, ".settings-hub-nav")).toMatch(/overflow-y:\s*auto/);
+  const section = rule(desktop, ".settings-hub-main > .settings-content") ?? "";
+  expect(section).toContain("flex: 1 1 auto");
+  expect(section).toContain("min-height: 0");
+  expect(section).toMatch(/overflow-y:\s*auto/);
+  // Team → Members keeps its two panes (F1), filling the section.
+  const split = rule(desktop, ".settings-hub-main > .split-layout") ?? "";
+  expect(split).toContain("grid-template-rows: minmax(0, 1fr)");
+  expect(split).toContain("min-height: 0");
+  // Phones keep the page scroller: nothing outside the computer query takes it away.
+  expect(hub.replace(desktop, "")).not.toMatch(/\.(app-page\.)?settings-hub(-layout|-main)?\s*\{[^}]*overflow/);
+  const shell = await read("settings/SettingsHub.tsx");
+  expect(shell).toContain("<main className={`app-page settings-hub");
+  expect(shell).toContain(`<header className="app-page-header">`);
 });

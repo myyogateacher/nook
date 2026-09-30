@@ -45,7 +45,7 @@ test("malformed ids are dropped instead of thrown", () => {
 });
 
 test("unknown paths resolve to home", () => {
-  for (const path of ["/settings", "/api-like", "/notesx", "/bin/extra", "/index.html"]) expect(parseRoute(path)).toEqual({ app: "home" });
+  for (const path of ["/api-like", "/notesx", "/bin/extra", "/index.html", "/settingsx"]) expect(parseRoute(path)).toEqual({ app: "home" });
 });
 
 test("a note id and a folder id are told apart by the folder prefix", () => {
@@ -97,15 +97,15 @@ test("Team routes: /team, /team/:userId (lowercased), and malformed ids open the
   expect(parseRoute(`/team/${userId.toUpperCase()}`)).toEqual({ app: "team", userId });
   expect(parseRoute("/team/garbage")).toEqual({ app: "team", userId: null });
   expect(parseRoute(`/team/${userId}/extra`)).toEqual({ app: "team", userId: null });
-  expect(formatRoute({ app: "team", userId: null })).toBe("/team");
-  expect(formatRoute({ app: "team", userId: userId.toUpperCase() })).toBe(`/team/${userId}`);
-  expect(formatRoute({ app: "team", userId: "garbage" })).toBe("/team");
+  expect(formatRoute({ app: "team", userId: null })).toBe("/settings/team/members");
+  expect(formatRoute({ app: "team", userId: userId.toUpperCase() })).toBe(`/settings/team/members/${userId}`);
+  expect(formatRoute({ app: "team", userId: "garbage" })).toBe("/settings/team/members");
   // Wave 18: the Invites panel, parsed before the id rule, and round-tripped.
   expect(parseRoute("/team/invites")).toEqual({ app: "team", userId: null, invites: true });
-  expect(formatRoute({ app: "team", userId: null, invites: true })).toBe("/team/invites");
-  expect(formatRoute(parseRoute("/team/invites"))).toBe("/team/invites");
+  expect(formatRoute({ app: "team", userId: null, invites: true })).toBe("/settings/team/invites");
+  expect(formatRoute(parseRoute("/team/invites"))).toBe("/settings/team/invites");
   expect(parseRoute("/team/invites/extra")).toEqual({ app: "team", userId: null });
   expect(parseRoute("/team/INVITES")).toEqual({ app: "team", userId: null });
-  expect(formatRoute(parseRoute(`/team/${userId}`))).toBe(`/team/${userId}`);
+  expect(formatRoute(parseRoute(`/team/${userId}`))).toBe(`/settings/team/members/${userId}`);
   expect(sameRoute({ app: "team", userId: null }, { app: "team", userId })).toBe(false);
 });

@@ -4,7 +4,7 @@ This guide covers the apps a signed-in user sees. For installing, configuring, b
 
 ## Home and URLs
 
-Signing in lands on **Home**, which is also **Today** (below): a row of app links (Notes, Files, Tasks, Collections, Calendar) under the greeting. The account row at the top of Today, Tasks, Collections, Calendar, the Bin, and Team holds your name, **Settings**, **Bin** (with a small count when it holds items), **Team**, **Sign out**, and the notification bell. Notes and Files keep Settings, Bin, and Sign out in the sidebar footer instead, and Files has the bell in the file list header next to **Upload**. Each app's **Home** control leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
+Signing in lands on **Home**, which is also **Today** (below): a row of app links (Notes, Files, Tasks, Collections, Calendar) under the greeting. The account row at the top of Today, Tasks, Collections, Calendar, the Bin, and Settings holds, from left to right, **Bin** (with a small count when it holds items), **Team**, **Settings**, **Inbox**, the notification bell, your picture and name, and **Sign out**, always the rightmost. On a phone the same buttons show as icons in the same order, with your picture in place of your name. Notes and Files keep Settings, Bin, and Sign out in the sidebar footer instead, and Files has the bell in the file list header next to **Upload**. Each app's **Home** control leads back. Each view has a real URL, and reloading or opening a link resumes that view (a signed-out visit shows the login screen first, then continues to the requested page):
 
 | URL | View |
 | --- | --- |
@@ -33,7 +33,10 @@ Signing in lands on **Home**, which is also **Today** (below): a row of app link
 | `/calendar/event/<event-id>` | One event |
 | `/notifications` | Your notifications |
 | `/bin` | Bin |
-| `/team`, `/team/<user-id>` | Team, and one person's page |
+| `/settings` | Settings (the section list on phones; Security beside the list on a computer) |
+| `/settings/<section>` | One Settings section: `security`, `notifications`, `access`, `keys`, `modules`, `about` |
+| `/settings/team/members`, `/settings/team/members/<user-id>` | Team in Settings: everyone, and one person's page |
+| `/settings/team/<section>` | A Team section (admins): `invites`, `groups`, `integrations`, `keys`, `policies`, `templates`, `activity`, `email` |
 | `/inbox`, `/inbox/history` | Inbox: proposals waiting for you, and resolved ones |
 | `/inbox/p/<proposal-id>` | One proposal with its changes |
 | `/inbox/routines` | Routines: prompts your agents run on a schedule |
@@ -267,6 +270,21 @@ The **Vault** keeps a team's secrets (API keys, database URLs, service passwords
 | `/vault/<vault-id>/access` | Who has access, per environment |
 | `/vault/<vault-id>/activity` | The vault's Activity |
 
+## Settings
+
+**Settings** is a page of its own at `/settings`. Open it with **Settings** in the account row or the Notes and Files sidebar footer. On a computer a nav on the left lists every section and the section you chose fills the rest of the window; the nav and the section scroll on their own. The header over the section shows your picture, name, team role, and the section's name.
+
+- **Account:** **Security** (password, two-factor, Google sign-in), **Notifications**, **My access** (not for guests), **API keys**, **Modules**, and **About**.
+- **Team:** for everyone but guests, **Members**; admins also get **Invites**, **Groups**, **Integrations**, **Keys**, **Policies**, **Templates**, **Access activity**, and **Email log**. Members, viewers, and guests see Team only while the Team module is on; admins always keep it here. The **Team** button in the account row opens **Members**.
+
+Each section has its own URL (`/settings/security`, `/settings/keys`, `/settings/team/groups`, …), so Back and Forward move between the sections you opened and then back to where you opened Settings. Older links still work and are rewritten in place: `/team/…` opens the same Team screen under `/settings/team/…`, and `/settings/mcp` opens `/settings/keys`.
+
+**On a phone** Settings opens on the section list, with your name and role at the top. Tapping a section opens it as a screen of its own, with a back arrow in its header. The arrow and browser Back return to the list, a second Back returns to where you opened Settings, and Forward opens them again. A section opened from elsewhere (the **Team** button, **Turn on in Settings**, a notification, or a link) opens with the list under it, so it goes back the same way. Inside Team, a person, a group, or an integration is one more screen with its own back link.
+
+Opening a Settings link directly (from an email or a bookmark) puts Home under it: Back from Settings goes to Home rather than off Nook. A guest who opens **My access** by its address sees **Security**; someone who is not an admin and opens an admin-only Team address sees **Members**, with a note saying that section is for admins.
+
+While a new API key is on screen (it is shown only once, in **API keys** or on an integration's page), leaving it by another section, the back arrow, Home, Bin, Inbox, the bell, **Sign out**, or browser Back or Forward asks first. Unsaved changes in **Team → Policies** ask the same way (Discard or Keep editing).
+
 ## Settings → Modules
 
 Open **Settings → Modules** to choose which parts of Nook you see. Each module has a switch, and every module is on until you turn it off. A change applies at once and is saved to your account, so it follows you to every device you sign in to (another open tab picks it up when you return to it). Home and Settings are always on.
@@ -279,7 +297,7 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 | Notifications | The bell and `/notifications`. Reminders are still created, and push notifications still arrive on devices where you turned them on. |
 | Inbox | The **Inbox** button, `/inbox`, and **Proposals awaiting you**. Agents can still suggest changes while it is off; nothing is applied until you approve it. Guests do not see this row. |
 | Vault | Its tile on Home and `/vault`. Hidden for guests, and for everyone but admins while the server has no vault key (then there is no switch either). |
-| Team | The **Team** button and `/team`. Guests do not see this row. Admins keep **Settings → Manage team**, which still opens Team while the module is off. Roles and blocking apply as before. |
+| Team | The **Team** button and Team in Settings (`/settings/team/…`). Guests do not see this row. Admins keep Team in Settings while the module is off. Roles and blocking apply as before. |
 
 **Back and Forward past a module that is off.** Back steps over an entry of a module that is off to the page before it. Forward cannot pass beyond such an entry: it stays where you are and shows the hint. For example, after Home, then Team, then Calendar, with Team turned off and Back to Home, Forward stops at Home, and Calendar is not reachable with Forward. Turning the module back on restores it: Forward then goes to Team and on to Calendar again.
 
@@ -287,7 +305,7 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 
 ## Email
 
-When your admin has set up email (OPERATIONS → Email), Nook can email you about things that involve you. Open **Settings → Notifications** and scroll to **Email**; the direct link is `/settings/notifications`. Settings has a URL for each section now (`/settings/security`, `/settings/keys`, …): Back closes Settings, and Forward opens it again at the same section.
+When your admin has set up email (OPERATIONS → Email), Nook can email you about things that involve you. Open **Settings → Notifications** and scroll to **Email**; the direct link is `/settings/notifications`. Settings has a URL for each section (`/settings/security`, `/settings/keys`, …; see [Settings](#settings)).
 
 - **Verify your address first.** An account made with an invite sent to your address is already verified. Otherwise Nook emails you a verification link when you sign up; open it (it works once, for 24 hours) or press **Send verification email**. Until you verify, Nook sends you only security emails.
 - **What Nook emails.** *Assigned to you* (someone else adds you to a card), *Comments on your cards* (cards you created or are assigned to), *Shared with you* (a note, folder, file, board, calendar, collection, or task view shared with you by name; sharing with everyone sends nothing), and *Proposals awaiting you* (your MCP keys suggested changes: only the key's name and how many, never the agent's text). Each has its own switch, and **Email notifications** turns them all off at once. Nothing you do yourself emails you.
@@ -304,13 +322,13 @@ When your admin has set up email (OPERATIONS → Email), Nook can email you abou
 
 Emails link straight to the card, note, board, Inbox, or Settings section they are about, on this Nook's address. Nook never asks for your password by email, and its emails contain no images, trackers, or remote content.
 
-Admins see what Nook emailed in **Team → Email log** (`/team/email`): which kind of email, to whom, when, and whether it was sent, held, skipped (and why), or failed, with a **Retry** for failed ones. A **Bounced**, **Spam report**, or **Soft bounces** tag next to a name means Nook is holding back all but security email to that person's address. It never shows addresses, subjects, or content.
+Admins see what Nook emailed in **Team → Email log** (`/settings/team/email`): which kind of email, to whom, when, and whether it was sent, held, skipped (and why), or failed, with a **Retry** for failed ones. A **Bounced**, **Spam report**, or **Soft bounces** tag next to a name means Nook is holding back all but security email to that person's address. It never shows addresses, subjects, or content.
 
 ## Password
 
 **Change it** in **Settings → Security → Password** (`/settings/security`): press **Change password**, enter your current password, the new one twice (at least 12 characters), and, if you use two-factor authentication, a code from your app or a recovery code. Every other device signed in to your account is signed out; the one you are using stays signed in. Nook emails you that the password changed. This works whether or not email is set up. Your API keys keep working, so review them under **Settings → API keys** if you changed the password because something looked wrong.
 
-**Two-factor recovery codes.** When you turn on two-factor authentication in **Settings → Security**, Nook shows your recovery codes in their own window with **Copy all** and **Download**; Settings stays open until you press **I saved them**. Each code signs you in once if you lose your authenticator app.
+**Two-factor recovery codes.** When you turn on two-factor authentication in **Settings → Security**, Nook shows your recovery codes in their own window with **Copy all** and **Download**; Nook stays on Settings until you press **I saved them**. Each code signs you in once if you lose your authenticator app.
 
 **Forgot it?** On the sign-in page press **Forgot password?** (`/forgot-password`), enter your address, and press **Send reset link**. The page always answers "If that address has a verified account, we sent a link": it never says whether an account exists. The email arrives only when the account's address is verified and the account is not blocked. Its link works once, for 30 minutes, and a newer link replaces an older one. Open it, choose a new password, and, if the account uses two-factor authentication, enter a code from your app or a recovery code (a mailbox alone cannot take over the account). Resetting signs you out on **every** device, including this one, and does not sign you in: sign in with the new password. Nook emails you that the password was reset, with a link to review your API keys, which keep working.
 
@@ -320,7 +338,7 @@ When email is off on your Nook, the forgot page says so and sends nothing: ask a
 
 Changing a role, blocking, unblocking, or signing someone out everywhere asks you to confirm in a dialog; there is no password re-check for signed-in admins.
 
-**Team** lists everyone with an account on this Nook and their **team role**. Open it with the **Team** button next to Bin in the account row (on Today and in the Tasks, Collections, Calendar, and Bin headers), at `/team`, or, for admins, from **Settings → Manage team**. Each person has their own page at `/team/<id>`.
+**Team** lives in [Settings](#settings): **Settings → Team → Members** lists everyone with an account on this Nook and their **team role**. Open it with the **Team** button next to Bin in the account row (on Today and in the Tasks, Collections, Calendar, and Bin headers), from the Settings nav, or at `/settings/team/members` (the old `/team` still works). Each person has their own page at `/settings/team/members/<id>`, next to the list on a computer.
 
 - **Roles.** An **Admin** can do everything a member can, and manages the team. A **Member** creates, edits, and shares notes, files, tasks, collections, and events, as before. The first account created on a new Nook is the admin; when an existing Nook upgrades, the oldest account becomes the admin and everyone else a member (the operator can change it, see [OPERATIONS.md](OPERATIONS.md#team-admins-and-blocking)). A **Viewer** reads everything shared with them or with everyone, but creates, edits, shares, and uploads nothing. A **Guest** reads only what is shared with them by name: items shared with "Everyone here" are not shown to guests. New accounts are guests unless the operator chose otherwise (`SIGNUP_ROLE`). The team role is separate from the levels you give when you share (Can view, Can edit, Manager): it caps them, so a viewer or guest only ever reads, even where others can edit.
 - **Viewers and guests.** Each app shows a **View only · Team role: Viewer** (or Guest) banner and hides the create, edit, share, upload, and delete controls, also on items the person created before their role changed (those stay theirs and stay shared). They can still read, download, search, use Today, run task filters (guests: only "Assigned to me"), set their own reminders on events they can read, manage their notifications, push devices, two-factor, and Modules, and sign out. Viewers can save, rename, duplicate, and delete private task views (**New view**, **Save as view**) but cannot share them; guests save no views and see only views shared with them by name. They cannot restore or empty the Bin (items leave after 30 days) or create calendar subscribe links. In Settings → API keys a viewer can create keys with read permissions only, and a guest cannot create keys. Guests have no Team button. When you share with people, the list marks recipients who will only read with **Guest** or **Viewer**.
@@ -332,11 +350,11 @@ Changing a role, blocking, unblocking, or signing someone out everywhere asks yo
 - **Activity** (admins) lists the latest role changes, blocks, unblocks, and sign-outs for the person, who made them, and when, including changes made from the host command line.
 - **Google sign-in** (admins, when Google sign-in is on). The person's page says whether they sign in with Google, which Google accounts can link their address (a Google Workspace account of the address's domain, or the Gmail account itself), and the last Google sign-in that could not link, with the time and why. **Allow Google sign-in…** lets their next Google sign-in link the account, once, within 24 hours. **Reset account for Google sign-in…** is for an account nobody knows the owner of: it signs it out, removes its password, two-factor, keys, feed links, and sharing, and keeps its content. It is not the same as **Reset access** under **Access**, which removes what others share with the person. For a linked account, **Allow re-linking…** is for someone who recreated their Google account: whoever next signs in with Google as that address gets the account and everything in it, so their old sessions, keys, and feed links end then, and by default the password and two-factor go too (you can keep them when you are sure the same person re-links). Each of these asks for your password (or a Google confirmation) and your two-factor code, and the person sees it in their bell.
 
-On a phone, the list and a person's page are separate screens: Back closes an open picker or confirmation first, then returns from the page to the list, then to Today.
+On a phone, the list and a person's page are separate screens: Back closes an open picker or confirmation first, then returns from the page to the list (the page's **‹ Members** link does the same), then to the Settings section list, then to where you opened Settings. The **Team** button opens Members with the section list under it, so Back and the back arrow both return to the list.
 
 ### Groups (admins)
 
-**Team → Groups** (`/team/groups`) lists the groups on this Nook with their size. **New group** asks for a name and an optional description; a group's page (`/team/groups/<id>`) adds people with the type-to-search field, removes them, renames or deletes the group, lists what owners shared with it (with the title hidden when you cannot open the item yourself), and shows its history.
+**Team → Groups** (`/settings/team/groups`) lists the groups on this Nook with their size. **New group** asks for a name and an optional description; a group's page (`/settings/team/groups/<id>`) adds people with the type-to-search field, removes them, renames or deletes the group, lists what owners shared with it (with the title hidden when you cannot open the item yourself), and shows its history.
 
 - A group never opens anything by itself: owners choose to share an item with it at a level, and you decide who is in it. Everyone in the group then reaches what was shared with it, from their next click; someone you remove loses it at once.
 - You can add yourself; the group page, its history, and the owners' Access sheets say that an admin added themselves.
@@ -346,24 +364,24 @@ On a phone, Back returns from a group to Groups, then to Team.
 
 ### Keys and policies (admins)
 
-- **Team → Keys** (`/team/keys`) lists every live API key on this Nook: its name, owner, permissions, surfaces, expiry, last use, and 14-day use, filtered by owner, module, state (expiring within 14 days, no expiry, blocked by policy, in rotation grace, expired, unused for 90 days), surface (MCP or REST), and whether a key is limited to addresses. You never see a key's secret or the names of the items a key is limited to. **Revoke** asks for a reason, stops the key at once, and shows the owner that an admin revoked it and why.
-- **Team → Policies** (`/team/policies`) sets the rules every key follows, checked on every call: the longest lifetime and the default for new keys, whether every key must have an expiry (keys made before this release have none), how many live keys each person may hold, which team roles may use keys over MCP and over REST, which modules each role's keys may use, and whether anyone may share with guests (off: nobody can share with a guest, directly or through a group, until it is turned back on; existing shares with guests stay until they are removed, see [Guests](#sharing-and-access)). The line above **Save policies** says how many keys a change would block. A key that breaks a rule is **blocked, not revoked**: it stops working and shows **Blocked by team policy** until it complies or the rule is loosened. Two admins editing at once cannot overwrite each other: the second save is refused and reloads.
+- **Team → Keys** (`/settings/team/keys`) lists every live API key on this Nook: its name, owner, permissions, surfaces, expiry, last use, and 14-day use, filtered by owner, module, state (expiring within 14 days, no expiry, blocked by policy, in rotation grace, expired, unused for 90 days), surface (MCP or REST), and whether a key is limited to addresses. You never see a key's secret or the names of the items a key is limited to. **Revoke** asks for a reason, stops the key at once, and shows the owner that an admin revoked it and why.
+- **Team → Policies** (`/settings/team/policies`) sets the rules every key follows, checked on every call: the longest lifetime and the default for new keys, whether every key must have an expiry (keys made before this release have none), how many live keys each person may hold, which team roles may use keys over MCP and over REST, which modules each role's keys may use, and whether anyone may share with guests (off: nobody can share with a guest, directly or through a group, until it is turned back on; existing shares with guests stay until they are removed, see [Guests](#sharing-and-access)). The line above **Save policies** says how many keys a change would block. A key that breaks a rule is **blocked, not revoked**: it stops working and shows **Blocked by team policy** until it complies or the rule is loosened. Two admins editing at once cannot overwrite each other: the second save is refused and reloads.
 
 ### Integrations (admins)
 
-**Team → Integrations** (`/team/integrations`) is for AI clients and scripts that should act as themselves rather than as a person: a CI job that posts results, a bot that files cards, an agent that reads a shared folder. Each one is an account that **never signs in**; it acts only through the API keys you create for it, and its keys keep working when the person who set it up leaves.
+**Team → Integrations** (`/settings/team/integrations`) is for AI clients and scripts that should act as themselves rather than as a person: a CI job that posts results, a bot that files cards, an agent that reads a shared folder. Each one is an account that **never signs in**; it acts only through the API keys you create for it, and its keys keep working when the person who set it up leaves.
 
-- **New integration** asks for a name, a role (**Member** or **Viewer**; never Admin), and an optional description. Its page (`/team/integrations/<id>`) changes the role, renames it, blocks or unblocks it, and deletes it; every change asks first and is recorded in Access activity.
-- **Keys.** The same list and dialogs as Settings → API keys, for the integration: **New key** asks for *your* password (and code) to create or rotate; Edit narrows without it; the new key is shown once, so copy it into the client that uses it. While it is on screen, leaving the page (← Integrations, another row, Home, or browser Back or Forward) asks first, as in Settings. Keys cannot hold Inbox or Team permissions. The key's items are chosen only from what owners have shared with the integration. Team → Keys lists them with the integration as owner.
+- **New integration** asks for a name, a role (**Member** or **Viewer**; never Admin), and an optional description. Its page (`/settings/team/integrations/<id>`) changes the role, renames it, blocks or unblocks it, and deletes it; every change asks first and is recorded in Access activity.
+- **Keys.** The same list and dialogs as Settings → API keys, for the integration: **New key** asks for *your* password (and code) to create or rotate; Edit narrows without it; the new key is shown once, so copy it into the client that uses it. While it is on screen, leaving the page (← Integrations, another Settings section, Home, or browser Back or Forward) asks first, as in Settings → API keys. Keys cannot hold Inbox or Team permissions. The key's items are chosen only from what owners have shared with the integration. Team → Keys lists them with the integration as owner.
 - **What it can reach.** Only what owners share with it by name in their Access sheet. Never what is open to everyone signed in, never a group's items (integrations cannot join groups), and never your own items. Admins hold its keys, so admins can read what owners share with it (owners are told so when they share), and nothing else of theirs.
 - **Block** pauses its keys at once; **Unblock** resumes its live keys. **Delete** revokes its keys, then removes it only when it never had a key and never created anything. Otherwise (it had a key, even one that only read, or it created a card, a comment, a note version) it is kept as **Deleted (kept for attribution)**, so its name stays on that content and on its keys' history in Access activity. A deleted integration is final: it cannot be unblocked, renamed, given another role, or given a key; it is not offered in any picker; and it does not count toward the limit of 100 integrations. Deleting it again changes nothing.
 - It never receives email or notifications, does not count toward `ALLOWED_EMAILS`, and cannot be invited. It can be assigned a card on a board shared with it (nobody is emailed or notified).
 
-On a phone, Back closes a sheet or confirm first, then returns from an integration to Integrations, then to Team.
+On a phone, Back closes a sheet or confirm first, then returns from an integration to Integrations, then to the Settings section list, then to where you opened Settings. After confirming with Google from an integration's keys, the result shows on that integration's page.
 
 ### Inviting people
 
-Admins add people with a single-use **invite link**, even while registration is closed. Open **Team → Invites** (`/team/invites`).
+Admins add people with a single-use **invite link**, even while registration is closed. Open **Settings → Team → Invites** (`/settings/team/invites`).
 
 - **Create.** Choose **New invite**, pick the **Team role** (Member, Viewer, or Guest; Guest is the default; admins are promoted after sign-up) and when it **Expires** (1, 3, or 7 days). Optionally bind it to an **Email** (only that address can use the link) and add a **Label** that only admins see. Nook allows 20 live invites at once and 10 new ones an hour per admin.
 - **Copy once.** The full link is shown once, right after you create it: **Copy link**, then send it any way you like. Closing the dialog forgets it; Nook keeps only a fingerprint of the link, so it cannot show it again. Create a new invite if you lose it.

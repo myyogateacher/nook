@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, Mail, RotateCcw, TriangleAlert } from "lucide-react";
 import { api } from "../api";
 import { relativeTime } from "../files/format";
+import { hubDocumentTitle } from "../router";
 
 /**
  * Team → Email log at /team/email (Wave 28, outbound email §D.4, §E.5), admins only: what Nook
@@ -66,7 +67,7 @@ export function TeamEmailLog({ onBack, flash }: { onBack: () => void; flash: (me
     }
   }, []);
   useEffect(() => { void load(filter); }, [filter, load]);
-  useEffect(() => { document.title = "Email log · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Email log"); }, []);
 
   async function retry(entry: MailLogEntry) {
     try {

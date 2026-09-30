@@ -11,11 +11,11 @@ describe("Team keys and policies on the client", () => {
     expect(parseRoute("/team/keys")).toEqual({ app: "team", userId: null, keys: true });
     expect(parseRoute("/team/policies")).toEqual({ app: "team", userId: null, policies: true });
     expect(parseRoute("/team/keys/extra")).toEqual({ app: "team", userId: null });
-    expect(formatRoute({ app: "team", userId: null, keys: true })).toBe("/team/keys");
-    expect(formatRoute({ app: "team", userId: null, policies: true })).toBe("/team/policies");
+    expect(formatRoute({ app: "team", userId: null, keys: true })).toBe("/settings/team/keys");
+    expect(formatRoute({ app: "team", userId: null, policies: true })).toBe("/settings/team/policies");
     // A member id wins over the flags, as for invites.
     const userId = crypto.randomUUID();
-    expect(formatRoute({ app: "team", userId, keys: true })).toBe(`/team/${userId}`);
+    expect(formatRoute({ app: "team", userId, keys: true })).toBe(`/settings/team/members/${userId}`);
   });
 
   test("only admins stay on the keys and policies panes", () => {

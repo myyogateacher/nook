@@ -8,6 +8,7 @@ import type { Option } from "../ui/Select";
 import { GroupFormDialog } from "./TeamGroups";
 import { deleteGroup, deleteGroupMessage, getGroup, groupEventLabel, guestCountLabel, KIND_LABELS, LEVEL_LABELS, memberCountLabel, patchGroup, putGroupMembers, type GroupDetail } from "./groupsApi";
 import { ROLE_LABELS, type Role } from "./teamRoles";
+import { hubDocumentTitle } from "../router";
 
 type TeamPerson = { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
 
@@ -63,7 +64,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
     }
   }, [flash, groupId, onDeleted]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (group) document.title = `${group.name} · Groups · Nook`; }, [group]);
+  useEffect(() => { if (group) document.title = hubDocumentTitle(group.name); }, [group]);
 
   async function saveMembers(userIds: string[], message: string) {
     if (!group) return;
@@ -86,7 +87,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
     }
   }
 
-  if (error) return <article className="team-detail"><button type="button" className="team-back" onClick={onBack}><ChevronLeft />Groups</button><div className="team-state team-error" role="alert">
+  if (error) return <article className="team-detail"><button type="button" className="team-back team-back-visible" onClick={onBack}><ChevronLeft />Groups</button><div className="team-state team-error" role="alert">
     <span className="team-state-icon"><TriangleAlert /></span>
     <h2>Could not load the group</h2>
     <p>{error}</p>

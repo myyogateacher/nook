@@ -50,14 +50,16 @@ test("dialog guards stack: the newest is asked first, and an idle one lets the n
   expect(popStateClosedDialog({})).toBe(false);
 });
 
-test("the bell renders only inside the signed-in shell, next to the account group", () => {
+test("the bell renders only inside the signed-in shell, in the account row before the person and Sign out", () => {
   expect(renderToStaticMarkup(<AccountActions {...account} />)).not.toContain("app-notification-bell");
   const markup = renderToStaticMarkup(<NotificationsContext.Provider value={{ openList: () => undefined, openPath: () => undefined }}><AccountActions {...account} /></NotificationsContext.Provider>);
   expect(markup).toContain('class="app-account-button app-notification-bell"');
   expect(markup).toContain('aria-label="Notifications"');
-  // The account group itself still holds exactly Settings and Sign out.
+  // Wave 37: Settings · bell · the person · Sign out, with Sign out the rightmost action.
   const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
-  expect([...group.matchAll(/<button/g)].length).toBe(2);
+  const titles = [...group.matchAll(/<button[^>]*title="([^"]+)"/g)].map((match) => match[1]);
+  expect(titles).toEqual(["Settings", "Notifications", "Sign out"]);
+  expect(group.indexOf("app-notification-bell")).toBeLessThan(group.indexOf("app-home-user"));
 });
 
 test("the notifications page shows its loading state, Back, and the account actions", () => {

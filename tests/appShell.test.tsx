@@ -20,11 +20,16 @@ test("Home offers Settings, Bin, and Sign out in its header", () => {
   expect(markup).not.toContain("<small>Nook</small>");
   const buttons = accountButtons(markup);
   expect(buttons).toHaveLength(3);
-  expect(buttons[0]).toContain('aria-controls="account-settings-dialog"');
-  expect(buttons[0]).toContain('aria-label="Open settings for Ada Lovelace"');
-  expect(buttons[1]).toContain('title="Bin"');
-  expect(buttons[1]).toContain('aria-label="Bin"');
+  // Wave 37: Bin · Settings · (Inbox · bell) · the person · Sign out, the rightmost action.
+  expect(buttons[0]).toContain('title="Bin"');
+  expect(buttons[0]).toContain('aria-label="Bin"');
+  expect(buttons[1]).toContain('aria-label="Open settings for Ada Lovelace"');
+  // Settings is a page now, not a dialog.
+  expect(buttons[1]).not.toContain("aria-haspopup");
   expect(buttons[2]).toContain('title="Sign out"');
+  const group = markup.match(/<div class="app-account" role="group" aria-label="Account">(.*?)<\/div>/)?.[1] ?? "";
+  expect(group.indexOf("app-home-user")).toBeGreaterThan(group.indexOf('title="Settings"'));
+  expect(group.indexOf("app-home-user")).toBeLessThan(group.indexOf('title="Sign out"'));
   // The count badge waits for the lazy Bin fetch, so the first render has none.
   expect(markup).not.toContain("app-account-badge");
 });

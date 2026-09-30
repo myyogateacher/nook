@@ -111,7 +111,8 @@ describe("Team chrome", () => {
   test("the account row shows Team after Bin for everyone but guests, and not on Team itself", () => {
     const markup = withNav({ role: "member", openTeam: () => undefined, onTeam: false });
     const titles = [...markup.matchAll(/title="([^"]+)"/g)].map((match) => match[1]);
-    expect(titles).toEqual(["Settings", "Bin", "Team", "Sign out"]);
+    // Wave 37: Bin · Team · Settings · … · Sign out, the rightmost action.
+    expect(titles).toEqual(["Bin", "Team", "Settings", "Sign out"]);
     expect(withNav({ role: "admin", openTeam: () => undefined, onTeam: false })).toContain('title="Team"');
     expect(withNav({ role: "guest", openTeam: () => undefined, onTeam: false })).not.toContain('title="Team"');
     expect(withNav({ role: "admin", openTeam: () => undefined, onTeam: true })).not.toContain('title="Team"');

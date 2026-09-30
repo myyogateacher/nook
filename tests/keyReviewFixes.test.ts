@@ -115,6 +115,17 @@ describe("S1: forwarding headers only from named proxies", () => {
   test("the shared address parser agrees with node:net on every sample", () => {
     const samples = ["1.2.3.4", "255.255.255.255", "256.1.1.1", "01.2.3.4", "1.2.3", "::", "::1", "1::", "2001:db8::1", "2001:db8:0:0:0:0:0:1", "1:2:3:4:5:6:7:8", "1:2:3:4:5:6:7:8:9", "1::2::3",
       "::ffff:1.2.3.4", "::ffff:1.2.3.256", "1:2:3:4:5:6:1.2.3.4", "12345::", "g::1", "1:::2", ":1:2:3:4:5:6:7", "fe80::1", "", "a.b.c.d", "1.2.3.4.5"];
+    // Verification R1: eight written groups leave no room for `::`.
+    samples.push("1::2:3:4:5:6:7:8", "1:2:3:4::5:6:7:8", "1:2:3:4:5:6:7::8", "::2:3:4:5:6:7:8", "1:2:3:4:5:6:7::", "1:2:3:4:5:6::1.2.3.4", "1:2:3:4:5::1.2.3.4");
+    // A seeded fuzz: 1 to 9 groups, with `::` (or not) at every position, some ending in dotted IPv4.
+    let seed = 34;
+    const next = (max: number) => (seed = (seed * 1103515245 + 12345) % 2147483648) % max;
+    for (let round = 0; round < 400; round += 1) {
+      const groups = Array.from({ length: 1 + next(9) }, () => next(0x10000).toString(16));
+      if (next(4) === 0) groups.push(`${next(256)}.${next(256)}.${next(256)}.${next(256)}`);
+      const at = next(groups.length + 2) - 1;
+      samples.push(at < 0 ? groups.join(":") : [...groups.slice(0, at), "", ...groups.slice(at)].join(":").replace(/^:(?!:)/, "::").replace(/(?<!:):$/, "::"));
+    }
     for (const sample of samples) expect({ sample, kind: isIP(sample) }).toEqual({ sample, kind: nodeIsIP(sample) });
   });
 });

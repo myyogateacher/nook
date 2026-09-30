@@ -104,6 +104,13 @@ export type McpErrorCode =
   | "KEY_POLICY"
   | "INTERNAL";
 
+/**
+ * Validation details for a tool, each naming its argument ("cardId: Invalid UUID"), on MCP and REST
+ * alike (Wave 34 review Q4). Every tool's validation path goes through this.
+ */
+export const issueDetails = (issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>) =>
+  issues.map((issue) => issue.path.length ? `${issue.path.map(String).join(".")}: ${issue.message}` : issue.message);
+
 export class McpToolError extends Error {
   constructor(readonly code: McpErrorCode, message: string, readonly details?: Record<string, unknown>) {
     super(message);

@@ -25,6 +25,10 @@ export type Reauth = { password?: string; totpCode?: string };
 
 export const listKeys = () => api<KeyList>("/keys");
 
+/** One of the caller's key events (GET /api/keys/:id): ids, counts, and short words only. */
+export type KeyEvent = { id: string; action: string; via: string; createdAt: string; meta: Record<string, unknown> | null };
+export const keyEvents = (id: string) => api<{ events: KeyEvent[] }>(`/keys/${id}`).then((result) => result.events);
+
 export const createKey = (body: { name: string; description?: string | null; surfaces: KeySurfaces; expiresInDays: number | null; grants: GrantPayload[]; ipAllowlist?: string[] } & Reauth) =>
   api<{ key: ApiKey & { token: string } }>("/keys", { method: "POST", body: JSON.stringify(body) });
 

@@ -2,7 +2,7 @@ import * as z from "zod/v4";
 import type { ZodType } from "zod";
 import { keyFilter } from "../keyResources";
 import { db, withAuditContext } from "../db";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { keyMayRead } from "../keyReach";
 import { searchText } from "../search";
 import { attachToCard, listAttachments } from "./attachments";
@@ -112,7 +112,7 @@ const columnBoardId = (columnId: string) =>
 /** Validates with the HTTP route's schema, so MCP accepts exactly what the API accepts. */
 function routeInput<T>(schema: ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+  if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
   return parsed.data;
 }
 

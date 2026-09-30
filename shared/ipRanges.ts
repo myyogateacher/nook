@@ -39,6 +39,8 @@ export function ipv6Groups(text: string): number[] | null {
   if (head.includes("::")) {
     const [left, right] = head.split("::") as [string, string];
     const l = parse(left), r = [...parse(right), ...tail];
+    // `::` stands for one or more zero groups (verification R1): with eight groups written out there is no room for it.
+    if (l.length + r.length > 7) return null;
     groups = [...l, ...new Array<number>(Math.max(0, 8 - l.length - r.length)).fill(0), ...r];
   } else {
     groups = [...parse(head), ...tail];

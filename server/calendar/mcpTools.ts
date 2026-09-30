@@ -5,7 +5,7 @@ import { onlyChosen } from "../keyGrants";
 import { config } from "../config";
 import { withAuditContext } from "../db";
 import { restoreItem } from "../bin";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { readableEvent } from "./access";
 import { keyMayRead } from "../keyReach";
 import { RecurrenceError, rangeFor, zonedToUtc } from "./recurrence";
@@ -56,7 +56,7 @@ async function service<T>(key: McpKeyContext, operation: () => T | Promise<T>): 
 /** Validates with the HTTP route's schema, so MCP accepts exactly what the API accepts. */
 function routeInput<T>(schema: ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+  if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
   return parsed.data;
 }
 

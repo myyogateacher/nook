@@ -32,7 +32,7 @@ export async function handleMcpUpload(request: Request, uploadId: string, client
   if (!hasScope(key.scopes, "files:write") || !canWriteContent(key.userId)) return json(403, { error: "This API key cannot upload files", code: "SCOPE_REQUIRED" });
 
   // Another key's ticket looks like a missing one.
-  if (!ticket || ticket.keyId !== key.keyId || ticket.userId !== key.userId) return json(404, { error: "Upload not found" });
+  if (!ticket || ticket.keyId !== key.keyId || ticket.userId !== key.userId) return json(404, { error: "Upload not found", code: "UPLOAD_NOT_FOUND" });
   if (ticket.state === "failed") return json(409, { error: ticket.failure!.message, code: ticket.failure!.code });
   if (ticket.state === "receiving") return json(409, { error: "This upload is already in progress", code: "UPLOAD_PENDING" });
   if (ticketExpired(ticket)) return json(404, { error: "The upload ticket expired", code: "UPLOAD_EXPIRED" });
@@ -71,6 +71,10 @@ export async function handleMcpUpload(request: Request, uploadId: string, client
       // Anything else (a stall, a size mismatch, quota) may be retried while the ticket lasts.
       ticket.state = "pending";
     }
-    return json(result.status, result.body);
+    // Every refusal carries a code (Wave 34 verification U1), also the upload pipeline's own.
+    const coded = result.status >= 400 && typeof result.body.code !== "string"
+      ? { ...result.body, code: result.status === 413 ? "TOO_LARGE" : result.status === 409 ? "UPLOAD_CONFLICT" : result.status === 404 ? "UPLOAD_NOT_FOUND" : "UPLOAD_FAILED" }
+      : result.body;
+    return json(result.status, coded);
   });
 }

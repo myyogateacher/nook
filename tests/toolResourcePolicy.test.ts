@@ -31,6 +31,9 @@ export function uuidPaths(node: SchemaNode | undefined, path = ""): string[] {
   if (!node) return [];
   if (node.format === "uuid") return [path];
   const def = node.def ?? {};
+  // Verification R2: a plain string named like an id (`folderId`, `tagIds[]`) counts as an item argument too.
+  const lastName = path.replace(/(\[\]|\{\})+$/, "").split(".").pop() ?? "";
+  if (def.type === "string" && namesAnItem(lastName)) return [path];
   switch (def.type) {
     case "optional": case "nullable": case "default": case "prefault": case "readonly": case "nonoptional": case "catch":
       return uuidPaths(def.innerType, path);
@@ -70,12 +73,12 @@ describe("tool resource policy", () => {
   test("the UUID walk finds nested undeclared ids (a fake tool fails the check)", async () => {
     const z = await import("zod/v4");
     const fake = {
-      inputSchema: z.object({ boardId: z.string().uuid(), moves: z.array(z.object({ cardId: z.string().uuid(), to: z.union([z.literal("top"), z.string().uuid()]) })).optional(), note: z.string() }),
+      inputSchema: z.object({ boardId: z.string().uuid(), moves: z.array(z.object({ cardId: z.string().uuid(), to: z.union([z.literal("top"), z.string().uuid()]) })).optional(), note: z.string(), filter: z.object({ tagIds: z.array(z.string()).optional(), ownerId: z.string().nullable() }).optional() }),
       access: { mode: "items", items: [{ arg: "boardId", kind: "board" }] }
     };
-    expect(uuidPaths(fake.inputSchema as never).sort()).toEqual(["boardId", "moves[].cardId", "moves[].to"]);
-    expect(undeclaredUuidArgs(fake).sort()).toEqual(["moves[].cardId", "moves[].to"]);
-    expect(undeclaredUuidArgs({ ...fake, access: { ...fake.access, related: ["moves"] } })).toEqual([]);
+    expect(uuidPaths(fake.inputSchema as never).sort()).toEqual(["boardId", "filter.ownerId", "filter.tagIds[]", "moves[].cardId", "moves[].to"]);
+    expect(undeclaredUuidArgs(fake).sort()).toEqual(["filter.ownerId", "filter.tagIds[]", "moves[].cardId", "moves[].to"]);
+    expect(undeclaredUuidArgs({ ...fake, access: { ...fake.access, related: ["moves", "filter"] } })).toEqual([]);
   });
 
   test("no tool deletes forever, shares, or manages keys, groups, templates, policies, or sign-in (D265)", () => {

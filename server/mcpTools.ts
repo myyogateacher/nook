@@ -18,7 +18,7 @@ import { noteManageTools } from "./mcpNoteTools";
 import { fileWriteTools } from "./mcpFileTools";
 import { rememberSeenDraft } from "./mcpSeenDrafts";
 import { checksum, storage, withNoteLock } from "./storage";
-import { defineTool, errorResult, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
+import { defineTool, errorResult, issueDetails, McpToolError, notFound, textResult, type McpKeyContext, type McpToolSpec, type ToolResult } from "./mcpToolKit";
 import { taskTools } from "./tasks/mcpTools";
 import { todayTools } from "./today/mcpTools";
 import { calendarTools } from "./calendar/mcpTools";
@@ -157,7 +157,7 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, s
     checkNamedItems(spec, reach, args && typeof args === "object" ? args as Record<string, unknown> : {});
     const parsed = spec.inputSchema.safeParse(args ?? {});
     // Each detail names its argument (review Q4): "cardId: Invalid UUID".
-    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message) });
+    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
     // Handlers read chosen items from `grants` (keyReach, keyFilter). `scopes` keeps only the
     // scopes the key holds over every item, so any older path that reads scopes alone stays closed
     // for a scope limited to chosen items (T203).

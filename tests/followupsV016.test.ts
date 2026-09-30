@@ -49,6 +49,31 @@ test("F10: Access activity details and unknown actions read as sentences, never 
   expect(groupEventLabel({ id: "1", action: "group.future", createdAt: "", actor: { id: "a", displayName: "Ada" }, target: null, self: false })).toBe("Ada changed the group");
 });
 
+test("F7: an open Access sheet reads the guest sharing policy again on focus and as its picker opens, never on a timer", async () => {
+  const sheet = await read("access/AccessSheet.tsx");
+  const refresh = sheet.slice(sheet.indexOf("const refreshGuestPolicy = useCallback("), sheet.indexOf("}, [refreshGuestPolicy]);"));
+  // The flag rides on the small picker groups list (GET /api/groups).
+  expect(refresh).toContain("listPickerGroups().then((result) => {");
+  expect(refresh).toContain("current.shareWithGuests !== allowed ? { ...current, shareWithGuests: allowed } : current");
+  // One request at a time; when the window regains focus or the tab becomes visible.
+  expect(refresh).toContain("if (!loaded || policyRequest.current) return;");
+  expect(refresh).toContain(`window.addEventListener("focus", refreshGuestPolicy);`);
+  expect(refresh).toContain(`document.addEventListener("visibilitychange", onVisible);`);
+  expect(sheet).not.toMatch(/setInterval\(/);
+  // And as the picker is about to open (a press or focus on it).
+  expect(sheet).toContain("onOpening={refreshGuestPolicy}");
+  expect(await read("access/PrincipalPicker.tsx")).toContain(`<div className="access-picker" onPointerDownCapture={onOpening} onFocusCapture={onOpening}>`);
+  // With the flag off the picker no longer offers guests (the existing model rule).
+  const { pickerOptions } = await import("../src/access/accessModel");
+  const owner = { id: "o", displayName: "Owner" };
+  const guest = { id: "g", displayName: "Gus", role: "guest" as const, email: null };
+  const member = { id: "m", displayName: "Mia", role: "member" as const, email: null };
+  const draft = { audience: "selected", audienceLevel: null, people: [], groups: [] } as never;
+  const values = (shareWithGuests: boolean) => pickerOptions(draft, { owner, shareWithGuests } as never, [guest, member] as never, []).map((option) => option.value);
+  expect(values(true).some((value) => value.endsWith("g"))).toBe(true);
+  expect(values(false).some((value) => value.endsWith("g"))).toBe(false);
+});
+
 test("F6: End, Home, PageDown, and PageUp scroll the Notes or Files panel on screen when focus is on the page", async () => {
   const { pageKeyScrollTop, PAGE_SCROLL_KEYS } = await import("../src/ui/pageScrollKeys");
   expect([...PAGE_SCROLL_KEYS]).toEqual(["End", "Home", "PageDown", "PageUp"]);

@@ -100,6 +100,30 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
   }, [id, kind, roleReadOnly]);
   useEffect(() => { if (!initial) void load(); }, [initial, load]);
 
+  // F7: an admin may turn sharing with guests off (or on) while this sheet is open. The flag comes
+  // with the small picker groups list, so it is read again when the sheet regains focus and as the
+  // picker opens, never on a timer; guests are then no longer offered without reopening the sheet.
+  const loaded = access !== null;
+  const policyRequest = useRef(false);
+  const refreshGuestPolicy = useCallback(() => {
+    if (!loaded || policyRequest.current) return;
+    policyRequest.current = true;
+    listPickerGroups().then((result) => {
+      setGroups(result.groups);
+      const allowed = result.shareWithGuests;
+      if (typeof allowed === "boolean") setAccess((current) => current && current.shareWithGuests !== allowed ? { ...current, shareWithGuests: allowed } : current);
+    }, () => undefined).finally(() => { policyRequest.current = false; });
+  }, [loaded]);
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") refreshGuestPolicy(); };
+    window.addEventListener("focus", refreshGuestPolicy);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", refreshGuestPolicy);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshGuestPolicy]);
+
   useEffect(() => {
     closeRef.current?.focus();
     const opener = openerRef.current;
@@ -193,7 +217,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
           </fieldset> : <p className="access-note" role="note"><Share2 aria-hidden="true" />You manage this item: you can add and change people and groups up to {LEVEL_LABELS.edit}. Only {access.owner.displayName} changes managers or who can open it.</p>}
 
           {selected && <section className="access-principals" aria-label="People and groups">
-            <PrincipalPicker options={pickerOptions(draft, access, people, groups)} onPick={(value) => update((current) => addPicked(current, value, access, people, groups))} disabled={busy}
+            <PrincipalPicker options={pickerOptions(draft, access, people, groups)} onPick={(value) => update((current) => addPicked(current, value, access, people, groups))} disabled={busy} onOpening={refreshGuestPolicy}
               emptyText={people.length || groups.length ? "Nobody else to add" : "No one to share with yet"} />
             {draft.groups.length === 0 && draft.people.length === 0 && <p className="access-empty">Nobody yet. Add people or groups above.</p>}
             <ul className="access-list">

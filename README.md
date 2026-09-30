@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.23.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.24.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -111,6 +111,16 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.24.0
+
+- **Vault API keys (`nkv_`)**: a separate kind of API key for scripts, CI, and AI clients that reach only the Vault. Create one in Settings → API keys with **Kind: Vault key**, choosing vaults and environments you can reach yourself, at read or write. A vault key never reaches other modules, and a general key never reaches the Vault, at the API and in the database. Its rights are always your rights at that moment: lose access, and the key loses it too; blocked, and the key stops.
+- **Protected environments over keys**: "every environment" never includes a protected one. A key reaches a protected environment only when the grant names it and the key was created with **Allow protected environments** (your password and code at creation stand in for the re-auth window). Protect an environment later and every key that did not name it loses it.
+- **REST**: `GET /api/v1/vault/vaults`, secrets, values (`GET`/`PUT` with `expectedVersion`), and version metadata, Bearer only, JSON only, `no-store`. **MCP**: vault keys see only the vault tools (`list_vaults`, `read_vault`, `list_secrets`, `read_secret`, `write_secret_value`, `create_secret`); values go to an MCP client only when the key has **Allow MCP clients to read values** on, and the dialog suggests MCP-only surfaces for such keys.
+- **Limits and alerts**: per key, 20 reads a minute and 1,000 an hour, 10 writes a minute and 200 a day, 60 values an hour over MCP, never charged to you. A key that hits a limit, or reads more than 500 values in a day, shows in your bell and in the vault's Activity, once a day.
+- **Where keys show**: the vault's Access page lists **Keys with access** (owners see each key; other members see the count and their own), Activity shows `key:<name>` actors with an "API keys" filter, and Team → Keys has a Kind filter that shows vault keys as counts only, never vault names. Members who don't manage access get a read-only Access page.
+- **Independent review**: the whole Vault (v0.20.0–v0.24.0) had an independent security review before this release; no HIGH finding, and every MEDIUM was fixed.
+- Migration 038 runs on the first boot, so back up first: it only adds (a protected-access flag on keys, a per-environment protected mark on grants, key names on vault events, an index, and triggers that keep vault grants on vault keys). See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.23.0
 

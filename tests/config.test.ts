@@ -6,7 +6,7 @@ const configPath = join(import.meta.dir, "..", "server", "config.ts");
 
 /** Imports server/config.ts in a fresh process (outside the repository, so no .env is loaded). */
 function loadConfig(env: Record<string, string>) {
-  const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ maxUploadBytes: config.maxUploadBytes, userStorageQuotaBytes: config.userStorageQuotaBytes, minFreeDiskBytes: config.minFreeDiskBytes }));`], {
+  const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ maxUploadBytes: config.maxUploadBytes, userStorageQuotaBytes: config.userStorageQuotaBytes, minFreeDiskBytes: config.minFreeDiskBytes }));`], {
     cwd: tmpdir(),
     env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
     stdout: "pipe",
@@ -45,7 +45,7 @@ describe("upload limit configuration", () => {
 
 describe("push configuration", () => {
   function loadPush(env: Record<string, string>) {
-    const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ pushEnabled: config.pushEnabled, pushSubject: config.pushSubject, pushEndpointHosts: config.pushEndpointHosts }));`], {
+    const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ pushEnabled: config.pushEnabled, pushSubject: config.pushSubject, pushEndpointHosts: config.pushEndpointHosts }));`], {
       cwd: tmpdir(),
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
       stdout: "pipe",
@@ -77,7 +77,7 @@ describe("push configuration", () => {
 
 describe("sign-up role configuration (D80)", () => {
   function loadSignupRole(env: Record<string, string>) {
-    const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify(config.signupRole));`], {
+    const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify(config.signupRole));`], {
       cwd: tmpdir(),
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
       stdout: "pipe",
@@ -117,7 +117,7 @@ describe("mail link host check (L4)", () => {
 
   test("mail through Resend stays off for a 127.0.0.0/8, 0.0.0.0, or mapped loopback origin even with http links allowed", () => {
     const enabled = (appOrigin: string) => {
-      const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled }));`], {
+      const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled }));`], {
         cwd: tmpdir(),
         env: {
           PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), APP_ORIGIN: appOrigin,
@@ -137,7 +137,7 @@ describe("mail link host check (L4)", () => {
 
 describe("sign-in methods (Wave 35, D290)", () => {
   function loadAuth(env: Record<string, string>) {
-    const result = Bun.spawnSync(["bun", "--eval", `const { config, passwordAuthEnabled, googleAuthEnabled } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ methods: config.auth.methods, domains: config.auth.google.allowedDomains, token: config.auth.google.endpoints.token, password: passwordAuthEnabled(), google: googleAuthEnabled() }));`], {
+    const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config, passwordAuthEnabled, googleAuthEnabled } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify({ methods: config.auth.methods, domains: config.auth.google.allowedDomains, token: config.auth.google.endpoints.token, password: passwordAuthEnabled(), google: googleAuthEnabled() }));`], {
       cwd: tmpdir(),
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), ...env },
       stdout: "pipe",

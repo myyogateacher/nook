@@ -340,7 +340,7 @@ describe("retired integrations (review R3, R7)", () => {
   test("the host CLI labels integrations and refuses to manage them", async () => {
     const admin = await user("SA cli admin", "admin");
     const bot = await integration(admin, "viewer", `CLI bot ${tag()}`);
-    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
     expect(cli("list").stdout.toString()).toContain(`${bot.displayName} (integration)`);
     for (const args of [["unblock", serviceEmailFor(bot.id)], ["set-role", serviceEmailFor(bot.id), "admin"]]) {
       const refused = cli(...args);

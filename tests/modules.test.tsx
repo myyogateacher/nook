@@ -37,7 +37,7 @@ describe("module registry (D92)", () => {
   });
 
   test("Settings lists every module, Team included, but never shows Team to guests", () => {
-    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "search", "bin", "notifications", "team", "inbox"]);
+    expect(SETTINGS_MODULES.map((module) => module.id)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "search", "bin", "notifications", "team", "inbox"]);
     expect(settingsModulesFor("admin").map((module) => module.id)).toContain("team");
     expect(settingsModulesFor("viewer").map((module) => module.id)).toContain("team");
     expect(settingsModulesFor("guest").map((module) => module.id)).not.toContain("team");
@@ -94,9 +94,10 @@ describe("Settings → Modules", () => {
   test("guests get no Team row, and admins are told Team stays in Settings", () => {
     const guest = render([], null, "guest");
     expect(guest).not.toContain("module-label-team");
-    // Guests have no inbox either (agent inbox D152).
+    // Guests have no inbox either (agent inbox D152), nor a vault (V-O3).
     expect(guest).not.toContain("module-label-inbox");
-    expect([...guest.matchAll(/role="switch"/g)]).toHaveLength(SETTINGS_MODULES.length - 2);
+    expect(guest).not.toContain("module-label-vault");
+    expect([...guest.matchAll(/role="switch"/g)]).toHaveLength(SETTINGS_MODULES.length - 3);
     expect(render(["team"], null, "admin")).toContain("You are an admin: Team stays available from Settings.");
   });
 
@@ -123,10 +124,10 @@ describe("gating (client only)", () => {
   const launcher = (markup: string) => [...markup.matchAll(/class="today-app today-app-([a-z]+)"/g)].map(([, section]) => section);
 
   test("the launcher is derived from the registry and drops modules that are off", () => {
-    expect(TODAY_APPS.map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards"]);
-    expect(enabledTodayApps(["calendar", "search"]).map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections", "whiteboards"]);
-    expect(launcher(home([]))).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards"]);
-    expect(launcher(home(["calendar", "tasks"]))).toEqual(["notes", "files", "collections", "whiteboards"]);
+    expect(TODAY_APPS.map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault"]);
+    expect(enabledTodayApps(["calendar", "search"]).map((app) => app.section)).toEqual(["notes", "files", "tasks", "collections", "whiteboards", "vault"]);
+    expect(launcher(home([]))).toEqual(["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault"]);
+    expect(launcher(home(["calendar", "tasks", "vault"]))).toEqual(["notes", "files", "collections", "whiteboards"]);
   });
 
   test("Bin off removes the Bin button from Home and from any header, even when the app passes onBin", () => {

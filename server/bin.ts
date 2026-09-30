@@ -10,11 +10,11 @@ export const BIN_RETENTION_MS = 30 * 86_400_000;
 
 /** Types stored in the core tables below. */
 export type CoreBinType = "note" | "document";
-/** Types whose module registers a BinProvider (Collections and Calendar, WAVES_10-12.md D68). */
-export type ProvidedBinType = "collection" | "collection_row" | "calendar" | "event";
+/** Types whose module registers a BinProvider (Collections and Calendar, WAVES_10-12.md D68; the Vault, D225). */
+export type ProvidedBinType = "collection" | "collection_row" | "calendar" | "event" | "vault" | "vault_environment" | "vault_secret";
 export type BinType = CoreBinType | ProvidedBinType;
 const CORE_BIN_TYPES: readonly CoreBinType[] = ["note", "document"];
-const PROVIDED_BIN_TYPES: readonly ProvidedBinType[] = ["collection", "collection_row", "calendar", "event"];
+const PROVIDED_BIN_TYPES: readonly ProvidedBinType[] = ["collection", "collection_row", "calendar", "event", "vault", "vault_environment", "vault_secret"];
 /**
  * Why an item was purged, as recorded in the audit metadata. "resumed" marks a
  * purge the sweeper finished after it was interrupted: the original reason
@@ -111,7 +111,9 @@ export type RestoreOutcome =
   | { status: "not_found" }
   /** A child (a row, an event) whose parent (its collection, calendar) is itself in the Bin: restore the parent first. */
   | { status: "parent_in_bin"; message?: string }
-  | { status: "limit_reached"; message: string };
+  | { status: "limit_reached"; message: string }
+  /** A vault environment or secret whose short name or name another live one took meanwhile (D225). */
+  | { status: "name_taken"; message: string };
 
 /**
  * A module's Bin items (D68): listed with the caller's items, restored and

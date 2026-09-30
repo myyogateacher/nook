@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, PenTool, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
+import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, KeyRound, PenTool, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
 import type { AppSection } from "./appShellNavigation";
 
 /**
@@ -12,11 +12,11 @@ import type { AppSection } from "./appShellNavigation";
  */
 
 /** Every module id, in Settings order. Keep in step with `MODULE_IDS` in server/moduleIds.ts. */
-export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "search", "bin", "notifications", "team", "inbox"] as const;
+export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "search", "bin", "notifications", "team", "inbox"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** The apps with a Today launcher tile. */
-export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards";
+export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards" | "vault";
 
 export type ModuleDef = {
   id: ModuleId;
@@ -45,6 +45,9 @@ export const MODULES: readonly ModuleDef[] = [
   // Whiteboards (Wave 23, D206). Off hides the launcher, routes, Today section, and Files' "Open
   // whiteboard"; boards still appear in Files as .excalidraw downloads (not a boundary, T97).
   { id: "whiteboards", label: "Whiteboards", description: "Sketches, diagrams, and floor plans saved in your Files.", icon: PenTool, routeApps: ["whiteboards"], launcher: { section: "whiteboards", href: "/whiteboards" }, todaySections: ["whiteboardsRecent"] },
+  // The Vault (Wave 25, D229). Off hides the launcher and routes only; the server keeps enforcing
+  // access, and a server without VAULT_ENCRYPTION_KEY hides it from everyone but admins (not a boundary, T97).
+  { id: "vault", label: "Vault", description: "Team secrets per environment: encrypted at rest, and anyone with the server and its key can read every secret.", icon: KeyRound, routeApps: ["vault"], launcher: { section: "vault", href: "/vault" }, todaySections: [] },
   { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides the Bin button and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
@@ -65,9 +68,19 @@ export const SETTINGS_MODULES = MODULES.filter((module) => !module.planned);
  * The modules Settings lists for a role. Guests never see Team (Team plan §6.2, §11): they have no
  * access to it, so it is left out rather than shown as a switch.
  */
-export function settingsModulesFor(role: string | undefined): readonly ModuleDef[] {
-  // Guests have no inbox either (D152): they cannot hold keys or apply proposals.
-  return role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team" && module.id !== "inbox") : SETTINGS_MODULES;
+export function settingsModulesFor(role: string | undefined, unavailable: readonly ModuleId[] = []): readonly ModuleDef[] {
+  // Guests have no inbox either (D152): they cannot hold keys or apply proposals; nor a vault (V-O3).
+  const shown = role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team" && module.id !== "inbox" && module.id !== "vault") : SETTINGS_MODULES;
+  return unavailable.length ? shown.filter((module) => !unavailable.includes(module.id)) : shown;
+}
+
+/**
+ * Modules the server does not offer this person (Wave 25): the Vault without VAULT_ENCRYPTION_KEY
+ * for everyone but admins, and always for guests (`/api/auth/me` `features`). They are hidden like a
+ * module that is turned off, but Settings has no switch for them and the hint says why.
+ */
+export function unavailableModules(features: { vault?: boolean } | undefined): ModuleId[] {
+  return features?.vault === false ? ["vault"] : [];
 }
 
 /** Unique known ids in registry order; anything else (unknown ids, non-arrays) is ignored. */

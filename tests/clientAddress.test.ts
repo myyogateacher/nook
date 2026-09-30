@@ -91,7 +91,7 @@ describe("client address behind trusted proxies (N1b)", () => {
 
   test("TRUSTED_PROXY_HOPS is validated at startup (integer 0–5)", () => {
     const configPath = join(import.meta.dir, "..", "server", "config.ts");
-    const load = (value: string) => Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(config.trustedProxyHops);`], {
+    const load = (value: string) => Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(config.trustedProxyHops);`], {
       cwd: tmpdir(),
       env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), TRUSTED_PROXY_HOPS: value },
       stdout: "pipe",

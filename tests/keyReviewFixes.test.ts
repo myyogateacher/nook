@@ -101,7 +101,7 @@ describe("S1: forwarding headers only from named proxies", () => {
 
   test("TRUSTED_PROXY_ADDRESSES is validated at startup", () => {
     const configPath = join(import.meta.dir, "..", "server", "config.ts");
-    const load = (value: string) => Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify(config.trustedProxyAddresses));`], {
+    const load = (value: string) => Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); console.log(JSON.stringify(config.trustedProxyAddresses));`], {
       cwd: tmpdir(), env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-config-test"), TRUSTED_PROXY_ADDRESSES: value }, stdout: "pipe", stderr: "pipe"
     });
     expect(load(" 127.0.0.1 , 172.16.0.0/12,::1").stdout.toString().trim()).toBe(JSON.stringify(["127.0.0.1", "172.16.0.0/12", "::1"]));

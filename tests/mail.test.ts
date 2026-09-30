@@ -47,7 +47,7 @@ describe("mail wrapper", () => {
     const configPath = join(import.meta.dir, "..", "server", "config.ts");
     const mailPath = join(import.meta.dir, "..", "server", "mail.ts");
     const load = (env: Record<string, string>) => {
-      const result = Bun.spawnSync(["bun", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); await import(${JSON.stringify(mailPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled, from: config.mail.from }));`], {
+      const result = Bun.spawnSync(["bun", "--no-env-file", "--eval", `const { config } = await import(${JSON.stringify(configPath)}); await import(${JSON.stringify(mailPath)}); console.log(JSON.stringify({ enabled: config.mail.enabled, from: config.mail.from }));`], {
         cwd: tmpdir(),
         env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: join(tmpdir(), "mynotes-mail-config-test"), APP_ORIGIN: "https://nook.example.com", ...env },
         stdout: "pipe",

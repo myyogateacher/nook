@@ -27,6 +27,7 @@ import { proposalBaseMigration } from "./027_proposal_base";
 import { emailDigestsMigration } from "./028_email_digests";
 import { accessLevelsMigration } from "./029_access_levels";
 import { whiteboardsMigration } from "./030_whiteboards";
+import { vaultMigration } from "./031_vault";
 import { accessCentralMigration } from "./032_access_central";
 import { keySurfacesMigration } from "./033_key_surfaces";
 import { googleIdentitiesMigration } from "./034_google_identities";
@@ -47,7 +48,10 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   accessLevelsMigration,
   // 030 (whiteboards, Wave 23; the plan's 023 was taken) needs only 006.
   whiteboardsMigration,
-  // 031 is reserved for a parallel wave. 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
+  // 031 (the vault, Wave 25; the plan's 024 was taken) needs 001 and 025. It may reach existing installs
+  // after 032–035, which runMigrations allows (each missing id is applied on its own).
+  vaultMigration,
+  // 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
   accessCentralMigration,
   // 033 (key surfaces, Wave 34: per-surface last use and daily counts) needs only 025.
   keySurfacesMigration,

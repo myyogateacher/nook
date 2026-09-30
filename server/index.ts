@@ -16,6 +16,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { startServerHeartbeat } from "./serverHeartbeat";
 import { startDispatcher } from "./calendar/reminders";
 import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
@@ -35,6 +36,8 @@ import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerWhiteboardRoutes } from "./whiteboards/routes";
 import { WHITEBOARD_IMPORT_MAX_BYTES } from "./whiteboards/import";
+import { registerVaultRoutes } from "./vault/routes";
+import { initVaultStatus, vaultFeature } from "./vault/status";
 import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
@@ -245,6 +248,7 @@ app.post("/api/auth/register", async (c) => {
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
+    features: { vault: vaultFeature(role) },
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
@@ -290,6 +294,7 @@ app.post("/api/auth/login", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
+    features: { vault: vaultFeature(user.role) },
     totp: totpState(user)
   });
 });
@@ -308,7 +313,9 @@ app.get("/api/auth/me", (c) => {
     // UI-only (D92): which modules this user hid. Never used for authorization (T97).
     preferences: readPreferences(user.id),
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
-    notices: { googleReset: googleResetNotice(user.id) }
+    notices: { googleReset: googleResetNotice(user.id) },
+    // Wave 25: whether this person sees the Vault module (server/vault/status.ts). UI only (T97).
+    features: { vault: vaultFeature(user.role) }
   });
 });
 
@@ -876,6 +883,8 @@ registerTodayRoutes(app);
 registerCollectionRoutes(app);
 // Whiteboards on Files (Wave 23): create, list, read, CAS save, thumbnails.
 registerWhiteboardRoutes(app);
+// The Vault (Wave 25): vaults, environments, secrets, values, and history, for sessions only.
+registerVaultRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerMailRoutes(app);
@@ -939,6 +948,8 @@ async function reconcilePublishedMirrors() {
 }
 
 await reconcilePublishedMirrors();
+// Wave 25 (D212, T199): the vault module is on only with a key that opens every live vault's data key.
+initVaultStatus();
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
@@ -972,6 +983,8 @@ try {
   console.error("Card excerpt reconcile failed", errorClass(error));
 }
 startSweeper();
+// Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
+startServerHeartbeat();
 // Nook key usage counts (D283) are kept in memory and written once a minute.
 startKeyUsageFlusher();
 try {

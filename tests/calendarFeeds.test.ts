@@ -338,7 +338,7 @@ describe("calendar feeds API", () => {
   });
 
   test("with TOTP required, a token created from a gated session still works without a session", () => {
-    const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "feedTotpProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "feedTotpProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     expect(probe.exitCode).toBe(0);
     expect(JSON.parse(output)).toEqual({ ungatedCreate: 403, gatedCreate: 201, feed: 200, feedType: "text/calendar; charset=utf-8", noSessionList: 401 });

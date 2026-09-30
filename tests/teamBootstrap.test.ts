@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 test("the first registration becomes the only admin, and the host CLI manages roles within the last-admin rule", () => {
-  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "teamBootstrapProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "teamBootstrapProbe.ts")], { stdout: "pipe", stderr: "pipe" });
   const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(output) as Record<string, any>;
   // With ALLOW_REGISTRATION=false two racing "first" registrations let exactly one through.
@@ -33,7 +33,7 @@ test("the first registration becomes the only admin, and the host CLI manages ro
 }, 30_000);
 
 test("with accounts but no active admin, boot warns and the next registration becomes the admin", () => {
-  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "noActiveAdminProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "noActiveAdminProbe.ts")], { stdout: "pipe", stderr: "pipe" });
   const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(output) as Record<string, any>;
   // A fresh, empty install is not a lockout.

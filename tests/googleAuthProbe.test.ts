@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 test("AUTH_METHODS=google on an empty closed instance: the first Google account is the admin, the next is refused, passwords are off", () => {
-  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "googleProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "googleProbe.ts")], { stdout: "pipe", stderr: "pipe" });
   const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(output) as Record<string, any>;
   expect(result.about).toEqual({ hasUsers: false, authMethods: { password: false, google: true } });

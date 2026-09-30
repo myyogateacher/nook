@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, KanbanSquare, NotebookText, PenTool, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
+import { ArchiveRestore, CalendarClock, CalendarDays, Ellipsis, File as FileIcon, House, KanbanSquare, KeyRound, KeySquare, Layers, NotebookText, PenTool, RotateCcw, Rows3, Sparkles, SquareCheck, Table2, Trash2, TriangleAlert, X } from "lucide-react";
 import { ApiError } from "../api";
 import { AccountActions, AppPageName } from "../AppShell";
 import { formatBytes } from "../files/filesApi";
@@ -43,10 +43,11 @@ const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "document", label: "Files" },
   { value: "tasks", label: "Tasks" },
   { value: "collections", label: "Collections" },
-  { value: "calendar", label: "Calendar" }
+  { value: "calendar", label: "Calendar" },
+  { value: "vault", label: "Vault" }
 ];
 
-const itemIcons = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock } as const;
+const itemIcons = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock, vault: KeyRound, vault_environment: Layers, vault_secret: KeySquare } as const;
 
 const itemKey = (item: Pick<BinItem, "type" | "id">) => `${item.type}:${item.id}`;
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
@@ -202,7 +203,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
     setSheetKey(itemKey(item));
   }
 
-  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : filter === "collections" ? "No collections or rows in the Bin." : filter === "calendar" ? "No calendars or events in the Bin." : "Nothing in the Bin.";
+  const emptyCopy = filter === "note" ? "No notes in the Bin." : filter === "document" ? "No files in the Bin." : filter === "tasks" ? "No cards or boards in the Bin." : filter === "collections" ? "No collections or rows in the Bin." : filter === "calendar" ? "No calendars or events in the Bin." : filter === "vault" ? "No vaults, environments, or secrets in the Bin." : "Nothing in the Bin.";
 
   return <main className="app-page bin-app">
     <header className="app-page-header">
@@ -259,7 +260,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
             <span className="bin-row-copy">
               <span className="bin-row-title" title={label}><span className="sr-only">{binKindLabel(item)}: </span>{label}</span>
               <span className="bin-row-meta">
-                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
+                <span>{item.type === "card" ? `On ${binFolderLabel(item)}` : item.type === "board" ? "Board" : item.type === "event" || item.type === "vault_environment" || item.type === "vault_secret" ? `In ${binFolderLabel(item)}` : item.attachment ? attachmentLabel(item) : binFolderLabel(item)}</span>
                 {item.type === "card" && Boolean(item.descendant_count) && <span>{subitemLabel(item.descendant_count!)}</span>}
                 <time dateTime={item.deleted_at}>Deleted {relativeTime(item.deleted_at)}</time>
                 {item.purging || action === "delete"
@@ -287,7 +288,7 @@ export function BinApp({ displayName, flash, onHome, onSettings, onSignOut, onRe
           <strong id="bin-sheet-title" title={binItemLabel(sheetItem)}>{binItemLabel(sheetItem)}</strong>
           <button className="icon-button" onClick={closeSheet} aria-label="Close actions"><X /></button>
         </header>
-        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />{sheetItem.type === "board" ? "Restore board" : sheetItem.type === "calendar" ? "Restore" : `Restore to ${binFolderLabel(sheetItem)}`}</button>
+        <button autoFocus onClick={() => { void restore(sheetItem); }}><ArchiveRestore />{sheetItem.type === "board" ? "Restore board" : sheetItem.type === "calendar" || sheetItem.type === "vault" ? "Restore" : `Restore to ${binFolderLabel(sheetItem)}`}</button>
         {sheetItem.can_purge !== false && <button className="danger" onClick={() => { void deleteForever(sheetItem); }}><Trash2 />Delete forever</button>}
         <button onClick={closeSheet}>Cancel</button>
       </div>

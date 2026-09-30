@@ -113,3 +113,16 @@ test("F1: two-pane pages (Team and its sections, Inbox proposals) scroll each pa
   expect(inbox).toContain(`className="inbox-detail-pane split-pane"`);
   expect(inbox).toMatch(/detailPaneRef\.current\?\.scrollTo\(\{ top: 0 \}\); \}, \[route\.proposalId\]\)/);
 });
+
+test("Vault (Wave 25): every screen scrolls as a page with a fixed header; a wide grid scrolls sideways only inside itself", async () => {
+  const shell = await read("appShell.css");
+  expect(bounded(rule(shell, ".app-page:not(.tasks-app):not(.collections-app)"))).toBe(true);
+  expect(await read("vault/VaultApp.tsx")).toContain(`<main ref={mainRef} className="app-page vault-app">`);
+  const vault = await read("vault/vault.css");
+  expect(vault).not.toMatch(/\.vault-app\s*\{[^}]*overflow/);
+  const grid = rule(vault, ".vault-grid-scroll") ?? "";
+  expect(grid).toContain("overflow-x: auto");
+  expect(grid).toContain("max-width: 100%");
+  // Long dialogs (many environments) scroll inside the dialog, not the page behind it.
+  expect(rule(vault, ".vault-dialog .vault-form")).toContain("overflow-y: auto");
+});

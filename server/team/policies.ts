@@ -238,6 +238,9 @@ export function policyImpact(proposed: Policies, time = Date.now()) {
   let blocked = 0;
   let newlyBlocked = 0;
   let narrowed = 0;
+  // Review Q8: why a key narrows. A key can lose a surface and a module at once.
+  let lostSurface = 0;
+  let lostModule = 0;
   for (const key of keys) {
     const input = { createdAt: key.created_at, expiresAt: key.expires_at };
     const next = surfaceBlocks(input, key.role, key.surfaces, proposed);
@@ -247,7 +250,10 @@ export function policyImpact(proposed: Policies, time = Date.now()) {
       continue;
     }
     const allowed = activeModules(key.role, proposed);
-    if (next.partly || [...(modulesByKey.get(key.id) ?? [])].some((module) => !allowed.includes(module))) narrowed += 1;
+    const moduleLost = [...(modulesByKey.get(key.id) ?? [])].some((module) => !allowed.includes(module));
+    if (next.partly) lostSurface += 1;
+    if (moduleLost) lostModule += 1;
+    if (next.partly || moduleLost) narrowed += 1;
   }
-  return { liveKeys: keys.length, blocked, newlyBlocked, narrowed };
+  return { liveKeys: keys.length, blocked, newlyBlocked, narrowed, lostSurface, lostModule };
 }

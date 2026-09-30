@@ -1,9 +1,9 @@
 import { useEffect, useId, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
 import { Select, type Option } from "../ui/Select";
 import {
-  MODULE_LABELS, permissionHelp, permissionLabel, rowModuleChoices, rowPermissionChoices, SELECTOR_KINDS, grantSummary,
+  CREATE_ONLY, MODULE_LABELS, permissionHelp, permissionLabel, rowModuleChoices, rowPermissionChoices, selectorFor, SELECTOR_KINDS, grantSummary,
   type GrantModule, type GrantRow, type KeyPermission, type PolicySummary
 } from "./keyGrants";
 import { loadResources, type ResourceOption } from "./keysApi";
@@ -29,7 +29,7 @@ export function GrantBuilder({ rows, onChange, role, policy, disabled = false, c
 }) {
   const [resources, setResources] = useState<Partial<Record<GrantModule, ResourceOption[] | "error">>>({});
   const narrowing = ceiling !== undefined;
-  const needed = [...new Set(rows.filter((row) => row.applies === "chosen" || narrowing).map((row) => row.module).filter((module) => SELECTOR_KINDS[module]))];
+  const needed = [...new Set(rows.filter((row) => row.applies === "chosen" || narrowing).filter((row) => selectorFor(row.module, row.permission)).map((row) => row.module))];
 
   useEffect(() => {
     for (const module of needed) {
@@ -78,7 +78,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
   canRemove: boolean;
 }) {
   const id = useId();
-  const selector = SELECTOR_KINDS[row.module];
+  const selector = selectorFor(row.module, row.permission);
   let permissions: Option<KeyPermission>[] = rowPermissionChoices(row.module, role, policy, rows, row.key).map((choice) => ({ value: choice.value, label: choice.label, description: choice.description, disabled: choice.disabled && choice.value !== row.permission }));
   if (narrowing && ceiling) {
     // Narrowing keeps the permission or lowers it to read (D278).
@@ -90,7 +90,9 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
   ] : [];
   const writable = row.permission !== "read";
   let resourceOptions: Option[] = resources === "error" || !resources ? [] : resources.map((option) => ({
-    value: option.value, label: option.label, description: option.description ?? (writable && !option.writable ? "You can only view this one" : undefined), disabled: writable && !option.writable
+    value: option.value, label: option.label,
+    description: writable && option.readOnly ? "Views can only be read through a key" : writable && !option.writable ? "You can only view this one" : option.description,
+    disabled: writable && !option.writable
   }));
   if (narrowing && ceiling?.applies === "chosen") resourceOptions = resourceOptions.filter((option) => ceiling.resourceIds.includes(option.value));
   // Chosen items leave the list (their chips hold them, with ×), so a pick never reads as a no-op (Friction 3).
@@ -112,16 +114,27 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
       </div>
       <div className="grant-field"><span id={labels.permission}>Permission</span>
         <Select<KeyPermission> labelledBy={labels.permission} label="Permission" value={row.permission} options={permissions} disabled={disabled || (narrowing && permissions.length < 2)}
-          onChange={(permission) => onChange({ permission })} />
+          onChange={(permission) => onChange(CREATE_ONLY.has(`${row.module}:${permission}`) ? { permission, applies: "all", resourceIds: [] } : { permission })} />
       </div>
       {selector && <div className="grant-field"><span id={labels.applies}>Applies to</span>
         <Select<"all" | "chosen"> labelledBy={labels.applies} label="Applies to" value={row.applies} options={appliesOptions} disabled={disabled}
           onChange={(applies) => onChange({ applies, resourceIds: applies === "all" ? [] : narrowing && ceiling?.applies === "chosen" ? ceiling.resourceIds : row.resourceIds })} />
       </div>}
     </div>
-    {selector && row.applies === "chosen" && <div className="grant-resources">
+    {selector && row.applies === "chosen" && narrowing && <div className="grant-resources">
+      {/* Review Q9: editing only removes items; adding needs a rotation (re-authenticated). */}
+      <ul className="grant-chosen" aria-label={`Chosen ${selector.many}`}>
+        {row.resourceIds.map((value) => {
+          const label = resourceOptions.find((option) => option.value === value)?.label ?? "An item you cannot open now";
+          return <li key={value} className="ui-chip"><span className="ui-chip-label">{label}</span>
+            <button type="button" className="ui-chip-remove" aria-label={`Remove ${label}`} disabled={disabled || row.resourceIds.length < 2} onClick={() => onChange({ resourceIds: row.resourceIds.filter((item) => item !== value) })}><X /></button></li>;
+        })}
+      </ul>
+      <small className="grant-note">Items can only be removed here; rotate the key to add.</small>
+    </div>}
+    {selector && row.applies === "chosen" && !narrowing && <div className="grant-resources">
       {resources === "error" ? <p className="form-error" role="alert">Could not load your {selector.many}.</p>
-        : <Combobox multiple label={`Chosen ${selector.many}`} placeholder={`Choose ${selector.many}…`} placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}
+        : <Combobox multiple backspaceRemoves={false} label={`Chosen ${selector.many}`} placeholder={`Choose ${selector.many}…`} placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}
           selectedOptions={row.resourceIds.map((value) => resourceOptions.find((option) => option.value === value) ?? { value, label: "An item you cannot open now" })}
           emptyText={resources && resources.length === 0 ? `You have no ${selector.many} to choose` : resourceOptions.length && !unchosen.length ? `Every ${selector.one} is chosen` : "No matches"} disabled={disabled}
           onChange={(resourceIds) => onChange({ resourceIds })} maxSelected={100} />}

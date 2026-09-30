@@ -17,6 +17,8 @@ export type AccessAction =
   | "key.revoked"
   | "key.grace_ended"
   | "key.policy_blocked"
+  // Wave 34 review Q1: a refused call (address, surface, expired, revoked), one per reason per hour per key.
+  | "key.denied"
   | "policy.changed"
   // Groups and item access (Wave 32, D267, D270).
   | "group.created"
@@ -108,6 +110,8 @@ function safeMeta(json: string | null) {
   const idLike = (value: string) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value);
   for (const [key, value] of Object.entries(meta)) {
     if (/ids?$/i.test(key) || /From$/.test(key)) continue;
+    // A refused call's address prefix is for the key's owner only (Wave 34 review Q1), never admins.
+    if (key === "clientPrefix") continue;
     if (typeof value === "number" || typeof value === "boolean") kept[key] = value;
     else if (typeof value === "string" && value.length <= 60 && !idLike(value)) kept[key] = value;
     else if (Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length <= 60 && !idLike(entry))) kept[key] = value.slice(0, 20);

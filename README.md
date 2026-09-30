@@ -63,7 +63,7 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - Admins block and unblock accounts, sign them out everywhere, and see activity. Admins never see anyone's private content.
 - New accounts get `SIGNUP_ROLE` (default `guest`). A host CLI (`server/team-admin.ts`) recovers from a lockout.
 - **Sign in with Google** (optional): `AUTH_METHODS=password|google|both` chooses the methods, enforced on the server. Google accounts are created automatically when registration would allow it (the first account, an invite, or open registration), `GOOGLE_ALLOWED_DOMAINS` limits them to your company domains, two-factor still applies, and Google profile pictures replace the letter avatars (downloaded and served by Nook itself). Setup: [docs/OPERATIONS.md](docs/OPERATIONS.md#google-sign-in).
-- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
+- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` (and `TRUSTED_PROXY_ADDRESSES` to the proxy's own address, so nobody reaching the port directly can choose an address) so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
 - **Central access**: Team → a member → **Access** shows everything a person can open, per module and through what (direct, a group, or everyone), with titles hidden for items the admin cannot open. Admins can only take access away (remove, lower, leave a group, revoke keys, or **Reset access**), each confirmed, logged in **Team → Access activity**, and announced on the owner's bell. **Team → Templates** gives invites a role and groups. Everyone but guests sees their own in **Settings → My access**.
 
 ### Everywhere
@@ -72,6 +72,7 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - **Settings → Modules**: turn apps on or off for your account on every device. Nothing is deleted and sharing is unchanged.
 - **Mobile first**: every app, item, and view has its own URL, phones get focused single-column screens, and browser Back and Forward work everywhere (Back closes an open dialog or sheet first).
 - **MCP server**: a Streamable HTTP endpoint for trusted AI clients with revocable API keys and per-key permissions across notes (read, write drafts), files (read), tasks (read, write), collections (read, write), calendar (read, write), Today, and team (admins). Agents write drafts; publishing always stays with you.
+- **REST API and scoped keys**: the same tools over plain HTTPS at `/api/v1` for scripts and CI, opt-in per key. A key can be limited to chosen folders, notes, files, boards, saved views, collections, calendars, routines, or whiteboards (lists, search, and Today then show only those), and to IP addresses behind a configured reverse proxy.
 
 <p align="center">
   <img src="docs/images/notes-editor-dark.png" alt="The Notes editor with a folder rail, note list, checklist, and table" width="49%" />

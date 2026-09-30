@@ -146,10 +146,22 @@ export function withProposalAuditContext<T>(extra: Record<string, unknown>, oper
   return proposalAuditContext.run(extra, operation);
 }
 
+/**
+ * The key surface a tool call came through (Wave 34): `{via: "rest"}` for `/api/v1/tools/:name`.
+ * Tools share one handler for MCP and REST, and module wrappers set `{via: "mcp"}`; this is
+ * merged after them (and before a proposal's provenance), so the audit row names the real surface.
+ */
+const surfaceAuditContext = new AsyncLocalStorage<Record<string, unknown>>();
+
+export function withSurfaceAuditContext<T>(extra: Record<string, unknown> | null, operation: () => T): T {
+  return extra ? surfaceAuditContext.run(extra, operation) : operation();
+}
+
 export function audit(actorId: string | null, noteId: string | null, eventType: string, metadata?: unknown) {
   const extra = auditContext.getStore();
+  const surface = surfaceAuditContext.getStore();
   const proposal = proposalAuditContext.getStore();
-  const merged = extra || proposal ? { ...(metadata as Record<string, unknown> | undefined), ...extra, ...proposal } : metadata;
+  const merged = extra || surface || proposal ? { ...(metadata as Record<string, unknown> | undefined), ...extra, ...surface, ...proposal } : metadata;
   db.query(
     "INSERT INTO audit_log (id, actor_id, note_id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(crypto.randomUUID(), actorId, noteId, eventType, merged ? JSON.stringify(merged) : null, now());

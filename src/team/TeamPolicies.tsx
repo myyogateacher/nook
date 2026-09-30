@@ -24,7 +24,15 @@ export function impactLine(impact: PolicyImpact | null, dirty: boolean) {
   if (!impact) return "Checking which keys these settings affect…";
   const parts: string[] = [];
   if (impact.blocked) parts.push(`${impact.blocked} of ${impact.liveKeys} live ${impact.liveKeys === 1 ? "key" : "keys"} ${dirty ? "would be" : "are"} blocked${dirty && impact.newlyBlocked ? ` (${impact.newlyBlocked} newly)` : ""}`);
-  if (impact.narrowed) parts.push(`${impact.narrowed} ${impact.narrowed === 1 ? "key" : "keys"} ${dirty ? "would lose" : "lose"} at least one module`);
+  const lose = dirty ? "would lose" : "lose";
+  const keys = (count: number) => `${count} ${count === 1 ? "key" : "keys"}`;
+  if (impact.lostSurface === undefined) {
+    if (impact.narrowed) parts.push(`${keys(impact.narrowed)} ${lose} at least one module`);
+  } else {
+    // Review Q8: a `both` key blocked on one surface loses that surface, not a module.
+    if (impact.lostSurface) parts.push(`${keys(impact.lostSurface)} ${lose} MCP or REST (the other still works)`);
+    if (impact.lostModule) parts.push(`${keys(impact.lostModule)} ${lose} at least one module`);
+  }
   if (!parts.length) return `No live key ${dirty ? "would be" : "is"} blocked or narrowed (${impact.liveKeys} live).`;
   return `${parts.join("; ")}. Blocked keys are not revoked: loosening the policy brings them back.`;
 }
@@ -173,7 +181,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
 
       <fieldset className="policies-section" disabled={busy}>
         <legend>Where keys work</legend>
-        <p>Guests never hold keys. REST arrives in a later release; the setting applies from then.</p>
+        <p>Guests never hold keys. MCP is for AI clients; REST (<code>/api/v1</code>) is for scripts and CI. A key that may use both keeps working on the surface its owner's role still allows.</p>
         <div className="policies-grid">
           <div className="policies-role"><span>MCP</span>{KEY_ROLES.map((role) => <label key={role} className="policies-switch"><span>{ROLE_NAMES[role]}</span><input type="checkbox" checked={draft.mcpRoles.includes(role)} onChange={onCheckedChange((checked) => toggleRole("mcpRoles", role, checked))} /></label>)}</div>
           <div className="policies-role"><span>REST</span>{KEY_ROLES.map((role) => <label key={role} className="policies-switch"><span>{ROLE_NAMES[role]}</span><input type="checkbox" checked={draft.restRoles.includes(role)} onChange={onCheckedChange((checked) => toggleRole("restRoles", role, checked))} /></label>)}</div>

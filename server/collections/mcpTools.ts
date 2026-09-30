@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { config } from "../config";
+import { keyFilter } from "../keyResources";
 import { withAuditContext } from "../db";
 import { restoreItem } from "../bin";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
@@ -200,11 +201,12 @@ export const collectionTools: McpToolSpec[] = [
     title: "List collections",
     description: "List the collections the user owns or that are shared with them, with the user's role (owner, editor, or viewer), row counts, and each field's id, name, type, and options.",
     scopes: ["collections:read"],
-    listFilter: { field: "collections", kind: "collection" },
+    access: { mode: "list", lists: ["collection"] },
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => ({
-      collections: listCollections(key.userId).map((summary) => {
+      // A key limited to chosen collections lists only those, in SQL (T203).
+      collections: listCollections(key.userId, keyFilter(key, "collections:read", { collection: "c.id" })).map((summary) => {
         const detail = collectionDetail(summary.id, key.userId);
         return { id: summary.id, name: summary.name, role: summary.role, rowCount: summary.row_count, ownerName: summary.owner_name, fields: (detail?.fields ?? []).map(presentField) };
       })
@@ -215,7 +217,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Query rows",
     description: "Rows of a collection, optionally filtered, sorted, and searched (q matches text and link fields). Filters are {field, op, value}; ops by type: text/url contains|equals|empty|not_empty, number/date eq|lt|lte|gt|gte|empty, checkbox is, select is|is_not|in, multi_select has_any|has_all, note/file empty|not_empty. Rows are keyed by field name. Pass nextCursor back for the next page.",
     scopes: ["collections:read"],
-    resource: { arg: "collectionId", kind: "collection" },
+    access: { mode: "items", items: [{ arg: "collectionId", kind: "collection" }] },
     write: false,
     inputSchema: z.object({
       collectionId: uuid,
@@ -246,7 +248,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Get a row",
     description: "Read one row, keyed by field name, with the revision update_row needs.",
     scopes: ["collections:read"],
-    resource: { arg: "rowId", kind: "row" },
+    access: { mode: "items", items: [{ arg: "rowId", kind: "row" }] },
     write: false,
     inputSchema: z.object({ rowId: uuid }),
     handler: async ({ rowId }, key) => service(key, () => {
@@ -260,7 +262,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Create a row",
     description: "Add a row to a collection the user owns or may edit. The row goes at the bottom. Values are keyed by field name.",
     scopes: ["collections:write"],
-    resource: { arg: "collectionId", kind: "collection" },
+    access: { mode: "items", items: [{ arg: "collectionId", kind: "collection" }] },
     write: true,
     dailyBucket: "row_write",
     inputSchema: z.object({ collectionId: uuid, values: valuesInput }),
@@ -279,7 +281,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Update a row",
     description: "Merge values into a row (fields not named are kept; null clears one). baseRevision must be the revision from get_row or query_rows; if the row changed since, the call fails with ROW_CHANGED and the current revision. The change can be undone in Nook.",
     scopes: ["collections:write"],
-    resource: { arg: "rowId", kind: "row" },
+    access: { mode: "items", items: [{ arg: "rowId", kind: "row" }] },
     write: true,
     dailyBucket: "row_write",
     inputSchema: z.object({ rowId: uuid, values: valuesInput, baseRevision: z.number().int().min(1) }),
@@ -299,6 +301,8 @@ export const collectionTools: McpToolSpec[] = [
     title: "Create a collection",
     description: `Create a private collection the user owns, from exactly one of templateId (${COLLECTION_TEMPLATES.map((template) => template.id).join(", ")}) or fields (1 to 60 of { name, type: text|number|date|checkbox|select|multi_select|url|note|file, required?, options?: [{ label, color? }] for selects }). Nobody else sees it until the user shares it in Nook. At most 100 collections per user (LIMIT_REACHED).`,
     scopes: ["collections:write"],
+    // templateId names a built-in template, not an item.
+    access: { mode: "global", related: ["templateId"] },
     write: true,
     dailyBucket: "row_write",
     inputSchema: z.object({
@@ -328,7 +332,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Move a row to the Bin",
     description: `Move a row of a collection the user may edit to the Bin. ${BIN_DESCRIPTION} Restore it with restore_row.`,
     scopes: ["collections:write"],
-    resource: { arg: "rowId", kind: "row" },
+    access: { mode: "items", items: [{ arg: "rowId", kind: "row" }] },
     alsoRequires: ["bin:write"],
     write: true,
     buckets: BIN_BUCKETS,
@@ -343,7 +347,7 @@ export const collectionTools: McpToolSpec[] = [
     title: "Restore a row from the Bin",
     description: "Restore a binned row. Only the collection owner, or whoever binned it while they can still edit the collection, can restore it. A row whose collection is in the Bin fails with PARENT_IN_BIN.",
     scopes: ["collections:write"],
-    resource: { arg: "rowId", kind: "row" },
+    access: { mode: "items", items: [{ arg: "rowId", kind: "row" }] },
     alsoRequires: ["bin:write"],
     write: true,
     inputSchema: z.object({ rowId: uuid }).strict(),

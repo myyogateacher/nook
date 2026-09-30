@@ -3,13 +3,14 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { listReadableFolders, ownedNote, readableNote, readableNotePredicate } from "./access";
 import { config } from "./config";
-import { audit, db, type DocumentRow, type NoteRow } from "./db";
+import { audit, db, withSurfaceAuditContext, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
-import { hasAllScopes, hasAnyScope, type McpScope } from "./mcpScopes";
-import { containerKindOf, countKeyUsage, isKeyDenial, resolveContainer, resolveKeyActor, toolReach } from "./apiKeys";
-import { grantsForScopes, scopeReach } from "./keyGrants";
+import { hasAllScopes, hasAnyScope, hasScope, type McpScope } from "./mcpScopes";
+import { countKeyUsage, isKeyDenial, resolveKeyActor } from "./apiKeys";
+import { grantsForScopes, scopeReach, selectionHas, type ScopeReach } from "./keyGrants";
+import { anchorsOf, keyFilter, keyReach, keyReachAny, reachCanCover, reachCovers, type ItemKind } from "./keyResources";
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
@@ -47,53 +48,92 @@ export type { McpErrorCode, McpKeyContext, McpToolSpec } from "./mcpToolKit";
  * its rotation grace, its holder blocked, or team policy blocks it. Scopes and grants are the
  * effective ones: grants ∩ the holder's current role ∩ policy, recomputed on every call (T81).
  */
-export function loadLiveKey(keyId: string): McpKeyContext | null {
-  const actor = resolveKeyActor(keyId, "mcp");
+export function loadLiveKey(keyId: string, surface: KeySurface = "mcp"): McpKeyContext | null {
+  const actor = resolveKeyActor(keyId, surface);
   return isKeyDenial(actor) ? null : actor;
 }
 
+/** Where a tool call came from: the MCP endpoint or `/api/v1/tools/:name` (Wave 34). */
+export type KeySurface = "mcp" | "rest";
+
 /**
- * How the key reaches a tool (D281): null when it cannot use it at all; otherwise the resource
- * selectors the call must stay inside (none for keys whose grants cover the whole module).
+ * How the key reaches a tool (D281): null when it cannot use it at all; otherwise the reach over
+ * the tool's scopes (any one of them) and over each `alsoRequires` scope.
  */
-function reachOf(spec: McpToolSpec, key: McpKeyContext) {
+type ToolReach = { reach: ScopeReach; also: ScopeReach[] };
+
+function reachOf(spec: McpToolSpec, key: McpKeyContext): ToolReach | null {
   if (!hasAnyScope(key.scopes, spec.scopes) || !hasAllScopes(key.scopes, spec.alsoRequires)) return null;
-  const grants = key.grants ?? grantsForScopes(key.scopes);
-  return toolReach(grants, key.scopes, spec.scopes, spec.alsoRequires);
+  const reach = keyReachAny(key, spec.scopes.filter((scope) => hasScope(key.scopes, scope)));
+  const also = (spec.alsoRequires ?? []).map((scope) => keyReach(key, scope));
+  if (reach === null || also.some((item) => item === null)) return null;
+  return { reach, also };
 }
 
-/** Whether `key` reaches the resource a call names: missing, unreadable, and outside the grant look the same (T203). */
-function callInsideSelectors(spec: McpToolSpec, selectors: ReturnType<typeof toolReach> & object, args: unknown) {
-  if (selectors.all) return true;
-  if (!spec.resource) return false;
-  const value = (args as Record<string, unknown> | null | undefined)?.[spec.resource.arg];
-  if (typeof value !== "string") return false;
-  const container = resolveContainer(spec.resource.kind, value);
-  if (!container) return false;
-  return selectors.selectors.every((selector) => selector.kind === container.kind && selector.ids.has(container.id));
+const coversEverything = (reach: ToolReach) => reach.reach === "all" && reach.also.every((item) => item === "all");
+
+/**
+ * Whether a key whose grants name chosen items may see `spec` (D281): `global` tools never; tools
+ * acting on named items only when the key's items could hold them (a key over chosen boards never
+ * sees note tools); list, derived, and own tools always (they filter what they return).
+ */
+function toolFits(spec: McpToolSpec, reach: ToolReach) {
+  if (coversEverything(reach)) return true;
+  if (spec.access.mode === "global") return false;
+  if (spec.access.mode !== "items") return true;
+  return (spec.access.items ?? []).filter((item) => item.ifAbsent !== "allow")
+    .every((item) => [reach.reach, ...reach.also].every((each) => reachCanCover(each, item.kind)));
+}
+
+const ITEM_LABELS: Record<ItemKind, string> = {
+  note: "Note", folder: "Folder", document: "File", whiteboard: "Whiteboard", board: "Board", card: "Card", column: "Column", sprint: "Sprint",
+  task_view: "View", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", routine: "Routine", run: "Run"
+};
+
+/**
+ * The declared items a call names, each checked against the key's chosen items (T203). Missing,
+ * unreadable, and outside the grant are the same NOT_FOUND, and the error never names the item.
+ */
+function checkNamedItems(spec: McpToolSpec, reach: ToolReach, args: Record<string, unknown>) {
+  if (coversEverything(reach) || spec.access.mode === "own" || spec.access.mode === "global") return;
+  for (const item of spec.access.items ?? []) {
+    const value = args[item.arg];
+    const values = value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+    if (!values.length) {
+      if (item.ifAbsent === "allow") continue;
+      throw new McpToolError("INVALID", `This API key covers only chosen items: pass ${item.arg}`);
+    }
+    for (const entry of values) {
+      const anchors = typeof entry === "string" ? anchorsOf(item.kind, entry) : null;
+      if (![reach.reach, ...reach.also].every((each) => reachCovers(each, anchors))) throw notFound(ITEM_LABELS[item.kind]);
+    }
+  }
 }
 
 /**
- * Runs one tool for a key: re-checks the key, its grants, and policy, charges the per-key limits,
- * and maps errors to `{error, code}` results.
+ * Runs one tool for a key on a surface (MCP or REST, the same path, Wave 34): re-checks the key,
+ * its grants, surface, and policy; checks the items the call names; charges the per-key limits
+ * (per surface); and maps errors to `{error, code}` results.
  */
-export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): Promise<ToolResult> {
-  const actor = resolveKeyActor(keyId, "mcp");
+export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, surface: KeySurface = "mcp"): Promise<ToolResult> {
+  const actor = resolveKeyActor(keyId, surface);
   if (isKeyDenial(actor)) {
+    // Counted once, on the surface that was refused (review S5).
+    countKeyUsage(keyId, "denied", surface);
     return actor.code === "KEY_POLICY" ? errorResult("KEY_POLICY", actor.message) : errorResult("SCOPE_REQUIRED", actor.message);
   }
   const key: McpKeyContext = actor;
   if (!hasAnyScope(key.scopes, spec.scopes)) {
-    countKeyUsage(key.keyId, "denied");
+    countKeyUsage(key.keyId, "denied", surface);
     return errorResult("SCOPE_REQUIRED", `This API key does not have the ${spec.scopes.join(" or ")} scope`);
   }
   if (!hasAllScopes(key.scopes, spec.alsoRequires)) {
-    countKeyUsage(key.keyId, "denied");
+    countKeyUsage(key.keyId, "denied", surface);
     return errorResult("SCOPE_REQUIRED", `This API key also needs the ${spec.alsoRequires!.join(" and ")} scope`);
   }
   const reach = reachOf(spec, key);
-  if (!reach || (!reach.all && !toolFitsSelectors(spec, reach))) {
-    countKeyUsage(key.keyId, "denied");
+  if (!reach || !toolFits(spec, reach)) {
+    countKeyUsage(key.keyId, "denied", surface);
     return errorResult("SCOPE_REQUIRED", "This API key covers only chosen items, and this tool is not available to it");
   }
   // Defence in depth (§5.4): effective scopes already drop write scopes for read-only team roles,
@@ -103,23 +143,27 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
   if (spec.write) buckets.push("write");
   if (spec.dailyBucket) buckets.push(spec.dailyBucket);
   if (spec.buckets) buckets.push(...spec.buckets);
-  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId, limits: actor.limits }, buckets);
+  const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId, limits: actor.limits, surface }, buckets);
   if (retryAfter) {
-    countKeyUsage(key.keyId, "denied");
+    countKeyUsage(key.keyId, "denied", surface);
     return errorResult("RATE_LIMITED", "Too many requests for this API key. Try again later.", { retryAfterSeconds: retryAfter });
   }
-  countKeyUsage(key.keyId, spec.write ? "write" : "call");
+  countKeyUsage(key.keyId, spec.write ? "write" : "call", surface);
   // Agent inbox D160: an admitted call counts toward the key's open routine run, if it has one.
   countRunToolCall(key.keyId);
   try {
+    // Named items first, on the raw arguments: an item outside the key's grant is NOT_FOUND
+    // whatever else the call gets wrong, so validation errors never tell it apart (T205).
+    checkNamedItems(spec, reach, args && typeof args === "object" ? args as Record<string, unknown> : {});
     const parsed = spec.inputSchema.safeParse(args ?? {});
-    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
-    if (!spec.listFilter && !callInsideSelectors(spec, reach, parsed.data)) throw notFound(resourceLabel(spec));
-    // Cross-module paths (Today sections, proposal targets, uploads) read `scopes`: a handler sees
-    // only the scopes the key holds over every resource, so a scope limited to chosen items never
-    // leaks through another module (T203; Wave 34 filters those paths by resource).
-    const handlerKey: McpKeyContext = reach.all && key.grants?.every((grant) => grant.resourceKind === null) ? key : { ...key, scopes: wholeModuleScopes(key) };
-    return textResult(filterListResult(spec, reach, await spec.handler(parsed.data, handlerKey)));
+    // Each detail names its argument (review Q4): "cardId: Invalid UUID".
+    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message) });
+    // Handlers read chosen items from `grants` (keyReach, keyFilter). `scopes` keeps only the
+    // scopes the key holds over every item, so any older path that reads scopes alone stays closed
+    // for a scope limited to chosen items (T203).
+    const handlerKey: McpKeyContext = { ...(key.grants?.every((grant) => grant.resourceKind === null) ? key : { ...key, scopes: wholeModuleScopes(key) }), surface };
+    const result = await withSurfaceAuditContext(surface === "rest" ? { via: "rest" } : null, () => spec.handler(parsed.data, handlerKey));
+    return textResult(result);
   } catch (error) {
     if (error instanceof McpToolError) return errorResult(error.code, error.message, error.details);
     console.error(`MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
@@ -129,14 +173,20 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string): 
 
 // ---------------------------------------------------------------- notes:read
 
-const listNotesQuery = db.query(`
+const listNotesSql = (keyCondition: string) => `
   SELECT n.id, v.title, n.current_version, n.updated_at, u.display_name AS owner_name,
          CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner
   FROM notes n JOIN users u ON u.id = n.owner_id
   JOIN note_versions v ON v.note_id = n.id AND v.version_number = n.current_version
-  WHERE n.deleted_at IS NULL AND n.current_version > 0 AND ${readableNotePredicate}
+  WHERE n.deleted_at IS NULL AND n.current_version > 0 AND ${readableNotePredicate} AND ${keyCondition}
   ORDER BY n.updated_at DESC LIMIT 200
-`);
+`;
+const listNotesQuery = db.query(listNotesSql("1"));
+
+/** Where a note sits, for a key limited to chosen notes or folders (Wave 34): the note itself or its immediate folder. */
+export const NOTE_ANCHOR_COLUMNS = { note: "n.id", folder: "n.folder_id" } as const;
+/** The same for Files documents (alias `d`). */
+export const DOCUMENT_ANCHOR_COLUMNS = { document: "d.id", folder: "d.folder_id" } as const;
 
 /** Reads a published version after checking it against its recorded checksum. */
 export async function readPublishedMarkdown(noteId: string, version: number) {
@@ -154,11 +204,15 @@ const noteReadTools: McpToolSpec[] = [
     title: "List notes",
     description: "List the published notes the authenticated Nook user can read. Draft content is never returned.",
     scopes: ["notes:read"],
+    access: { mode: "list", lists: ["note"] },
     write: false,
     inputSchema: z.object({ query: z.string().max(120).optional().describe("Optional case-insensitive title filter") }),
     handler: ({ query }, key) => {
       const search = query?.trim().toLowerCase() ?? "";
-      const notes = listNotesQuery.all({ userId: key.userId }) as Array<Record<string, unknown> & { title: string }>;
+      // A key limited to chosen notes or folders is narrowed in SQL, before the LIMIT (T203).
+      const scope = keyFilter(key, "notes:read", NOTE_ANCHOR_COLUMNS);
+      const statement = scope.sql === "1" ? listNotesQuery : db.query(listNotesSql(scope.sql));
+      const notes = statement.all({ ...scope.params, userId: key.userId }) as Array<Record<string, unknown> & { title: string }>;
       return { notes: search ? notes.filter((note) => note.title.toLowerCase().includes(search)) : notes };
     }
   }),
@@ -167,6 +221,7 @@ const noteReadTools: McpToolSpec[] = [
     title: "Read a note",
     description: "Read the latest published Markdown for a note visible to the authenticated Nook user.",
     scopes: ["notes:read"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: false,
     inputSchema: z.object({ noteId: z.string().uuid() }),
     handler: async ({ noteId }, key) => {
@@ -181,22 +236,29 @@ const noteReadTools: McpToolSpec[] = [
     title: "Search notes",
     description: "Full-text search over the published text of notes the user can read. Drafts are never searched. Snippets are plain text.",
     scopes: ["notes:read"],
+    access: { mode: "list", lists: ["note"], items: [{ arg: "folderId", kind: "folder", ifAbsent: "allow" }] },
     write: false,
     inputSchema: z.object({
       query: z.string().min(1).max(MAX_QUERY_LENGTH).describe("Words to find; quote a phrase with double quotes"),
       folderId: z.string().uuid().optional().describe("Only notes in this folder"),
       limit: z.number().int().min(1).max(20).optional().describe("Maximum results, 1 to 20 (default 10)")
     }),
-    handler: ({ query, folderId, limit }, key) => searchPublishedNotes(key.userId, query, { folderId: folderId ?? null, limit: limit ?? 10 })
+    handler: ({ query, folderId, limit }, key) => searchPublishedNotes(key.userId, query, { folderId: folderId ?? null, limit: limit ?? 10, keyScope: keyFilter(key, "notes:read", NOTE_ANCHOR_COLUMNS) })
   }),
   defineTool({
     name: "list_folders",
     title: "List folders",
     description: "List the folders the user owns or that are shared with them, as the Nook web app shows them.",
     scopes: ["notes:read", "files:read"],
+    access: { mode: "list", lists: ["folder"] },
     write: false,
     inputSchema: z.object({}),
-    handler: (_args, key) => ({ folders: listReadableFolders(key.userId) })
+    handler: (_args, key) => {
+      // Folders are listed whole (no LIMIT); a key limited to chosen folders sees only those.
+      const reach = keyReachAny(key, ["notes:read", "files:read"]);
+      const folders = listReadableFolders(key.userId);
+      return { folders: reach === "all" ? folders : folders.filter((folder) => reach !== null && selectionHas(reach, "folder", folder.id)) };
+    }
   })
 ];
 
@@ -235,6 +297,7 @@ const noteWriteTools: McpToolSpec[] = [
     title: "Create a draft note",
     description: "Create a new note whose content is an unpublished draft. A person must open it in Nook and publish it. Returns the note id, draft revision, and a link.",
     scopes: ["notes:write-draft"],
+    access: { mode: "items", items: [{ arg: "folderId", kind: "folder" }] },
     write: true,
     dailyBucket: "create_note",
     inputSchema: z.object({
@@ -254,6 +317,7 @@ const noteWriteTools: McpToolSpec[] = [
     title: "Get a note's draft",
     description: "Read the current draft of a note the user owns, with the revision to pass to update_note_draft or publish_note_draft. When there is no draft, returns the published text and a null revision.",
     scopes: ["notes:write-draft", "notes:publish"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: false,
     inputSchema: z.object({ noteId: z.string().uuid() }),
     handler: async ({ noteId }, key) => withNoteLock(noteId, async () => {
@@ -277,6 +341,7 @@ const noteWriteTools: McpToolSpec[] = [
     title: "Update a note's draft",
     description: "Replace or append to the draft of a note the user owns. Never publishes and never creates a version. baseRevision must be the revision from get_note_draft (null when there was no draft); if the draft changed since, the call fails with DRAFT_CHANGED.",
     scopes: ["notes:write-draft"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: true,
     inputSchema: z.object({
       noteId: z.string().uuid(),
@@ -339,15 +404,17 @@ const fileTools: McpToolSpec[] = [
     title: "List files",
     description: "List the files (documents) the user can see in Nook Files, newest first. Metadata only.",
     scopes: ["files:read"],
+    access: { mode: "list", lists: ["document"], items: [{ arg: "folderId", kind: "folder", ifAbsent: "allow" }] },
     write: false,
     inputSchema: z.object({ folderId: z.string().uuid().optional().describe("Only files in this folder") }),
-    handler: ({ folderId }, key) => ({ documents: listReadableDocuments(key.userId, folderId ?? null) })
+    handler: ({ folderId }, key) => ({ documents: listReadableDocuments(key.userId, folderId ?? null, keyFilter(key, "files:read", DOCUMENT_ANCHOR_COLUMNS)) })
   }),
   defineTool({
     name: "get_document_metadata",
     title: "Get file details",
     description: "Name, type, size, folder, owner, and sharing of one file the user can see in Nook Files.",
     scopes: ["files:read"],
+    access: { mode: "items", items: [{ arg: "documentId", kind: "document" }] },
     write: false,
     inputSchema: z.object({ documentId: z.string().uuid() }),
     handler: ({ documentId }, key) => {
@@ -361,6 +428,7 @@ const fileTools: McpToolSpec[] = [
     title: "Read a text file",
     description: `Read a text file (such as .txt, .md, .csv, or .json) up to ${MCP_MAX_TEXT_BYTES} bytes as UTF-8. Other files return NOT_TEXT or TOO_LARGE.`,
     scopes: ["files:read"],
+    access: { mode: "items", items: [{ arg: "documentId", kind: "document" }] },
     write: false,
     inputSchema: z.object({ documentId: z.string().uuid() }),
     handler: async ({ documentId }, key) => {
@@ -394,32 +462,10 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
 /** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */
 export const toolAllowed = (spec: McpToolSpec, scopes: McpKeyContext["scopes"]) => hasAnyScope(scopes, spec.scopes) && hasAllScopes(scopes, spec.alsoRequires);
 
-/**
- * Whether a key whose grants name chosen items may see `spec` (D281): only a tool that declares
- * the one resource it touches, of the kind every selector names, is offered; everything else is
- * hidden until Wave 34 filters lists by resource (fail closed, T203).
- */
-function toolFitsSelectors(spec: McpToolSpec, reach: NonNullable<ReturnType<typeof toolReach>>) {
-  if (reach.all) return true;
-  if (spec.listFilter) return reach.selectors.every((selector) => selector.kind === spec.listFilter!.kind);
-  const resource = spec.resource;
-  return Boolean(resource) && reach.selectors.every((selector) => selector.kind === containerKindOf(resource!.kind));
-}
-
-/** A list tool's result narrowed to the chosen items of a selector key. */
-function filterListResult(spec: McpToolSpec, reach: NonNullable<ReturnType<typeof toolReach>>, result: unknown) {
-  if (reach.all || !spec.listFilter || !result || typeof result !== "object") return result;
-  const field = spec.listFilter.field;
-  const items = (result as Record<string, unknown>)[field];
-  if (!Array.isArray(items)) return { ...(result as Record<string, unknown>), [field]: [] };
-  const kept = items.filter((item) => typeof (item as { id?: unknown })?.id === "string" && reach.selectors.every((selector) => selector.ids.has((item as { id: string }).id)));
-  return { ...(result as Record<string, unknown>), [field]: kept };
-}
-
-/** Whether `key` may see and call `spec` with its grants (scopes plus resource selectors). */
+/** Whether `key` may see and call `spec` with its grants (scopes plus chosen items, D281). */
 export function toolVisible(spec: McpToolSpec, key: McpKeyContext) {
   const reach = reachOf(spec, key);
-  return reach !== null && toolFitsSelectors(spec, reach);
+  return reach !== null && toolFits(spec, reach);
 }
 
 /** The scopes the key holds over every resource of the module (not only chosen items). */
@@ -428,15 +474,12 @@ function wholeModuleScopes(key: McpKeyContext): McpScope[] {
   return key.scopes.filter((scope) => scopeReach(grants, scope) === "all");
 }
 
-const RESOURCE_LABELS: Record<NonNullable<McpToolSpec["resource"]>["kind"], string> = {
-  board: "Board", card: "Card", column: "Column", sprint: "Sprint", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", whiteboard: "Whiteboard"
-};
-const resourceLabel = (spec: McpToolSpec) => spec.resource ? RESOURCE_LABELS[spec.resource.kind] : "Item";
+/** The tools a key may see now, in registration order (MCP tools/list and REST GET /api/v1/tools). */
+export const visibleTools = (key: McpKeyContext) => mcpToolSpecs.filter((spec) => toolVisible(spec, key));
 
 /** Registers the tools this key may use on a per-request server. */
 export function registerMcpTools(server: McpServer, key: McpKeyContext) {
-  for (const spec of mcpToolSpecs) {
-    if (!toolVisible(spec, key)) continue;
+  for (const spec of visibleTools(key)) {
     server.registerTool(spec.name, {
       title: spec.title,
       description: spec.description,
@@ -447,8 +490,8 @@ export function registerMcpTools(server: McpServer, key: McpKeyContext) {
 }
 
 /** Test hook: call a tool by name without the scope-based registration, to prove the handler re-check. */
-export function invokeMcpToolForTests(name: string, args: unknown, keyId: string) {
+export function invokeMcpToolForTests(name: string, args: unknown, keyId: string, surface: KeySurface = "mcp") {
   const spec = mcpToolSpecs.find((item) => item.name === name);
   if (!spec) throw new Error(`Unknown MCP tool ${name}`);
-  return runTool(spec, args, keyId);
+  return runTool(spec, args, keyId, surface);
 }

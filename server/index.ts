@@ -42,6 +42,8 @@ import { isFeedRequest } from "./calendar/feeds";
 import { contentRouteSecurityHeaders, isContentRequest, registerDocumentRoutes } from "./documents";
 import { createMcpApiKey, handleMcpRequest, listMcpApiKeys, revokeMcpApiKey } from "./mcp";
 import { handleMcpUpload } from "./mcpUploads";
+import { registerRestV1 } from "./restV1";
+import { clientIp } from "./clientAddress";
 import { aliasKeyRefusal, registerKeyRoutes } from "./keyRoutes";
 import { liveKeyCount, startKeyUsageFlusher } from "./apiKeys";
 import { readPolicies } from "./team/policies";
@@ -289,6 +291,10 @@ app.post("/api/auth/login", async (c) => {
     totp: totpState(user)
   });
 });
+
+// The REST surface (Wave 34, D280): Bearer keys only, so it sits before the session, CSRF, TOTP-setup,
+// and role middleware below, like /mcp. server/restV1.ts has the rules.
+registerRestV1(app);
 
 app.use("/api/auth/me", requireAuth);
 app.get("/api/auth/me", (c) => {
@@ -875,9 +881,10 @@ app.onError((error, c) => {
 
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
-app.all("/mcp", (c) => handleMcpRequest(c.req.raw));
+// The client address goes along for per-key IP allowlists (Wave 34, server/ipAllowlist.ts).
+app.all("/mcp", (c) => handleMcpRequest(c.req.raw, clientIp(c)));
 // Ticketed MCP uploads (Wave 19, D176): the same Bearer key that called begin_upload.
-app.put("/mcp/uploads/:uploadId", (c) => handleMcpUpload(c.req.raw, c.req.param("uploadId")));
+app.put("/mcp/uploads/:uploadId", (c) => handleMcpUpload(c.req.raw, c.req.param("uploadId"), clientIp(c)));
 
 // Dev-only mail preview (D253); in production every /dev path answers 404 (T232).
 registerMailPreviewRoutes(app);
@@ -920,6 +927,11 @@ async function reconcilePublishedMirrors() {
 await reconcilePublishedMirrors();
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
+// Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
+// choose their own X-Forwarded-For. One line, no addresses.
+if (config.trustedProxyHops >= 1 && config.trustedProxyAddresses.length === 0) {
+  console.warn("TRUSTED_PROXY_HOPS is set but TRUSTED_PROXY_ADDRESSES is empty: X-Forwarded-For is trusted from any connection. Publish the port only to the proxy, or set TRUSTED_PROXY_ADDRESSES (see docs/OPERATIONS.md).");
+}
 try {
   await reconcileSearchIndex();
 } catch (error) {

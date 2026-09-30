@@ -1,5 +1,6 @@
 import * as z from "zod/v4";
 import { defineTool, McpToolError, type McpToolSpec } from "../mcpToolKit";
+import { keyContainerIds } from "../keyResources";
 import { validTimeZone } from "../today/registry";
 import { TASK_QUERY_LIMITS } from "../../shared/taskQuery";
 import { QUERY_GROUPS, QUERY_SORTS, queryCards, type QueriedCard, type QueryResult } from "./query";
@@ -79,12 +80,16 @@ export const taskViewTools: McpToolSpec[] = [
     title: "List saved task views",
     description: "List the saved cross-board task views the user can open: their own, views shared with them, and views shared with everyone. Each has a filter in the task query language; run one with query_cards.",
     scopes: ["tasks:read"],
+    access: { mode: "list", lists: ["task_view"] },
     write: false,
     inputSchema: z.object({}).strict(),
     handler: (_args, key) => {
       const { mine, shared, everyone } = listViews(key.userId);
+      // A key limited to chosen items lists only the views it was given (T203); board grants give
+      // no views, since a view reaches across boards.
+      const chosen = keyContainerIds(key, "tasks:read", "task_view");
       return {
-        views: [...mine, ...shared, ...everyone].map((view) => ({
+        views: [...mine, ...shared, ...everyone].filter((view) => chosen === null || chosen.includes(view.id)).map((view) => ({
           id: view.id, name: view.name, owner_name: view.owner_name, is_owner: view.is_owner, visibility: view.visibility, query: view.query
         }))
       };
@@ -101,6 +106,7 @@ export const taskViewTools: McpToolSpec[] = [
       "and \"quoted text\" for title or excerpt text. A leading - negates a term. Results are paged: pass nextCursor back as cursor."
     ].join(" "),
     scopes: ["tasks:read"],
+    access: { mode: "list", lists: ["board"], items: [{ arg: "viewId", kind: "task_view", ifAbsent: "allow" }] },
     write: false,
     inputSchema: z.object({
       viewId: uuid.optional().describe("A saved view from list_views; runs its filter, sort, and grouping as this user"),
@@ -122,10 +128,14 @@ export const taskViewTools: McpToolSpec[] = [
       if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many queries. Try again in a moment.", { retryAfterSeconds: retryAfter });
       return run(() => {
         if (viewId !== undefined) {
+          // runTool checked the view is one this key was given (or the key reaches every item): a
+          // view grant runs the view as its owner reads it, across boards.
           const { view, ...result } = viewCards(key.userId, viewId, page);
           return { view: { id: view.id, name: view.name, owner_name: view.owner_name }, ...mcpResult(result) };
         }
-        return mcpResult(queryCards(key.userId, { q: filter!, sort, group, ...page }));
+        // A filter runs only over the boards a key limited to chosen items was given.
+        const boardIds = keyContainerIds(key, "tasks:read", "board");
+        return mcpResult(queryCards(key.userId, { q: filter!, sort, group, ...page, ...(boardIds ? { boardIds } : {}) }));
       });
     }
   })

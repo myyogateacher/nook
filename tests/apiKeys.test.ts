@@ -114,8 +114,9 @@ describe("/api/keys", () => {
     const theirs = await board(admin, "Private board");
     expect((await createKey(owner, { ...wrong, grants: grants(["tasks", "read", [theirs]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
     expect((await createKey(owner, { ...wrong, grants: grants(["tasks", "read", [crypto.randomUUID()]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
-    // Chosen items exist only for boards, collections, and calendars in Wave 31.
-    expect((await createKey(owner, { ...wrong, grants: grants(["notes", "read", [crypto.randomUUID()]]) })).body.code).toBe("INVALID_GRANT");
+    // Today, Team, and the Bin cover every item; notes take chosen folders and notes since Wave 34.
+    expect((await createKey(owner, { ...wrong, grants: grants(["today", "read", [crypto.randomUUID()]]) })).body.code).toBe("INVALID_GRANT");
+    expect((await createKey(owner, { ...wrong, grants: grants(["notes", "read", [crypto.randomUUID()]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
     expect((await createKey(owner, { ...wrong, grants: grants(["notes", "manage"]) })).status).toBe(400);
     expect((await createKey(owner, { ...wrong, grants: [] })).status).toBe(400);
     // Now the password is checked: 401, and nothing was created.
@@ -203,7 +204,8 @@ describe("/api/keys", () => {
     expect((await mcp(key.token)).status).toBe(401);
     expect(sweepKeyGraces().gracesEnded).toBeGreaterThanOrEqual(1);
     expect(db.query("SELECT revoked_at IS NOT NULL AS revoked FROM mcp_api_keys WHERE id = ?").get(key.id)).toEqual({ revoked: 1 });
-    expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.rotated", "key.grace_ended"]);
+    // The refused call is on the owner's key events (review Q1): one key.denied with reason "rotated".
+    expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.rotated", "key.denied", "key.grace_ended"]);
     expect(events(next.id).map((event) => event.action)).toEqual(["key.created"]);
     // No grace: the old key stops at once.
     const again = await api(owner, "POST", `/keys/${next.id}/rotate`, { password: owner.password, graceHours: 0 });

@@ -1,4 +1,5 @@
 import { db, type DocumentRow } from "./db";
+import { NO_FILTER, type SqlFilter } from "./keyResources";
 import { readableBoardPredicate } from "./tasks/access";
 import type { PreviewKind } from "./mimeSniff";
 import { readableCollectionPredicate } from "./collections/access";
@@ -119,9 +120,10 @@ export function readableDocumentSummary(documentId: string, userId: string) {
  * collection attachments never appear in Files (WAVES_7-9.md §7), even for
  * their uploader.
  */
-export function listReadableDocuments(userId: string, folderId: string | null) {
-  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' AND ($folderId IS NULL OR d.folder_id = $folderId) ORDER BY d.updated_at DESC LIMIT 500`)
-    .all({ userId, folderId }) as DocumentSummary[];
+export function listReadableDocuments(userId: string, folderId: string | null, keyScope: SqlFilter = NO_FILTER) {
+  // keyScope (Wave 34): an API key limited to chosen files or folders, applied before the LIMIT.
+  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' AND ($folderId IS NULL OR d.folder_id = $folderId) AND ${keyScope.sql} ORDER BY d.updated_at DESC LIMIT 500`)
+    .all({ ...keyScope.params, userId, folderId }) as DocumentSummary[];
 }
 
 /**
@@ -138,9 +140,9 @@ export function listableDocumentSummary(documentId: string, userId: string) {
  * The newest Files items `userId` can list, under the Files list predicate
  * (Today's `files` section, WAVES_10-12.md D51). `limit` is small and fixed.
  */
-export function recentListableDocuments(userId: string, limit: number) {
-  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
-    .all({ userId, limit }) as DocumentSummary[];
+export function recentListableDocuments(userId: string, limit: number, keyScope: SqlFilter = NO_FILTER) {
+  return db.query(`${documentSummarySelect} WHERE ${readablePredicate} AND d.purpose = 'file' AND ${keyScope.sql} ORDER BY d.updated_at DESC, d.id LIMIT $limit`)
+    .all({ ...keyScope.params, userId, limit }) as DocumentSummary[];
 }
 
 /** The full row for listableDocumentSummary's predicate; for server-side reads only (never returned). */

@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
+import { NO_FILTER, type SqlFilter } from "../keyResources";
 import { withResourceLock } from "../storage";
 import { boardLevel, boardLevels, readableBoard, readableBoardPredicate, readableCard, readableColumn, type BoardRow, type BoardVisibility, type ColumnRow, type ColumnState } from "./access";
 import { atLeast, type ItemLevel } from "../access/levels";
@@ -94,9 +95,10 @@ export function boardSummary(boardId: string, userId: string) {
   return row ? withStructure(row, userId) : null;
 }
 
-export function listBoards(userId: string) {
-  const rows = db.query(`${boardSummarySelect} WHERE ${readableBoardPredicate} ORDER BY is_owner DESC, b.name COLLATE NOCASE, b.id LIMIT 500`)
-    .all({ userId }) as BoardSummaryRow[];
+/** `keyScope` (Wave 34): an API key limited to chosen boards, over `b.id`, applied before the LIMIT. */
+export function listBoards(userId: string, keyScope: SqlFilter = NO_FILTER) {
+  const rows = db.query(`${boardSummarySelect} WHERE ${readableBoardPredicate} AND ${keyScope.sql} ORDER BY is_owner DESC, b.name COLLATE NOCASE, b.id LIMIT 500`)
+    .all({ ...keyScope.params, userId }) as BoardSummaryRow[];
   // The page's levels in three queries, not three per board (C10).
   const levels = boardLevels(rows, userId);
   return rows.map((row) => withStructure(row, userId, levels.get(row.id)));

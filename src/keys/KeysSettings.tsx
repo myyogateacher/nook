@@ -11,7 +11,9 @@ import {
   blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, keyEventLine, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
-import { useKeysApi, type ApiKey, type KeyEvent, type KeyList, type NarrowBody, type KeysApi } from "./keysApi";
+import { keyDetailEvents, useKeysApi, type ApiKey, type KeyEvent, type KeyList, type NarrowBody, type KeysApi, type VaultKeyEvent } from "./keysApi";
+import { firstVaultRow, useVaultChoices, VaultGrantBuilder } from "./VaultGrantBuilder";
+import { namesProtected, vaultFlagChips, vaultGrantChips, vaultGrantCountChips, vaultGrantsToRows, vaultKeyEventLine, vaultRowsNarrow, vaultRowsToGrants, type VaultGrantRow, type VaultGrantView } from "./vaultKeyGrants";
 import "./keys.css";
 
 /**
@@ -44,6 +46,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const configText = JSON.stringify({ mcpServers: { nook: { type: "streamable-http", url: endpoint, headers: { Authorization: `Bearer ${newToken?.token ?? "<YOUR_API_KEY>"}` } } } }, null, 2);
   // Always a placeholder: a key typed into a shell ends up in its history (T215).
   const restExample = restCurlExample(window.location.origin);
+  const vaultExample = vaultCurlExample(window.location.origin);
   const guest = role === "guest";
   // QA U11: an account that confirms with Google does it BEFORE opening New key or Rotate, so the
   // round trip never loses what was typed into the dialog.
@@ -156,9 +159,11 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card mcp-config keys-rest-help"><div><h4 id="keys-rest-heading">Using the REST API</h4><p>A key whose “Where it is used” includes REST runs the same tools over plain HTTPS, for scripts and CI. Send it only in the Authorization header, never in a URL. Bodies are JSON. <code>GET /api/v1/tools</code> lists what the key can call, and <code>GET /api/v1/me</code> shows its permissions and limits. Replace the placeholder with your key.</p></div><pre aria-labelledby="keys-rest-heading"><code>{restExample}</code></pre><button type="button" className="secondary-button" onClick={() => copy(restExample, "rest")}><Copy />{copied === "rest" ? "Copied example" : "Copy example"}</button></div>
 
+    {!integration && <div className="mcp-card mcp-config keys-rest-help"><div><h4 id="keys-vault-heading">Using a vault key</h4><p>A vault key (<code>nkv_…</code>) reaches only the vaults and environments you give it, never more than you can reach yourself, and nothing outside the Vault. Over REST it reads and writes values at <code>/api/v1/vault</code>; over MCP it gets the vault tools only, and returns values only when you allowed that when you created it. Replace the placeholder with your key.</p></div><pre aria-labelledby="keys-vault-heading"><code>{vaultExample}</code></pre><button type="button" className="secondary-button" onClick={() => copy(vaultExample, "vault")}><Copy />{copied === "vault" ? "Copied example" : "Copy example"}</button></div>}
+
     {/* Back off the phone sentinel closes a key dialog; Forward shows the same one again (Friction 12). */}
     <HistoryDialogReopen.Provider value={dialog && reopenOnForward ? () => setDialog(dialog) : null}>
-    {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
+    {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} allowVault={!integration} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
     {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
     {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id)); setStatus(`${dialog.key.name} was revoked.`); }} />}
@@ -213,6 +218,21 @@ export function restCurlExample(origin: string) {
   ].join("\n");
 }
 
+/** The vault REST help's example (Wave 27): list the vaults a key reaches, with a placeholder key. */
+export function vaultCurlExample(origin: string) {
+  return [
+    `curl -s "${origin}/api/v1/vault/vaults" \\`,
+    "  -H \"Authorization: Bearer <YOUR_VAULT_KEY>\""
+  ].join("\n");
+}
+
+/** A vault key's expiry choices (D217): the policy's days up to 365, never "No expiry". */
+export const vaultExpiryChoices = (policy: Pick<PolicySummary, "keyMaxDays" | "keyDefaultDays" | "keyRequireExpiry">) =>
+  expiryChoices({ ...policy, keyMaxDays: Math.min(policy.keyMaxDays, 365) }).filter((option) => option.value !== "none");
+
+/** The warning next to "Allow MCP clients to read values" (T191). */
+export const MCP_VALUES_WARNING = "Values an MCP client reads are sent to that client's AI model provider and may be kept there. Leave this off unless the agent truly needs values; the REST API reads values without it.";
+
 /** The line under an Expires choice: the policy cap, and why "No expiry" is off when it is. */
 export function expiryNote(policy: Pick<PolicySummary, "keyMaxDays" | "keyRequireExpiry">) {
   return policy.keyRequireExpiry
@@ -264,7 +284,8 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
       {blockedSurfaceLine(apiKey) && <small className="keys-row-warning">{blockedSurfaceLine(apiKey)}</small>}
       {deniedLine(apiKey, relativeTime) && <small className="keys-row-warning">{deniedLine(apiKey, relativeTime)}</small>}
       {apiKey.description && <small className="keys-row-description">{apiKey.description}</small>}
-      <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{grantChips(apiKey.grants).map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}</ul>
+      <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{[...grantChips(apiKey.grants), ...(owner ? vaultGrantCountChips : vaultGrantChips)(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[])].map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}
+        {vaultFlagChips(apiKey.vault).map((flag) => <li key={flag} className="keys-flag">{flag}</li>)}</ul>
       {apiKey.state === "blocked" && (apiKey.blockedBy === "expiry_required" || apiKey.blockedMessage) && <small className="keys-row-warning">{blockedLine(apiKey)}</small>}
       {apiKey.state === "revoked" && apiKey.revokedBy === "admin" && <small className="keys-row-warning">An admin revoked this key{apiKey.revokeReason ? `: “${apiKey.revokeReason}”` : "."}</small>}
       {apiKey.state !== "revoked" && apiKey.surfaces !== "both" && <div className="keys-row-usage"><UsageBars usage={apiKey.usage14d} /><small>{usageLabel(apiKey.usage14d)}</small></div>}
@@ -273,7 +294,7 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
         const daily = apiKey.usageBySurface14d?.daily?.[surface] ?? [];
         return <div key={surface} className="keys-row-usage"><UsageBars usage={daily} /><small>{surface === "mcp" ? "MCP" : "REST"}: {usageLabel(daily).replace("No calls", "no calls")}</small></div>;
       })}
-      {!owner && apiKey.state !== "revoked" && <KeyActivity keyId={apiKey.id} />}
+      {!owner && apiKey.state !== "revoked" && <KeyActivity keyId={apiKey.id} vault={apiKey.kind === "vault"} />}
       {binned && onReview && <small className="mcp-key-binned">{binned} · <button type="button" className="text-button" onClick={onReview}>Review</button></small>}
     </div>
     {(onRotate || onEdit || onRevoke) && <div className="keys-row-actions">
@@ -288,17 +309,39 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
  * The key's own events for its owner (Wave 34 verification Q1), loaded when opened: created,
  * narrowed, rotated, blocked, and refused calls with the shortened address they came from.
  */
-function KeyActivity({ keyId }: { keyId: string }) {
+function KeyActivity({ keyId, vault = false }: { keyId: string; vault?: boolean }) {
   const keysApi = useKeysApi();
   const [events, setEvents] = useState<KeyEvent[] | "error" | null>(null);
+  // Wave 27: a vault key also lists what it did in vaults (never a value or a secret's name).
+  const [vaultEvents, setVaultEvents] = useState<VaultKeyEvent[]>([]);
   return <details className="keys-activity" onToggle={(event) => {
-    if ((event.currentTarget as HTMLDetailsElement).open && events === null) keysApi.events(keyId).then(setEvents, () => setEvents("error"));
+    if (!(event.currentTarget as HTMLDetailsElement).open || events !== null) return;
+    if (vault) keyDetailEvents(keyId).then((result) => { setEvents(result.events); setVaultEvents(result.vaultEvents ?? []); }, () => setEvents("error"));
+    else keysApi.events(keyId).then(setEvents, () => setEvents("error"));
   }}>
     <summary>Recent activity</summary>
     {events === null ? <small role="status">Loading…</small> : events === "error" ? <small role="alert">Could not load this key's activity.</small>
-      : events.length === 0 ? <small>Nothing yet.</small>
-        : <ul>{events.map((event) => <li key={event.id}><small>{keyEventLine(event)} · {relativeTime(event.createdAt)}</small></li>)}</ul>}
+      : events.length === 0 && vaultEvents.length === 0 ? <small>Nothing yet.</small>
+        : <ul>
+          {vaultEvents.map((event) => <li key={event.id}><small>{vaultKeyEventLine(event)} · {relativeTime(event.createdAt)}</small></li>)}
+          {events.map((event) => <li key={event.id}><small>{keyEventLine(event)} · {relativeTime(event.createdAt)}</small></li>)}
+        </ul>}
   </details>;
+}
+
+/** The two vault key settings (Wave 27): values over MCP (T191) and protected environments (D226). Narrowing only turns them off. */
+function VaultFlags({ mcpValues, protectedAccess, onMcpValues, onProtectedAccess, disabled, narrowing = false }: {
+  mcpValues: boolean; protectedAccess: boolean; onMcpValues: (value: boolean) => void; onProtectedAccess: (value: boolean) => void; disabled: boolean;
+  /** Edit: a setting that is off stays off (turning one on needs a rotation). */
+  narrowing?: { mcpValues: boolean; protectedAccess: boolean } | false;
+}) {
+  return <fieldset className="keys-fieldset keys-vault-flags"><legend>Vault settings</legend>
+    <label className="keys-switch"><span>Allow protected environments<small>Needed for a grant that names a protected environment (such as Production). A grant on every environment never reaches a protected one.</small></span>
+      <input type="checkbox" checked={protectedAccess} disabled={disabled || (narrowing !== false && !narrowing.protectedAccess)} onChange={(event) => onProtectedAccess(event.currentTarget.checked)} /></label>
+    <label className="keys-switch"><span>Allow MCP clients to read values<small className="keys-switch-warning">{MCP_VALUES_WARNING}</small></span>
+      <input type="checkbox" checked={mcpValues} disabled={disabled || (narrowing !== false && !narrowing.mcpValues)} onChange={(event) => onMcpValues(event.currentTarget.checked)} /></label>
+    {narrowing !== false && <small className="grant-note">Editing can only turn these off. Rotate the key to turn one on.</small>}
+  </fieldset>;
 }
 
 function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
@@ -313,8 +356,23 @@ function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disable
   </div>;
 }
 
-function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { policy: PolicySummary; role: string | undefined; totpEnabled: boolean; onClose: () => void; onCreated: (key: ApiKey & { token: string }) => void }) {
+function CreateKeyDialog({ policy, role, totpEnabled, allowVault, onClose, onCreated }: { policy: PolicySummary; role: string | undefined; totpEnabled: boolean; allowVault: boolean; onClose: () => void; onCreated: (key: ApiKey & { token: string }) => void }) {
   const keysApi = useKeysApi();
+  // Wave 27 (D264): a general key or a vault key (nkv_), never both in one.
+  const [kind, setKind] = useState<"general" | "vault">("general");
+  const [vaultRows, setVaultRows] = useState<VaultGrantRow[]>([]);
+  const [mcpValues, setMcpValues] = useState(false);
+  const [protectedAccess, setProtectedAccess] = useState(false);
+  const vaults = useVaultChoices(allowVault);
+  // Switching to a vault key starts with one row on your first vault (read, the first environment it may name).
+  useEffect(() => {
+    if (kind === "vault" && !vaultRows.length && Array.isArray(vaults)) {
+      const first = firstVaultRow(vaults, protectedAccess);
+      if (first) setVaultRows([first]);
+    }
+    // Only when the kind changes or the vaults arrive; later edits may leave the list empty.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, vaults]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [surfaces, setSurfaces] = useState<KeySurfaces>("mcp");
@@ -329,8 +387,10 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const { grants, error: grantError } = rowsToGrants(rows);
+    const vault = kind === "vault";
+    const { grants, error: grantError } = vault ? vaultRowsToGrants(vaultRows) : rowsToGrants(rows);
     if (grantError) return setError(grantError);
+    if (vault && namesProtected(vaultRows, vaults && vaults !== "error" ? vaults : []) && !protectedAccess) return setError("A row names a protected environment: turn on “Allow protected environments” or pick another environment.");
     if (!name.trim()) return setError("Give the key a name.");
     setBusy(true);
     setError("");
@@ -341,7 +401,11 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
         return setError(`Allowed addresses: ${checked.error}`);
       }
       const ipAllowlist = checked.canonical;
-      const result = await keysApi.create({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await keysApi.create({
+        name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}),
+        ...(vault ? { kind: "vault" as const, allowMcpValueReads: mcpValues, protectedAccess } : {}),
+        ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {})
+      });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -351,17 +415,38 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
 
   return <KeysDialog title="New API key" description="Choose what this key may do. You can narrow it later without a password; adding access needs a new key." onClose={onClose} busy={busy} wide>
     <form className="keys-form" onSubmit={submit}>
-      <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="Claude Code on my laptop" required disabled={busy} autoComplete="off" /></label>
+      {allowVault && <div className="keys-select-field"><span id="keys-kind-label">Kind</span><Select<"general" | "vault"> labelledBy="keys-kind-label" label="Kind" value={kind} disabled={busy}
+        options={[
+          { value: "general", label: "General key", description: "Notes, Files, Tasks, and the other modules" },
+          { value: "vault", label: "Vault key", description: "Vault secrets only (nkv_); nothing else" }
+        ]}
+        onChange={(next) => {
+          setKind(next);
+          setError("");
+          if (next === "vault") {
+            // A vault key always expires; REST is the path for CI (T191).
+            if (expires === "none") setExpires(String(Math.min(policy.keyDefaultDays, 365)));
+            if (surfaces === "mcp" && policy.restAllowed) setSurfaces("rest");
+          }
+        }} />{kind === "vault" && <small>Reaches only the vaults and environments you pick, never more than you can reach yourself, and loses what you lose.</small>}</div>}
+      <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder={kind === "vault" ? "Deploy pipeline (staging)" : "Claude Code on my laptop"} required disabled={busy} autoComplete="off" /></label>
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} placeholder="What it is for" disabled={busy} autoComplete="off" /></label>
       <div className="keys-select-field"><span id="keys-surface-label">Where it is used</span><Select<KeySurfaces> labelledBy="keys-surface-label" label="Where it is used" value={surfaces} options={surfaceOptions} onChange={setSurfaces} disabled={busy} />{surfaces === "both" && <small>{PER_SURFACE_LIMITS}</small>}</div>
-      <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
-      <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
+      {kind === "general" && <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>}
+      {kind === "vault" && <fieldset className="keys-fieldset"><legend>Vault access</legend><VaultGrantBuilder rows={vaultRows} onChange={setVaultRows} vaults={vaults} role={role} protectedAccess={protectedAccess} disabled={busy} /></fieldset>}
+      {kind === "vault" && <VaultFlags mcpValues={mcpValues} protectedAccess={protectedAccess} onMcpValues={setMcpValues} disabled={busy}
+        onProtectedAccess={(value) => {
+          setProtectedAccess(value);
+          // Turning it off drops the rows that named a protected environment back to "choose".
+          if (!value && vaults && vaults !== "error") setVaultRows((current) => current.filter((row) => !namesProtected([row], vaults)));
+        }} />}
+      <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={kind === "vault" ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{kind === "vault" ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} />
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-        <button type="submit" className="primary-button" disabled={busy || !rows.length}>{busy ? "Creating…" : "Create key"}</button>
+        <button type="submit" className="primary-button" disabled={busy || (kind === "vault" ? !vaultRows.length : !rows.length)}>{busy ? "Creating…" : "Create key"}</button>
       </div>
     </form>
   </KeysDialog>;
@@ -371,6 +456,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
 export function keyToRows(key: ApiKey): GrantRow[] {
   const rows = new Map<string, GrantRow>();
   for (const grant of key.grants) {
+    if (grant.module === "vault") continue;
     const id = `${grant.module}:${grant.permission}:${grant.resource ? "chosen" : "all"}`;
     const row = rows.get(id) ?? { key: `edit-${id}`, module: grant.module, permission: grant.permission, applies: grant.resource ? "chosen" as const : "all" as const, resourceIds: [] };
     if (grant.resource) row.resourceIds.push(resourceToken(grant.resource.kind, grant.resource.id));
@@ -383,6 +469,13 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   const keysApi = useKeysApi();
   const ceiling = useMemo(() => keyToRows(apiKey), [apiKey]);
   const [rows, setRows] = useState<GrantRow[]>(ceiling);
+  // Wave 27: a vault key narrows its vault rows and turns its settings off (D278).
+  const isVault = apiKey.kind === "vault";
+  const vaultCeiling = useMemo(() => vaultGrantsToRows(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[]), [apiKey]);
+  const [vaultRows, setVaultRows] = useState<VaultGrantRow[]>(vaultCeiling);
+  const [mcpValues, setMcpValues] = useState(Boolean(apiKey.vault?.allowMcpValueReads));
+  const [protectedAccess, setProtectedAccess] = useState(Boolean(apiKey.vault?.protectedAccess));
+  const vaults = useVaultChoices(isVault);
   const [name, setName] = useState(apiKey.name);
   const [description, setDescription] = useState(apiKey.description ?? "");
   const [expires, setExpires] = useState("keep");
@@ -403,14 +496,17 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const { grants, error: grantError } = rowsToGrants(rows);
+    const { grants, error: grantError } = isVault ? vaultRowsToGrants(vaultRows) : rowsToGrants(rows);
     if (grantError) return setError(grantError);
+    if (isVault && !vaultRowsNarrow(vaultCeiling, vaultRows, Boolean(apiKey.vault?.protectedAccess))) return setError("Editing can only remove access. Create a new key or rotate this one to add access.");
     const body: NarrowBody = {};
+    if (isVault && mcpValues !== Boolean(apiKey.vault?.allowMcpValueReads)) body.allowMcpValueReads = mcpValues;
+    if (isVault && protectedAccess !== Boolean(apiKey.vault?.protectedAccess)) body.protectedAccess = protectedAccess;
     if (name.trim() !== apiKey.name) body.name = name.trim();
     if ((description.trim() || null) !== apiKey.description) body.description = description.trim() || null;
     if (expires !== "keep") body.expiresInDays = Number(expires);
     if (surfaces !== apiKey.surfaces) body.surfaces = surfaces;
-    const same = JSON.stringify(rowsToGrants(ceiling).grants) === JSON.stringify(grants);
+    const same = JSON.stringify(isVault ? vaultRowsToGrants(vaultCeiling).grants : rowsToGrants(ceiling).grants) === JSON.stringify(grants);
     if (!same) body.grants = grants;
     // Adding or tightening an address limit narrows the key (D278); the server refuses widening.
     const checkedList = checkAllowlist(allowlist);
@@ -436,13 +532,16 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
       <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required disabled={busy} autoComplete="off" /></label>
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} disabled={busy} autoComplete="off" /></label>
       {apiKey.surfaces === "both" && <div className="keys-select-field"><span id="keys-edit-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-edit-surface" label="Where it is used" value={surfaces} options={surfaceChoices} onChange={setSurfaces} disabled={busy} /></div>}
-      <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} ceiling={ceiling} /></fieldset>
+      {!isVault && <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} ceiling={ceiling} /></fieldset>}
+      {isVault && <fieldset className="keys-fieldset"><legend>Vault access</legend><VaultGrantBuilder rows={vaultRows} onChange={setVaultRows} vaults={vaults} role={role} protectedAccess={Boolean(apiKey.vault?.protectedAccess)} disabled={busy} ceiling={vaultCeiling} /></fieldset>}
+      {isVault && <VaultFlags mcpValues={mcpValues} protectedAccess={protectedAccess} onMcpValues={setMcpValues} onProtectedAccess={setProtectedAccess} disabled={busy}
+        narrowing={{ mcpValues: Boolean(apiKey.vault?.allowMcpValueReads), protectedAccess: Boolean(apiKey.vault?.protectedAccess) }} />}
       <div className="keys-select-field"><span id="keys-edit-expiry">Expiry</span><Select labelledBy="keys-edit-expiry" label="Expiry" value={expires} options={expiryChoices} onChange={setExpires} disabled={busy} /></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode={apiKey.ipAllowlist?.length ? "narrow" : "create"} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-        <button type="submit" className="primary-button" disabled={busy || !rows.length}>{busy ? "Saving…" : "Save"}</button>
+        <button type="submit" className="primary-button" disabled={busy || (isVault ? !vaultRows.length : !rows.length)}>{busy ? "Saving…" : "Save"}</button>
       </div>
     </form>
   </KeysDialog>;
@@ -458,6 +557,13 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
   const [expires, setExpires] = useState(() => rotationExpiryDefault(apiKey, policy));
   const original = useMemo(() => keyToRows(apiKey), [apiKey]);
   const [rows, setRows] = useState<GrantRow[]>(original);
+  // Wave 27: a rotation re-authenticates, so a vault key's access and settings may change (checked against your access now).
+  const isVault = apiKey.kind === "vault";
+  const vaultOriginal = useMemo(() => vaultGrantsToRows(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[]), [apiKey]);
+  const [vaultRows, setVaultRows] = useState<VaultGrantRow[]>(vaultOriginal);
+  const [mcpValues, setMcpValues] = useState(Boolean(apiKey.vault?.allowMcpValueReads));
+  const [protectedAccess, setProtectedAccess] = useState(Boolean(apiKey.vault?.protectedAccess));
+  const vaults = useVaultChoices(isVault);
   const [surfaces, setSurfaces] = useState<KeySurfaces>(apiKey.surfaces);
   const [allowlist, setAllowlist] = useState((apiKey.ipAllowlist ?? []).join("\n"));
   const [password, setPassword] = useState("");
@@ -467,12 +573,16 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const { grants, error: grantError } = rowsToGrants(rows);
+    const { grants, error: grantError } = isVault ? vaultRowsToGrants(vaultRows) : rowsToGrants(rows);
     if (grantError) return setError(grantError);
     const checked = checkAllowlist(allowlist);
     if (checked.error) return setError(`Allowed addresses: ${checked.error}`);
     const changes: Parameters<KeysApi["rotate"]>[1] = { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires) };
-    if (JSON.stringify(rowsToGrants(original).grants) !== JSON.stringify(grants)) changes.grants = grants;
+    if (JSON.stringify(isVault ? vaultRowsToGrants(vaultOriginal).grants : rowsToGrants(original).grants) !== JSON.stringify(grants)) changes.grants = grants;
+    if (isVault) {
+      changes.allowMcpValueReads = mcpValues;
+      changes.protectedAccess = protectedAccess;
+    }
     if (surfaces !== apiKey.surfaces) changes.surfaces = surfaces;
     if (checked.canonical.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) changes.ipAllowlist = checked.canonical.length ? checked.canonical : null;
     setBusy(true);
@@ -489,10 +599,12 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
   return <KeysDialog title={`Rotate ${apiKey.name}?`} description="You get a new secret and a fresh lifetime. You may also change what the new key can do, including adding access, surfaces, or addresses. Routines that use this key move to the new one. Update your clients before the old key stops." onClose={onClose} busy={busy} wide>
     <form className="keys-form" onSubmit={submit}>
       <div className="keys-select-field"><span id="keys-rotate-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-rotate-surface" label="Where it is used" value={surfaces} options={surfaceChoices(policy)} onChange={setSurfaces} disabled={busy} /></div>
-      <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
+      {!isVault && <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>}
+      {isVault && <fieldset className="keys-fieldset"><legend>Vault access</legend><VaultGrantBuilder rows={vaultRows} onChange={setVaultRows} vaults={vaults} role={role} protectedAccess={protectedAccess} disabled={busy} /></fieldset>}
+      {isVault && <VaultFlags mcpValues={mcpValues} protectedAccess={protectedAccess} onMcpValues={setMcpValues} onProtectedAccess={setProtectedAccess} disabled={busy} />}
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable) || Boolean(apiKey.ipAllowlist?.length)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode="rotate" />
       <div className="keys-select-field"><span id="keys-grace-label">Old key</span><Select labelledBy="keys-grace-label" label="Old key" value={grace} options={GRACE_OPTIONS.map((option) => ({ ...option }))} onChange={setGrace} disabled={busy} /></div>
-      <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
+      <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={isVault ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{isVault ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">

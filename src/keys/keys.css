@@ -147,3 +147,12 @@
 .keys-activity summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
 .keys-activity ul { margin: 0; padding: 0 0 0 16px; display: grid; gap: 2px; }
 @media (min-width: 761px) { .keys-activity summary { min-height: 32px; } }
+
+/* Wave 27: vault keys (settings switches, flag chips) */
+.keys-vault-flags { display: grid; gap: 8px; }
+.keys-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; color: #d6d6da; font-size: .84rem; cursor: pointer; }
+.keys-switch > span { display: grid; gap: 3px; min-width: 0; }
+.keys-switch small { color: #88888f; font-size: .74rem; line-height: 1.45; }
+.keys-switch small.keys-switch-warning { color: #e3cf9c; }
+.keys-switch input { width: 20px; height: 20px; flex: none; accent-color: #d7b86a; }
+.scope-chips li.keys-flag { border-style: dashed; }

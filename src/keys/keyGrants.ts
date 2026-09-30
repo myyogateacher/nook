@@ -191,7 +191,14 @@ export type KeyGrantView = {
   module: GrantModule; permission: KeyPermission;
   resource: { kind: ResourceKind; id: string; name: string | null } | null;
   active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | null;
+} | {
+  /** Wave 27: a vault key's grant (vault, and one environment or every one). */
+  module: "vault"; permission: "read" | "write";
+  resource: { kind: "vault"; id: string; name: string | null } | null;
+  env?: { id: string; name: string | null; protected: boolean } | null;
+  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | null;
 };
+type GeneralGrantView = Extract<KeyGrantView, { module: GrantModule }>;
 
 const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access", unavailable: "no longer available: keys hold only your own views" } as const;
 
@@ -200,8 +207,10 @@ const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned of
  * with inactive grants marked and why (T201).
  */
 export function grantChips(grants: readonly KeyGrantView[]) {
-  const groups = new Map<string, KeyGrantView[]>();
+  // Vault grants (Wave 27) have their own chips: vaultGrantChips in vaultKeyGrants.ts.
+  const groups = new Map<string, GeneralGrantView[]>();
   for (const grant of grants) {
+    if (grant.module === "vault") continue;
     const id = `${grant.module}:${grant.permission}:${grant.resource ? "chosen" : "all"}`;
     groups.set(id, [...(groups.get(id) ?? []), grant]);
   }

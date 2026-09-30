@@ -100,6 +100,13 @@ export const rotateVault = (vaultId: string) => api<{ rotation: RotationStatus }
 export const getRotation = (vaultId: string) => api<{ rotation: RotationStatus }>(`${v(vaultId)}/rotation`);
 export const getQuota = () => api<{ storedBytes: number; quotaBytes: number }>("/vault/quota");
 
+/** Wave 27: the vault keys (nkv_) that reach a vault now; owners see each, others the count and their own. */
+export type VaultKeysWithAccess = {
+  count: number; scope: "vault" | "own"; maxGrants: number;
+  keys: Array<{ id: string; name: string; prefix: string; owner: { id: string; displayName: string; isYou: boolean }; expiresAt: string | null; lastUsedAt: string | null; levels: Record<string, EnvLevel> }>;
+};
+export const listVaultKeys = (vaultId: string) => api<VaultKeysWithAccess>(`${v(vaultId)}/keys`);
+
 export type ActivityEvent = {
   id: string; createdAt: string; event: string; via: string; count: number | null;
   actor: { id: string; displayName: string; isYou: boolean } | null;
@@ -108,6 +115,8 @@ export type ActivityEvent = {
   /** Whom an access event was about (names only), and the level it gave. Absent on older events. */
   target?: { displayName: string; isYou: boolean } | null;
   level?: string | null;
+  /** Wave 27: the vault key that acted (shown as key:<name>); `actor` is the person who made it. */
+  key?: { name: string; prefix: string | null } | null;
 };
 export type ActivityPage = {
   scope: "vault" | "own"; events: ActivityEvent[]; people: Array<{ id: string; displayName: string }>;

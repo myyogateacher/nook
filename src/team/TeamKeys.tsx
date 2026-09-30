@@ -38,6 +38,13 @@ const IP_OPTIONS: Option<"all" | "true" | "false">[] = [
   { value: "false", label: "Not IP limited" }
 ];
 
+/** Wave 27: general keys or vault keys (nkv_). */
+const KIND_OPTIONS: Option<"all" | "general" | "vault">[] = [
+  { value: "all", label: "Any kind" },
+  { value: "general", label: "General keys" },
+  { value: "vault", label: "Vault keys", description: "nkv_ keys: vault secrets only; vault names stay hidden" }
+];
+
 /** Review Q14: with filters on, "3 of 7 live keys match". */
 export function inventorySummary(summary: { live: number; noExpiry: number; matching?: number }, filtered: boolean) {
   const keys = (count: number) => `${count} live ${count === 1 ? "key" : "keys"}`;
@@ -53,11 +60,12 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
   const [state, setState] = useState<"all" | InventoryState>("all");
   const [surface, setSurface] = useState<"all" | "mcp" | "rest">("all");
   const [ipLimited, setIpLimited] = useState<"all" | "true" | "false">("all");
+  const [kind, setKind] = useState<"all" | "general" | "vault">("all");
   const [data, setData] = useState<Inventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<InventoryKey | null>(null);
   const generation = useRef(0);
-  const filtered = owner !== "all" || module !== "all" || state !== "all" || surface !== "all" || ipLimited !== "all";
+  const filtered = owner !== "all" || module !== "all" || state !== "all" || surface !== "all" || ipLimited !== "all" || kind !== "all";
 
   const load = useCallback(async (cursor?: string | null) => {
     const current = ++generation.current;
@@ -65,14 +73,14 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     try {
       const result = await listInventory({
         owner: owner === "all" ? undefined : owner, module: module === "all" ? undefined : module, state: state === "all" ? undefined : state, cursor: cursor ?? undefined,
-        surface: surface === "all" ? undefined : surface, ipRestricted: ipLimited === "all" ? undefined : ipLimited
+        surface: surface === "all" ? undefined : surface, ipRestricted: ipLimited === "all" ? undefined : ipLimited, kind: kind === "all" ? undefined : kind
       });
       if (current !== generation.current) return;
       setData((previous) => cursor && previous ? { ...result, keys: [...previous.keys, ...result.keys] } : result);
     } catch (reason) {
       if (current === generation.current) setError(reason instanceof Error ? reason.message : "Could not load keys");
     }
-  }, [ipLimited, module, owner, state, surface]);
+  }, [ipLimited, kind, module, owner, state, surface]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { document.title = "Keys · Team · Nook"; }, []);
 
@@ -86,7 +94,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     <header className="team-invites-header">
       <div>
         <h2 id="team-keys-title">Keys</h2>
-        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, surfaces, and use, never the secrets, the items a key is limited to, or the addresses it is limited to. Revoking stops a key at once and tells its owner why.</p>
+        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, surfaces, and use, never the secrets, the items a key is limited to, or the addresses it is limited to. A vault key shows how many vaults it reaches, never their names. Revoking stops a key at once and tells its owner why.</p>
       </div>
     </header>
     <div className="team-keys-filters" role="group" aria-label="Filter keys">
@@ -94,6 +102,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       <div className="keys-select-field"><span id="team-keys-module">Module</span><Select<"all" | GrantModule> labelledBy="team-keys-module" label="Module" value={module} options={moduleOptions} onChange={setModule} /></div>
       <div className="keys-select-field"><span id="team-keys-state">State</span><Select<"all" | InventoryState> labelledBy="team-keys-state" label="State" value={state} options={STATE_OPTIONS} onChange={setState} /></div>
       <div className="keys-select-field"><span id="team-keys-surface">Surface</span><Select<"all" | "mcp" | "rest"> labelledBy="team-keys-surface" label="Surface" value={surface} options={SURFACE_OPTIONS} onChange={setSurface} /></div>
+      <div className="keys-select-field"><span id="team-keys-kind">Kind</span><Select<"all" | "general" | "vault"> labelledBy="team-keys-kind" label="Kind" value={kind} options={KIND_OPTIONS} onChange={setKind} /></div>
       <div className="keys-select-field"><span id="team-keys-ip">Addresses</span><Select<"all" | "true" | "false"> labelledBy="team-keys-ip" label="Addresses" value={ipLimited} options={IP_OPTIONS} onChange={setIpLimited} /></div>
     </div>
     {error && <div className="team-state team-error" role="alert">

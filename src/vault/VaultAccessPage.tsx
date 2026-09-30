@@ -12,6 +12,7 @@ import { ROLE_LABELS, isRole } from "../team/teamRoles";
 import type { EnvLevel } from "../../shared/vault";
 import { errorCode, messageOf } from "./VaultDialogs";
 import { getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironment, type SheetGroup, type SheetPerson, type VaultAccessSheet } from "./vaultApi";
+import { VaultKeysSection } from "./VaultKeysSection";
 
 /**
  * Who has access to one vault, at /vault/:id/access (vault plan §10 Access; D214–D216, V-O3; Wave 26).
@@ -34,7 +35,7 @@ export const NOT_A_MANAGER = "Only the vault's owners and environment admins man
 export function notOffered(person: Pick<PickerPerson, "id" | "displayName" | "kind" | "role">): Option {
   return {
     value: `person:${person.id}`, label: person.displayName, disabled: true, group: "Not offered",
-    description: person.kind === "service" ? "Integrations cannot be vault members yet; vault keys for machines arrive later" : "Guests never get vault access"
+    description: person.kind === "service" ? "Integrations cannot be vault members; machines use vault keys (Settings → API keys)" : "Guests never get vault access"
   };
 }
 
@@ -236,7 +237,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
         setSaveError("Someone else changed who has access. This shows the latest now; make your change again.");
         return;
       }
-      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "PERSON_BLOCKED" ? "A blocked account cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members yet." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
+      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "PERSON_BLOCKED" ? "A blocked account cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members; machines use vault keys." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
     }
   }
 
@@ -309,12 +310,13 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
       </li>)}
     </ul>}
 
-    {people.some((person) => person.kind === "service") && owner && <p className="file-dialog-hint vault-access-note"><Bot className="vault-hint-icon" aria-hidden="true" />Integrations cannot be vault members; vault keys for machines arrive later.</p>}
+    {people.some((person) => person.kind === "service") && owner && <p className="file-dialog-hint vault-access-note"><Bot className="vault-hint-icon" aria-hidden="true" />Integrations cannot be vault members. For machines, make a vault key in Settings → API keys.</p>}
     {saveError && <p className="form-error" role="alert">{saveError}</p>}
     <div className="vault-access-actions">
       {dirty && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setDraft(draftOf(sheet)); setSaveError(null); }}>Discard changes</button>}
       <button type="button" className="secondary-button" onClick={() => onOpenActivity(null)}><History />Activity</button>
       <button type="button" className="primary-button vault-primary" disabled={busy || !dirty} onClick={() => { void save(); }}>{busy ? "Saving…" : "Save"}</button>
     </div>
+    <VaultKeysSection vaultId={vaultId} environments={envs} />
   </>;
 }

@@ -13,7 +13,7 @@ import { listActivity, type ActivityEvent, type ActivityPage } from "./vaultApi"
  */
 
 const FAMILY_LABELS: Record<string, string> = {
-  reads: "Reads", writes: "Changes to values and secrets", access: "Access and members", keys: "Data key", transfer: "Import and export", structure: "Vault and environments"
+  reads: "Reads", writes: "Changes to values and secrets", access: "Access and members", keys: "Data key", apikeys: "API keys", transfer: "Import and export", structure: "Vault and environments"
 };
 
 const WORDS: Record<string, string> = {
@@ -25,13 +25,29 @@ const WORDS: Record<string, string> = {
   "export": "exported", "import": "imported into", "import.preview": "previewed an import into",
   "vault.create": "created the vault", "vault.update": "renamed or described the vault", "vault.delete": "moved the vault to the Bin", "vault.restore": "restored the vault",
   "env.create": "added the environment", "env.update": "renamed the environment", "env.protect": "protected", "env.unprotect": "removed protection from", "env.reorder": "reordered environments",
-  "env.delete": "deleted the environment", "env.restore": "restored the environment", "env.purge": "purged the environment", "integrity.fail": "hit an integrity check on"
+  "env.delete": "deleted the environment", "env.restore": "restored the environment", "env.purge": "purged the environment", "integrity.fail": "hit an integrity check on",
+  // Wave 27: vault keys.
+  "key.limited": "hit its rate limit"
 };
+
+/**
+ * Who acted: a person, or a vault key as `key:<name>` with whose key it is (Wave 27). The key's
+ * name is shown to whoever sees the event (owners see every event; members their own).
+ */
+export function activityActor(event: Pick<ActivityEvent, "actor" | "via" | "key">) {
+  const person = event.actor ? (event.actor.isYou ? "You" : event.actor.displayName) : event.via === "sweeper" ? "Nook" : "Someone";
+  if (!event.key || event.via === "session") return person;
+  const whose = event.actor ? (event.actor.isYou ? "your key" : `${event.actor.displayName}'s key`) : "a key";
+  return `key:${event.key.name} (${whose})`;
+}
 
 /** One line, in words: "Alice revealed DATABASE_URL in Production", "You exported 12 values from Staging". */
 export function activityLine(event: ActivityEvent) {
-  const who = event.actor ? (event.actor.isYou ? "You" : event.actor.displayName) : event.via === "sweeper" ? "Nook" : "Someone";
+  const who = activityActor(event);
   const verb = WORDS[event.event] ?? event.event;
+  if (event.event === "apikey.create" || event.event === "apikey.rotate") {
+    return `${who} ${event.event === "apikey.create" ? "gave" : "rotated"} the API key “${event.key?.name ?? "a deleted key"}”${event.event === "apikey.create" ? " access to this vault" : ", keeping its access here"}`;
+  }
   const secret = event.secret ? event.secret.name ?? (event.secret.state === "binned" ? "a secret now in the Bin" : "a secret that is gone") : null;
   const env = event.environment ? event.environment.name ?? "an environment you cannot see" : null;
   const count = event.count !== null && event.count > 1 && ["value.read", "export", "import", "import.preview", "member.add", "member.remove", "key.retire"].includes(event.event) ? event.count : null;

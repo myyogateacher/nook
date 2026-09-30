@@ -927,6 +927,11 @@ async function reconcilePublishedMirrors() {
 await reconcilePublishedMirrors();
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
+// Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
+// choose their own X-Forwarded-For. One line, no addresses.
+if (config.trustedProxyHops >= 1 && config.trustedProxyAddresses.length === 0) {
+  console.warn("TRUSTED_PROXY_HOPS is set but TRUSTED_PROXY_ADDRESSES is empty: X-Forwarded-For is trusted from any connection. Publish the port only to the proxy, or set TRUSTED_PROXY_ADDRESSES (see docs/OPERATIONS.md).");
+}
 try {
   await reconcileSearchIndex();
 } catch (error) {

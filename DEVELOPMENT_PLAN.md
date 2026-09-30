@@ -635,6 +635,34 @@ Exit criteria: desktop and mobile manual QA (test plan §M) plus an accessibilit
 - A final independent security audit across W3–W5. Run `/security-review` and a fresh-session review against the threat model.
 - Mark everything done in `TODO.md`.
 
+### Wave 37 — Settings hub (operator request, 2026-09-30)
+
+Settings stops being a dialog over the app and becomes a page of its own, with Team inside it; the top bar is reordered. Client only: no route, contract, or migration changes on the server.
+
+**Route scheme.** Settings is a route (`{ app: "settings", section }`), and Team keeps its `{ app: "team", … }` routes with new canonical URLs under the hub:
+
+| Canonical URL | Screen | Aliases (still parsed, rewritten in place) |
+| --- | --- | --- |
+| `/settings` | The section list (phones); Security beside the nav (computers) | — |
+| `/settings/security`, `/notifications`, `/access`, `/keys`, `/modules`, `/about` | An account section | `/settings/mcp` → `/settings/keys` |
+| `/settings/team/members`, `/settings/team/members/:userId`, `…/:userId/access` | Team → Members, one member, their access | `/team`, `/settings/team`, `/team/:userId`, `/team/:userId/access` |
+| `/settings/team/invites`, `/email`, `/keys`, `/policies`, `/templates`, `/activity` | Team admin sections | `/team/invites`, `/team/email`, … |
+| `/settings/team/groups(/:groupId)`, `/settings/team/integrations(/:integrationId)` | Groups, one group; Integrations, one integration | `/team/groups(/:id)`, `/team/integrations(/:id)` |
+
+`formatRoute` always writes the canonical URL, and the app already rewrites any non-Notes URL that differs (startup and every popstate) with `replaceState`, so an alias never leaves a second entry. Server links are unchanged (`/team/:id` in mail, `/settings/:section`, the Google `#google=…` returns): they are aliases. The Google return from Team → member now targets `/settings/team/members/:id`; the result is read before the first rewrite, and Settings' reader ignores `/settings/team/…`.
+
+**What moved.**
+
+- `SettingsDialog` (App.tsx) became `SettingsPage`, rendered for both the `settings` and `team` apps as one element (moving between them never remounts it). The shell is `src/settings/SettingsHub.tsx` (header, grouped nav, section header with avatar, name, role, and title); `src/settings/hubModel.ts` holds the pure parts (entries per role, selection, the phone back arrow). The fixed-position dialog, its scrim, Escape handling, title scope, and the settings-over history state are gone; the page names itself in the document title.
+- `TeamApp` became `TeamSection` (same file), which renders inside the hub: Members keeps its list and details panes (`.split-layout`); every other section fills the hub's section scroller. Its admin rows moved into the hub nav; its header, Home, and account row are the hub's. The route comes from the hub (no own popstate listener).
+- One leave guard for the page: a new key shown once in Settings → API keys or on an integration's page asks before a section switch, the back arrow, Home, Bin, sign-out, and Back/Forward (`useLeaveGuard`, then the move is repeated).
+- "Manage team" and `openTeamViaSettings` are gone: admins keep Team in the hub with the Team module off, so admin Team routes pass the route gate; members and viewers follow the toggle; guests never see it.
+- Top bar (`AccountActions`): Bin · Team · Settings · Inbox · bell · picture and name · Sign out (rightmost), one group, the same order on phones. Settings and Team are left out on the hub itself.
+
+**Decisions.** The first Team entry is Members for every role that sees Team (the Team button opens it). On a computer the nav pushes an entry per section (Back walks the sections, then leaves Settings); `/settings` shows Security there. On a phone the list is the first screen; a section's back arrow is `history.back()` when the entry was pushed over `/settings`, otherwise the list replaces the section (deep links). Pages below a section (member, access, group, integration) keep their own back link and hide the hub's arrow. While two-factor setup is required, Settings → Security is the only screen (Sign out is its only action).
+
+**Tests.** `tests/settingsHub.test.tsx` (routes and aliases both ways, nav per role, the 390 px history flow on a model history, the back arrow, the leave guard wiring); updated route, shell, scroll, and chrome tests; `docs/plan/qa/scroll-audit.mjs` covers every hub route (a hub check: the page does not scroll on a computer, the nav and section are bounded scrollers; Members adds the two-pane check), and its seeding waits out the per-admin team write limit.
+
 ---
 
 ## 12. Gates for every commit, audit, and release

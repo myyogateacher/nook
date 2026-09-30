@@ -60,13 +60,15 @@ function Preview({ boardId, snapshot, files }: { boardId: string; snapshot: Whit
   </span>;
 }
 
-export function HistorySheet({ boardId, files, onRestore, onCopy, onClose }: {
+export function HistorySheet({ boardId, files, onRestore, onCopy, onClose, covered = false }: {
   boardId: string;
   /** The pictures the canvas already holds, for the previews. */
   files: () => BinaryFiles;
   onRestore: (snapshot: WhiteboardSnapshot) => void;
   onCopy: (snapshot: WhiteboardSnapshot) => Promise<void>;
   onClose: () => void;
+  /** Verification N1: a confirm is open over the sheet (or a restore is running): Escape is the confirm's, not the sheet's. */
+  covered?: boolean;
 }) {
   const [snapshots, setSnapshots] = useState<WhiteboardSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +81,7 @@ export function HistorySheet({ boardId, files, onRestore, onCopy, onClose }: {
       .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "Could not load the history"); });
     return () => { live = false; };
   }, [boardId]);
-  return <ModalDialog title="History" eyebrow="Whiteboard" onClose={onClose} variant="sheet" className="nook-picker whiteboard-history" busy={busy !== null}>
+  return <ModalDialog title="History" eyebrow="Whiteboard" onClose={onClose} variant="sheet" className="nook-picker whiteboard-history" busy={busy !== null || covered}>
     <p className="nook-picker-hint whiteboard-history-intro">Nook keeps a version when you empty the board or remove most of it, and one every 30 minutes while you draw, up to 20. Restoring one keeps what is on the board now as a version too.</p>
     <div className="nook-picker-body">
       {error && <p className="form-error" role="alert">{error}</p>}

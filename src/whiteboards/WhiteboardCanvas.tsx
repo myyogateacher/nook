@@ -919,6 +919,31 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
    * the canvas is read-only; should the scene change anyway, it is kept (pending copy and the
    * conflict choice) rather than replaced by the restored version.
    */
+  /**
+   * Verification N2: a restored version carries its pictures as they were (the server keeps them),
+   * but one whose file this person can no longer open would stay only as pixels held in this tab.
+   * Such pictures are taken off like a refused save's (review M1): the message shows, and the next
+   * save drops the reference. The restored version itself stays in History.
+   */
+  const dropUnavailableRestoredImages = useCallback(async () => {
+    const ids = new Set<string>();
+    for (const element of sceneRef.current?.elements ?? []) {
+      if (element.type === "image" && !element.isDeleted && typeof element.fileId === "string" && refsRef.current.has(element.fileId)) ids.add(element.fileId);
+    }
+    const unavailable: string[] = [];
+    for (const id of ids) {
+      const documentId = refsRef.current.get(id)?.nookDocumentId ?? id;
+      try {
+        const { document } = await api<{ document: DocumentSummary }>(`/files/${encodeURIComponent(documentId)}`);
+        if (document.preview_kind !== "image") unavailable.push(id);
+      } catch (reason) {
+        if (reason instanceof ApiError && reason.status === 404) unavailable.push(id);
+      }
+      if (tearingDownRef.current || !mounted.current) return;
+    }
+    if (unavailable.length) removeRefusedImages({ documentIds: unavailable });
+  }, [removeRefusedImages]);
+
   const restoreVersion = useCallback(async (snapshot: WhiteboardSnapshot) => {
     if (restoringRef.current) return;
     restoringRef.current = true;
@@ -945,6 +970,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
           return;
         }
         if (!await showServerScene(`Restored the version from ${formatTime(snapshot.createdAt)}`, before)) keepLocal(restored.revision);
+        else void dropUnavailableRestoredImages();
       } catch (reason) {
         const payload = codeOf(reason);
         if (payload?.code === "REVISION_CONFLICT") {
@@ -961,7 +987,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       restoringRef.current = false;
       if (mounted.current) setRestoring(false);
     }
-  }, [boardId, flash, flush, loseAccess, showServerScene, writePendingNow]);
+  }, [boardId, dropUnavailableRestoredImages, flash, flush, loseAccess, showServerScene, writePendingNow]);
 
   /** A private copy of this board (or of one kept version), opened once it exists. */
   const duplicate = useCallback(async (snapshot?: WhiteboardSnapshot) => {
@@ -1168,7 +1194,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       onUpload={(files) => { setLayer(null); void uploadImages(files); }} />}
     {layer?.kind === "link" && <LinkPickerSheet currentLink={selection.link} onClose={() => setLayer(null)} onPick={(path) => applyLink(path)} onRemove={() => applyLink(null)} />}
     {(layer?.kind === "history" || layer?.kind === "restoreVersion") && <HistorySheet boardId={boardId} files={heldFiles}
-      onClose={() => setLayer(null)}
+      covered={layer.kind === "restoreVersion" || restoring}
+      onClose={() => { if (!restoring) setLayer(null); }}
       onRestore={(snapshot) => setLayer({ kind: "restoreVersion", snapshot })}
       onCopy={(snapshot) => duplicate(snapshot)} />}
     {layer?.kind === "restoreVersion" && <ConfirmDialog title="Restore this version?"

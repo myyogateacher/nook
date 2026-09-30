@@ -9,12 +9,16 @@ const { runRotationPass, pauseRotationRunnerForTests, rotationStatus } = await i
 const { reencryptBatch } = await import("../server/vault/crypto");
 const { setVaultQuotaForTests } = await import("../server/vault/service");
 const { putGroupMembers, deleteGroup } = await import("../server/team/groups");
+const { removeFromGroup, resetAccess } = await import("../server/team/memberAccess");
+const teamService = await import("../server/team/service");
+const { parseCsvImport, serializeCsv } = await import("../shared/vaultTransfer");
 const { vaultSharingMigration } = await import("../server/migrations/037_vault_sharing");
 
 /**
  * Independent review probes for Wave 26 (Vault B). Tests marked `test.failing` are open review
  * findings: they assert the behaviour the plan promises and fail on the branch as reviewed. When a
  * finding is fixed, its probe starts passing and bun reports it, so it becomes an ordinary test.
+ * Every finding of the review is fixed on this branch (the probes read "FIXED").
  */
 
 beforeEach(() => resetVaultLimits());
@@ -78,16 +82,18 @@ describe("review: the protected-environment window is per session (D226)", () =>
     expect((db.query("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ? AND vault_reauth_at IS NOT NULL").get(owner.userId) as { count: number }).count).toBe(1);
   });
 
-  test("FINDING (LOW): the re-authentication limit is per person, so another session of the account can use it up for all of them", async () => {
+  test("FIXED (LOW): the re-authentication limit is per session and counts failures, so another session of the account cannot use it up", async () => {
     const owner = await createUser("R26 reauth limit owner");
     const other = await createUser("R26 reauth limit other");
     const vault = await newVault(owner, undefined, { unlock: false });
     expect(vault.id).toBeTruthy();
     const stolen = anotherSession(owner);
     for (let attempt = 0; attempt < 10; attempt += 1) expect((await call(stolen, "POST", "/reauth", { password: "wrong" })).status).toBe(403);
-    // The legitimate session, with the right password, is now refused too (bucket `reauth:<userId>`)…
-    expect((await call(owner, "POST", "/reauth", { password: owner.password })).status).toBe(429);
-    // …but nobody else is affected: a co-worker cannot lock someone out.
+    // The copied session is out of attempts, even with the right password…
+    expect((await call(stolen, "POST", "/reauth", { password: owner.password })).status).toBe(429);
+    // …but the legitimate session is not (bucket `reauth:<sessionId>`), and succeeding costs nothing.
+    for (let attempt = 0; attempt < 11; attempt += 1) expect((await call(owner, "POST", "/reauth", { password: owner.password })).status).toBe(200);
+    // Nobody else is affected either: a co-worker cannot lock someone out.
     expect((await call(other, "POST", "/reauth", { password: other.password })).status).toBe(200);
   });
 });
@@ -115,7 +121,7 @@ describe("review: losing read through a group (D211 §6.6, Wave 26 decision 5)",
     }
   });
 
-  test.failing("FINDING (MEDIUM): losing read through Team → Groups (removal or group deletion) starts a data-key rotation like any other loss", async () => {
+  test("FIXED (MEDIUM): losing read through Team → Groups (removal or group deletion) starts a data-key rotation like any other loss", async () => {
     const owner = await createUser("R26 group rot owner");
     const admin = await createUser("R26 group rot admin");
     const member = await createUser("R26 group rot member");
@@ -128,6 +134,59 @@ describe("review: losing read through a group (D211 §6.6, Wave 26 decision 5)",
       putGroupMembers(admin.userId, groupId, { userIds: [], revision: groupRevision(groupId) });
       expect(generation(vault.id)).toBeGreaterThan(before);
       expect(db.query("SELECT 1 FROM vault_events WHERE vault_id = ? AND event = 'key.rotate.auto'").get(vault.id)).not.toBeNull();
+      // The owner hears to rotate the real credentials upstream (the bell, with the vault's name).
+      const notices = (await request("/notifications", {}, owner).then((response) => response.json())) as { items?: Array<{ title: string; href: string }> };
+      const line = (notices.items ?? []).find((item) => item.title.includes("data key is being rotated"));
+      expect(line?.href).toBe(`/vault/${vault.id}`);
+      // Adding someone back and removing nobody rotates nothing.
+      const again = generation(vault.id);
+      putGroupMembers(admin.userId, groupId, { userIds: [member.userId], revision: groupRevision(groupId) });
+      expect(generation(vault.id)).toBe(again);
+      // Deleting the group rotates again.
+      deleteGroup(admin.userId, groupId);
+      expect(generation(vault.id)).toBe(again + 1);
+    }
+  });
+
+  test("removing someone from a group on their access page, Reset access, a block, and a role change to guest rotate too; a group without vault read does not", async () => {
+    const owner = await createUser("R26 loss owner");
+    const admin = await createUser("R26 loss admin");
+    const member = await createUser("R26 loss member");
+    setRole(admin, "admin");
+    const actor = { id: admin.userId, role: "admin" as const };
+    try {
+      const vault = await newVault(owner);
+      await newSecret(owner, vault, "LOSS", { dev: "v" });
+      const groupId = group("R26 loss readers", [member]);
+      const idle = group("R26 loss idle", [member]);
+      await share(owner, vault, [], [{ id: groupId, levels: { dev: "read" } }]);
+      let at = generation(vault.id);
+      // A group that reaches no vault: nothing rotates.
+      removeFromGroup(admin.userId, member.userId, idle);
+      expect(generation(vault.id)).toBe(at);
+      removeFromGroup(admin.userId, member.userId, groupId);
+      expect(generation(vault.id)).toBe(at += 1);
+      // Reset access: direct membership and group alike, one rotation per vault.
+      db.query("INSERT INTO group_members (group_id, user_id, added_at) VALUES (?, ?, ?)").run(groupId, member.userId, new Date().toISOString());
+      await share(owner, vault, [{ session: member, levels: { dev: "read" } }], [{ id: groupId, levels: { dev: "read" } }]);
+      at = generation(vault.id);
+      resetAccess(admin.userId, member.userId);
+      expect(generation(vault.id)).toBe(at += 1);
+      expect((await call(member, "GET", base(vault.id))).status).toBe(404);
+      // A block.
+      await share(owner, vault, [{ session: member, levels: { dev: "read" } }]);
+      at = generation(vault.id);
+      teamService.blockUser(actor, member.userId, null, { via: "web" });
+      expect(generation(vault.id)).toBe(at += 1);
+      teamService.unblockUser(actor, member.userId, { via: "web" });
+      // A role change to viewer keeps read (no rotation); to guest loses it.
+      teamService.setRole(actor, member.userId, { role: "viewer", expectedRole: "member" }, { via: "web" });
+      expect(generation(vault.id)).toBe(at);
+      teamService.setRole(actor, member.userId, { role: "guest", expectedRole: "viewer" }, { via: "web" });
+      expect(generation(vault.id)).toBe(at + 1);
+    } finally {
+      setRole(member, "member");
+      db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(member.userId);
     }
   });
 });
@@ -176,8 +235,46 @@ describe("review: data-key rotation interleaved with writes (§3.3)", () => {
   });
 });
 
+describe("review: rows that do not open during a rotation (L5)", () => {
+  test("they never stall it: rows are taken in rowid order past them, and a sweep records key.rotate.skipped once, with a count", async () => {
+    pauseRotationRunnerForTests(true);
+    const owner = await createUser("R26 stuck owner");
+    const vault = await newVault(owner);
+    const secrets = [];
+    for (let index = 0; index < 6; index += 1) secrets.push(await newSecret(owner, vault, `STUCK_${index}`, { dev: `d${index}` }));
+    // The three lowest rowids of current values stop opening (as if damaged on disk).
+    const bad = db.query("SELECT v.rowid AS rid, v.secret_id FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id WHERE s.vault_id = ? ORDER BY v.rowid LIMIT 3").all(vault.id) as Array<{ rid: number; secret_id: string }>;
+    for (const row of bad) db.query("UPDATE vault_values SET value_ct = 'v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA:AAAA' WHERE rowid = ?").run(row.rid);
+    expect((await call(owner, "POST", `${base(vault.id)}/rotate`, {})).status).toBe(200);
+    // Batches smaller than the bad rows: before the fix the same two rows came back every time.
+    let skipped = 0;
+    let sawSkipped = 0;
+    for (let batch = 0; batch < 20; batch += 1) {
+      const result = reencryptBatch(vault.id, 2);
+      if (result.skipped) {
+        skipped = result.skipped;
+        sawSkipped += 1;
+      }
+      if (!result.remaining) break;
+    }
+    expect({ skipped, sawSkipped }).toEqual({ skipped: 3, sawSkipped: 1 });
+    expect(rotationStatus(vault.id).pendingRows).toBe(3);
+    expect(reencryptBatch(vault.id, 2)).toEqual({ moved: 0, failed: 0, remaining: false, skipped: 0 });
+    // The good rows read under the new key.
+    for (const secret of secrets.filter((item) => !bad.some((row) => row.secret_id === item.id))) {
+      expect((await call(owner, "GET", valuePath(vault, secret.id, "dev"))).body.value.value).toBe(`d${secrets.indexOf(secret)}`);
+    }
+    // Through the runner: one event per sweep, a count and no ids; passes after that do nothing.
+    expect((await call(owner, "POST", `${base(vault.id)}/rotate`, {})).status).toBe(200);
+    runRotationPass(1);
+    runRotationPass(1);
+    expect(db.query("SELECT count, secret_id, env_id FROM vault_events WHERE vault_id = ? AND event = 'key.rotate.skipped'").all(vault.id)).toEqual([{ count: 3, secret_id: null, env_id: null }]);
+    expect(rotationStatus(vault.id)).toMatchObject({ pendingRows: 3, activeKeys: 2 });
+  });
+});
+
 describe("review: owners and the billing owner (D214, decision 8)", () => {
-  test.failing("FINDING (LOW): when the creator leaves a vault that has another owner, the bytes and the vault count move to the owner who stays", async () => {
+  test("FIXED (LOW): when the creator leaves a vault that has another owner, the bytes and the vault count move to the owner who stays", async () => {
     const creator = await createUser("R26 billing creator");
     const heir = await createUser("R26 billing heir");
     const vault = await newVault(creator);
@@ -189,7 +286,18 @@ describe("review: owners and the billing owner (D214, decision 8)", () => {
     expect(db.query("SELECT owner_id FROM vaults WHERE id = ?").get(vault.id)).toEqual({ owner_id: heir.userId });
   });
 
-  test.failing("FINDING (LOW): a blocked member cannot be made the vault's owner", async () => {
+  test("an admin's removal of the billing owner (Team → member access) moves the billing owner too", async () => {
+    const creator = await createUser("R26 billing removed creator");
+    const heir = await createUser("R26 billing removed heir");
+    const admin = await createUser("R26 billing removed admin");
+    const vault = await newVault(creator);
+    await share(creator, vault, [{ session: heir, role: "owner" }]);
+    const { adminRemoveVaultMember } = await import("../server/vault/members");
+    adminRemoveVaultMember(admin.userId, creator.userId, vault.id);
+    expect(db.query("SELECT owner_id FROM vaults WHERE id = ?").get(vault.id)).toEqual({ owner_id: heir.userId });
+  });
+
+  test("FIXED (LOW): a blocked member cannot be made the vault's owner", async () => {
     const owner = await createUser("R26 blocked owner");
     const blocked = await createUser("R26 blocked member");
     const vault = await newVault(owner);
@@ -200,12 +308,16 @@ describe("review: owners and the billing owner (D214, decision 8)", () => {
       // (The new owner is listed first: the other order meets the 500 of the next probe.)
       const response = await putAccess(owner, vault.id, { people: [{ id: blocked.userId, role: "owner", levels: {} }, { id: owner.userId, role: "member", levels: { [vault.envs.dev!]: "admin" } }], groups: [] });
       expect(response.status).toBe(400);
+      expect(response.body.code).toBe("PERSON_BLOCKED");
+      // Saving the sheet with the blocked member left as a member still works.
+      const sheet = (await call(owner, "GET", `${base(vault.id)}/access`)).body;
+      expect((await putAccess(owner, vault.id, { people: sheet.people.map((person: { id: string; role: string; levels: unknown }) => ({ id: person.id, role: person.role, levels: person.levels })), groups: [] }, sheet.etag)).status).toBe(200);
     } finally {
       db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(blocked.userId);
     }
   });
 
-  test.failing("FINDING (MEDIUM): an owner hands the vault to a member in one save, in the order the Access page sends (owner row first)", async () => {
+  test("FIXED (MEDIUM): an owner hands the vault to a member in one save, in the order the Access page sends (owner row first)", async () => {
     const owner = await createUser("R26 handover owner");
     const heir = await createUser("R26 handover heir");
     const vault = await newVault(owner);
@@ -214,14 +326,36 @@ describe("review: owners and the billing owner (D214, decision 8)", () => {
     const sheet = (await call(owner, "GET", `${base(vault.id)}/access`)).body;
     expect(sheet.people.map((person: { id: string }) => person.id)).toEqual([owner.userId, heir.userId]);
     const response = await putAccess(owner, vault.id, { people: [{ id: owner.userId, role: "member", levels: {} }, { id: heir.userId, role: "owner", levels: {} }], groups: [] });
-    // Today: the demotion runs first, 031's vault_keep_one_owner trigger fires, and the uncaught
-    // SQLite error is a 500 "Something went wrong" (only DELETE maps LAST_OWNER). With the rows in
-    // the other order the write succeeds, but the closing `readVaultAccess(actor, …)` re-authorizes
-    // the caller, who is no longer an owner or env admin: 404/403, and the whole handover rolls back.
+    // Before the fix: the demotion ran first and 031's vault_keep_one_owner trigger made it a 500;
+    // in the other order the closing re-authorization of the (demoted) caller rolled it all back.
     expect(response.status).toBe(200);
+    // The caller no longer manages (nor reads) the vault: no sheet, and the page goes to the list.
+    expect(response.body).toMatchObject({ access: null, managesAccess: false, stillReads: false, rotated: true });
+    expect(db.query("SELECT user_id, role FROM vault_members WHERE vault_id = ? ORDER BY role").all(vault.id)).toEqual([{ user_id: owner.userId, role: "member" }, { user_id: heir.userId, role: "owner" }]);
+    expect(db.query("SELECT owner_id FROM vaults WHERE id = ?").get(vault.id)).toEqual({ owner_id: heir.userId });
+    expect((await call(heir, "GET", `${base(vault.id)}/access`)).body.canManagePeople).toBe(true);
   });
 
-  test.failing("FINDING (LOW): a member's QUOTA_EXCEEDED does not disclose the creator's stored bytes across all their vaults", async () => {
+  test("the other row order hands over too; an owner who keeps read goes to the vault; a role change that leaves no owner is 409 LAST_OWNER", async () => {
+    const owner = await createUser("R26 handover2 owner");
+    const heir = await createUser("R26 handover2 heir");
+    const vault = await newVault(owner);
+    await share(owner, vault, [{ session: heir, levels: { dev: "read" } }]);
+    const response = await putAccess(owner, vault.id, { people: [{ id: heir.userId, role: "owner", levels: {} }, { id: owner.userId, role: "member", levels: { [vault.envs.dev!]: "write" } }], groups: [] });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ access: null, managesAccess: false, stillReads: true });
+    // The new owner cannot leave everyone without an owner either.
+    const sheet = (await call(heir, "GET", `${base(vault.id)}/access`)).body;
+    const none = await putAccess(heir, vault.id, { people: [{ id: heir.userId, role: "member", levels: {} }, { id: owner.userId, role: "member", levels: {} }], groups: [] }, sheet.etag);
+    expect({ status: none.status, code: none.body.code }).toEqual({ status: 409, code: "LAST_OWNER" });
+    // An owner who stays an owner still gets the sheet back.
+    const kept = await putAccess(heir, vault.id, { people: [{ id: heir.userId, role: "owner", levels: {} }, { id: owner.userId, role: "member", levels: { [vault.envs.dev!]: "read" } }], groups: [] }, sheet.etag);
+    expect(kept.status).toBe(200);
+    expect(kept.body.managesAccess).toBe(true);
+    expect(kept.body.access.etag).toBeTruthy();
+  });
+
+  test("FIXED (LOW): a member's QUOTA_EXCEEDED does not disclose the creator's stored bytes across all their vaults", async () => {
     const owner = await createUser("R26 quota owner");
     const member = await createUser("R26 quota member");
     const vault = await newVault(owner);
@@ -231,6 +365,10 @@ describe("review: owners and the billing owner (D214, decision 8)", () => {
     const refused = await call(member, "POST", `${base(vault.id)}/secrets`, { name: "MEMBER", values: { [vault.envs.dev!]: { value: "m" } } });
     expect(refused.body.code).toBe("QUOTA_EXCEEDED");
     expect(refused.body.storedBytes).toBeUndefined();
+    // The billing owner still hears their own figure.
+    const own = await call(owner, "POST", `${base(vault.id)}/secrets`, { name: "OWNER_MORE", values: { [vault.envs.dev!]: { value: "o" } } });
+    expect(own.body.code).toBe("QUOTA_EXCEEDED");
+    expect(own.body.storedBytes).toBeGreaterThan(0);
   });
 });
 
@@ -259,7 +397,7 @@ describe("review: export (§6.4, T55)", () => {
     expect((await call(member, "POST", `${base(vault.id)}/environments/${vault.envs.dev}/import`, { entries: [{ name: "X", value: "y" }], dryRun: true })).body.code).toBe("VAULT_LEVEL");
   });
 
-  test.failing("FINDING (MEDIUM): a CSV export neutralizes cells a spreadsheet would run as a formula (T55)", async () => {
+  test("FIXED (MEDIUM): a CSV export neutralizes cells a spreadsheet would run as a formula (T55)", async () => {
     const owner = await createUser("R26 csv owner");
     const writer = await createUser("R26 csv writer");
     const vault = await newVault(owner);
@@ -270,6 +408,23 @@ describe("review: export (§6.4, T55)", () => {
     const response = await request(`/vault/vaults/${vault.id}/environments/${vault.envs.dev}/export?format=csv`, {}, owner);
     const lines = (await response.text()).split("\r\n").slice(1).filter(Boolean);
     for (const line of lines) for (const cell of line.split(",")) expect(cell.replace(/^"/, "")).not.toMatch(/^[=+\-@\t\r]/);
+  });
+
+  test("a neutralized CSV imports back unchanged", () => {
+    const entries = [
+      { name: "=CMD", value: "+1", comment: "-note", type: "value" },
+      { name: "PLAIN", value: "'kept as typed", comment: "@here", type: "value" },
+      { name: "TAB", value: "\tx", comment: null, type: "value" }
+    ];
+    const text = serializeCsv(entries, { comments: true });
+    expect(text).toContain("'=CMD,'+1,'-note");
+    const parsed = parseCsvImport(text);
+    expect(parsed.problems).toEqual([]);
+    expect(parsed.entries).toEqual([
+      { name: "=CMD", value: "+1", comment: "-note" },
+      { name: "PLAIN", value: "'kept as typed", comment: "@here" },
+      { name: "TAB", value: "\tx" }
+    ]);
   });
 });
 

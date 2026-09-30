@@ -93,7 +93,10 @@ describe("the protected-environment window", () => {
     try {
       await unlock(viewer);
       expect((await call(viewer, "GET", `/vaults/${vault.id}/secrets/${secret.id}/values/${vault.envs.prod}`)).body.value.value).toBe("viewed-prod");
-      for (let attempt = 0; attempt < 9; attempt += 1) await call(viewer, "POST", "/reauth", { password: "wrong" });
+      // Failures count (per session); the success above did not.
+      for (let attempt = 0; attempt < 9; attempt += 1) expect((await call(viewer, "POST", "/reauth", { password: "wrong" })).status).toBe(403);
+      expect((await call(viewer, "POST", "/reauth", { password: viewer.password })).status).toBe(200);
+      expect((await call(viewer, "POST", "/reauth", { password: "wrong" })).status).toBe(403);
       const limited = await call(viewer, "POST", "/reauth", { password: viewer.password });
       expect(limited.status).toBe(429);
     } finally {

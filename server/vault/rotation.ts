@@ -73,7 +73,9 @@ export function runRotationPass(maxBatches = 1): { moved: number; failed: number
       const result = reencryptBatch(vaultId, ROTATION_BATCH);
       moved += result.moved;
       failed += result.failed;
-      if (!result.remaining || result.moved === 0) break;
+      // Rows that do not open are recorded once per sweep, as a count (review L5).
+      if (result.skipped) recordVaultEvent(vaultId, null, "key.rotate.skipped", { count: result.skipped }, "sweeper");
+      if (!result.remaining || result.moved + result.failed === 0) break;
     }
     const gone = retireGenerations(vaultId);
     if (gone.length) {
@@ -95,7 +97,8 @@ export function scheduleRotationRun() {
     try {
       const result = runRotationPass(1);
       if (result.failed) console.error(`Vault rotation: ${result.failed} rows did not open under their own key and were left as they are`);
-      if (result.pending > 0 && result.moved > 0) scheduleRotationRun();
+      // Keep going while a pass got anywhere; rows that do not open are passed, not retried.
+      if (result.pending > 0 && result.moved + result.failed > 0) scheduleRotationRun();
     } catch (error) {
       console.error("Vault rotation failed", error instanceof Error ? error.name : "Unknown error");
     }

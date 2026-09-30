@@ -18,7 +18,7 @@ export const EVENT_FAMILIES: Record<string, readonly string[]> = {
   reads: ["value.read", "version.read", "comment.read"],
   writes: ["value.write", "value.clear", "value.restore", "secret.create", "secret.update", "secret.delete", "secret.restore", "secret.purge"],
   access: ["member.add", "member.remove", "member.leave", "member.owner", "member.demote", "access.change"],
-  keys: ["key.rotate", "key.rotate.auto", "key.retire", "reauth"],
+  keys: ["key.rotate", "key.rotate.auto", "key.rotate.skipped", "key.retire", "reauth"],
   transfer: ["export", "import", "import.preview"],
   structure: ["vault.create", "vault.update", "vault.delete", "vault.restore", "env.create", "env.update", "env.protect", "env.unprotect", "env.reorder", "env.delete", "env.restore", "env.purge", "integrity.fail"]
 };

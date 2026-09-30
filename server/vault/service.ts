@@ -102,14 +102,16 @@ export const storedBytesOf = (ownerId: string) => (db.query("SELECT ifnull(sum(s
  * grew the vault creator's stored bytes past the quota. A write that shrinks or keeps the total (a
  * clear, a value that trims history) always passes, so a person over quota can clean up.
  */
-export function enforceQuota<T>(vaultId: string, write: () => T): T {
+export function enforceQuota<T>(vaultId: string, actorId: string, write: () => T): T {
   const ownerId = ownerOfVault(vaultId);
   const before = ownerId ? storedBytesOf(ownerId) : 0;
   const result = write();
   if (ownerId) {
     const after = storedBytesOf(ownerId);
     if (after > before && after > quotaBytes) {
-      throw new VaultError(413, "QUOTA_EXCEEDED", "This would pass the vault storage quota of the vault's creator. Clear old values or delete secrets (and empty them from the Bin) first.", { quotaBytes, storedBytes: before });
+      // The total covers every vault the billing owner created: only they hear the figure (review L3).
+      const detail = actorId === ownerId ? { quotaBytes, storedBytes: before } : { quotaBytes };
+      throw new VaultError(413, "QUOTA_EXCEEDED", "This would pass the vault storage quota of the vault's creator. Clear old values or delete secrets (and empty them from the Bin) first.", detail);
     }
   }
   return result;
@@ -431,7 +433,7 @@ export function createSecret(actor: VaultActor, vaultId: string, input: { name: 
   chargeVault("write", actor.userId, 1 + valueEntries.length);
   const id = crypto.randomUUID();
   const timestamp = now();
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const comment = sealSecretComment(secretGrant, id, input.comment ?? null);
     db.query(`INSERT INTO vault_secrets (id, vault_id, name, type, comment_ct, comment_generation, tags, revision, created_by, created_at, updated_by, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`).run(id, vaultId, input.name, input.type, comment.commentCt, comment.generation, JSON.stringify(input.tags ?? []), actor.userId, timestamp, actor.userId, timestamp);
@@ -453,7 +455,7 @@ export function updateSecret(actor: VaultActor, vaultId: string, secretId: strin
   }
   chargeVault("write", actor.userId);
   const grant = vaultGrant(access, "write");
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const comment = input.comment === undefined ? null : sealSecretComment(grant, secretId, input.comment);
     const result = db.query(`UPDATE vault_secrets SET name = COALESCE(?, name), type = COALESCE(?, type),
         comment_ct = CASE WHEN ? THEN ? ELSE comment_ct END, comment_generation = CASE WHEN ? THEN ? ELSE comment_generation END,
@@ -543,7 +545,7 @@ export function setValue(actor: VaultActor, vaultId: string, secretId: string, e
   const grant = requireEnvGrant(access, envId, "write");
   checkValueForType(secret.type, input.value);
   chargeVault("write", actor.userId);
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const version = writeValueLocked(access, grant, secretId, envId, input.value, input.comment ?? null, input.expectedVersion);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
     recordVaultEvent(vaultId, actor.userId, "value.write", { secretId, envId, count: version });
@@ -562,7 +564,7 @@ export function setValues(actor: VaultActor, vaultId: string, secretId: string, 
   const grants = entries.map((entry) => requireEnvGrant(access, entry.envId, "write"));
   for (const entry of entries) checkValueForType(secret.type, entry.value);
   chargeVault("write", actor.userId, entries.length);
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     // Every environment's version is checked before anything is written, and the refusal names all
     // that moved, so "Load the latest" can refresh each of them at once (QA Q2).
     const changed = entries.flatMap((entry) => {
@@ -691,7 +693,7 @@ export function restoreVersion(actor: VaultActor, vaultId: string, secretId: str
   chargeVault("write", actor.userId);
   const opened = integrity(vaultId, actor.userId, { secretId, envId }, () => openValue(grant, { secretId, envId, version, generation: row.generation, valueCt: row.value_ct!, commentCt: row.comment_ct }));
   checkValueForType(secret.type, opened.value);
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     writeValueLocked(access, grant, secretId, envId, opened.value, opened.comment, expectedVersion);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(now(), vaultId);
     recordVaultEvent(vaultId, actor.userId, "value.restore", { secretId, envId, count: version });

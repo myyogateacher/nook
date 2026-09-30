@@ -88,7 +88,7 @@ export function importEntries(actor: VaultActor, vaultId: string, envId: string,
   }
   const writes = plan.filter((item) => item.status === "create" || item.status === "set" || item.status === "update");
   chargeVault("write", actor.userId, Math.max(1, writes.length));
-  db.transaction(() => enforceQuota(vaultId, () => {
+  db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const timestamp = now();
     for (const item of writes) {
       let secretId = item.secret?.id;

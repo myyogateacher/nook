@@ -178,7 +178,7 @@ function reachers(vaultId: string): string[] {
 export function writeVaultAccess(actor: VaultActor, vaultId: string, body: VaultAccessPut, ifMatch: string | undefined) {
   if (!ifMatch) throw new VaultError(428, "ETAG_REQUIRED", "Send If-Match with the ETag from GET …/access");
   chargeVault("write", actor.userId);
-  return db.transaction(() => {
+  const outcome = db.transaction(() => {
     const current = readVaultAccess(actor, vaultId);
     if (ifMatch !== current.etag && ifMatch !== current.etag.slice(1, -1)) {
       throw new VaultError(409, "ACCESS_CHANGED", "Someone else changed who has access. Review the latest and save again.", { access: current });
@@ -202,25 +202,32 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
     const beforeMembers = new Map(members(vaultId).map((row) => [row.user_id, row]));
     const timestamp = now();
 
-    // Members: add, change roles, then remove (the LAST_OWNER trigger refuses dropping the last owner).
-    for (const person of nextPeople) {
-      const had = beforeMembers.get(person.id);
-      if (!had) {
-        db.query("INSERT INTO vault_members (vault_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)").run(vaultId, person.id, person.role, actor.userId, timestamp);
-      } else if (had.role !== person.role) {
-        db.query("UPDATE vault_members SET role = ?, revision = revision + 1 WHERE vault_id = ? AND user_id = ?").run(person.role, vaultId, person.id);
-        recordVaultEvent(vaultId, actor.userId, person.role === "owner" ? "member.owner" : "member.demote");
-      }
-    }
-    const removed = [...beforeMembers.keys()].filter((userId) => !nextPeople.some((person) => person.id === userId));
-    for (const userId of removed) {
+    // Members: add and promote first, then demote, then remove, whatever order the sheet sent (an
+    // owner handing the vault over lists themselves first): 031's LAST_OWNER triggers only see a
+    // vault without an owner if the save really leaves none.
+    const lastOwner = <T>(operation: () => T): T => {
       try {
-        db.query("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?").run(vaultId, userId);
+        return operation();
       } catch (error) {
         if (error instanceof Error && error.message.includes("LAST_OWNER")) throw new VaultError(409, "LAST_OWNER", "A vault keeps at least one owner");
         throw error;
       }
+    };
+    const setRole = (person: NextPerson) => {
+      db.query("UPDATE vault_members SET role = ?, revision = revision + 1 WHERE vault_id = ? AND user_id = ?").run(person.role, vaultId, person.id);
+      recordVaultEvent(vaultId, actor.userId, person.role === "owner" ? "member.owner" : "member.demote");
+    };
+    for (const person of nextPeople) {
+      const had = beforeMembers.get(person.id);
+      if (!had) db.query("INSERT INTO vault_members (vault_id, user_id, role, added_by, added_at) VALUES (?, ?, ?, ?, ?)").run(vaultId, person.id, person.role, actor.userId, timestamp);
+      else if (had.role !== person.role && person.role === "owner") setRole(person);
     }
+    for (const person of nextPeople) {
+      const had = beforeMembers.get(person.id);
+      if (had && had.role !== person.role && person.role !== "owner") lastOwner(() => setRole(person));
+    }
+    const removed = [...beforeMembers.keys()].filter((userId) => !nextPeople.some((person) => person.id === userId));
+    for (const userId of removed) lastOwner(() => db.query("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?").run(vaultId, userId));
     // Levels: members' rows only (owners hold admin everywhere; no rows).
     // Live environments only: a binned environment's rows come back with it when it is restored.
     const liveIds = JSON.stringify(envIds);
@@ -239,13 +246,7 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
         if (level !== "none") insertGroup.run(vaultId, group.id, VAULT_TO_GROUP[level], envId, actor.userId, timestamp);
       }
     }
-    // The creator's bytes stay with whoever owns it: when the creator is no longer an owner, the
-    // longest-standing owner becomes the vault's billing owner (the byte quota and the 100-vault bound).
-    const billing = db.query("SELECT owner_id FROM vaults WHERE id = ?").get(vaultId) as { owner_id: string };
-    if (!nextPeople.some((person) => person.id === billing.owner_id && person.role === "owner")) {
-      const next = db.query("SELECT user_id FROM vault_members WHERE vault_id = ? AND role = 'owner' ORDER BY added_at, user_id LIMIT 1").get(vaultId) as { user_id: string } | null;
-      if (next) db.query("UPDATE vaults SET owner_id = ? WHERE id = ?").run(next.user_id, vaultId);
-    }
+    moveBillingOwner(vaultId);
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(timestamp, vaultId);
 
     // Who gained and who lost access, for notices, events, and the rotation.
@@ -272,8 +273,32 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
     recordAccessEvent({ actorId: actor.userId, via: "web", action: "item.access_changed", resource: { kind: "vault", id: vaultId }, meta: { kind: "vault", peopleCount: nextPeople.length, groupCount: nextGroups.length } }, timestamp);
     // §3.3, §6.6: anyone who could read an environment and no longer can starts a new data key.
     const rotated = lost.length > 0 ? beginRotation(vaultId, actor.userId, "member_removed") : null;
-    return { access: readVaultAccess(actor, vaultId), rotated: rotated !== null, generation: rotated, lostAccess: lost.length };
+    return { rotated: rotated !== null, generation: rotated, lostAccess: lost.length };
   })();
+  // The sheet as the caller sees it now, read after the save rather than inside it: an owner who
+  // handed the vault over (or stepped down to no access) no longer manages it, and re-authorizing
+  // inside the transaction would roll their handover back. `access` is then null, and `stillReads`
+  // says whether the page should go to the vault or to the list.
+  let access: VaultAccessSheet | null = null;
+  try {
+    access = readVaultAccess(actor, vaultId);
+  } catch (error) {
+    if (!(error instanceof VaultError)) throw error;
+  }
+  return { access, managesAccess: access !== null, stillReads: access !== null || vaultAccess(actor, vaultId) !== null, ...outcome };
+}
+
+/**
+ * The creator's bytes stay with whoever owns the vault: when its billing owner (`vaults.owner_id`)
+ * is no longer an owner of it, the longest-standing owner becomes the billing owner (the byte quota
+ * and the 100-vault bound). Called after every change that can demote or remove an owner.
+ */
+function moveBillingOwner(vaultId: string) {
+  const billing = db.query("SELECT owner_id FROM vaults WHERE id = ?").get(vaultId) as { owner_id: string } | null;
+  if (!billing) return;
+  if (db.query("SELECT 1 FROM vault_members WHERE vault_id = ? AND user_id = ? AND role = 'owner'").get(vaultId, billing.owner_id)) return;
+  const next = db.query("SELECT user_id FROM vault_members WHERE vault_id = ? AND role = 'owner' ORDER BY added_at, user_id LIMIT 1").get(vaultId) as { user_id: string } | null;
+  if (next) db.query("UPDATE vaults SET owner_id = ? WHERE id = ?").run(next.user_id, vaultId);
 }
 
 function dedupe<T extends { id: string }>(entries: T[]): T[] {
@@ -303,6 +328,13 @@ function validateOwnerChange(current: VaultAccessSheet, people: NextPerson[], gr
       if (row.role === "viewer" && raised) {
         if (person.role === "owner") throw invalid("A viewer can only read: they cannot own a vault", "ROLE_CAP", { people: [person.id] });
         if (Object.values(person.levels).some((level) => LEVEL_ORDER(level) > LEVEL_ORDER("read"))) throw invalid("A viewer can only read", "ROLE_CAP", { people: [person.id] });
+      }
+      // A new owner must be able to manage the vault: never a blocked account (review L2), nor any
+      // account whose Team role does not reach admin on a vault. An existing owner who was blocked
+      // stays listed, so the sheet can still be saved while someone else takes over.
+      if (person.role === "owner" && existing?.role !== "owner") {
+        if (row.disabled_at !== null) throw invalid("A blocked account cannot own a vault", "PERSON_BLOCKED", { people: [person.id] });
+        if (roleCap(person.id) !== "admin") throw invalid("This person's Team role cannot own a vault", "ROLE_CAP", { people: [person.id] });
       }
     }
   }
@@ -371,6 +403,7 @@ export function leaveVault(actor: VaultActor, vaultId: string) {
       if (error instanceof Error && error.message.includes("LAST_OWNER")) throw new VaultError(409, "LAST_OWNER", "You are the last owner. Make someone else an owner first, or delete the vault.");
       throw error;
     }
+    moveBillingOwner(vaultId);
     recordVaultEvent(vaultId, actor.userId, "member.leave");
     audit(actor.userId, null, "vault.left", { vaultId });
     const stillReads = vaultAccess(actor, vaultId) !== null;
@@ -418,9 +451,10 @@ export const vaultMemberCount = (userId: string) =>
   (db.query("SELECT COUNT(*) AS count FROM vault_members m JOIN vaults v ON v.id = m.vault_id WHERE m.user_id = ? AND m.role = 'member'").get(userId) as { count: number }).count;
 
 /**
- * Reset access (Team, D268): removes the person's member rows (never an owner row), starts a key
- * rotation on each vault, and returns the vaults' billing owners with counts for their notices.
- * Runs inside the reset's transaction.
+ * Reset access (Team, D268): removes the person's member rows (never an owner row) and returns the
+ * vaults' billing owners with counts for their notices. Runs inside the reset's transaction; the
+ * caller wraps the whole reset in `snapshotVaultReach` / `rotateOnLostReach`, which rotates each
+ * vault the person could read (their member rows and their groups alike) once.
  */
 export function resetVaultMemberships(adminId: string, userId: string): Map<string, number> {
   const rows = db.query("SELECT m.vault_id, v.owner_id, v.deleted_at FROM vault_members m JOIN vaults v ON v.id = m.vault_id WHERE m.user_id = ? AND m.role = 'member'").all(userId) as Array<{ vault_id: string; owner_id: string; deleted_at: string | null }>;
@@ -428,7 +462,6 @@ export function resetVaultMemberships(adminId: string, userId: string): Map<stri
   for (const row of rows) {
     db.query("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?").run(row.vault_id, userId);
     recordVaultEvent(row.vault_id, adminId, "member.remove", { count: 1 });
-    if (row.deleted_at === null) beginRotation(row.vault_id, adminId, "member_removed");
     perOwner.set(row.owner_id, (perOwner.get(row.owner_id) ?? 0) + 1);
   }
   return perOwner;
@@ -449,6 +482,7 @@ export function adminRemoveVaultMember(adminId: string, userId: string, vaultId:
       if (error instanceof Error && error.message.includes("LAST_OWNER")) throw new VaultError(409, "LAST_OWNER", "This person is the vault's only owner. Their access stays until another owner is added.");
       throw error;
     }
+    moveBillingOwner(vaultId);
     const timestamp = now();
     recordVaultEvent(vaultId, adminId, "member.remove", { count: 1 });
     recordAccessEvent({ actorId: adminId, via: "web", action: "access.share_removed", targetUserId: userId, resource: { kind: "vault", id: vaultId }, meta: { role: row.role } }, timestamp);
@@ -477,4 +511,61 @@ export function adminLowerVaultMember(adminId: string, userId: string, vaultId: 
     audit(adminId, null, "team.access_lowered", { targetId: userId, kind: "vault", to: level, environments: changed });
     return { lowered: true as const, environments: changed };
   })();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Losing read outside the Access sheet (review M3; §6.6, Wave 26 decision 5): Team → Groups (a
+// member removed, a group deleted), Team → member access (removed from a group, Reset access), and
+// the account itself (blocked, or made a guest). Every such change takes a snapshot of what the
+// people involved could read first, and after the change rotates each vault where anyone lost an
+// environment, exactly as the Access sheet does, and tells the vault's owners to rotate the real
+// credentials upstream (the bell; the sheet says it to the owner who saved).
+
+/** Per vault, per person: the live environments each of `userIds` can read now. */
+export type VaultReach = Map<string, Map<string, Set<string>>>;
+
+const liveEnvIds = (vaultId: string) => (db.query("SELECT id FROM vault_environments WHERE vault_id = ? AND deleted_at IS NULL AND purge_started_at IS NULL").all(vaultId) as Array<{ id: string }>).map((row) => row.id);
+
+export function snapshotVaultReach(userIds: readonly string[]): VaultReach {
+  const reach: VaultReach = new Map();
+  for (const userId of new Set(userIds)) {
+    const vaultIds = (db.query(`SELECT vault_id AS id FROM vault_members WHERE user_id = $userId
+      UNION SELECT gg.resource_id AS id FROM group_grants gg JOIN group_members gm ON gm.group_id = gg.group_id WHERE gg.resource_kind = 'vault' AND gm.user_id = $userId`)
+      .all({ userId }) as Array<{ id: string }>).map((row) => row.id);
+    for (const vaultId of vaultIds) {
+      const envs = readableEnvs(vaultId, userId, liveEnvIds(vaultId));
+      if (!envs.size) continue;
+      const people = reach.get(vaultId) ?? new Map<string, Set<string>>();
+      people.set(userId, envs);
+      reach.set(vaultId, people);
+    }
+  }
+  return reach;
+}
+
+/**
+ * Compares `before` with what the same people read now and, per vault where anyone lost an
+ * environment, starts a rotation (`key.rotate.auto`) and puts a bell notice with each owner. Call in
+ * the same transaction as the change. Returns the vaults rotated.
+ */
+export function rotateOnLostReach(actorId: string | null, before: VaultReach): string[] {
+  const rotated: string[] = [];
+  const timestamp = now();
+  for (const [vaultId, people] of before) {
+    const envIds = liveEnvIds(vaultId);
+    let lost = 0;
+    for (const [userId, had] of people) {
+      const has = readableEnvs(vaultId, userId, envIds);
+      if ([...had].some((envId) => !has.has(envId))) lost += 1;
+    }
+    if (!lost) continue;
+    beginRotation(vaultId, actorId, "member_removed");
+    rotated.push(vaultId);
+    const owners = (db.query("SELECT user_id FROM vault_members WHERE vault_id = ? AND role = 'owner'").all(vaultId) as Array<{ user_id: string }>).map((row) => row.user_id);
+    for (const ownerId of owners) {
+      if (people.has(ownerId)) continue;
+      notifyAccess({ userId: ownerId, kind: "vault_key_rotated", actorId, resource: { kind: "vault", id: vaultId }, count: lost }, timestamp);
+    }
+  }
+  return rotated;
 }

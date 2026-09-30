@@ -158,9 +158,18 @@ export function serializeJson(entries: readonly ExportEntry[], options: { commen
 
 const csvField = (value: string) => /[",\r\n]/.test(value) || value !== value.trim() ? `"${value.replace(/"/g, "\"\"")}"` : value;
 
+/**
+ * T55 (the Collections pattern, server/collections/csv.ts): a cell a spreadsheet would run as a
+ * formula (starting with = + - @, a tab, or a CR) gets a leading apostrophe on export, and the import
+ * takes it off again, so an exported file imports back unchanged.
+ */
+const FORMULA_START = /^[=+\-@\t\r]/;
+export const neutralizeFormula = (value: string) => FORMULA_START.test(value) ? `'${value}` : value;
+export const restoreNeutralized = (value: string) => value.startsWith("'") && FORMULA_START.test(value.slice(1)) ? value.slice(1) : value;
+
 export function serializeCsv(entries: readonly ExportEntry[], options: { comments: boolean }) {
   const rows = [options.comments ? "name,value,comment" : "name,value"];
-  for (const entry of entries) rows.push([entry.name, entry.value, ...(options.comments ? [entry.comment ?? ""] : [])].map(csvField).join(","));
+  for (const entry of entries) rows.push([entry.name, entry.value, ...(options.comments ? [entry.comment ?? ""] : [])].map((cell) => csvField(neutralizeFormula(cell))).join(","));
   return `${rows.join("\r\n")}\r\n`;
 }
 
@@ -256,13 +265,13 @@ export function parseCsvImport(input: string): ParseResult {
   const problems: ParseProblem[] = [];
   const entries: ImportEntry[] = [];
   rows.slice(1).forEach((row, index) => {
-    const name = row[nameAt]?.trim() ?? "";
-    const value = row[valueAt];
+    const name = restoreNeutralized(row[nameAt]?.trim() ?? "");
+    const value = row[valueAt] === undefined ? undefined : restoreNeutralized(row[valueAt]!);
     if (!name || value === undefined) {
       problems.push({ line: index + 2, name: name || null, reason: "The row needs a name and a value" });
       return;
     }
-    const comment = commentAt >= 0 ? row[commentAt] ?? "" : "";
+    const comment = commentAt >= 0 ? restoreNeutralized(row[commentAt] ?? "") : "";
     entries.push({ name, value, ...(comment ? { comment } : {}) });
   });
   return dedupeEntries(entries, problems);

@@ -132,6 +132,7 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onBin, on
   } else if (route.page === "access") {
     body = <VaultAccessPage key={`access:${route.vaultId}`} vaultId={route.vaultId} onBack={back} onReady={restoreScroll} flash={flash} ask={confirm.ask}
       onMissing={() => { flash("That vault is not available"); go(vaultRoute(), true); }}
+      onHandedOver={(stillReads) => { if (stillReads) back(); else go(vaultRoute(), true); }}
       onOpenActivity={(actorId) => { setActivityActor(actorId); go(vaultRoute(route.vaultId, { page: "activity" })); }} />;
   } else if (route.page === "activity") {
     body = <VaultActivityPage key={`activity:${route.vaultId}:${activityActor ?? ""}`} vaultId={route.vaultId} vaultName={vaultNames.current.get(route.vaultId) ?? pageCache.current.get(route.vaultId)?.vault.name ?? null}

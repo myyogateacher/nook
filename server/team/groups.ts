@@ -10,6 +10,7 @@ import { parseJson, uuid } from "../validation";
 import { can, type Role } from "./roles";
 import { readPolicies } from "./policies";
 import { GUEST_SHARE_DISABLED } from "../access/shares";
+import { rotateOnLostReach, snapshotVaultReach } from "../vault/members";
 
 /**
  * Groups (access plan D267, §C.6, O-A1, T200). Admins create groups and decide who is in them;
@@ -175,7 +176,10 @@ export function deleteGroup(actorId: string, groupId: string, revision?: number)
     const row = groupRow(groupId);
     if (!row) throw notFound();
     if (revision !== undefined && row.revision !== revision) throw changed(row.revision);
+    // Its members lose what the group reached: a vault among it rotates its data key (review M3).
+    const reach = snapshotVaultReach((db.query("SELECT user_id FROM group_members WHERE group_id = ?").all(groupId) as Array<{ user_id: string }>).map((member) => member.user_id));
     db.query("DELETE FROM user_groups WHERE id = ?").run(groupId);
+    rotateOnLostReach(actorId, reach);
     // group_id is kept on the event (no FK), so the history stays readable in the audit.
     recordAccessEvent({ actorId, via: "web", action: "group.deleted", groupId, meta: { memberCount: row.member_count, grantCount: row.grant_count } });
     audit(actorId, null, "group.deleted", { groupId, memberCount: row.member_count, grantCount: row.grant_count });
@@ -213,6 +217,7 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       if (guestJoinRefused(groupId, added)) throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
     }
     const timestamp = now();
+    const reach = snapshotVaultReach(removed);
     const insert = db.query("INSERT INTO group_members (group_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)");
     const remove = db.query("DELETE FROM group_members WHERE group_id = ? AND user_id = ?");
     for (const userId of added) {
@@ -227,6 +232,8 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       notifyAccess({ userId, kind: "group_removed", actorId, groupId }, timestamp);
     }
     db.query("UPDATE user_groups SET updated_at = ?, revision = revision + 1 WHERE id = ?").run(timestamp, groupId);
+    // Losing read on a vault through the group rotates its data key, as on the vault's own sheet (review M3).
+    rotateOnLostReach(actorId, reach);
     if (added.length || removed.length) audit(actorId, null, "group.members_changed", { groupId, added: added.length, removed: removed.length, selfAdded: added.includes(actorId) });
     return { added: added.length, removed: removed.length, selfAdded: added.includes(actorId) };
   })();

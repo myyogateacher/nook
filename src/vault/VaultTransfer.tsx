@@ -180,7 +180,7 @@ export function ExportDialog({ vault, initialEnvId, onClose, flash }: { vault: V
       <Select labelledBy={ids.format} value={format} onChange={setFormat} options={FORMAT_OPTIONS} disabled={busy} />
       <label className="vault-check"><input type="checkbox" checked={comments} onChange={(event) => setComments(event.target.checked)} disabled={busy} />Include value comments</label>
       <div className="vault-conflict vault-export-warning" role="note">
-        <p><TriangleAlert className="vault-hint-icon" aria-hidden="true" />The file holds every value of {env?.name ?? "this environment"} in plain text. Keep it off shared drives and chat, and delete it when you are done. Open CSV files in a text editor rather than a spreadsheet.</p>
+        <p><TriangleAlert className="vault-hint-icon" aria-hidden="true" />The file holds every value of {env?.name ?? "this environment"} in plain text. Keep it off shared drives and chat, and delete it when you are done. Open CSV files in a text editor rather than a spreadsheet. In a CSV, a name, value, or comment that starts with =, +, -, or @ gets a leading apostrophe so a spreadsheet does not run it; importing the file takes it off again.</p>
         <p>Exports are recorded in the vault's Activity, and you can export 10 times an hour.</p>
       </div>
       {env?.protected && <p className="file-dialog-hint">{env.name} is protected: you will be asked to confirm it's you.</p>}

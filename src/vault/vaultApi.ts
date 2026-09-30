@@ -88,7 +88,11 @@ export type VaultAccessSheet = {
 export type AccessPutBody = { people: Array<{ id: string; role: "owner" | "member"; levels: Record<string, EnvLevel> }>; groups: Array<{ id: string; levels: Record<string, EnvLevel> }> };
 export const getVaultAccess = (vaultId: string) => api<VaultAccessSheet>(`${v(vaultId)}/access`);
 export const putVaultAccess = (vaultId: string, body: AccessPutBody, etag: string) =>
-  api<{ access: VaultAccessSheet; rotated: boolean; generation: number | null; lostAccess: number }>(`${v(vaultId)}/access`, { method: "PUT", body: json(body), headers: { "If-Match": etag } });
+  api<{
+    /** Null when the caller no longer manages the vault's access (an owner who handed it over). */
+    access: VaultAccessSheet | null; managesAccess: boolean; stillReads: boolean;
+    rotated: boolean; generation: number | null; lostAccess: number;
+  }>(`${v(vaultId)}/access`, { method: "PUT", body: json(body), headers: { "If-Match": etag } });
 export const leaveVault = (vaultId: string) => api<{ ok: true; stillReads: boolean }>(`${v(vaultId)}/leave`, { method: "POST", body: "{}" });
 
 export type RotationStatus = { generation: number; pendingRows: number; activeKeys: number; done: boolean };

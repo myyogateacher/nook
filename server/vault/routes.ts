@@ -141,8 +141,12 @@ export function registerVaultRoutes(app: Hono<AppEnv>) {
     const body = await parseJson(c.req.raw, reauthSchema);
     const user = c.get("user");
     const sessionId = c.get("sessionId");
-    chargeVault("reauth", user.id);
+    // Per session, failures only (review L4): another session of the same account (a copied
+    // cookie) cannot use up this one's attempts, and succeeding costs nothing.
+    const bucket = sessionId ?? user.id;
+    chargeVault("reauth", bucket, 0);
     if (!sessionId || !await verifyReauth(user.id, body, "vault_protected", sessionId)) {
+      chargeVault("reauth", bucket);
       audit(user.id, null, "vault.reauth_failed");
       throw new VaultError(403, "REAUTH_FAILED", "The password or the authentication code is not right");
     }
@@ -184,7 +188,7 @@ export function registerVaultRoutes(app: Hono<AppEnv>) {
     const people = body.people.map((person) => ({ ...person, levels: Object.fromEntries(Object.entries(person.levels).map(([envId, level]) => [envId.toLowerCase(), level])) }));
     const groups = body.groups.map((group) => ({ ...group, levels: Object.fromEntries(Object.entries(group.levels).map(([envId, level]) => [envId.toLowerCase(), level])) }));
     const result = writeVaultAccess(actorOf(c), vaultId, { people, groups }, c.req.header("If-Match"));
-    c.header("ETag", result.access.etag);
+    if (result.access) c.header("ETag", result.access.etag);
     return result;
   }));
   app.post("/api/vault/vaults/:vaultId/leave", handle(async (c) => {

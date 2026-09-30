@@ -240,84 +240,135 @@ export function startGeneration(vaultId: string): number {
   return next;
 }
 
-type RotRow = { secret_id: string; env_id: string; version: number; generation: number; value_ct: string | null; comment_ct: string | null };
+type RotRow = { rid: number; secret_id: string; env_id: string; version: number; generation: number; value_ct: string | null; comment_ct: string | null };
+
+/**
+ * Where one vault's re-encryption sweep is (review L5): the table it is on (current values, then
+ * history, then secret comments), the last rowid it looked at there, and how many rows failed to
+ * open so far. Rows are taken in rowid order after the cursor, so rows that do not open are passed
+ * once and never block the rows behind them, however many there are. When a sweep ends with only
+ * such rows left, `stuck` holds their count and the vault is not swept again until something new is
+ * pending (or a new generation starts). Kept in memory: a restart sweeps once more from the start.
+ */
+type Sweep = { target: number; phase: 0 | 1 | 2 | 3; cursor: number; failed: number; stuck: number | null };
+const sweeps = new Map<string, Sweep>();
+const freshSweep = (target: number): Sweep => ({ target, phase: 0, cursor: 0, failed: 0, stuck: null });
 
 /**
  * Re-encrypts at most `limit` rows of one vault that are still under an older generation: current
  * values, history (a cleared version only takes the new generation number), and secret comments.
  * Each row is opened under its own ids and generation and sealed again under the current one with
  * the same AAD, then written with a compare-and-swap on its old ciphertext, in one transaction. Rows
- * that fail to open are left alone and counted (`failed`): never guessed, never dropped. Returns how
- * many rows moved and whether any remain.
+ * that fail to open are left alone and counted (`failed`, once per sweep): never guessed, never
+ * dropped, and never in the way of the rows after them. `skipped` is set once, when a sweep ends
+ * with such rows left (the caller records `key.rotate.skipped` with the count). Returns how many
+ * rows moved and whether any that could still move remain.
  */
-export function reencryptBatch(vaultId: string, limit: number): { moved: number; failed: number; remaining: boolean } {
-  return db.transaction(() => {
-    const target = currentGeneration(vaultId);
-    const keys = new Map<number, Buffer>();
-    const keyFor = (generation: number) => {
-      let key = keys.get(generation);
-      if (!key) {
-        key = dekFor(vaultId, generation);
-        keys.set(generation, key);
-      }
-      return key;
-    };
-    let moved = 0;
-    let failed = 0;
+export function reencryptBatch(vaultId: string, limit: number): { moved: number; failed: number; remaining: boolean; skipped: number } {
+  try {
+    return db.transaction(() => reencryptInTransaction(vaultId, limit))();
+  } catch (error) {
+    sweeps.delete(vaultId);
+    throw error;
+  }
+}
+
+function reencryptInTransaction(vaultId: string, limit: number) {
+  const target = currentGeneration(vaultId);
+  let sweep = sweeps.get(vaultId);
+  if (!sweep || sweep.target !== target) sweep = freshSweep(target);
+  if (sweep.stuck !== null) {
+    // Only rows that did not open are left: nothing to do until something else is pending.
+    if (pendingRows(vaultId, target) <= sweep.stuck) {
+      sweeps.set(vaultId, sweep);
+      return { moved: 0, failed: 0, remaining: false, skipped: 0 };
+    }
+    sweep = freshSweep(target);
+  }
+  sweeps.set(vaultId, sweep);
+  const keys = new Map<number, Buffer>();
+  const keyFor = (generation: number) => {
+    let key = keys.get(generation);
+    if (!key) {
+      key = dekFor(vaultId, generation);
+      keys.set(generation, key);
+    }
+    return key;
+  };
+  let moved = 0;
+  let failed = 0;
+  const attempt = (write: () => number) => {
     try {
-      const values = db.query(`SELECT v.secret_id, v.env_id, v.version, v.generation, v.value_ct, v.comment_ct FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id
-        WHERE s.vault_id = ? AND v.generation < ? LIMIT ?`).all(vaultId, target, limit) as RotRow[];
-      const reseal = (row: RotRow) => {
-        const from = keyFor(row.generation);
-        const to = keyFor(target);
-        const valueCt = row.value_ct === null ? null
-          : sealEnvelope(to, openEnvelope(from, row.value_ct, AAD.value(vaultId, row.secret_id, row.env_id, row.version)), AAD.value(vaultId, row.secret_id, row.env_id, row.version));
-        const commentCt = row.comment_ct === null ? null
-          : sealEnvelope(to, openEnvelope(from, row.comment_ct, AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version)), AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version));
-        return { valueCt, commentCt };
-      };
-      for (const row of values) {
-        try {
+      moved += write() > 0 ? 1 : 0;
+    } catch (error) {
+      if (!(error instanceof VaultIntegrityError)) throw error;
+      failed += 1;
+    }
+  };
+  const reseal = (row: RotRow) => {
+    const from = keyFor(row.generation);
+    const to = keyFor(target);
+    const valueCt = row.value_ct === null ? null
+      : sealEnvelope(to, openEnvelope(from, row.value_ct, AAD.value(vaultId, row.secret_id, row.env_id, row.version)), AAD.value(vaultId, row.secret_id, row.env_id, row.version));
+    const commentCt = row.comment_ct === null ? null
+      : sealEnvelope(to, openEnvelope(from, row.comment_ct, AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version)), AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version));
+    return { valueCt, commentCt };
+  };
+  try {
+    let budget = limit;
+    while (budget > 0 && sweep.phase < 3) {
+      let seen: number[];
+      if (sweep.phase === 0) {
+        const rows = db.query(`SELECT v.rowid AS rid, v.secret_id, v.env_id, v.version, v.generation, v.value_ct, v.comment_ct FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id
+          WHERE s.vault_id = ? AND v.generation < ? AND v.rowid > ? ORDER BY v.rowid LIMIT ?`).all(vaultId, target, sweep.cursor, budget) as RotRow[];
+        for (const row of rows) attempt(() => {
           const next = reseal(row);
-          moved += db.query("UPDATE vault_values SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
-            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes > 0 ? 1 : 0;
-        } catch (error) {
-          if (!(error instanceof VaultIntegrityError)) throw error;
-          failed += 1;
-        }
-      }
-      const room = limit - values.length;
-      const versions = room <= 0 ? [] : db.query(`SELECT h.secret_id, h.env_id, h.version, h.generation, h.value_ct, h.comment_ct FROM vault_value_versions h JOIN vault_secrets s ON s.id = h.secret_id
-        WHERE s.vault_id = ? AND h.generation < ? LIMIT ?`).all(vaultId, target, room) as RotRow[];
-      for (const row of versions) {
-        try {
+          return db.query("UPDATE vault_values SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
+            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes;
+        });
+        seen = rows.map((row) => row.rid);
+      } else if (sweep.phase === 1) {
+        const rows = db.query(`SELECT h.rowid AS rid, h.secret_id, h.env_id, h.version, h.generation, h.value_ct, h.comment_ct FROM vault_value_versions h JOIN vault_secrets s ON s.id = h.secret_id
+          WHERE s.vault_id = ? AND h.generation < ? AND h.rowid > ? ORDER BY h.rowid LIMIT ?`).all(vaultId, target, sweep.cursor, budget) as RotRow[];
+        for (const row of rows) attempt(() => {
           const next = reseal(row);
-          moved += db.query("UPDATE vault_value_versions SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
-            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes > 0 ? 1 : 0;
-        } catch (error) {
-          if (!(error instanceof VaultIntegrityError)) throw error;
-          failed += 1;
-        }
-      }
-      const left = room - versions.length;
-      const comments = left <= 0 ? [] : db.query("SELECT id, comment_ct, comment_generation FROM vault_secrets WHERE vault_id = ? AND comment_generation < ? LIMIT ?")
-        .all(vaultId, target, left) as Array<{ id: string; comment_ct: string; comment_generation: number }>;
-      for (const row of comments) {
-        try {
+          return db.query("UPDATE vault_value_versions SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
+            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes;
+        });
+        seen = rows.map((row) => row.rid);
+      } else {
+        const rows = db.query("SELECT rowid AS rid, id, comment_ct, comment_generation FROM vault_secrets WHERE vault_id = ? AND comment_generation < ? AND rowid > ? ORDER BY rowid LIMIT ?")
+          .all(vaultId, target, sweep.cursor, budget) as Array<{ rid: number; id: string; comment_ct: string; comment_generation: number }>;
+        for (const row of rows) attempt(() => {
           const aad = AAD.secretComment(vaultId, row.id);
           const commentCt = sealEnvelope(keyFor(target), openEnvelope(keyFor(row.comment_generation), row.comment_ct, aad), aad);
-          moved += db.query("UPDATE vault_secrets SET comment_ct = ?, comment_generation = ? WHERE id = ? AND comment_generation = ? AND comment_ct = ?")
-            .run(commentCt, target, row.id, row.comment_generation, row.comment_ct).changes > 0 ? 1 : 0;
-        } catch (error) {
-          if (!(error instanceof VaultIntegrityError)) throw error;
-          failed += 1;
-        }
+          return db.query("UPDATE vault_secrets SET comment_ct = ?, comment_generation = ? WHERE id = ? AND comment_generation = ? AND comment_ct = ?")
+            .run(commentCt, target, row.id, row.comment_generation, row.comment_ct).changes;
+        });
+        seen = rows.map((row) => row.rid);
       }
-      return { moved, failed, remaining: pendingRows(vaultId, target) > failed };
-    } finally {
-      for (const key of keys.values()) key.fill(0);
+      if (seen.length < budget) {
+        sweep.phase = (sweep.phase + 1) as Sweep["phase"];
+        sweep.cursor = 0;
+      } else sweep.cursor = seen[seen.length - 1]!;
+      budget -= seen.length;
     }
-  })();
+    sweep.failed += failed;
+    const pending = pendingRows(vaultId, target);
+    let skipped = 0;
+    if (sweep.phase === 3 || pending <= sweep.failed) {
+      // The sweep is over when it reached the end, or when every row still pending is one that
+      // failed in it. Anything else still pending came in behind the cursor: another sweep takes it.
+      if (pending > sweep.failed) sweeps.set(vaultId, freshSweep(target));
+      else {
+        sweep.stuck = pending;
+        skipped = sweep.failed;
+      }
+    }
+    return { moved, failed, remaining: pending > (sweep.stuck ?? sweep.failed), skipped };
+  } finally {
+    for (const key of keys.values()) key.fill(0);
+  }
 }
 
 /** Rows of a vault still under a generation older than `target`. */

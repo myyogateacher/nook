@@ -21,7 +21,7 @@ const WORDS: Record<string, string> = {
   "value.write": "set", "value.clear": "cleared", "value.restore": "restored an old version of",
   "secret.create": "created", "secret.update": "edited", "secret.delete": "deleted", "secret.restore": "restored", "secret.purge": "purged",
   "member.add": "added people", "member.remove": "removed people", "member.leave": "left the vault", "member.owner": "made someone an owner", "member.demote": "made an owner a member", "access.change": "changed who has access",
-  "key.rotate": "rotated the data key", "key.rotate.auto": "started a data-key rotation (someone lost access)", "key.retire": "retired old data keys",
+  "key.rotate": "rotated the data key", "key.rotate.auto": "started a data-key rotation (someone lost access)", "key.rotate.skipped": "left rows that did not open under their key (rotation)", "key.retire": "retired old data keys",
   "export": "exported", "import": "imported into", "import.preview": "previewed an import into",
   "vault.create": "created the vault", "vault.update": "renamed or described the vault", "vault.delete": "moved the vault to the Bin", "vault.restore": "restored the vault",
   "env.create": "added the environment", "env.update": "renamed the environment", "env.protect": "protected", "env.unprotect": "removed protection from", "env.reorder": "reordered environments",

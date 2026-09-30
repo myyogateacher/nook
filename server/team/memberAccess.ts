@@ -10,7 +10,7 @@ import { SHARE_TABLES } from "../access/shares";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { AUDIENCE_ALL_USERS, type Role } from "./roles";
 import { VaultError } from "../vault/access";
-import { adminLowerVaultMember, adminRemoveVaultMember, memberVaults, resetVaultMemberships, vaultMemberCount } from "../vault/members";
+import { adminLowerVaultMember, adminRemoveVaultMember, memberVaults, resetVaultMemberships, rotateOnLostReach, snapshotVaultReach, vaultMemberCount } from "../vault/members";
 
 /**
  * The member access page (access plan §C.6, D268, D269, T204, T214, T218): everything one person
@@ -336,8 +336,10 @@ export function lowerAccess(actorId: string, userId: string, token: string, leve
  */
 export function removeFromGroup(actorId: string, userId: string, groupId: string) {
   return db.transaction(() => {
+    const reach = snapshotVaultReach([userId]);
     const removed = db.query("DELETE FROM group_members WHERE group_id = ? AND user_id = ?").run(groupId, userId).changes;
     if (!removed) throw gone();
+    rotateOnLostReach(actorId, reach);
     const timestamp = now();
     db.query("UPDATE user_groups SET updated_at = ?, revision = revision + 1 WHERE id = ?").run(timestamp, groupId);
     recordAccessEvent({ actorId, via: "web", action: "group.member_removed", groupId, targetUserId: userId, meta: { from: "member_access", ...(userId === actorId ? { self: true } : {}) } }, timestamp);
@@ -358,6 +360,8 @@ export function resetAccess(actorId: string, userId: string) {
   if (target.id === actorId) throw new MemberAccessError(400, "SELF_ACTION", "You cannot reset your own access. Ask another admin.");
   return db.transaction(() => {
     const before = resetCounts(userId);
+    // Every vault the person could read (member rows and groups alike) rotates once (review M3).
+    const reach = snapshotVaultReach([userId]);
     const timestamp = now();
     const perOwner = new Map<string, number>();
     for (const kind of ACCESS_KINDS) {
@@ -377,8 +381,9 @@ export function resetAccess(actorId: string, userId: string) {
     }
     const keys = db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>;
     for (const key of keys) adminRevokeKey(actorId, key.id, "Access reset by an admin", { notify: false, meta: { reset: true } });
-    // Vault memberships (Wave 26): member rows go (owned vaults stay), each vault rotates its key.
+    // Vault memberships (Wave 26): member rows go (owned vaults stay).
     for (const [ownerId, count] of resetVaultMemberships(actorId, userId)) perOwner.set(ownerId, (perOwner.get(ownerId) ?? 0) + count);
+    rotateOnLostReach(actorId, reach);
     const feeds = db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(timestamp, userId).changes;
     const routines = pauseRoutinesOf(userId);
     const removed = { ...before, feeds, routines };

@@ -16,6 +16,7 @@ import { readPolicies } from "./policies";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { mailAccountEvent, mailRoleChanged } from "../mail/triggers";
 import { avatarUrlFor } from "../avatars";
+import { rotateOnLostReach, snapshotVaultReach } from "../vault/members";
 
 export type TeamVia = "web" | "cli" | "mcp";
 /** Who is acting: a signed-in admin (web or MCP), or the host CLI (no actor). */
@@ -259,8 +260,11 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
     if (input.role === "guest" && !readPolicies().shareWithGuests && inGrantedGroup(target.id)) {
       throw new TeamError(400, "GUEST_SHARE_DISABLED", "Sharing with guests is turned off for this Nook. Remove this person from groups that have items shared with them first.");
     }
+    // A guest reads no vault (V-O3): what the person could read there rotates (review M3).
+    const reach = snapshotVaultReach([target.id]);
     const result = db.query("UPDATE users SET role = ? WHERE id = ? AND role = ?").run(input.role, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: userRole(target.id) });
+    rotateOnLostReach(actor?.id ?? null, reach);
     recordEvent(target.id, actor, options.via, "role_change", { fromRole: target.role, toRole: input.role });
     // Agent inbox D152: a read-only role cannot use routines, so they pause (resume after a promotion).
     if (input.role === "viewer" || input.role === "guest") pauseRoutinesOf(target.id);
@@ -286,9 +290,12 @@ export function blockUser(actor: TeamActor, targetId: string, reason: string | n
     if (target.disabled_at !== null) throw new TeamError(409, "ALREADY_BLOCKED", "This account is already blocked");
     if (target.role === "admin" && otherActiveAdmins(target.id) === 0) throw lastAdmin();
     const timestamp = now();
+    // A blocked account reads no vault: each vault it could read rotates its data key (review M3).
+    const reach = snapshotVaultReach([target.id]);
     const result = db.query("UPDATE users SET disabled_at = ?, blocked_by = ?, block_reason = ? WHERE id = ? AND disabled_at IS NULL AND role = ?")
       .run(timestamp, actor?.id ?? null, cleanReason, target.id, target.role);
     if (result.changes !== 1) throw new TeamError(409, "ROLE_CHANGED", "This account changed while you were blocking it. Review it and try again.", { currentRole: userRole(target.id) });
+    rotateOnLostReach(actor?.id ?? null, reach);
     const sessions = db.query("DELETE FROM sessions WHERE user_id = ?").run(target.id).changes;
     revokeUserPushSubscriptions(target.id, "user_blocked");
     recordEvent(target.id, actor, options.via, "block", { reason: cleanReason }, timestamp);

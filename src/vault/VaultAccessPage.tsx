@@ -22,7 +22,9 @@ import { getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironme
  * and integrations are never offered (V-O3; integrations wait for vault keys), and viewers can only
  * read. Saving is one request with the ETag; someone else's change meanwhile shows the latest.
  * Removing someone says to rotate the real credentials upstream (§6.6) and links their reads.
- * Unsaved changes ask before Back or Forward leaves (the leave guard).
+ * Unsaved changes ask before Back or Forward leaves (the leave guard). An owner who hands the vault
+ * over in one save (another person made owner, themselves made a member) no longer manages it: the
+ * page then leaves for the vault, or for the list when they can no longer read it (`onHandedOver`).
  */
 
 export const ENV_LEVEL_LABELS: Record<EnvLevel, string> = { none: "No access", read: "Read", write: "Write", admin: "Admin" };
@@ -50,9 +52,11 @@ export function levelOptions(options: { cap: EnvLevel; ownerOnly: boolean; curre
   });
 }
 
-export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenActivity, onMissing }: {
+export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenActivity, onMissing, onHandedOver }: {
   vaultId: string; onBack: () => void; onReady: () => void; flash: (message: string) => void;
   ask: (request: ConfirmRequest) => Promise<boolean>; onOpenActivity: (actorId: string | null) => void; onMissing: () => void;
+  /** After a save that leaves the caller without the Access page: to the vault when they still read it, else to the list. */
+  onHandedOver: (stillReads: boolean) => void;
 }) {
   const phone = useMediaQuery(PHONE_QUERY);
   const [sheet, setSheet] = useState<VaultAccessSheet | null>(null);
@@ -156,6 +160,14 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
     try {
       const removed = sheet.people.filter((person) => !draft.people.some((item) => item.id === person.id));
       const result = await putVaultAccess(vaultId, bodyOf(draft), sheet.etag);
+      if (!result.access) {
+        // Saved, and the caller no longer manages this vault: leave past the leave guard.
+        flash(result.stillReads ? "Saved. You no longer manage who has access to this vault." : "Saved. You no longer have access to this vault.");
+        setAllowLeave(true);
+        const stillReads = result.stillReads;
+        setTimeout(() => whenHistorySettled(() => onHandedOver(stillReads)), 0);
+        return;
+      }
       setSheet(result.access);
       setDraft(draftOf(result.access));
       setBusy(false);
@@ -179,7 +191,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
         setSaveError("Someone else changed who has access. This shows the latest now; make your change again.");
         return;
       }
-      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members yet." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
+      setSaveError(code === "ROLE_CAP" ? "A viewer can only read, and cannot own a vault." : code === "PERSON_BLOCKED" ? "A blocked account cannot own a vault." : code === "GUEST_NOT_ALLOWED" ? "Guests cannot be vault members." : code === "INTEGRATION_NOT_ALLOWED" ? "Integrations cannot be vault members yet." : code === "LAST_OWNER" ? "A vault keeps at least one owner." : messageOf(reason, "Could not save"));
     }
   }
 
@@ -193,7 +205,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
   const roleSelect = (person: SheetPerson) => owner
     ? <Select<"owner" | "member"> label={`Vault role of ${person.displayName}`} value={person.role} variant="chip" disabled={busy}
       onChange={(role) => setPerson(person.id, (item) => ({ ...item, role, levels: role === "owner" ? Object.fromEntries(envs.map((env) => [env.id, "admin" as EnvLevel])) : noneLevels() }))}
-      options={[{ value: "owner", label: "Owner", description: person.cap !== "admin" ? "Viewers cannot own a vault" : "Everything, on every environment", disabled: person.cap !== "admin" && person.role !== "owner" }, { value: "member", label: "Member", description: "What each environment allows" }]} />
+      options={[{ value: "owner", label: "Owner", description: person.blocked ? "Blocked accounts cannot own a vault" : person.cap !== "admin" ? "Viewers cannot own a vault" : "Everything, on every environment", disabled: (person.blocked || person.cap !== "admin") && person.role !== "owner" }, { value: "member", label: "Member", description: "What each environment allows" }]} />
     : <span className="vault-access-role">{person.role === "owner" ? "Owner" : "Member"}</span>;
 
   const removeButton = (label: string, onRemove: () => void) => owner

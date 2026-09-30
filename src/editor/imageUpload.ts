@@ -28,11 +28,16 @@ export function imageAltText(filename: string) {
   return filename.replace(/[\[\]\\\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 200) || "image";
 }
 
-type UploadedDocument = { id: string; name: string; mime_type: string; preview_kind: string };
+export type UploadedDocument = { id: string; name: string; mime_type: string; preview_kind: string; folder_id?: string | null };
 
 export class ImageUploadError extends Error {}
 
-export async function uploadNoteImage(file: File, folderId: string | null): Promise<{ src: string; alt: string }> {
+/**
+ * Stores a picked, pasted, or dropped picture as an ordinary File in `folderId` (Default when null)
+ * and returns its document, once the server's own sniff says it is a PNG, JPEG, GIF, or WebP image.
+ * Shared by notes and whiteboards (Wave 24, D198); `signal` cancels the upload.
+ */
+export async function uploadImageDocument(file: File, folderId: string | null, signal?: AbortSignal): Promise<UploadedDocument> {
   if (!isInsertableImageType(file.type)) throw new ImageUploadError(IMAGE_REJECTED_MESSAGE);
   const body = new FormData();
   body.append("file", file, file.name || "image");
@@ -40,7 +45,7 @@ export async function uploadNoteImage(file: File, folderId: string | null): Prom
   const csrf = getCsrfToken();
   if (csrf) headers.set("X-CSRF-Token", csrf);
   const query = folderId ? `?folderId=${encodeURIComponent(folderId)}` : "";
-  const response = await fetch(`/api/files${query}`, { method: "POST", body, headers, credentials: "same-origin" });
+  const response = await fetch(`/api/files${query}`, { method: "POST", body, headers, credentials: "same-origin", ...(signal ? { signal } : {}) });
   const payload = await response.json().catch(() => ({})) as { document?: UploadedDocument; error?: unknown };
   if (!response.ok || !payload.document) {
     throw new ImageUploadError(typeof payload.error === "string" ? payload.error : `Image upload failed (${response.status})`);
@@ -56,5 +61,10 @@ export async function uploadNoteImage(file: File, folderId: string | null): Prom
     }).catch(() => undefined);
     throw new ImageUploadError(IMAGE_REJECTED_MESSAGE);
   }
+  return document;
+}
+
+export async function uploadNoteImage(file: File, folderId: string | null): Promise<{ src: string; alt: string }> {
+  const document = await uploadImageDocument(file, folderId);
   return { src: imageContentUrl(document.id), alt: imageAltText(document.name || file.name) };
 }

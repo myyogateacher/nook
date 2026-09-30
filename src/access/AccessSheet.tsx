@@ -32,6 +32,8 @@ export type AccessSheetProps = {
    * Back (Files, Tasks, Collections, Calendar) leave it off, so one Back closes one layer (D69).
    */
   guardHistory?: boolean;
+  /** A line the host adds above the actions (whiteboards: pictures show only for people who can open their files). */
+  note?: string;
   /** Render tests: the loaded state, without fetching. */
   initial?: { access: ItemAccess; people?: PickerPerson[]; groups?: PickerGroup[] };
 };
@@ -54,7 +56,7 @@ type Prompt = { kind: "discard" } | { kind: "audience"; message: string };
  * caught by a guard registered once the sheet is dirty, so it runs before the host's own (newest
  * first). Saving another audience over a list of people and groups asks first too, with the count.
  */
-export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = false, initial }: AccessSheetProps) {
+export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = false, note, initial }: AccessSheetProps) {
   const [access, setAccess] = useState<ItemAccess | null>(initial?.access ?? null);
   const [draft, setDraft] = useState<Draft | null>(initial ? draftFrom(initial.access) : null);
   const [people, setPeople] = useState<PickerPerson[]>(initial?.people ?? []);
@@ -251,6 +253,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
       <footer className="access-footer">
         {error && <p className="access-error" role="alert">{error}</p>}
         {!error && blocker && selected && <p className="access-row-hint">{blocker}</p>}
+        {note && <p className="access-row-hint">{note}</p>}
         {access && typeof access.keysWithAccess === "number" && access.keysWithAccess > 0 && <p className="access-row-hint access-keys-hint">{keysReachLine(access.keysWithAccess)}</p>}
         <div className="access-actions">
           <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>

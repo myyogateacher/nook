@@ -10,7 +10,7 @@ const excalidrawFontsDir = "node_modules/@excalidraw/excalidraw/dist/prod/fonts"
 function excalidrawFonts(): Plugin {
   // Review L6: a production build must apply both rewrites at least once, or it fails.
   let building = false;
-  const applied = { fontFallback: 0, copyAsSvg: 0, addToLibrary: 0, helpImage: 0, helpCrop: 0, helpHeader: 0, dialogClose: 0 };
+  const applied = { fontFallback: 0, copyAsSvg: 0, addToLibrary: 0, imageTool: 0, helpHeader: 0, dialogClose: 0 };
   return {
     name: "nook-excalidraw-fonts",
     configResolved(config) {
@@ -52,18 +52,15 @@ function excalidrawFonts(): Plugin {
         out = out.replace(/name:\s*"addToLibrary",/, 'name:"addToLibrary",predicate:()=>false,');
         applied.addToLibrary += 1;
       }
-      // QA Q5: Help does not list "Insert image" (images are refused in this release). Production build only.
-      const helpImage = /[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{label:[A-Za-z_$][\w$]*\("toolBar\.image"\),shortcuts:\[[^}]*?\]\}\),/;
-      if (helpImage.test(out)) {
-        out = out.replace(helpImage, "");
-        applied.helpImage += 1;
-      }
-      // QA E3: nor "Crop image" and "Finish image cropping". Production build only.
-      const helpCrop = /[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*,\{label:[A-Za-z_$][\w$]*\("helpDialog\.crop(?:Start|Finish)"\),shortcuts:\[[^}]*?\](?:,isOr:![01])?\}\),/g;
-      const withoutCrop = out.replace(helpCrop, "");
-      if (withoutCrop !== out) {
-        out = withoutCrop;
-        applied.helpCrop += 1;
+      // Wave 24 (D198, the spike's CSP finding): Excalidraw's own image tool opens a file picker and
+      // resizes the picture with pica/image-blob-reduce, which try WebAssembly.compile under a CSP
+      // without 'wasm-unsafe-eval', and it would embed the picture as a dataURL. The tool (toolbar,
+      // shortcut 9, command palette) instead asks Nook's canvas to open its own image picker, which
+      // stores the picture as a File and places a reference. Production build only.
+      const imageTool = /([A-Za-z_$][\w$]*)\.type==="image"&&this\.onImageAction\(\{insertOnCanvasDirectly:\(([A-Za-z_$][\w$]*)\.type==="image"&&\2\.insertOnCanvasDirectly\)\?\?!1\}\)/;
+      if (imageTool.test(out)) {
+        out = out.replace(imageTool, '$1.type==="image"&&void window.dispatchEvent(new CustomEvent("nook:excalidraw-image"))');
+        applied.imageTool += 1;
       }
       // QA E3: Help's header is only links that leave Nook (docs, blog, GitHub, YouTube). It is not
       // rendered at all: hidden with CSS, its links stayed first in the focus order, so the dialog
@@ -86,8 +83,7 @@ function excalidrawFonts(): Plugin {
       if (applied.fontFallback === 0) this.error("Excalidraw's esm.sh font fallback was never rewritten; update the rewrite (D203)");
       if (applied.copyAsSvg === 0) this.error("Excalidraw's copyAsSvg action was never patched; update the rewrite (D201)");
       if (applied.addToLibrary === 0) this.error("Excalidraw's addToLibrary action was never patched; update the rewrite (QA Q4)");
-      if (applied.helpImage === 0) this.error("Excalidraw's Help image entry was never removed; update the rewrite (QA Q5)");
-      if (applied.helpCrop === 0) this.error("Excalidraw's Help crop entries were never removed; update the rewrite (QA E3)");
+      if (applied.imageTool === 0) this.error("Excalidraw's image tool was never routed to Nook's picker; update the rewrite (D198)");
       if (applied.helpHeader === 0) this.error("Excalidraw's Help header was never removed; update the rewrite (QA E3)");
       if (applied.dialogClose === 0) this.error("Excalidraw's dialog close button was never patched; update the rewrite (QA E3)");
     },

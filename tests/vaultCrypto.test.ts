@@ -144,7 +144,9 @@ describe("grants (D213, T181)", () => {
     const grant = requireEnvGrant(access, vault.envs.dev!, "read");
     expect(openValue(grant, row).value).toBe("gee");
     // A grant for another environment, or a copy of a real one, is refused.
-    expect(() => openValue(requireEnvGrant(access, vault.envs.prod!, "read"), row)).toThrow("Vault grant refused");
+    expect(() => openValue(requireEnvGrant(access, vault.envs.staging!, "read"), row)).toThrow("Vault grant refused");
+    // Prod is protected: without a session window no grant is minted at all (D226).
+    expect(() => requireEnvGrant(access, vault.envs.prod!, "read")).toThrow("protected");
     expect(() => openValue({ ...grant }, row)).toThrow("Vault grant refused");
     // Sealing needs write.
     db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(owner.userId);

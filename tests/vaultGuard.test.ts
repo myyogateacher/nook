@@ -27,7 +27,8 @@ test("only vault/crypto.ts touches the cipher functions (besides modules with th
 test("only the vault service, its status check, and the host CLI import vault crypto", async () => {
   const importers = (await sources()).filter(({ source }) => /from\s+"(\.\/|\.\.\/)*(vault\/)?crypto"/.test(source) && /vault/.test(source)).map(({ path }) => path)
     .filter((path) => path.startsWith("vault/") || path === "vault-admin.ts");
-  expect(importers.sort()).toEqual(["vault-admin.ts", "vault/service.ts", "vault/status.ts"]);
+  // Wave 26: rotation re-encrypts inside crypto.ts and transfer opens values with grants for export.
+  expect(importers.sort()).toEqual(["vault-admin.ts", "vault/rotation.ts", "vault/service.ts", "vault/status.ts", "vault/transfer.ts"]);
   const outside = (await sources()).filter(({ path, source }) => !path.startsWith("vault/") && path !== "vault-admin.ts" && /vault\/crypto/.test(source)).map(({ path }) => path);
   expect(outside).toEqual([]);
 });
@@ -40,7 +41,11 @@ test("grants are minted only in access.ts, and the low-level envelope functions 
 });
 
 test("vault tables stay inside the vault module (D223): no search, Today, or MCP code reads them", async () => {
-  const allowed = new Set(["vault/access.ts", "vault/bin.ts", "vault/crypto.ts", "vault/limits.ts", "vault/service.ts", "vault/status.ts", "vault/routes.ts", "vault-admin.ts", "migrations/031_vault.ts"]);
+  const allowed = new Set([
+    "vault/access.ts", "vault/bin.ts", "vault/crypto.ts", "vault/limits.ts", "vault/service.ts", "vault/status.ts", "vault/routes.ts", "vault-admin.ts", "migrations/031_vault.ts",
+    // Wave 26 (Vault B): sharing, Activity, rotation, import and export, and the stored-bytes triggers.
+    "vault/members.ts", "vault/events.ts", "vault/rotation.ts", "vault/transfer.ts", "migrations/037_vault_sharing.ts"
+  ]);
   const readers = (await sources()).filter(({ path, source }) => !allowed.has(path) && /\bvault_(secrets|values|value_versions|keys|environments|events)\b/.test(source)).map(({ path }) => path);
   expect(readers).toEqual([]);
 });

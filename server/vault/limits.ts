@@ -3,14 +3,19 @@ import { VaultError } from "./access";
 
 /**
  * Vault rate limits (vault plan §7, T194, T195): reveals and value reads 300 per 10 minutes per
- * person, writes 300 per 10 minutes. Counters live in SQLite (`vault_rate_limits`), so a restart
+ * person, writes 300 per 10 minutes, exports 10 an hour, and protected-environment re-authentication
+ * attempts 10 per 10 minutes (Wave 26). Counters live in SQLite (`vault_rate_limits`), so a restart
  * does not reset them. Each bucket is a sliding window estimated from the current and previous fixed
  * windows (the previous one weighted by how much of it still overlaps). A refused request costs
  * nothing and gets 429 `RATE_LIMITED` with `retryAfterSeconds`. Wave 27 adds the per-key buckets.
  */
 export const VAULT_LIMITS = {
   read: { limit: 300, windowMs: 10 * 60_000 },
-  write: { limit: 300, windowMs: 10 * 60_000 }
+  write: { limit: 300, windowMs: 10 * 60_000 },
+  /** Exports (§7): 10 an hour per person, each one a whole environment in plaintext. */
+  export: { limit: 10, windowMs: 60 * 60_000 },
+  /** Re-authentication attempts for protected environments (D226): 10 per 10 minutes per person. */
+  reauth: { limit: 10, windowMs: 10 * 60_000 }
 } as const;
 export type VaultLimit = keyof typeof VAULT_LIMITS;
 

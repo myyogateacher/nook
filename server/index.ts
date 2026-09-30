@@ -37,6 +37,7 @@ import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerWhiteboardRoutes } from "./whiteboards/routes";
 import { registerVaultRoutes } from "./vault/routes";
 import { initVaultStatus, vaultFeature } from "./vault/status";
+import { scheduleRotationRun } from "./vault/rotation";
 import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -139,7 +140,9 @@ const globalSecureHeaders = secureHeaders({
 
 // secureHeaders overwrites headers after next(), so the document content route (and only it)
 // is excluded and sets its own strict header set, including a sandboxing CSP.
-app.use("*", (c, next) => isContentRequest(c.req.method, c.req.path)
+// The vault export (Wave 26) is a plaintext attachment: it gets the same sandboxing header set.
+const isVaultExport = (method: string, path: string) => method === "GET" && /^\/api\/vault\/vaults\/[^/]+\/environments\/[^/]+\/export$/.test(path);
+app.use("*", (c, next) => isContentRequest(c.req.method, c.req.path) || isVaultExport(c.req.method, c.req.path)
   ? contentRouteSecurityHeaders(c, next)
   : globalSecureHeaders(c, next));
 
@@ -942,7 +945,8 @@ async function reconcilePublishedMirrors() {
 
 await reconcilePublishedMirrors();
 // Wave 25 (D212, T199): the vault module is on only with a key that opens every live vault's data key.
-initVaultStatus();
+// Wave 26: a data-key rotation a restart interrupted carries on in the background.
+if (initVaultStatus().enabled) scheduleRotationRun();
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can

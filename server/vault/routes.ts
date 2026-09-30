@@ -1,14 +1,25 @@
 import type { Context, Hono, Next } from "hono";
 import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
+import { audit, db, now } from "../db";
+import { contentDisposition } from "../contentHeaders";
+import { mailTwoFactor } from "../mail/triggers";
+import { reauthMethod, verifyReauth } from "../reauth";
 import { parseJson, uuid } from "../validation";
-import { VaultError, type VaultActor } from "./access";
+import { reauthUntil, VaultError, type VaultActor } from "./access";
+import { EVENT_FAMILIES, listVaultActivity, type EventFamily } from "./events";
+import { chargeVault } from "./limits";
+import { leaveVault, MAX_VAULT_GROUPS, MAX_VAULT_PEOPLE, readVaultAccess, writeVaultAccess } from "./members";
+import { rotateVault, rotationStatus } from "./rotation";
+import { exportEnvironment, importEntries } from "./transfer";
 import {
   clearValue, createEnvironment, createSecret, createVault, deleteEnvironment, deleteSecret, deleteVault, getSecret, getVault, listSecrets, listVaults,
-  listVersions, readValue, readVersion, reorderEnvironments, restoreVersion, revealCells, setValue, setValues, updateEnvironment, updateSecret, updateVault
+  listVersions, readValue, readVersion, reorderEnvironments, restoreVersion, revealCells, setValue, setValues, storedBytesOf, updateEnvironment, updateSecret, updateVault,
+  vaultQuotaBytes
 } from "./service";
 import { requireVaultEnabled, vaultStatus } from "./status";
-import { hasControlChars, isTag, SECRET_TYPES, SLUG_PATTERN, VAULT_BOUNDS } from "../../shared/vault";
+import { ENV_LEVELS, hasControlChars, isTag, SECRET_TYPES, SLUG_PATTERN, VAULT_BOUNDS } from "../../shared/vault";
+import { IMPORT_FORMATS } from "../../shared/vaultTransfer";
 import "./bin";
 
 /**
@@ -19,11 +30,12 @@ import "./bin";
  * `VAULT_DISABLED`. Responses are `no-store` (all of /api), and no error carries a value or echoes
  * input: validation failures name the field only (T188).
  *
- * Wave 25 builds no API keys and no MCP tools (owner-only vaults): `/api/v1/vault/*` and the `nkv_`
- * MCP tools arrive in Wave 27.
+ * Wave 26 adds sharing (`…/access`, `…/leave`), the protected-environment window (`/api/vault/reauth`),
+ * import and export, key rotation, Activity, and the byte quota. There are still no API keys and no
+ * MCP tools: `/api/v1/vault/*` and the `nkv_` MCP tools arrive in Wave 27.
  */
 
-const actorOf = (c: Context<AppEnv>): VaultActor => ({ kind: "session", userId: c.get("user").id });
+const actorOf = (c: Context<AppEnv>): VaultActor => ({ kind: "session", userId: c.get("user").id, sessionId: c.get("sessionId") ?? null });
 
 const line = (max: number) => z.string().trim().min(1).max(max).refine((value) => !hasControlChars(value), "must be one line of text");
 const vaultName = line(VAULT_BOUNDS.vaultName);
@@ -57,6 +69,22 @@ const setValueSchema = z.object({ value, comment: comment.optional(), expectedVe
 const setValuesSchema = z.object({ values: z.array(z.object({ envId: uuid, value, comment: comment.optional(), expectedVersion: version }).strict()).min(1).max(VAULT_BOUNDS.applyBatch) }).strict();
 const revealSchema = z.object({ cells: z.array(z.object({ secretId: uuid, envId: uuid }).strict()).min(1).max(VAULT_BOUNDS.revealBatch) }).strict();
 const restoreSchema = z.object({ expectedVersion: version }).strict();
+const levelMap = z.record(uuid, z.enum(ENV_LEVELS)).refine((record) => Object.keys(record).length <= VAULT_BOUNDS.environments, "has too many environments");
+const accessPutSchema = z.object({
+  people: z.array(z.object({ id: uuid, role: z.enum(["owner", "member"]), levels: levelMap }).strict()).max(MAX_VAULT_PEOPLE),
+  groups: z.array(z.object({ id: uuid, levels: levelMap }).strict()).max(MAX_VAULT_GROUPS).default([])
+}).strict();
+const reauthSchema = z.object({
+  password: z.string().min(1).max(1024).optional(),
+  totpCode: z.string().regex(/^\d{6}$/, "must be six digits").optional(),
+  recoveryCode: z.string().min(1).max(64).optional()
+}).strict();
+const importSchema = z.object({
+  entries: z.array(z.object({ name: z.string().max(256), value, comment: comment.optional() }).strict()).max(VAULT_BOUNDS.importEntries),
+  mode: z.enum(["skip", "overwrite"]).default("skip"),
+  dryRun: z.boolean().default(false)
+}).strict();
+const emptySchema = z.object({}).strict();
 
 /** Ids in the path: anything that is not a UUID is the same 404 as a missing item (T194). */
 function id(c: Context<AppEnv>, name: string) {
@@ -89,6 +117,11 @@ const handle = (handler: Handler) => async (c: Context<AppEnv>) => {
   }
 };
 
+/** Any reader of the vault, or the 404 (for status lines that name nothing). */
+function readVaultOrThrow(c: Context<AppEnv>, vaultId: string) {
+  getVault(actorOf(c), vaultId);
+}
+
 /** Guests never reach the vault (V-O3): every vault path is 404 for them, as if it did not exist. */
 async function vaultGate(c: Context<AppEnv>, next: Next) {
   if (c.get("user")?.role === "guest") return c.json({ error: "Not found" }, 404);
@@ -98,6 +131,28 @@ async function vaultGate(c: Context<AppEnv>, next: Next) {
 export function registerVaultRoutes(app: Hono<AppEnv>) {
   app.use("/api/vault/*", vaultGate);
   app.use("/api/vault", vaultGate);
+
+  // The protected-environment window (D226): how this session proves it, and whether it is open.
+  app.get("/api/vault/reauth", handle((c) => {
+    const user = db.query("SELECT id, password_hash, totp_enabled_at FROM users WHERE id = ?").get(c.get("user").id) as { id: string; password_hash: string; totp_enabled_at: string | null };
+    return { reauthUntil: reauthUntil(actorOf(c)), method: reauthMethod(user), twoFactor: user.totp_enabled_at !== null };
+  }));
+  app.post("/api/vault/reauth", handle(async (c) => {
+    const body = await parseJson(c.req.raw, reauthSchema);
+    const user = c.get("user");
+    const sessionId = c.get("sessionId");
+    chargeVault("reauth", user.id);
+    if (!sessionId || !await verifyReauth(user.id, body, "vault_protected", sessionId)) {
+      audit(user.id, null, "vault.reauth_failed");
+      throw new VaultError(403, "REAUTH_FAILED", "The password or the authentication code is not right");
+    }
+    if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+    db.query("UPDATE sessions SET vault_reauth_at = ? WHERE id = ? AND user_id = ?").run(now(), sessionId, user.id);
+    audit(user.id, null, "vault.reauth");
+    return { reauthUntil: reauthUntil(actorOf(c)) };
+  }));
+  // The caller's stored bytes against the quota (review L5), for the list's footer.
+  app.get("/api/vault/quota", handle((c) => ({ storedBytes: storedBytesOf(c.get("user").id), quotaBytes: vaultQuotaBytes() })));
 
   // Whether the module is on. Why it is off (no key, or a key that does not open the vaults) is for admins only.
   app.get("/api/vault/status", (c) => {
@@ -116,6 +171,79 @@ export function registerVaultRoutes(app: Hono<AppEnv>) {
     return { vault: updateVault(actorOf(c), vaultId, await parseJson(c.req.raw, updateVaultSchema)) };
   }));
   app.delete("/api/vault/vaults/:vaultId", handle((c) => deleteVault(actorOf(c), id(c, "vaultId"))));
+
+  // Sharing (D214, D215): the access sheet with an ETag, and leaving.
+  app.get("/api/vault/vaults/:vaultId/access", handle((c) => {
+    const access = readVaultAccess(actorOf(c), id(c, "vaultId"));
+    c.header("ETag", access.etag);
+    return access;
+  }));
+  app.put("/api/vault/vaults/:vaultId/access", handle(async (c) => {
+    const vaultId = id(c, "vaultId");
+    const body = await parseJson(c.req.raw, accessPutSchema);
+    const people = body.people.map((person) => ({ ...person, levels: Object.fromEntries(Object.entries(person.levels).map(([envId, level]) => [envId.toLowerCase(), level])) }));
+    const groups = body.groups.map((group) => ({ ...group, levels: Object.fromEntries(Object.entries(group.levels).map(([envId, level]) => [envId.toLowerCase(), level])) }));
+    const result = writeVaultAccess(actorOf(c), vaultId, { people, groups }, c.req.header("If-Match"));
+    c.header("ETag", result.access.etag);
+    return result;
+  }));
+  app.post("/api/vault/vaults/:vaultId/leave", handle(async (c) => {
+    const vaultId = id(c, "vaultId");
+    await parseJson(c.req.raw, emptySchema);
+    return leaveVault(actorOf(c), vaultId);
+  }));
+
+  // Data-key rotation (§3.3): owners start one; the sweeper re-encrypts in the background.
+  app.post("/api/vault/vaults/:vaultId/rotate", handle(async (c) => {
+    const vaultId = id(c, "vaultId");
+    await parseJson(c.req.raw, emptySchema);
+    return { rotation: rotateVault(actorOf(c), vaultId) };
+  }));
+  app.get("/api/vault/vaults/:vaultId/rotation", handle((c) => {
+    const vaultId = id(c, "vaultId");
+    // Readers see how far it is; the numbers name nothing.
+    readVaultOrThrow(c, vaultId);
+    return { rotation: rotationStatus(vaultId) };
+  }));
+
+  // Activity (§7): owners see every event; members their own.
+  app.get("/api/vault/vaults/:vaultId/events", handle((c) => {
+    const vaultId = id(c, "vaultId");
+    const family = c.req.query("event");
+    if (family !== undefined && !(family in EVENT_FAMILIES)) throw new VaultError(400, "INVALID", "event is not a known family");
+    const actorParam = c.req.query("actor");
+    const envParam = c.req.query("env");
+    const actorId = actorParam === undefined ? undefined : uuid.safeParse(actorParam.toLowerCase()).data;
+    const envId = envParam === undefined ? undefined : uuid.safeParse(envParam.toLowerCase()).data;
+    if ((actorParam !== undefined && !actorId) || (envParam !== undefined && !envId)) throw new VaultError(400, "INVALID", "actor and env are ids");
+    const cursor = c.req.query("cursor");
+    if (cursor !== undefined && cursor.length > 200) throw new VaultError(400, "INVALID_CURSOR", "cursor is not valid");
+    return listVaultActivity(actorOf(c), vaultId, { actorId, family: family as EventFamily | undefined, envId, cursor });
+  }));
+
+  // Import (preview, then write) and export (an attachment), one environment at a time (§6.4).
+  app.post("/api/vault/vaults/:vaultId/environments/:envId/import", handle(async (c) => {
+    const [vaultId, envId] = [id(c, "vaultId"), id(c, "envId")];
+    const body = await parseJson(c.req.raw, importSchema);
+    return importEntries(actorOf(c), vaultId, envId, body);
+  }));
+  app.get("/api/vault/vaults/:vaultId/environments/:envId/export", handle((c) => {
+    const [vaultId, envId] = [id(c, "vaultId"), id(c, "envId")];
+    const format = c.req.query("format") ?? "dotenv";
+    if (!(IMPORT_FORMATS as readonly string[]).includes(format)) throw new VaultError(400, "INVALID", "format is dotenv, json, or csv");
+    const comments = c.req.query("comments") === "1";
+    const result = exportEnvironment(actorOf(c), vaultId, envId, format as (typeof IMPORT_FORMATS)[number], comments);
+    return new Response(result.body, {
+      status: 200,
+      headers: {
+        "Content-Type": result.contentType,
+        "Content-Disposition": contentDisposition("attachment", result.fileName),
+        "Cache-Control": "no-store",
+        "X-Vault-Export-Count": String(result.count),
+        "X-Vault-Export-Skipped": String(result.skipped)
+      }
+    });
+  }));
 
   app.post("/api/vault/vaults/:vaultId/environments", handle(async (c) => {
     const vaultId = id(c, "vaultId");

@@ -1,7 +1,7 @@
 import { registerBinProvider, SWEEP_BATCH_SIZE, SWEEP_RESUME_BATCH_SIZE, type BinItem, type BinSweepCounts, type PurgeOutcome, type PurgeReason, type RestoreOutcome } from "../bin";
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
-import { atLeast, roleCap, type VaultLevel } from "./access";
+import { atLeast, levelIgnoringBin, roleCap, type VaultLevel } from "./access";
 import { recordVaultEvent } from "./service";
 import { VAULT_BOUNDS } from "../../shared/vault";
 
@@ -10,7 +10,9 @@ import { VAULT_BOUNDS } from "../../shared/vault";
  * server/bin.ts as providers.
  *
  * - Listed with their plaintext names (D222) to the vault's owners, and to whoever binned an
- *   environment or secret while they still hold write there. A binned vault hides its binned
+ *   environment or secret while they still hold write there (their own row or a group; Wave 26).
+ *   Other members of a shared vault never see its Bin rows, and nobody sees a binned vault's name
+ *   but its owners. A binned vault hides its binned
  *   environments and secrets: restoring the vault brings them back as they were.
  * - Restore: owners always; the deleter while they still hold write. A name or short name another
  *   live item took meanwhile is 409 `NAME_TAKEN`; a binned parent is `PARENT_IN_BIN`.
@@ -26,15 +28,8 @@ const providedDefaults = { size_bytes: null, board_id: null, board_name: null, a
 const isOwner = (vaultId: string, userId: string) => roleCap(userId) === "admin"
   && Boolean(db.query("SELECT 1 FROM vault_members WHERE vault_id = ? AND user_id = ? AND role = 'owner'").get(vaultId, userId));
 
-/** The caller's level on one environment of a live vault, ignoring whether the environment itself is binned. */
-function rawLevel(vaultId: string, envId: string, userId: string): VaultLevel {
-  const cap = roleCap(userId);
-  if (cap === "none") return "none";
-  const member = db.query("SELECT role FROM vault_members WHERE vault_id = ? AND user_id = ?").get(vaultId, userId) as { role: string } | null;
-  if (!member) return "none";
-  const level: VaultLevel = member.role === "owner" ? "admin" : (db.query("SELECT level FROM vault_env_access WHERE vault_id = ? AND user_id = ? AND env_id = ?").get(vaultId, userId, envId) as { level: VaultLevel } | null)?.level ?? "none";
-  return atLeast(cap, level) ? level : cap;
-}
+/** The caller's level on one environment of a live vault (own row or groups), ignoring whether the environment itself is binned. */
+const rawLevel = (vaultId: string, envId: string, userId: string): VaultLevel => levelIgnoringBin(vaultId, envId, userId);
 
 /** Whether a deleter still writes on every live environment where the secret has a value (D216). */
 function writesSecret(vaultId: string, secretId: string, userId: string) {
@@ -176,8 +171,8 @@ const envVisible = (row: BinnedEnv, userId: string) => isOwner(row.vault_id, use
 
 registerBinProvider("vault_environment", {
   list(userId) {
-    const rows = db.query(`${binnedEnvSelect} JOIN vault_members m ON m.vault_id = e.vault_id AND m.user_id = ?
-      WHERE e.deleted_at IS NOT NULL AND v.deleted_at IS NULL AND v.purge_started_at IS NULL ORDER BY e.deleted_at DESC, e.id LIMIT 500`).all(userId) as BinnedEnv[];
+    const rows = db.query(`${binnedEnvSelect} WHERE (e.deleted_by = $userId OR EXISTS (SELECT 1 FROM vault_members m WHERE m.vault_id = e.vault_id AND m.user_id = $userId AND m.role = 'owner'))
+      AND e.deleted_at IS NOT NULL AND v.deleted_at IS NULL AND v.purge_started_at IS NULL ORDER BY e.deleted_at DESC, e.id LIMIT 500`).all({ userId }) as BinnedEnv[];
     return rows.filter((row) => envVisible(row, userId)).map((row): BinItem => ({
       type: "vault_environment", id: row.id, title: row.name, folder_id: row.vault_id, folder_name: row.vault_name,
       deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...providedDefaults, can_purge: isOwner(row.vault_id, userId)
@@ -241,8 +236,8 @@ const secretVisible = (row: BinnedSecret, userId: string) => isOwner(row.vault_i
 
 registerBinProvider("vault_secret", {
   list(userId) {
-    const rows = db.query(`${binnedSecretSelect} JOIN vault_members m ON m.vault_id = s.vault_id AND m.user_id = ?
-      WHERE s.deleted_at IS NOT NULL AND v.deleted_at IS NULL AND v.purge_started_at IS NULL ORDER BY s.deleted_at DESC, s.id LIMIT 500`).all(userId) as BinnedSecret[];
+    const rows = db.query(`${binnedSecretSelect} WHERE (s.deleted_by = $userId OR EXISTS (SELECT 1 FROM vault_members m WHERE m.vault_id = s.vault_id AND m.user_id = $userId AND m.role = 'owner'))
+      AND s.deleted_at IS NOT NULL AND v.deleted_at IS NULL AND v.purge_started_at IS NULL ORDER BY s.deleted_at DESC, s.id LIMIT 500`).all({ userId }) as BinnedSecret[];
     return rows.filter((row) => secretVisible(row, userId)).map((row): BinItem => ({
       type: "vault_secret", id: row.id, title: row.name, folder_id: row.vault_id, folder_name: row.vault_name,
       deleted_at: row.deleted_at!, purge_after: row.purge_after!, purging: row.purge_started_at !== null, ...providedDefaults, can_purge: isOwner(row.vault_id, userId)

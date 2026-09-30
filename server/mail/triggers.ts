@@ -77,6 +77,22 @@ export function mailShared(actorId: string, kind: SharedKind, itemId: string, be
   }
 }
 
+/**
+ * #25 for vaults (Wave 26): people newly given access to a vault by name. The mail names the vault
+ * only (D223), never a secret or a value. Vault shares stay out of the digest's share log (its kinds
+ * are fixed by 028), so the mail and the bell are the two channels.
+ */
+export function mailVaultShared(actorId: string, vaultId: string, userIds: readonly string[]) {
+  for (const userId of unique(userIds)) {
+    if (userId === actorId) continue;
+    safely("sharing.shared", () => enqueueMail({
+      userId, template: "sharing.shared", payload: { items: [{ kind: "vault", id: vaultId }], actorIds: [actorId] },
+      coalesceKey: `sharing.shared:${userId}`, windowMs: WINDOW_MS.activity,
+      merge: (queued: Payload, incoming: Payload) => ({ items: mergeItems(queued.items, incoming.items), actorIds: mergeIds(queued.actorIds, incoming.actorIds, 10) })
+    }));
+  }
+}
+
 /** The explicit share list of an item, read before a sharing change replaces it. */
 export function shareMembers(table: "note_shares" | "folder_shares" | "document_shares" | "board_members" | "calendar_members" | "collection_members" | "task_view_members", column: string, itemId: string) {
   return (db.query(`SELECT user_id FROM ${table} WHERE ${column} = ?`).all(itemId) as Array<{ user_id: string }>).map((row) => row.user_id);

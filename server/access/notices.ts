@@ -1,6 +1,7 @@
 import { db, now } from "../db";
 import { presentItem } from "./effective";
 import { ACCESS_KINDS, type AccessKind, type Level } from "./levels";
+import { vaultTitleFor } from "../vault/access";
 
 const LEVEL_WORDS: Record<Level, string> = { view: "Can view", comment: "Can comment", edit: "Can edit", manage: "Manager" };
 
@@ -17,14 +18,17 @@ const LEVEL_WORDS: Record<Level, string> = { view: "Can view", comment: "Can com
 export type AccessNoticeKind = "share_removed" | "share_lowered" | "access_reset" | "access_reset_self" | "group_added" | "group_removed" | "key_revoked"
   // Wave 35 (Google sign-in): an admin allowed linking or re-linking, reset the account for Google,
   // or unlinked Google; or a re-link completed. `count` carries GOOGLE_RESET_PARTS bits.
-  | "google_allowed" | "google_relink_allowed" | "google_reset" | "google_unlinked" | "google_relinked";
+  | "google_allowed" | "google_relink_allowed" | "google_reset" | "google_unlinked" | "google_relinked"
+  // Wave 26 (Vault B): a vault was shared with you, or your access to one ended. The line names the
+  // vault only while you can read it, and never a secret (D223).
+  | "vault_shared" | "vault_removed";
 
 export type AccessNotice = {
   userId: string;
   kind: AccessNoticeKind;
   actorId: string | null;
   targetUserId?: string | null;
-  resource?: { kind: AccessKind; id: string } | null;
+  resource?: { kind: AccessKind | "vault"; id: string } | null;
   groupId?: string | null;
   keyId?: string | null;
   count?: number | null;
@@ -62,6 +66,11 @@ const isAccessKind = (value: string | null): value is AccessKind => value !== nu
 
 function line(row: NoticeRow, recipientId: string) {
   const actor = row.actor_name ?? "An admin";
+  if (row.resource_kind === "vault" && row.resource_id) {
+    const title = vaultTitleFor(recipientId, row.resource_id);
+    if (row.kind === "vault_shared") return title ? `${row.actor_name ?? "Someone"} shared the vault “${title}” with you` : "A vault shared with you is no longer available to you";
+    if (row.kind === "vault_removed") return title ? `${actor} changed your access to the vault “${title}”` : `${actor} removed your access to a vault`;
+  }
   const target = row.target_name ?? "someone";
   const item = isAccessKind(row.resource_kind) && row.resource_id ? presentItem(row.resource_kind, row.resource_id, recipientId) : null;
   const itemText = item ? (item.titleHidden ? `a ${item.title.split(" owned by ")[0]!.toLowerCase()}` : `“${item.title}”`) : "an item that is gone";
@@ -146,7 +155,7 @@ export function listAccessNotices(userId: string, options: { unread: boolean; li
     WHERE n.user_id = $userId AND ($unread = 0 OR n.read_at IS NULL) ORDER BY n.created_at DESC, n.rowid DESC LIMIT $limit`)
     .all({ userId, unread: options.unread ? 1 : 0, limit: options.limit }) as NoticeRow[];
   return rows.map((row) => ({
-    id: row.id, title: line(row, userId), href: ACCESS_NOTICE_HREF,
+    id: row.id, title: line(row, userId), href: row.resource_kind === "vault" && row.resource_id && row.kind === "vault_shared" && vaultTitleFor(userId, row.resource_id) ? `/vault/${row.resource_id}` : ACCESS_NOTICE_HREF,
     late: false, read: row.read_at !== null, createdAt: row.created_at, occurrenceStart: null
   }));
 }

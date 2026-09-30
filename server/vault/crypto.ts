@@ -223,3 +223,126 @@ export function rotateKek(oldKey: Buffer, newKey: Buffer): { keys: number } {
 export function insertVaultKey(vaultId: string, generation: number) {
   db.query("INSERT INTO vault_keys (vault_id, generation, wrapped_dek, created_at) VALUES (?, ?, ?, ?)").run(vaultId, generation, newWrappedDek(vaultId, generation), now());
 }
+
+// ---------------------------------------------------------------------------------------------
+// DEK rotation (vault plan §3.3, §6.6; Wave 26). The service decides who may rotate (owners); the
+// work that touches plaintext stays here, where plaintext never leaves the function that opened it.
+
+/**
+ * Starts a new data-key generation: a fresh DEK wrapped by the KEK, and the vault's current
+ * generation moves to it, so every write from now on uses it. Older rows keep their generation until
+ * `reencryptBatch` moves them. Call inside the caller's transaction. Returns the new generation.
+ */
+export function startGeneration(vaultId: string): number {
+  const next = currentGeneration(vaultId) + 1;
+  insertVaultKey(vaultId, next);
+  db.query("UPDATE vaults SET current_generation = ? WHERE id = ?").run(next, vaultId);
+  return next;
+}
+
+type RotRow = { secret_id: string; env_id: string; version: number; generation: number; value_ct: string | null; comment_ct: string | null };
+
+/**
+ * Re-encrypts at most `limit` rows of one vault that are still under an older generation: current
+ * values, history (a cleared version only takes the new generation number), and secret comments.
+ * Each row is opened under its own ids and generation and sealed again under the current one with
+ * the same AAD, then written with a compare-and-swap on its old ciphertext, in one transaction. Rows
+ * that fail to open are left alone and counted (`failed`): never guessed, never dropped. Returns how
+ * many rows moved and whether any remain.
+ */
+export function reencryptBatch(vaultId: string, limit: number): { moved: number; failed: number; remaining: boolean } {
+  return db.transaction(() => {
+    const target = currentGeneration(vaultId);
+    const keys = new Map<number, Buffer>();
+    const keyFor = (generation: number) => {
+      let key = keys.get(generation);
+      if (!key) {
+        key = dekFor(vaultId, generation);
+        keys.set(generation, key);
+      }
+      return key;
+    };
+    let moved = 0;
+    let failed = 0;
+    try {
+      const values = db.query(`SELECT v.secret_id, v.env_id, v.version, v.generation, v.value_ct, v.comment_ct FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id
+        WHERE s.vault_id = ? AND v.generation < ? LIMIT ?`).all(vaultId, target, limit) as RotRow[];
+      const reseal = (row: RotRow) => {
+        const from = keyFor(row.generation);
+        const to = keyFor(target);
+        const valueCt = row.value_ct === null ? null
+          : sealEnvelope(to, openEnvelope(from, row.value_ct, AAD.value(vaultId, row.secret_id, row.env_id, row.version)), AAD.value(vaultId, row.secret_id, row.env_id, row.version));
+        const commentCt = row.comment_ct === null ? null
+          : sealEnvelope(to, openEnvelope(from, row.comment_ct, AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version)), AAD.valueComment(vaultId, row.secret_id, row.env_id, row.version));
+        return { valueCt, commentCt };
+      };
+      for (const row of values) {
+        try {
+          const next = reseal(row);
+          moved += db.query("UPDATE vault_values SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
+            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes > 0 ? 1 : 0;
+        } catch (error) {
+          if (!(error instanceof VaultIntegrityError)) throw error;
+          failed += 1;
+        }
+      }
+      const room = limit - values.length;
+      const versions = room <= 0 ? [] : db.query(`SELECT h.secret_id, h.env_id, h.version, h.generation, h.value_ct, h.comment_ct FROM vault_value_versions h JOIN vault_secrets s ON s.id = h.secret_id
+        WHERE s.vault_id = ? AND h.generation < ? LIMIT ?`).all(vaultId, target, room) as RotRow[];
+      for (const row of versions) {
+        try {
+          const next = reseal(row);
+          moved += db.query("UPDATE vault_value_versions SET value_ct = ?, comment_ct = ?, generation = ? WHERE secret_id = ? AND env_id = ? AND version = ? AND generation = ?")
+            .run(next.valueCt, next.commentCt, target, row.secret_id, row.env_id, row.version, row.generation).changes > 0 ? 1 : 0;
+        } catch (error) {
+          if (!(error instanceof VaultIntegrityError)) throw error;
+          failed += 1;
+        }
+      }
+      const left = room - versions.length;
+      const comments = left <= 0 ? [] : db.query("SELECT id, comment_ct, comment_generation FROM vault_secrets WHERE vault_id = ? AND comment_generation < ? LIMIT ?")
+        .all(vaultId, target, left) as Array<{ id: string; comment_ct: string; comment_generation: number }>;
+      for (const row of comments) {
+        try {
+          const aad = AAD.secretComment(vaultId, row.id);
+          const commentCt = sealEnvelope(keyFor(target), openEnvelope(keyFor(row.comment_generation), row.comment_ct, aad), aad);
+          moved += db.query("UPDATE vault_secrets SET comment_ct = ?, comment_generation = ? WHERE id = ? AND comment_generation = ? AND comment_ct = ?")
+            .run(commentCt, target, row.id, row.comment_generation, row.comment_ct).changes > 0 ? 1 : 0;
+        } catch (error) {
+          if (!(error instanceof VaultIntegrityError)) throw error;
+          failed += 1;
+        }
+      }
+      return { moved, failed, remaining: pendingRows(vaultId, target) > failed };
+    } finally {
+      for (const key of keys.values()) key.fill(0);
+    }
+  })();
+}
+
+/** Rows of a vault still under a generation older than `target`. */
+export function pendingRows(vaultId: string, target: number): number {
+  const count = (sql: string) => (db.query(sql).get(vaultId, target) as { count: number }).count;
+  return count("SELECT COUNT(*) AS count FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id WHERE s.vault_id = ? AND v.generation < ?")
+    + count("SELECT COUNT(*) AS count FROM vault_value_versions h JOIN vault_secrets s ON s.id = h.secret_id WHERE s.vault_id = ? AND h.generation < ?")
+    + count("SELECT COUNT(*) AS count FROM vault_secrets WHERE vault_id = ? AND comment_generation < ?");
+}
+
+/**
+ * Retires every older generation nothing references any more: its wrapped DEK row is deleted, so
+ * ciphertext of that generation (in an old backup, say) cannot be opened with this database's keys.
+ * Returns the generations retired.
+ */
+export function retireGenerations(vaultId: string): number[] {
+  return db.transaction(() => {
+    const target = currentGeneration(vaultId);
+    const old = (db.query("SELECT generation FROM vault_keys WHERE vault_id = ? AND generation < ? ORDER BY generation").all(vaultId, target) as Array<{ generation: number }>).map((row) => row.generation);
+    const referenced = (generation: number) => Boolean(
+      db.query("SELECT 1 FROM vault_values v JOIN vault_secrets s ON s.id = v.secret_id WHERE s.vault_id = ? AND v.generation = ? LIMIT 1").get(vaultId, generation)
+      || db.query("SELECT 1 FROM vault_value_versions h JOIN vault_secrets s ON s.id = h.secret_id WHERE s.vault_id = ? AND h.generation = ? LIMIT 1").get(vaultId, generation)
+      || db.query("SELECT 1 FROM vault_secrets WHERE vault_id = ? AND comment_generation = ? LIMIT 1").get(vaultId, generation));
+    const retired = old.filter((generation) => !referenced(generation));
+    for (const generation of retired) db.query("DELETE FROM vault_keys WHERE vault_id = ? AND generation = ?").run(vaultId, generation);
+    return retired;
+  })();
+}

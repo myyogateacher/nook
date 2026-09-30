@@ -21,7 +21,8 @@ export type Route =
   // `groups` (Wave 32): Team → Groups at /team/groups, and one group at /team/groups/:groupId.
   // Wave 33: a member's access page at /team/:userId/access (`access` with a userId), Team → Templates
   // at /team/templates, and Team → Access activity at /team/activity.
-  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string; access?: true; templates?: true; activity?: true }
+  // Wave 36: Team → Integrations at /team/integrations, and one integration at /team/integrations/:integrationId.
+  | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string; access?: true; templates?: true; activity?: true; integrations?: true; integrationId?: string }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
   // Routines (Wave 22) at /inbox/routines; the routine editor is a sheet on that entry.
@@ -148,6 +149,9 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "team" && rest[0] === "groups" && rest.length <= 2) {
     return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, groups: true, groupId: rest[1]!.toLowerCase() } : { app: "team", userId: null, groups: true };
   }
+  if (app === "team" && rest[0] === "integrations" && rest.length <= 2) {
+    return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, integrations: true, integrationId: rest[1]!.toLowerCase() } : { app: "team", userId: null, integrations: true };
+  }
   if (app === "team" && rest.length === 1 && rest[0] === "templates") return { app: "team", userId: null, templates: true };
   if (app === "team" && rest.length === 1 && rest[0] === "activity") return { app: "team", userId: null, activity: true };
   if (app === "team" && rest.length === 2 && rest[1] === "access" && isRouteId(rest[0]!)) return { app: "team", userId: rest[0]!.toLowerCase(), access: true };
@@ -214,7 +218,8 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
+  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups")
+    : route.integrations ? (route.integrationId && isRouteId(route.integrationId) ? `/team/integrations/${route.integrationId.toLowerCase()}` : "/team/integrations") : "/team";
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "vault") {
     if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";

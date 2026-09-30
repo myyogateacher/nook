@@ -62,7 +62,7 @@ describe("REST v1: authentication and transport", () => {
     const me = await rest(created.token, "GET", "/me");
     expect(me.status).toBe(200);
     expect(me.body.key).toMatchObject({ id: created.id, prefix: created.prefix, surfaces: "rest", kind: "general", ipRestricted: false });
-    expect(me.body.owner).toEqual({ id: owner.userId, displayName: "REST me", role: "member" });
+    expect(me.body.owner).toEqual({ id: owner.userId, displayName: "REST me", role: "member", kind: "person" });
     expect(me.body.grants).toEqual(expect.arrayContaining([{ module: "notes", permission: "read", resource: null }]));
     expect(me.body.limits.perKey.callsPerMinute).toBe(120);
     expect(me.text).not.toContain(created.token);

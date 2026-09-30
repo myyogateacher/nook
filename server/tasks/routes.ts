@@ -12,7 +12,7 @@ import { CARD_FLAGS, createTag, deleteTag, MAX_TAGS_PER_CARD, TAG_COLORS, TAG_NA
 import { registerTaskQueryRoutes } from "./queryRoutes";
 import { cardHierarchy } from "./hierarchy";
 import { COMMENT_MAX_BYTES, COMMENT_PAGE_SIZE, createComment, deleteComment, listComments, updateComment } from "./comments";
-import { avatarUrlsFor } from "../avatars";
+import { avatarUrlsFor, integrationIdsAmong } from "../avatars";
 
 /** Web payloads only (MCP output unchanged): each comment author's picture, beside the name (QA U4). */
 function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]) {
@@ -20,10 +20,12 @@ function withAuthorAvatars<T extends { author_id: string | null }>(comments: T[]
   return comments.map((comment) => ({ ...comment, author_avatar_url: comment.author_id ? urls.get(comment.author_id) ?? null : null }));
 }
 const withAuthorAvatar = <T extends { author_id: string | null }>(result: { comment: T }) => ({ ...result, comment: withAuthorAvatars([result.comment])[0]! });
-/** Q7: a card in a web answer carries each assignee's picture, as the board payload does. */
+/** Q7: a card in a web answer carries each assignee's picture, as the board payload does; Q-L4: and the integration mark. */
 function withAssigneeAvatars<T extends { card: { assignees: Array<{ id: string }> } }>(result: T): T {
-  const urls = avatarUrlsFor(result.card.assignees.map((assignee) => assignee.id));
-  return { ...result, card: { ...result.card, assignees: result.card.assignees.map((assignee) => ({ ...assignee, avatar_url: urls.get(assignee.id) ?? null })) } };
+  const ids = result.card.assignees.map((assignee) => assignee.id);
+  const urls = avatarUrlsFor(ids);
+  const integrations = integrationIdsAmong(ids);
+  return { ...result, card: { ...result.card, assignees: result.card.assignees.map((assignee) => ({ ...assignee, avatar_url: urls.get(assignee.id) ?? null, ...(integrations.has(assignee.id) ? { is_integration: true } : {}) })) } };
 }
 import {
   createBoard,
@@ -271,7 +273,9 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
       const result = listBoardReaders(userId, boardId, { q, limit: limitParam === undefined ? undefined : Number(limitParam) });
       // Q7: the picker shows each person's picture, not a letter (web payload only; MCP unchanged).
       const urls = avatarUrlsFor(result.users.map((user) => user.id));
-      return { ...result, users: result.users.map((user) => ({ ...user, avatarUrl: urls.get(user.id) ?? null })) };
+      // Q-L4: an integration is drawn with its icon and marked, never with initials.
+      const integrations = integrationIdsAmong(result.users.map((user) => user.id));
+      return { ...result, users: result.users.map((user) => ({ ...user, avatarUrl: urls.get(user.id) ?? null, ...(integrations.has(user.id) ? { isIntegration: true } : {}) })) };
     });
   });
 

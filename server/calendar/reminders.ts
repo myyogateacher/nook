@@ -287,7 +287,8 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
           const following = nextEventFire(event, row.offset_minutes!, row.tz, nowMs + 1, occurrenceStartMs);
           next = following ? iso(following.fireMs) : null;
         }
-        if (late > MAX_LATENESS_MS) {
+        // Integrations (D287) have no bell, push, or mail: their reminders advance without a notice.
+        if (late > MAX_LATENESS_MS || db.query("SELECT 1 FROM users WHERE id = ? AND kind = 'service'").get(row.user_id)) {
           counts.skipped += 1;
         } else {
           const window = db.query("SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM notifications WHERE user_id = ? AND created_at > ?")

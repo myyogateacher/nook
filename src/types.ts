@@ -44,6 +44,8 @@ export type Version = {
   checksum: string;
   created_at: string;
   author_name: string;
+  /** Wave 36 (D287): 1 when an integration published this version through its key. */
+  author_is_integration?: 0 | 1;
 };
 export type Visibility = "private" | "selected" | "all_users";
 export type PreviewKind = "image" | "pdf" | "text" | "audio" | "video" | "none";

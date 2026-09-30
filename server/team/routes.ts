@@ -10,6 +10,7 @@ import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
 import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPoliciesSchema, writePolicies } from "./policies";
 import { registerGroupRoutes } from "./groups";
 import { registerCentralAccessRoutes } from "./centralRoutes";
+import { registerIntegrationRoutes } from "./integrationRoutes";
 import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
@@ -237,6 +238,14 @@ function accessReadGate(c: Context<AppEnv>) {
   return null;
 }
 
+/** Team → Integrations reads: admins only (guests 404, everyone else 403 ADMIN_ONLY). */
+function integrationReadGate(c: Context<AppEnv>) {
+  const user = c.get("user");
+  if (!can(user.role, "team.read")) return notFound(c);
+  if (!can(user.role, "team.manage")) return c.json({ error: "Only admins can manage integrations", code: "ADMIN_ONLY" }, 403);
+  return null;
+}
+
 export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerInviteRoutes(app);
   registerAccessRoutes(app);
@@ -244,6 +253,8 @@ export function registerTeamRoutes(app: Hono<AppEnv>) {
   registerGroupRoutes(app, { read: groupReadGate, write: writeGate });
   // Member access, templates, and access activity (Wave 33, §C.6): the same admin gates.
   registerCentralAccessRoutes(app, { read: accessReadGate, write: writeGate });
+  // Integrations (Wave 36, D287): before `/api/team/:userId` so "integrations" is never a user id.
+  registerIntegrationRoutes(app, { read: integrationReadGate, write: writeGate });
 
   app.get("/api/team", (c) => {
     const user = c.get("user");

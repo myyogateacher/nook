@@ -29,7 +29,8 @@ export type TeamErrorCode =
   | "SELF_ACTION"
   | "ALREADY_BLOCKED"
   | "NOT_BLOCKED"
-  | "GUEST_SHARE_DISABLED";
+  | "GUEST_SHARE_DISABLED"
+  | "SERVICE_ROLE";
 
 export class TeamError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, readonly code: TeamErrorCode, message: string, readonly details?: Record<string, unknown>) {
@@ -139,14 +140,15 @@ export { userRole };
 
 /** The Team list: active before blocked, then by role, then by name (§6.3). */
 export function listTeam(viewer: { id: string; role: Role }) {
-  const rows = db.query(`${memberSelect} ORDER BY u.disabled_at IS NOT NULL, ${ROLE_ORDER}, u.display_name COLLATE NOCASE, u.id LIMIT ?`)
+  // People only: integrations (D287) have their own list, Team → Integrations.
+  const rows = db.query(`${memberSelect} WHERE u.kind = 'person' ORDER BY u.disabled_at IS NOT NULL, ${ROLE_ORDER}, u.display_name COLLATE NOCASE, u.id LIMIT ?`)
     .all(TEAM_LIST_LIMIT) as MemberRow[];
   return { me: { id: viewer.id, role: viewer.role }, users: rows.map((row) => present(row, viewer)) };
 }
 
 /** One member; admins also get the latest activity. Null when the account does not exist. */
 export function teamMember(viewer: { id: string; role: Role }, userId: string) {
-  const row = db.query(`${memberSelect} WHERE u.id = ?`).get(userId) as MemberRow | null;
+  const row = db.query(`${memberSelect} WHERE u.id = ? AND u.kind = 'person'`).get(userId) as MemberRow | null;
   if (!row) return null;
   const member = present(row, viewer);
   // D165: "Joined with an invite from <admin>, as <role>" comes from team_invites, not team_events.
@@ -209,7 +211,9 @@ const otherActiveAdmins = (userId: string) =>
   (db.query("SELECT COUNT(*) AS count FROM users WHERE id <> ? AND role = 'admin' AND disabled_at IS NULL").get(userId) as { count: number }).count;
 
 type TargetRow = Pick<UserRow, "id" | "role" | "disabled_at">;
-const loadTarget = (userId: string) => db.query("SELECT id, role, disabled_at FROM users WHERE id = ?").get(userId) as TargetRow | null;
+/** Account kind a Team write expects (D287): the person routes never reach an integration, nor the reverse. */
+export type AccountKind = "person" | "service";
+const loadTarget = (userId: string, kind: AccountKind = "person") => db.query("SELECT id, role, disabled_at FROM users WHERE id = ? AND kind = ?").get(userId, kind) as TargetRow | null;
 
 function requireManager(actor: TeamActor) {
   if (actor && !can(actor.role, "team.manage")) throw new TeamError(403, "ADMIN_ONLY", "Only admins can manage the team");
@@ -240,11 +244,13 @@ const auditMeta = (via: TeamVia, extra: Record<string, unknown>) => ({ ...extra,
  * them from those groups first. Direct shares owners made before are existing shares and stay (the
  * policy is not retroactive; admins cannot change other people's shares, D73).
  */
-export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia }) {
+export function setRole(actor: TeamActor, targetId: string, input: { role: Role; expectedRole: Role }, options: { via: TeamVia; kind?: AccountKind }) {
   requireManager(actor);
   return write(() => {
-    const target = loadTarget(targetId);
+    const target = loadTarget(targetId, options.kind);
     if (!target) throw notFound();
+    // D287: an integration is a member or a viewer, never an admin or a guest (migration 036 refuses it too).
+    if (options.kind === "service" && input.role !== "member" && input.role !== "viewer") throw new TeamError(400, "SERVICE_ROLE", "An integration can only be a member or a viewer");
     if (target.role !== input.expectedRole) {
       throw new TeamError(409, "ROLE_CHANGED", "This role was changed by someone else. Review it and try again.", { currentRole: target.role });
     }
@@ -270,11 +276,11 @@ export function setRole(actor: TeamActor, targetId: string, input: { role: Role;
  * them), and removes push subscriptions, in one transaction. MCP keys and feed tokens pause and
  * resume on unblock (O9).
  */
-export function blockUser(actor: TeamActor, targetId: string, reason: string | null, options: { via: TeamVia }) {
+export function blockUser(actor: TeamActor, targetId: string, reason: string | null, options: { via: TeamVia; kind?: AccountKind }) {
   requireManager(actor);
   const cleanReason = reason?.trim() ? reason.trim().slice(0, BLOCK_REASON_MAX) : null;
   return write(() => {
-    const target = loadTarget(targetId);
+    const target = loadTarget(targetId, options.kind);
     if (!target) throw notFound();
     if (actor && actor.id === target.id) throw new TeamError(409, "SELF_ACTION", "You cannot block your own account");
     if (target.disabled_at !== null) throw new TeamError(409, "ALREADY_BLOCKED", "This account is already blocked");
@@ -295,10 +301,10 @@ export function blockUser(actor: TeamActor, targetId: string, reason: string | n
 }
 
 /** Lifts a block. Old sessions stay deleted; keys and feeds resume; the role is unchanged (§4.2). */
-export function unblockUser(actor: TeamActor, targetId: string, options: { via: TeamVia }) {
+export function unblockUser(actor: TeamActor, targetId: string, options: { via: TeamVia; kind?: AccountKind }) {
   requireManager(actor);
   return write(() => {
-    const target = loadTarget(targetId);
+    const target = loadTarget(targetId, options.kind);
     if (!target) throw notFound();
     if (target.disabled_at === null) throw new TeamError(409, "NOT_BLOCKED", "This account is not blocked");
     const result = db.query("UPDATE users SET disabled_at = NULL, blocked_by = NULL, block_reason = NULL WHERE id = ? AND disabled_at IS NOT NULL").run(target.id);

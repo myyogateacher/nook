@@ -32,6 +32,7 @@ import { accessCentralMigration } from "./032_access_central";
 import { keySurfacesMigration } from "./033_key_surfaces";
 import { googleIdentitiesMigration } from "./034_google_identities";
 import { todayDigestPromptMigration } from "./035_today_digest_prompt";
+import { serviceAccountsMigration } from "./036_service_accounts";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -57,7 +58,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // 034 (Google identities, flows, avatars, re-auth) needs only 001.
   googleIdentitiesMigration,
   // 035 (the Today digest prompt) needs only 026.
-  todayDigestPromptMigration
+  todayDigestPromptMigration,
+  // 036 (service accounts, Wave 36: description, kind and role triggers) needs 001, 017, 025, and 034.
+  serviceAccountsMigration
 ];
 
 /**

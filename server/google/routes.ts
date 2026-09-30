@@ -38,8 +38,9 @@ type IdentityRow = { id: string; user_id: string; subject: string; email: string
 
 const identityBySub = (sub: string) => db.query("SELECT * FROM google_identities WHERE subject = ?").get(sub) as IdentityRow | null;
 const identityOfUser = (userId: string) => db.query("SELECT * FROM google_identities WHERE user_id = ?").get(userId) as IdentityRow | null;
-const userById = (id: string) => db.query("SELECT * FROM users WHERE id = ?").get(id) as (UserRow & { email_verified_at: string | null; avatar_id: string | null }) | null;
-const userByEmail = (email: string) => db.query("SELECT * FROM users WHERE email = ?").get(email) as (UserRow & { email_verified_at: string | null; avatar_id: string | null }) | null;
+// Integrations (D287) are never found here: no Google sign-in, link, or re-authentication reaches one.
+const userById = (id: string) => db.query("SELECT * FROM users WHERE id = ? AND kind = 'person'").get(id) as (UserRow & { email_verified_at: string | null; avatar_id: string | null }) | null;
+const userByEmail = (email: string) => db.query("SELECT * FROM users WHERE email = ? AND kind = 'person'").get(email) as (UserRow & { email_verified_at: string | null; avatar_id: string | null }) | null;
 
 
 const safeEqual = (left: string, right: string) => left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));

@@ -41,6 +41,8 @@ export type UserRow = {
   /** The admin who blocked this account; NULL when active, or blocked before Team (017). */
   blocked_by: string | null;
   block_reason: string | null;
+  /** 'service' for an integration (D287, migration 025): it never signs in; only its keys act. */
+  kind?: "person" | "service";
 };
 
 /** A row of `team_invites` (migration 018, D161–D169). The token itself is never stored. */

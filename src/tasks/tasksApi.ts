@@ -33,7 +33,7 @@ export type BoardSummary = {
 export type BoardColumn = { id: string; board_id: string; name: string; position: number; is_done: 0 | 1; wip_limit?: number | null; created_at: string; updated_at: string };
 
 /** An assignee (D102). `can_read` 0: they lost access to the board ("Former member"); they can only be removed. */
-export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1; /** Wave 35 (D299): the same-origin picture, when the payload has it. */ avatar_url?: string | null };
+export type CardAssignee = { id: string; display_name: string; can_read: 0 | 1; /** Wave 35 (D299): the same-origin picture, when the payload has it. */ avatar_url?: string | null; /** Wave 36 (D287): an integration. */ is_integration?: boolean };
 
 /** The Collections option palette (D109); `gray` is the default. */
 export const TAG_COLORS = ["gray", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"] as const;
@@ -54,6 +54,8 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
+  /** Wave 36 (D287): 1 when an integration created the card through its key. */
+  creator_is_integration?: 0 | 1;
   /** YYYY-MM-DD or null; the civil date in `due_tz` when the card has a time. */
   due_on: string | null;
   /** "HH:MM" in `due_tz`, or null (D100). */
@@ -112,7 +114,7 @@ export const updateBoardStructure = (boardId: string, structure: BoardStructure)
  * and one board-level `users` map names every assignee once.
  */
 export type BoardPayloadCard = Omit<CardSummary, "board_id" | "assignees"> & { assignee_ids: string[] };
-export type BoardPayload = Omit<BoardDetail, "cards"> & { cards: BoardPayloadCard[]; users: Record<string, { display_name: string; can_read: 0 | 1; avatar_url?: string | null }> };
+export type BoardPayload = Omit<BoardDetail, "cards"> & { cards: BoardPayloadCard[]; users: Record<string, { display_name: string; can_read: 0 | 1; avatar_url?: string | null; is_integration?: boolean }> };
 
 /** Rebuilds the in-memory card shape (`board_id`, `assignees[]`) from the trimmed payload. */
 export function hydrateBoard(payload: BoardPayload): BoardDetail {
@@ -122,14 +124,14 @@ export function hydrateBoard(payload: BoardPayload): BoardDetail {
     cards: cards.map(({ assignee_ids, ...card }) => ({
       ...card,
       board_id: payload.board.id,
-      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0, avatar_url: users[id]?.avatar_url ?? null }))
+      assignees: assignee_ids.map((id) => ({ id, display_name: users[id]?.display_name ?? "Former member", can_read: users[id]?.can_read ?? 0, avatar_url: users[id]?.avatar_url ?? null, ...(users[id]?.is_integration ? { is_integration: true } : {}) }))
     }))
   };
 }
 
 export const getBoard = (boardId: string) => api<BoardPayload>(`/tasks/boards/${boardId}`).then(hydrateBoard);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
-export type BoardReader = { id: string; displayName: string; /** Q7: the same-origin picture (web payload). */ avatarUrl?: string | null };
+export type BoardReader = { id: string; displayName: string; /** Q7: the same-origin picture (web payload). */ avatarUrl?: string | null; /** Wave 36: an integration (web payload). */ isIntegration?: boolean };
 /**
  * Everyone who can open the board, for the assignee picker: up to 200 without `q`, or a
  * case-insensitive name match (1–64 characters) of at most `limit` (default 20). Display names only.
@@ -196,6 +198,8 @@ export type CardComment = {
   author_name: string | null;
   /** Wave 35 (QA U4): the author's picture in web payloads; absent from MCP and older servers. */
   author_avatar_url?: string | null;
+  /** Wave 36 (D287): 1 when an integration wrote it through its key. */
+  author_is_integration?: 0 | 1;
   is_author: 0 | 1;
   body: string;
   created_at: string;

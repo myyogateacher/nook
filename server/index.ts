@@ -260,7 +260,7 @@ app.post("/api/auth/login", async (c) => {
   // Blocked accounts are looked up too, so the block can be explained, but only after the right
   // password and before any second factor is consumed (T85). The reason is never shown (O11).
   const user = isEmailAllowed(body.email)
-    ? db.query("SELECT * FROM users WHERE email = ?").get(body.email) as UserRow | null
+    ? db.query("SELECT * FROM users WHERE email = ? AND kind = 'person'").get(body.email) as UserRow | null
     : null;
   // verifyPassword refuses the unusable sentinel of Google-only accounts (D294).
   const valid = user ? await verifyPassword(body.password, user.password_hash) : false;
@@ -540,10 +540,16 @@ app.get("/api/users", (c) => {
   if (!can(currentUser.role, "sharing.write")) return c.json(ROLE_READ_ONLY_BODY, 403);
   // With the share_with_guests policy off, guests are left out of the picker (Wave 32, D.2, T213).
   const guests = readPolicies().shareWithGuests ? "" : " AND role <> 'guest'";
-  const users = db.query(`SELECT id, display_name, role, avatar_id FROM users WHERE id != ? AND disabled_at IS NULL${guests} ORDER BY display_name LIMIT 100`)
-    .all(currentUser.id) as Array<{ id: string; display_name: string; role: UserRow["role"]; avatar_id: string | null }>;
-  // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes).
-  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id, user.avatar_id) })) });
+  type DirectoryRow = { id: string; display_name: string; role: UserRow["role"]; kind: "person" | "service"; avatar_id: string | null };
+  const people = db.query(`SELECT id, display_name, role, kind, avatar_id FROM users WHERE id != ? AND disabled_at IS NULL AND kind = 'person'${guests} ORDER BY display_name LIMIT 100`)
+    .all(currentUser.id) as DirectoryRow[];
+  // Every active integration (at most INTEGRATION_LIMIT), whatever the people cap leaves out.
+  const integrations = db.query("SELECT id, display_name, role, kind, avatar_id FROM users WHERE disabled_at IS NULL AND kind = 'service' ORDER BY display_name")
+    .all() as DirectoryRow[];
+  const users = [...people, ...integrations];
+  // `role` lets the picker hint that a viewer or guest will only read (§2.2 notes); `kind` marks an
+  // integration (D287), which owners share with like a person and which never gets a picture.
+  return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role, kind: user.kind, avatarUrl: user.kind === "service" ? null : avatarUrlFor(user.id, user.avatar_id) })) });
 });
 
 app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));
@@ -757,7 +763,8 @@ app.get("/api/notes/:id/versions", (c) => {
   const note = readableNote(id, c.get("user").id);
   if (!note) return c.json({ error: "Note not found" }, 404);
   const versions = db.query(`
-    SELECT v.id, v.version_number, v.title, v.checksum, v.created_at, u.display_name AS author_name
+    SELECT v.id, v.version_number, v.title, v.checksum, v.created_at, u.display_name AS author_name,
+           CASE WHEN u.kind = 'service' THEN 1 ELSE 0 END AS author_is_integration
     FROM note_versions v JOIN users u ON u.id = v.author_id
     WHERE v.note_id = ? ORDER BY v.version_number DESC
   `).all(id);

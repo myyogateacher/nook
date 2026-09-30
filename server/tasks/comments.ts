@@ -19,6 +19,8 @@ export type CardComment = {
   card_id: string;
   author_id: string | null;
   author_name: string | null;
+  /** 1 when the author is an integration (Wave 36, D287): the comment came through its key. */
+  author_is_integration: 0 | 1;
   is_author: 0 | 1;
   body: string;
   created_at: string;
@@ -30,7 +32,7 @@ export type CardComment = {
 type CommentRow = { id: string; card_id: string; author_id: string | null; body: string; created_at: string; edited_at: string | null; board_id: string; owner_id: string };
 
 const commentSelect = `
-  SELECT m.id, m.card_id, m.author_id, u.display_name AS author_name,
+  SELECT m.id, m.card_id, m.author_id, u.display_name AS author_name, CASE WHEN u.kind = 'service' THEN 1 ELSE 0 END AS author_is_integration,
          CASE WHEN m.author_id = $userId THEN 1 ELSE 0 END AS is_author,
          m.body, m.created_at, m.edited_at
   FROM card_comments m LEFT JOIN users u ON u.id = m.author_id

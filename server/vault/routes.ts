@@ -70,6 +70,8 @@ function fail(c: Context<AppEnv>, error: unknown) {
   // Field paths and rules only: zod messages never quote the input, and nothing else is added.
   if (error instanceof ZodError) return c.json({ error: "Invalid request", code: "INVALID", details: error.issues.map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`) }, 400);
   if (error instanceof SyntaxError) return c.json({ error: "Invalid JSON", code: "INVALID" }, 400);
+  // A data key that stopped opening mid-request (the key file changed under a running server).
+  if (error instanceof Error && error.name === "VaultIntegrityError") return c.json({ error: "Stored vault data failed its integrity check", code: "VAULT_INTEGRITY" }, 500);
   throw error;
 }
 

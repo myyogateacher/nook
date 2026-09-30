@@ -228,7 +228,7 @@ export function GeneratorDialog({ onCancel, onUse }: { onCancel: () => void; onU
       {options.kind === "characters" && <fieldset className="vault-sets">
         <legend className="vault-field-label">Characters</legend>
         {(["lower", "upper", "digits", "symbols"] as const).map((key) => <label key={key} className="vault-check">
-          <input type="checkbox" checked={sets[key]} onChange={(event) => setOptions((current) => ({ ...current, sets: { ...current.sets, [key]: event.target.checked } }))} />
+          <input type="checkbox" checked={sets[key]} onChange={(event) => { const checked = event.target.checked; setOptions((current) => ({ ...current, sets: { ...current.sets, [key]: checked } })); }} />
           {{ lower: "a–z", upper: "A–Z", digits: "0–9", symbols: "Symbols (!#%+-.:=@^_~)" }[key]}
         </label>)}
       </fieldset>}
@@ -325,7 +325,7 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
         {others.length > 0 && <fieldset className="vault-sets">
           <legend className="vault-field-label">Also save in</legend>
           {others.map((other) => <label key={other.id} className="vault-check">
-            <input type="checkbox" checked={applyTo.includes(other.id)} disabled={busy} onChange={(event) => setApplyTo((current) => event.target.checked ? [...current, other.id] : current.filter((id) => id !== other.id))} />
+            <input type="checkbox" checked={applyTo.includes(other.id)} disabled={busy} onChange={(event) => { const checked = event.target.checked; setApplyTo((current) => checked ? [...current, other.id] : current.filter((id) => id !== other.id)); }} />
             {other.name}{secret.values[other.id]?.status === "set" ? " (replaces its value)" : ""}
           </label>)}
         </fieldset>}
@@ -500,7 +500,7 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask
       <span className="vault-field-label">Environments</span>
       <ul className="vault-env-settings">
         {current.environments.map((env, index) => <li key={env.id}>
-          <input aria-label={`Name of ${env.slug}`} value={names[env.id] ?? env.name} maxLength={VAULT_BOUNDS.envName} disabled={busy || env.level !== "admin"} autoComplete="off" onChange={(event) => setNames((all) => ({ ...all, [env.id]: event.target.value }))} />
+          <input aria-label={`Name of ${env.slug}`} value={names[env.id] ?? env.name} maxLength={VAULT_BOUNDS.envName} disabled={busy || env.level !== "admin"} autoComplete="off" onChange={(event) => { const value = event.target.value; setNames((all) => ({ ...all, [env.id]: value })); }} />
           <span className="vault-slug">{env.slug}</span>
           {env.level === "admin" && (names[env.id] ?? env.name).trim() !== env.name && <button type="button" className="secondary-button vault-inline-button" disabled={busy || !(names[env.id] ?? "").trim()} onClick={() => { void run(async () => { await updateEnvironment(vault.id, env.id, { name: (names[env.id] ?? "").trim() }); return refreshed(); }, "Renamed"); }}>Save</button>}
           {owner && <button type="button" className="icon-button" aria-label={`Move ${env.name} up`} disabled={busy || index === 0} onClick={() => move(index, -1)}><ArrowUp /></button>}
@@ -517,8 +517,8 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, ask
         if (!newEnv.name.trim() || !SLUG_PATTERN.test(newEnv.slug)) return setError("A new environment needs a name and a short name of lowercase letters, digits, and hyphens.");
         void run(async () => { await createEnvironment(vault.id, { name: newEnv.name.trim(), slug: newEnv.slug }); setNewEnv({ name: "", slug: "" }); return refreshed(); }, "Environment added");
       }}>
-        <input id={ids.envName} aria-label="New environment name" placeholder="QA" value={newEnv.name} maxLength={VAULT_BOUNDS.envName} autoComplete="off" disabled={busy} onChange={(event) => setNewEnv((draft) => ({ ...draft, name: event.target.value }))} />
-        <input id={ids.envSlug} aria-label="New environment short name" className="vault-slug-input" placeholder="qa" value={newEnv.slug} maxLength={VAULT_BOUNDS.slug} autoComplete="off" spellCheck={false} disabled={busy} onChange={(event) => setNewEnv((draft) => ({ ...draft, slug: event.target.value.toLowerCase() }))} />
+        <input id={ids.envName} aria-label="New environment name" placeholder="QA" value={newEnv.name} maxLength={VAULT_BOUNDS.envName} autoComplete="off" disabled={busy} onChange={(event) => { const name = event.target.value; setNewEnv((draft) => ({ ...draft, name })); }} />
+        <input id={ids.envSlug} aria-label="New environment short name" className="vault-slug-input" placeholder="qa" value={newEnv.slug} maxLength={VAULT_BOUNDS.slug} autoComplete="off" spellCheck={false} disabled={busy} onChange={(event) => { const slug = event.target.value.toLowerCase(); setNewEnv((draft) => ({ ...draft, slug })); }} />
         <button type="submit" className="secondary-button vault-inline-button" disabled={busy}><Plus />Add</button>
       </form>}
       {error && <p className="form-error" role="alert">{error}</p>}

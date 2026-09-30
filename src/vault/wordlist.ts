@@ -1,7 +1,7 @@
 /**
  * The passphrase word list (vault plan §6.7, D230): 2,048 common English words of 3 to 7 lowercase
  * letters, written for Nook (no third-party list), so each word carries exactly 11 bits. Sorted and
- * unique; tests/vaultGenerator.test.ts checks both and the count.
+ * unique; tests/vaultClient.test.ts checks both and the count.
  */
 const WORDS = `
 abbey abide able acid acorn acre act actor adapt add adobe adore advice aerial affair afford after again age

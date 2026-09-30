@@ -18,3 +18,33 @@ test("F5: the phone note toolbar's Publish version button is a 44 px target insi
   expect(phone).toMatch(/\.editor-toolbar \{ height: 58px;/);
 });
 
+test("F10: Access activity details and unknown actions read as sentences, never key: value lists or codes", async () => {
+  const { metaLine } = await import("../src/team/AccessActivity");
+  const { activityLabel } = await import("../src/access/memberAccessApi");
+  const { groupEventLabel } = await import("../src/team/groupsApi");
+  const base = { id: "e", via: "web", createdAt: "", actor: { id: "a", displayName: "Ada" }, target: { id: "b", displayName: "Bo" }, group: null, key: null, item: null };
+  const line = (action: string, meta: Record<string, unknown> | null) => metaLine({ ...base, action, meta });
+  expect(line("access.reset", { directShares: 3, groups: 1, keys: 0, feeds: 2, routines: 0 })).toBe("Removed 3 direct shares, 1 group membership, and 2 calendar feeds (revoked).");
+  expect(line("access.reset", { directShares: 0 })).toBe("Nothing needed removing.");
+  expect(line("access.share_lowered", { from: "edit", to: "view" })).toBe("From “Can edit” to “Can view”.");
+  expect(line("access.share_removed", { level: "comment" })).toBe("They had “Can comment”.");
+  expect(line("item.access_changed", { kind: "note", audience: "selected", peopleCount: 2, groupCount: 1 })).toBe("Now shared with 2 people and 1 group.");
+  expect(line("item.access_changed", { kind: "board", audience: "all_users", peopleCount: 0, groupCount: 0, asManager: true })).toBe("Now open to everyone on this Nook. Changed by a manager, not the owner.");
+  expect(line("item.access_changed", { audience: "private" })).toBe("Now private.");
+  expect(line("group.deleted", { memberCount: 1, grantCount: 4 })).toBe("It had 1 person and 4 items shared with it.");
+  expect(line("group.member_removed", { from: "reset" })).toBe("Part of Reset access.");
+  expect(line("group.member_added", { from: "template" })).toBe("Added by a template.");
+  expect(line("group.member_added", { self: true })).toBeNull();
+  expect(line("template.created", { role: "member", groupCount: 2 })).toBe("New people get the Member role and 2 groups.");
+  expect(line("template.applied", { added: 2, skipped: 1 })).toBe("Added to 2 groups; 1 group was skipped.");
+  expect(line("account.google_allowed", { reset: false, relink: true, removeCredentials: false })).toBe("The password and two-factor stay after the re-link.");
+  expect(line("account.google_reset", { sessions: 1, password: 1 })).toBe("Removed 1 signed-in session and the password.");
+  // No line of any known action shows a raw "key: value", an arrow list, or an underscore code.
+  const metas: Array<[string, Record<string, unknown>]> = [["policy.changed", { settings: ["key_max_days"] }], ["key.policy_blocked", { reason: "surface" }], ["key.created", { grants: [], expiresInDays: 30 }], ["key.rotated", { graceHours: 24, routinesMoved: 1 }], ["template.deleted", { liveInvites: 2 }], ["group.updated", { renamed: true }]];
+  for (const [action, meta] of metas) {
+    const text = line(action, meta) ?? "";
+    expect({ action, text, raw: /[a-z][A-Za-z]*: |_|→/.test(text) }).toEqual({ action, text, raw: false });
+  }
+  expect(activityLabel({ ...base, action: "future.thing", meta: null })).toBe("Ada changed access");
+  expect(groupEventLabel({ id: "1", action: "group.future", createdAt: "", actor: { id: "a", displayName: "Ada" }, target: null, self: false })).toBe("Ada changed the group");
+});

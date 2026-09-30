@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { Download, FolderInput, History, ImageDown, PenTool, Pencil, Share2, Trash2, X } from "lucide-react";
+import { Copy, Download, FileImage, FolderInput, History, ImageDown, ImagePlus, Link2, Link as LinkIcon, PenTool, Pencil, Share2, Trash2, X } from "lucide-react";
 import { AccessSheet } from "../access/AccessSheet";
 import { notifyBinChanged } from "../bin/binApi";
 import { ConfirmDialog, ModalDialog, trapTabKey } from "../files/Dialog";
@@ -41,20 +41,32 @@ export function downloadBoard(board: Pick<WhiteboardSummary, "id">) {
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
+/** Extra ⋯ entries (Wave 24): each is offered only when its handler is given. */
+export type BoardExtras = {
+  /** The canvas offers PNG export (and SVG where D201 allows). */
+  onExportPng?: () => void;
+  onExportSvg?: () => void;
+  /** The canvas offers the owner the History sheet (D207). */
+  onHistory?: () => void;
+  /** Anyone who reads and writes gets a private copy. */
+  onDuplicate?: (board: WhiteboardSummary) => void;
+  /** The link a note turns into an embed card (D208). */
+  onCopyLink?: (board: WhiteboardSummary) => void;
+  /** The canvas: a picture from Files (D198) and a link on the selected shapes (D199). */
+  onInsertImage?: () => void;
+  onLinkItem?: () => void;
+};
+
 /**
- * The ⋯ sheet: everyone who can read gets Open (on the list), Export PNG (on the canvas), and Download
- * .excalidraw (QA Q2); the owner also share, rename, move, delete, and, on the canvas when a safety
- * snapshot exists, Restore previous version.
+ * The ⋯ sheet: everyone who can read gets Open (on the list), Export PNG (on the canvas), Download
+ * .excalidraw (QA Q2), Copy link, and Duplicate (when their role writes); the owner also share,
+ * insert a picture, link a shape, History, rename, move, and delete.
  */
-export function BoardActionSheet({ board, canEdit, onOpen, onExportPng, onRestorePrevious, onAction, onClose }: {
+export function BoardActionSheet({ board, canEdit, onOpen, onExportPng, onExportSvg, onHistory, onDuplicate, onCopyLink, onInsertImage, onLinkItem, onAction, onClose }: BoardExtras & {
   board: WhiteboardSummary;
   canEdit: boolean;
   /** The list offers Open; the canvas is already open. */
   onOpen?: () => void;
-  /** The canvas offers PNG export. */
-  onExportPng?: () => void;
-  /** The canvas offers the owner the newest safety snapshot. */
-  onRestorePrevious?: () => void;
   onAction: (action: Exclude<BoardAction, "open" | "exportPng">) => void;
   onClose: () => void;
 }) {
@@ -74,9 +86,14 @@ export function BoardActionSheet({ board, canEdit, onOpen, onExportPng, onRestor
       </header>
       {onOpen && <button onClick={onOpen} autoFocus><PenTool />Open</button>}
       {canEdit && <button onClick={() => onAction("share")} autoFocus={!onOpen}><Share2 />Share</button>}
+      {canEdit && onInsertImage && <button onClick={onInsertImage}><ImagePlus />Insert image</button>}
+      {canEdit && onLinkItem && <button onClick={onLinkItem}><LinkIcon />Link shape to a Nook item</button>}
       {onExportPng && <button onClick={onExportPng}><ImageDown />Export PNG</button>}
+      {onExportSvg && <button onClick={onExportSvg}><FileImage />Export SVG</button>}
       <button onClick={() => { downloadBoard(board); onClose(); }}><Download />Download .excalidraw</button>
-      {canEdit && onRestorePrevious && board.snapshotCount > 0 && <button onClick={onRestorePrevious}><History />Restore previous version</button>}
+      {onCopyLink && <button onClick={() => onCopyLink(board)}><Link2 />Copy link for a note</button>}
+      {onDuplicate && <button onClick={() => onDuplicate(board)}><Copy />Duplicate</button>}
+      {canEdit && onHistory && <button onClick={onHistory}><History />History</button>}
       {canEdit && <>
         <button onClick={() => onAction("rename")}><Pencil />Rename</button>
         <button onClick={() => onAction("move")}><FolderInput />Move</button>
@@ -88,7 +105,7 @@ export function BoardActionSheet({ board, canEdit, onOpen, onExportPng, onRestor
 }
 
 /** The owner dialogs for one board. `onChanged` gets the board as the server now has it. */
-export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDeleted, onAction, onOpen, onExportPng, onRestorePrevious }: {
+export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDeleted, onAction, onOpen, extras = {} }: {
   dialog: BoardDialog | null;
   folders: Folder[];
   flash: (message: string) => void;
@@ -97,8 +114,8 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
   onDeleted: (board: WhiteboardSummary) => void;
   onAction: (action: Exclude<BoardAction, "open" | "exportPng">, board: WhiteboardSummary) => void;
   onOpen?: (board: WhiteboardSummary) => void;
-  onExportPng?: () => void;
-  onRestorePrevious?: () => void;
+  /** Entries the ⋯ sheet offers besides the Files actions; each closes the sheet first. */
+  extras?: BoardExtras;
 }) {
   const [busy, setBusy] = useState(false);
   useHistoryDialogGuard(dialog !== null, onClose, { blocked: busy });
@@ -110,8 +127,13 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
   if (dialog.kind === "actions") {
     return <BoardActionSheet board={board} canEdit={canEdit} onClose={onClose}
       onOpen={onOpen ? () => onOpen(board) : undefined}
-      onExportPng={onExportPng ? () => { onClose(); onExportPng(); } : undefined}
-      onRestorePrevious={onRestorePrevious}
+      onExportPng={extras.onExportPng ? () => { onClose(); extras.onExportPng!(); } : undefined}
+      onExportSvg={extras.onExportSvg ? () => { onClose(); extras.onExportSvg!(); } : undefined}
+      onHistory={extras.onHistory}
+      onInsertImage={extras.onInsertImage}
+      onLinkItem={extras.onLinkItem}
+      onDuplicate={extras.onDuplicate ? (target) => { onClose(); extras.onDuplicate!(target); } : undefined}
+      onCopyLink={extras.onCopyLink ? (target) => { onClose(); extras.onCopyLink!(target); } : undefined}
       onAction={(action) => onAction(action, board)} />;
   }
   if (dialog.kind === "rename") {
@@ -134,7 +156,9 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
     }} />;
   }
   if (dialog.kind === "share") {
-    return <AccessSheet kind="document" id={board.id} title={name} onClose={onClose} onSaved={(access) => {
+    return <AccessSheet kind="document" id={board.id} title={name} onClose={onClose}
+      note="People you share with can view; only you can edit. Pictures on the board show only for people who can open those files."
+      onSaved={(access) => {
       const visibility = access.audience === "inherit" ? board.visibility : access.audience === "private" ? "private" : access.audience;
       onChanged({ id: board.id, visibility });
       onClose();

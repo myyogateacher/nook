@@ -56,6 +56,8 @@ export type AutosaveEvent =
   /** A network error or 5xx; or 429 with the server's Retry-After and a message (review L11). */
   | { type: "failed"; retryAfterMs?: number; message?: string }
   | { type: "rejected"; message: string }
+  /** A refused save the canvas fixed (review M1: pictures no longer shared were removed): save again now. */
+  | { type: "retry" }
   /** On load, after Reload latest, or after a copy was saved: start over from the server's scene. */
   | { type: "reset"; revision: number; live: number };
 
@@ -93,6 +95,9 @@ export function autosaveReducer(state: AutosaveState, event: AutosaveEvent): Aut
     }
     case "rejected":
       return { ...state, status: "rejected", savingVersion: null, message: event.message };
+    case "retry":
+      if (state.status !== "saving" && state.status !== "rejected") return state;
+      return { ...state, status: hasUnsaved(state) ? "dirty" : "idle", savingVersion: null, retryMs: 0, message: null };
     case "reset":
       return { ...initialAutosave(event.revision, event.live), editVersion: state.editVersion, savedVersion: state.editVersion };
   }
@@ -184,3 +189,13 @@ export function pendingSyncAction(pending: PendingCopy, server: (ServerScene & {
   if (pending.content === server.content) return "clear";
   return pendingCopyAction(pending, server) === "apply" ? "send" : "keep";
 }
+
+/** What the canvas held when a restore (or another server replacement) started: its edit counter and change key. */
+export type SceneMark = { editVersion: number; key: string | null };
+
+/**
+ * Review M2: whether the person changed the board between `before` and `after`. A server scene
+ * (a restored version) is shown only over an unchanged canvas; otherwise the local scene is kept
+ * (pending copy, conflict choice) instead of being replaced.
+ */
+export const changedSince = (before: SceneMark, after: SceneMark) => before.editVersion !== after.editVersion || before.key !== after.key;

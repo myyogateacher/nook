@@ -1,4 +1,4 @@
-import { ELEMENT_TYPES, validateScene, type CanonicalScene, type SceneResult } from "../../shared/whiteboardScene";
+import { ELEMENT_TYPES, isAllowedLink, validateScene, type CanonicalScene, type SceneFile, type SceneResult } from "../../shared/whiteboardScene";
 
 /**
  * Pure helpers between Excalidraw and Nook's history (whiteboard plan D202) and save pipeline.
@@ -52,38 +52,84 @@ export function restoreMessage(previous: { createdAt: string; elementCount: numb
   return `Switch to the version from ${formatTime(previous.createdAt)}, which has ${shapes(previous.elementCount)}; the current one has ${shapes(currentCount)}. You can switch back the same way.`;
 }
 
-/** The one message for every refused image (paste, drop, the image shortcut, a Mermaid diagram drawn as an image; QA Q5). */
-export const IMAGES_REFUSED_MESSAGE = "Images can't be added to whiteboards yet.";
+/** The one message for every picture the board cannot keep as a Nook file (a Mermaid diagram drawn as an image, a picture pasted from outside Nook; QA Q5). */
+export const IMAGES_REFUSED_MESSAGE = "Pictures on a whiteboard come from your files: use Insert image, or drop or paste a picture file.";
 
 /** The appState patch that closes every Excalidraw layer, applied with updateScene. */
 export const closedExcalidrawLayers = () => ({ openDialog: null, openMenu: null, openPopup: null, openSidebar: null, contextMenu: null });
 
 type LooseElement = { type?: unknown; isDeleted?: unknown } & Record<string, unknown>;
 
+/** The board's image references (D198): Excalidraw file id → the Nook document it shows. */
+export type ImageRefs = ReadonlyMap<string, SceneFile>;
+const noRefs: ImageRefs = new Map();
+
+/** A Nook document id, which is also the file id a Nook image gets on the canvas. */
+export const isDocumentId = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
+
+/** An element the board keeps: a supported type, and for an image, one whose file is a known Nook reference (deleted ones are harmless). */
+export const isKeptElement = (element: LooseElement, refs: ImageRefs = noRefs) =>
+  element.isDeleted === true || ((ELEMENT_TYPES as readonly string[]).includes(String(element.type)) && (element.type !== "image" || (typeof element.fileId === "string" && refs.has(element.fileId))));
+
+/** Whether a set of elements holds anything the board cannot keep (an unreferenced image, an embed, or an AI frame). */
+export const hasUnsupportedElements = (elements: readonly LooseElement[], refs: ImageRefs = noRefs) => !elements.every((element) => isKeptElement(element, refs));
+
 /**
- * The scene a save sends: live elements of the supported types only. Images are left out in
- * Wave 23 (no image tool; dropped or pasted images never reach the server, T164), and so are
- * element types the validator refuses (embeddables, AI frames).
+ * D199: the link a shape keeps. A full URL of this instance becomes its in-app path, a bare
+ * `www.` host gets https, and anything the allowlist refuses becomes null (dropped before a save,
+ * so one bad link never makes the whole board unsavable).
  */
-export function sceneForSave(elements: readonly LooseElement[], appState: Record<string, unknown>): SceneResult {
-  const kept = elements.filter((element) => element.isDeleted !== true && typeof element.type === "string"
-    && (ELEMENT_TYPES as readonly string[]).includes(element.type) && element.type !== "image");
+export function keptLink(link: unknown, origin: string): string | null {
+  if (typeof link !== "string" || !link.trim()) return null;
+  let value = link.trim();
+  if (value.startsWith(`${origin}/`)) value = value.slice(origin.length);
+  else if (/^www\.[^\s/]+\.[^\s]+$/i.test(value)) value = `https://${value}`;
+  return isAllowedLink(value) ? value : null;
+}
+
+/**
+ * The scene a save sends: live elements of the supported types, and images only when their file is
+ * a Nook reference the board knows (an image still uploading, or one pasted from outside Nook, is
+ * never saved: T164). Links outside the D199 allowlist are dropped from the saved copy.
+ */
+export function sceneForSave(elements: readonly LooseElement[], appState: Record<string, unknown>, refs: ImageRefs = noRefs, origin = ""): SceneResult {
+  const kept = elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refs));
+  const files: Record<string, SceneFile> = {};
+  for (const element of kept) if (element.type === "image" && typeof element.fileId === "string") files[element.fileId] = refs.get(element.fileId)!;
   return validateScene({
     type: "excalidraw",
     version: 2,
     source: "nook",
-    elements: kept.map((element) => ({ ...element })),
+    elements: kept.map((element) => element.link === undefined || element.link === null ? { ...element } : { ...element, link: keptLink(element.link, origin) }),
     appState: { viewBackgroundColor: appState.viewBackgroundColor, gridSize: appState.gridSize, gridStep: appState.gridStep, gridModeEnabled: appState.gridModeEnabled },
-    files: {}
+    files
   });
 }
 
-/** An element a Wave 23 board keeps: a supported type other than image (deleted ones are harmless). */
-export const isKeptElement = (element: LooseElement) =>
-  element.isDeleted === true || (element.type !== "image" && (ELEMENT_TYPES as readonly string[]).includes(String(element.type)));
+/**
+ * Review M1: the pictures a save was refused for (400 IMAGE_NOT_AVAILABLE, `documentIds`: files
+ * deleted or no longer shared with this person, brought back by an undo, a pending copy, or another
+ * tab) leave the board: their references and their image elements go, so the next save succeeds.
+ * `removed` is the number of image elements taken off; `fileIds` the references dropped. Nothing
+ * dropped (the refused ids are not on this canvas) means the save cannot be fixed this way.
+ */
+export function withoutRefusedImages<T extends LooseElement>(elements: readonly T[], refs: ImageRefs, documentIds: readonly string[]) {
+  const refused = new Set(documentIds);
+  const fileIds = new Set([...refs.values()].filter((file) => refused.has(file.nookDocumentId)).map((file) => file.id));
+  for (const [key, file] of refs) if (refused.has(file.nookDocumentId)) fileIds.add(key);
+  const kept = elements.filter((element) => !(element.type === "image" && typeof element.fileId === "string" && fileIds.has(element.fileId)));
+  const nextRefs = new Map([...refs].filter(([key]) => !fileIds.has(key)));
+  const removed = elements.filter((element) => element.isDeleted !== true && element.type === "image" && typeof element.fileId === "string" && fileIds.has(element.fileId)).length;
+  return { elements: kept, refs: nextRefs, fileIds, removed };
+}
 
-/** Whether a set of elements holds anything the board cannot keep (an image, embed, or AI frame dropped or pasted in). */
-export const hasUnsupportedElements = (elements: readonly LooseElement[]) => !elements.every(isKeptElement);
+export const refusedImagesMessage = (count: number) => count === 1
+  ? "A picture was removed from this whiteboard because its file is no longer shared with you (or was deleted)."
+  : `${count} pictures were removed from this whiteboard because their files are no longer shared with you (or were deleted).`;
+
+/** Elements whose link the save drops (to tell the person once). */
+export const refusedLinks = (elements: readonly LooseElement[], origin: string) =>
+  elements.filter((element) => element.isDeleted !== true && typeof element.link === "string" && element.link.trim() !== "" && keptLink(element.link, origin) === null).length;
 
 /** A cheap change key for onChange: element versions plus the kept appState keys. */
 export function changeKey(elements: readonly LooseElement[], appState: Record<string, unknown>) {

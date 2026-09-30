@@ -55,7 +55,7 @@ Calendars with agenda and month views, repeating events, links to notes, cards, 
 
 ### Whiteboards
 
-Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG, and share view-only through the same Access sheet as files. The editor loads only when you open a board and makes no requests outside your Nook.
+Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG and SVG, and share view-only through the same Access sheet as files. Place pictures from Files (or upload, drop, or paste them; they are stored as files and shown only to people who can open them), link shapes to notes, files, cards, boards, and events, restore earlier versions from History, duplicate boards, import `.excalidraw` files, show a board as a card in a note, and find boards by their text in search. The editor loads only when you open a board and makes no requests outside your Nook.
 
 ### Vault
 
@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.20.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.21.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -111,6 +111,14 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.21.0
+
+- **Connected whiteboards**: pictures from Files on the canvas (insert from your files, upload, or drop; a shared board never shares its pictures, so viewers need the file shared too), links from any shape to a note, card, row, file, or board (or an outside link, opened only after a confirm), a **whiteboard card in a note** (type `/whiteboard`; readers without access to the board see only "Whiteboard unavailable", and the note's Markdown never carries the board's name), **History** with previews and Restore (editing is blocked while a restore runs; nothing drawn meanwhile is lost), **Duplicate**, **Import** of `.excalidraw` files (pictures embedded in the file become Files in the board's folder), SVG export, and whiteboards in the search screen.
+- **Never unsavable**: if a picture's file is unshared or deleted, the board takes it off with a message and saves; the half-hourly snapshot is skipped rather than refusing a save when storage is full; a restored version drops pictures you can no longer open.
+- **Phones**: tapping a shape's link icon works for outside links too; History, pickers, and confirms close with Back.
+- **For developers using MCP**: no new tools; `read_whiteboard` now returns picture references as document ids.
+- No migration in this release. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.20.0
 

@@ -7,6 +7,8 @@ type Command = {
   hint: string;
   keywords: string;
   run: (editor: Editor, range: Range) => void;
+  /** Offered only when the editor has this command (the Whiteboard item needs the picker, Wave 24). */
+  requires?: string;
 };
 
 const commands: Command[] = [
@@ -20,6 +22,7 @@ const commands: Command[] = [
   { label: "Quote", hint: "Capture a quotation", keywords: "blockquote quote", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleBlockquote().run() },
   { label: "Code block", hint: "Monospace code", keywords: "code pre", run: (editor, range) => editor.chain().focus().deleteRange(range).toggleCodeBlock().run() },
   { label: "Image", hint: "Upload a picture", keywords: "image picture photo upload img", run: (editor, range) => editor.chain().focus().deleteRange(range).openImagePicker().run() },
+  { label: "Whiteboard", hint: "Show a whiteboard as a card", keywords: "whiteboard board drawing sketch diagram canvas excalidraw embed", requires: "openWhiteboardPicker", run: (editor, range) => editor.chain().focus().deleteRange(range).openWhiteboardPicker().run() },
   { label: "Table", hint: "3 × 3 grid with a header row", keywords: "table grid columns rows", run: (editor, range) => editor.chain().focus().deleteRange(range).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { label: "Divider", hint: "Separate sections", keywords: "rule divider hr", run: (editor, range) => editor.chain().focus().deleteRange(range).setHorizontalRule().run() },
   { label: "Today", hint: "Insert today’s date", keywords: "date today", run: (editor, range) => editor.chain().focus().deleteRange(range).insertContent(new Intl.DateTimeFormat(undefined, { dateStyle: "long" }).format(new Date())).run() }
@@ -35,9 +38,9 @@ export const SlashCommands = Extension.create({
         char: "/",
         startOfLine: true,
         allowSpaces: true,
-        items: ({ query }) => {
+        items: ({ query, editor }) => {
           const needle = query.toLowerCase();
-          return commands.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(needle)).slice(0, 16);
+          return commands.filter((item) => (!item.requires || item.requires in editor.commands) && `${item.label} ${item.keywords}`.toLowerCase().includes(needle)).slice(0, 16);
         },
         command: ({ editor, range, props }) => props.run(editor, range),
         render: () => {

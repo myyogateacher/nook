@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.20.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.21.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -311,7 +311,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.20.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.21.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -347,6 +347,8 @@ The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files
 **Whiteboards.** A whiteboard is a Files document whose bytes are its current scene, a canonical `.excalidraw` JSON object of at most 4 MiB under `documents/objects/<object-id>`. Each save writes a new object and removes the old one after the database switches to it; a crash in between leaves an orphan that the hourly sweeper removes after an hour. Boards count against the owner's quota like any file, together with their kept previous versions and their thumbnails (at most 128 KiB each, stored in SQLite). The Excalidraw editor and its self-hosted fonts add about 21 MB to the image's `dist/`, about 26 MB with the compressed copies Nook serves (fonts about 13 MB, of which the Xiaolai CJK font is about 12.7 MB); the editor is downloaded by a browser only when someone opens a board.
 
 **Whiteboard safety snapshots.** The `whiteboard_snapshots` table (created by migration 030) is in use since whiteboards shipped: a save that empties a board, or takes a board of 10 or more elements to fewer than half of them, keeps the scene it replaces as a snapshot, and **Restore previous version** keeps the scene it replaces too; at most 5 are kept per board, only the owner sees and restores them, and they count toward the owner's quota.
+
+**Whiteboard pictures, versions, and imports (Wave 24, no migration).** A picture on a board is an ordinary File (uploaded into the board's folder, or picked from Files); the scene holds only its document id, so pictures count toward the quota once and are backed up, binned, and purged as files. Browsers load pictures through the normal content route with the viewer's own session; the server never reads a picture for a board. Each board keeps up to 20 earlier versions (`whiteboard_snapshots`: one every 30 minutes of drawing, plus one whenever a board is emptied or mostly cleared); each is a full scene object counted toward the owner's quota and purged with the board. Imports of `.excalidraw` files take a request of at most 32 MiB; every embedded picture goes through the upload pipeline (`MAX_UPLOAD_BYTES`, the content sniff, the quota), and a failed import removes the pictures it stored. The CSP is unchanged: pictures are scaled for display with canvas APIs, and Excalidraw's WebAssembly-based resizer is never used (its image tool opens Nook's own picker; the build fails if that patch stops applying).
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 
@@ -392,6 +394,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.21.0:** no migration and no new settings; connected whiteboards (pictures from Files, links, note cards, History, duplicate, import) only add routes. Pictures uploaded from a board or imported are stored as Files in the board's folder and take that folder's sharing. Pull, rebuild with `APP_VERSION=0.21.0`, and restart as above.
 
 **Upgrading to 0.20.0:** back up first with `./scripts/backup.sh --force`. Migration 031 (the Vault's tables) runs once on the first boot; it only adds tables, and its number is lower than 032–035, which your instance already applied (expected: each migration is applied by its own number). The Vault stays off until you set `VAULT_ENCRYPTION_KEY` or `VAULT_ENCRYPTION_KEY_FILE` (see *Vault*); nothing else changes. From this release SQLite runs with `secure_delete` on, which makes deletes a little slower and overwrites deleted rows.
 

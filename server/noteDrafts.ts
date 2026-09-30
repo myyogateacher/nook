@@ -6,6 +6,7 @@ import { recordNoteDraftProposal, rejectEffectFor, resolveNoteDraftProposals, ty
 import { indexNote, unindexNote } from "./searchIndex";
 import { checksum, storage, withNoteLock } from "./storage";
 import { deriveNoteTitle } from "./validation";
+import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 
 /**
  * Draft writes shared by the HTTP routes and the MCP tools, so both keep the
@@ -33,7 +34,9 @@ export type DraftWriteResult = { revision: number; title: string; hasDelta: bool
  * badge). Human writes pass undefined and leave any earlier value alone:
  * the draft still holds that key's text until it is published or discarded.
  */
-export async function writeDraftLocked(note: NoteRow, userId: string, markdown: string, mcpKeyId?: string): Promise<DraftWriteResult | null> {
+export async function writeDraftLocked(note: NoteRow, userId: string, input: string, mcpKeyId?: string): Promise<DraftWriteResult | null> {
+  // A whiteboard card's link text is never a board name, whoever wrote it (QA H1).
+  const markdown = neutralizeWhiteboardEmbeds(input);
   const nextRevision = (note.draft_revision ?? 0) + 1;
   const title = deriveNoteTitle(markdown);
   // An agent's write records the draft it replaces, so rejecting it can give that draft back (H1).
@@ -81,7 +84,8 @@ async function draftBase(note: NoteRow): Promise<DraftBase> {
  * indexed in the insert's transaction. Audited as `note.create`, or as
  * `mcp.note_create` with the key when an MCP key created it.
  */
-export async function createDraftNote(userId: string, folderId: string | null, markdown: string, mcp?: { keyId: string }) {
+export async function createDraftNote(userId: string, folderId: string | null, input: string, mcp?: { keyId: string }) {
+  const markdown = neutralizeWhiteboardEmbeds(input);
   const id = crypto.randomUUID();
   const timestamp = now();
   const title = markdown === "" ? "New note" : deriveNoteTitle(markdown);

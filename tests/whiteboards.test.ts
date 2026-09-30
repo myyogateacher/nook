@@ -256,27 +256,33 @@ describe("whiteboards API", () => {
     const board = await create(owner, "Snapshots");
     const texts = (count: number, prefix = "s") => Array.from({ length: count }, (_, index) => `${prefix}${index}`);
     expect((await save(owner, board.id, 1, sceneWith(texts(12)))).status).toBe(200);
-    // 12 → 7 is not below half: no snapshot.
-    expect((await save(owner, board.id, 2, sceneWith(texts(7)))).body.snapshotKept).toBeUndefined();
-    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 0 });
+    const firstKept = boardRow(board.id)!.object_id as string;
+    // D207: the first save over a non-empty scene keeps it (there is no snapshot yet) …
+    expect((await save(owner, board.id, 2, sceneWith(texts(8)))).body.snapshotKept).toBe(true);
+    // … and within 30 minutes of that, 8 → 7 (not below half) keeps nothing.
+    expect((await save(owner, board.id, 3, sceneWith(texts(7)))).body.snapshotKept).toBeUndefined();
+    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 1 });
     const beforeEmpty = boardRow(board.id)!;
     // 7 → 0: the 7-element scene is kept as a snapshot, its object stays, and it counts toward the quota.
-    const emptied = await save(owner, board.id, 3, sceneWith([]));
-    expect(emptied.body).toMatchObject({ revision: 4, snapshotKept: true });
-    const snapshots = db.query("SELECT revision, object_id, size_bytes FROM whiteboard_snapshots WHERE document_id = ?").all(board.id) as Json[];
-    expect(snapshots).toEqual([{ revision: 3, object_id: beforeEmpty.object_id, size_bytes: docRow(board.id) ? expect.any(Number) : 0 }]);
+    const emptied = await save(owner, board.id, 4, sceneWith([]));
+    expect(emptied.body).toMatchObject({ revision: 5, snapshotKept: true });
+    const snapshots = db.query("SELECT revision, object_id, size_bytes FROM whiteboard_snapshots WHERE document_id = ? ORDER BY revision").all(board.id) as Json[];
+    expect(snapshots).toEqual([
+      { revision: 2, object_id: firstKept, size_bytes: expect.any(Number) },
+      { revision: 4, object_id: beforeEmpty.object_id, size_bytes: expect.any(Number) }
+    ]);
     expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(true);
     const { storedBytes } = await import("../server/documents");
-    expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + (snapshots[0]!.size_bytes as number));
-    // Only the owner sees it.
-    expect((await api(owner, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 1 });
+    expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + (snapshots[0]!.size_bytes as number) + (snapshots[1]!.size_bytes as number));
+    // Only the owner sees them.
+    expect((await api(owner, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 2 });
     await api(owner, "PUT", `/files/${board.id}/sharing`, { visibility: "selected", userIds: [reader.userId] });
     expect((await api(reader, "GET", `/whiteboards/${board.id}`)).body.whiteboard).toMatchObject({ snapshotCount: 0, snapshotAt: null });
-    expect((await api(reader, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 })).status).toBe(404);
+    expect((await api(reader, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 5 })).status).toBe(404);
     // QA E6: what a restore would switch to, for the dialog's wording; the owner's only.
     const previous = await api(owner, "GET", `/whiteboards/${board.id}/previous-version`);
     expect(previous.status).toBe(200);
-    expect(previous.body).toEqual({ revision: 3, createdAt: expect.any(String), elementCount: 7 });
+    expect(previous.body).toEqual({ id: expect.any(String), revision: 4, createdAt: expect.any(String), elementCount: 7 });
     expect((await api(reader, "GET", `/whiteboards/${board.id}/previous-version`)).status).toBe(404);
     const fresh = await create(owner, "No snapshot yet");
     expect((await api(owner, "GET", `/whiteboards/${fresh.id}/previous-version`)).body).toMatchObject({ code: "NO_SNAPSHOT" });
@@ -288,21 +294,22 @@ describe("whiteboards API", () => {
     expect((await api(reader, "GET", "/whiteboards?folder=shared")).body.whiteboards[0].ownerAvatarUrl).toBe(`/api/users/${owner.userId}/avatar?v=${avatarId}`);
     db.query("UPDATE users SET avatar_id = NULL WHERE id = ?").run(owner.userId);
     // Restore: a new revision with the kept scene, through the CAS; the emptied scene is kept in turn.
-    expect((await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 3 })).status).toBe(409);
-    const restored = await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 });
+    expect((await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 4 })).status).toBe(409);
+    const restored = await api(owner, "POST", `/whiteboards/${board.id}/restore-previous`, { baseRevision: 5 });
     expect(restored.status).toBe(200);
-    expect(restored.body).toMatchObject({ revision: 5, restoredFrom: { revision: 3 } });
+    expect(restored.body).toMatchObject({ revision: 6, restoredFrom: { revision: 4 } });
     const read = await api(owner, "GET", `/whiteboards/${board.id}`);
     expect(read.body.scene.elements).toHaveLength(7);
-    expect(read.body.whiteboard.snapshotCount).toBe(2);
-    // At most five are kept; the oldest objects are removed.
-    let revision = 5;
-    for (let round = 0; round < 4; round += 1) {
+    expect(read.body.whiteboard.snapshotCount).toBe(3);
+    // At most 20 are kept (D207); the oldest objects are removed.
+    let revision = 6;
+    for (let round = 0; round < 18; round += 1) {
       revision = (await save(owner, board.id, revision, sceneWith([]))).body.revision;
       revision = (await save(owner, board.id, revision, sceneWith(texts(2, `r${round}`)))).body.revision;
     }
-    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 5 });
-    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(false);
+    expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 20 });
+    expect(existsSync(objectPath(firstKept))).toBe(false);
+    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(true);
     // Purging the board removes the snapshot objects too.
     const kept = (db.query("SELECT object_id FROM whiteboard_snapshots WHERE document_id = ?").all(board.id) as Json[]).map((row) => row.object_id as string);
     await api(owner, "DELETE", `/files/${board.id}`);

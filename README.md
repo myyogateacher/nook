@@ -98,7 +98,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.17.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.18.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -107,6 +107,24 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.18.0
+
+- **Keys limited to chosen items in every module**: an API key can now be limited to chosen folders and notes, folders and files, boards and saved views (only views you own, read only), collections, calendars, routines, and whiteboards. Every tool checks each item it touches: anything outside the key's choice answers "not found" as if it did not exist, and lists, search, Today, and counts include only the chosen items.
+- **A REST API for keys**: scripts and CI jobs can call the same tools as MCP over plain HTTPS: `GET /api/v1/me` (what the key can do), `GET /api/v1/tools` (the tools it may call, with their input schemas), and `POST /api/v1/tools/<name>` with a JSON body of the tool's arguments. The tools, arguments, results, limits, and rules are the same as over MCP. Send the key only as `Authorization: Bearer <key>`; a key in a URL is refused. Every error has a stable `code` (`AUTH_REQUIRED`, `KEY_INVALID`, `KEY_POLICY`, `IP_NOT_ALLOWED`, `KEY_IN_URL`, `NOT_FOUND`, `RATE_LIMITED`, and for file uploads `UPLOAD_NOT_FOUND`, `UPLOAD_CONFLICT`, and `UPLOAD_FAILED`; see [docs/USING.md](docs/USING.md#the-rest-api)). For example:
+
+  ```sh
+  curl -s -X POST "https://<your nook>/api/v1/tools/list_boards" \
+    -H "Authorization: Bearer <YOUR_API_KEY>" -H "Content-Type: application/json" -d '{}'
+  ```
+- **Where a key is used**: each key says whether it works over MCP (the default), REST, or both. Editing a key can only narrow this, without a password; to widen it, rotate the key or create a new one. Per-minute limits and "last used" are kept for each surface, so a busy script does not slow your AI client down. Admins decide which team roles may use REST and MCP in **Team → Policies** (REST: admins and members by default).
+- **Address limits for keys**: a key can be limited to up to ten IPv4 or IPv6 addresses or ranges. This is offered only when the server sits behind a reverse proxy it trusts (`TRUSTED_PROXY_HOPS` of 1 or more). A refused call shows on the owner's key row ("Last refused …") and in its **Recent activity** section, with a shortened address; admins see it in Team → Access activity, without the address.
+- **Rotating can change access**: because rotating asks for your password, it can now also change the new key's access, where it is used, and its allowed addresses, including widening them. **Edit** still only narrows, for example from all boards to chosen ones.
+- **New optional setting `TRUSTED_PROXY_ADDRESSES`**: the addresses or ranges your reverse proxy connects from. When set, forwarding headers are read only from those proxies. Set it as soon as `TRUSTED_PROXY_HOPS` is 1 or more; otherwise Nook logs a warning at startup and the app port must be reachable only through the proxy (for example `"127.0.0.1:2026:2026"` in `compose.yaml`).
+- **Small fixes**: on a computer the Team pages and the Inbox scroll the list and the details separately; the Home header stays in place while Today scrolls; member pages no longer log a console error while Google sign-in is off; Back after deleting a note or file from its list no longer takes an extra step; the **Publish version** button is larger on phones; End, Home, PageDown, and PageUp scroll the Files list and long notes; an open Access sheet stops offering guests once sharing with guests is turned off; and Access activity lines read as sentences.
+- **For developers using MCP**: there are no new tools, and no tool on either surface deletes forever, shares, or manages keys. Invalid arguments now name the argument on every tool (`"cardId: Invalid UUID"`), the `Bearer` scheme is accepted in any letter case, and every key that does not authenticate (mistyped, expired, rotated, or revoked) answers the one code `KEY_INVALID`; the reason is shown only to the key's owner.
+- **Not in this release**: service accounts.
+- Migration 033 runs on the first boot, so back up first. Existing keys are unchanged: they stay MCP-only with no address limit, and REST is off on new keys until chosen. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.17.0
 

@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.17.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.18.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -237,7 +237,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.17.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.18.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -317,6 +317,20 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.18.0:** back up first with `./scripts/backup.sh --force`. Migration 033 (key use per surface: when each API key was last used over MCP and over REST, a new daily usage table split by surface, and the columns that record a key's last refused call; existing use is copied as MCP use) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing existing changes. Its number is lower than migrations 034 and 035, which your instance already applied: that is expected, because the app applies each migration by its own number. Migration number 031 is intentionally not used yet. Pull, rebuild with `APP_VERSION=0.18.0`, and restart as above.
+
+What an admin should know:
+
+- **One new optional variable, `TRUSTED_PROXY_ADDRESSES`:** the addresses or CIDR ranges your reverse proxy connects from, comma-separated (for example `127.0.0.1` for a proxy on the same host, or `172.16.0.0/12` for a proxy container on the Docker network). When set, `X-Forwarded-For` is read only from those proxies, and anyone reaching Nook's port directly is seen as their own address. Set it as soon as `TRUSTED_PROXY_HOPS` is 1 or more. If `TRUSTED_PROXY_HOPS` is set without it, Nook logs a warning at startup and trusts the header from any connection, so the port must then be reachable only through the proxy: publish it on localhost only (`"127.0.0.1:2026:2026"` in `compose.yaml`, shown there as a comment) or firewall it. See [Rate limits and reverse proxies](#rate-limits-and-reverse-proxies). No other new variables.
+- **Existing keys:** unchanged. They stay MCP-only with no address limit, and there is nothing to do. New keys use MCP unless their creator also picks REST.
+- **REST API:** keys whose surfaces include REST call the same tools as MCP at `/api/v1` (see [The REST API](#the-rest-api-apiv1)). A reverse proxy that already passes `/api` needs no change. **Team → Policies** now applies its REST and MCP role lists (`rest_roles`, default admins and members; `mcp_roles`, default admins, members, and viewers).
+- **Keys limited to chosen items and addresses:** keys can be limited to chosen items in every module, and, only when `TRUSTED_PROXY_HOPS` is 1 or more, to up to ten addresses or ranges. Refused calls show on the owner's key row and in its **Recent activity** section with a shortened address, and in Team → Access activity without the address. Rotating a key asks for the password and can now change its access, surfaces, and addresses; Edit can only narrow (including from all items to chosen ones).
+- **Team → Keys** shows each key's use per surface per day, and filters by surface and by address limit.
+- **Behaviour changes for developers using MCP:** invalid arguments now name the argument on every tool (`"cardId: Invalid UUID"`); the `Bearer` scheme is accepted in any letter case; every key that does not authenticate (unknown, mistyped, expired, past its rotation grace, or revoked) answers 401 with the one code `KEY_INVALID`, and the reason is shown only to the key's owner; `/api/v1` refuses a key sent in a URL (`KEY_IN_URL`); every refusal of `PUT /mcp/uploads/:id` now carries a code, including `UPLOAD_NOT_FOUND`, `UPLOAD_CONFLICT`, and `UPLOAD_FAILED`. There are no new MCP tools, and no tool on either surface deletes forever, shares, or manages keys.
+- **Not in this release:** service accounts.
+
+The web API gains `grants[].resources`, `surfaces`, and `ipAllowlist` on `POST /api/keys`, narrowing of `surfaces` and `ipAllowlist` on `PATCH /api/keys/:id`, and `grants`, `surfaces`, and `ipAllowlist` on `POST /api/keys/:id/rotate`; `GET /api/keys` adds per-surface last use and daily counts and the last refused call, and `GET /api/team/keys` accepts `?surface=` and `?ipRestricted=`.
 
 **Upgrading to 0.17.0:** back up first with `./scripts/backup.sh --force`. Migration 030 (whiteboards: the `whiteboards` table, one row per board next to its Files entry; `whiteboard_snapshots`, the kept previous versions; and `whiteboard_search` with the full-text index `whiteboard_fts`) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing existing changes. Its number is lower than migrations your instance already applied (032, 034, and 035): that is expected, because the app applies each migration by its own number. Migration numbers 031 and 033 are intentionally not used yet. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.17.0`, and restart as above.
 

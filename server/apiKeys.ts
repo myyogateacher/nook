@@ -24,7 +24,7 @@ import { editableCollectionPredicate, readableCollectionPredicate } from "./coll
 import { readableDocumentPredicate } from "./documentAccess";
 import { whiteboardDisplayName } from "../shared/whiteboardScene";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
-import { isVaultNarrowing, validateVaultGrants, vaultEffectiveGrants, vaultGrantInactive, vaultGrantInput, vaultGrantNames, VaultKeyError, type VaultGrantInput } from "./vault/keys";
+import { environmentOfVault, isVaultNarrowing, validateVaultGrants, vaultEffectiveGrants, vaultGrantInactive, vaultGrantInput, vaultGrantNames, VaultKeyError, type VaultGrantInput } from "./vault/keys";
 
 /**
  * Nook keys (docs/plan/research/2026-09-28-access-management-api-keys.md §C.4, D261–D283): one
@@ -171,11 +171,11 @@ const keyColumns = `k.id, k.user_id, k.name, k.description, k.key_prefix, k.kind
   k.last_denied_at, k.last_denied_reason, k.last_denied_surface, k.allow_mcp_value_reads, k.vault_protected_access, u.role, u.disabled_at`;
 
 const keyById = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`);
-const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id, env_id FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
+const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id, env_id, protected_at_grant FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
 
 export function loadGrants(keyId: string): Grant[] {
-  return (grantsByKey.all(keyId) as Array<{ module: GrantModule; permission: KeyPermission; resource_kind: ResourceKind | null; resource_id: string | null; env_id: string | null }>)
-    .map((row) => ({ module: row.module, permission: row.permission, resourceKind: row.resource_kind, resourceId: row.resource_id, ...(row.module === "vault" ? { envId: row.env_id } : {}) }));
+  return (grantsByKey.all(keyId) as Array<{ module: GrantModule; permission: KeyPermission; resource_kind: ResourceKind | null; resource_id: string | null; env_id: string | null; protected_at_grant: number }>)
+    .map((row) => ({ module: row.module, permission: row.permission, resourceKind: row.resource_kind, resourceId: row.resource_id, ...(row.module === "vault" ? { envId: row.env_id, protectedAtGrant: row.protected_at_grant === 1 } : {}) }));
 }
 
 export type KeyLimits = { callsPerMinute?: number; writesPerMinute?: number };
@@ -593,8 +593,11 @@ function insertKey(input: InsertInput) {
 
 /** Inserts a key's grant rows (env_id for vault grants). */
 function insertGrantRows(keyId: string, grants: readonly Grant[], createdAt: string) {
-  const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, env_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-  for (const grant of grants) insertGrant.run(crypto.randomUUID(), keyId, grant.module, grant.permission, grant.resourceKind, grant.resourceId, grant.module === "vault" ? grant.envId ?? null : null, createdAt);
+  const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, env_id, protected_at_grant, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const grant of grants) {
+    const vault = grant.module === "vault";
+    insertGrant.run(crypto.randomUUID(), keyId, grant.module, grant.permission, grant.resourceKind, grant.resourceId, vault ? grant.envId ?? null : null, vault && grant.envId && grant.protectedAtGrant ? 1 : 0, createdAt);
+  }
 }
 
 const grantSummary = (grants: readonly Grant[]) => grants.map((grant) => `${grant.module}:${grant.permission}${grant.resourceId ? `@${grant.resourceKind}` : ""}${grant.envId ? "+env" : ""}`);
@@ -648,7 +651,20 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
   if (patch.grants && row.kind === "vault") {
     // Vault keys (D278): drop grants, write → read, or one environment for every one (see isVaultNarrowing).
     const { vault } = grantsForKind("vault", patch.grants);
-    const candidate: Grant[] = vault.map((input) => ({ module: "vault", permission: input.permission, resourceKind: "vault", resourceId: input.vaultId, envId: input.envId ?? null }));
+    // Review L1: an environment must be one of that vault's (live or in the Bin), or the database's
+    // shape trigger would refuse the row as a 500.
+    for (const input of vault) {
+      if (input.envId && !environmentOfVault(input.vaultId, input.envId)) {
+        throw new KeyError(400, "INVALID_GRANT", "That environment is not one of this vault's");
+      }
+    }
+    // A kept environment keeps whether its protection was covered when it was granted (L2).
+    const coveredWhenGranted = (vaultId: string, envId: string | null) => envId !== null
+      && current.some((held) => held.module === "vault" && held.resourceId === vaultId && (held.envId ?? null) === envId && held.protectedAtGrant === true);
+    const candidate: Grant[] = vault.map((input) => ({
+      module: "vault", permission: input.permission, resourceKind: "vault", resourceId: input.vaultId, envId: input.envId ?? null,
+      protectedAtGrant: coveredWhenGranted(input.vaultId, input.envId ?? null)
+    }));
     const unique = dedupeGrants(candidate);
     if (!isVaultNarrowing(current, unique, protectedAccess)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only remove access. Create a new key to add access.");
     if (unique.length > MAX_GRANTS) throw new KeyError(400, "INVALID_GRANT", `A key can hold at most ${MAX_GRANTS} grants`);
@@ -1009,9 +1025,10 @@ function surfaceTotals14d(keyIds: readonly string[]) {
 
 export type GrantView = {
   module: GrantModule; permission: KeyPermission;
-  resource: { kind: ResourceKind; id: string; name: string | null } | null;
-  /** Vault grants (Wave 27): one environment (its name only for the key's owner while they can read it), or null for every one. */
-  env?: { id: string; name: string | null; protected: boolean } | null;
+  /** Vault grants seen by anyone but the key's owner (Team → Keys) carry no id (review L4): `id` is null. */
+  resource: { kind: ResourceKind; id: string | null; name: string | null } | null;
+  /** Vault grants (Wave 27): one environment (its id and name only for the key's owner, the name while they can read it), or null for every one. */
+  env?: { id: string | null; name: string | null; protected: boolean } | null;
   active: boolean; inactiveReason: InactiveReason | null;
 };
 
@@ -1031,6 +1048,8 @@ export type ApiKeyView = {
   ipRestricted: boolean; ipAllowlist?: string[];
   /** Vault keys (Wave 27): the two flags; null for general keys. */
   vault: VaultFlags | null;
+  /** Vault keys (review L4): how many vaults the grants name and in how many they may write; what Team → Keys shows instead of ids. */
+  vaultCounts: { vaults: number; writeVaults: number } | null;
 };
 
 /**
@@ -1061,11 +1080,12 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
     grants: grants.map((grant) => {
       const reason = grantInactiveReason(grant, row.role, modules, row.user_id, row.vault_protected_access === 1);
       if (grant.module === "vault") {
-        // Names only for the key's owner while they can read the vault (D73, T204).
+        // Names only for the key's owner while they can read the vault (D73, T204); ids only for the
+        // owner too (review L4): an admin outside the vault sees counts (`vaultCounts`), never ids.
         const names = viewerIsOwner ? vaultGrantNames(row.user_id, grant) : { vaultName: null, envName: null, envProtected: false };
         return {
-          module: grant.module, permission: grant.permission, resource: grant.resourceId ? { kind: "vault" as const, id: grant.resourceId, name: names.vaultName } : null,
-          env: grant.envId ? { id: grant.envId, name: names.envName, protected: names.envProtected } : null, active: reason === null, inactiveReason: reason
+          module: grant.module, permission: grant.permission, resource: grant.resourceId ? { kind: "vault" as const, id: viewerIsOwner ? grant.resourceId : null, name: names.vaultName } : null,
+          env: grant.envId ? { id: viewerIsOwner ? grant.envId : null, name: names.envName, protected: names.envProtected } : null, active: reason === null, inactiveReason: reason
         };
       }
       // Names only for items the key's owner can still read (T204); the owner is the viewer here.
@@ -1078,7 +1098,11 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
     blockedSurfaces: (row.surfaces === "both" ? ["mcp", "rest"] as const : [row.surfaces]).filter((surface) => policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies) !== null),
     // Admins see that a key is address-limited, never the addresses of someone else's key.
     ipRestricted: allowlist !== null, ...(viewerIsOwner && allowlist ? { ipAllowlist: allowlist } : {}),
-    vault: row.kind === "vault" ? { allowMcpValueReads: row.allow_mcp_value_reads === 1, protectedAccess: row.vault_protected_access === 1 } : null
+    vault: row.kind === "vault" ? { allowMcpValueReads: row.allow_mcp_value_reads === 1, protectedAccess: row.vault_protected_access === 1 } : null,
+    vaultCounts: row.kind === "vault" ? {
+      vaults: new Set(grants.filter((grant) => grant.module === "vault").map((grant) => grant.resourceId)).size,
+      writeVaults: new Set(grants.filter((grant) => grant.module === "vault" && grant.permission === "write").map((grant) => grant.resourceId)).size
+    } : null
   };
 }
 

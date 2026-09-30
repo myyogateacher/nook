@@ -27,7 +27,8 @@ const WORDS: Record<string, string> = {
   "env.create": "added the environment", "env.update": "renamed the environment", "env.protect": "protected", "env.unprotect": "removed protection from", "env.reorder": "reordered environments",
   "env.delete": "deleted the environment", "env.restore": "restored the environment", "env.purge": "purged the environment", "integrity.fail": "hit an integrity check on",
   // Wave 27: vault keys.
-  "key.limited": "hit its rate limit"
+  "key.limited": "hit its rate limit",
+  "key.volume": "read more than 500 values today"
 };
 
 /**

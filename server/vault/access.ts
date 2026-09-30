@@ -27,7 +27,8 @@ import { db } from "../db";
  * refuses it before it gets here). A key is never an owner here (owner-only operations, members,
  * and access are session-only, D219), and a grant never exceeds `write`. Protected environments over
  * keys: a key reaches one only when a grant names that environment explicitly AND the key carries
- * `protectedAccess` (chosen at creation, under its re-authentication); a grant over every
+ * `protectedAccess` (chosen at creation, under its re-authentication) AND the environment was
+ * protected when that grant was made (so the re-authentication covered it); a grant over every
  * environment never covers a protected one. So a key needs no session window: the rule is in its
  * level.
  */
@@ -35,7 +36,11 @@ import { db } from "../db";
 export type VaultLevel = "none" | "read" | "write" | "admin";
 export type VaultRole = "owner" | "member";
 /** One vault grant of a key (access plan D264): a vault, one environment or every one (null), read or write. */
-export type VaultKeyGrant = { vaultId: string; envId: string | null; permission: "read" | "write" };
+export type VaultKeyGrant = {
+  vaultId: string; envId: string | null; permission: "read" | "write";
+  /** The named environment was protected when the grant was made on a flagged key (review L2); only then does it reach it while protected. */
+  protectedAtGrant?: boolean;
+};
 /**
  * A vault key calling REST (`via: "api"`) or MCP (`via: "mcp"`): its creator, its effective grants
  * (already role-capped), and its two flags. Built fresh for every call by the key layer.
@@ -58,13 +63,14 @@ export const viaOf = (actor: VaultActor): VaultVia => actor.kind === "key" ? act
 /**
  * A key's own level on one environment (before the creator's level and role cap): the best grant
  * that covers it. A grant over every environment skips protected ones; a grant naming a protected
- * environment counts only on a key with `protectedAccess`.
+ * environment counts only on a key with `protectedAccess`, and only when that environment was
+ * already protected when the grant was made (review L2: protecting it later cuts the key off).
  */
 export function keyEnvLevel(actor: VaultKeyActor, vaultId: string, env: { id: string; protected: 0 | 1 }): VaultLevel {
   let best: VaultLevel = "none";
   for (const grant of actor.grants) {
     if (grant.vaultId !== vaultId) continue;
-    if (grant.envId === null ? env.protected === 1 : grant.envId !== env.id || (env.protected === 1 && !actor.protectedAccess)) continue;
+    if (grant.envId === null ? env.protected === 1 : grant.envId !== env.id || (env.protected === 1 && !(actor.protectedAccess && grant.protectedAtGrant === true))) continue;
     best = maxLevel(best, grant.permission);
   }
   return best;

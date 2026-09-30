@@ -21,7 +21,7 @@ export const EVENT_FAMILIES: Record<string, readonly string[]> = {
   keys: ["key.rotate", "key.rotate.auto", "key.rotate.skipped", "key.retire", "reauth"],
   transfer: ["export", "import", "import.preview"],
   /** Wave 27: what vault keys did here, and keys created or rotated with access to this vault (any event with a key). */
-  apikeys: ["apikey.create", "apikey.rotate", "key.limited"],
+  apikeys: ["apikey.create", "apikey.rotate", "key.limited", "key.volume"],
   structure: ["vault.create", "vault.update", "vault.delete", "vault.restore", "env.create", "env.update", "env.protect", "env.unprotect", "env.reorder", "env.delete", "env.restore", "env.purge", "integrity.fail"]
 };
 export type EventFamily = keyof typeof EVENT_FAMILIES;
@@ -56,7 +56,7 @@ export function listVaultActivity(actor: VaultActor, vaultId: string, filters: {
   const actorId = owner ? filters.actorId : actor.userId;
   const rows = db.query(`SELECT e.id, e.created_at, e.event, e.via, e.count, e.actor_id, u.display_name AS actor_name,
       e.secret_id, s.name AS secret_name, s.deleted_at AS secret_deleted, e.env_id, n.name AS env_name,
-      e.target_id, t.display_name AS target_name, e.level, e.key_id, k.name AS key_name, k.key_prefix
+      e.target_id, t.display_name AS target_name, e.level, e.key_id, COALESCE(e.key_name, k.name) AS key_name, COALESCE(e.key_prefix, k.key_prefix) AS key_prefix
     FROM vault_events e LEFT JOIN users u ON u.id = e.actor_id LEFT JOIN users t ON t.id = e.target_id LEFT JOIN mcp_api_keys k ON k.id = e.key_id
       LEFT JOIN vault_secrets s ON s.id = e.secret_id AND s.vault_id = e.vault_id
       LEFT JOIN vault_environments n ON n.id = e.env_id AND n.vault_id = e.vault_id
@@ -90,7 +90,8 @@ export function listVaultActivity(actor: VaultActor, vaultId: string, filters: {
         // Whom an access event was about (names only, QA L1), and the level it gave.
         target: row.target_id === null ? null : { displayName: row.target_name ?? "a former member", isYou: row.target_id === actor.userId },
         level: row.level,
-        // Wave 27: the vault key that acted (shown as `key:<name>`), its creator being `actor`.
+        // Wave 27: the vault key that acted (shown as `key:<name>`), its creator being `actor`. The name
+        // is the one the key had when the event was written (review L5), so a rename re-labels nothing.
         key: row.key_id === null ? null : { name: row.key_name ?? "a deleted key", prefix: row.key_prefix }
       };
     }),

@@ -21,6 +21,8 @@ export type AccessAction =
   | "key.denied"
   // Wave 27: a vault key hit a per-key vault limit (at most one per key per 10 minutes).
   | "key.vault.limited"
+  // Wave 27 fixes (V-O6, review M1): a vault key read more than 500 values in a UTC day (once a day per key).
+  | "key.vault.volume"
   | "policy.changed"
   // Groups and item access (Wave 32, D267, D270).
   | "group.created"

@@ -8,7 +8,7 @@ import { readBoundedBody } from "../validation";
 import { hasControlChars, isTag, SECRET_TYPES, VAULT_BOUNDS } from "../../shared/vault";
 import { VaultError, type VaultKeyActor } from "./access";
 import { vaultKeyActor } from "./keys";
-import { noteKeyLimited, presentSecret, presentVault, safeDetails } from "./keyApi";
+import { noteKeyLimited, noteKeyValueRead, presentSecret, presentVault, safeDetails } from "./keyApi";
 import { KeyLimitError } from "./limits";
 import { createSecret, getSecret, getVault, listSecrets, listVaults, listVersions, readValue, setValue } from "./service";
 import { requireVaultEnabled } from "./status";
@@ -132,6 +132,7 @@ async function run(route: Route, method: string, request: Request, url: URL, act
         return json(200, { value: written }, { ETag: `"v${written.version}"` });
       }
       const value = readValue(actor, route.vaultId, route.secretId, route.envId);
+      noteKeyValueRead(actor, route.vaultId);
       return json(200, { value }, { ETag: `"v${value.version}"` });
     }
     case "versions": return listVersions(actor, route.vaultId, route.secretId, route.envId);

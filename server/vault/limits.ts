@@ -14,6 +14,11 @@ import { VaultError, type VaultActor } from "./access";
  * (the plan's §7.1 cap, since those values leave the host). A key's calls charge only the key's
  * buckets, so a busy CI job cannot lock its creator out of the app. A refusal is a `KeyLimitError`;
  * the REST and MCP layers record the `key.vault.limited` alert when they see one.
+ *
+ * Detection below the limits (V-O6, review M1): every value a key reads also counts in its
+ * `keyReadDayAlert` bucket, which never refuses; passing 500 in a UTC day alerts the creator
+ * (`key.vault.volume`, server/vault/keyApi.ts), since a key paced under the limits could otherwise
+ * read up to 24,000 values a day unnoticed.
  */
 export const VAULT_LIMITS = {
   read: { limit: 300, windowMs: 10 * 60_000 },
@@ -29,7 +34,12 @@ export const VAULT_LIMITS = {
   keyWrite: { limit: 10, windowMs: 60_000 },
   keyWriteDay: { limit: 200, windowMs: 24 * 60 * 60_000 },
   /** Per vault key: values read over MCP (T191), on top of the read buckets. */
-  keyMcpValue: { limit: 60, windowMs: 60 * 60_000 }
+  keyMcpValue: { limit: 60, windowMs: 60 * 60_000 },
+  /**
+   * Per vault key (V-O6, review M1): values read in a UTC day. Never refuses; passing the limit
+   * alerts the key's creator once that day (`countKeyValueReads`, server/vault/keyApi.ts).
+   */
+  keyReadDayAlert: { limit: 500, windowMs: 24 * 60 * 60_000 }
 } as const;
 export type VaultLimit = keyof typeof VAULT_LIMITS;
 
@@ -105,6 +115,25 @@ export function chargeActor(actor: VaultActor, kind: "read" | "write", cost = 1,
   if (options.mcpValue) charges.push({ kind: "keyMcpValue", subject: actor.keyId, cost });
   const refused = chargeAll(charges, nowMs);
   if (refused) throw new KeyLimitError(actor.keyId, refused.kind, refused.retryAfterSeconds);
+}
+
+/**
+ * Counts `count` value reads of a vault key in its `keyReadDayAlert` bucket (a fixed UTC day, V-O6).
+ * Never refuses. Returns the day's total and whether this call took it past the alert threshold
+ * (so the crossing is reported once per day per key).
+ */
+export function countKeyValueReads(keyId: string, count = 1, nowMs = Date.now()): { total: number; crossed: boolean } {
+  const { limit, windowMs } = VAULT_LIMITS.keyReadDayAlert;
+  const bucket = `keyReadDayAlert:${keyId}`;
+  const windowStart = Math.floor(nowMs / windowMs) * windowMs;
+  return db.transaction(() => {
+    const row = db.query("SELECT window_start, count, previous_count FROM vault_rate_limits WHERE bucket = ?").get(bucket) as Row | null;
+    const before = row && row.window_start === windowStart ? row.count : 0;
+    const total = before + count;
+    db.query(`INSERT INTO vault_rate_limits (bucket, window_start, count, previous_count) VALUES (?, ?, ?, 0)
+      ON CONFLICT(bucket) DO UPDATE SET window_start = excluded.window_start, count = excluded.count, previous_count = 0`).run(bucket, windowStart, total);
+    return { total, crossed: before <= limit && total > limit };
+  })();
 }
 
 /** Test hook. */

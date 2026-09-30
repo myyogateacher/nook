@@ -233,6 +233,12 @@ export const vaultExpiryChoices = (policy: Pick<PolicySummary, "keyMaxDays" | "k
 /** The warning next to "Allow MCP clients to read values" (T191). */
 export const MCP_VALUES_WARNING = "Values an MCP client reads are sent to that client's AI model provider and may be kept there. Leave this off unless the agent truly needs values; the REST API reads values without it.";
 
+/**
+ * Wave 27 fixes: a vault key that lets MCP clients read values is an agent's key; suggest keeping it
+ * off REST, where scripts should use their own key without that setting.
+ */
+export const MCP_VALUES_SURFACE_HINT = "Keys that let an AI agent read values are best used over MCP only. Give scripts and CI their own REST key without this setting.";
+
 /** The line under an Expires choice: the policy cap, and why "No expiry" is off when it is. */
 export function expiryNote(policy: Pick<PolicySummary, "keyMaxDays" | "keyRequireExpiry">) {
   return policy.keyRequireExpiry
@@ -284,7 +290,7 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
       {blockedSurfaceLine(apiKey) && <small className="keys-row-warning">{blockedSurfaceLine(apiKey)}</small>}
       {deniedLine(apiKey, relativeTime) && <small className="keys-row-warning">{deniedLine(apiKey, relativeTime)}</small>}
       {apiKey.description && <small className="keys-row-description">{apiKey.description}</small>}
-      <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{[...grantChips(apiKey.grants), ...(owner ? vaultGrantCountChips : vaultGrantChips)(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[])].map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}
+      <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{[...grantChips(apiKey.grants), ...(owner ? vaultGrantCountChips(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[], apiKey.vaultCounts) : vaultGrantChips(apiKey.grants.filter((grant) => grant.module === "vault") as VaultGrantView[]))].map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}
         {vaultFlagChips(apiKey.vault).map((flag) => <li key={flag} className="keys-flag">{flag}</li>)}</ul>
       {apiKey.state === "blocked" && (apiKey.blockedBy === "expiry_required" || apiKey.blockedMessage) && <small className="keys-row-warning">{blockedLine(apiKey)}</small>}
       {apiKey.state === "revoked" && apiKey.revokedBy === "admin" && <small className="keys-row-warning">An admin revoked this key{apiKey.revokeReason ? `: “${apiKey.revokeReason}”` : "."}</small>}
@@ -440,6 +446,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, onClose, onCre
           // Turning it off drops the rows that named a protected environment back to "choose".
           if (!value && vaults && vaults !== "error") setVaultRows((current) => current.filter((row) => !namesProtected([row], vaults)));
         }} />}
+      {kind === "vault" && mcpValues && surfaces !== "mcp" && <p className="grant-note" role="note">{MCP_VALUES_SURFACE_HINT}{policy.mcpAllowed && <> <button type="button" className="text-button" onClick={() => setSurfaces("mcp")} disabled={busy}>Use MCP only</button></>}</p>}
       <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={kind === "vault" ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{kind === "vault" ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} />
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />

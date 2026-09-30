@@ -1,15 +1,15 @@
 import { db } from "../db";
 import { recordAccessEvent } from "../access/events";
 import { notifyAccess } from "../access/notices";
-import { VaultError, type VaultKeyActor } from "./access";
-import { KeyLimitError } from "./limits";
+import { VaultError, type VaultActor, type VaultKeyActor } from "./access";
+import { countKeyValueReads, KeyLimitError, VAULT_LIMITS } from "./limits";
 import { recordVaultEvent, type SecretSummary, type VaultSummary } from "./service";
 
 /**
  * What the key surfaces of the vault share (Wave 27): REST `/api/v1/vault/*` (server/vault/rest.ts)
  * and the vault MCP tools (server/vault/mcpTools.ts). Both call the same service functions as the
  * session API with a key actor; this file shapes their answers the same way and records the
- * per-key limit alert.
+ * per-key limit alert and the daily value-read alert (V-O6).
  */
 
 /** A vault as a key sees it: the environments it can reach (with its level) and the secret count. Never a value. */
@@ -55,6 +55,27 @@ export function noteKeyLimited(actor: VaultKeyActor, error: KeyLimitError, vault
   const since = new Date(nowMs - NOTICE_EVERY_MS).toISOString();
   if (!db.query("SELECT 1 FROM access_notices WHERE key_id = ? AND kind = 'key_vault_limited' AND created_at >= ?").get(actor.keyId, since)) {
     notifyAccess({ userId: actor.userId, kind: "key_vault_limited", actorId: null, keyId: actor.keyId }, at);
+  }
+}
+
+/**
+ * A vault key read a value (V-O6, review M1): counts it in the key's daily `keyReadDayAlert` bucket,
+ * which never refuses. The read that takes the day past 500 records `key.vault.volume` in the access
+ * log (with the day's count), `key.volume` in that vault's Activity (the count only), and a
+ * `key_vault_volume` bell notice to the creator, at most one a day per key. So a stolen key paced
+ * under the per-minute and per-hour limits still gets noticed. Never the value or the secret.
+ */
+export function noteKeyValueRead(actor: VaultActor, vaultId: string, nowMs = Date.now()) {
+  if (actor.kind !== "key") return;
+  const { total, crossed } = countKeyValueReads(actor.keyId, 1, nowMs);
+  if (!crossed) return;
+  const at = new Date(nowMs).toISOString();
+  const surface = actor.via === "api" ? "rest" : "mcp";
+  recordAccessEvent({ actorId: null, via: surface, action: "key.vault.volume", targetUserId: actor.userId, keyId: actor.keyId, meta: { reads: total, threshold: VAULT_LIMITS.keyReadDayAlert.limit, surface } }, at);
+  if (db.query("SELECT 1 FROM vaults WHERE id = ?").get(vaultId)) recordVaultEvent(vaultId, actor, "key.volume", { count: total });
+  const since = new Date(nowMs - NOTICE_EVERY_MS).toISOString();
+  if (!db.query("SELECT 1 FROM access_notices WHERE key_id = ? AND kind = 'key_vault_volume' AND created_at >= ?").get(actor.keyId, since)) {
+    notifyAccess({ userId: actor.userId, kind: "key_vault_volume", actorId: null, keyId: actor.keyId, count: total }, at);
   }
 }
 

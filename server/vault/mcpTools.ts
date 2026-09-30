@@ -7,7 +7,7 @@ import { canWriteContent } from "../team/userRole";
 import { SECRET_TYPES, VAULT_BOUNDS } from "../../shared/vault";
 import { VaultError, type VaultKeyActor } from "./access";
 import { vaultKeyActor } from "./keys";
-import { noteKeyLimited, presentSecret, presentVault, safeDetails } from "./keyApi";
+import { noteKeyLimited, noteKeyValueRead, presentSecret, presentVault, safeDetails } from "./keyApi";
 import { KeyLimitError } from "./limits";
 import { createSecret, getSecret, listSecrets, listVaults, readValue, secretMetadata, setValue } from "./service";
 import { requireVaultEnabled } from "./status";
@@ -111,8 +111,11 @@ export const vaultToolSpecs: readonly VaultToolSpec[] = [
         };
       }
       const envId = args.envId.toLowerCase();
-      const detail = getSecret(actor, vaultId, secretId);
+      // The value first (review L3): a refused value opens, charges, and audits nothing else; the
+      // secret's comment then rides on the same read (audited, not charged twice).
       const value = readValue(actor, vaultId, secretId, envId, { mcpValue: true });
+      noteKeyValueRead(actor, vaultId);
+      const detail = getSecret(actor, vaultId, secretId, { charged: true });
       return {
         secret: { ...presentSecret(detail.secret), comment: detail.secret.comment },
         value: { envId, value: value.value, comment: value.comment, version: value.version, updatedAt: value.updatedAt, updatedBy: value.updatedBy }

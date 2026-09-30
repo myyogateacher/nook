@@ -194,6 +194,8 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
   "key.policy_blocked": (event) => `A policy blocked the key ${keyName(event)}${surfaceSuffix(event)}`,
   // Wave 34 review Q1: a refused call, with the surface; never the address for admins.
   "key.denied": (event) => `The key ${keyName(event)} was refused${surfaceSuffix(event)}: ${DENIAL_TEXT[String(event.meta?.reason)] ?? "not allowed"}`,
+  "key.vault.limited": (event) => `The vault key ${keyName(event)} hit a vault limit${surfaceSuffix(event)}`,
+  "key.vault.volume": (event) => `The vault key ${keyName(event)} read more than 500 values today${surfaceSuffix(event)}`,
   "policy.changed": (event) => `${who(event)} changed team policies`,
   "group.created": (event) => `${who(event)} created the group ${groupName(event)}`,
   "group.updated": (event) => `${who(event)} changed the group ${groupName(event)}`,

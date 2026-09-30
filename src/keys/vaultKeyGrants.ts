@@ -17,8 +17,9 @@ export type VaultGrantRow = { key: string; vaultId: string; envId: string; permi
 export type VaultGrantPayload = { module: "vault"; permission: "read" | "write"; vaultId: string; envId: string | null };
 export type VaultGrantView = {
   module: "vault"; permission: "read" | "write" | string;
-  resource: { kind: "vault"; id: string; name: string | null } | null;
-  env?: { id: string; name: string | null; protected: boolean } | null;
+  /** `id` is null outside the key owner's own list (Team → Keys, review L4). */
+  resource: { kind: "vault"; id: string | null; name: string | null } | null;
+  env?: { id: string | null; name: string | null; protected: boolean } | null;
   active: boolean; inactiveReason: string | null;
 };
 
@@ -81,8 +82,8 @@ export function vaultRowsToGrants(rows: readonly VaultGrantRow[]): { grants: Vau
 
 /** A key's vault grants as builder rows (Edit and Rotate start from these). */
 export function vaultGrantsToRows(grants: readonly VaultGrantView[]): VaultGrantRow[] {
-  return grants.filter((grant) => grant.module === "vault" && grant.resource).map((grant, index) => ({
-    key: `vault-${index}-${grant.resource!.id}`, vaultId: grant.resource!.id, envId: grant.env?.id ?? ALL_ENVS, permission: grant.permission === "write" ? "write" : "read"
+  return grants.filter((grant) => grant.module === "vault" && grant.resource?.id).map((grant, index) => ({
+    key: `vault-${index}-${grant.resource!.id}`, vaultId: grant.resource!.id!, envId: grant.env?.id ?? ALL_ENVS, permission: grant.permission === "write" ? "write" : "read"
   }));
 }
 
@@ -122,16 +123,16 @@ export function vaultGrantChips(grants: readonly VaultGrantView[]) {
 }
 
 /**
- * Team → Keys (admins, D73): a vault key as counts only, never a vault's or environment's name:
- * "Vault · 2 vaults · write in 1".
+ * Team → Keys (admins, D73): a vault key as counts only, never a vault's or environment's name or
+ * id: "Vault · 2 vaults · write in 1". The server sends the counts (review L4: no ids to count).
  */
-export function vaultGrantCountChips(grants: readonly VaultGrantView[]) {
+export function vaultGrantCountChips(grants: readonly VaultGrantView[], counts: { vaults: number; writeVaults: number } | null | undefined) {
   const vaultGrants = grants.filter((grant) => grant.module === "vault");
   if (!vaultGrants.length) return [];
-  const vaults = new Set(vaultGrants.map((grant) => grant.resource?.id ?? "?"));
-  const writes = new Set(vaultGrants.filter((grant) => grant.permission === "write").map((grant) => grant.resource?.id ?? "?"));
+  const vaults = counts?.vaults ?? 0;
+  const writes = counts?.writeVaults ?? 0;
   const active = vaultGrants.some((grant) => grant.active);
-  const label = `Vault · ${vaults.size} ${vaults.size === 1 ? "vault" : "vaults"}${writes.size ? ` · write in ${writes.size}` : " · read only"}${active ? "" : " (no current access)"}`;
+  const label = `Vault · ${vaults} ${vaults === 1 ? "vault" : "vaults"}${writes ? ` · write in ${writes}` : " · read only"}${active ? "" : " (no current access)"}`;
   return [{ id: "vault-count", label, active }];
 }
 
@@ -150,7 +151,7 @@ export function vaultKeyEventLine(event: { event: string; via: string; vault: { 
   const surface = event.via === "api" ? " over REST" : event.via === "mcp" ? " over MCP" : "";
   const what: Record<string, string> = {
     "value.read": "Read a value", "value.write": "Wrote a value", "secret.create": "Created a secret", "comment.read": "Read a comment",
-    "version.read": "Read an old version", "key.limited": "Hit its rate limit", "apikey.create": "Given access", "apikey.rotate": "Rotated with access"
+    "version.read": "Read an old version", "key.limited": "Hit its rate limit", "key.volume": "Read more than 500 values today", "apikey.create": "Given access", "apikey.rotate": "Rotated with access"
   };
   return `${what[event.event] ?? event.event}${surface} · ${where}`;
 }

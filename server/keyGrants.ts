@@ -29,7 +29,11 @@ export const KEY_SURFACES: readonly KeySurfaces[] = ["mcp", "rest", "both"];
  * grant names, or null/absent for every environment of it (protected ones excepted, see
  * server/vault/access.ts).
  */
-export type Grant = { module: GrantModule; permission: KeyPermission; resourceKind: ResourceKind | null; resourceId: string | null; envId?: string | null };
+export type Grant = {
+  module: GrantModule; permission: KeyPermission; resourceKind: ResourceKind | null; resourceId: string | null; envId?: string | null;
+  /** Vault grants naming an environment (Wave 27 fixes, L2): it was protected when the grant was made on a key allowed protected environments. */
+  protectedAtGrant?: boolean;
+};
 
 /** The permissions a vault key's grants may hold (Wave 27): read, and write (which implies read). */
 export const VAULT_KEY_PERMISSIONS = ["read", "write"] as const;

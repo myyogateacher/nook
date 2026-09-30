@@ -312,6 +312,8 @@ export function keyEventLine(event: { action: string; meta: Record<string, unkno
     case "key.revoked": return meta.by === "admin" ? "Revoked by an admin" : "Revoked";
     case "key.grace_ended": return "Rotation grace ended";
     case "key.policy_blocked": return `Blocked by team policy${surface}`;
+    case "key.vault.limited": return `Hit a vault limit${surface}`;
+    case "key.vault.volume": return `Read more than ${typeof meta.threshold === "number" ? meta.threshold : 500} values today${surface}`;
     case "key.denied": {
       const from = typeof meta.clientPrefix === "string" ? `, from ${meta.clientPrefix}` : "";
       return `Refused${surface}: ${DENIAL_LINE[String(meta.reason)] ?? "not allowed"}${from}`;

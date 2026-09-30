@@ -230,15 +230,21 @@ describe("review 27: effective rights with key actors (D218, T182)", () => {
     setProtected(vault.envs.staging!, 0);
   });
 
-  test("FINDING (LOW): a flagged key keeps an environment it named while it was unprotected once that environment is marked protected", async () => {
+  // Fixed (review L2): the flag covers only the environments that were protected when the grant was made.
+  test("a flagged key loses an environment it named while it was unprotected once that environment is marked protected", async () => {
     const owner = await createUser("R27 flag scope");
     const vault = await newVault(owner);
     const secret = await newSecret(owner, vault, "FLAG_SCOPE", { staging: "fs-staging", prod: "fs-prod" });
     const flagged = await vaultKey(owner, [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.prod }, { module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.staging }], { protectedAccess: true });
     setProtected(vault.envs.staging!, 1);
-    // The creation's re-authentication covered prod, not staging; the key still reads staging.
-    expect((await rest(flagged.token, "GET", valuePath(vault, secret.id, "staging"))).body.value.value).toBe("fs-staging");
+    // The creation's re-authentication covered prod, not staging: staging is cut off; prod still works.
+    expect((await rest(flagged.token, "GET", valuePath(vault, secret.id, "staging"))).status).toBe(404);
+    expect((await rest(flagged.token, "GET", valuePath(vault, secret.id, "prod"))).body.value.value).toBe("fs-prod");
+    expect(db.query("SELECT env_id, protected_at_grant FROM api_key_grants WHERE key_id = ? ORDER BY protected_at_grant").all(flagged.id))
+      .toEqual([{ env_id: vault.envs.staging, protected_at_grant: 0 }, { env_id: vault.envs.prod, protected_at_grant: 1 }]);
+    // Unprotected again: back within reach, like any named environment.
     setProtected(vault.envs.staging!, 0);
+    expect((await rest(flagged.token, "GET", valuePath(vault, secret.id, "staging"))).body.value.value).toBe("fs-staging");
   });
 
   test("environments come and go: a new unprotected one joins an 'every environment' grant, a new protected one does not, a binned one leaves, a purged one drops the grant row", async () => {
@@ -318,22 +324,26 @@ describe("review 27: values over the key surfaces (T188, T191)", () => {
     expect(JSON.stringify(one.value)).not.toContain("v-staging");
   });
 
-  test("FINDING (LOW): one MCP value read costs two reads in the key's read buckets and records a comment read, even when the value itself is refused", async () => {
+  // Fixed (review L3): the value is read first and charged once; the comment rides on it.
+  test("one MCP value read costs one read in the key's read buckets, and a refused value opens, charges, and audits nothing", async () => {
     const owner = await createUser("R27 double charge");
     const vault = await newVault(owner);
     const secret = await newSecret(owner, vault, "DOUBLE", { dev: "d" }, { comment: "c" });
     const flagged = await vaultKey(owner, [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.dev }], { allowMcpValueReads: true });
     expect((await tool(flagged.id, "read_secret", { vaultId: vault.id, secretId: secret.id, envId: vault.envs.dev })).value.value.value).toBe("d");
     const bucket = (name: string) => (db.query("SELECT count FROM vault_rate_limits WHERE bucket = ?").get(`${name}:${flagged.id}`) as { count: number } | null)?.count ?? 0;
-    expect(bucket("keyRead")).toBe(2);
+    expect(bucket("keyRead")).toBe(1);
     expect(bucket("keyMcpValue")).toBe(1);
-    // A value the key cannot read (staging is not granted): the comment was still opened, charged, and audited.
+    const commentReads = () => (db.query("SELECT COUNT(*) AS count FROM vault_events WHERE key_id = ? AND event = 'comment.read'").get(flagged.id) as { count: number }).count;
+    // The comment it returned is still audited.
+    expect(commentReads()).toBe(1);
+    // A value the key cannot read (staging is not granted): nothing is opened, charged, or audited.
     resetVaultLimits();
     const refused = await tool(flagged.id, "read_secret", { vaultId: vault.id, secretId: secret.id, envId: vault.envs.staging });
     expect(refused.value.code).toBe("NOT_FOUND");
-    expect(bucket("keyRead")).toBe(1);
-    const commentReads = db.query("SELECT COUNT(*) AS count FROM vault_events WHERE key_id = ? AND event = 'comment.read'").get(flagged.id) as { count: number };
-    expect(commentReads.count).toBe(2);
+    expect(bucket("keyRead")).toBe(0);
+    expect(bucket("keyMcpValue")).toBe(0);
+    expect(commentReads()).toBe(1);
   });
 
   test("HEAD on a value is a full audited read whose body the client never gets", async () => {
@@ -481,11 +491,10 @@ describe("review 27: REST conformance and per-key limits (T183, T194, T195)", ()
 });
 
 describe("review 27: detection below the limits (T183, V-O6)", () => {
-  // FINDING (MEDIUM): V-O6 records the operator's decision "alert the creator after 500 value reads a
-  // day"; Wave 27 decision 4 replaced it with an alert only when a per-key limit refuses a call. A
-  // stolen key paced under 20 a minute and 1,000 an hour reads up to 24,000 values a day (a whole
-  // 1,000-secret x 20-environment vault in about 20 hours) and its creator hears nothing.
-  test.failing("a key that reads more than 500 values in a day without ever hitting a limit alerts its creator", async () => {
+  // Fixed (review M1): V-O6's "alert the creator after 500 value reads a day" is back, beside the
+  // limit alert. A stolen key paced under 20 a minute and 1,000 an hour could otherwise read up to
+  // 24,000 values a day (a whole 1,000-secret x 20-environment vault in about 20 hours) unnoticed.
+  test("a key that reads more than 500 values in a day without ever hitting a limit alerts its creator", async () => {
     const owner = await createUser("R27 paced thief");
     const vault = await newVault(owner);
     const secret = await newSecret(owner, vault, "PACED", { dev: "p" });
@@ -502,6 +511,11 @@ describe("review 27: detection below the limits (T183, V-O6)", () => {
     expect((db.query("SELECT COUNT(*) AS count FROM vault_events WHERE key_id = ? AND event = 'value.read'").get(key.id) as { count: number }).count).toBe(510);
     const alerts = db.query("SELECT COUNT(*) AS count FROM access_notices WHERE key_id = ? AND user_id = ?").get(key.id, owner.userId) as { count: number };
     expect(alerts.count).toBeGreaterThan(0);
+    // Exactly once: one notice, one access event, one Activity row (counts only).
+    expect(db.query("SELECT kind FROM access_notices WHERE key_id = ?").all(key.id)).toEqual([{ kind: "key_vault_volume" }]);
+    expect((db.query("SELECT COUNT(*) AS count FROM access_events WHERE key_id = ? AND action = 'key.vault.volume'").get(key.id) as { count: number }).count).toBe(1);
+    expect(db.query("SELECT count, secret_id, env_id FROM vault_events WHERE key_id = ? AND event = 'key.volume'").all(key.id)).toEqual([{ count: 501, secret_id: null, env_id: null }]);
+    expect(db.query("SELECT COUNT(*) AS count FROM access_notices WHERE key_id = ? AND kind = 'key_vault_limited'").get(key.id)).toEqual({ count: 0 });
   });
 });
 
@@ -545,10 +559,8 @@ describe("review 27: key lifecycle (D217, D277, D278)", () => {
     expect(days).toBeLessThanOrEqual(365);
   });
 
-  // FINDING (LOW): narrowing "every environment" to one checks only that the id is an environment
-  // "of" the grant, not that it exists in that vault; 038's VAULT_GRANT_SHAPE trigger then refuses
-  // the row and the request ends as a 500 INTERNAL (fail-closed: the transaction rolls back).
-  test.failing("narrowing to an environment of another vault, or to no environment at all, is a 400, not a 500", async () => {
+  // Fixed (review L1): the environment must be one of that vault's before the database is asked.
+  test("narrowing to an environment of another vault, or to no environment at all, is a 400, not a 500", async () => {
     const owner = await createUser("R27 narrow foreign");
     const vault = await newVault(owner);
     const other = await newVault(owner);
@@ -556,6 +568,7 @@ describe("review 27: key lifecycle (D217, D277, D278)", () => {
     for (const envId of [other.envs.dev, crypto.randomUUID()]) {
       const response = await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id, envId }] });
       expect(response.status).toBe(400);
+      expect(response.body.code).toBe("INVALID_GRANT");
     }
   });
 
@@ -565,7 +578,7 @@ describe("review 27: key lifecycle (D217, D277, D278)", () => {
     const other = await newVault(owner);
     const key = await vaultKey(owner, [{ module: "vault", permission: "read", vaultId: vault.id }]);
     const response = await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id, envId: other.envs.dev }] });
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(400);
     expect(db.query("SELECT resource_id, env_id FROM api_key_grants WHERE key_id = ?").all(key.id)).toEqual([{ resource_id: vault.id, env_id: null }]);
   });
 
@@ -610,16 +623,22 @@ describe("review 27: key lifecycle (D217, D277, D278)", () => {
     expect((await mcp(key.token, "tools/list")).status).toBe(401);
   });
 
-  test("FINDING (LOW): Team → Keys hides vault names from admins but still lists each vault's and environment's id", async () => {
+  // Fixed (review L4): counts only, no ids.
+  test("Team → Keys hides vault names and ids from admins and shows counts", async () => {
     const admin = await createUser("R27 inventory admin");
     setRole(admin, "admin");
     const owner = await createUser("R27 inventory owner");
     const vault = await newVault(owner);
     const key = await vaultKey(owner, [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.dev }]);
-    const body = await (await request("/team/keys?kind=vault", {}, admin)).json() as { keys: Array<{ id: string; grants: Array<{ resource: { id: string; name: string | null } | null; env?: { id: string; name: string | null } | null }> }> };
+    const response = await request("/team/keys?kind=vault", {}, admin);
+    const text = await response.text();
+    const body = JSON.parse(text) as { keys: Array<{ id: string; vaultCounts: unknown; grants: Array<{ resource: { id: string | null; name: string | null } | null; env?: { id: string | null; name: string | null } | null }> }> };
     const found = body.keys.find((item) => item.id === key.id)!;
-    expect(found.grants[0]!.resource).toMatchObject({ id: vault.id, name: null });
-    expect(found.grants[0]!.env).toMatchObject({ id: vault.envs.dev, name: null });
+    expect(found.grants[0]!.resource).toMatchObject({ id: null, name: null });
+    expect(found.grants[0]!.env).toMatchObject({ id: null, name: null });
+    expect(found.vaultCounts).toEqual({ vaults: 1, writeVaults: 0 });
+    expect(text).not.toContain(vault.id);
+    expect(text).not.toContain(vault.envs.dev!);
     // The admin still gets the vault's 404.
     expect((await call(admin, "GET", `/vaults/${vault.id}`)).status).toBe(404);
   });
@@ -693,7 +712,8 @@ describe("review 27: cross-wave invariants with key actors", () => {
     expect(db.query("SELECT 1 FROM vault_events WHERE vault_id = ? AND event = 'integrity.fail'").get(vault.id)).toBeNull();
   });
 
-  test("Activity attribution comes from the server: the key id and creator are recorded, and a key's name is shown live (a rename re-labels old events)", async () => {
+  // Fixed (review L5): the key's name is stored with the event, so a rename re-labels nothing.
+  test("Activity attribution comes from the server: the key id, creator, and the key's name at the time are recorded (a rename re-labels nothing)", async () => {
     const owner = await createUser("R27 attribution owner");
     const member = await createUser("R27 attribution member");
     const vault = await newVault(owner);
@@ -707,7 +727,11 @@ describe("review 27: cross-wave invariants with key actors", () => {
     expect((await keysApi(member, "PATCH", `/${key.id}`, { name: "R27 attribution owner (session)" })).status).toBe(200);
     const events = (await call(owner, "GET", `/vaults/${vault.id}/events?event=apikeys`)).body.events as Array<any>;
     const read = events.find((event) => event.event === "value.read");
-    expect(read).toMatchObject({ via: "api", actor: { displayName: "R27 attribution member" }, key: { name: "R27 attribution owner (session)" } });
+    expect(read).toMatchObject({ via: "api", actor: { displayName: "R27 attribution member" }, key: { name: key.key.name, prefix: key.key.prefix } });
+    // A read after the rename carries the new name.
+    expect((await rest(key.token, "GET", valuePath(vault, secret.id, "dev"))).status).toBe(200);
+    const after = ((await call(owner, "GET", `/vaults/${vault.id}/events?event=apikeys`)).body.events as Array<any>).filter((event) => event.event === "value.read");
+    expect(after.map((event) => event.key.name)).toEqual(["R27 attribution owner (session)", key.key.name]);
   });
 
   test("Keys with access: a member who is not an owner sees the count and only their own keys; a stranger and an admin outside get 404", async () => {

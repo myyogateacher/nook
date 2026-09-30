@@ -53,12 +53,16 @@ type ValueRow = { secret_id: string; env_id: string; value_ct: string; comment_c
  * One `vault_events` row. `actor` is a person's id (or null), or a VaultActor: a key's events carry
  * its id and surface (`via: api | mcp`) with its creator as the person (Wave 27).
  */
+const keyLabel = db.query("SELECT name, key_prefix FROM mcp_api_keys WHERE id = ?");
+
 export function recordVaultEvent(vaultId: string, actor: string | null | VaultActor, event: string, detail: { secretId?: string | null; envId?: string | null; count?: number | null; targetId?: string | null; level?: string | null } = {}, via: VaultVia = "session") {
   const actorId = actor === null || typeof actor === "string" ? actor : actor.userId;
   const keyId = actor !== null && typeof actor === "object" && actor.kind === "key" ? actor.keyId : null;
   const recordedVia = actor !== null && typeof actor === "object" ? viaOf(actor) : via;
-  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, via, event, secret_id, env_id, count, target_id, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), vaultId, actorId, keyId, recordedVia, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, detail.targetId ?? null, detail.level ?? null, now());
+  // The key's name and prefix as they are now (review L5): a later rename never re-labels this event.
+  const key = keyId ? keyLabel.get(keyId) as { name: string; key_prefix: string } | null : null;
+  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, key_name, key_prefix, via, event, secret_id, env_id, count, target_id, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), vaultId, actorId, keyId, key?.name ?? null, key?.key_prefix ?? null, recordedVia, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, detail.targetId ?? null, detail.level ?? null, now());
 }
 
 /** The key acting, for the `*_via_key` columns, or null for a person. */
@@ -384,12 +388,14 @@ export function listSecrets(actor: VaultActor, vaultId: string, options: { q?: s
  * recorded. Create and update answer with `writtenSecret`: they return the comment the caller just
  * wrote, which is not a read.
  */
-export function getSecret(actor: VaultActor, vaultId: string, secretId: string) {
+export function getSecret(actor: VaultActor, vaultId: string, secretId: string, options: { charged?: boolean } = {}) {
   const access = requireVault(actor, vaultId);
   const row = liveSecret(access, secretId);
   if (row.comment_ct === null) return secretDetail(access, row);
   vaultGrant(access, "read");
-  chargeActor(actor, "read");
+  // `charged`: the caller already charged this read (the MCP value read that returns the comment
+  // with the value, review L3); the opening is still audited.
+  if (!options.charged) chargeActor(actor, "read");
   const detail = secretDetail(access, row);
   recordVaultEvent(vaultId, actor, "comment.read", { secretId, count: 1 });
   return detail;

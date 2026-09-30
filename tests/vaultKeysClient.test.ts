@@ -65,7 +65,8 @@ describe("vault key rows, Activity, and Keys with access", () => {
   ];
   test("owners see names; Team → Keys sees counts only (D73)", () => {
     expect(vaultGrantChips(grants).map((chip) => chip.label)).toEqual(["Vault · Payments · Development: read and write", "Vault · A vault · every environment: read (no current access)"]);
-    const counted = vaultGrantCountChips(grants.map((grant) => ({ ...grant, resource: grant.resource && { ...grant.resource, name: null }, env: grant.env && { ...grant.env, name: null } })));
+    // Review L4: Team → Keys gets no ids either; the server's counts make the chip.
+    const counted = vaultGrantCountChips(grants.map((grant) => ({ ...grant, resource: grant.resource && { ...grant.resource, id: null, name: null }, env: grant.env && { ...grant.env, id: null, name: null } })), { vaults: 2, writeVaults: 1 });
     expect(counted.map((chip) => chip.label)).toEqual(["Vault · 2 vaults · write in 1"]);
     expect(JSON.stringify(counted)).not.toContain("Payments");
     expect(vaultFlagChips({ allowMcpValueReads: false, protectedAccess: true })).toEqual(["No values over MCP", "Protected environments"]);

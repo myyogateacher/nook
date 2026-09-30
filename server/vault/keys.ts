@@ -16,8 +16,10 @@ import {
  *   cannot read is the same 404 `RESOURCE_NOT_FOUND` as a missing one, T205; a vault they read at a
  *   lower level is 403 `GRANT_EXCEEDS_ACCESS`). A grant naming a protected environment needs the
  *   key's `protectedAccess` flag (400 `PROTECTED_ACCESS_REQUIRED`); the flag is stored only when a
- *   grant names a protected environment, so marking another environment protected later still cuts
- *   the key off it.
+ *   grant names a protected environment, and each such grant records that its environment was
+ *   protected when it was made (`protected_at_grant`, review L2). Only those grants reach a protected
+ *   environment, so marking another environment protected later cuts every key off it, even a
+ *   flagged key that named it while it was unprotected.
  * - The effective grants a call uses: the stored ones capped by the creator's role (viewers read,
  *   guests nothing). The vault's own predicate (access.ts) then intersects them with the creator's
  *   live level on every call (D218).
@@ -66,6 +68,7 @@ export function validateVaultGrants(userId: string, inputs: readonly VaultGrantI
     const access = creatorAccess(userId, input.vaultId);
     if (!access) throw notFound();
     const needed: VaultLevel = input.permission;
+    let protectedNow = false;
     if (input.envId) {
       const env = visibleEnvironments(access).find((item) => item.id === input.envId);
       if (!env || !atLeast(envLevel(access, env.id), "read")) throw notFound();
@@ -73,6 +76,7 @@ export function validateVaultGrants(userId: string, inputs: readonly VaultGrantI
       if (env.protected === 1) {
         if (!protectedAccess) throw new VaultKeyError(400, "PROTECTED_ACCESS_REQUIRED", "A grant on a protected environment needs “Allow protected environments” on the key");
         namesProtected = true;
+        protectedNow = true;
       }
     } else {
       // "Every environment" covers the unprotected ones only: at least one must be within reach.
@@ -83,7 +87,7 @@ export function validateVaultGrants(userId: string, inputs: readonly VaultGrantI
         throw new VaultKeyError(403, "GRANT_EXCEEDS_ACCESS", "A key cannot have more access than you have to that vault");
       }
     }
-    const grant: Grant = { module: "vault", permission: input.permission, resourceKind: "vault", resourceId: input.vaultId, envId: input.envId ?? null };
+    const grant: Grant = { module: "vault", permission: input.permission, resourceKind: "vault", resourceId: input.vaultId, envId: input.envId ?? null, protectedAtGrant: protectedNow };
     seen.set(`${grant.permission}:${grant.resourceId}:${grant.envId ?? "*"}`, grant);
   }
   const grants = [...seen.values()];
@@ -102,7 +106,7 @@ export function vaultEffectiveGrants(userId: string, grants: readonly Grant[]): 
 /** The VaultActor for one call from a vault key's effective grants and flags. */
 export function vaultKeyActor(key: { keyId: string; userId: string; name: string; grants: readonly Grant[]; vault: { mcpValueReads: boolean; protectedAccess: boolean } | null }, via: "api" | "mcp"): VaultKeyActor {
   const grants: VaultKeyGrant[] = key.grants.filter((grant) => grant.module === "vault" && grant.resourceId !== null && (grant.permission === "read" || grant.permission === "write"))
-    .map((grant) => ({ vaultId: grant.resourceId!, envId: grant.envId ?? null, permission: grant.permission as "read" | "write" }));
+    .map((grant) => ({ vaultId: grant.resourceId!, envId: grant.envId ?? null, permission: grant.permission as "read" | "write", protectedAtGrant: grant.protectedAtGrant === true }));
   return {
     kind: "key", userId: key.userId, keyId: key.keyId, keyName: key.name, via, grants,
     protectedAccess: key.vault?.protectedAccess ?? false, mcpValueReads: key.vault?.mcpValueReads ?? false
@@ -119,7 +123,7 @@ export function vaultGrantInactive(userId: string, grant: Grant, protectedAccess
   if (!grant.resourceId) return "no-access";
   const access = creatorAccess(userId, grant.resourceId);
   if (!access) return "no-access";
-  const actor: VaultKeyActor = { kind: "key", userId, keyId: "", keyName: "", via: "api", grants: [{ vaultId: grant.resourceId, envId: grant.envId ?? null, permission: grant.permission === "write" ? "write" : "read" }], protectedAccess, mcpValueReads: false };
+  const actor: VaultKeyActor = { kind: "key", userId, keyId: "", keyName: "", via: "api", grants: [{ vaultId: grant.resourceId, envId: grant.envId ?? null, permission: grant.permission === "write" ? "write" : "read", protectedAtGrant: grant.protectedAtGrant === true }], protectedAccess, mcpValueReads: false };
   const reaches = access.environments.some((env) => atLeast(minLevel(envLevel(access, env.id), keyEnvLevel(actor, grant.resourceId!, env)), "read"));
   return reaches ? null : "no-access";
 }
@@ -130,6 +134,11 @@ export function vaultGrantNames(userId: string, grant: Grant): { vaultName: stri
   if (!access) return { vaultName: null, envName: null, envProtected: false };
   const env = grant.envId ? visibleEnvironments(access).find((item) => item.id === grant.envId) : null;
   return { vaultName: access.vault.name, envName: env?.name ?? null, envProtected: env?.protected === 1 };
+}
+
+/** Whether `envId` is an environment of `vaultId`, live or in the Bin (narrowing's check, review L1). */
+export function environmentOfVault(vaultId: string, envId: string) {
+  return Boolean(db.query("SELECT 1 FROM vault_environments WHERE id = ? AND vault_id = ?").get(envId, vaultId));
 }
 
 /**
@@ -165,10 +174,10 @@ export function keysWithAccess(viewerId: string, vaultId: string) {
       AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?) AND (k.revoke_after IS NULL OR k.revoke_after > ?) AND u.disabled_at IS NULL
     ORDER BY u.display_name COLLATE NOCASE, k.created_at`).all(vaultId, at, at) as KeyRow[];
   const keys = rows.flatMap((row) => {
-    const grants = vaultEffectiveGrants(row.user_id, db.query("SELECT module, permission, resource_kind, resource_id, env_id FROM api_key_grants WHERE key_id = ? AND module = 'vault'")
+    const grants = vaultEffectiveGrants(row.user_id, db.query("SELECT module, permission, resource_kind, resource_id, env_id, protected_at_grant FROM api_key_grants WHERE key_id = ? AND module = 'vault'")
       .all(row.id).map((raw) => {
-        const item = raw as { permission: KeyPermission; resource_id: string; env_id: string | null };
-        return { module: "vault" as const, permission: item.permission, resourceKind: "vault" as const, resourceId: item.resource_id, envId: item.env_id };
+        const item = raw as { permission: KeyPermission; resource_id: string; env_id: string | null; protected_at_grant: number };
+        return { module: "vault" as const, permission: item.permission, resourceKind: "vault" as const, resourceId: item.resource_id, envId: item.env_id, protectedAtGrant: item.protected_at_grant === 1 };
       }));
     const actor = vaultKeyActor({ keyId: row.id, userId: row.user_id, name: row.name, grants, vault: { mcpValueReads: false, protectedAccess: row.vault_protected_access === 1 } }, "api");
     const access = vaultAccess(actor, vaultId);
@@ -204,10 +213,11 @@ export function recordKeyGrantEvents(keyId: string, userId: string, grants: read
   const vaults = new Map<string, number>();
   for (const grant of grants) if (grant.module === "vault" && grant.resourceId) vaults.set(grant.resourceId, (vaults.get(grant.resourceId) ?? 0) + 1);
   const at = new Date().toISOString();
-  const insert = db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, via, event, count, created_at) VALUES (?, ?, ?, ?, 'session', ?, ?, ?)");
+  const key = db.query("SELECT name, key_prefix FROM mcp_api_keys WHERE id = ?").get(keyId) as { name: string; key_prefix: string } | null;
+  const insert = db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, key_name, key_prefix, via, event, count, created_at) VALUES (?, ?, ?, ?, ?, ?, 'session', ?, ?, ?)");
   for (const [vaultId, count] of vaults) {
     if (!db.query("SELECT 1 FROM vaults WHERE id = ?").get(vaultId)) continue;
-    insert.run(crypto.randomUUID(), vaultId, userId, keyId, event, count, at);
+    insert.run(crypto.randomUUID(), vaultId, userId, keyId, key?.name ?? null, key?.key_prefix ?? null, event, count, at);
   }
 }
 

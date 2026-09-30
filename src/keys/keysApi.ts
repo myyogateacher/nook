@@ -21,6 +21,8 @@ export type ApiKey = {
   pendingProposals?: number;
   /** Wave 27: a vault key's flags (values over MCP, protected environments); null for general keys. */
   vault?: { allowMcpValueReads: boolean; protectedAccess: boolean } | null;
+  /** Vault keys (review L4): counts for Team → Keys, where grants carry no vault or environment ids. */
+  vaultCounts?: { vaults: number; writeVaults: number } | null;
 };
 
 export type KeyList = { keys: ApiKey[]; policy: PolicySummary; liveCount: number };

@@ -96,6 +96,15 @@ export function initialGoogleTeamResult() {
   return initialTeam;
 }
 
+/**
+ * Review L6: the Team result for this integration's page (an admin's confirmation started from its
+ * keys returns to /settings/team/integrations/:id), or null.
+ */
+export function googleIntegrationResultFor(integrationId: string): GoogleSettingsResult {
+  const result = initialGoogleTeamResult();
+  return result && (initialTeamPath.startsWith(`/team/integrations/${integrationId}`) || initialTeamPath.startsWith(`/settings/team/integrations/${integrationId}`)) ? result : null;
+}
+
 /** The Team result for this member's page, or null (it came back to someone else's, or nowhere). */
 export function googleTeamResultFor(userId: string): GoogleSettingsResult {
   const result = initialGoogleTeamResult();

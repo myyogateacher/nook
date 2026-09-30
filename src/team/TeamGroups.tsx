@@ -4,6 +4,7 @@ import { KeysDialog } from "../keys/KeysDialog";
 import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks";
 import { createGroup, guestCountLabel, listGroups, memberCountLabel, type GroupSummary } from "./groupsApi";
 import "../keys/keys.css";
+import { hubDocumentTitle } from "../router";
 
 /**
  * Team → Groups at /team/groups (Wave 32, access plan §C.6, D267), admins only: every group with
@@ -27,7 +28,7 @@ export function TeamGroups({ onBack, onOpenGroup, flash }: { onBack: () => void;
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { document.title = "Groups · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Groups"); }, []);
 
   return <article className="team-detail team-groups" aria-labelledby="team-groups-title">
     <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>

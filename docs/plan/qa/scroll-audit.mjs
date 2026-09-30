@@ -347,7 +347,14 @@ async function audit(page, name, { scope, check } = {}) {
     if (await targetInView(page, region.key)) { notes.push(`${region.name}: fits`); continue; }
     const point = await blankPoint(page, region.key);
     await page.mouse.move(point.x, point.y);
-    for (let step = 0; step < 40 && !(await targetInView(page, region.key)); step += 1) { await page.mouse.wheel({ deltaY: 500 }); await sleep(35); }
+    // Review L7: a step never longer than the scroller's visible height (less a margin), so a short
+    // scroller (437 px at 1280 × 600) cannot jump over its target between two checks.
+    const wheelStep = await page.evaluate((key) => {
+      const region = document.querySelector(`[data-scroll-audit="${key}"]`);
+      const height = region && region !== document.scrollingElement ? region.getBoundingClientRect().height : innerHeight;
+      return Math.max(60, Math.min(500, Math.round(Math.min(height, innerHeight)) - 60));
+    }, region.key);
+    for (let step = 0; step < 80 && !(await targetInView(page, region.key)); step += 1) { await page.mouse.wheel({ deltaY: wheelStep }); await sleep(35); }
     const wheel = await targetInView(page, region.key);
     let touch = true;
     if (page.mobile) {

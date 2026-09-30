@@ -88,6 +88,11 @@ type Outcome = { allowedUntil: string; reset: ResetCounts | null; relink?: boole
 /** Whether the Team → member Google card asks for its state: only once the account says Google sign-in is on. */
 export const googleCardShown = (account: { methods?: { google?: boolean } } | null) => account?.methods?.google === true;
 
+/** A Google confirmation's result on the Team page it came back to (a member's, or an integration's), dismissible. */
+export function GoogleReturnNotice({ notice, onDismiss }: { notice: { tone: string; text: string }; onDismiss: () => void }) {
+  return <p className={`settings-google-notice ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={onDismiss}><X /></button></p>;
+}
+
 export function TeamGoogleCard({ userId, name }: { userId: string; name: string }) {
   const [state, setState] = useState<GoogleAdminState | null>(null);
   const [step, setStep] = useState<Step | null>(null);
@@ -172,7 +177,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
 
   return <section className="team-card team-google" aria-labelledby={`team-google-${userId}`}>
     <h3 id={`team-google-${userId}`} className="team-google-heading"><GoogleMark />Google sign-in</h3>
-    {returned && <p className={`settings-google-notice ${returned.tone}`} role={returned.tone === "error" ? "alert" : "status"}>{returned.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setReturned(null)}><X /></button></p>}
+    {returned && <GoogleReturnNotice notice={returned} onDismiss={() => setReturned(null)} />}
     <p className="team-muted">
       {state.linked ? `Signs in with Google (${state.linked.email}).${state.allowedUntil ? ` Re-linking allowed until ${until(state.allowedUntil)}.` : ""}`
         : state.allowedUntil ? `Allowed: the next Google sign-in with this account's address links it, until ${until(state.allowedUntil)}.`

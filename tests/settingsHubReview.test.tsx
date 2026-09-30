@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { formatRoute, parseRoute, type Route } from "../src/router";
-import { firstTeamRoute, HUB_PUSHED_OVER_KEY, hubBackAction, hubEntries, isHubRoute, settingsRoute, teamGroupShown } from "../src/settings/hubModel";
+import { firstTeamRoute, HUB_PUSHED_OVER_KEY, hubBackAction, hubEntries, hubListGoesUnder, isHubRoute, settingsRoute, teamGroupShown } from "../src/settings/hubModel";
 import { readHistoryDepth, withHistoryDepth } from "../src/appShellNavigation";
 import { takeGoogleSettingsResult } from "../src/auth/googleSignIn";
 
@@ -72,8 +72,12 @@ describe("nav per role (review)", () => {
 describe("the phone back arrow (review)", () => {
   const pushed = (below: string, belowDepth: number) => withHistoryDepth({ [HUB_PUSHED_OVER_KEY]: below }, belowDepth + 1);
 
-  test("Team button from Home: Members was pushed over /, so the arrow replaces it with the list (Back then goes Home)", () => {
+  test("Team button from Home: on a phone the list goes under Members (review L4), so the arrow is Back; an entry pushed straight over / still replaces", () => {
     expect(formatRoute(firstTeamRoute())).toBe("/settings/team/members");
+    expect(hubListGoesUnder(firstTeamRoute(), parseRoute("/"), true)).toBe(true);
+    expect(hubBackAction(pushed("/settings", 1))).toBe("history");
+    // A computer has no list screen: Members goes straight over Home, and no arrow is shown there.
+    expect(hubListGoesUnder(firstTeamRoute(), parseRoute("/"), false)).toBe(false);
     expect(hubBackAction(pushed("/", 0))).toBe("list");
   });
 
@@ -93,12 +97,16 @@ describe("the phone back arrow (review)", () => {
 });
 
 describe("the leave guard's reach (review)", () => {
-  test("the hub guards Home, Bin, and Sign out; Inbox and the bell come from app-wide contexts that do not ask", () => {
+  test("the hub guards Home, Bin, Sign out, and (fixed, review M1) Inbox and the bell through hub-scoped contexts", () => {
     const app = read("App.tsx");
     expect(app).toContain("<AccountActions displayName={session.user.displayName} onSignOut={() => guardLeave(onSignOut)} onBin={onBin ? () => guardLeave(onBin) : undefined} binCount={binCount} />");
-    // Finding (review M1): the Inbox button and the bell's items navigate through these, with no key check.
+    // The app-wide contexts stay as they were; inside the hub they are replaced by guarded ones.
     expect(app).toContain('const inboxNav = { role: session.user.role, openInbox: () => { void openApp("inbox"); }, onInbox: shownApp === "inbox" };');
-    expect(app).toContain("{ openList: () => { void openApp(\"notifications\"); }, openPath: openNotificationPath }");
+    expect(app).toContain("const hubInboxNav = useMemo(() => inboxNav && { ...inboxNav, openInbox: () => guardLeave(inboxNav.openInbox) }, [guardLeave, inboxNav]);");
+    expect(app).toContain("openList: () => guardLeave(notificationsNav.openList), openPath: (path: string) => guardLeave(() => notificationsNav.openPath(path))");
+    expect(app).toContain("<InboxNavContext.Provider value={hubInboxNav}><NotificationsContext.Provider value={hubNotificationsNav}>");
+    // The Inbox button and the bell read those contexts, so the hub's header gets the guarded ones.
     expect(read("AppShell.tsx")).toContain("onClick={nav.openInbox}");
+    expect(read("notifications/NotificationBell.tsx")).toContain("const context = useNotificationsContext();");
   });
 });

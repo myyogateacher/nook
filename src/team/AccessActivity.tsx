@@ -7,6 +7,7 @@ import { listGroups, type GroupSummary } from "./groupsApi";
 import { listInventory, type InventoryKey } from "../keys/keysApi";
 import "../keys/keys.css";
 import "../access/memberAccess.css";
+import { hubDocumentTitle } from "../router";
 
 /**
  * Team → Access activity at /team/activity (Wave 33, access plan §C.6, D288), admins only: who
@@ -132,7 +133,7 @@ export function AccessActivity({ members, onBack }: { members: ReadonlyArray<{ i
   useEffect(() => { listGroups().then((result) => setGroups(result.groups), () => setGroups([])); }, []);
   // Live keys as Team → Keys lists them: name, owner, prefix; never items (D73).
   useEffect(() => { listInventory({}).then((result) => setKeys(result.keys), () => setKeys([])); }, []);
-  useEffect(() => { document.title = "Access activity · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Access activity"); }, []);
 
   const load = useCallback(async (from: string | null) => {
     const current = ++generation.current;

@@ -38,7 +38,9 @@ test("every former native confirm site asks through useConfirm", async () => {
 });
 
 test("the unsaved key confirm names what is being left", () => {
-  expect(unsavedKeyConfirm("close")).toMatchObject({ title: "Leave without saving the key?", confirmLabel: "Close without saving", danger: true });
+  // Review L2: "close" (Settings as a dialog) is gone; leaving the page says "Leave Settings".
+  expect(unsavedKeyConfirm("leave")).toMatchObject({ title: "Leave without saving the key?", confirmLabel: "Leave without saving", danger: true });
+  expect(unsavedKeyConfirm("leave").message).toContain("Leave Settings without copying it?");
   expect(unsavedKeyConfirm("section").message).toContain("Leave this section without copying it?");
   expect(unsavedKeyConfirm("leave").confirmLabel).toBe("Leave without saving");
 });

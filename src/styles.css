@@ -336,9 +336,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
 .new-api-key > div { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.new-api-key .secondary-button { min-height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.new-api-key .secondary-button { min-height: 38px; display: flex; flex: none; align-items: center; gap: 7px; padding: 0 12px; white-space: nowrap; }
 .new-api-key .secondary-button svg { width: 15px; }
-.new-api-key .text-button { margin: 0; }
+/* QA Q8: "I saved this key" reads as a button beside Copy key, not a full-width link. */
+.new-api-key .text-button { width: auto; min-height: 38px; margin: 0; padding: 0 12px; border: 1px solid #4a4129; border-radius: 8px; white-space: nowrap; }
 .mcp-key-list { display: grid; border-top: 1px solid #29292d; }
 .mcp-key-list > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 13px 0; border-bottom: 1px solid #29292d; }
 .mcp-key-list .key-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #202024; color: #aaaab0; }

@@ -190,6 +190,8 @@
 .team-group-row { grid-template-columns: 40px minmax(0, 1fr) 20px; }
 .team-group-row .team-avatar svg, .team-group-page .team-avatar svg { width: 20px; height: 20px; }
 .team-group-row > svg { width: 18px; color: #7c7c83; }
+/* QA Q8: an integration row has its role chips before the chevron, so the chevron keeps its own column. */
+.team-group-row.team-integration-row { grid-template-columns: 40px minmax(0, 1fr) auto 20px; }
 .group-member-list, .group-item-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .group-member-row, .group-item-row { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #242428; border-radius: 12px; padding: 6px 6px 6px 12px; background: #161618; }
 .group-item-row { padding-right: 12px; }

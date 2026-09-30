@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { formatRoute, parseRoute, type Route } from "../src/router";
-import { firstTeamRoute, HUB_PUSHED_OVER_KEY, hubBackAction, hubEntries, hubEntryLabel, hubEntryOf, isHubRoute, isNestedHubRoute, settingsRoute, teamGroupShown } from "../src/settings/hubModel";
+import { firstTeamRoute, HUB_PUSHED_OVER_KEY, hubBackAction, hubEntries, hubEntryLabel, hubEntryOf, hubListGoesUnder, hubPopRoute, isHubRoute, isNestedHubRoute, leaveGuardAction, settingsRoute, teamGroupShown } from "../src/settings/hubModel";
 import { SettingsHubShell } from "../src/settings/SettingsHub";
 import { readHistoryDepth, withHistoryDepth } from "../src/appShellNavigation";
 import { unsavedKeyConfirm } from "../src/keys/unsavedKeyConfirm";
@@ -172,7 +172,7 @@ describe("the page", () => {
     expect(markup).toContain('aria-label="Settings sections"');
     expect(markup).toContain('<h2 id="settings-hub-group-account">Account</h2>');
     expect(markup).toContain('<h2 id="settings-hub-group-team">Team</h2>');
-    expect(markup).toContain('<span class="eyebrow">Ada · Admin</span><h1 id="settings-hub-title">Security</h1>');
+    expect(markup).toContain('<span class="eyebrow">Ada · Admin</span><h1 id="settings-hub-title" tabindex="-1">Security</h1>');
     expect(markup).toContain('aria-label="Back to Settings"');
     expect(markup).not.toContain("aria-modal");
     expect(markup).not.toContain('role="dialog"');
@@ -241,6 +241,66 @@ describe("history at 390 px", () => {
     expect(screen(history.url)).toBe("notifications");
   });
 
+  test("phones: a section opened from outside the hub gets the list under it, so Back and the arrow agree (review L4, QA Q1)", () => {
+    const history = browser("/");
+    // The Team button on Home: App's navigate pushes the list, then Members.
+    const target = firstTeamRoute();
+    expect(hubListGoesUnder(target, parseRoute(history.url), true)).toBe(true);
+    history.push(settingsRoute(null));
+    history.push(target);
+    expect(history.length).toBe(3);
+    // The arrow is exactly browser Back: the list, then Home; Forward reopens Members.
+    expect(hubBackAction(history.state)).toBe("history");
+    history.back();
+    expect(screen(history.url)).toBe("list");
+    history.back();
+    expect(screen(history.url)).toBe("app:home");
+    history.forward();
+    history.forward();
+    expect(screen(history.url)).toBe("team-members");
+    // Within the hub, on a computer, or to the list itself: nothing extra.
+    expect(hubListGoesUnder(settingsRoute("security"), settingsRoute(null), true)).toBe(false);
+    expect(hubListGoesUnder(settingsRoute("security"), firstTeamRoute(), true)).toBe(false);
+    expect(hubListGoesUnder(settingsRoute("security"), parseRoute("/"), false)).toBe(false);
+    expect(hubListGoesUnder(settingsRoute(null), parseRoute("/"), true)).toBe(false);
+    const app = read("App.tsx");
+    expect(app).toContain('if (!options.replace && hubListGoesUnder(route, routeFromLocation(window.location), isMobileViewport())) writeHistory(session.user.id, settingsRoute(null), options.panel ?? mobilePanel, "push");');
+  });
+
+  test("a Settings deep link gets Home underneath (review L5, as Wave 28 did); phones also the list", () => {
+    const app = read("App.tsx");
+    expect(app).toContain("if (isHubRoute(target) && readHistoryDepth(window.history.state) === 0) {");
+    expect(app).toContain('writeHistory(userId, { app: "home" }, panel, "replace");\n          if (hubListGoesUnder(target, { app: "home" }, isMobileViewport())) writeHistory(userId, settingsRoute(null), panel, "push");\n          writeHistory(userId, target, panel, "push");');
+    // The model: a phone lands on /settings/team/policies; Back walks the list, then Home, never off Nook.
+    const history = browser("/settings/team/policies");
+    history.replace({ app: "home" });
+    history.push(settingsRoute(null));
+    history.push({ app: "team", userId: null, policies: true });
+    expect(hubBackAction(history.state)).toBe("history");
+    history.back();
+    expect(screen(history.url)).toBe("list");
+    history.back();
+    expect(screen(history.url)).toBe("app:home");
+    // A hub screen replaced in place keeps the URL it was pushed over, so the arrow still steps back.
+    expect(app).toContain('const below = isHubRoute(route) && current && typeof current === "object" ? current as Record<string, unknown> : null;');
+  });
+
+  test("review M2: Members → Back → Team turned off → Forward keeps the section the URL names", () => {
+    // A member on /settings/modules opened Members, went Back, and turned Team off. Forward pops
+    // /settings/team/members: the hub leaves it alone, the route gate undoes the move (D92), and once
+    // that undo settled the hub reads the URL again: /settings/modules.
+    const members = parseRoute("/settings/team/members");
+    expect(hubPopRoute(members, teamGroupShown("member", false))).toBeNull();
+    expect(hubPopRoute(parseRoute("/settings/modules"), teamGroupShown("member", false))).toEqual(settingsRoute("modules"));
+    // Admins keep Team with the module off; a non-hub URL never changes the hub's screen.
+    expect(hubPopRoute(members, teamGroupShown("admin", false))).toEqual(members);
+    expect(hubPopRoute(parseRoute("/notes"), true)).toBeNull();
+    // The hub listener does exactly that (re-reads after the gate's undo, via whenHistorySettled).
+    const app = read("App.tsx");
+    expect(app).toContain("teamShownRef.current = teamGroupShown(session.user.role, teamModuleEnabled);");
+    expect(app).toContain("if (next) setLocationRoute((current) => formatRoute(current) === formatRoute(next) ? current : next);");
+  });
+
   test("the section's back arrow is Back when the list is below it, else the list replaces the section", () => {
     const history = browser("/");
     history.push(settingsRoute(null));
@@ -278,7 +338,9 @@ describe("history at 390 px", () => {
 
   test("the hub follows Back and Forward itself (a dialog open at the time only closes)", () => {
     const app = read("App.tsx");
-    expect(app).toContain("if (popStateClosedDialog(event)) return;\n      const next = routeFromLocation(window.location);\n      if (isHubRoute(next)) setLocationRoute(next);");
+    // Review M2: a move that was undone (a dialog's, a leave guard's, or the route gate's) is read again once it settled.
+    expect(app).toContain("if (popStateClosedDialog(event)) { cancel = whenHistorySettled(follow); return; }");
+    expect(app).toContain("const next = hubPopRoute(routeFromLocation(window.location), teamShownRef.current);");
     // Account and Team routes render the same page element, so moving between them never remounts it.
     expect(app).toContain(': shownApp === "settings" || shownApp === "team" ? settingsPage(false)');
     expect(app).toContain('key="settings-hub"');
@@ -300,5 +362,79 @@ describe("the leave guard (a key shown only once)", () => {
     expect(app).toContain('whenHistorySettled(() => "direction" in next ? window.history.go(repeatDelta(next.direction)) : next.leave())');
     expect(unsavedKeyConfirm("section")).toMatchObject({ title: "Leave without saving the key?", confirmLabel: "Leave section" });
     expect(unsavedKeyConfirm("integration").message).toContain("Leave this integration");
+  });
+
+  test("review L2: Back or Forward out of Settings says Leave Settings; to another section, Leave section", () => {
+    const here = settingsRoute("mcp");
+    expect(leaveGuardAction(settingsRoute("security"), here)).toBe("section");
+    expect(leaveGuardAction(firstTeamRoute(), here)).toBe("section");
+    expect(leaveGuardAction(parseRoute("/notes"), here)).toBe("leave");
+    // Back off the landing entry's sentinel: the URL still reads the page's own, and the move leaves Nook.
+    expect(leaveGuardAction(here, here)).toBe("leave");
+    expect(read("App.tsx")).toContain("void ask(confirmFor(leaveGuardAction(routeFromLocation(window.location), routeRef.current))).then((confirmed) => {");
+    expect(unsavedKeyConfirm("leave").message).toContain("Leave Settings without copying it?");
+  });
+
+  test("review L1: a section's own guard (Policies' unsaved changes) runs before every in-app move of the hub", () => {
+    const app = read("App.tsx");
+    expect(app).toContain("if (beforeLeaveRef.current?.(keyGuarded)) return;");
+    expect(app).toContain("<HubBeforeLeaveContext.Provider value={registerBeforeLeave}>");
+    // The phone arrow and the nav go through guardLeave, so they ask too.
+    expect(app).toContain('onBack={() => guardLeave(backToList, "section")}');
+    const policies = read("team/TeamPolicies.tsx");
+    expect(policies).toContain("useBeforeHubLeave((leave) => {\n    if (!dirty) return false;\n    pendingLeaveRef.current = leave;\n    setLeaving(true);\n    return true;\n  });");
+    // Discard runs the move asked about once the draft's history guards let go.
+    expect(policies).toContain("const leave = pendingLeaveRef.current ?? onBack;");
+    expect(policies).toContain("window.setTimeout(() => { whenHistorySettled(leave); }, 0);");
+  });
+});
+
+describe("Wave 37 fixes (QA)", () => {
+  test("L3: every hub screen is titled Settings · <Section> · Nook; pages below a section by their name", () => {
+    for (const file of ["TeamApp", "TeamPolicies", "Templates", "AccessActivity", "TeamGroups", "TeamEmailLog", "TeamIntegrations", "TeamKeys", "IntegrationPage", "GroupPage", "MemberAccess"]) {
+      const source = read(`team/${file}.tsx`);
+      expect(source).not.toMatch(/· (Team|Groups|Integrations) · Nook/);
+      expect(source).toContain("document.title = hubDocumentTitle(");
+    }
+  });
+
+  test("Q3: inside the hub a Team section's own title is for assistive tech only (the hub header shows it)", () => {
+    const css = read("settings/settingsHub.css");
+    expect(css).toContain(".settings-team-content :is(#team-invites-title, #team-groups-title, #team-integrations-title, #team-keys-title, #team-policies-title, #team-templates-title, #team-activity-title, #team-email-title) {");
+  });
+
+  test("Q2: a member's page links back to Members", () => {
+    expect(read("team/TeamApp.tsx")).toContain('<button type="button" className="team-back" onClick={onBack}><ChevronLeft />Members</button>');
+  });
+
+  test("Q4: after a move, focus goes to the section heading", () => {
+    const hub = read("settings/SettingsHub.tsx");
+    expect(hub).toContain("if (lost || (isMobileViewport() && !inSection)) headingRef.current?.focus({ preventScroll: true });");
+    expect(read("App.tsx")).toContain("screenKey={formatRoute(route)}");
+  });
+
+  test("Q5: Turn on in Settings scrolls to the module's row, focuses its switch, and highlights it", () => {
+    const app = read("App.tsx");
+    expect(app).toContain('onClick={() => { setHighlightModule(moduleHint); setModuleHint(null); openSettings("modules"); }}');
+    expect(app).toContain("<ModulesSettings {...modules} highlight={highlightModule} onHighlightDone={onHighlightDone} />");
+    const modules = read("ModulesSettings.tsx");
+    expect(modules).toContain('row.scrollIntoView({ block: "center" });');
+    expect(modules).toContain('${highlighted === id ? " highlight" : ""}');
+  });
+
+  test("Q6: a guest's /settings/access opens Security; Q7: an admin-only Team URL says why it opened Members", () => {
+    const app = read("App.tsx");
+    expect(app).toContain('const guestAccess = route.app === "settings" && route.section === "access" && session.user.role === "guest";');
+    expect(app).toContain('useEffect(() => { if (guestAccess) go(settingsRoute("security"), { replace: true }); }, [go, guestAccess]);');
+    const team = read("team/TeamApp.tsx");
+    expect(team).toContain('export const ADMINS_ONLY_HINT = "That section is for admins";');
+    expect(team).toContain("flash(ADMINS_ONLY_HINT);\n    navigateRef.current({ app: \"team\", userId: null }, { replace: true });");
+  });
+
+  test("L6: a Google return to an integration's page shows its result there", () => {
+    const page = read("team/IntegrationPage.tsx");
+    expect(page).toContain("const result = googleIntegrationResultFor(integrationId);");
+    expect(page).toContain("notice={returned && <GoogleReturnNotice notice={returned} onDismiss={() => setReturned(null)} />}");
+    expect(read("auth/googleSignIn.tsx")).toContain("initialTeamPath.startsWith(`/settings/team/integrations/${integrationId}`)");
   });
 });

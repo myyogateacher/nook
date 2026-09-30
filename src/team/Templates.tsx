@@ -10,6 +10,7 @@ import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks";
 import "../keys/keys.css";
 import "../access/memberAccess.css";
+import { hubDocumentTitle } from "../router";
 
 /**
  * Team → Templates at /team/templates (Wave 33, access plan D286), admins only: a name, a team
@@ -44,7 +45,7 @@ export function Templates({ onBack, flash }: { onBack: () => void; flash: (messa
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { document.title = "Templates · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Templates"); }, []);
 
   return <article className="team-detail team-templates" aria-labelledby="team-templates-title">
     <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>

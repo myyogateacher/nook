@@ -4,7 +4,7 @@ import { ApiError } from "../api";
 import { readHistoryDepth } from "../appShellNavigation";
 import { formatBytes } from "../files/filesApi";
 import { relativeTime } from "../files/format";
-import type { Route } from "../router";
+import { hubDocumentTitle, type Route } from "../router";
 import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
 import { TeamGoogleCard } from "./TeamGoogle";
@@ -70,6 +70,9 @@ function viewOf(route: Extract<Route, { app: "team" }>): TeamView {
  */
 export const replacesInvitesRoute = (view: TeamView, role: Role) => (view.invites || view.email === true || view.keys === true || view.policies === true || view.groups === true
   || view.templates === true || view.activity === true || view.access === true || view.integrations === true) && !canManageTeam(role);
+
+/** QA Q7: the toast when an admin-only Team URL opens Members for someone else. */
+export const ADMINS_ONLY_HINT = "That section is for admins";
 
 const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object"
   ? (reason.payload as { code?: unknown }).code
@@ -199,8 +202,10 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
 
   useEffect(() => {
     if (!replacesInvitesRoute(view, role)) return;
+    // QA Q7: say why the screen is Members instead of the section the URL named.
+    flash(ADMINS_ONLY_HINT);
     navigateRef.current({ app: "team", userId: null }, { replace: true });
-  }, [role, view]);
+  }, [flash, role, view]);
 
   // The member on the URL. A missing one falls back to the list with a toast.
   useEffect(() => {
@@ -222,7 +227,7 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
 
   useEffect(() => {
     if (routeEmail || routeKeys || routePolicies || routeGroups || routeAccess || routeTemplates || routeActivity || routeIntegrations) return;
-    document.title = detail && routeUserId === detail.id ? `${detail.displayName} · Team · Nook` : routeInvites ? "Invites · Team · Nook" : "Members · Team · Nook";
+    document.title = hubDocumentTitle(detail && routeUserId === detail.id ? detail.displayName : routeInvites ? "Invites" : "Members");
   }, [detail, routeAccess, routeActivity, routeEmail, routeGroups, routeInvites, routeIntegrations, routeKeys, routePolicies, routeTemplates, routeUserId]);
 
   const back = useCallback(() => {
@@ -369,7 +374,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
   const keys = member.mcpKeys?.live ?? 0;
 
   return <article className="team-detail">
-    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
+    <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Members</button>
     <header className="team-detail-header">
       <Avatar className="team-avatar large" name={member.displayName} url={member.avatarUrl} />
       <div>

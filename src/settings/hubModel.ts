@@ -2,7 +2,7 @@
 // selects, and where the phone's back arrow goes. Pure, so it is unit tested directly.
 import { readHistoryDepth } from "../appShellNavigation";
 import type { Route, SettingsSection } from "../router";
-import { SETTINGS_SECTION_NAMES } from "../router";
+import { formatRoute, SETTINGS_SECTION_NAMES } from "../router";
 import { canManageTeam, canSeeTeam, type Role } from "../team/teamRoles";
 
 export type TeamEntryId = "members" | "invites" | "groups" | "integrations" | "keys" | "policies" | "templates" | "activity" | "email";
@@ -110,4 +110,34 @@ export const HUB_PUSHED_OVER_KEY = "mynotes.pushed-over";
 export function hubBackAction(state: unknown): "history" | "list" {
   const entry = state && typeof state === "object" ? state as Record<string, unknown> : null;
   return readHistoryDepth(entry) > 0 && entry?.[HUB_PUSHED_OVER_KEY] === "/settings" ? "history" : "list";
+}
+
+/**
+ * The route the hub shows after Back or Forward (review M2): the hub route on the URL, or null to
+ * keep the screen (not a hub route, or a Team entry while the role's Team group is hidden: the route
+ * gate skips that entry, D92, and the hub reads the URL again once that move settled).
+ */
+export function hubPopRoute(route: Route, teamShown: boolean): Route | null {
+  if (!isHubRoute(route)) return null;
+  if (route.app === "team" && !teamShown) return null;
+  return route;
+}
+
+/**
+ * The leave guard's wording for a browser move it undid (review L2): "section" when the move went to
+ * another hub screen, "leave" when it leaves Settings (another app, or off the landing entry's
+ * sentinel, where the URL still reads the page's own).
+ */
+export function leaveGuardAction(target: Route, current: Route): "section" | "leave" {
+  return isHubRoute(target) && formatRoute(target) !== formatRoute(current) ? "section" : "leave";
+}
+
+/**
+ * Phones (review L4/Q1): a hub section opened from outside the hub (the Team button, "Turn on in
+ * Settings", a notification, a deep link) gets the section list pushed under it first, so browser
+ * Back and the section's back arrow agree (both return to the list, then to where Settings was
+ * opened) and Forward reopens the section. One extra entry per visit, none within the hub.
+ */
+export function hubListGoesUnder(target: Route, current: Route, mobile: boolean) {
+  return mobile && isHubRoute(target) && !(target.app === "settings" && target.section === null) && !isHubRoute(current);
 }

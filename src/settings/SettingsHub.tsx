@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Bell, Bot, ChevronLeft, ChevronRight, History, House, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Sparkles, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { AppPageName } from "../AppShell";
+import { isMobileViewport } from "../mobileNavigation";
 import { Avatar } from "../ui/Avatar";
 import { ROLE_LABELS, type Role } from "../team/teamRoles";
 import type { HubEntry, HubEntryId } from "./hubModel";
@@ -31,6 +32,8 @@ type HubShellProps = {
   /** True on the bare /settings: phones show the section list, not a section. */
   listScreen: boolean;
   title: string;
+  /** The screen on show (its URL): when it changes, focus moves to the section's heading (Q4). */
+  screenKey?: string;
   /** Phones: the section's back arrow to the list; hidden on a page below a section (it has its own). */
   showBack: boolean;
   onBack: () => void;
@@ -47,7 +50,18 @@ type HubShellProps = {
  * nav is the first screen (/settings) and a section opens as a screen of its own with a back arrow;
  * both are history entries, so browser Back returns to the list, then to where Settings was opened.
  */
-export function SettingsHubShell({ displayName, avatarUrl, role, entries, selected, listScreen, title, showBack, onBack, onSelect, onHome, account, children }: HubShellProps) {
+export function SettingsHubShell({ displayName, avatarUrl, role, entries, selected, listScreen, title, screenKey = "", showBack, onBack, onSelect, onHome, account, children }: HubShellProps) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Q4: after a move, focus goes to the section's heading when it was lost (the control that moved
+  // is gone: "Turn on in Settings", Home's Settings button) or, on a phone, sat in the list that is
+  // now hidden. A section that placed focus itself (the module row asked for) keeps it.
+  useEffect(() => {
+    if (listScreen) return;
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected;
+    const inSection = active instanceof Element && active.closest(".settings-hub-main") !== null;
+    if (lost || (isMobileViewport() && !inSection)) headingRef.current?.focus({ preventScroll: true });
+  }, [listScreen, screenKey]);
   const roleLabel = role ? ROLE_LABELS[role] : null;
   const groups = [
     { id: "account", label: "Account", items: entries.filter((entry) => entry.group === "account") },
@@ -86,7 +100,7 @@ export function SettingsHubShell({ displayName, avatarUrl, role, entries, select
           <Avatar className="app-user-avatar settings-avatar" name={displayName} url={avatarUrl} />
           <div className="settings-hub-heading">
             <span className="eyebrow">{displayName}{roleLabel ? ` · ${roleLabel}` : ""}</span>
-            <h1 id="settings-hub-title">{title}</h1>
+            <h1 id="settings-hub-title" ref={headingRef} tabIndex={-1}>{title}</h1>
           </div>
         </header>
         {children}

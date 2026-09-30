@@ -31,7 +31,7 @@ test("Calendar, which has no other h1, names the page with an h1 in the header; 
   }
   // Wave 37: Team lives in the Settings hub, whose section header carries the page's h1.
   const hub = await Bun.file(join(root, "settings/SettingsHub.tsx")).text();
-  expect(hub).toContain('<h1 id="settings-hub-title">{title}</h1>');
+  expect(hub).toContain('<h1 id="settings-hub-title" ref={headingRef} tabIndex={-1}>{title}</h1>');
   expect(hub).not.toContain('className="app-page-title"');
 });
 

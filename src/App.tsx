@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bot,
@@ -48,7 +48,8 @@ const VaultApp = lazy(() => import("./vault/VaultApp").then((module) => ({ defau
 import { lineDiff } from "./diff/lineDiff";
 import { TeamSection } from "./team/TeamApp";
 import { SettingsHubShell } from "./settings/SettingsHub";
-import { hubBackAction, hubEntries, hubEntryLabel, hubEntryOf, isHubRoute, isNestedHubRoute, settingsRoute, type HubEntry, type HubEntryId } from "./settings/hubModel";
+import { hubBackAction, hubEntries, hubEntryLabel, hubEntryOf, hubListGoesUnder, hubPopRoute, isHubRoute, isNestedHubRoute, leaveGuardAction, settingsRoute, teamGroupShown, type HubEntry, type HubEntryId } from "./settings/hubModel";
+import { HubBeforeLeaveContext, type BeforeHubLeave } from "./settings/hubLeave";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
 import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
@@ -334,6 +335,9 @@ type SettingsPageProps = {
   onSignOut: () => void;
   onSecurityChanged: (state: TotpState) => void;
   teamModuleEnabled: boolean;
+  /** "Turn on in Settings" (Q5): the module row Settings → Modules scrolls to and highlights once. */
+  highlightModule?: ModuleId | null;
+  onHighlightDone?: () => void;
 };
 
 /** The hub route on the URL: an account section, the list, or a Team section. */
@@ -348,11 +352,13 @@ function hubRouteFromLocation(): Route {
  * history entry, so Back returns through the sections to where Settings was opened. The account
  * sections are the ones the dialog had; Team (for the roles that see it) is TeamSection in the hub.
  */
-function SettingsPage({ session, modules, googleResult = null, navigate, flash, onHome, onBin, onSignOut, onSecurityChanged, teamModuleEnabled }: SettingsPageProps) {
+function SettingsPage({ session, modules, googleResult = null, navigate, flash, onHome, onBin, onSignOut, onSecurityChanged, teamModuleEnabled, highlightModule = null, onHighlightDone }: SettingsPageProps) {
   const setupRequired = session.totp.setupRequired;
   const [locationRoute, setLocationRoute] = useState<Route>(hubRouteFromLocation);
   // Two-factor setup first: Security is the only screen, whatever the URL says.
   const route: Route = setupRequired ? settingsRoute("security") : locationRoute;
+  const routeRef = useRef(route);
+  routeRef.current = route;
   // Wave 35: how this account signs in and re-authenticates (password, Google, or neither).
   const { account, reload: reloadAccount } = useAccountAuthLoader();
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
@@ -382,6 +388,13 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   const onIntegrationKeyPending = useCallback((value: boolean) => { pendingRef.current.integration = value; setIntegrationKeyPending(value); }, []);
   const onMcpKeyPending = useCallback((value: boolean) => { pendingRef.current.mcp = value; setMcpKeyPending(value); }, []);
   const confirmFor = (action: "section" | "leave") => unsavedKeyConfirm(pendingRef.current.integration ? "integration" : action);
+  // Review L1: the section on screen may hold something else a move would lose (Team → Policies with
+  // unsaved changes); its hook asks first, then the key check below runs.
+  const beforeLeaveRef = useRef<BeforeHubLeave | null>(null);
+  const registerBeforeLeave = useCallback((hook: BeforeHubLeave) => {
+    beforeLeaveRef.current = hook;
+    return () => { if (beforeLeaveRef.current === hook) beforeLeaveRef.current = null; };
+  }, []);
   // A move asked about and confirmed runs once the key no longer holds the page (its guard is gone).
   const afterRelease = useRef<{ direction: PopDirection } | { leave: () => void } | null>(null);
   const release = () => {
@@ -391,16 +404,20 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   };
   /** Runs `leave` now, or once the person chose to leave a key shown only once behind. */
   const guardLeave = useCallback((leave: () => void, action: "section" | "leave" = "leave") => {
-    if (!pendingRef.current.mcp && !pendingRef.current.integration) return leave();
-    void ask(confirmFor(action)).then((confirmed) => {
-      if (!confirmed || (!pendingRef.current.mcp && !pendingRef.current.integration)) return;
-      afterRelease.current = { leave };
-      release();
-    });
+    const keyGuarded = () => {
+      if (!pendingRef.current.mcp && !pendingRef.current.integration) return leave();
+      void ask(confirmFor(action)).then((confirmed) => {
+        if (!confirmed || (!pendingRef.current.mcp && !pendingRef.current.integration)) return;
+        afterRelease.current = { leave };
+        release();
+      });
+    };
+    if (beforeLeaveRef.current?.(keyGuarded)) return;
+    keyGuarded();
   }, [ask]);
   // Browser Back or Forward with a key on screen: undone, then asked; leaving repeats the move.
   useLeaveGuard(pending && !confirmOpen, (direction) => {
-    void ask(confirmFor(isHubRoute(routeFromLocation(window.location)) ? "section" : "leave")).then((confirmed) => {
+    void ask(confirmFor(leaveGuardAction(routeFromLocation(window.location), routeRef.current))).then((confirmed) => {
       if (!confirmed || (!pendingRef.current.mcp && !pendingRef.current.integration)) return;
       afterRelease.current = { direction };
       release();
@@ -416,15 +433,24 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     return () => { clearTimeout(timer); cancel(); };
   }, [pending]);
 
-  // Back and Forward between the hub's entries (a dialog open at the time only closes).
+  // Back and Forward between the hub's entries (a dialog open at the time only closes). Review M2: a
+  // move that was undone (a dialog's, a leave guard's, or the route gate's skip of a Team entry whose
+  // module is off, D92) is read again once it settled, so the screen always follows the URL.
+  const teamShownRef = useRef(teamGroupShown(session.user.role, teamModuleEnabled));
+  teamShownRef.current = teamGroupShown(session.user.role, teamModuleEnabled);
   useEffect(() => {
+    let cancel = () => undefined as void;
+    const follow = () => {
+      const next = hubPopRoute(routeFromLocation(window.location), teamShownRef.current);
+      if (next) setLocationRoute((current) => formatRoute(current) === formatRoute(next) ? current : next);
+    };
     const onPopState = (event: PopStateEvent) => {
-      if (popStateClosedDialog(event)) return;
-      const next = routeFromLocation(window.location);
-      if (isHubRoute(next)) setLocationRoute(next);
+      cancel();
+      if (popStateClosedDialog(event)) { cancel = whenHistorySettled(follow); return; }
+      follow();
     };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    return () => { cancel(); window.removeEventListener("popstate", onPopState); };
   }, []);
 
   const go = useCallback((next: Route, options: { replace?: boolean } = {}) => {
@@ -440,8 +466,11 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   const entries = useMemo(() => hubEntries(session.user.role, { teamModuleEnabled, setupRequired }), [session.user.role, setupRequired, teamModuleEnabled]);
   const listScreen = route.app === "settings" && route.section === null;
-  const section: SettingsSection | null = route.app === "settings" ? route.section ?? "security" : null;
-  const selected: HubEntryId = hubEntryOf(route) ?? "security";
+  // Q6: guests have no My access; its URL opens Security (replaced below).
+  const guestAccess = route.app === "settings" && route.section === "access" && session.user.role === "guest";
+  const section: SettingsSection | null = route.app === "settings" ? guestAccess ? "security" : route.section ?? "security" : null;
+  const selected: HubEntryId = guestAccess ? "security" : hubEntryOf(route) ?? "security";
+  useEffect(() => { if (guestAccess) go(settingsRoute("security"), { replace: true }); }, [go, guestAccess]);
   const title = route.app === "team" ? hubEntryLabel(selected) : SETTINGS_SECTION_NAMES[section ?? "security"];
 
   // "Settings · Notifications · Nook"; Team's sections name themselves.
@@ -595,9 +624,9 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   const content = route.app === "team"
     ? <TeamSection route={route} role={session.user.role ?? "member"} totpEnabled={state.enabled} navigate={go} flash={flash} onLeave={() => go(settingsRoute(null), { replace: true })} guardLeave={guardLeave} onKeyPendingChange={onIntegrationKeyPending} />
-    : section === "modules" ? <ModulesSettings {...modules} />
+    : section === "modules" ? <ModulesSettings {...modules} highlight={highlightModule} onHighlightDone={onHighlightDone} />
     : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={onMcpKeyPending} totpEnabled={state.enabled} role={session.user.role} />
-    : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>)
+    : section === "access" ? <MyAccess />
     : section === "notifications" ? <NotificationSettings />
     : section === "about" ? <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>
     : securitySection;
@@ -606,9 +635,16 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   const accountActions = setupRequired
     ? <div className="app-account" role="group" aria-label="Account"><button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button></div>
     : <AccountActions displayName={session.user.displayName} onSignOut={() => guardLeave(onSignOut)} onBin={onBin ? () => guardLeave(onBin) : undefined} binCount={binCount} />;
+  // Review M1: the header's Inbox button and the bell's items come from app-wide contexts; inside the
+  // hub they go through the same leave guard as Home, Bin, and Sign out.
+  const inboxNav = useContext(InboxNavContext);
+  const notificationsNav = useContext(NotificationsContext);
+  const hubInboxNav = useMemo(() => inboxNav && { ...inboxNav, openInbox: () => guardLeave(inboxNav.openInbox) }, [guardLeave, inboxNav]);
+  const hubNotificationsNav = useMemo(() => notificationsNav && { openList: () => guardLeave(notificationsNav.openList), openPath: (path: string) => guardLeave(() => notificationsNav.openPath(path)) }, [guardLeave, notificationsNav]);
 
   return (
     <AccountAuthContext.Provider value={account}>
+    <InboxNavContext.Provider value={hubInboxNav}><NotificationsContext.Provider value={hubNotificationsNav}><HubBeforeLeaveContext.Provider value={registerBeforeLeave}>
     <SettingsHubShell
       displayName={session.user.displayName}
       avatarUrl={session.user.avatarUrl}
@@ -617,12 +653,14 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
       selected={selected}
       listScreen={listScreen && !setupRequired}
       title={title}
+      screenKey={formatRoute(route)}
       showBack={!setupRequired && !isNestedHubRoute(route)}
       onBack={() => guardLeave(backToList, "section")}
       onSelect={selectEntry}
       onHome={onHome ? () => guardLeave(onHome) : undefined}
       account={accountActions}
     >{content}</SettingsHubShell>
+    </HubBeforeLeaveContext.Provider></NotificationsContext.Provider></InboxNavContext.Provider>
     {confirmElement}
     {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
     </AccountAuthContext.Provider>
@@ -790,7 +828,13 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const state = historyStateFor(userId, route, panel, filesPanel, search);
   // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
   if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location), [PUSHED_OVER_CHAIN_KEY]: pushedOverChain(current, locationUrl(window.location)) }, depth + 1), "", url);
-  else window.history.replaceState(withHistoryDepth(state, depth), "", url);
+  else {
+    // A hub screen replaced in place (a redirect, an alias) keeps the URL it was pushed over, so the
+    // phone's back arrow still knows the section list is below it.
+    const below = isHubRoute(route) && current && typeof current === "object" ? current as Record<string, unknown> : null;
+    const kept = below && typeof below[PUSHED_OVER_KEY] === "string" ? { [PUSHED_OVER_KEY]: below[PUSHED_OVER_KEY], [PUSHED_OVER_CHAIN_KEY]: below[PUSHED_OVER_CHAIN_KEY] } : {};
+    window.history.replaceState(withHistoryDepth({ ...state, ...kept }, depth), "", url);
+  }
 }
 
 export function App() {
@@ -875,6 +919,8 @@ export function App() {
   const teamGateOpen = activeApp === "team" && canManageTeam(session?.user.role);
   // The module whose route was just replaced with Home, for the one-line hint (D92).
   const [moduleHint, setModuleHint] = useState<ModuleId | null>(null);
+  // Q5: the module "Turn on in Settings" opened Settings → Modules for, scrolled to and highlighted once.
+  const [highlightModule, setHighlightModule] = useState<ModuleId | null>(null);
   const leavingHiddenModuleRef = useRef(false);
   const hiddenLeaveFailedRef = useRef<string | null>(null);
   // The depth of the entry on screen, so a popstate can tell Back from Forward (route gate, D92).
@@ -1014,7 +1060,13 @@ export function App() {
         setMobilePanel(panel);
         setActiveApp(route.app);
         const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
-        writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
+        if (isHubRoute(target) && readHistoryDepth(window.history.state) === 0) {
+          // Review L5 (as Wave 28 did): a Settings deep link the page loaded on gets Home underneath,
+          // so Back from Settings goes Home instead of leaving Nook (phones: the list, then Home).
+          writeHistory(userId, { app: "home" }, panel, "replace");
+          if (hubListGoesUnder(target, { app: "home" }, isMobileViewport())) writeHistory(userId, settingsRoute(null), panel, "push");
+          writeHistory(userId, target, panel, "push");
+        } else writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
         historyDepthRef.current = readHistoryDepth(window.history.state);
       }).catch((reason) => {
         if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
@@ -1176,6 +1228,8 @@ export function App() {
       removedStepBackRef.current = formatRoute(route);
       return;
     }
+    // Phones (review L4): a hub section opened from outside the hub gets the section list under it.
+    if (!options.replace && hubListGoesUnder(route, routeFromLocation(window.location), isMobileViewport())) writeHistory(session.user.id, settingsRoute(null), options.panel ?? mobilePanel, "push");
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
@@ -2009,7 +2063,7 @@ export function App() {
   };
   const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{unavailable.includes(moduleHint) ? "The vault is not available on this server." : moduleOffHint(moduleHint)}</p>
-    {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
+    {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setHighlightModule(moduleHint); setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
   </div>}</>;
   const openBin = binEnabled ? () => { void openApp("bin"); } : undefined;
@@ -2043,6 +2097,8 @@ export function App() {
     onSignOut={signOut}
     onSecurityChanged={securityChanged}
     teamModuleEnabled={isModuleEnabled(disabledModules, "team")}
+    highlightModule={highlightModule}
+    onHighlightDone={() => setHighlightModule(null)}
   />;
 
   // While two-factor setup is required, Settings → Security is the only screen.

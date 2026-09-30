@@ -254,7 +254,8 @@ describe("end-user QA fixes (U1–U11)", () => {
     const keys = readFileSync(join(src, "keys", "KeysSettings.tsx"), "utf8");
     expect(keys).toContain("|| needsGoogle}><Plus");
     expect(keys).toContain("onRotate={needsGoogle ? undefined");
-    expect(keys).toContain('returnTo="/settings/keys" startable={false}');
+    expect(keys).toContain('returnTo={keysApi.returnTo} startable={false}');
+    expect(readFileSync(join(src, "keys", "keysApi.ts"), "utf8")).toContain('returnTo: "/settings/keys"');
     const account: AccountAuth = { methods: { password: true, google: true }, hasPassword: false, google: { email: "g@nook.test" }, reauth: "google", reauthUntil: null, passwordReset: true };
     expect(renderToStaticMarkup(<GoogleReauthNotice account={account} returnTo="/" startable={false} />)).not.toContain("href=");
   });

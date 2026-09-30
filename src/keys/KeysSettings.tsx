@@ -8,7 +8,7 @@ import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
-  allowlistLines, expiryChoices, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
+  blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
 import { createKey, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyList, type NarrowBody } from "./keysApi";
@@ -151,7 +151,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     <HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>
     {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
-    {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
+    {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
     {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id)); setStatus(`${dialog.key.name} was revoked.`); }} />}
     {dialog?.kind === "review" && <McpBinnedReview keyId={dialog.key.id} keyName={dialog.key.name} onClose={() => closeDialogAfterReload(dialog.key.id)} onRevoke={() => setDialog({ kind: "revoke", key: dialog.key })} />}
     </HistoryDialogReopen.Provider>
@@ -174,13 +174,25 @@ export function surfaceChoices(policy: Pick<PolicySummary, "mcpAllowed" | "restA
  * The optional address limit (D284). Offered only where the server can see client addresses
  * (TRUSTED_PROXY_HOPS set by the operator, O-A7); otherwise one line says why it is not offered.
  */
-function AllowlistField({ available, value, onChange, disabled, narrowing = false }: { available: boolean; value: string; onChange: (value: string) => void; disabled: boolean; narrowing?: boolean }) {
+function AllowlistField({ available, pinned, value, onChange, disabled, mode = "create" }: { available: boolean; pinned?: boolean; value: string; onChange: (value: string) => void; disabled: boolean; mode?: "create" | "narrow" | "rotate" }) {
   if (!available) return <p className="keys-allowlist-off" role="note">Limiting a key to IP addresses is off on this server: it only works when your admin has told Nook how many proxies sit in front of it (TRUSTED_PROXY_HOPS).</p>;
+  const checked = checkAllowlist(value);
+  const help = mode === "narrow" ? "One address or range per line. You can only tighten this list here. Rotate the key to change this."
+    : mode === "rotate" ? "One address or range per line, up to 10. The new key uses this list; leave it empty to allow any address."
+    : "One IPv4 or IPv6 address or CIDR range per line, up to 10. Leave empty to allow any address. Adding a limit later narrows the key; widening or removing it needs a rotation.";
   return <label className="keys-input">Allowed addresses (optional)
-    <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} placeholder={"203.0.113.10\n198.51.100.0/24"} disabled={disabled} spellCheck={false} autoComplete="off" />
-    <small>{narrowing ? "One address or range per line. You can only tighten this list here; to widen it, rotate the key or create a new one." : "One IPv4 or IPv6 address or CIDR range per line, up to 10. Leave empty to allow any address. Adding a limit later narrows the key; removing it needs a new key."}</small>
+    <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} placeholder={"203.0.113.10\n198.51.100.0/24"} disabled={disabled} spellCheck={false} autoComplete="off"
+      aria-invalid={checked.error ? true : undefined} className={checked.error ? "invalid" : undefined} />
+    {checked.error && <small className="keys-field-error" role="alert">{checked.error}</small>}
+    {!checked.error && checked.changed.length > 0 && <small className="keys-field-note">Saved as: {checked.changed.join(", ")}</small>}
+    <small>{help}</small>
+    {/* Review S1: without TRUSTED_PROXY_ADDRESSES, anyone who reaches Nook's port directly could claim an address. */}
+    {!pinned && <small className="keys-field-note">This only holds while Nook's port can be reached through your reverse proxy alone.</small>}
   </label>;
 }
+
+/** Review S7: the per-minute limits are per surface. */
+export const PER_SURFACE_LIMITS = "Limits apply per surface: a key used over both MCP and REST gets each minute's calls and writes on each.";
 
 /** The REST help's example (Wave 34): a tool call with a placeholder key, never a real one. */
 export function restCurlExample(origin: string) {
@@ -240,11 +252,18 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
       {owner && <small className="keys-row-owner">{owner}</small>}
       <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {lastUsedLine(apiKey, relativeTime)}</small>
       {apiKey.ipAllowlist && <small className="keys-row-description">Only from {apiKey.ipAllowlist.join(", ")}</small>}
+      {blockedSurfaceLine(apiKey) && <small className="keys-row-warning">{blockedSurfaceLine(apiKey)}</small>}
+      {deniedLine(apiKey, relativeTime) && <small className="keys-row-warning">{deniedLine(apiKey, relativeTime)}</small>}
       {apiKey.description && <small className="keys-row-description">{apiKey.description}</small>}
       <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{grantChips(apiKey.grants).map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}</ul>
       {apiKey.state === "blocked" && (apiKey.blockedBy === "expiry_required" || apiKey.blockedMessage) && <small className="keys-row-warning">{blockedLine(apiKey)}</small>}
       {apiKey.state === "revoked" && apiKey.revokedBy === "admin" && <small className="keys-row-warning">An admin revoked this key{apiKey.revokeReason ? `: “${apiKey.revokeReason}”` : "."}</small>}
-      {apiKey.state !== "revoked" && <div className="keys-row-usage"><UsageBars usage={apiKey.usage14d} /><small>{usageLabel(apiKey.usage14d)}</small></div>}
+      {apiKey.state !== "revoked" && apiKey.surfaces !== "both" && <div className="keys-row-usage"><UsageBars usage={apiKey.usage14d} /><small>{usageLabel(apiKey.usage14d)}</small></div>}
+      {/* Review Q12: a key on both surfaces shows its calls per surface per day. */}
+      {apiKey.state !== "revoked" && apiKey.surfaces === "both" && (["mcp", "rest"] as const).map((surface) => {
+        const daily = apiKey.usageBySurface14d?.daily?.[surface] ?? [];
+        return <div key={surface} className="keys-row-usage"><UsageBars usage={daily} /><small>{surface === "mcp" ? "MCP" : "REST"}: {usageLabel(daily).replace("No calls", "no calls")}</small></div>;
+      })}
       {binned && onReview && <small className="mcp-key-binned">{binned} · <button type="button" className="text-button" onClick={onReview}>Review</button></small>}
     </div>
     {(onRotate || onEdit || onRevoke) && <div className="keys-row-actions">
@@ -287,7 +306,12 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     setBusy(true);
     setError("");
     try {
-      const ipAllowlist = allowlistLines(allowlist);
+      const checked = checkAllowlist(allowlist);
+      if (checked.error) {
+        setBusy(false);
+        return setError(`Allowed addresses: ${checked.error}`);
+      }
+      const ipAllowlist = checked.canonical;
       const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
@@ -300,10 +324,10 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     <form className="keys-form" onSubmit={submit}>
       <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="Claude Code on my laptop" required disabled={busy} autoComplete="off" /></label>
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} placeholder="What it is for" disabled={busy} autoComplete="off" /></label>
-      <div className="keys-select-field"><span id="keys-surface-label">Where it is used</span><Select<KeySurfaces> labelledBy="keys-surface-label" label="Where it is used" value={surfaces} options={surfaceOptions} onChange={setSurfaces} disabled={busy} /></div>
+      <div className="keys-select-field"><span id="keys-surface-label">Where it is used</span><Select<KeySurfaces> labelledBy="keys-surface-label" label="Where it is used" value={surfaces} options={surfaceOptions} onChange={setSurfaces} disabled={busy} />{surfaces === "both" && <small>{PER_SURFACE_LIMITS}</small>}</div>
       <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
       <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
-      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} value={allowlist} onChange={setAllowlist} disabled={busy} />
+      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} />
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
@@ -359,9 +383,11 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
     const same = JSON.stringify(rowsToGrants(ceiling).grants) === JSON.stringify(grants);
     if (!same) body.grants = grants;
     // Adding or tightening an address limit narrows the key (D278); the server refuses widening.
-    const nextAllowlist = allowlistLines(allowlist);
+    const checkedList = checkAllowlist(allowlist);
+    if (checkedList.error) return setError(`Allowed addresses: ${checkedList.error}`);
+    const nextAllowlist = checkedList.canonical;
     if (nextAllowlist.length && nextAllowlist.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) body.ipAllowlist = nextAllowlist;
-    if (!nextAllowlist.length && apiKey.ipAllowlist?.length) return setError("Removing the address limit widens the key. Rotate it or create a new key instead.");
+    if (!nextAllowlist.length && apiKey.ipAllowlist?.length) return setError("Removing the address limit widens the key. Rotate the key to change this.");
     if (!Object.keys(body).length) return onClose();
     setBusy(true);
     setError("");
@@ -375,14 +401,14 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   }
 
   const hasSelectors = ceiling.some((row) => SELECTOR_KINDS[row.module]);
-  return <KeysDialog title={`Edit ${apiKey.name}`} description={`Editing can only remove access, bring the expiry closer, or rename. To add access, create a new key.${hasSelectors ? " You can narrow “all” to chosen items." : ""}`} onClose={onClose} busy={busy} wide>
+  return <KeysDialog title={`Edit ${apiKey.name}`} description={`Editing can only remove access, bring the expiry closer, or rename. Rotate the key to add access, surfaces, or addresses.${hasSelectors ? " You can narrow “all” to chosen items." : ""}`} onClose={onClose} busy={busy} wide>
     <form className="keys-form" onSubmit={submit}>
       <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required disabled={busy} autoComplete="off" /></label>
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} disabled={busy} autoComplete="off" /></label>
       {apiKey.surfaces === "both" && <div className="keys-select-field"><span id="keys-edit-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-edit-surface" label="Where it is used" value={surfaces} options={surfaceChoices} onChange={setSurfaces} disabled={busy} /></div>}
       <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} ceiling={ceiling} /></fieldset>
       <div className="keys-select-field"><span id="keys-edit-expiry">Expiry</span><Select labelledBy="keys-edit-expiry" label="Expiry" value={expires} options={expiryChoices} onChange={setExpires} disabled={busy} /></div>
-      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} value={allowlist} onChange={setAllowlist} disabled={busy} narrowing={Boolean(apiKey.ipAllowlist?.length)} />
+      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode={apiKey.ipAllowlist?.length ? "narrow" : "create"} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
@@ -392,9 +418,17 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   </KeysDialog>;
 }
 
-function RotateKeyDialog({ apiKey, policy, totpEnabled, onClose, onRotated }: { apiKey: ApiKey; policy: PolicySummary; totpEnabled: boolean; onClose: () => void; onRotated: (key: ApiKey & { token: string }) => void }) {
+/**
+ * Rotate (D277, review Q2): a new secret after re-authentication. Because it re-authenticates, it may
+ * also change what the new key can do, widening included: access, where it is used, and addresses.
+ */
+function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated }: { apiKey: ApiKey; policy: PolicySummary; role: string | undefined; totpEnabled: boolean; onClose: () => void; onRotated: (key: ApiKey & { token: string }) => void }) {
   const [grace, setGrace] = useState<string>("24");
   const [expires, setExpires] = useState(() => rotationExpiryDefault(apiKey, policy));
+  const original = useMemo(() => keyToRows(apiKey), [apiKey]);
+  const [rows, setRows] = useState<GrantRow[]>(original);
+  const [surfaces, setSurfaces] = useState<KeySurfaces>(apiKey.surfaces);
+  const [allowlist, setAllowlist] = useState((apiKey.ipAllowlist ?? []).join("\n"));
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -402,10 +436,18 @@ function RotateKeyDialog({ apiKey, policy, totpEnabled, onClose, onRotated }: { 
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const { grants, error: grantError } = rowsToGrants(rows);
+    if (grantError) return setError(grantError);
+    const checked = checkAllowlist(allowlist);
+    if (checked.error) return setError(`Allowed addresses: ${checked.error}`);
+    const changes: Parameters<typeof rotateKey>[1] = { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires) };
+    if (JSON.stringify(rowsToGrants(original).grants) !== JSON.stringify(grants)) changes.grants = grants;
+    if (surfaces !== apiKey.surfaces) changes.surfaces = surfaces;
+    if (checked.canonical.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) changes.ipAllowlist = checked.canonical.length ? checked.canonical : null;
     setBusy(true);
     setError("");
     try {
-      const result = await rotateKey(apiKey.id, { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await rotateKey(apiKey.id, { ...changes, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onRotated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not rotate the key"));
@@ -413,8 +455,11 @@ function RotateKeyDialog({ apiKey, policy, totpEnabled, onClose, onRotated }: { 
     }
   }
 
-  return <KeysDialog title={`Rotate ${apiKey.name}?`} description="You get a new secret with the same permissions and a fresh lifetime. Routines that use this key move to the new one. Update your clients before the old key stops." onClose={onClose} busy={busy}>
+  return <KeysDialog title={`Rotate ${apiKey.name}?`} description="You get a new secret and a fresh lifetime. You may also change what the new key can do, including adding access, surfaces, or addresses. Routines that use this key move to the new one. Update your clients before the old key stops." onClose={onClose} busy={busy} wide>
     <form className="keys-form" onSubmit={submit}>
+      <div className="keys-select-field"><span id="keys-rotate-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-rotate-surface" label="Where it is used" value={surfaces} options={surfaceChoices(policy)} onChange={setSurfaces} disabled={busy} /></div>
+      <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
+      <AllowlistField available={Boolean(policy.ipAllowlistAvailable) || Boolean(apiKey.ipAllowlist?.length)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode="rotate" />
       <div className="keys-select-field"><span id="keys-grace-label">Old key</span><Select labelledBy="keys-grace-label" label="Old key" value={grace} options={GRACE_OPTIONS.map((option) => ({ ...option }))} onChange={setGrace} disabled={busy} /></div>
       <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />

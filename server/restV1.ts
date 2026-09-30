@@ -131,7 +131,8 @@ function presentMe(auth: Authenticated) {
     limits: {
       perKey: { callsPerMinute: own.callsPerMinute ?? MCP_LIMITS.call.limit, writesPerMinute: own.writesPerMinute ?? MCP_LIMITS.write.limit },
       perUser: { callsPerMinute: MCP_USER_LIMITS.call!.limit, writesPerMinute: MCP_USER_LIMITS.write!.limit },
-      note: "Per-minute limits apply per surface (MCP and REST separately); daily limits are shared."
+      perSurface: true,
+      note: "Per-minute limits apply per surface: a key used over both MCP and REST gets these limits on each. Daily limits are shared."
     }
   };
 }
@@ -174,7 +175,7 @@ async function handle(c: Context<AppEnv>): Promise<Response> {
   const url = new URL(c.req.url);
   if (keyInUrl(url)) {
     // Refused before anything else, and never logged: the key may now be in proxy logs, so say so.
-    return refuse(400, "Send the API key only in the Authorization header, never in the URL. Revoke this key: it may now be in logs.", "KEY_IN_URL");
+    return refuse(400, "Send API keys only in the Authorization header, never in the URL. If this was a real key, revoke it: it may now be in logs.", "KEY_IN_URL");
   }
   const path = url.pathname.replace(/\/+$/, "");
   const method = c.req.method;

@@ -54,7 +54,8 @@ describe("Team MCP", () => {
 
   test("the tools list members without emails, and a demoted admin's key loses them on the next call", async () => {
     const admin = await user("MCP admin", "admin");
-    const target = await user("MCP target");
+    // Sorted first among members, so it stays inside the 500-row team list however many accounts the run made.
+    const target = await user("0 MCP target");
     const key = createMcpApiKey(admin.userId, "Team key", ["team:read", "notes:read"]);
     expect(await toolNames(key.token)).toEqual(expect.arrayContaining(["list_team_members", "get_team_member", "list_notes"]));
 

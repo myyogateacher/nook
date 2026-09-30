@@ -12,7 +12,8 @@ export type ApiKey = {
   grants: KeyGrantView[]; scopes: McpScope[]; effectiveScopes: McpScope[];
   limits: { callsPerMinute?: number; writesPerMinute?: number }; usage14d: number[]; binnedToday?: number;
   /** Wave 34: last use and 14-day calls per surface; the address limit (its list only for the owner). */
-  lastUsed?: { mcp: string | null; rest: string | null }; usageBySurface14d?: { mcp: number; rest: number };
+  lastUsed?: { mcp: string | null; rest: string | null }; usageBySurface14d?: { mcp: number; rest: number; daily?: { mcp: number[]; rest: number[] } };
+  lastDenied?: { at: string; reason: string; surface: "mcp" | "rest" | null } | null; blockedSurfaces?: Array<"mcp" | "rest">;
   ipRestricted?: boolean; ipAllowlist?: string[];
   /** Pending Inbox suggestions from this key (GET /api/keys only). */
   pendingProposals?: number;
@@ -32,7 +33,7 @@ export type NarrowBody = { name?: string; description?: string | null; surfaces?
 export const narrowKey = (id: string, body: NarrowBody) =>
   api<{ changed: string[]; key: ApiKey }>(`/keys/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 
-export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168; expiresInDays?: number | null } & Reauth) =>
+export const rotateKey = (id: string, body: { graceHours: 0 | 1 | 24 | 168; expiresInDays?: number | null; grants?: GrantPayload[]; surfaces?: KeySurfaces; ipAllowlist?: string[] | null } & Reauth) =>
   api<{ key: ApiKey & { token: string }; oldKey: ApiKey }>(`/keys/${id}/rotate`, { method: "POST", body: JSON.stringify(body) });
 
 export const revokeKey = (id: string) => api<{ ok: true }>(`/keys/${id}`, { method: "DELETE", body: "{}" });
@@ -57,7 +58,8 @@ export async function loadResources(module: GrantModule): Promise<ResourceOption
     ]);
     return [
       ...boards.map((board) => ({ value: resourceToken("board", board.id), label: board.name, description: withKind("board", ownerNote(board)), writable: true })),
-      ...[...views.mine, ...views.shared, ...views.everyone].map((view, index) => ({ value: resourceToken("task_view", view.id), label: view.name, description: withKind("task_view", index < views.mine.length ? "read only" : `Owned by ${view.owner_name}, read only`), writable: false, readOnly: true }))
+      // Review S2: only your own views; someone else's view would follow their later edits.
+      ...views.mine.map((view) => ({ value: resourceToken("task_view", view.id), label: view.name, description: withKind("task_view", "read only"), writable: false, readOnly: true }))
     ];
   }
   if (module === "notes") {
@@ -103,7 +105,7 @@ export async function loadResources(module: GrantModule): Promise<ResourceOption
 // ---------------------------------------------------------------- Team (admins)
 
 export type InventoryKey = ApiKey & { owner: { id: string; displayName: string; role: string; blocked: boolean } };
-export type Inventory = { keys: InventoryKey[]; nextCursor: string | null; summary: { live: number; noExpiry: number } };
+export type Inventory = { keys: InventoryKey[]; nextCursor: string | null; summary: { live: number; noExpiry: number; matching?: number } };
 export type InventoryState = "active" | "expiring" | "no_expiry" | "blocked" | "grace" | "unused" | "expired";
 
 export function listInventory(filter: { owner?: string; module?: GrantModule; state?: InventoryState; cursor?: string; surface?: "mcp" | "rest"; ipRestricted?: "true" | "false" }) {
@@ -121,7 +123,7 @@ export type Policies = {
   mcpRoles: Array<"admin" | "member" | "viewer">; restRoles: Array<"admin" | "member" | "viewer">;
   groupsMemberCreate: boolean; shareWithGuests: boolean;
 };
-export type PolicyImpact = { liveKeys: number; blocked: number; newlyBlocked: number; narrowed: number };
+export type PolicyImpact = { liveKeys: number; blocked: number; newlyBlocked: number; narrowed: number; lostSurface?: number; lostModule?: number };
 export type PolicyState = { policies: Policies; defaults: Policies; revision: number; updatedAt: string | null; updatedBy: { id: string; displayName: string } | null; impact: PolicyImpact };
 
 export const getPolicies = () => api<PolicyState>("/team/policies");

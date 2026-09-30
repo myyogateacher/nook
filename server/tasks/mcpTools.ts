@@ -257,7 +257,7 @@ export const taskTools: McpToolSpec[] = [
     title: "List cards on a board",
     description: "List a board's columns, its tags, and its cards in order. Optional filters narrow the cards: columnId, assigneeIds, tags, flags, dueBefore/dueAfter/dueNone, text, and sprint; values inside one filter are alternatives, and different filters must all match. Descriptions are shortened plain text; attachments are file names only. Use get_card for a full card.",
     scopes: ["tasks:read"],
-    access: { mode: "items", items: [{ arg: "boardId", kind: "board" }], related: ["columnId", "assigneeIds"] },
+    access: { mode: "items", items: [{ arg: "boardId", kind: "board" }], related: ["columnId", "assigneeIds", "sprint"] },
     write: false,
     inputSchema: z.object({ boardId: uuid, columnId: uuid.optional().describe("Only cards in this column"), ...listFilters }),
     handler: async ({ boardId, columnId, assigneeIds, tags, flags, dueBefore, dueAfter, dueNone, text, sprint }, key) => service(key, () => {

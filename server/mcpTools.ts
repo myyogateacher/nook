@@ -118,6 +118,8 @@ function checkNamedItems(spec: McpToolSpec, reach: ToolReach, args: Record<strin
 export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, surface: KeySurface = "mcp"): Promise<ToolResult> {
   const actor = resolveKeyActor(keyId, surface);
   if (isKeyDenial(actor)) {
+    // Counted once, on the surface that was refused (review S5).
+    countKeyUsage(keyId, "denied", surface);
     return actor.code === "KEY_POLICY" ? errorResult("KEY_POLICY", actor.message) : errorResult("SCOPE_REQUIRED", actor.message);
   }
   const key: McpKeyContext = actor;
@@ -154,11 +156,12 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, s
     // whatever else the call gets wrong, so validation errors never tell it apart (T205).
     checkNamedItems(spec, reach, args && typeof args === "object" ? args as Record<string, unknown> : {});
     const parsed = spec.inputSchema.safeParse(args ?? {});
-    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+    // Each detail names its argument (review Q4): "cardId: Invalid UUID".
+    if (!parsed.success) return errorResult("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message) });
     // Handlers read chosen items from `grants` (keyReach, keyFilter). `scopes` keeps only the
     // scopes the key holds over every item, so any older path that reads scopes alone stays closed
     // for a scope limited to chosen items (T203).
-    const handlerKey: McpKeyContext = key.grants?.every((grant) => grant.resourceKind === null) ? key : { ...key, scopes: wholeModuleScopes(key) };
+    const handlerKey: McpKeyContext = { ...(key.grants?.every((grant) => grant.resourceKind === null) ? key : { ...key, scopes: wholeModuleScopes(key) }), surface };
     const result = await withSurfaceAuditContext(surface === "rest" ? { via: "rest" } : null, () => spec.handler(parsed.data, handlerKey));
     return textResult(result);
   } catch (error) {

@@ -159,7 +159,8 @@ describe("Nook key rights", () => {
     const owner = await createUser("Rights expiry");
     const expired = key(owner, [all("notes", "read")]);
     db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), expired.id);
-    expect(await rpc(expired.token, "tools/list")).toEqual({ status: 401, body: { error: "This API key has expired" } });
+    // One code for every key that does not authenticate (review Q5); the reason is on the owner's key events.
+    expect(await rpc(expired.token, "tools/list")).toEqual({ status: 401, body: { error: "This API key is not valid or no longer active", code: "KEY_INVALID" } });
     expect((await call(expired.id, "list_notes")).value.code).toBe("SCOPE_REQUIRED");
     const rotated = key(owner, [all("notes", "read")]);
     db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), rotated.id);

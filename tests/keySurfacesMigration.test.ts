@@ -30,7 +30,7 @@ describe("migration 033 (key surfaces)", () => {
     db.exec("PRAGMA foreign_keys = ON");
     runMigrations(db);
     const columns = (db.query("PRAGMA table_info(mcp_api_keys)").all() as Array<{ name: string }>).map((column) => column.name);
-    expect(columns).toEqual(expect.arrayContaining(["last_used_mcp_at", "last_used_rest_at"]));
+    expect(columns).toEqual(expect.arrayContaining(["last_used_mcp_at", "last_used_rest_at", "last_denied_at", "last_denied_reason", "last_denied_surface"]));
     seed(db);
     db.query("INSERT INTO api_key_surface_usage (key_id, day, surface, calls) VALUES ('k1', '2026-09-21', 'rest', 1)").run();
     expect(() => db.query("INSERT INTO api_key_surface_usage (key_id, day, surface) VALUES ('k1', '2026-09-21', 'web')").run()).toThrow();
@@ -46,6 +46,7 @@ describe("migration 033 (key surfaces)", () => {
     db.exec("DROP TABLE api_key_surface_usage");
     db.exec("ALTER TABLE mcp_api_keys DROP COLUMN last_used_mcp_at");
     db.exec("ALTER TABLE mcp_api_keys DROP COLUMN last_used_rest_at");
+    for (const column of ["last_denied_at", "last_denied_reason", "last_denied_surface"]) db.exec(`ALTER TABLE mcp_api_keys DROP COLUMN ${column}`);
     db.exec("DELETE FROM schema_migrations WHERE id = 33");
     seed(db);
     runMigrations(db);

@@ -204,7 +204,8 @@ describe("/api/keys", () => {
     expect((await mcp(key.token)).status).toBe(401);
     expect(sweepKeyGraces().gracesEnded).toBeGreaterThanOrEqual(1);
     expect(db.query("SELECT revoked_at IS NOT NULL AS revoked FROM mcp_api_keys WHERE id = ?").get(key.id)).toEqual({ revoked: 1 });
-    expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.rotated", "key.grace_ended"]);
+    // The refused call is on the owner's key events (review Q1): one key.denied with reason "rotated".
+    expect(events(key.id).map((event) => event.action)).toEqual(["key.created", "key.rotated", "key.denied", "key.grace_ended"]);
     expect(events(next.id).map((event) => event.action)).toEqual(["key.created"]);
     // No grace: the old key stops at once.
     const again = await api(owner, "POST", `/keys/${next.id}/rotate`, { password: owner.password, graceHours: 0 });

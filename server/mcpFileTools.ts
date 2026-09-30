@@ -24,6 +24,8 @@ export const DAILY_UPLOAD_BYTES_PER_USER = 1_073_741_824;
 type Purpose = "file" | "task_attachment";
 export type UploadTicket = {
   id: string; keyId: string; userId: string; name: string; sizeBytes: number; sha256: string; folderId: string | null; purpose: Purpose;
+  /** The surface begin_upload was called on (review S4): the PUT must use the key on that surface. */
+  surface: "mcp" | "rest";
   expiresAt: number;
   state: "pending" | "receiving" | "committed" | "failed";
   documentId?: string;
@@ -201,7 +203,7 @@ export const fileWriteTools: McpToolSpec[] = [
       quotaCheck(key.userId, sizeBytes);
       const id = crypto.randomUUID();
       const expiresAt = Date.now() + UPLOAD_TICKET_TTL_MS;
-      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: kind, expiresAt, state: "pending" });
+      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: kind, expiresAt, state: "pending", surface: key.surface ?? "mcp" });
       return {
         uploadId: id,
         uploadUrl: `${config.appOrigin}/mcp/uploads/${id}`,

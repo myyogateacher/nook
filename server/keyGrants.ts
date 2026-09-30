@@ -84,6 +84,12 @@ export const SELECTOR_KINDS: Partial<Record<GrantModule, readonly ResourceKind[]
   whiteboards: ["whiteboard"]
 };
 
+/**
+ * Permissions that only create something new and act on no existing item (review Q7): chosen items
+ * would give them nothing to do (create_whiteboard is hidden from chosen-item keys), so they take none.
+ */
+export const CREATE_ONLY: ReadonlySet<string> = new Set(["whiteboards:write"]);
+
 /** Kinds that can only be named with the read permission (a saved view is never written through a key). */
 export const READ_ONLY_KINDS: readonly ResourceKind[] = ["task_view"];
 

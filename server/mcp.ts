@@ -7,7 +7,7 @@ import { DEFAULT_MCP_SCOPES, normalizeScopes, type McpScope } from "./mcpScopes"
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
 import { type Role } from "./team/roles";
-import { countKeyUsage, createApiKey, hashKeyToken, isKeyDenial, listApiKeys, markKeyUsed, resolveKeyActor, revokeOwnKey, type KeyActor } from "./apiKeys";
+import { countKeyUsage, createApiKey, hashKeyToken, isKeyDenial, listApiKeys, markKeyUsed, noteKeyDenied, resolveKeyActor, revokeOwnKey, type KeyActor } from "./apiKeys";
 import { grantsForScopes, type KeySurfaces } from "./keyGrants";
 import { addressAllowed, ipAllowlistAvailable } from "./ipAllowlist";
 import { readPolicies } from "./team/policies";
@@ -135,46 +135,48 @@ export function authenticateKeyRequest(request: Request, options: { surface: Aut
   const limiter = options.surface === "rest" ? "rest" : "mcp";
   const host = request.headers.get("host");
   const origin = request.headers.get("origin");
-  if (!host || !allowedHosts().has(host)) return mcpJsonError("Invalid host", 403);
-  if (origin && !isOriginAllowed(origin)) return mcpJsonError("Invalid origin", 403);
+  if (!host || !allowedHosts().has(host)) return mcpJsonError("Invalid host", 403, false, "HOST_INVALID");
+  if (origin && !isOriginAllowed(origin)) return mcpJsonError("Invalid origin", 403, false, "ORIGIN_INVALID");
 
   const authorization = request.headers.get("authorization") ?? "";
-  const match = /^Bearer ([A-Za-z0-9_-]{40,80})$/.exec(authorization);
+  // The scheme is case-insensitive (RFC 9110, review S7); the key itself is exact.
+  const match = /^bearer ([A-Za-z0-9_-]{40,80})$/i.exec(authorization.trim());
   if (!match) {
     const limited = recordInvalidAuth(limiter);
-    return mcpJsonError(limited ? "Too many authentication failures" : "A valid Bearer API key is required", limited ? 429 : 401, true);
+    return limited ? mcpJsonError("Too many authentication failures", 429, true, "RATE_LIMITED")
+      : mcpJsonError("Send an API key as Authorization: Bearer <key>", 401, true, "AUTH_REQUIRED");
   }
   const token = match[1]!;
+  // Found even when revoked or its holder blocked, so the owner's key row can say why (review Q1);
+  // the caller always gets the one code KEY_INVALID for a key that does not authenticate (review Q5).
   const row = db.query(`
     SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, k.surfaces, u.email, u.role
     FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
+    WHERE k.token_hash = ?
   `).get(hashMcpToken(token)) as (Omit<McpKeyRow, "actor" | "surface"> & { surfaces: KeySurfaces }) | null;
-  if (!row || !isEmailAllowed(row.email)) {
+  const invalid = () => {
     const limited = recordInvalidAuth(limiter);
-    return mcpJsonError(limited ? "Too many authentication failures" : "Invalid or revoked API key", limited ? 429 : 401, true);
-  }
+    return limited ? mcpJsonError("Too many authentication failures", 429, true, "RATE_LIMITED")
+      : mcpJsonError("This API key is not valid or no longer active", 401, true, "KEY_INVALID");
+  };
+  if (!row || !isEmailAllowed(row.email)) return invalid();
   const surface: "mcp" | "rest" = options.surface === "upload" ? (row.surfaces === "rest" ? "rest" : "mcp") : options.surface;
-  // Expired, past its rotation grace, not allowed on this surface, or blocked by team policy (D263, D276, D277, D279, T209).
+  // Expired, past its rotation grace, revoked, not allowed on this surface, or blocked by team policy (D263, D276, D277, D279, T209).
   const actor = resolveKeyActor(row.id, surface);
   if (isKeyDenial(actor)) {
-    if (actor.code === "KEY_POLICY") {
-      countKeyUsage(row.id, "denied", surface);
-      return mcpResponse(JSON.stringify({ error: actor.message, code: "KEY_POLICY" }), { status: 403, headers: { "Content-Type": "application/json" } });
-    }
-    const limited = recordInvalidAuth(limiter);
-    return mcpJsonError(limited ? "Too many authentication failures" : actor.message, limited ? 429 : 401, true);
+    countKeyUsage(row.id, "denied", surface);
+    if (actor.code === "KEY_POLICY") return mcpResponse(JSON.stringify({ error: actor.message, code: "KEY_POLICY" }), { status: 403, headers: { "Content-Type": "application/json" } });
+    return invalid();
   }
   // Wave 34 (D284, T211): a key limited to addresses works only from inside its list, and only
   // where the server can see client addresses; the refusal never echoes the list or the address.
   if (actor.ipAllowlist !== null) {
-    if (!ipAllowlistAvailable()) {
+    const refused = !ipAllowlistAvailable() ? "This API key is limited to certain addresses, and this server cannot check addresses. Ask an admin."
+      : !addressAllowed(actor.ipAllowlist, options.clientIp ?? null) ? "This API key cannot be used from this address" : null;
+    if (refused) {
       countKeyUsage(row.id, "denied", surface);
-      return mcpJsonError("This API key is limited to certain addresses, and this server cannot check addresses. Ask an admin.", 403, false, "IP_NOT_ALLOWED");
-    }
-    if (!addressAllowed(actor.ipAllowlist, options.clientIp ?? null)) {
-      countKeyUsage(row.id, "denied", surface);
-      return mcpJsonError("This API key cannot be used from this address", 403, false, "IP_NOT_ALLOWED");
+      noteKeyDenied(row, "ip", surface, options.clientIp ?? null);
+      return mcpJsonError(refused, 403, false, "IP_NOT_ALLOWED");
     }
   }
   markKeyUsed(row.id, surface);
@@ -201,7 +203,7 @@ export async function handleMcpRequest(request: Request, clientIp: string | null
   const authenticated = authenticateMcpRequest(request, clientIp);
   if (authenticated instanceof Response) return authenticated;
   const key = authenticated;
-  const token = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "")![1]!;
+  const token = /^bearer (.+)$/i.exec((request.headers.get("authorization") ?? "").trim())![1]!;
   if (activeRequests >= 24) return mcpJsonError("MCP server is busy", 503);
   activeRequests += 1;
   try {

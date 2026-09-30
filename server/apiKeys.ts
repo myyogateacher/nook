@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { audit, db, now } from "./db";
+import { config } from "./config";
+import { addressBucket } from "./clientAddress";
 import { recordAccessEvent, type AccessVia } from "./access/events";
 import { notifyAccess } from "./access/notices";
 import {
-  dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, READ_ONLY_KINDS, RESOURCE_KINDS, SCOPE_GRANTS, scopeFor, SELECTOR_KINDS,
+  CREATE_ONLY, dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, READ_ONLY_KINDS, RESOURCE_KINDS, SCOPE_GRANTS, scopeFor, SELECTOR_KINDS,
   type Grant, type GrantModule, type KeyKind, type KeyPermission, type KeySurfaces, type ResourceKind
 } from "./keyGrants";
 import type { McpScope } from "./mcpScopes";
@@ -99,6 +101,14 @@ export const rotateKeySchema = z.object({
   graceHours: z.union([z.literal(0), z.literal(1), z.literal(24), z.literal(168)]).default(24),
   /** The new key's lifetime; omitted keeps the old key's (capped by policy); null for no expiry, unless policy requires one. */
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+  /**
+   * Wave 34 review Q2: rotation re-authenticates (D278), so it may also change what the new key can
+   * do, widening included: its grants, surfaces, and address limit (null removes the limit).
+   * Omitted fields keep the old key's values. Every change is validated like a new key.
+   */
+  grants: z.array(grantInput).min(1).max(MAX_GRANTS).optional(),
+  surfaces: z.enum(["mcp", "rest", "both"]).optional(),
+  ipAllowlist: z.array(z.string().trim().min(1).max(64)).min(1).max(IP_ALLOWLIST_MAX).nullable().optional(),
   ...reauthFields
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
@@ -111,11 +121,13 @@ type KeyRow = {
   scopes: string; created_at: string; last_used_at: string | null; expires_at: string | null; revoke_after: string | null; revoked_at: string | null;
   rotated_from: string | null; revoked_by: string | null; revoke_reason: string | null; limits_json: string | null;
   ip_allowlist: string | null; last_used_mcp_at: string | null; last_used_rest_at: string | null;
+  last_denied_at: string | null; last_denied_reason: string | null; last_denied_surface: "mcp" | "rest" | null;
   role: Role; disabled_at: string | null;
 };
 
 const keyColumns = `k.id, k.user_id, k.name, k.description, k.key_prefix, k.kind, k.surfaces, k.scopes, k.created_at, k.last_used_at, k.expires_at,
-  k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, k.ip_allowlist, k.last_used_mcp_at, k.last_used_rest_at, u.role, u.disabled_at`;
+  k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, k.ip_allowlist, k.last_used_mcp_at, k.last_used_rest_at,
+  k.last_denied_at, k.last_denied_reason, k.last_denied_surface, u.role, u.disabled_at`;
 
 const keyById = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`);
 const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
@@ -158,13 +170,22 @@ function keyState(row: KeyRow, policies: Policies, time = Date.now()): { state: 
 
 // ------------------------------------------------------------------------------ effective rights
 
-export type InactiveReason = "role" | "policy" | "no-access";
+export type InactiveReason = "role" | "policy" | "no-access" | "unavailable";
+
+/**
+ * Wave 34 review S2: a key may hold only saved views its holder owns. A view shared by someone else
+ * would follow that person's future edits across boards; such grants (made before this rule) are
+ * listed as "no longer available" and grant nothing.
+ */
+const ownedView = (userId: string, viewId: string) => Boolean(db.query("SELECT 1 FROM task_views WHERE id = ? AND owner_id = ?").get(viewId, userId));
+const foreignViewGrant = (grant: Grant, userId: string) => grant.resourceKind === "task_view" && grant.resourceId !== null && !ownedView(userId, grant.resourceId);
 
 /** Why one grant grants nothing right now, or null when it is active (T201: stored, listed, and dead weight). */
 function grantInactiveReason(grant: Grant, role: Role, modules: readonly GrantModule[], userId: string): InactiveReason | null {
   const scope = scopeFor(grant.module, grant.permission);
   if (!scope || !mcpScopesForRole(role).includes(scope)) return "role";
   if (!modules.includes(grant.module)) return "policy";
+  if (foreignViewGrant(grant, userId)) return "unavailable";
   if (grant.resourceKind && grant.resourceId && !resourceReachable(userId, grant.resourceKind, grant.resourceId, grant.permission)) return "no-access";
   return null;
 }
@@ -176,6 +197,7 @@ function effectiveOf(row: KeyRow, grants: readonly Grant[], policies: Policies) 
   const active: Grant[] = [];
   for (const grant of grants) {
     if (!modules.includes(grant.module)) continue;
+    if (foreignViewGrant(grant, row.user_id)) continue;
     const scope = scopeFor(grant.module, grant.permission);
     if (scope !== null && allowed.includes(scope)) {
       active.push(grant);
@@ -205,6 +227,14 @@ export type KeyActor = {
 
 export type KeyDenial = { code: "KEY_INACTIVE" | "KEY_POLICY"; message: string; reason?: PolicyBlock };
 
+/**
+ * Why a call with a real key was refused (review Q1, Q5). Callers see one code (`KEY_INVALID` for
+ * inactive keys); the reason goes only to the owner: their key row and the key's events.
+ */
+export type DenialReason = "ip" | "surface" | "policy_surface_role" | "policy_expiry_required" | "policy_lifetime" | "expired" | "rotated" | "revoked" | "paused";
+
+const INACTIVE_MESSAGE = "This API key is not valid or no longer active";
+
 const blockLogged = new Set<string>();
 
 /**
@@ -213,16 +243,24 @@ const blockLogged = new Set<string>();
  */
 export function resolveKeyActor(keyId: string, surface: "mcp" | "rest" = "mcp", time = Date.now()): KeyActor | KeyDenial {
   const row = keyById.get(keyId) as KeyRow | null;
-  if (!row || row.revoked_at !== null || row.disabled_at !== null) return { code: "KEY_INACTIVE", message: "This API key is no longer active" };
-  if (row.revoke_after !== null && isoMs(row.revoke_after)! <= time) return { code: "KEY_INACTIVE", message: "This API key was rotated and its grace period has ended" };
-  if (row.expires_at !== null && isoMs(row.expires_at)! <= time) return { code: "KEY_INACTIVE", message: "This API key has expired" };
+  if (!row) return { code: "KEY_INACTIVE", message: INACTIVE_MESSAGE };
+  const inactive: DenialReason | null = row.revoked_at !== null ? "revoked" : row.disabled_at !== null ? "paused"
+    : row.revoke_after !== null && isoMs(row.revoke_after)! <= time ? "rotated" : row.expires_at !== null && isoMs(row.expires_at)! <= time ? "expired" : null;
+  if (inactive) {
+    // Revoked keys are not reported: the owner revoked them, or was told by the admin who did.
+    if (inactive !== "revoked") noteKeyDenied(row, inactive, surface, null, time);
+    return { code: "KEY_INACTIVE", message: INACTIVE_MESSAGE };
+  }
   const surfaceAllowed = row.surfaces === "both" || row.surfaces === surface;
-  if (!surfaceAllowed) return { code: "KEY_POLICY", message: surface === "mcp" ? "This API key is not allowed to use MCP" : "This API key is not allowed to use the REST API" };
+  if (!surfaceAllowed) {
+    noteKeyDenied(row, "surface", surface, null, time);
+    return { code: "KEY_POLICY", message: surface === "mcp" ? "This API key is not allowed to use MCP (it is a REST key)" : "This API key is not allowed to use the REST API (it is an MCP key)" };
+  }
   const policies = readPolicies();
   const blocked = policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies);
   if (blocked) {
-    notePolicyBlock(row, blocked, time);
-    return { code: "KEY_POLICY", message: POLICY_BLOCK_MESSAGES[blocked], reason: blocked };
+    notePolicyBlock(row, blocked, surface, time);
+    return { code: "KEY_POLICY", message: policyBlockMessage(row, blocked, surface, policies), reason: blocked };
   }
   const effective = effectiveOf(row, loadGrants(row.id), policies);
   return { keyId: row.id, userId: row.user_id, name: row.name, kind: row.kind, scopes: effective.scopes, grants: effective.grants, limits: parseLimits(row.limits_json), ipAllowlist: storedAllowlist(row.ip_allowlist) };
@@ -230,16 +268,77 @@ export function resolveKeyActor(keyId: string, surface: "mcp" | "rest" = "mcp", 
 
 export const isKeyDenial = (value: KeyActor | KeyDenial): value is KeyDenial => "code" in value;
 
-/** One `key.policy_blocked` event per key per day (§C.4), so the inventory can show it without a log flood. */
-function notePolicyBlock(row: KeyRow, reason: PolicyBlock, time: number) {
+/**
+ * The refusal for a policy block, naming the surface (review Q3): a `both` key blocked on one
+ * surface says the other still works.
+ */
+function policyBlockMessage(row: KeyRow, blocked: PolicyBlock, surface: "mcp" | "rest", policies: Policies) {
+  if (blocked !== "surface_role") return POLICY_BLOCK_MESSAGES[blocked];
+  const name = surface === "rest" ? "the REST API" : "MCP";
+  const other: "mcp" | "rest" = surface === "rest" ? "mcp" : "rest";
+  const otherWorks = row.surfaces === "both" && policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, other, policies) === null;
+  return `Team policy does not allow your team role to use API keys over ${name}.${otherWorks ? ` This key still works over ${other === "mcp" ? "MCP" : "the REST API"}.` : ""}`;
+}
+
+/**
+ * One `key.policy_blocked` event per key per day (§C.4) on the surface that was refused (review Q3),
+ * so the inventory can show it without a log flood. Usage is counted once, by the caller (review S5).
+ */
+function notePolicyBlock(row: KeyRow, reason: PolicyBlock, surface: "mcp" | "rest", time: number) {
+  markDenied(row, `policy_${reason}` as DenialReason, surface, time);
   const day = new Date(time).toISOString().slice(0, 10);
-  const marker = `${row.id}:${day}`;
-  countKeyUsage(row.id, "denied");
+  const marker = `${row.id}:${surface}:${day}`;
   if (blockLogged.has(marker)) return;
   if (blockLogged.size > 5000) blockLogged.clear();
   blockLogged.add(marker);
-  const already = db.query("SELECT 1 FROM access_events WHERE key_id = ? AND action = 'key.policy_blocked' AND created_at >= ? LIMIT 1").get(row.id, `${day}T00:00:00.000Z`);
-  if (!already) recordAccessEvent({ actorId: null, via: row.surfaces === "rest" ? "rest" : "mcp", action: "key.policy_blocked", targetUserId: row.user_id, keyId: row.id, meta: { reason } });
+  const already = db.query("SELECT 1 FROM access_events WHERE key_id = ? AND action = 'key.policy_blocked' AND via = ? AND created_at >= ? LIMIT 1").get(row.id, surface, `${day}T00:00:00.000Z`);
+  if (!already) recordAccessEvent({ actorId: null, via: surface, action: "key.policy_blocked", targetUserId: row.user_id, keyId: row.id, meta: { reason, surface } });
+}
+
+const deniedMarked = new Map<string, number>();
+const deniedLogged = new Map<string, number>();
+
+/** The key row's "Last refused" (review Q1), written at most once a minute per key. */
+function markDenied(row: Pick<KeyRow, "id">, reason: DenialReason, surface: "mcp" | "rest", time: number) {
+  const last = deniedMarked.get(row.id) ?? 0;
+  if (time - last < 60_000) return;
+  if (deniedMarked.size > 5000) deniedMarked.clear();
+  deniedMarked.set(row.id, time);
+  db.query("UPDATE mcp_api_keys SET last_denied_at = ?, last_denied_reason = ?, last_denied_surface = ? WHERE id = ?").run(new Date(time).toISOString(), reason, surface, row.id);
+}
+
+/** The first three octets of an IPv4 address or the /64 of an IPv6 one, for the owner's own key events only. */
+export function addressPrefix(address: string | null): string | null {
+  const bucket = addressBucket(address);
+  if (!bucket) return null;
+  if (bucket.includes(":")) return bucket;
+  return `${bucket.split(".").slice(0, 3).join(".")}.0/24`;
+}
+
+/**
+ * A refused call with a real key (review Q1): the key row's "Last refused", and a `key.denied`
+ * event at most once per reason per hour per key, so a flood cannot fill the log. The client address
+ * is kept only as its /24 or /64, and only for address refusals.
+ */
+export function noteKeyDenied(row: Pick<KeyRow, "id" | "user_id">, reason: DenialReason, surface: "mcp" | "rest", clientIp: string | null, time = Date.now()) {
+  markDenied(row, reason, surface, time);
+  const marker = `${row.id}:${reason}`;
+  const hour = 3_600_000;
+  if (time - (deniedLogged.get(marker) ?? 0) < hour) return;
+  if (deniedLogged.size > 5000) deniedLogged.clear();
+  deniedLogged.set(marker, time);
+  const since = new Date(time - hour).toISOString();
+  const already = db.query("SELECT meta_json FROM access_events WHERE key_id = ? AND action = 'key.denied' AND created_at >= ?").all(row.id, since) as Array<{ meta_json: string | null }>;
+  if (already.some((event) => event.meta_json?.includes(`"reason":"${reason}"`))) return;
+  const prefix = reason === "ip" ? addressPrefix(clientIp) : null;
+  recordAccessEvent({ actorId: null, via: surface, action: "key.denied", targetUserId: row.user_id, keyId: row.id, meta: { reason, surface, ...(prefix ? { clientPrefix: prefix } : {}) } }, new Date(time).toISOString());
+}
+
+/** Test hook: forget the denial throttles. */
+export function resetKeyDenialsForTests() {
+  deniedMarked.clear();
+  deniedLogged.clear();
+  blockLogged.clear();
 }
 
 // ------------------------------------------------------------------------------ resources
@@ -263,7 +362,8 @@ export function resourceReachable(userId: string, kind: ResourceKind, id: string
     case "note": return Boolean(db.query(`SELECT 1 FROM notes n WHERE n.id = $id AND n.deleted_at IS NULL AND ${write ? "n.owner_id = $userId" : readableNotePredicate}`).get({ id, userId }));
     case "document": return Boolean(db.query(`SELECT 1 FROM documents d WHERE d.id = $id AND d.purpose = 'file'
       AND ${write ? "d.owner_id = $userId AND d.deleted_at IS NULL" : readableDocumentPredicate}`).get({ id, userId }));
-    case "task_view": return !write && Boolean(db.query(`SELECT 1 FROM task_views v JOIN users u ON u.id = v.owner_id WHERE v.id = $id AND ${readableViewPredicate}`).get({ id, userId }));
+    // Only the holder's own views (review S2), and only for reading.
+    case "task_view": return !write && ownedView(userId, id);
     // Routines are private to their owner.
     case "routine": return Boolean(db.query("SELECT 1 FROM routines WHERE id = ? AND owner_id = ?").get(id, userId));
     default: return false;
@@ -306,6 +406,7 @@ export function chosenResources(input: GrantInput): Array<{ kind: ResourceKind; 
   if (!input.resourceIds && !input.resources) return null;
   const kinds = SELECTOR_KINDS[input.module];
   if (!kinds) throw new KeyError(400, "INVALID_GRANT", `Keys for ${input.module} cover every item`);
+  if (CREATE_ONLY.has(`${input.module}:${input.permission}`)) throw new KeyError(400, "INVALID_GRANT", `${input.module}: ${input.permission} only creates new items, so it cannot name chosen ones`);
   const items = input.resources ?? input.resourceIds!.map((id) => ({ kind: kinds[0]!, id }));
   const seen = new Set<string>();
   const out: Array<{ kind: ResourceKind; id: string }> = [];
@@ -377,12 +478,13 @@ export function checkCreateAllowlist(entries: readonly string[] | undefined) {
 }
 
 /**
- * When a key was used, per surface (Wave 34, migration 033): at most every five minutes per
- * surface, so a busy key does not write on every call. `last_used_at` stays the latest of both.
+ * When a key was used, per surface (Wave 34, migration 033): at most once a minute per surface,
+ * so a busy key does not write on every call. `last_used_at` stays the latest of both.
  */
 export function markKeyUsed(keyId: string, surface: "mcp" | "rest", time = Date.now()) {
   const column = surface === "mcp" ? "last_used_mcp_at" : "last_used_rest_at";
-  const cutoff = new Date(time - 300_000).toISOString();
+  // At most once a minute per key and surface (review Q10), so a check right after a call sees it.
+  const cutoff = new Date(time - 60_000).toISOString();
   const at = new Date(time).toISOString();
   db.query(`UPDATE mcp_api_keys SET ${column} = $at, last_used_at = $at WHERE id = $id AND (${column} IS NULL OR ${column} < $cutoff)`).run({ id: keyId, at, cutoff });
 }
@@ -483,6 +585,7 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
       else for (const { kind, id } of chosen) candidate.push({ module: input.module, permission: input.permission, resourceKind: kind, resourceId: id });
     }
     const unique = dedupeGrants(candidate);
+    if (unique.some((grant) => foreignViewGrant(grant, userId))) throw new KeyError(400, "INVALID_GRANT", "A key can only hold your own saved views. Remove the views that are no longer available.");
     if (!isNarrowing(current, unique)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only remove access. Create a new key to add access.");
     // Narrowing an "all" grant to chosen items: each item must be one the holder can reach (T205).
     for (const grant of unique) {
@@ -535,12 +638,12 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
   const currentAllowlist = storedAllowlist(row.ip_allowlist);
   let allowlist = currentAllowlist;
   if (patch.ipAllowlist === null) {
-    if (currentAllowlist !== null) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Removing a key's address limit widens it. Rotate the key or create a new one.");
+    if (currentAllowlist !== null) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Removing a key's address limit widens it. Rotate the key to change this.");
   } else if (patch.ipAllowlist !== undefined) {
     // Adding or tightening a list narrows the key (D278), but only where addresses can be checked.
     if (!ipAllowlistAvailable()) throw new KeyError(400, "IP_ALLOWLIST_UNAVAILABLE", "This server cannot check client addresses, so keys cannot be limited to addresses here");
     const next = normalizeAllowlistOrThrow(patch.ipAllowlist);
-    if (!allowlistNarrows(currentAllowlist, next)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only keep or tighten its address limit. Rotate the key or create a new one to widen it.");
+    if (!allowlistNarrows(currentAllowlist, next)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only keep or tighten its address limit. Rotate the key to change this.");
     if (JSON.stringify(next) !== JSON.stringify(currentAllowlist)) {
       allowlist = next;
       changed.push("ipAllowlist");
@@ -583,20 +686,34 @@ function supersedeProposals(keyId: string, ownerId: string, timestamp: string) {
  * the same transaction and needs none. An expired key may be rotated (with the password): that is
  * how its holder renews it without re-entering its grants.
  */
-export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null) {
+export type RotationChanges = { grants?: readonly GrantInput[]; surfaces?: KeySurfaces; ipAllowlist?: readonly string[] | null };
+
+export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}) {
   const row = liveOwnKey(userId, keyId);
   if (row.revoke_after !== null) throw new KeyError(409, "KEY_ROTATING", "This key was already rotated. Revoke it now or wait for its grace period to end.");
   const policies = readPolicies();
-  checkCreatePolicy(userId, row.role, { surfaces: row.surfaces, expiresInDays }, policies);
-  const allowed = mcpScopesForRole(row.role);
-  const modules = activeModules(row.role, policies);
-  for (const grant of loadGrants(row.id)) {
-    const scope = scopeFor(grant.module, grant.permission);
-    if (!scope || !allowed.includes(scope)) throw new KeyError(403, "SCOPE_NOT_ALLOWED", "Your team role cannot hold this key's permissions. Create a new key instead.");
-    if (!modules.includes(grant.module)) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow keys for this module for your team role", { module: grant.module });
+  const surfaces = changes.surfaces ?? row.surfaces;
+  checkCreatePolicy(userId, row.role, { surfaces, expiresInDays }, policies);
+  let grants: Grant[];
+  if (changes.grants) {
+    // New grants are validated exactly like a new key's (role, policy, reachable items, own views).
+    grants = validateGrants(userId, row.role, changes.grants, policies);
+  } else {
+    grants = loadGrants(row.id);
+    const allowed = mcpScopesForRole(row.role);
+    const modules = activeModules(row.role, policies);
+    for (const grant of grants) {
+      const scope = scopeFor(grant.module, grant.permission);
+      if (!scope || !allowed.includes(scope)) throw new KeyError(403, "SCOPE_NOT_ALLOWED", "Your team role cannot hold this key's permissions. Create a new key instead.");
+      if (!modules.includes(grant.module)) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow keys for this module for your team role", { module: grant.module });
+      if (foreignViewGrant(grant, userId)) throw new KeyError(400, "INVALID_GRANT", "This key holds a saved view that is no longer available. Change its access when you rotate it.");
+    }
   }
+  if (!grants.length) throw new KeyError(409, "NO_GRANTS", "This key has no permissions left. Create a new key instead.");
+  const ipAllowlist = changes.ipAllowlist === undefined ? storedAllowlist(row.ip_allowlist)
+    : changes.ipAllowlist === null ? null : checkCreateAllowlist(changes.ipAllowlist);
   if (graceHours > 0) checkKeyCount(userId, policies);
-  return { row, policies };
+  return { row, policies, grants, surfaces, ipAllowlist };
 }
 
 /**
@@ -604,19 +721,17 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
  * grants, surfaces, and limits, linked by `rotated_from`. The old key works for `graceHours`, then
  * stops. Routines bound to the old key move to the new one in the same transaction.
  */
-export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null) {
-  const { row, policies } = checkRotation(userId, keyId, graceHours, expiresInDays);
+export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}) {
+  const { row, policies, grants, surfaces, ipAllowlist } = checkRotation(userId, keyId, graceHours, expiresInDays, changes);
   const lifetimeDays = row.expires_at === null ? policies.keyDefaultDays
     : Math.max(1, Math.round((Date.parse(row.expires_at) - Date.parse(row.created_at)) / DAY_MS));
   // A lifetime chosen in the rotate dialog (C2) was checked above; otherwise the old one, capped.
   const days = expiresInDays === undefined ? Math.min(lifetimeDays, policies.keyMaxDays) : expiresInDays;
-  const grants = loadGrants(row.id);
-  if (!grants.length) throw new KeyError(409, "NO_GRANTS", "This key has no permissions left. Create a new key instead.");
   const createdAt = now();
   const expiresAt = days === null ? null : new Date(Date.parse(createdAt) + days * DAY_MS).toISOString();
   const revokeAfter = new Date(Date.parse(createdAt) + graceHours * 3_600_000).toISOString();
   return db.transaction(() => {
-    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces: row.surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist: storedAllowlist(row.ip_allowlist) });
+    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist });
     if (graceHours === 0) {
       db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoke_after = ? WHERE id = ?").run(createdAt, createdAt, row.id);
       supersedeProposals(row.id, userId, createdAt);
@@ -755,14 +870,22 @@ function usage14d(keyIds: readonly string[]) {
 }
 
 /** Admitted calls in the last 14 days per surface, for each key (Wave 34). */
+type SurfaceUsage = { mcp: number; rest: number; daily: { mcp: number[]; rest: number[] } };
+
+/** Admitted calls per surface: 14-day totals and per-day counts, oldest first (review Q12). */
 function surfaceTotals14d(keyIds: readonly string[]) {
-  const since = new Date(Date.now() - 13 * DAY_MS).toISOString().slice(0, 10);
-  const result = new Map<string, { mcp: number; rest: number }>();
+  const days = Array.from({ length: 14 }, (_, index) => new Date(Date.now() - (13 - index) * DAY_MS).toISOString().slice(0, 10));
+  const result = new Map<string, SurfaceUsage>();
   if (!keyIds.length) return result;
-  const rows = db.query(`SELECT key_id, surface, SUM(calls + writes) AS calls FROM api_key_surface_usage WHERE day >= ? AND key_id IN (${keyIds.map(() => "?").join(",")}) GROUP BY key_id, surface`)
-    .all(since, ...keyIds) as Array<{ key_id: string; surface: "mcp" | "rest"; calls: number }>;
-  for (const id of keyIds) result.set(id, { mcp: 0, rest: 0 });
-  for (const row of rows) result.get(row.key_id)![row.surface] = row.calls;
+  const rows = db.query(`SELECT key_id, surface, day, calls + writes AS calls FROM api_key_surface_usage WHERE day >= ? AND key_id IN (${keyIds.map(() => "?").join(",")})`)
+    .all(days[0]!, ...keyIds) as Array<{ key_id: string; surface: "mcp" | "rest"; day: string; calls: number }>;
+  for (const id of keyIds) result.set(id, { mcp: 0, rest: 0, daily: { mcp: days.map(() => 0), rest: days.map(() => 0) } });
+  for (const row of rows) {
+    const entry = result.get(row.key_id)!;
+    entry[row.surface] += row.calls;
+    const index = days.indexOf(row.day);
+    if (index >= 0) entry.daily[row.surface][index] = row.calls;
+  }
   return result;
 }
 
@@ -781,7 +904,11 @@ export type ApiKeyView = {
   revokedBy: "self" | "admin" | "rotation" | null; revokeReason: string | null;
   grants: GrantView[]; scopes: McpScope[]; effectiveScopes: McpScope[]; limits: KeyLimits; usage14d: number[];
   /** Wave 34: last use and 14-day calls per surface. */
-  lastUsed: { mcp: string | null; rest: string | null }; usageBySurface14d: { mcp: number; rest: number };
+  lastUsed: { mcp: string | null; rest: string | null }; usageBySurface14d: SurfaceUsage;
+  /** Review Q1: the last refused call (at most a minute old), with why and on which surface; never the address. */
+  lastDenied: { at: string; reason: string; surface: "mcp" | "rest" | null } | null;
+  /** Review Q3: surfaces this key may use that team policy blocks now (the other may still work). */
+  blockedSurfaces: Array<"mcp" | "rest">;
   /** Wave 34 (D284): whether the key is limited to addresses; the list itself only for its owner. */
   ipRestricted: boolean; ipAllowlist?: string[];
 };
@@ -798,7 +925,9 @@ function revokedByOf(row: KeyRow, state: KeyState): ApiKeyView["revokedBy"] {
   return row.revoked_at === null || Date.parse(row.revoked_at) >= Date.parse(row.revoke_after) ? "rotation" : "self";
 }
 
-function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usage: number[], viewerIsOwner: boolean, bySurface: { mcp: number; rest: number } = { mcp: 0, rest: 0 }): ApiKeyView {
+const emptySurfaceUsage = (): SurfaceUsage => ({ mcp: 0, rest: 0, daily: { mcp: Array(14).fill(0), rest: Array(14).fill(0) } });
+
+function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usage: number[], viewerIsOwner: boolean, bySurface: SurfaceUsage = emptySurfaceUsage()): ApiKeyView {
   const allowlist = storedAllowlist(row.ip_allowlist);
   const { state, blockedBy } = keyState(row, policies);
   const modules = activeModules(row.role, policies);
@@ -817,6 +946,8 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
     }),
     scopes: grantsToScopes(grants), effectiveScopes: effective.scopes, limits: parseLimits(row.limits_json), usage14d: usage,
     lastUsed: { mcp: row.last_used_mcp_at, rest: row.last_used_rest_at }, usageBySurface14d: bySurface,
+    lastDenied: row.last_denied_at && row.last_denied_reason ? { at: row.last_denied_at, reason: row.last_denied_reason, surface: row.last_denied_surface } : null,
+    blockedSurfaces: (row.surfaces === "both" ? ["mcp", "rest"] as const : [row.surfaces]).filter((surface) => policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies) !== null),
     // Admins see that a key is address-limited, never the addresses of someone else's key.
     ipRestricted: allowlist !== null, ...(viewerIsOwner && allowlist ? { ipAllowlist: allowlist } : {})
   };
@@ -831,7 +962,7 @@ export function listApiKeys(userId: string) {
   const usage = usage14d(rows.map((row) => row.id));
   const bySurface = surfaceTotals14d(rows.map((row) => row.id));
   const keys = rows.map((row) => present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], true, bySurface.get(row.id)));
-  return { keys, policy: { keyMaxDays: policies.keyMaxDays, keyDefaultDays: policies.keyDefaultDays, keyRequireExpiry: policies.keyRequireExpiry, keysPerUser: policies.keysPerUser, modules: activeModules(userRole(userId) ?? "guest", policies), mcpAllowed: policies.mcpRoles.includes((userRole(userId) ?? "guest") as "admin"), restAllowed: policies.restRoles.includes((userRole(userId) ?? "guest") as "admin"), ipAllowlistAvailable: ipAllowlistAvailable() }, liveCount: liveKeyCount(userId) };
+  return { keys, policy: { keyMaxDays: policies.keyMaxDays, keyDefaultDays: policies.keyDefaultDays, keyRequireExpiry: policies.keyRequireExpiry, keysPerUser: policies.keysPerUser, modules: activeModules(userRole(userId) ?? "guest", policies), mcpAllowed: policies.mcpRoles.includes((userRole(userId) ?? "guest") as "admin"), restAllowed: policies.restRoles.includes((userRole(userId) ?? "guest") as "admin"), ipAllowlistAvailable: ipAllowlistAvailable(), ipProxyPinned: config.trustedProxyAddresses.length > 0 }, liveCount: liveKeyCount(userId) };
 }
 
 const userRole = (userId: string) => (db.query("SELECT role FROM users WHERE id = ?").get(userId) as { role: Role } | null)?.role ?? null;
@@ -938,6 +1069,8 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
     params.push(filter.surface);
   }
   if (filter.ipRestricted !== undefined) where += filter.ipRestricted ? " AND k.ip_allowlist IS NOT NULL" : " AND k.ip_allowlist IS NULL";
+  // Review Q14: how many keys the filters match (every page), next to the live total.
+  const matching = (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE ${where}`).get(...params) as { count: number }).count;
   if (filter.cursor) {
     const [createdAt, id] = filter.cursor.split("|");
     if (createdAt && id) {
@@ -960,7 +1093,7 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
   return {
     keys,
     nextCursor: rows.length > INVENTORY_PAGE && last ? `${last.created_at}|${last.id}` : null,
-    summary: { live: summary.live, noExpiry: summary.no_expiry ?? 0 }
+    summary: { live: summary.live, noExpiry: summary.no_expiry ?? 0, matching }
   };
 }
 

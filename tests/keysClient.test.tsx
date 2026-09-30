@@ -253,3 +253,64 @@ describe("Wave 34: surfaces, REST help, and address limits on the client", () =>
     expect(inventory).not.toContain("Only from");
   });
 });
+
+describe("Wave 34 review: what people are told on the client", () => {
+  test("Q6: the address field says which entry is wrong and why, caps at ten, and shows canonical forms", async () => {
+    const { checkAllowlist } = await import("../src/keys/keyGrants");
+    const ok = checkAllowlist("203.0.113.5/24\n2001:DB8::1\n198.51.100.7");
+    expect(ok.error).toBeNull();
+    expect(ok.canonical).toEqual(["203.0.113.0/24", "2001:db8::1", "198.51.100.7"]);
+    expect(ok.changed).toEqual(["203.0.113.5/24 → 203.0.113.0/24", "2001:DB8::1 → 2001:db8::1"]);
+    expect(checkAllowlist("0.0.0.0/0").error).toBe("“0.0.0.0/0”: /0 would allow every address, so it is not a limit");
+    expect(checkAllowlist("10.0.0.1/40").error).toContain("too wide or too long");
+    expect(checkAllowlist("10.0.0.1\nproxy.example").error).toBe("“proxy.example”: not an IPv4 or IPv6 address or range");
+    expect(checkAllowlist(Array.from({ length: 11 }, (_, index) => `10.0.0.${index}`).join("\n")).error).toBe("At most 10 addresses or ranges; remove 1.");
+  });
+
+  test("Q7: create-only permissions offer no chosen items", async () => {
+    const { selectorFor } = await import("../src/keys/keyGrants");
+    expect(selectorFor("whiteboards", "write")).toBeUndefined();
+    expect(selectorFor("whiteboards", "read")?.kinds).toEqual(["whiteboard"]);
+    expect(rowsToGrants([row({ module: "whiteboards", permission: "write", applies: "chosen", resourceIds: ["whiteboard:w1"] })]).grants).toEqual([{ module: "whiteboards", permission: "write" }]);
+  });
+
+  test("Q1, Q3: key rows say when a call was refused and which surface policy blocks", async () => {
+    const { blockedSurfaceLine, deniedLine } = await import("../src/keys/keyGrants");
+    const relative = () => "2 min ago";
+    expect(deniedLine({ lastDenied: { at: "x", reason: "ip", surface: "rest" } }, relative)).toBe("Last refused 2 min ago over REST: not allowed from its address");
+    expect(deniedLine({ lastDenied: null }, relative)).toBeNull();
+    expect(blockedSurfaceLine({ surfaces: "both", state: "active", blockedSurfaces: ["rest"] })).toBe("REST blocked by team policy; MCP works");
+    expect(blockedSurfaceLine({ surfaces: "rest", state: "blocked", blockedSurfaces: ["rest"] })).toBeNull();
+    const html = renderToStaticMarkup(<KeyRow apiKey={apiKey({ surfaces: "both", blockedSurfaces: ["rest"], lastDenied: { at: new Date().toISOString(), reason: "policy_surface_role", surface: "rest" } })} />);
+    expect(html).toContain("REST blocked by team policy; MCP works");
+    expect(html).toContain("Last refused");
+  });
+
+  test("Q8, Q14: the policy preview names a lost surface, and the inventory counts what the filters match", async () => {
+    const { impactLine } = await import("../src/team/TeamPolicies");
+    expect(impactLine({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1, lostSurface: 1, lostModule: 0 }, true)).toContain("1 key would lose MCP or REST (the other still works)");
+    const source = await Bun.file(new URL("../src/team/TeamPolicies.tsx", import.meta.url)).text();
+    expect(source).not.toContain("REST arrives in a later release");
+    const { inventorySummary } = await import("../src/team/TeamKeys");
+    expect(inventorySummary({ live: 7, noExpiry: 2, matching: 3 }, true)).toBe("3 of 7 live keys match · 2 without an expiry on this Nook");
+    expect(inventorySummary({ live: 7, noExpiry: 2, matching: 7 }, false)).toBe("7 live keys on this Nook · 2 without an expiry");
+  });
+
+  test("Q9, Q13: editing only removes chosen items; the picker is bounded and Backspace never removes a chip", async () => {
+    const builder = await Bun.file(new URL("../src/keys/GrantBuilder.tsx", import.meta.url)).text();
+    expect(builder).toContain("Items can only be removed here; rotate the key to add.");
+    expect(builder).toContain("<Combobox multiple backspaceRemoves={false}");
+    const css = await Bun.file(new URL("../src/keys/keys.css", import.meta.url)).text();
+    expect(css).toContain(".grant-resources .ui-popup-body { max-height: 352px; }");
+    const { comboboxKey } = await import("../src/ui/listNavigation");
+    // The builder passes hasValues false when Backspace must not remove: nothing is removed.
+    expect(comboboxKey({ open: true, active: 0 }, { key: "Backspace" }, [], { query: "", multiple: true, hasValues: false }).removeLast).toBeUndefined();
+  });
+
+  test("Q2: Rotate can change access, surfaces, and addresses; Edit tells people to rotate", async () => {
+    const source = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+    expect(source).toContain("You may also change what the new key can do, including adding access, surfaces, or addresses.");
+    expect(source).toContain("Rotate the key to change this.");
+    expect(source).not.toContain("rotate the key or create a new one");
+  });
+});

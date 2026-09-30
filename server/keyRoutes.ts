@@ -90,6 +90,9 @@ export function aliasKeyRefusal(user: { id: string; role: Role }, scopes: readon
   }
 }
 
+/** What a rotation changes besides the secret (review Q2). */
+const rotationChanges = (body: z.infer<typeof rotateKeySchema>) => ({ grants: body.grants, surfaces: body.surfaces, ipAllowlist: body.ipAllowlist });
+
 const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 
 export function registerKeyRoutes(app: Hono<AppEnv>) {
@@ -151,7 +154,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     // Refusals that need no password come first, so no code is consumed: missing key, already
     // rotating, and the creation checks (role, policy, count; review L1).
     try {
-      checkRotation(user.id, id, body.graceHours, body.expiresInDays);
+      checkRotation(user.id, id, body.graceHours, body.expiresInDays, rotationChanges(body));
     } catch (error) {
       if (error instanceof KeyError) return keyError(c, error);
       throw error;
@@ -163,7 +166,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     }
     if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
     return run(c, () => {
-      const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays);
+      const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays, rotationChanges(body));
       // A rotation makes a new secret, so it gets the same security mail as a new key.
       mailApiKeyCreated(user.id, rotated.id);
       return { key: { ...ownApiKey(user.id, rotated.id), token: rotated.token }, oldKey: ownApiKey(user.id, id) };

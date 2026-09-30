@@ -1,3 +1,4 @@
+import { formatEntry, parseEntry } from "../../shared/ipRanges";
 import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPermissions";
 
 /**
@@ -55,6 +56,15 @@ export const KIND_LABELS: Record<ResourceKind, string> = {
   folder: "Folder", note: "Note", document: "File", board: "Board", task_view: "View", collection: "Collection", calendar: "Calendar", routine: "Routine", whiteboard: "Whiteboard"
 };
 
+/**
+ * Permissions that only make something new and act on no existing item (review Q7): "Create
+ * whiteboards" makes a new private board, so it has no chosen items to offer.
+ */
+export const CREATE_ONLY: ReadonlySet<string> = new Set(["whiteboards:write"]);
+
+/** The chosen-item kinds a row offers: none for modules without items or create-only permissions. */
+export const selectorFor = (module: GrantModule, permission: KeyPermission) => CREATE_ONLY.has(`${module}:${permission}`) ? undefined : SELECTOR_KINDS[module];
+
 /** Kinds a key can only read through (a saved view is a query, never a write target). */
 export const READ_ONLY_KINDS: readonly ResourceKind[] = ["task_view"];
 
@@ -81,6 +91,8 @@ export type PolicySummary = {
   keyMaxDays: number; keyDefaultDays: number; keyRequireExpiry: boolean; keysPerUser: number; modules: readonly GrantModule[]; mcpAllowed: boolean; restAllowed: boolean;
   /** Wave 34 (O-A7): whether this server can check client addresses (TRUSTED_PROXY_HOPS ≥ 1). */
   ipAllowlistAvailable?: boolean;
+  /** Review S1: whether the operator named the proxies (TRUSTED_PROXY_ADDRESSES), so a direct caller cannot claim an address. */
+  ipProxyPinned?: boolean;
 };
 
 export type PermissionChoice = { value: KeyPermission; label: string; description: string; disabled: boolean; reason: string | null };
@@ -161,7 +173,7 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
     const id = `${row.module}:${row.permission}`;
     if (seen.has(id)) return { grants: [], error: `${MODULE_LABELS[row.module]}: ${permissionLabel(row.module, row.permission)} is listed twice.` };
     seen.add(id);
-    if (row.applies === "chosen") {
+    if (row.applies === "chosen" && !CREATE_ONLY.has(`${row.module}:${row.permission}`)) {
       const selector = SELECTOR_KINDS[row.module];
       if (!selector) return { grants: [], error: `${MODULE_LABELS[row.module]} covers every item.` };
       if (!row.resourceIds.length) return { grants: [], error: `Choose at least one ${selector.one} for ${MODULE_LABELS[row.module]}, or pick All ${selector.many}.` };
@@ -178,10 +190,10 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
 export type KeyGrantView = {
   module: GrantModule; permission: KeyPermission;
   resource: { kind: ResourceKind; id: string; name: string | null } | null;
-  active: boolean; inactiveReason: "role" | "policy" | "no-access" | null;
+  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | null;
 };
 
-const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access" } as const;
+const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access", unavailable: "no longer available: keys hold only your own views" } as const;
 
 /**
  * The chips of a key row: one per module and permission, naming the chosen items (or "all"),
@@ -243,6 +255,51 @@ export function lastUsedLine(key: { surfaces: KeySurfaces; lastUsedAt: string | 
 
 /** The allowlist textarea's lines, trimmed, blanks dropped (the server validates and canonicalises). */
 export const allowlistLines = (text: string) => text.split(/[\n,]+/).map((line) => line.trim()).filter(Boolean);
+
+export const ALLOWLIST_MAX = 10;
+
+/**
+ * The address field checked as it is typed (review Q6), with the server's own parser: each entry's
+ * canonical form (203.0.113.5/24 is the range 203.0.113.0/24), which lines are wrong and why, and
+ * the ten-entry cap.
+ */
+export function checkAllowlist(text: string) {
+  const lines = allowlistLines(text);
+  const entries: Array<{ input: string; canonical: string | null; error: string | null }> = lines.map((input) => {
+    const range = parseEntry(input);
+    if (range) return { input, canonical: formatEntry(range), error: null };
+    const prefix = /\/(\d+)$/.exec(input.trim());
+    const error = prefix && Number(prefix[1]) === 0 ? "/0 would allow every address, so it is not a limit"
+      : prefix && parseEntry(input.trim().replace(/\/\d+$/, "")) ? "the range after / is too wide or too long for this address"
+      : "not an IPv4 or IPv6 address or range";
+    return { input, canonical: null, error };
+  });
+  const tooMany = entries.length > ALLOWLIST_MAX ? `At most ${ALLOWLIST_MAX} addresses or ranges; remove ${entries.length - ALLOWLIST_MAX}.` : null;
+  const invalid = entries.filter((entry) => entry.error);
+  const error = tooMany ?? (invalid.length ? invalid.map((entry) => `“${entry.input}”: ${entry.error}`).join("; ") : null);
+  const changed = entries.filter((entry) => entry.canonical && entry.canonical !== entry.input).map((entry) => `${entry.input} → ${entry.canonical}`);
+  return { entries, canonical: entries.map((entry) => entry.canonical).filter((value): value is string => value !== null), error, changed };
+}
+
+/** Why a key's last call was refused (review Q1). */
+const DENIAL_LINE: Record<string, string> = {
+  ip: "not allowed from its address", surface: "not set up for that surface", policy_surface_role: "team policy does not allow your role there",
+  policy_expiry_required: "team policy requires an expiry", policy_lifetime: "it lasts longer than team policy allows",
+  expired: "it has expired", rotated: "its rotation grace ended", paused: "your account is blocked"
+};
+
+export function deniedLine(key: { lastDenied?: { at: string; reason: string; surface: "mcp" | "rest" | null } | null }, relative: (iso: string) => string) {
+  if (!key.lastDenied) return null;
+  const surface = key.lastDenied.surface === "rest" ? " over REST" : key.lastDenied.surface === "mcp" ? " over MCP" : "";
+  return `Last refused ${relative(key.lastDenied.at)}${surface}: ${DENIAL_LINE[key.lastDenied.reason] ?? "not allowed"}`;
+}
+
+/** Review Q3: a key that may use both surfaces, with one blocked by team policy, says which one still works. */
+export function blockedSurfaceLine(key: { surfaces: KeySurfaces; state: string; blockedSurfaces?: ReadonlyArray<"mcp" | "rest"> }) {
+  const blocked = key.blockedSurfaces ?? [];
+  if (key.surfaces !== "both" || blocked.length !== 1 || key.state === "blocked") return null;
+  return blocked[0] === "rest" ? "REST blocked by team policy; MCP works" : "MCP blocked by team policy; REST works";
+}
 
 export const GRACE_OPTIONS = [
   { value: "0", label: "Stop the old key now" },

@@ -80,7 +80,12 @@ export async function submitProposal(key: McpKeyContext, item: SubmitItem, times
   // boards may suggest changes only on those boards (access plan §K, T203).
   const reach = keyReach(key, kind.scope);
   if (reach === null) throw new McpToolError("SCOPE_REQUIRED", `This API key needs the ${kind.scope} scope to suggest ${item.kind} changes`);
-  if (reach !== "all" && item.kind === "note_draft") checkNoteDraftReach(reach, item.payload);
+  // Review S3: the target is checked against the key's chosen items FIRST, before any validation that
+  // reads the owner's data, so an item outside the grant is the same NOT_FOUND as a missing one.
+  if (reach !== "all") {
+    if (item.kind === "note_draft") checkNoteDraftReach(reach, item.payload);
+    else checkTargetReach(reach, item.kind, item.payload);
+  }
   if (!canWriteContent(key.userId)) throw new McpToolError("READ_ONLY", "Your team role is read-only");
   if (open) checkRunKind(open, item.kind);
   if ((pendingCount.get(key.userId, PENDING_CEILING) as { count: number }).count >= PENDING_CEILING) {
@@ -113,6 +118,23 @@ export async function submitProposal(key: McpKeyContext, item: SubmitItem, times
 }
 
 type KindSubmitResult = Awaited<ReturnType<typeof PROPOSAL_KIND_DEFS[ProposalKind]["submit"]>>;
+
+/** Which payload field names each kind's target, and what kind of item it is (review S3). */
+const TARGET_FIELDS: Record<Exclude<ProposalKind, "note_draft">, { field: string; kind: ItemKind }> = {
+  card_create: { field: "boardId", kind: "board" },
+  card_update: { field: "cardId", kind: "card" },
+  card_comment: { field: "cardId", kind: "card" },
+  event_create: { field: "calendarId", kind: "calendar" },
+  event_update: { field: "eventId", kind: "event" },
+  row_create: { field: "collectionId", kind: "collection" },
+  row_update: { field: "rowId", kind: "row" }
+};
+
+function checkTargetReach(reach: Exclude<ScopeReach, "all" | null>, kind: Exclude<ProposalKind, "note_draft">, payload: unknown) {
+  const target = TARGET_FIELDS[kind];
+  const value = payload && typeof payload === "object" ? (payload as Record<string, unknown>)[target.field] : undefined;
+  if (typeof value !== "string" || !reachCovers(reach, anchorsOf(target.kind, value))) throw new McpToolError("NOT_FOUND", "Not found");
+}
 
 /**
  * A note draft is written as soon as it validates, so a key limited to chosen notes or folders is

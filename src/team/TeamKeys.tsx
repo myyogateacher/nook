@@ -36,6 +36,13 @@ const IP_OPTIONS: Option<"all" | "true" | "false">[] = [
   { value: "false", label: "Not IP limited" }
 ];
 
+/** Review Q14: with filters on, "3 of 7 live keys match". */
+export function inventorySummary(summary: { live: number; noExpiry: number; matching?: number }, filtered: boolean) {
+  const keys = (count: number) => `${count} live ${count === 1 ? "key" : "keys"}`;
+  if (filtered && summary.matching !== undefined) return `${summary.matching} of ${keys(summary.live)} match · ${summary.noExpiry} without an expiry on this Nook`;
+  return `${keys(summary.live)} on this Nook · ${summary.noExpiry} without an expiry`;
+}
+
 export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ id: string; displayName: string }>; onBack: () => void; flash: (message: string) => void }) {
   const [owner, setOwner] = useState("all");
   const [module, setModule] = useState<"all" | GrantModule>("all");
@@ -46,6 +53,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<InventoryKey | null>(null);
   const generation = useRef(0);
+  const filtered = owner !== "all" || module !== "all" || state !== "all" || surface !== "all" || ipLimited !== "all";
 
   const load = useCallback(async (cursor?: string | null) => {
     const current = ++generation.current;
@@ -89,7 +97,8 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!error && !data && <p className="team-loading" role="status">Loading keys…</p>}
-    {!error && data && <p className="team-keys-summary">{data.summary.live} live {data.summary.live === 1 ? "key" : "keys"} on this Nook · {data.summary.noExpiry} without an expiry</p>}
+    {!error && data && <p className="team-keys-summary">{inventorySummary(data.summary, filtered)}</p>}
+    {!error && data && <p className="team-muted team-keys-note">Calls per surface are counted per day; there is no per-call log in the app.</p>}
     {!error && data && data.keys.length === 0 && <div className="team-state">
       <span className="team-state-icon"><KeyRound /></span>
       <h2>No keys match.</h2>

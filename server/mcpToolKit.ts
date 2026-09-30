@@ -24,6 +24,8 @@ export type McpKeyContext = {
    * proposal): what the key may see about foreign items (server/keyReach.ts) does not limit them.
    */
   person?: true;
+  /** The surface the call came through (Wave 34), set by runTool: uploads remember it (review S4). */
+  surface?: "mcp" | "rest";
 };
 
 /**

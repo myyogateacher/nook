@@ -21,6 +21,34 @@ const shapeOf = (spec: (typeof mcpToolSpecs)[number]) => (spec.inputSchema as un
 const MODES = ["items", "list", "derived", "own", "global"];
 const namesAnItem = (name: string) => /(^id$|Id$|Ids$)/.test(name);
 
+type SchemaNode = { def?: { type?: string; innerType?: SchemaNode; element?: SchemaNode; options?: SchemaNode[]; shape?: Record<string, SchemaNode>; valueType?: SchemaNode; left?: SchemaNode; right?: SchemaNode }; format?: string; shape?: Record<string, SchemaNode> };
+
+/**
+ * Every place a schema takes a UUID (review S6), as a path: `cardId`, `assigneeIds[]`, `items[].boardId`.
+ * Walks optional, nullable, default, array, union, intersection, record, and nested object schemas.
+ */
+export function uuidPaths(node: SchemaNode | undefined, path = ""): string[] {
+  if (!node) return [];
+  if (node.format === "uuid") return [path];
+  const def = node.def ?? {};
+  switch (def.type) {
+    case "optional": case "nullable": case "default": case "prefault": case "readonly": case "nonoptional": case "catch":
+      return uuidPaths(def.innerType, path);
+    case "array": return uuidPaths(def.element, `${path}[]`);
+    case "union": return (def.options ?? []).flatMap((option) => uuidPaths(option, path));
+    case "intersection": return [...uuidPaths(def.left, path), ...uuidPaths(def.right, path)];
+    case "record": return uuidPaths(def.valueType, `${path}{}`);
+    case "object": return Object.entries(node.shape ?? def.shape ?? {}).flatMap(([key, child]) => uuidPaths(child, path ? `${path}.${key}` : key));
+    default: return [];
+  }
+}
+
+/** The UUID arguments a tool neither checks (items) nor explains (related), by top-level argument. */
+export function undeclaredUuidArgs(spec: { inputSchema: unknown; access: { items?: ReadonlyArray<{ arg: string }>; related?: readonly string[] } }) {
+  const declared = new Set([...(spec.access.items ?? []).map((item) => item.arg), ...(spec.access.related ?? [])]);
+  return uuidPaths(spec.inputSchema as SchemaNode).filter((path) => !declared.has(path.split(/[.[{]/)[0]!));
+}
+
 describe("tool resource policy", () => {
   test("every registered tool declares what it touches", () => {
     expect(mcpToolSpecs.length).toBeGreaterThan(60);
@@ -32,9 +60,22 @@ describe("tool resource policy", () => {
       for (const arg of declared) expect({ tool: spec.name, arg, exists: arg in shape }).toEqual({ tool: spec.name, arg, exists: true });
       // Every id argument is either checked or explained.
       for (const arg of Object.keys(shape).filter(namesAnItem)) expect({ tool: spec.name, arg, declared: declared.includes(arg) }).toEqual({ tool: spec.name, arg, declared: true });
+      // Every UUID anywhere in the arguments, nested ones included (review S6).
+      expect({ tool: spec.name, undeclared: undeclaredUuidArgs(spec) }).toEqual({ tool: spec.name, undeclared: [] });
       if (spec.access.mode === "items") expect({ tool: spec.name, items: (spec.access.items ?? []).length > 0 }).toEqual({ tool: spec.name, items: true });
       if (spec.access.mode === "list") expect({ tool: spec.name, lists: (spec.access.lists ?? []).length > 0 }).toEqual({ tool: spec.name, lists: true });
     }
+  });
+
+  test("the UUID walk finds nested undeclared ids (a fake tool fails the check)", async () => {
+    const z = await import("zod/v4");
+    const fake = {
+      inputSchema: z.object({ boardId: z.string().uuid(), moves: z.array(z.object({ cardId: z.string().uuid(), to: z.union([z.literal("top"), z.string().uuid()]) })).optional(), note: z.string() }),
+      access: { mode: "items", items: [{ arg: "boardId", kind: "board" }] }
+    };
+    expect(uuidPaths(fake.inputSchema as never).sort()).toEqual(["boardId", "moves[].cardId", "moves[].to"]);
+    expect(undeclaredUuidArgs(fake).sort()).toEqual(["moves[].cardId", "moves[].to"]);
+    expect(undeclaredUuidArgs({ ...fake, access: { ...fake.access, related: ["moves"] } })).toEqual([]);
   });
 
   test("no tool deletes forever, shares, or manages keys, groups, templates, policies, or sign-in (D265)", () => {

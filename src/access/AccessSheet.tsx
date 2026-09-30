@@ -7,6 +7,7 @@ import { Avatar } from "../ui/Avatar";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { useRole } from "../team/roleAccess";
 import { ROLE_LABELS } from "../team/teamRoles";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { getAccess, keysReachLine, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
 import {
   accessErrorMessage, addPicked, afterGuestRefusal, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
@@ -251,10 +252,10 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
                 const boost = groupBoost(person, draft.groups);
                 const flagged = refused?.people.includes(person.id) ?? false;
                 return <li key={`p-${person.id}`} className={`access-row${flagged ? " refused" : ""}`}>
-                  <Avatar className="access-avatar" name={person.displayName} url={person.avatarUrl} />
+                  <Avatar className="access-avatar" name={person.displayName} url={person.avatarUrl} integration={person.kind === "service"} />
                   <span className="access-row-copy">
-                    <strong>{person.displayName}</strong>
-                    <small>Team role: {ROLE_LABELS[person.teamRole]}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>
+                    <strong>{person.displayName}{person.kind === "service" && <IntegrationBadge />}</strong>
+                    <small>{person.kind === "service" ? `Its keys reach this at this level · ${ROLE_LABELS[person.teamRole]}` : `Team role: ${ROLE_LABELS[person.teamRole]}`}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>
                     {kept && <small className="access-row-hint access-kept">{KEPT_GUEST_NOTE}</small>}
                     {boost && <small className="access-row-hint access-boost">Also {LEVEL_LABELS[boost.level]} through {boost.group}; the higher level applies</small>}
                     {flagged && <small className="access-row-refused">Sharing with guests is off: remove this person{kept ? " or set their level back" : ""}.</small>}

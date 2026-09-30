@@ -21,7 +21,7 @@ const CATEGORY_OPTIONS: Option<"all" | ActivityCategory>[] = [
   { value: "keys", label: "API keys" },
   { value: "policies", label: "Policies" },
   { value: "templates", label: "Templates" },
-  { value: "accounts", label: "Google sign-in" }
+  { value: "accounts", label: "Google sign-in and integrations" }
 ];
 
 /** G4: what a Google reset or re-link removed, as a sentence of only what actually went. */

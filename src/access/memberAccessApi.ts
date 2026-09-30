@@ -201,7 +201,12 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
     : event.meta?.reset ? `${who(event)} reset ${target(event)}'s account and allowed Google sign-in` : `${who(event)} allowed Google sign-in for ${target(event)}`,
   "account.google_reset": (event) => `${who(event)} reset ${target(event)}'s account for Google sign-in`,
   "account.google_unlinked": (event) => `${who(event)} unlinked Google from ${target(event)}'s account`,
-  "account.google_relinked": (event) => `A new Google account was linked to ${target(event)}'s account`
+  "account.google_relinked": (event) => `A new Google account was linked to ${target(event)}'s account`,
+  // Wave 36: integrations (service accounts).
+  "integration.created": (event) => `${who(event)} created the integration ${target(event)}`,
+  "integration.updated": (event) => `${who(event)} changed the integration ${target(event)}`,
+  "integration.deleted": (event) => `${who(event)} deleted an integration`,
+  "integration.retired": (event) => `${who(event)} deleted the integration ${target(event)}; it stays blocked because it created content`
 };
 const templateName = (event: ActivityEvent) => typeof event.meta?.templateName === "string" ? `“${event.meta.templateName}”` : "(name not recorded)";
 const who = (event: ActivityEvent) => event.actor?.displayName ?? (event.via === "sweeper" ? "Nook" : "Someone");

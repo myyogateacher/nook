@@ -8,14 +8,14 @@ import type { AccessGroup, AccessPerson, AccessPutBody, Audience, ItemAccess, Pi
  * saves. Kept apart from the component so tests/accessSheet.test.tsx can check it without a DOM.
  */
 
-export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean; groupIds?: string[]; avatarUrl?: string | null };
+export type DraftPerson = Pick<AccessPerson, "id" | "displayName" | "teamRole" | "level"> & { blocked?: boolean; groupIds?: string[]; avatarUrl?: string | null; /** Wave 36: an integration (D287). */ kind?: "person" | "service" };
 export type DraftGroup = Pick<AccessGroup, "id" | "name" | "memberCount" | "guestCount" | "selfAddedCount" | "level">;
 export type Draft = { audience: Audience; audienceLevel: Level | null; people: DraftPerson[]; groups: DraftGroup[] };
 
 export const draftFrom = (access: ItemAccess): Draft => ({
   audience: access.audience,
   audienceLevel: access.audienceLevel ?? null,
-  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds, avatarUrl }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}), ...(avatarUrl ? { avatarUrl } : {}) })),
+  people: access.people.map(({ id, displayName, teamRole, level, blocked, groupIds, avatarUrl, kind }) => ({ id, displayName, teamRole, level, blocked, ...(groupIds ? { groupIds } : {}), ...(avatarUrl ? { avatarUrl } : {}), ...(kind === "service" ? { kind } : {}) })),
   groups: access.groups.map(({ id, name, memberCount, guestCount, selfAddedCount, level }) => ({ id, name, memberCount, guestCount, selfAddedCount, level }))
 });
 
@@ -75,10 +75,13 @@ export function pickerOptions(draft: Draft, access: Pick<ItemAccess, "owner" | "
   const personOptions: Option[] = people.filter((person) => person.id !== access.owner.id && !chosenPeople.has(person.id) && (access.shareWithGuests || person.role !== "guest")).map((person) => ({
     value: personValue(person.id),
     label: person.displayName,
-    group: "People",
-    description: person.role ? `Team role: ${ROLE_LABELS[person.role]}${roleCapHint(person.role) ? " · reads only" : ""}` : undefined
+    // Wave 36 (D287): integrations are offered like people, marked, and after them.
+    group: person.kind === "service" ? "Integrations" : "People",
+    description: person.kind === "service"
+      ? `Integration: an AI client or script with its own keys${roleCapHint(person.role ?? "member") ? " · reads only" : ""}`
+      : person.role ? `Team role: ${ROLE_LABELS[person.role]}${roleCapHint(person.role) ? " · reads only" : ""}` : undefined
   }));
-  return [...groupOptions, ...personOptions];
+  return [...groupOptions, ...personOptions.filter((option) => option.group === "People"), ...personOptions.filter((option) => option.group === "Integrations")];
 }
 
 /** Adds the picked person or group at the default level. Unknown values change nothing. */
@@ -91,7 +94,7 @@ export function addPicked(draft: Draft, value: string, access: Pick<ItemAccess, 
   }
   const person = people.find((item) => personValue(item.id) === value);
   if (!person || draft.people.some((item) => item.id === person.id)) return draft;
-  return { ...draft, people: [...draft.people, { id: person.id, displayName: person.displayName, teamRole: person.role ?? "member", level, ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}) }] };
+  return { ...draft, people: [...draft.people, { id: person.id, displayName: person.displayName, teamRole: person.role ?? "member", level, ...(person.avatarUrl ? { avatarUrl: person.avatarUrl } : {}), ...(person.kind === "service" ? { kind: person.kind } : {}) }] };
 }
 
 /** What PUT sends. People and groups only for "selected"; managers never send the audience level (D273). */

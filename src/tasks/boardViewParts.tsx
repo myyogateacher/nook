@@ -47,7 +47,7 @@ export function Avatars({ card }: { card: BoardCard }) {
   if (!card.assignees.length) return null;
   const { shown, more } = visibleItems<CardAssignee>(card.assignees, FACE_PEOPLE);
   return <span className="task-card-people" aria-hidden="true">
-    {shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} />)}
+    {shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} integration={person.is_integration} />)}
     {more > 0 && <span className="task-avatar task-avatar-more">+{more}</span>}
   </span>;
 }

@@ -1,3 +1,4 @@
+import { createContext, useContext } from "react";
 import { api } from "../api";
 import { KIND_LABELS, resourceToken, type GrantModule, type GrantPayload, type KeyGrantView, type KeyState, type KeySurfaces, type PolicySummary, type ResourceKind } from "./keyGrants";
 import type { McpScope } from "../mcpPermissions";
@@ -105,6 +106,47 @@ export async function loadResources(module: GrantModule): Promise<ResourceOption
   }
   return [];
 }
+
+// ---------------------------------------------------------------- whose keys (Wave 36)
+
+/**
+ * The key calls one key screen makes: the caller's own keys (Settings → API keys), or an
+ * integration's keys managed by an admin (Team → Integrations, D287). The screens and dialogs are
+ * the same; only the endpoints, the item picker's source, and the Google re-authentication return
+ * address differ.
+ */
+export type KeysApi = {
+  list: () => Promise<KeyList>;
+  events: (id: string) => Promise<KeyEvent[]>;
+  create: typeof createKey;
+  narrow: typeof narrowKey;
+  rotate: typeof rotateKey;
+  revoke: typeof revokeKey;
+  loadResources: (module: GrantModule) => Promise<ResourceOption[]>;
+  /** Where a Google re-authentication started from this screen comes back to. */
+  returnTo: string;
+};
+
+export const ownKeysApi: KeysApi = { list: listKeys, events: keyEvents, create: createKey, narrow: narrowKey, rotate: rotateKey, revoke: revokeKey, loadResources, returnTo: "/settings/keys" };
+
+/** An integration's keys, under /api/team/integrations/:id (admins; creation and rotation re-authenticate the admin). */
+export function integrationKeysApi(integrationId: string): KeysApi {
+  const base = `/team/integrations/${encodeURIComponent(integrationId)}`;
+  return {
+    list: () => api<{ keys: KeyList }>(base).then((result) => result.keys),
+    events: (id) => api<{ events: KeyEvent[] }>(`${base}/keys/${id}`).then((result) => result.events),
+    create: (body) => api<{ key: ApiKey & { token: string } }>(`${base}/keys`, { method: "POST", body: JSON.stringify(body) }),
+    narrow: (id, body) => api<{ changed: string[]; key: ApiKey }>(`${base}/keys/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    rotate: (id, body) => api<{ key: ApiKey & { token: string }; oldKey: ApiKey }>(`${base}/keys/${id}/rotate`, { method: "POST", body: JSON.stringify(body) }),
+    revoke: (id) => api<{ ok: true }>(`${base}/keys/${id}`, { method: "DELETE", body: "{}" }),
+    // Only what is shared with the integration, never the admin's own items (T212).
+    loadResources: (module) => api<{ resources: ResourceOption[] }>(`${base}/resources?module=${encodeURIComponent(module)}`).then((result) => result.resources),
+    returnTo: `/team/integrations/${integrationId}`
+  };
+}
+
+export const KeysApiContext = createContext<KeysApi>(ownKeysApi);
+export const useKeysApi = () => useContext(KeysApiContext);
 
 // ---------------------------------------------------------------- Team (admins)
 

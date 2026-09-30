@@ -6,7 +6,7 @@ import {
   CREATE_ONLY, MODULE_LABELS, permissionHelp, permissionLabel, rowModuleChoices, rowPermissionChoices, selectorFor, SELECTOR_KINDS, grantSummary,
   type GrantModule, type GrantRow, type KeyPermission, type PolicySummary
 } from "./keyGrants";
-import { loadResources, type ResourceOption } from "./keysApi";
+import { useKeysApi, type ResourceOption } from "./keysApi";
 
 /**
  * The grant builder (access plan §E "New key", step 3): one row per permission. Module → permission
@@ -29,6 +29,8 @@ export function GrantBuilder({ rows, onChange, role, policy, disabled = false, c
 }) {
   const [resources, setResources] = useState<Partial<Record<GrantModule, ResourceOption[] | "error">>>({});
   const narrowing = ceiling !== undefined;
+  // Settings: your own items; Team → Integrations: only what is shared with the integration.
+  const { loadResources } = useKeysApi();
   const needed = [...new Set(rows.filter((row) => row.applies === "chosen" || narrowing).filter((row) => selectorFor(row.module, row.permission)).map((row) => row.module))];
 
   useEffect(() => {

@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { Bot } from "lucide-react";
 
 /**
  * The one avatar used wherever a person is drawn (Wave 35, D299): their picture when the server gave
@@ -17,6 +18,11 @@ type ViewProps = {
   fallback?: ReactNode;
   failed: boolean;
   onError: () => void;
+  /**
+   * An integration (service account, Wave 36, D287): always the integration icon, never a picture
+   * (it has no Google identity) and never letters, so it cannot pass for a person.
+   */
+  integration?: boolean;
 };
 
 /**
@@ -26,7 +32,8 @@ type ViewProps = {
 export const isAvatarPath = (url: string | null | undefined): url is string => typeof url === "string" && /^\/api\/users\/[0-9a-f-]{36}\/avatar\?v=[0-9a-f-]{36}$/.test(url);
 
 /** Pure: the picture, or the fallback when there is no usable URL or it failed. */
-export function AvatarView({ name, url, className, fallback, failed, onError }: ViewProps) {
+export function AvatarView({ name, url, className, fallback, failed, onError, integration = false }: ViewProps) {
+  if (integration) return <span className={`${className} avatar-integration`} aria-hidden="true"><Bot /></span>;
   const showImage = isAvatarPath(url) && !failed;
   return <span className={showImage ? `${className} avatar-has-image` : className} aria-hidden="true">
     {showImage ? <img src={url!} alt="" loading="lazy" decoding="async" draggable={false} referrerPolicy="no-referrer" onError={onError} /> : fallback ?? avatarInitial(name)}

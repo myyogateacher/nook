@@ -85,6 +85,7 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
+import { IntegrationBadge } from "./ui/IntegrationBadge";
 import { MyAccess } from "./settings/MyAccess";
 import { ConfirmDialog } from "./files/Dialog";
 import { useConfirm } from "./ui/useConfirm";
@@ -585,7 +586,7 @@ function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: 
         {versions.map((version) => (
           <button key={version.id} className={selected === version.version_number ? "selected" : ""} onClick={() => setSelected(version.version_number)}>
             <span>Version {version.version_number}</span>
-            <small>{version.author_name} · {relativeTime(version.created_at)}</small>
+            <small>{version.author_name}{version.author_is_integration === 1 && <IntegrationBadge />} · {relativeTime(version.created_at)}</small>
           </button>
         ))}
         {!versions.length && <p className="empty-copy">Publish a draft to create the first version.</p>}
@@ -1978,7 +1979,7 @@ export function App() {
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
-      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} /></Suspense>
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}

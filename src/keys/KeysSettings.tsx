@@ -11,7 +11,7 @@ import {
   blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, keyEventLine, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
-import { createKey, keyEvents, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyEvent, type KeyList, type NarrowBody } from "./keysApi";
+import { useKeysApi, type ApiKey, type KeyEvent, type KeyList, type NarrowBody, type KeysApi } from "./keysApi";
 import "./keys.css";
 
 /**
@@ -26,7 +26,12 @@ type Dialog = { kind: "create" } | { kind: "edit"; key: ApiKey } | { kind: "rota
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
-export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null }: { onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined; /** Q2: the result of a Google confirmation started here. */ notice?: React.ReactNode }) {
+export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null, integration }: {
+  onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined; /** Q2: the result of a Google confirmation started here. */ notice?: React.ReactNode;
+  /** Team → Integrations (Wave 36): an admin manages this integration's keys (wrap in KeysApiContext); `role` is the integration's. */
+  integration?: { name: string };
+}) {
+  const keysApi = useKeysApi();
   const [data, setData] = useState<KeyList | null>(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -44,8 +49,8 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const needsGoogle = Boolean(account && !asksForPassword(account) && !googleConfirmed(account));
 
   const load = useCallback(() => {
-    listKeys().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
-  }, []);
+    keysApi.list().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
+  }, [keysApi]);
   useEffect(load, [load]);
   // Q3: a new (or rotated) key takes focus, selected, so it can be copied at once; the New key button that
   // opened the dialog is disabled while the key is on screen.
@@ -118,7 +123,9 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
   return <section className="settings-content mcp-settings keys-settings" aria-labelledby="keys-heading">
     {notice}
-    <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP or the REST API. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
+    <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>{integration
+      ? `Keys let an AI client or script act as ${integration.name}, over MCP or the REST API. A key reaches only what owners share with ${integration.name} by name, only what its permissions allow, and only until it expires. Creating or rotating one asks for your password; copy the new key into the client that uses it.`
+      : "Keys let trusted AI clients and scripts use Nook as you, over MCP or the REST API. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever."}</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {status && <p className="keys-status" role="status">{status}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
@@ -127,13 +134,13 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
-        <div><h4 ref={headingRef} tabIndex={-1}>Your keys</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
+        <div><h4 ref={headingRef} tabIndex={-1}>{integration ? `Keys of ${integration.name}` : "Your keys"}</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
         {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken) || needsGoogle}><Plus aria-hidden="true" />New key</button>}
       </div>
       {/* Q2: the confirmation state too ("Confirmed with Google until …"), not only the button. */}
-      {!guest && account && !asksForPassword(account) && <GoogleReauthNotice account={account} returnTo="/settings/keys" />}
+      {!guest && account && !asksForPassword(account) && <GoogleReauthNotice account={account} returnTo={keysApi.returnTo} />}
       {guest && <p className="mcp-role-note" role="note">Guests cannot create API keys. Ask an admin for another team role.</p>}
-      {role === "viewer" && <p className="mcp-role-note" role="note">Team role: Viewer. Keys you create can only read.</p>}
+      {role === "viewer" && <p className="mcp-role-note" role="note">{integration ? "This integration is a viewer: its keys can only read." : "Team role: Viewer. Keys you create can only read."}</p>}
       {data && !data.policy.mcpAllowed && <p className="mcp-role-note" role="note">Team policy does not allow your team role to use MCP keys.</p>}
       {atLimit && <p className="mcp-role-note" role="note">You have {data!.liveCount} live keys, the most team policy allows. Revoke one to create another.</p>}
       <ul ref={liveListRef} className="keys-list" aria-label="API keys">
@@ -280,9 +287,10 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
  * narrowed, rotated, blocked, and refused calls with the shortened address they came from.
  */
 function KeyActivity({ keyId }: { keyId: string }) {
+  const keysApi = useKeysApi();
   const [events, setEvents] = useState<KeyEvent[] | "error" | null>(null);
   return <details className="keys-activity" onToggle={(event) => {
-    if ((event.currentTarget as HTMLDetailsElement).open && events === null) keyEvents(keyId).then(setEvents, () => setEvents("error"));
+    if ((event.currentTarget as HTMLDetailsElement).open && events === null) keysApi.events(keyId).then(setEvents, () => setEvents("error"));
   }}>
     <summary>Recent activity</summary>
     {events === null ? <small role="status">Loading…</small> : events === "error" ? <small role="alert">Could not load this key's activity.</small>
@@ -292,17 +300,19 @@ function KeyActivity({ keyId }: { keyId: string }) {
 }
 
 function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
+  const keysApi = useKeysApi();
   // Wave 35 (D297): accounts without a usable password confirm with Google instead.
   const account = useAccountAuth();
   return <div className="keys-reauth">
     {asksForPassword(account)
       ? <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
-      : <GoogleReauthNotice account={account!} returnTo="/settings/keys" startable={false} />}
+      : <GoogleReauthNotice account={account!} returnTo={keysApi.returnTo} startable={false} />}
     {totpEnabled && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
   </div>;
 }
 
 function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { policy: PolicySummary; role: string | undefined; totpEnabled: boolean; onClose: () => void; onCreated: (key: ApiKey & { token: string }) => void }) {
+  const keysApi = useKeysApi();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [surfaces, setSurfaces] = useState<KeySurfaces>("mcp");
@@ -329,7 +339,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
         return setError(`Allowed addresses: ${checked.error}`);
       }
       const ipAllowlist = checked.canonical;
-      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await keysApi.create({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -368,6 +378,7 @@ export function keyToRows(key: ApiKey): GrantRow[] {
 }
 
 function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: ApiKey; policy: PolicySummary; role: string | undefined; onClose: () => void; onSaved: (message: string) => void }) {
+  const keysApi = useKeysApi();
   const ceiling = useMemo(() => keyToRows(apiKey), [apiKey]);
   const [rows, setRows] = useState<GrantRow[]>(ceiling);
   const [name, setName] = useState(apiKey.name);
@@ -409,7 +420,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
     setBusy(true);
     setError("");
     try {
-      await narrowKey(apiKey.id, body);
+      await keysApi.narrow(apiKey.id, body);
       onSaved(`${body.name ?? apiKey.name} was updated.`);
     } catch (reason) {
       setError(messageOf(reason, "Could not save the key"));
@@ -440,6 +451,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
  * also change what the new key can do, widening included: access, where it is used, and addresses.
  */
 function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated }: { apiKey: ApiKey; policy: PolicySummary; role: string | undefined; totpEnabled: boolean; onClose: () => void; onRotated: (key: ApiKey & { token: string }) => void }) {
+  const keysApi = useKeysApi();
   const [grace, setGrace] = useState<string>("24");
   const [expires, setExpires] = useState(() => rotationExpiryDefault(apiKey, policy));
   const original = useMemo(() => keyToRows(apiKey), [apiKey]);
@@ -457,14 +469,14 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
     if (grantError) return setError(grantError);
     const checked = checkAllowlist(allowlist);
     if (checked.error) return setError(`Allowed addresses: ${checked.error}`);
-    const changes: Parameters<typeof rotateKey>[1] = { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires) };
+    const changes: Parameters<KeysApi["rotate"]>[1] = { graceHours: Number(grace) as 0 | 1 | 24 | 168, expiresInDays: expiryDays(expires) };
     if (JSON.stringify(rowsToGrants(original).grants) !== JSON.stringify(grants)) changes.grants = grants;
     if (surfaces !== apiKey.surfaces) changes.surfaces = surfaces;
     if (checked.canonical.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) changes.ipAllowlist = checked.canonical.length ? checked.canonical : null;
     setBusy(true);
     setError("");
     try {
-      const result = await rotateKey(apiKey.id, { ...changes, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await keysApi.rotate(apiKey.id, { ...changes, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onRotated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not rotate the key"));
@@ -507,13 +519,14 @@ export function revokeCopy(key: Pick<ApiKey, "name" | "prefix" | "state" | "pend
 }
 
 function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClose: () => void; onRevoked: () => void }) {
+  const keysApi = useKeysApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function confirmAction() {
     setBusy(true);
     setError("");
     try {
-      await revokeKey(apiKey.id);
+      await keysApi.revoke(apiKey.id);
       onRevoked();
     } catch (reason) {
       setError(messageOf(reason, "Could not revoke the key"));

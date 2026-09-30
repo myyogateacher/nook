@@ -901,6 +901,9 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     }
   }, [boardId, flash, flush, onOpenBoard]);
 
+  /** The pictures on hand, for History previews (stable, so previews are drawn once). */
+  const heldFiles = useCallback(() => filesRef.current, []);
+
   const copyLink = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(whiteboardLink(boardId));
@@ -1068,7 +1071,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       onPick={(document) => { setLayer(null); void placeImage(document); }}
       onUpload={(files) => { setLayer(null); void uploadImages(files); }} />}
     {layer?.kind === "link" && <LinkPickerSheet currentLink={selection.link} onClose={() => setLayer(null)} onPick={(path) => applyLink(path)} onRemove={() => applyLink(null)} />}
-    {(layer?.kind === "history" || layer?.kind === "restoreVersion") && <HistorySheet boardId={boardId} files={() => filesRef.current}
+    {(layer?.kind === "history" || layer?.kind === "restoreVersion") && <HistorySheet boardId={boardId} files={heldFiles}
       onClose={() => setLayer(null)}
       onRestore={(snapshot) => setLayer({ kind: "restoreVersion", snapshot })}
       onCopy={(snapshot) => duplicate(snapshot)} />}

@@ -47,7 +47,18 @@ async function session(email, name, width = 1280, height = 800) {
   return page;
 }
 
-const api = (page, method, path, body, headers = {}) => page.evaluate(async ({ method, path, body, csrf, headers }) => {
+/**
+ * One API call from the page. Team writes are limited to 30 a minute per admin, and seeding makes
+ * more (templates, invites, integrations): a 429 on a /team path waits out the minute and retries.
+ */
+const api = async (page, method, path, body, headers = {}) => {
+  const result = await apiOnce(page, method, path, body, headers);
+  if (result.status !== 429 || !path.startsWith("/team")) return result;
+  await sleep(61_000);
+  return apiOnce(page, method, path, body, headers);
+};
+
+const apiOnce = (page, method, path, body, headers = {}) => page.evaluate(async ({ method, path, body, csrf, headers }) => {
   const init = { method, headers: { "X-CSRF-Token": csrf, ...headers } };
   if (body instanceof Array && body[0] === "file") {
     const form = new FormData();
@@ -564,6 +575,8 @@ const ROUTES = (s) => [
   ["Settings · Modules", "/settings/modules"],
   ["Settings · API keys", "/settings/keys"],
   ["Settings · New key (many permissions)", "/settings/keys", async (page) => { await tapText(page, "button", "New key"); await page.waitForSelector(".keys-dialog"); for (let index = 0; index < 8; index += 1) await tapText(page, ".keys-dialog button", "Add permission").catch(() => undefined); }, { scope: ".keys-dialog" }],
+  // Wave 27: a vault key's grant builder with many rows, the vault settings, and the MCP warning.
+  ...(s.vault ? [["Settings · New vault key (many vaults)", "/settings/keys", async (page) => { await tapText(page, "button", "New key"); await page.waitForSelector(".keys-dialog"); await tapText(page, ".keys-dialog [role=combobox]", "General key"); await tapText(page, "[role=option]", "Vault key"); await page.waitForSelector(".vault-grant-builder .grant-row"); for (let index = 0; index < 8; index += 1) await tapText(page, ".keys-dialog button", "Add vault access").catch(() => undefined); }, { scope: ".keys-dialog" }]] : []),
   ["Settings · My access", "/settings/access"],
   ["Settings · Notifications", "/settings/notifications"],
   ["Settings · About", "/settings/about"],

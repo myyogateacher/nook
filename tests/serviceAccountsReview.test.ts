@@ -154,7 +154,7 @@ describe("review: integration lifecycle (role cap, block, delete, tombstone)", (
     expect((await card("After")).status).toBe(403);
   });
 
-  test("delete of a key-only integration erases its key rows and usage; a tombstone can be unblocked and re-keyed", async () => {
+  test("delete of a key-only integration keeps its key rows and usage; a retired integration cannot be revived", async () => {
     const admin = await user("Rev36 life admin", "admin");
     const bot = (await ok(admin, "POST", "/team/integrations", { name: "Rev36 quiet bot", role: "member" })).integration as { id: string };
     const key = await makeKey(admin, bot.id, [{ module: "notes", permission: "read" }]);
@@ -169,21 +169,47 @@ describe("review: integration lifecycle (role cap, block, delete, tombstone)", (
     expect((await send(admin, "POST", `/team/integrations/${bot.id}/keys/${keyId}/rotate`, { graceHours: 0, password: admin.password })).status).toBe(409);
     await ok(admin, "POST", `/team/integrations/${bot.id}/unblock`, {});
 
-    // Hard delete (it only read): the revoked key, its grants, and its usage go with it; only logs keep the id.
+    // Fixed (R1): it had a key, so delete keeps it (retired); the revoked key, its grants, and its usage stay.
+    const usageBefore = (db.query("SELECT COUNT(*) AS count FROM api_key_usage WHERE key_id = ?").get(keyId) as { count: number }).count;
     const gone = await send(admin, "DELETE", `/team/integrations/${bot.id}`, {});
-    expect(gone.body).toMatchObject({ deleted: true, keysRevoked: 1 });
-    expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE id = ?").get(keyId)).toEqual({ count: 0 });
-    expect(db.query("SELECT COUNT(*) AS count FROM api_key_grants WHERE key_id = ?").get(keyId)).toEqual({ count: 0 });
+    expect(gone.body).toMatchObject({ deleted: false, retained: true, keysRevoked: 1, integration: { status: "retired" } });
+    expect(db.query("SELECT COUNT(*) AS count FROM mcp_api_keys WHERE id = ?").get(keyId)).toEqual({ count: 1 });
+    expect((db.query("SELECT COUNT(*) AS count FROM api_key_grants WHERE key_id = ?").get(keyId) as { count: number }).count).toBeGreaterThan(0);
+    expect((db.query("SELECT COUNT(*) AS count FROM api_key_usage WHERE key_id = ?").get(keyId) as { count: number }).count).toBe(usageBefore);
     expect((db.query("SELECT COUNT(*) AS count FROM access_events WHERE key_id = ?").get(keyId) as { count: number }).count).toBeGreaterThan(0);
 
-    // A tombstone (it made something) is an ordinary blocked integration: Unblock brings it back and it can be keyed again.
+    // Fixed (R3): a retired integration (it had keys, or it made something) is not an ordinary blocked one:
+    // no unblock, no key, no rotation, no rename, no role change, no block; deleting it again changes nothing.
     const busy = (await ok(admin, "POST", "/team/integrations", { name: "Rev36 busy bot", role: "member" })).integration as { id: string };
     const folder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(busy.id) as { id: string }).id;
     const stamp = new Date().toISOString();
     db.query("INSERT INTO folders (id, owner_id, parent_id, name, created_at, updated_at, is_default) VALUES (?, ?, ?, 'Made by bot', ?, ?, 0)").run(crypto.randomUUID(), busy.id, folder, stamp, stamp);
     const retired = await send(admin, "DELETE", `/team/integrations/${busy.id}`, {});
-    expect(retired.body).toMatchObject({ deleted: false, retained: true, integration: { status: "blocked" } });
-    expect((await send(admin, "POST", `/team/integrations/${busy.id}/unblock`, {})).status).toBe(200);
-    expect((await makeKey(admin, busy.id, [{ module: "notes", permission: "read" }])).status).toBe(201);
+    expect(retired.body).toMatchObject({ deleted: false, retained: true, integration: { status: "retired" } });
+    for (const id of [bot.id, busy.id]) {
+      expect((await send(admin, "POST", `/team/integrations/${id}/unblock`, {})).body.code).toBe("INTEGRATION_RETIRED");
+      expect((await send(admin, "POST", `/team/integrations/${id}/block`, {})).body.code).toBe("INTEGRATION_RETIRED");
+      const keyed = await makeKey(admin, id, [{ module: "notes", permission: "read" }]);
+      expect({ status: keyed.status, code: keyed.body.code }).toEqual({ status: 409, code: "INTEGRATION_RETIRED" });
+      expect((await send(admin, "PATCH", `/team/integrations/${id}`, { name: "Revived" })).status).toBe(409);
+      expect((await send(admin, "PATCH", `/team/integrations/${id}`, { role: "viewer", expectedRole: "member" })).status).toBe(409);
+      const again = await send(admin, "DELETE", `/team/integrations/${id}`, {});
+      expect(again.body).toMatchObject({ deleted: false, retained: true, keysRevoked: 0, integration: { status: "retired" } });
+    }
+    const rotated = await send(admin, "POST", `/team/integrations/${bot.id}/keys/${keyId}/rotate`, { graceHours: 0, password: admin.password });
+    expect(rotated.body.code).toBe("INTEGRATION_RETIRED");
+    // Nor in the database: the retirement is final and the block cannot be lifted.
+    expect(() => db.query("UPDATE users SET disabled_at = NULL WHERE id = ?").run(busy.id)).toThrow("RETIRED");
+    expect(() => db.query("UPDATE users SET retired_at = NULL WHERE id = ?").run(busy.id)).toThrow("RETIRED");
+    // Retired ones are listed as such and never offered in a picker.
+    const listed = (await ok(admin, "GET", "/team/integrations")).integrations as Array<{ id: string; status: string }>;
+    expect(listed.filter((row) => row.id === bot.id || row.id === busy.id).map((row) => row.status)).toEqual(["retired", "retired"]);
+    const directory = (await ok(admin, "GET", "/users")).users as Array<{ id: string }>;
+    expect(directory.some((row) => row.id === bot.id || row.id === busy.id)).toBe(false);
+
+    // An integration that never had a key and made nothing is removed outright.
+    const unused = (await ok(admin, "POST", "/team/integrations", { name: "Rev36 unused bot", role: "viewer" })).integration as { id: string };
+    expect((await send(admin, "DELETE", `/team/integrations/${unused.id}`, {})).body).toMatchObject({ deleted: true, keysRevoked: 0 });
+    expect(db.query("SELECT 1 FROM users WHERE id = ?").get(unused.id)).toBeNull();
   });
 });

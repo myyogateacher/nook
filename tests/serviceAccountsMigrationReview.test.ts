@@ -9,7 +9,10 @@ import { serviceAccountsMigration } from "../server/migrations/036_service_accou
  * sessions, Google identities) working while it refuses the same for an integration.
  */
 
-const TRIGGERS = ["users_kind_fixed", "users_service_role_insert", "users_service_role_update", "sessions_person_only", "google_identities_person_only"];
+const TRIGGERS = [
+  "users_kind_fixed", "users_service_role_insert", "users_service_role_update", "sessions_person_only", "google_identities_person_only",
+  "sessions_person_only_move", "google_identities_person_only_move", "users_retired_final"
+];
 const at = "2026-09-01T00:00:00.000Z";
 
 /** A database at 035: every migration, then 036 taken back out (its triggers, its column, its row). */
@@ -19,6 +22,7 @@ function databaseAt035() {
   runMigrations(db);
   for (const name of TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${name}`);
   db.exec("ALTER TABLE users DROP COLUMN description");
+  db.exec("ALTER TABLE users DROP COLUMN retired_at");
   db.query("DELETE FROM schema_migrations WHERE id = 36").run();
   return db;
 }
@@ -51,7 +55,7 @@ describe("review: migration 036 (service accounts) on an upgraded database", () 
     expect(db.query("SELECT id FROM schema_migrations WHERE id = 36").get()).toEqual({ id: 36 });
     expect((db.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (SELECT value FROM json_each(?)) ORDER BY name").all(JSON.stringify(TRIGGERS)) as Array<{ name: string }>).map((row) => row.name))
       .toEqual([...TRIGGERS].sort());
-    expect(db.query("SELECT COUNT(*) AS count FROM users WHERE kind = 'person' AND description IS NULL").get()).toEqual({ count: 4 });
+    expect(db.query("SELECT COUNT(*) AS count FROM users WHERE kind = 'person' AND description IS NULL AND retired_at IS NULL").get()).toEqual({ count: 4 });
     // Re-running the migration's body changes nothing and throws nothing.
     serviceAccountsMigration.up(db);
     runMigrations(db);
@@ -76,9 +80,18 @@ describe("review: migration 036 (service accounts) on an upgraded database", () 
     db.query("UPDATE users SET role = 'member' WHERE id = 'bot'").run();
     expect(() => db.query("UPDATE users SET description = ? WHERE id = 'bot'").run("x".repeat(201))).toThrow();
 
-    // Defence in depth only guards INSERT: moving an existing row onto an integration is not refused
-    // by the database (no code path does this today; requireAuth also ignores such a session).
-    const moved = db.query("UPDATE sessions SET user_id = 'bot' WHERE user_id = 'admin1'").run().changes;
-    expect(moved).toBe(1);
+    // Fixed (R5): moving an existing session or Google identity onto an integration is refused too,
+    // while moving one between people still works.
+    expect(() => db.query("UPDATE sessions SET user_id = 'bot' WHERE user_id = 'admin1'").run()).toThrow("SERVICE_NO_SESSION");
+    expect(() => db.query("UPDATE google_identities SET user_id = 'bot' WHERE user_id = 'admin1'").run()).toThrow("SERVICE_NO_GOOGLE");
+    expect(db.query("UPDATE sessions SET user_id = 'member1' WHERE user_id = 'admin1'").run().changes).toBe(1);
+
+    // A retired integration: only an integration, only a blocked one, and final.
+    expect(() => db.query("UPDATE users SET retired_at = ? WHERE id = 'member1'").run(at)).toThrow();
+    expect(() => db.query("UPDATE users SET retired_at = ? WHERE id = 'bot'").run(at)).toThrow();
+    db.query("UPDATE users SET disabled_at = ?, retired_at = ? WHERE id = 'bot'").run(at, at);
+    expect(() => db.query("UPDATE users SET disabled_at = NULL WHERE id = 'bot'").run()).toThrow("RETIRED");
+    expect(() => db.query("UPDATE users SET retired_at = NULL WHERE id = 'bot'").run()).toThrow("RETIRED");
+    db.query("UPDATE users SET display_name = 'Kept' WHERE id = 'bot'").run();
   });
 });

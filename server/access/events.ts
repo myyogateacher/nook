@@ -40,9 +40,12 @@ export type AccessAction =
   | "template.updated"
   | "template.deleted"
   | "template.applied"
-  // Integrations (service accounts, Wave 36, D287): created, renamed or re-roled, deleted, or kept blocked because it owns content.
+  // Integrations (service accounts, Wave 36, D287): created, renamed or re-roled, blocked, unblocked,
+  // deleted, or retired (deleted but kept, because it made content or had keys).
   | "integration.created"
   | "integration.updated"
+  | "integration.blocked"
+  | "integration.unblocked"
   | "integration.deleted"
   | "integration.retired";
 

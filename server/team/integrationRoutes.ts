@@ -16,7 +16,7 @@ import { parseJson, uuid } from "../validation";
 import { BLOCK_REASON_MAX, TeamError } from "./service";
 import {
   blockIntegration, createIntegration, deleteIntegration, INTEGRATION_DESCRIPTION_MAX, INTEGRATION_EXCLUDED_MODULES, INTEGRATION_NAME_MAX, INTEGRATION_ROLES,
-  integrationDetail, IntegrationError, integrationResources, listIntegrations, unblockIntegration, updateIntegration
+  integrationDetail, IntegrationError, integrationResources, listIntegrations, RETIRED_MESSAGE, unblockIntegration, updateIntegration
 } from "./serviceAccounts";
 
 /**
@@ -65,7 +65,11 @@ async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>, statu
 }
 
 /** The integration as the key checks see it, or null (unknown, or a person's id). */
-const integrationAccount = (id: string) => db.query("SELECT id, role, disabled_at FROM users WHERE id = ? AND kind = 'service'").get(id) as { id: string; role: "member" | "viewer"; disabled_at: string | null } | null;
+const integrationAccount = (id: string) => db.query("SELECT id, role, disabled_at, retired_at FROM users WHERE id = ? AND kind = 'service'").get(id) as { id: string; role: "member" | "viewer"; disabled_at: string | null; retired_at: string | null } | null;
+/** A deleted integration kept for attribution never gets a key again (R3). */
+function refuseRetired(integration: { retired_at: string | null }) {
+  if (integration.retired_at !== null) throw new KeyError(409, "INTEGRATION_RETIRED", RETIRED_MESSAGE);
+}
 /** One of the integration's keys (any state), or null. */
 const keyOf = (integrationId: string, keyId: string) => db.query("SELECT id FROM mcp_api_keys WHERE id = ? AND user_id = ?").get(keyId, integrationId) as { id: string } | null;
 
@@ -166,6 +170,7 @@ export function registerIntegrationRoutes(app: Hono<AppEnv>, gates: { read: Gate
     const body = await parseJson(c.req.raw, createKeySchema);
     const admin = c.get("user");
     return run(c, async () => {
+      refuseRetired(integration);
       if (integration.disabled_at !== null) throw new KeyError(409, "INTEGRATION_BLOCKED", "Unblock this integration before creating a key for it");
       refuseExcludedModules(body.grants.map((grant) => grant.module));
       // Every check that needs no password runs first, against the integration (its role, policy, and shares).
@@ -207,6 +212,7 @@ export function registerIntegrationRoutes(app: Hono<AppEnv>, gates: { read: Gate
     const admin = c.get("user");
     const changes = { grants: body.grants, surfaces: body.surfaces, ipAllowlist: body.ipAllowlist };
     return run(c, async () => {
+      refuseRetired(integration);
       if (integration.disabled_at !== null) throw new KeyError(409, "INTEGRATION_BLOCKED", "Unblock this integration before rotating its keys");
       refuseExcludedModules(body.grants?.map((grant) => grant.module));
       checkRotation(integration.id, keyId, body.graceHours, body.expiresInDays, changes);

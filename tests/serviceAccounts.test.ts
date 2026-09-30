@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { createUser, db, origin, request, type Session } from "./support/harness";
 
 const { resetTeamRateLimits } = await import("../server/team/routes");
@@ -100,6 +101,8 @@ describe("every sign-in path refuses an integration", () => {
     const invite = await send(admin, "POST", "/team/invites", { role: "member", email });
     expect(invite.status).toBe(400);
     expect(invite.body.code).toBe("EMAIL_NOT_ALLOWED");
+    // Q-L2: the refusal does not blame an allowlist that may not be set.
+    expect(invite.body.error).toBe("This address cannot be invited");
 
     // 5. Sessions: none can be made (server and database), so no cookie can ever carry it.
     await expect(createSession({ req: { header: () => undefined } } as never, bot.id)).rejects.toBeInstanceOf(ServiceAccountSignInError);
@@ -148,6 +151,9 @@ describe("Team → Integrations", () => {
     expect(blocked.body.integration.status).toBe("blocked");
     const unblocked = await send(admin, "POST", `/team/integrations/${bot.id}/unblock`, {});
     expect(unblocked.body.integration.status).toBe("active");
+    // Q-L5: Access activity says blocked and unblocked, not "changed".
+    const actions = (db.query("SELECT action FROM access_events WHERE target_user_id = ? ORDER BY created_at, rowid").all(bot.id) as Array<{ action: string }>).map((row) => row.action);
+    expect(actions).toEqual(["integration.created", "integration.updated", "integration.blocked", "integration.unblocked"]);
     expect((await send(admin, "POST", "/team/integrations", { name: "Admin bot", role: "admin" })).status).toBe(400);
     expect((await send(admin, "POST", "/team/integrations", { name: "Guest bot", role: "guest" })).status).toBe(400);
   });
@@ -286,18 +292,59 @@ describe("Team → Integrations", () => {
     const comments = await send(owner, "GET", `/tasks/cards/${cardId}/comments`);
     expect(comments.body.comments[0]).toMatchObject({ author_name: busy.displayName, author_is_integration: 1, author_avatar_url: null });
 
-    const quietKey = await integrationKey(admin, quiet.id, [all("tasks", "read")]);
-    // Team history about it (a block and an unblock) goes with it.
+    // Never keyed and made nothing: removed, and Team history about it (a block and an unblock) goes with it.
     await send(admin, "POST", `/team/integrations/${quiet.id}/block`, {});
     await send(admin, "POST", `/team/integrations/${quiet.id}/unblock`, {});
     const gone = await send(admin, "DELETE", `/team/integrations/${quiet.id}`, {});
-    expect(gone.body).toMatchObject({ deleted: true, keysRevoked: 1 });
+    expect(gone.body).toMatchObject({ deleted: true, keysRevoked: 0 });
     expect(db.query("SELECT 1 FROM users WHERE id = ?").get(quiet.id)).toBeNull();
-    expect((await rest(quietKey.body.key.token, "GET", "/me")).status).toBe(401);
+
+    // Keyed (even if it only read): kept as retired, so its keys' history stays; the key stops at once.
+    const reader = await integration(admin);
+    const readerKey = await integrationKey(admin, reader.id, [all("tasks", "read")]);
+    const retired = await send(admin, "DELETE", `/team/integrations/${reader.id}`, {});
+    expect(retired.body).toMatchObject({ deleted: false, retained: true, keysRevoked: 1, integration: { status: "retired", hadKeys: true, ownsContent: false } });
+    expect((await rest(readerKey.body.key.token, "GET", "/me")).status).toBe(401);
 
     const kept = await send(admin, "DELETE", `/team/integrations/${busy.id}`, {});
-    expect(kept.body).toMatchObject({ deleted: false, retained: true, keysRevoked: 1, integration: { status: "blocked" } });
+    expect(kept.body).toMatchObject({ deleted: false, retained: true, keysRevoked: 1, integration: { status: "retired" } });
     expect((await rest(writeKey.body.key.token, "GET", "/me")).status).toBe(401);
     expect((await send(owner, "GET", `/tasks/cards/${cardId}`)).body.card.creator_name).toBe(busy.displayName);
   });
+});
+
+describe("retired integrations (review R3, R7)", () => {
+  test("do not count toward the integration limit", async () => {
+    const admin = await user("SA limit admin", "admin");
+    const live = (db.query("SELECT COUNT(*) AS count FROM users WHERE kind = 'service' AND retired_at IS NULL").get() as { count: number }).count;
+    const stamp = new Date().toISOString();
+    const filler: string[] = [];
+    try {
+      // Fill every slot, then retire the fillers: a new one fits again.
+      for (let index = live; index < 100; index += 1) {
+        const id = crypto.randomUUID();
+        filler.push(id);
+        db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role, kind) VALUES (?, ?, 'Filler', '!unusable:service', ?, 'viewer', 'service')").run(id, serviceEmailFor(id), stamp);
+      }
+      const full = await send(admin, "POST", "/team/integrations", { name: "One too many", role: "viewer" });
+      expect({ status: full.status, code: full.body.code }).toEqual({ status: 409, code: "INTEGRATION_LIMIT" });
+      for (const id of filler) db.query("UPDATE users SET disabled_at = ?, retired_at = ? WHERE id = ?").run(stamp, stamp, id);
+      const fits = await send(admin, "POST", "/team/integrations", { name: "Fits again", role: "viewer" });
+      expect(fits.status).toBe(201);
+      filler.push(fits.body.integration.id);
+    } finally {
+      for (const id of filler) db.query("DELETE FROM users WHERE id = ?").run(id);
+    }
+  });
+
+  test("the host CLI labels integrations and refuses to manage them", async () => {
+    const admin = await user("SA cli admin", "admin");
+    const bot = await integration(admin, "viewer", `CLI bot ${tag()}`);
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    expect(cli("list").stdout.toString()).toContain(`${bot.displayName} (integration)`);
+    for (const args of [["unblock", serviceEmailFor(bot.id)], ["set-role", serviceEmailFor(bot.id), "admin"]]) {
+      const refused = cli(...args);
+      expect({ code: refused.exitCode, err: refused.stderr.toString().trim() }).toEqual({ code: 1, err: "That account is an integration; manage it in Team → Integrations." });
+    }
+  }, 30_000);
 });

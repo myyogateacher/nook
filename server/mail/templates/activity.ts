@@ -80,10 +80,11 @@ export const commentTemplate = defineTemplate<{ boardId: string; cardId: string;
 
 // --- Shared with you (#25), one template for every module -------------------------------------
 
-export type SharedKind = "note" | "folder" | "file" | "board" | "calendar" | "collection" | "view";
+/** `vault` (Wave 26): the vault's name only, never a secret's name or value (D223). */
+export type SharedKind = "note" | "folder" | "file" | "board" | "calendar" | "collection" | "view" | "vault";
 export type SharedItem = { kind: SharedKind; id: string; title: string; access: "read" | "edit" | null };
 
-const KIND_LABELS: Record<SharedKind, string> = { note: "Note", folder: "Notes folder", file: "File", board: "Board", calendar: "Calendar", collection: "Collection", view: "Task view" };
+const KIND_LABELS: Record<SharedKind, string> = { note: "Note", folder: "Notes folder", file: "File", board: "Board", calendar: "Calendar", collection: "Collection", view: "Task view", vault: "Vault" };
 
 export function sharedItemPath(item: Pick<SharedItem, "kind" | "id">) {
   switch (item.kind) {
@@ -94,6 +95,7 @@ export function sharedItemPath(item: Pick<SharedItem, "kind" | "id">) {
     case "calendar": return paths.calendar();
     case "collection": return paths.collection(item.id);
     case "view": return paths.taskView(item.id);
+    case "vault": return paths.vault(item.id);
   }
 }
 

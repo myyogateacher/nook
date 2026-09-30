@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.21.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.22.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -133,9 +133,12 @@ What else to know:
 
 - Deleted vaults, environments, and secrets stay in the Bin for 30 days. Deleting a vault forever deletes its data key, so nothing of it can be decrypted again; older backup archives keep the ciphertext (and the old wrapped key) for up to about five weeks, as for notes. After a leak, rotate the real credentials upstream: the vault cannot take back values someone already read.
 - The database runs with `PRAGMA secure_delete = ON` (all modules), so deleted rows are overwritten instead of lingering in free pages.
-- In this release vaults have one member, their owner. Members and per-environment access, protected environments with re-authentication, import and export, vault API keys (`nkv_…`), REST, and MCP tools arrive in later releases. Admins get no access to other people's vaults.
-- Every reveal, copy, write, clear, and restore, and every opening of a secret's comment, is recorded in the vault's own event log (ids and counts only, never values). The hourly sweep deletes events older than 90 days; newer events cannot be deleted. Reads and writes are limited to 300 each per 10 minutes per person; the limits survive a restart.
-- Vaults and secrets in the Bin count toward the limits of 100 vaults per person and 1,000 secrets per vault until they are purged.
+- Vaults are shared by their owners with people and groups, with a level per environment (see USING → Vault). Team roles cap it: viewers read at most, and guests and integrations (service accounts) are never vault members; integrations will reach vaults through vault API keys (`nkv_…`), which arrive with REST and MCP tools in a later release. Admins get no access to vaults they are not in; Team → a member → Access lists a person's vault memberships (names hidden unless you can open the vault) and can remove them or lower them to read, never add. Reset access removes vault memberships too (vaults the person owns stay).
+- **Protected environments** (prod by default) need a fresh re-authentication for values: the password (or a Google confirmation where that is the account's method) and a two-factor code when enabled, valid 15 minutes for that browser session. The server enforces it, for owners too. Re-authentication attempts are limited to 10 per 10 minutes per person.
+- **Rotating a vault's data key vs. `rotate-kek`.** `rotate-kek` (above) replaces the server key that wraps every vault's data key, on the host, with the app stopped; values are not touched. A vault's **data key** is rotated in the app (vault settings → Rotate data key, owners) and automatically whenever someone loses access to an environment: a new data key is wrapped by the current server key, new writes use it at once, and the running server re-encrypts the vault's older values, history, and comments in the background (batches of 500 rows, a short pause between them; the hourly sweep finishes any rotation a restart interrupted), then deletes the old wrapped data key. Nothing needs stopping and values stay readable throughout. It protects backups against someone who kept an old wrapped key; it does not take back values someone already read, so rotate those credentials upstream. Old archives still hold the old wrapped data key and its ciphertext until they rotate out.
+- **Import and export.** Import reads `.env` (`KEY=value`, quotes, `export`, `#` comments), JSON (`{ "NAME": "value" }` or a list of `{ name, value, comment }`), or CSV (`name,value,comment` header) in the browser, at most 1 MiB and 500 entries; the server checks every entry and shows a preview before anything is written. Export writes one environment as `.env`, JSON, or CSV in plain text; each export is recorded (the vault's Activity and the audit log `vault.export`, with counts) and limited to 10 an hour per person. An export file is as sensitive as the vault: keep it off shared drives, and delete it when done.
+- Every reveal, copy, write, clear, restore, import, export, and access change, and every opening of a secret's comment, is recorded in the vault's own event log (ids and counts only, never values); owners read it as the vault's **Activity**, members see their own. The hourly sweep deletes events older than 90 days; newer events cannot be deleted. Reads and writes are limited to 300 each per 10 minutes per person; the limits survive a restart.
+- Vaults and secrets in the Bin count toward the limits of 100 vaults per person and 1,000 secrets per vault until they are purged. The vaults a person created may hold 64 MiB of stored ciphertext in total (values, their history, and comments, the Bin included); past that, writes that add data are refused until values are cleared or deleted items purged. When the creator stops being an owner, the longest-standing owner takes over that count.
 
 ### Passwords
 
@@ -308,7 +311,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.21.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.22.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -391,6 +394,8 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.22.0:** back up first with `./scripts/backup.sh --force`. Migration 037 (vault sharing: `sessions.vault_reauth_at`, `vaults.stored_bytes` with a backfill, `target_id` and `level` on `vault_events`, an index on secrets, and a trigger that refuses integrations as vault members) runs once on the first boot and can only be undone by restoring that backup. It only adds. No new environment variables. Data-key rotations run inside the server in batches and resume after a restart. Pull, rebuild with `APP_VERSION=0.22.0`, and restart as above.
 
 **Upgrading to 0.21.0:** no migration and no new settings; connected whiteboards (pictures from Files, links, note cards, History, duplicate, import) only add routes. Pictures uploaded from a board or imported are stored as Files in the board's folder and take that folder's sharing. Pull, rebuild with `APP_VERSION=0.21.0`, and restart as above.
 

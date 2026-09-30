@@ -19,27 +19,33 @@ const S = "e4eaaaf2-d142-41a4-8c2f-d8c1d4c8c1b7";
 
 describe("vault routes", () => {
   test("parse and format the list, a vault, an environment, and a secret", () => {
-    expect(parseRoute("/vault")).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null });
-    expect(parseRoute(`/vault/${V}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null });
-    expect(parseRoute(`/vault/${V}/env/${E}`)).toEqual({ app: "vault", vaultId: V, envId: E, secretId: null });
-    expect(parseRoute(`/vault/${V}/secrets/${S}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: S });
-    expect(parseRoute(`/vault/${V.toUpperCase()}/secrets/${S.toUpperCase()}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: S });
+    expect(parseRoute("/vault")).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null, page: null });
+    expect(parseRoute(`/vault/${V}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: null });
+    expect(parseRoute(`/vault/${V}/env/${E}`)).toEqual({ app: "vault", vaultId: V, envId: E, secretId: null, page: null });
+    expect(parseRoute(`/vault/${V}/secrets/${S}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: S, page: null });
+    expect(parseRoute(`/vault/${V.toUpperCase()}/secrets/${S.toUpperCase()}`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: S, page: null });
     for (const path of ["/vault", `/vault/${V}`, `/vault/${V}/env/${E}`, `/vault/${V}/secrets/${S}`]) expect(formatRoute(parseRoute(path))).toBe(path);
   });
 
   test("malformed paths fall back to the vault or the list", () => {
-    expect(parseRoute("/vault/not-an-id")).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null });
-    expect(parseRoute(`/vault/${V}/secrets/nope`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null });
-    expect(parseRoute(`/vault/${V}/env/${E}/extra`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null });
+    expect(parseRoute("/vault/not-an-id")).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null, page: null });
+    expect(parseRoute(`/vault/${V}/secrets/nope`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: null });
+    expect(parseRoute(`/vault/${V}/env/${E}/extra`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: null });
     // A secret wins over an environment; ids never appear without a vault.
-    expect(formatRoute({ app: "vault", vaultId: V, envId: E, secretId: S })).toBe(`/vault/${V}/secrets/${S}`);
-    expect(vaultRoute(null, { envId: E })).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null });
+    expect(formatRoute({ app: "vault", vaultId: V, envId: E, secretId: S, page: null })).toBe(`/vault/${V}/secrets/${S}`);
+    // Wave 26: a vault's Access and Activity pages.
+    expect(parseRoute(`/vault/${V}/access`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: "access" });
+    expect(parseRoute(`/vault/${V}/activity`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: "activity" });
+    expect(parseRoute(`/vault/${V}/activity/x`)).toEqual({ app: "vault", vaultId: V, envId: null, secretId: null, page: null });
+    for (const path of [`/vault/${V}/access`, `/vault/${V}/activity`]) expect(formatRoute(parseRoute(path))).toBe(path);
+    expect(vaultBackAction(vaultRoute(V, { page: "access" }), 0)).toEqual({ kind: "replace", route: vaultRoute(V) });
+    expect(vaultRoute(null, { envId: E })).toEqual({ app: "vault", vaultId: null, envId: null, secretId: null, page: null });
   });
 
   test("in-app Back steps through history, or replaces a deep link with its parent, or goes Home", () => {
     expect(vaultBackAction(vaultRoute(), 3)).toEqual({ kind: "home" });
-    expect(vaultBackAction(vaultRoute(V, { secretId: S }), 2)).toEqual({ kind: "history" });
-    expect(vaultBackAction(vaultRoute(V, { secretId: S }), 0)).toEqual({ kind: "replace", route: vaultRoute(V) });
+    expect(vaultBackAction(vaultRoute(V, { secretId: S, page: null }), 2)).toEqual({ kind: "history" });
+    expect(vaultBackAction(vaultRoute(V, { secretId: S, page: null }), 0)).toEqual({ kind: "replace", route: vaultRoute(V) });
     expect(vaultBackAction(vaultRoute(V, { envId: E }), 0)).toEqual({ kind: "replace", route: vaultRoute() });
   });
 });

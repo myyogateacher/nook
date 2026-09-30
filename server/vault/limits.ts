@@ -3,19 +3,29 @@ import { VaultError } from "./access";
 
 /**
  * Vault rate limits (vault plan §7, T194, T195): reveals and value reads 300 per 10 minutes per
- * person, writes 300 per 10 minutes. Counters live in SQLite (`vault_rate_limits`), so a restart
+ * person, writes 300 per 10 minutes, exports 10 an hour, and failed protected-environment
+ * re-authentication attempts 10 per 10 minutes per session (Wave 26). Counters live in SQLite (`vault_rate_limits`), so a restart
  * does not reset them. Each bucket is a sliding window estimated from the current and previous fixed
  * windows (the previous one weighted by how much of it still overlaps). A refused request costs
  * nothing and gets 429 `RATE_LIMITED` with `retryAfterSeconds`. Wave 27 adds the per-key buckets.
  */
 export const VAULT_LIMITS = {
   read: { limit: 300, windowMs: 10 * 60_000 },
-  write: { limit: 300, windowMs: 10 * 60_000 }
+  write: { limit: 300, windowMs: 10 * 60_000 },
+  /** Exports (§7): 10 an hour per person, each one a whole environment in plaintext. */
+  export: { limit: 10, windowMs: 60 * 60_000 },
+  /** Failed re-authentication attempts for protected environments (D226): 10 per 10 minutes per session. */
+  reauth: { limit: 10, windowMs: 10 * 60_000 }
 } as const;
 export type VaultLimit = keyof typeof VAULT_LIMITS;
 
 type Row = { window_start: number; count: number; previous_count: number };
 
+/**
+ * Charges `cost` to the `kind:subject` bucket, or 429 when that would pass the limit. With `cost` 0
+ * it only checks that one more would still fit (the re-authentication limit peeks first and charges
+ * failures only).
+ */
 export function chargeVault(kind: VaultLimit, subject: string, cost = 1, nowMs = Date.now()) {
   const { limit, windowMs } = VAULT_LIMITS[kind];
   const bucket = `${kind}:${subject}`;
@@ -32,11 +42,12 @@ export function chargeVault(kind: VaultLimit, subject: string, cost = 1, nowMs =
     }
     const overlap = 1 - (nowMs - windowStart) / windowMs;
     const estimate = previous * overlap + count;
-    if (estimate + cost > limit) {
+    if (estimate + Math.max(cost, 1) > limit) {
       // At worst the current window has to end before the estimate drops enough.
       const retryAfterSeconds = Math.max(1, Math.ceil((windowStart + windowMs - nowMs) / 1000));
       throw new VaultError(429, "RATE_LIMITED", "Too many vault requests. Try again later.", { retryAfterSeconds });
     }
+    if (cost === 0) return;
     db.query(`INSERT INTO vault_rate_limits (bucket, window_start, count, previous_count) VALUES (?, ?, ?, ?)
       ON CONFLICT(bucket) DO UPDATE SET window_start = excluded.window_start, count = excluded.count, previous_count = excluded.previous_count`)
       .run(bucket, windowStart, count + cost, previous);

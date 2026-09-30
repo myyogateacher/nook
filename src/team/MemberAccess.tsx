@@ -8,7 +8,7 @@ import { Select, type Option } from "../ui/Select";
 import { AccessOverview } from "../access/AccessOverview";
 import {
   applyTemplateToMember, getMemberAccess, getMemberAccessPage, LEVEL_WORDS, listTemplates, lowerMemberAccess, removeMemberAccess, removeMemberFromGroup,
-  resetMemberAccess, resetLines, resetSummary, feedsAndRoutines, guestRefusedNames, guestRefusalReason, type AccessKind, type AccessLevel, type AccessRow, type AccessSource, type AccessSummary, type AccessTemplate, type ResetCounts
+  resetMemberAccess, resetLines, resetSummary, feedsAndRoutines, guestRefusedNames, guestRefusalReason, type AccessKind, type AccessLevel, type AccessRow, type AccessSource, type AccessSummary, type AccessTemplate, type ResetCounts, type VaultAccessRow
 } from "../access/memberAccessApi";
 import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
@@ -28,6 +28,8 @@ type Dialog =
   | { kind: "group"; group: { id: string; name: string } }
   | { kind: "key"; key: AccessSummary["keys"][number] }
   | { kind: "template"; template: AccessTemplate }
+  | { kind: "vaultRemove"; row: VaultAccessRow }
+  | { kind: "vaultLower"; row: VaultAccessRow }
   | { kind: "reset" };
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
@@ -125,7 +127,8 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
     </section>
 
     <AccessOverview summary={summary} loadPage={loadPage} reloadKey={reloadKey} busy={dialog !== null}
-      actions={{ onRemove: (row, source) => setDialog({ kind: "remove", row, source }), onLower: (row, source, level) => setDialog({ kind: "lower", row, source, level }) }} />
+      actions={{ onRemove: (row, source) => setDialog({ kind: "remove", row, source }), onLower: (row, source, level) => setDialog({ kind: "lower", row, source, level }),
+        onRemoveVault: (row) => setDialog({ kind: "vaultRemove", row }), onLowerVault: (row) => setDialog({ kind: "vaultLower", row }) }} />
 
     {dialog && <ActionDialog dialog={dialog} summary={summary} onClose={() => setDialog(null)} onDone={changed} onStale={() => { setDialog(null); flash("That access changed meanwhile. The page now shows the latest."); setReloadKey((value) => value + 1); void load(); }} />}
   </article>;
@@ -184,6 +187,26 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
       action = async () => {
         await lowerMemberAccess(userId, dialog.source.handle!, dialog.level);
         return `${name} now has ${LEVEL_WORDS[dialog.level]}`;
+      };
+      break;
+    case "vaultRemove": {
+      const vaultName = dialog.row.titleHidden ? "this vault" : `“${dialog.row.title}”`;
+      title = `Remove ${name} from ${dialog.row.titleHidden ? "this vault" : dialog.row.title}?`;
+      body = <p>{name} can no longer open {vaultName}. Its data key is rotated, and they are told. They may have copied values they could read: the vault's owners should rotate those credentials upstream.</p>;
+      confirmLabel = "Remove from the vault";
+      action = async () => {
+        await removeMemberAccess(userId, dialog.row.handle!);
+        return `${name} was removed from the vault`;
+      };
+      break;
+    }
+    case "vaultLower":
+      title = `Lower ${name} to read in ${dialog.row.titleHidden ? "this vault" : dialog.row.title}?`;
+      body = <p>Every environment where {name} can write or administer becomes read only. The owners can change it back.</p>;
+      confirmLabel = "Lower to read";
+      action = async () => {
+        await lowerMemberAccess(userId, dialog.row.handle!, "view");
+        return `${name} can now only read in the vault`;
       };
       break;
     case "group":

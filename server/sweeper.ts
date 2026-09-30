@@ -13,6 +13,8 @@ import { orphanGrantReport } from "./access/groups";
 import { sweepAvatarFiles } from "./avatars";
 import { sweepGoogleFlows } from "./google/flows";
 import { sweepVaultEvents } from "./vault/service";
+import { resumeRotations } from "./vault/rotation";
+import { vaultStatus } from "./vault/status";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -133,6 +135,15 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (events) console.info(`Vault event sweep: ${events} old events removed`);
       } catch (error) {
         console.error("Vault event sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Vault data-key rotation (Wave 26): finish re-encrypting and retire old generations.
+        if (vaultStatus().enabled) {
+          const rotation = resumeRotations();
+          if (rotation.moved || rotation.retired) console.info(`Vault rotation sweep: ${rotation.moved} rows re-encrypted, ${rotation.retired} old keys retired, ${rotation.pending} vaults pending`);
+        }
+      } catch (error) {
+        console.error("Vault rotation sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       try {
         // Google sign-in (Wave 35): flows past their 10 minutes, and avatar files no account points at.

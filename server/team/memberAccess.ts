@@ -9,6 +9,8 @@ import { notifyAccess, resetMask } from "../access/notices";
 import { SHARE_TABLES } from "../access/shares";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { AUDIENCE_ALL_USERS, type Role } from "./roles";
+import { VaultError } from "../vault/access";
+import { adminLowerVaultMember, adminRemoveVaultMember, memberVaults, resetVaultMemberships, rotateOnLostReach, snapshotVaultReach, vaultMemberCount } from "../vault/members";
 
 /**
  * The member access page (access plan §C.6, D268, D269, T204, T214, T218): everything one person
@@ -26,6 +28,10 @@ import { AUDIENCE_ALL_USERS, type Role } from "./roles";
  *   Every action writes `access_events` and `audit_log` (ids and counts only) and puts a bell
  *   notice with the item's owner (§C.11).
  * - The person themself sees the same page read-only at Settings → My access (`/api/me/access`).
+ * - Vaults (Wave 26): the vaults the person is a member of, with their level per environment,
+ *   titles and environment names hidden the same way (D269). Reductions: remove the membership
+ *   (never a vault's last owner) or lower every environment to read. A vault membership counts as
+ *   a direct share in Reset access, which removes member rows and leaves owned vaults alone.
  */
 
 export const ACCESS_PAGE = 200;
@@ -104,7 +110,7 @@ function kindCounts(kind: AccessKind, userId: string, role: Role) {
 
 /** What Reset access removes, counted (the confirm shows these before, the result after). */
 export function resetCounts(userId: string) {
-  let direct = 0;
+  let direct = vaultMemberCount(userId);
   for (const kind of ACCESS_KINDS) direct += directCount(kind, userId);
   const count = (sql: string) => (db.query(sql).get(userId) as { count: number }).count;
   return {
@@ -155,6 +161,8 @@ export function accessSummary(viewerId: string, userId: string) {
     feeds: { live: counts.feeds },
     routines: { enabled: counts.routines },
     kinds: ACCESS_KINDS.map((kind) => kindCounts(kind, userId, target.role)),
+    // Wave 26: vault memberships, each with an opaque handle on the admin page (D269, T204).
+    vaults: memberVaults(viewerId, userId).map(({ vaultId, ...row }) => ({ ...row, ...(viewerId !== userId ? { handle: sealItemHandle(viewerId, userId, { kind: "vault", id: vaultId, via: "direct", groupId: null }) } : {}) })),
     resetCounts: counts,
     pageSize: ACCESS_PAGE
   };
@@ -252,12 +260,30 @@ function openHandle(actorId: string, userId: string, token: string) {
   return { ...handle, kind: handle.kind as AccessKind };
 }
 
+/** A vault row's handle (Wave 26), or null when the handle is about something else. */
+function vaultHandle(actorId: string, userId: string, token: string) {
+  const handle = openItemHandle(token, actorId, userId);
+  return handle && handle.kind === "vault" && handle.via === "direct" ? handle.id : null;
+}
+
+/** The vault module's refusals, as the page's own. */
+function asMemberAccessError<T>(operation: () => T): T {
+  try {
+    return operation();
+  } catch (error) {
+    if (error instanceof VaultError) throw new MemberAccessError(error.status === 404 ? 404 : error.status === 409 ? 409 : 400, error.code, error.message);
+    throw error;
+  }
+}
+
 /**
  * `DELETE …/access/:handle`: removes the person's direct share on the item, or (for a row reached
  * through a group) removes them from that group. Reduction only; the owner hears about it.
  */
 export function removeAccess(actorId: string, userId: string, token: string) {
   person(userId);
+  const vaultId = vaultHandle(actorId, userId, token);
+  if (vaultId) return asMemberAccessError(() => adminRemoveVaultMember(actorId, userId, vaultId));
   const handle = openHandle(actorId, userId, token);
   if (handle.via === "group") return { removed: "group" as const, ...removeFromGroup(actorId, userId, handle.groupId ?? "") };
   const { table, column, hasLevel } = SHARE_TABLES[handle.kind];
@@ -277,6 +303,12 @@ export function removeAccess(actorId: string, userId: string, token: string) {
 /** `PATCH …/access/:handle {level}`: lowers a direct share. Only to a level the kind offers and strictly below the current one. */
 export function lowerAccess(actorId: string, userId: string, token: string, level: Level) {
   person(userId);
+  const vaultId = vaultHandle(actorId, userId, token);
+  if (vaultId) {
+    // A vault offers one reduction short of removing: every environment down to read ("view").
+    if (level !== "view") throw new MemberAccessError(400, "LEVEL_NOT_OFFERED", "A vault membership can be lowered to read only");
+    return asMemberAccessError(() => adminLowerVaultMember(actorId, userId, vaultId, "read"));
+  }
   const handle = openHandle(actorId, userId, token);
   const { table, column, hasLevel } = SHARE_TABLES[handle.kind];
   if (handle.via !== "direct" || !hasLevel) throw new MemberAccessError(400, "NOT_LOWERABLE", "Only a direct share with a level can be lowered");
@@ -304,8 +336,10 @@ export function lowerAccess(actorId: string, userId: string, token: string, leve
  */
 export function removeFromGroup(actorId: string, userId: string, groupId: string) {
   return db.transaction(() => {
+    const reach = snapshotVaultReach([userId]);
     const removed = db.query("DELETE FROM group_members WHERE group_id = ? AND user_id = ?").run(groupId, userId).changes;
     if (!removed) throw gone();
+    rotateOnLostReach(actorId, reach);
     const timestamp = now();
     db.query("UPDATE user_groups SET updated_at = ?, revision = revision + 1 WHERE id = ?").run(timestamp, groupId);
     recordAccessEvent({ actorId, via: "web", action: "group.member_removed", groupId, targetUserId: userId, meta: { from: "member_access", ...(userId === actorId ? { self: true } : {}) } }, timestamp);
@@ -326,6 +360,8 @@ export function resetAccess(actorId: string, userId: string) {
   if (target.id === actorId) throw new MemberAccessError(400, "SELF_ACTION", "You cannot reset your own access. Ask another admin.");
   return db.transaction(() => {
     const before = resetCounts(userId);
+    // Every vault the person could read (member rows and groups alike) rotates once (review M3).
+    const reach = snapshotVaultReach([userId]);
     const timestamp = now();
     const perOwner = new Map<string, number>();
     for (const kind of ACCESS_KINDS) {
@@ -345,6 +381,9 @@ export function resetAccess(actorId: string, userId: string) {
     }
     const keys = db.query("SELECT id FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL").all(userId) as Array<{ id: string }>;
     for (const key of keys) adminRevokeKey(actorId, key.id, "Access reset by an admin", { notify: false, meta: { reset: true } });
+    // Vault memberships (Wave 26): member rows go (owned vaults stay).
+    for (const [ownerId, count] of resetVaultMemberships(actorId, userId)) perOwner.set(ownerId, (perOwner.get(ownerId) ?? 0) + count);
+    rotateOnLostReach(actorId, reach);
     const feeds = db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(timestamp, userId).changes;
     const routines = pauseRoutinesOf(userId);
     const removed = { ...before, feeds, routines };

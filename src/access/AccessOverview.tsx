@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, EyeOff, UserMinus, X } from "lucide-react";
 import { Select, type Option } from "../ui/Select";
 import { KIND_LABELS } from "../team/groupsApi";
-import { kindBreakdown, kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount } from "./memberAccessApi";
+import { kindBreakdown, kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount, type VaultAccessRow } from "./memberAccessApi";
 import "./memberAccess.css";
 
 /**
@@ -16,7 +16,37 @@ import "./memberAccess.css";
 export type AccessRowActions = {
   onRemove: (row: AccessRow, source: AccessSource) => void;
   onLower: (row: AccessRow, source: AccessSource, level: AccessLevel) => void;
+  /** Wave 26: a vault membership's reductions (remove it, or lower every environment to read). */
+  onRemoveVault?: (row: VaultAccessRow) => void;
+  onLowerVault?: (row: VaultAccessRow) => void;
 };
+
+const VAULT_LEVEL_WORDS = { none: "No access", read: "Read", write: "Write", admin: "Admin" } as const;
+
+/** Vault memberships (Wave 26): one row per vault, with the level per environment, never a secret. */
+function VaultSection({ rows, actions, busy }: { rows: VaultAccessRow[]; actions?: AccessRowActions; busy: boolean }) {
+  return <section className="team-card ma-module" aria-labelledby="ma-module-vault">
+    <h3 id="ma-module-vault">Vault</h3>
+    {rows.length === 0 ? <p className="team-muted">No vault memberships.</p> : <ul className="group-item-list" aria-label="Vault access">
+      {rows.map((row, index) => <li key={row.handle ?? `${row.title}-${index}`} className="group-item-row ma-row">
+        <span className="team-row-copy">
+          <span className="team-row-title">{row.titleHidden && <EyeOff aria-hidden="true" className="group-item-hidden" />}<strong>{row.title}</strong></span>
+          <span className="team-row-meta">
+            <span>{row.role === "owner" ? "Owner" : "Member"}</span>
+            {row.environments.map((env) => <span key={env.name}>{env.name}: {VAULT_LEVEL_WORDS[env.level]}</span>)}
+            {row.titleHidden && <span>Name hidden: you cannot open it</span>}
+            {!row.active && <span className="team-status-chip">Not in effect now</span>}
+          </span>
+        </span>
+        {actions && row.handle && <span className="ma-row-actions">
+          {row.role === "member" && row.environments.some((env) => env.level === "write" || env.level === "admin") && actions.onLowerVault
+            && <button type="button" className="team-action" disabled={busy} onClick={() => actions.onLowerVault!(row)}>Lower to read</button>}
+          {actions.onRemoveVault && <button type="button" className="icon-button group-member-remove" disabled={busy} aria-label={`Remove from ${row.title}`} title="Remove from the vault" onClick={() => actions.onRemoveVault!(row)}><X /></button>}
+        </span>}
+      </li>)}
+    </ul>}
+  </section>;
+}
 
 const MODULE_ORDER: Array<KindCount["module"]> = ["notes", "files", "tasks", "collections", "calendar"];
 
@@ -39,6 +69,7 @@ export function AccessOverview({ summary, loadPage, actions, reloadKey = 0, busy
         {kinds.filter((row) => row.direct + row.group + row.audience > 0).map((row) => <KindSection key={row.kind} counts={row} loadPage={loadPage} actions={actions} reloadKey={reloadKey} busy={busy} />)}
       </section>;
     })}
+    {summary.vaults && summary.vaults.length > 0 && <VaultSection rows={summary.vaults} actions={actions} busy={busy} />}
   </div>;
 }
 

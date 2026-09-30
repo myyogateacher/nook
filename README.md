@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.21.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.22.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -111,6 +111,16 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.22.0
+
+- **Shared vaults**: a vault's owner shares it with people and groups per environment at none, read, write, or admin (viewers read at most; guests and integrations never). The Access page is a people × environments grid on a computer and cards on a phone, with a leave guard for unsaved changes. Owners can hand a vault over in one save, and a vault always keeps one owner. Admins who are not members still see nothing: not the name, not the activity.
+- **Protected environments**: `prod` is protected by default. Revealing, editing, exporting, or reading the history of a protected environment asks for your password (and code) again, once per 15 minutes per session; a stolen session cookie cannot read it.
+- **Import and export**: `.env`, JSON, and CSV, with a preview of what will be created, updated, or skipped; exports are limited to ten an hour, recorded in Activity, and CSV cells that look like formulas are neutralised.
+- **Data-key rotation**: whenever anyone loses read on an environment (removed from the vault, from a group, blocked, or demoted to guest), the vault's data key is rotated in the background and the owners get a bell notice to rotate the real credentials upstream, with "Show what they read". Rotate on demand from the vault's settings.
+- **Activity and history**: an Activity page per vault (who did what, counts, never values), a version-history dialog with Show and Restore, a tag filter, "Shared with me" on the vault list, and a 64 MiB storage quota per vault creator.
+- **For developers using MCP**: still no vault tools; `nkv_` keys, REST, and MCP tools come in the next release.
+- Migration 037 runs on the first boot, so back up first: it only adds (a re-auth timestamp on sessions, the vault's stored bytes, two columns on vault events, and a trigger that keeps integrations out of vaults). See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.21.0
 

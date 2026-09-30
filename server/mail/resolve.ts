@@ -7,6 +7,7 @@ import { requireReadableView } from "../tasks/views";
 import { calendarLevel, readableCalendar } from "../calendar/access";
 import { collectionLevel, readableCollection } from "../collections/access";
 import { atLeast } from "../access/levels";
+import { vaultBestLevel, vaultTitleFor } from "../vault/access";
 import { parseStoredScopes } from "../mcpScopes";
 import { stripMarkdown } from "./html";
 import { isMuted } from "./mutes";
@@ -95,6 +96,13 @@ export function sharedItem(kind: SharedKind, id: string, userId: string): Shared
     case "collection": {
       const collection = readableCollection(id, userId);
       return collection ? { kind, id, title: collection.name, access: atLeast(collectionLevel(collection, userId), "edit") ? "edit" : "read" } : null;
+    }
+    case "vault": {
+      // The vault's name only, and only while the recipient can read it (D223).
+      const title = vaultTitleFor(userId, id);
+      if (title === null) return null;
+      const best = vaultBestLevel(userId, id);
+      return { kind, id, title, access: best === "write" || best === "admin" ? "edit" : "read" };
     }
     case "view": {
       try {

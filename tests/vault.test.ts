@@ -65,8 +65,10 @@ describe("vaults and environments", () => {
     expect((await call(owner, "GET", "/vaults/not-a-uuid")).status).toBe(404);
     const vault = await newVault(owner);
     const tooBig = await call(owner, "POST", `/vaults/${vault.id}/secrets`, { name: "BIG", values: { [vault.envs.dev!]: { value: "x".repeat(70_000) } } });
-    expect(tooBig.status).toBe(400);
+    // QA Q6: too many characters is too many bytes as well: the same 413 TOO_LARGE.
+    expect(tooBig).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });
     expect(tooBig.text).not.toContain("xxxx");
+    expect(db.query("SELECT 1 FROM vault_secrets WHERE vault_id = ? AND name = 'BIG'").get(vault.id)).toBeNull();
     // 64 KiB of characters, but more than 64 KiB of UTF-8 bytes: 413.
     const wide = await call(owner, "POST", `/vaults/${vault.id}/secrets`, { name: "WIDE", values: { [vault.envs.dev!]: { value: "é".repeat(40_000) } } });
     expect(wide).toMatchObject({ status: 413, body: { code: "TOO_LARGE" } });

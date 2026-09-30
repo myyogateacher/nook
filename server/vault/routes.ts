@@ -34,8 +34,11 @@ const secretName = line(VAULT_BOUNDS.secretName);
 const tags = z.array(z.string().refine(isTag, "must be 1–32 characters without spaces or commas")).max(VAULT_BOUNDS.tags)
   .refine((list) => new Set(list).size === list.length, "must not repeat")
   .refine((list) => JSON.stringify(list).length <= 1024, "are too long together");
-const value = z.string().max(VAULT_BOUNDS.valueBytes).refine((item) => !item.includes("\u0000"), "must not contain NUL characters");
-const comment = z.string().max(VAULT_BOUNDS.commentBytes).refine((item) => !item.includes("\u0000"), "must not contain NUL characters").nullable();
+// No character limit here: the UTF-8 byte bounds (64 KiB, 2 KiB) are checked where the value is
+// sealed and answer 413 TOO_LARGE however the size is reached (QA Q6); the JSON body bound caps the
+// request before that.
+const value = z.string().refine((item) => !item.includes("\u0000"), "must not contain NUL characters");
+const comment = z.string().refine((item) => !item.includes("\u0000"), "must not contain NUL characters").nullable();
 const revision = z.number().int().min(1);
 const version = z.number().int().min(0);
 

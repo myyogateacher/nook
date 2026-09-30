@@ -57,6 +57,40 @@ export function useRevealedValues(hideAfterMs = REVEAL_MS) {
   return { revealed, show, hide, hideAll };
 }
 
+/**
+ * The value editor's mask (QA Q4): opening the editor reads the value, so it follows the reveal
+ * rules. Masked at first when `initiallyMasked`; once shown it masks again after 30 seconds without
+ * typing (`touch` restarts the clock) and whenever the tab is hidden. Masking never discards the
+ * draft: it only changes what is on screen.
+ */
+export function useEditorMask(initiallyMasked: boolean, hideAfterMs = REVEAL_MS) {
+  const [masked, setMasked] = useState(initiallyMasked);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stop = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  }, []);
+  const mask = useCallback(() => { stop(); setMasked(true); }, [stop]);
+  const arm = useCallback(() => {
+    stop();
+    timer.current = setTimeout(() => { timer.current = null; setMasked(true); }, hideAfterMs);
+  }, [stop, hideAfterMs]);
+  const show = useCallback(() => { setMasked(false); arm(); }, [arm]);
+  const touch = useCallback(() => { if (timer.current) arm(); }, [arm]);
+  // Mount only: the mask starts as asked and follows the tab from then on.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!initiallyMasked) arm();
+    const onVisibility = () => { if (document.visibilityState === "hidden") mask(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
+    };
+  }, []);
+  return { masked, show, mask, touch };
+}
+
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**

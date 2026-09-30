@@ -8,6 +8,8 @@ import { binFolderLabel, binKindLabel, filterBinItems, restoreResultMessage } fr
 import { settingsModulesFor, unavailableModules } from "../src/modules";
 import { formatLoginValue, isTag, parseLoginValue, SLUG_PATTERN } from "../shared/vault";
 import type { BinItem } from "../src/types";
+import { ApiError } from "../src/api";
+import { changedValues, conflictMessage, listNames } from "../src/vault/VaultDialogs";
 
 /** The client side of Wave 25 (Vault A): routes, the generator (§6.7), the clipboard, the Bin, and module availability. */
 
@@ -70,6 +72,10 @@ describe("the generator (§6.7)", () => {
     expect(phrase.bits).toBe(55);
     expect(strengthLabel(55)).toBe("55 bits · weak");
     expect(strengthLabel(128)).toBe("128 bits · very strong");
+    // QA Q5: the default passphrase is six words, 66 bits, never labelled weak.
+    const defaultPhrase = generate({ ...DEFAULT_GENERATOR, kind: "passphrase" });
+    expect(defaultPhrase.value.split("-")).toHaveLength(6);
+    expect(strengthLabel(defaultPhrase.bits)).toBe("66 bits · fair");
   });
 
   test("100,000 draws over 16 symbols are roughly uniform", () => {
@@ -83,6 +89,20 @@ describe("the generator (§6.7)", () => {
     expect(new Set(PASSPHRASE_WORDS).size).toBe(2048);
     expect([...PASSPHRASE_WORDS].sort()).toEqual([...PASSPHRASE_WORDS]);
     expect(PASSPHRASE_WORDS.every((word) => /^[a-z]{3,7}$/.test(word))).toBe(true);
+  });
+});
+
+describe("value conflicts (QA Q1, Q2)", () => {
+  test("a VALUE_CHANGED names each environment that moved, with its version", () => {
+    const names: Record<string, string> = { d: "Development", s: "Staging", p: "Production" };
+    const envName = (id: string) => names[id] ?? "Another environment";
+    const batch = new ApiError("changed", 409, { code: "VALUE_CHANGED", envId: "d", currentVersion: 7, changed: [{ envId: "d", currentVersion: 7 }, { envId: "p", currentVersion: 3 }] });
+    expect(changedValues(batch, "s")).toEqual([{ envId: "d", currentVersion: 7 }, { envId: "p", currentVersion: 3 }]);
+    expect(conflictMessage(changedValues(batch, "s"), envName)).toBe("Development (now version 7) and Production (now version 3) changed since you opened this.");
+    // An answer without `changed` is about the environment it names, else the one being edited.
+    expect(changedValues(new ApiError("changed", 409, { code: "VALUE_CHANGED", currentVersion: 4 }), "s")).toEqual([{ envId: "s", currentVersion: 4 }]);
+    expect(conflictMessage([{ envId: "s", currentVersion: 4 }], envName)).toBe("Staging (now version 4) changed since you opened this.");
+    expect(listNames(["A", "B", "C"])).toBe("A, B and C");
   });
 });
 

@@ -7,7 +7,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ConfirmRequest } from "../ui/useConfirm";
 import { DEFAULT_ENVIRONMENTS, formatLoginValue, isTag, parseLoginValue, SECRET_TYPES, SLUG_PATTERN, utf8Length, VAULT_BOUNDS, type SecretType } from "../../shared/vault";
 import { DEFAULT_GENERATOR, generate, GENERATOR_BOUNDS, strengthLabel, type GeneratorKind, type GeneratorOptions } from "./generator";
-import { MASK, type Revealed } from "./reveal";
+import { MASK, useEditorMask, type Revealed } from "./reveal";
 import {
   createEnvironment, createSecret, createVault, deleteEnvironment, deleteVault, getVault, readValue, reorderEnvironments, setValue, setValues, updateEnvironment, updateSecret, updateVault,
   type SecretDetail, type SecretSummary, type VaultEnvironment, type VaultSummary
@@ -23,6 +23,28 @@ import {
 export const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 export const errorCode = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? (reason.payload as { code?: string }).code : undefined;
 const payloadNumber = (reason: unknown, key: string) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? (reason.payload as Record<string, unknown>)[key] as number | undefined : undefined;
+
+/** One environment a VALUE_CHANGED refusal names (QA Q1, Q2). */
+export type ChangedValue = { envId: string; currentVersion: number };
+
+/** Every environment a VALUE_CHANGED names; an answer without `changed` is about `fallbackEnvId`. */
+export function changedValues(reason: unknown, fallbackEnvId: string): ChangedValue[] {
+  const payload = reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? reason.payload as Record<string, unknown> : {};
+  const listed = Array.isArray(payload.changed)
+    ? payload.changed.filter((item): item is ChangedValue => typeof item === "object" && item !== null && typeof (item as ChangedValue).envId === "string" && typeof (item as ChangedValue).currentVersion === "number")
+    : [];
+  if (listed.length) return listed;
+  const version = payloadNumber(reason, "currentVersion");
+  return [{ envId: typeof payload.envId === "string" ? payload.envId : fallbackEnvId, currentVersion: typeof version === "number" ? version : 0 }];
+}
+
+export const listNames = (names: string[]) => names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+/** "Development changed since you opened this (it is now version 7)." Names each environment. */
+export function conflictMessage(changed: ChangedValue[], envName: (envId: string) => string) {
+  const parts = changed.map((item) => `${envName(item.envId)} (now version ${item.currentVersion})`);
+  return `${listNames(parts)} changed since you opened this.`;
+}
 
 export const TYPE_LABELS: Record<SecretType, string> = { value: "Value", login: "Login", note: "Note" };
 const TYPE_OPTIONS = SECRET_TYPES.map((type) => ({ value: type, label: TYPE_LABELS[type], description: type === "value" ? "One string: a token, URL, or key" : type === "login" ? "A username, password, and URL" : "Multi-line text" }));
@@ -163,21 +185,31 @@ export function NewSecretDialog({ vault, initialEnvId, onCancel, onCreated }: { 
 }
 
 /** The value inputs: one text area, or a login's three fields; Generate fills the value or the password. */
-function ValueFields({ type, value, login, onValue, onLogin, valueId, onGenerate, disabled, optional = false }: {
+type EditorMask = ReturnType<typeof useEditorMask>;
+
+function ValueFields({ type, value, login, onValue, onLogin, valueId, onGenerate, disabled, optional = false, mask }: {
   type: SecretType; value: string; login: { username: string; password: string; url: string };
   onValue: (value: string) => void; onLogin: (login: { username: string; password: string; url: string }) => void;
   valueId: string; onGenerate: () => void; disabled: boolean; optional?: boolean;
+  /** The editor's mask (QA Q4): hides the secret part without touching the draft. */
+  mask?: EditorMask;
 }) {
   const userId = useId();
   const urlId = useId();
+  const masked = mask?.masked ?? false;
   const generate = <button type="button" className="secondary-button vault-inline-button" onClick={onGenerate} disabled={disabled}><Wand2 />Generate</button>;
+  const toggle = mask && (masked
+    // With the text area gone while masked, its label points at Show instead.
+    ? <button type="button" id={type === "login" ? undefined : valueId} className="secondary-button vault-inline-button" onClick={mask.show} disabled={disabled}><Eye />Show</button>
+    : <button type="button" className="secondary-button vault-inline-button" onClick={mask.mask} disabled={disabled}><EyeOff />Hide</button>);
   if (type === "login") {
     return <div className="vault-login-fields">
       <label htmlFor={userId}>Username</label>
       <input id={userId} value={login.username} disabled={disabled} {...valueFieldProps} onChange={(event) => onLogin({ ...login, username: event.target.value })} />
       <label htmlFor={valueId}>Password{optional ? " (optional)" : ""}</label>
       <div className="vault-value-row">
-        <input id={valueId} className="vault-secret-input" type="text" value={login.password} disabled={disabled} {...valueFieldProps} onChange={(event) => onLogin({ ...login, password: event.target.value })} />
+        <input id={valueId} className="vault-secret-input" type={masked ? "password" : "text"} value={login.password} disabled={disabled} {...valueFieldProps} onChange={(event) => { mask?.touch(); onLogin({ ...login, password: event.target.value }); }} />
+        {toggle}
         {generate}
       </div>
       <label htmlFor={urlId}>URL</label>
@@ -185,8 +217,10 @@ function ValueFields({ type, value, login, onValue, onLogin, valueId, onGenerate
     </div>;
   }
   return <>
-    <div className="vault-value-label"><label htmlFor={valueId}>Value{optional ? " (optional)" : ""}</label>{generate}</div>
-    <textarea id={valueId} className="vault-secret-input" rows={type === "note" ? 6 : 3} value={value} disabled={disabled} {...valueFieldProps} onChange={(event) => onValue(event.target.value)} />
+    <div className="vault-value-label"><label htmlFor={valueId}>Value{optional ? " (optional)" : ""}</label><span className="vault-value-tools">{toggle}{generate}</span></div>
+    {masked
+      ? <div className="vault-secret-input vault-secret-masked"><Masked /><span className="file-dialog-hint">{value ? "Hidden. Show it to edit; your changes are kept." : "Empty."}</span></div>
+      : <textarea id={valueId} className="vault-secret-input" rows={type === "note" ? 6 : 3} value={value} disabled={disabled} {...valueFieldProps} onChange={(event) => { mask?.touch(); onValue(event.target.value); }} />}
   </>;
 }
 
@@ -262,11 +296,19 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
   const [generating, setGenerating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState<number | null>(null);
+  const [conflict, setConflict] = useState<ChangedValue[] | null>(null);
+  const [refreshedNote, setRefreshedNote] = useState<string | null>(null);
+  // QA Q1: the versions of every environment as they were when the editor opened. A background
+  // reload of the list (window focus) changes `secret`, but never these: "Also save in" must not
+  // quietly adopt a newer version someone else wrote, or the CAS would not protect it.
+  const [openedVersions, setOpenedVersions] = useState<Record<string, number>>(() =>
+    Object.fromEntries(vault.environments.map((item) => [item.id, secret.values[item.id]?.version ?? 0])));
+  const editorMask = useEditorMask(cell?.status === "set");
   const valueId = useId();
   const commentId = useId();
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
   const others = vault.environments.filter((item) => item.id !== env.id && canWriteEnv(item));
+  const envName = (envId: string) => vault.environments.find((item) => item.id === envId)?.name ?? "Another environment";
 
   async function loadCurrent() {
     setLoading(true);
@@ -302,24 +344,41 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
       } else {
         await setValues(vault.id, secret.id, [
           { envId: env.id, value: payload, comment: comment.trim() || null, expectedVersion },
-          ...applyTo.map((envId) => ({ envId, value: payload, comment: comment.trim() || null, expectedVersion: secret.values[envId]?.version ?? 0 }))
+          ...applyTo.map((envId) => ({ envId, value: payload, comment: comment.trim() || null, expectedVersion: openedVersions[envId] ?? 0 }))
         ]);
       }
       onSaved(applyTo.length ? `Saved in ${applyTo.length + 1} environments` : `Saved in ${env.name}`);
     } catch (reason) {
       setBusy(false);
       if (errorCode(reason) === "VALUE_CHANGED") {
-        setConflict(payloadNumber(reason, "currentVersion") ?? null);
+        setRefreshedNote(null);
+        setConflict(changedValues(reason, env.id));
         return;
       }
       setError(messageOf(reason, "Could not save the value"));
     }
   }
 
+  /**
+   * QA Q2: "Load the latest" refreshes every environment that changed, not only this one: this
+   * environment's value and comment are read again; another environment takes the version the
+   * server reported, so saving replaces what is there now, and the note says which ones.
+   */
+  async function loadLatest() {
+    const changed = conflict ?? [];
+    const elsewhere = changed.filter((item) => item.envId !== env.id);
+    if (elsewhere.length) setOpenedVersions((current) => ({ ...current, ...Object.fromEntries(elsewhere.map((item) => [item.envId, item.currentVersion])) }));
+    if (changed.some((item) => item.envId === env.id) || changed.length === 0) await loadCurrent();
+    else setConflict(null);
+    setRefreshedNote(changed.length
+      ? `Loaded the latest version of ${listNames(changed.map((item) => envName(item.envId)))}. Saving now replaces ${changed.length === 1 ? "it" : "them"}.`
+      : null);
+  }
+
   return <><ModalDialog title={`${secret.name} · ${env.name}`} eyebrow={cell?.status === "set" ? `Edit value · version ${expectedVersion}` : "Set value"} onClose={onCancel} busy={busy || generating} variant="sheet" className="vault-dialog">
     <form className="file-dialog-form vault-form" onSubmit={submit} aria-busy={loading || undefined}>
       {loading ? <p className="file-dialog-hint" role="status">Loading the current value…</p> : <>
-        <ValueFields type={secret.type} value={value} login={login} onValue={setValueText} onLogin={setLogin} valueId={valueId} onGenerate={() => setGenerating(true)} disabled={busy} />
+        <ValueFields type={secret.type} value={value} login={login} onValue={setValueText} onLogin={setLogin} valueId={valueId} onGenerate={() => setGenerating(true)} disabled={busy} mask={editorMask} />
         <label htmlFor={commentId}>Comment for this value (encrypted)</label>
         <input id={commentId} value={comment} maxLength={VAULT_BOUNDS.commentBytes} autoComplete="off" onChange={(event) => setComment(event.target.value)} />
         {others.length > 0 && <fieldset className="vault-sets">
@@ -331,9 +390,10 @@ export function ValueEditorDialog({ vault, secret, env, onCancel, onSaved }: {
         </fieldset>}
       </>}
       {conflict !== null && <div className="vault-conflict" role="alert">
-        <p>This value changed since you opened it{conflict ? ` (it is now version ${conflict})` : ""}. Your text is still here and nothing was saved.</p>
-        <button type="button" className="secondary-button vault-inline-button" onClick={() => { void loadCurrent(); }}><RefreshCw />Load the latest</button>
+        <p>{conflictMessage(conflict, envName)} Your text is still here and nothing was saved.</p>
+        <button type="button" className="secondary-button vault-inline-button" onClick={() => { void loadLatest(); }}><RefreshCw />Load the latest</button>
       </div>}
+      {conflict === null && refreshedNote && <p className="file-dialog-hint" role="status">{refreshedNote}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>

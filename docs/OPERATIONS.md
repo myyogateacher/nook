@@ -100,7 +100,7 @@ It also prints the key's fingerprint (the first 8 hex digits of its SHA-256), so
    sudo chown 1000:1000 /path/outside/data/vault.key.new   # skip when you are uid 1000
    ```
 
-2. Take a backup and stop the app. `rotate-kek` refuses to run while a server is using `DATA_DIR`: the server rewrites `DATA_DIR/server.heartbeat` every 5 seconds and removes it when it exits, and the command waits up to 20 seconds for a stopped server's heartbeat to go stale.
+2. Take a backup and stop the app. `rotate-kek` refuses to run while a server is using `DATA_DIR`: the server rewrites `DATA_DIR/server.heartbeat` every 5 seconds, and the file counts as stale 15 seconds after the last write (a stopped container never removes it); the command waits up to 20 seconds for it to go stale.
 
    ```sh
    ./scripts/backup.sh --force
@@ -329,7 +329,7 @@ The container reads and writes `/data`, mapped by Compose to:
 │   ├── objects/<object-id>         a whiteboard's current scene (a new object per save)
 │   └── .staging/<document-id>.part uploads in progress (not backed up)
 ├── push/vapid.json                 Web Push signing keys (0600), created at first boot when push is on
-├── server.heartbeat                rewritten every 5 s while the server runs, removed when it exits
+├── server.heartbeat                rewritten every 5 s while the server runs (stale after 15 s)
 └── backup/                         weekly archives (host backup script only)
 ```
 

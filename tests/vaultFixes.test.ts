@@ -46,6 +46,39 @@ describe("secret comments are reads (L4)", () => {
   });
 });
 
+describe("\"Also save in\" keeps its compare-and-swap (QA Q1, Q2)", () => {
+  test("a batch with a stale version for another environment writes nothing and names every environment that moved", async () => {
+    const owner = await createUser("Fix batch owner");
+    const vault = await newVault(owner);
+    const [dev, staging, prod] = [vault.envs.dev!, vault.envs.staging!, vault.envs.prod!];
+    const secret = await newSecret(owner, vault, "DB_PASSWORD", { dev: "dev-1", staging: "staging-1", prod: "prod-1" });
+    const base = `/vaults/${vault.id}/secrets/${secret.id}/values`;
+    // Tab B opened Staging's editor at version 1 everywhere; tab A then saved Development and Production.
+    expect((await call(owner, "PUT", `${base}/${dev}`, { value: "dev-from-a", expectedVersion: 1 })).status).toBe(200);
+    expect((await call(owner, "PUT", `${base}/${prod}`, { value: "prod-from-a", expectedVersion: 1 })).status).toBe(200);
+    const stale = await call(owner, "PUT", base, { values: [
+      { envId: staging, value: "from-b", expectedVersion: 1 },
+      { envId: dev, value: "from-b", expectedVersion: 1 },
+      { envId: prod, value: "from-b", expectedVersion: 1 }
+    ] });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toMatchObject({ code: "VALUE_CHANGED", envId: dev, currentVersion: 2, changed: [{ envId: dev, currentVersion: 2 }, { envId: prod, currentVersion: 2 }] });
+    for (const [envId, expected] of [[staging, "staging-1"], [dev, "dev-from-a"], [prod, "prod-from-a"]] as const) {
+      expect((await call(owner, "GET", `${base}/${envId}`)).body.value.value).toBe(expected);
+    }
+    // After "Load the latest" (the reported versions), the same batch goes through.
+    const fresh = await call(owner, "PUT", base, { values: [
+      { envId: staging, value: "from-b", expectedVersion: 1 },
+      { envId: dev, value: "from-b", expectedVersion: 2 },
+      { envId: prod, value: "from-b", expectedVersion: 2 }
+    ] });
+    expect(fresh.status).toBe(200);
+    // A single write names its own environment.
+    const single = await call(owner, "PUT", `${base}/${staging}`, { value: "late", expectedVersion: 1 });
+    expect(single.body).toMatchObject({ code: "VALUE_CHANGED", envId: staging, currentVersion: 2, changed: [{ envId: staging, currentVersion: 2 }] });
+  });
+});
+
 describe("bounds count the Bin (L5)", () => {
   test("binned vaults count toward 100 owned vaults, and binned secrets toward 1,000 per vault", async () => {
     const owner = await createUser("Fix bounds owner");

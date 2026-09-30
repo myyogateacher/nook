@@ -155,7 +155,12 @@ describe("limits (T194, T195)", () => {
     const cell = { secretId: secret.id, envId: dev };
     expect((await call(owner, "POST", `/vaults/${vault.id}/reveal`, { cells: Array.from({ length: 101 }, () => cell) })).status).toBe(400);
     expect((await call(owner, "PUT", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`, { value: "é".repeat(32_768) + "a", expectedVersion: 1 })).status).toBe(413);
-    expect((await call(owner, "PUT", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`, { value: "a".repeat(65_537), expectedVersion: 1 })).status).toBe(400);
+    // QA Q6: over 65,536 characters is over 64 KiB too, and the same 413 TOO_LARGE.
+    const chars = await call(owner, "PUT", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`, { value: "a".repeat(65_537), expectedVersion: 1 });
+    expect(chars.status).toBe(413);
+    expect(chars.body.code).toBe("TOO_LARGE");
+    expect((await call(owner, "PUT", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`, { value: "ok", comment: "c".repeat(2049), expectedVersion: 1 })).body.code).toBe("TOO_LARGE");
+    expect((await call(owner, "PUT", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`, { value: "a".repeat(65_536), expectedVersion: 1 })).status).toBe(200);
     for (let batch = 0; batch < 3; batch += 1) expect((await call(owner, "POST", `/vaults/${vault.id}/reveal`, { cells: Array.from({ length: 100 }, () => cell) })).status).toBe(200);
     const limited = await call(owner, "GET", `/vaults/${vault.id}/secrets/${secret.id}/values/${dev}`);
     expect(limited.status).toBe(429);

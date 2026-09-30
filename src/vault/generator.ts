@@ -24,7 +24,7 @@ export type GeneratorOptions = {
 
 export const GENERATOR_BOUNDS = { length: [8, 128], bytes: [16, 64], words: [3, 12] } as const;
 export const DEFAULT_GENERATOR: GeneratorOptions = {
-  kind: "characters", length: 32, sets: { lower: true, upper: true, digits: true, symbols: true }, bytes: 32, words: 5, separator: "-"
+  kind: "characters", length: 32, sets: { lower: true, upper: true, digits: true, symbols: true }, bytes: 32, words: 6, separator: "-"
 };
 
 const LOWER = "abcdefghijklmnopqrstuvwxyz";

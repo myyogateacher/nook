@@ -449,7 +449,15 @@ function currentVersion(secretId: string, envId: string): { version: number; set
   return { version: last.version ?? 0, set: false };
 }
 
-const valueChanged = (current: number) => new VaultError(409, "VALUE_CHANGED", "This value changed since you opened it. Reload it, then edit again.", { currentVersion: current });
+/**
+ * 409 VALUE_CHANGED names every environment whose version moved (QA Q1, Q2): `changed` lists each
+ * `{ envId, currentVersion }`; `envId` and `currentVersion` repeat the first one.
+ */
+type ChangedValue = { envId: string; currentVersion: number };
+const valuesChanged = (changed: ChangedValue[]) => new VaultError(409, "VALUE_CHANGED", "This value changed since you opened it. Reload it, then edit again.", {
+  currentVersion: changed[0]!.currentVersion, envId: changed[0]!.envId, changed
+});
+const valueChanged = (envId: string, current: number) => valuesChanged([{ envId, currentVersion: current }]);
 
 /**
  * One value write inside the caller's transaction: CAS on `expectedVersion` (0 = not set yet),
@@ -457,7 +465,7 @@ const valueChanged = (current: number) => new VaultError(409, "VALUE_CHANGED", "
  */
 function writeValueLocked(access: VaultAccess, grant: ReturnType<typeof requireEnvGrant>, secretId: string, envId: string, value: string, comment: string | null, expectedVersion: number) {
   const current = currentVersion(secretId, envId);
-  if (current.version !== expectedVersion) throw valueChanged(current.version);
+  if (current.version !== expectedVersion) throw valueChanged(envId, current.version);
   const version = current.version + 1;
   const sealed = sealValue(grant, { secretId, envId, version }, value, comment);
   const timestamp = now();
@@ -508,6 +516,13 @@ export function setValues(actor: VaultActor, vaultId: string, secretId: string, 
   for (const entry of entries) checkValueForType(secret.type, entry.value);
   chargeVault("write", actor.userId, entries.length);
   db.transaction(() => {
+    // Every environment's version is checked before anything is written, and the refusal names all
+    // that moved, so "Load the latest" can refresh each of them at once (QA Q2).
+    const changed = entries.flatMap((entry) => {
+      const current = currentVersion(secretId, entry.envId).version;
+      return current === entry.expectedVersion ? [] : [{ envId: entry.envId, currentVersion: current }];
+    });
+    if (changed.length > 0) throw valuesChanged(changed);
     entries.forEach((entry, index) => {
       writeValueLocked(access, grants[index]!, secretId, entry.envId, entry.value, entry.comment ?? null, entry.expectedVersion);
       recordVaultEvent(vaultId, actor.userId, "value.write", { secretId, envId: entry.envId });
@@ -526,7 +541,7 @@ export function clearValue(actor: VaultActor, vaultId: string, secretId: string,
   const version = db.transaction(() => {
     const current = currentVersion(secretId, envId);
     if (!current.set) throw new VaultError(404, "VALUE_NOT_SET", "This environment has no value to clear");
-    if (current.version !== expectedVersion) throw valueChanged(current.version);
+    if (current.version !== expectedVersion) throw valueChanged(envId, current.version);
     const next = current.version + 1;
     db.query("DELETE FROM vault_values WHERE secret_id = ? AND env_id = ?").run(secretId, envId);
     db.query("INSERT INTO vault_value_versions (secret_id, env_id, version, value_ct, comment_ct, cleared, generation, created_by, created_at) VALUES (?, ?, ?, NULL, NULL, 1, ?, ?, ?)")

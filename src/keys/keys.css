@@ -124,3 +124,9 @@
   .keys-settings .mcp-endpoint .icon-button { width: 44px; height: 44px; }
   .keys-settings .mcp-config .secondary-button { min-height: 44px; }
 }
+
+/* Wave 34: the REST help and the address limit. */
+.keys-allowlist-off { margin: 0; color: #88888f; font-size: .78rem; line-height: 1.45; }
+.keys-input textarea { min-height: 72px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.keys-rest-help pre { overflow-x: auto; max-width: 100%; white-space: pre; }
+.keys-rest-help p code { overflow-wrap: anywhere; }

@@ -29,7 +29,7 @@ describe("key grants on the client", () => {
     for (const [scope, grant] of Object.entries(SCOPE_GRANTS)) expect(GRANT_SCOPES[grant.module as keyof typeof GRANT_SCOPES]?.[grant.permission]).toBe(scope as never);
     const clientPairs = Object.values(GRANT_SCOPES).flatMap((permissions) => Object.values(permissions));
     expect(clientPairs.sort()).toEqual(Object.keys(SCOPE_GRANTS).sort());
-    for (const module of GRANT_MODULES) expect(SELECTOR_KINDS[module]?.kind).toBe(SERVER_SELECTORS[module]);
+    for (const module of GRANT_MODULES) expect(SELECTOR_KINDS[module]?.kinds).toEqual(SERVER_SELECTORS[module]);
   });
 
   test("permission options say why one is off: admins only, read-only role, or team policy", () => {
@@ -71,14 +71,19 @@ describe("key grants on the client", () => {
   });
 
   test("rows become the request's grants, with chosen items only where a module has them", () => {
-    expect(rowsToGrants([row({}), row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["b1", "b2"] })])).toEqual({
-      grants: [{ module: "notes", permission: "read" }, { module: "tasks", permission: "write", resourceIds: ["b1", "b2"] }], error: null
+    expect(rowsToGrants([row({}), row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["board:b1", "board:b2"] })])).toEqual({
+      grants: [{ module: "notes", permission: "read" }, { module: "tasks", permission: "write", resources: [{ kind: "board", id: "b1" }, { kind: "board", id: "b2" }] }], error: null
     });
+    // Wave 34: notes by folder and single notes in one row; a saved view only with Read.
+    expect(rowsToGrants([row({ applies: "chosen", resourceIds: ["folder:f1", "note:n1"] })]).grants).toEqual([{ module: "notes", permission: "read", resources: [{ kind: "folder", id: "f1" }, { kind: "note", id: "n1" }] }]);
+    expect(rowsToGrants([row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["task_view:v1"] })]).error).toContain("saved views can only be read");
     expect(rowsToGrants([]).error).toBe("Add at least one permission.");
     expect(rowsToGrants([row({}), row({})]).error).toContain("listed twice");
-    expect(rowsToGrants([row({ module: "tasks", applies: "chosen" })]).error).toBe("Choose at least one board for Tasks, or pick All boards.");
-    expect(grantSummary([row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["b1", "b2"] })]))
+    expect(rowsToGrants([row({ module: "tasks", applies: "chosen" })]).error).toBe("Choose at least one board or view for Tasks, or pick All boards and views.");
+    expect(grantSummary([row({ module: "tasks", permission: "write", applies: "chosen", resourceIds: ["board:b1", "board:b2"] })]))
       .toBe("Tasks: write tasks on 2 boards. Never shares, never manages access or keys, and never deletes forever.");
+    expect(grantSummary([row({ applies: "chosen", resourceIds: ["folder:f1", "note:n1"] })]))
+      .toBe("Notes: read notes on 2 items. Never shares, never manages access or keys, and never deletes forever.");
     // Creating whiteboards makes new boards: never "on 0 whiteboards" (Wave 23 QA Q7).
     expect(grantSummary([row({ module: "whiteboards", permission: "write", applies: "chosen", resourceIds: [] })]))
       .toBe("Whiteboards: create whiteboards. Never shares, never manages access or keys, and never deletes forever.");
@@ -97,8 +102,8 @@ describe("key grants on the client", () => {
       ["Team: read team (your team role cannot use it)", false]
     ]);
     expect(keyToRows(apiKey({ grants }))).toEqual([
-      { key: "edit-tasks:write:chosen", module: "tasks", permission: "write", applies: "chosen", resourceIds: ["b1"] },
-      { key: "edit-calendar:read:chosen", module: "calendar", permission: "read", applies: "chosen", resourceIds: ["c1", "c2"] },
+      { key: "edit-tasks:write:chosen", module: "tasks", permission: "write", applies: "chosen", resourceIds: ["board:b1"] },
+      { key: "edit-calendar:read:chosen", module: "calendar", permission: "read", applies: "chosen", resourceIds: ["calendar:c1", "calendar:c2"] },
       { key: "edit-team:read:all", module: "team", permission: "read", applies: "all", resourceIds: [] }
     ]);
   });
@@ -214,5 +219,37 @@ describe("KeysDialog while busy (review L5)", () => {
     const source = readFileSync(new URL("../src/keys/KeysDialog.tsx", import.meta.url), "utf8");
     expect(source).toContain("onKeyDown={trapTabKey}");
     expect(source).toContain("useHistoryDialogGuard(true, onClose, { blocked: busy })");
+  });
+});
+
+describe("Wave 34: surfaces, REST help, and address limits on the client", () => {
+  test("new keys default to MCP; REST is offered only where team policy allows it (O-A8)", async () => {
+    const { surfaceChoices } = await import("../src/keys/KeysSettings");
+    expect(surfaceChoices({ mcpAllowed: true, restAllowed: false }).map((option) => [option.value, option.disabled])).toEqual([["mcp", false], ["rest", true], ["both", true]]);
+    const source = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
+    expect(source).toContain("const [surfaces, setSurfaces] = useState<KeySurfaces>(\"mcp\");");
+  });
+
+  test("the REST example uses a placeholder, never a key, and the key in the Authorization header", async () => {
+    const { restCurlExample } = await import("../src/keys/KeysSettings");
+    const example = restCurlExample("https://nook.example.test");
+    expect(example).toContain("https://nook.example.test/api/v1/tools/list_boards");
+    expect(example).toContain("Authorization: Bearer <YOUR_API_KEY>");
+    expect(example).not.toMatch(/mynotes_[A-Za-z0-9]/);
+    expect(example).not.toContain("?");
+  });
+
+  test("key rows show per-surface last use and the address limit (the list only to its owner)", async () => {
+    const { lastUsedLine, allowlistLines } = await import("../src/keys/keyGrants");
+    const relative = (iso: string) => `at ${iso.slice(0, 10)}`;
+    expect(lastUsedLine({ surfaces: "both", lastUsedAt: "2026-09-29T00:00:00.000Z", lastUsed: { mcp: "2026-09-29T00:00:00.000Z", rest: null } }, relative)).toBe("MCP at 2026-09-29 · REST never");
+    expect(lastUsedLine({ surfaces: "rest", lastUsedAt: null }, relative)).toBe("Never used");
+    expect(allowlistLines(" 203.0.113.0/24\n\n2001:db8::/32, 10.0.0.1 ")).toEqual(["203.0.113.0/24", "2001:db8::/32", "10.0.0.1"]);
+    const owned = renderToStaticMarkup(<KeyRow apiKey={apiKey({ ipRestricted: true, ipAllowlist: ["203.0.113.0/24"] })} />);
+    expect(owned).toContain("IP limited (1)");
+    expect(owned).toContain("Only from 203.0.113.0/24");
+    const inventory = renderToStaticMarkup(<KeyRow apiKey={apiKey({ ipRestricted: true })} owner="Alice" />);
+    expect(inventory).toContain("IP limited");
+    expect(inventory).not.toContain("Only from");
   });
 });

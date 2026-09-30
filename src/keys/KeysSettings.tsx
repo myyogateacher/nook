@@ -8,7 +8,7 @@ import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
-  expiryChoices, expiryDays, GRACE_OPTIONS, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
+  allowlistLines, expiryChoices, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
 import { createKey, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyList, type NarrowBody } from "./keysApi";
@@ -35,6 +35,8 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const [status, setStatus] = useState("");
   const endpoint = `${window.location.origin}/mcp`;
   const configText = JSON.stringify({ mcpServers: { nook: { type: "streamable-http", url: endpoint, headers: { Authorization: `Bearer ${newToken?.token ?? "<YOUR_API_KEY>"}` } } } }, null, 2);
+  // Always a placeholder: a key typed into a shell ends up in its history (T215).
+  const restExample = restCurlExample(window.location.origin);
   const guest = role === "guest";
   // QA U11: an account that confirms with Google does it BEFORE opening New key or Rotate, so the
   // round trip never loses what was typed into the dialog.
@@ -116,7 +118,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
   return <section className="settings-content mcp-settings keys-settings" aria-labelledby="keys-heading">
     {notice}
-    <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
+    <div className="settings-section-heading"><span className="settings-icon"><KeyRound /></span><div><h3 id="keys-heading">API keys</h3><p>Keys let trusted AI clients and scripts use Nook as you, over MCP or the REST API. Each key does only what its permissions allow, only with items you can open, and only until it expires. No key can share, manage access, manage keys, or delete forever.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {status && <p className="keys-status" role="status">{status}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
@@ -143,6 +145,8 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card mcp-config"><div><h4 id="mcp-config-heading">JSON client configuration</h4><p>This common JSON shape is supported by many Streamable HTTP clients; check your client's documentation because config formats differ. Replace the placeholder if you have not just created a key.</p></div><pre aria-labelledby="mcp-config-heading"><code>{configText}</code></pre><button type="button" className="secondary-button" onClick={() => copy(configText, "config")}><Copy />{copied === "config" ? "Copied config" : "Copy config"}</button></div>
 
+    <div className="mcp-card mcp-config keys-rest-help"><div><h4 id="keys-rest-heading">Using the REST API</h4><p>A key whose “Where it is used” includes REST runs the same tools over plain HTTPS, for scripts and CI. Send it only in the Authorization header, never in a URL. Bodies are JSON. <code>GET /api/v1/tools</code> lists what the key can call, and <code>GET /api/v1/me</code> shows its permissions and limits. Replace the placeholder with your key.</p></div><pre aria-labelledby="keys-rest-heading"><code>{restExample}</code></pre><button type="button" className="secondary-button" onClick={() => copy(restExample, "rest")}><Copy />{copied === "rest" ? "Copied example" : "Copy example"}</button></div>
+
     {/* Back off the phone sentinel closes a key dialog; Forward shows the same one again (Friction 12). */}
     <HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>
     {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
@@ -152,6 +156,40 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     {dialog?.kind === "review" && <McpBinnedReview keyId={dialog.key.id} keyName={dialog.key.name} onClose={() => closeDialogAfterReload(dialog.key.id)} onRevoke={() => setDialog({ kind: "revoke", key: dialog.key })} />}
     </HistoryDialogReopen.Provider>
   </section>;
+}
+
+/**
+ * Where a key may be used (D279, O-A8): MCP by default, REST opt-in, each only when team policy
+ * allows the holder's role there.
+ */
+export function surfaceChoices(policy: Pick<PolicySummary, "mcpAllowed" | "restAllowed">) {
+  return [
+    { value: "mcp" as const, label: "MCP", description: policy.mcpAllowed ? "AI clients such as Claude Code" : "Turned off by team policy", disabled: !policy.mcpAllowed },
+    { value: "rest" as const, label: "REST", description: policy.restAllowed ? "Scripts and CI over the REST API (/api/v1)" : "Turned off by team policy", disabled: !policy.restAllowed },
+    { value: "both" as const, label: "MCP and REST", description: policy.restAllowed && policy.mcpAllowed ? "Both" : "Turned off by team policy", disabled: !policy.restAllowed || !policy.mcpAllowed }
+  ];
+}
+
+/**
+ * The optional address limit (D284). Offered only where the server can see client addresses
+ * (TRUSTED_PROXY_HOPS set by the operator, O-A7); otherwise one line says why it is not offered.
+ */
+function AllowlistField({ available, value, onChange, disabled, narrowing = false }: { available: boolean; value: string; onChange: (value: string) => void; disabled: boolean; narrowing?: boolean }) {
+  if (!available) return <p className="keys-allowlist-off" role="note">Limiting a key to IP addresses is off on this server: it only works when your admin has told Nook how many proxies sit in front of it (TRUSTED_PROXY_HOPS).</p>;
+  return <label className="keys-input">Allowed addresses (optional)
+    <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} placeholder={"203.0.113.10\n198.51.100.0/24"} disabled={disabled} spellCheck={false} autoComplete="off" />
+    <small>{narrowing ? "One address or range per line. You can only tighten this list here; to widen it, rotate the key or create a new one." : "One IPv4 or IPv6 address or CIDR range per line, up to 10. Leave empty to allow any address. Adding a limit later narrows the key; removing it needs a new key."}</small>
+  </label>;
+}
+
+/** The REST help's example (Wave 34): a tool call with a placeholder key, never a real one. */
+export function restCurlExample(origin: string) {
+  return [
+    `curl -s -X POST "${origin}/api/v1/tools/list_boards" \\`,
+    "  -H \"Authorization: Bearer <YOUR_API_KEY>\" \\",
+    "  -H \"Content-Type: application/json\" \\",
+    "  -d '{}'"
+  ].join("\n");
 }
 
 /** The line under an Expires choice: the policy cap, and why "No expiry" is off when it is. */
@@ -198,9 +236,10 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
   return <li className={`keys-row state-${apiKey.state}`} data-key-id={apiKey.id}>
     <span className="key-icon" aria-hidden="true"><KeyRound /></span>
     <div className="keys-row-main">
-      <div className="keys-row-title"><strong>{apiKey.name}</strong><span className="keys-chip">{SURFACE_LABELS[apiKey.surfaces]}</span>{apiKey.kind === "vault" && <span className="keys-chip">Vault</span>}<span className={`keys-chip tone-${state.tone}`}>{state.label}</span></div>
+      <div className="keys-row-title"><strong>{apiKey.name}</strong><span className="keys-chip">{SURFACE_LABELS[apiKey.surfaces]}</span>{apiKey.ipRestricted && <span className="keys-chip" title={apiKey.ipAllowlist?.join(", ")}>{apiKey.ipAllowlist ? `IP limited (${apiKey.ipAllowlist.length})` : "IP limited"}</span>}{apiKey.kind === "vault" && <span className="keys-chip">Vault</span>}<span className={`keys-chip tone-${state.tone}`}>{state.label}</span></div>
       {owner && <small className="keys-row-owner">{owner}</small>}
-      <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {apiKey.lastUsedAt ? `Used ${relativeTime(apiKey.lastUsedAt)}` : "Never used"}</small>
+      <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {lastUsedLine(apiKey, relativeTime)}</small>
+      {apiKey.ipAllowlist && <small className="keys-row-description">Only from {apiKey.ipAllowlist.join(", ")}</small>}
       {apiKey.description && <small className="keys-row-description">{apiKey.description}</small>}
       <ul className="scope-chips" aria-label={`Permissions for ${apiKey.name}`}>{grantChips(apiKey.grants).map((chip) => <li key={chip.id} className={chip.active ? undefined : "inactive"}>{chip.label}</li>)}</ul>
       {apiKey.state === "blocked" && (apiKey.blockedBy === "expiry_required" || apiKey.blockedMessage) && <small className="keys-row-warning">{blockedLine(apiKey)}</small>}
@@ -235,13 +274,10 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
   const [rows, setRows] = useState<GrantRow[]>(() => [{ key: newRowKey(), module: "notes", permission: "read", applies: "all", resourceIds: [] }]);
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
+  const [allowlist, setAllowlist] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const surfaceOptions = [
-    { value: "mcp" as const, label: "MCP", description: "AI clients such as Claude Code", disabled: !policy.mcpAllowed },
-    { value: "rest" as const, label: "REST", description: policy.restAllowed ? "Scripts and CI; the REST API arrives in a later release" : "Turned off by team policy", disabled: !policy.restAllowed },
-    { value: "both" as const, label: "MCP and REST", description: policy.restAllowed && policy.mcpAllowed ? "Both, once REST arrives" : "Turned off by team policy", disabled: !policy.restAllowed || !policy.mcpAllowed }
-  ];
+  const surfaceOptions = surfaceChoices(policy);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -251,7 +287,8 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
     setBusy(true);
     setError("");
     try {
-      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const ipAllowlist = allowlistLines(allowlist);
+      const result = await createKey({ name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}), ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
       onCreated(result.key);
     } catch (reason) {
       setError(messageOf(reason, "Could not create the key"));
@@ -266,6 +303,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, onClose, onCreated }: { po
       <div className="keys-select-field"><span id="keys-surface-label">Where it is used</span><Select<KeySurfaces> labelledBy="keys-surface-label" label="Where it is used" value={surfaces} options={surfaceOptions} onChange={setSurfaces} disabled={busy} /></div>
       <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>
       <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{expiryNote(policy)}</small></div>
+      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} value={allowlist} onChange={setAllowlist} disabled={busy} />
       <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
@@ -282,7 +320,7 @@ export function keyToRows(key: ApiKey): GrantRow[] {
   for (const grant of key.grants) {
     const id = `${grant.module}:${grant.permission}:${grant.resource ? "chosen" : "all"}`;
     const row = rows.get(id) ?? { key: `edit-${id}`, module: grant.module, permission: grant.permission, applies: grant.resource ? "chosen" as const : "all" as const, resourceIds: [] };
-    if (grant.resource) row.resourceIds.push(grant.resource.id);
+    if (grant.resource) row.resourceIds.push(resourceToken(grant.resource.kind, grant.resource.id));
     rows.set(id, row);
   }
   return [...rows.values()];
@@ -295,6 +333,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
   const [description, setDescription] = useState(apiKey.description ?? "");
   const [expires, setExpires] = useState("keep");
   const [surfaces, setSurfaces] = useState<KeySurfaces>(apiKey.surfaces);
+  const [allowlist, setAllowlist] = useState((apiKey.ipAllowlist ?? []).join("\n"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const daysLeft = apiKey.expiresAt ? Math.max(1, Math.ceil((Date.parse(apiKey.expiresAt) - Date.now()) / 86_400_000)) : null;
@@ -319,6 +358,10 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
     if (surfaces !== apiKey.surfaces) body.surfaces = surfaces;
     const same = JSON.stringify(rowsToGrants(ceiling).grants) === JSON.stringify(grants);
     if (!same) body.grants = grants;
+    // Adding or tightening an address limit narrows the key (D278); the server refuses widening.
+    const nextAllowlist = allowlistLines(allowlist);
+    if (nextAllowlist.length && nextAllowlist.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) body.ipAllowlist = nextAllowlist;
+    if (!nextAllowlist.length && apiKey.ipAllowlist?.length) return setError("Removing the address limit widens the key. Rotate it or create a new key instead.");
     if (!Object.keys(body).length) return onClose();
     setBusy(true);
     setError("");
@@ -339,6 +382,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
       {apiKey.surfaces === "both" && <div className="keys-select-field"><span id="keys-edit-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-edit-surface" label="Where it is used" value={surfaces} options={surfaceChoices} onChange={setSurfaces} disabled={busy} /></div>}
       <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} ceiling={ceiling} /></fieldset>
       <div className="keys-select-field"><span id="keys-edit-expiry">Expiry</span><Select labelledBy="keys-edit-expiry" label="Expiry" value={expires} options={expiryChoices} onChange={setExpires} disabled={busy} /></div>
+      <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} value={allowlist} onChange={setAllowlist} disabled={busy} narrowing={Boolean(apiKey.ipAllowlist?.length)} />
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

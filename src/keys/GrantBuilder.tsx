@@ -90,7 +90,9 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
   ] : [];
   const writable = row.permission !== "read";
   let resourceOptions: Option[] = resources === "error" || !resources ? [] : resources.map((option) => ({
-    value: option.value, label: option.label, description: option.description ?? (writable && !option.writable ? "You can only view this one" : undefined), disabled: writable && !option.writable
+    value: option.value, label: option.label,
+    description: writable && option.readOnly ? "Views can only be read through a key" : writable && !option.writable ? "You can only view this one" : option.description,
+    disabled: writable && !option.writable
   }));
   if (narrowing && ceiling?.applies === "chosen") resourceOptions = resourceOptions.filter((option) => ceiling.resourceIds.includes(option.value));
   // Chosen items leave the list (their chips hold them, with ×), so a pick never reads as a no-op (Friction 3).

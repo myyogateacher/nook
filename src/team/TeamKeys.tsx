@@ -24,10 +24,24 @@ const STATE_OPTIONS: Option<"all" | InventoryState>[] = [
   { value: "unused", label: "Unused for 90 days" }
 ];
 
+const SURFACE_OPTIONS: Option<"all" | "mcp" | "rest">[] = [
+  { value: "all", label: "Any surface" },
+  { value: "mcp", label: "MCP", description: "Keys that may use MCP (including MCP and REST)" },
+  { value: "rest", label: "REST", description: "Keys that may use the REST API (including MCP and REST)" }
+];
+
+const IP_OPTIONS: Option<"all" | "true" | "false">[] = [
+  { value: "all", label: "Any address" },
+  { value: "true", label: "IP limited", description: "Keys limited to certain addresses" },
+  { value: "false", label: "Not IP limited" }
+];
+
 export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ id: string; displayName: string }>; onBack: () => void; flash: (message: string) => void }) {
   const [owner, setOwner] = useState("all");
   const [module, setModule] = useState<"all" | GrantModule>("all");
   const [state, setState] = useState<"all" | InventoryState>("all");
+  const [surface, setSurface] = useState<"all" | "mcp" | "rest">("all");
+  const [ipLimited, setIpLimited] = useState<"all" | "true" | "false">("all");
   const [data, setData] = useState<Inventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<InventoryKey | null>(null);
@@ -37,13 +51,16 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     const current = ++generation.current;
     setError(null);
     try {
-      const result = await listInventory({ owner: owner === "all" ? undefined : owner, module: module === "all" ? undefined : module, state: state === "all" ? undefined : state, cursor: cursor ?? undefined });
+      const result = await listInventory({
+        owner: owner === "all" ? undefined : owner, module: module === "all" ? undefined : module, state: state === "all" ? undefined : state, cursor: cursor ?? undefined,
+        surface: surface === "all" ? undefined : surface, ipRestricted: ipLimited === "all" ? undefined : ipLimited
+      });
       if (current !== generation.current) return;
       setData((previous) => cursor && previous ? { ...result, keys: [...previous.keys, ...result.keys] } : result);
     } catch (reason) {
       if (current === generation.current) setError(reason instanceof Error ? reason.message : "Could not load keys");
     }
-  }, [module, owner, state]);
+  }, [ipLimited, module, owner, state, surface]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { document.title = "Keys · Team · Nook"; }, []);
 
@@ -55,13 +72,15 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     <header className="team-invites-header">
       <div>
         <h2 id="team-keys-title">Keys</h2>
-        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, and use, never the secrets or the items a key is limited to. Revoking stops a key at once and tells its owner why.</p>
+        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, surfaces, and use, never the secrets, the items a key is limited to, or the addresses it is limited to. Revoking stops a key at once and tells its owner why.</p>
       </div>
     </header>
     <div className="team-keys-filters" role="group" aria-label="Filter keys">
       <div className="keys-select-field"><span id="team-keys-owner">Owner</span><Select labelledBy="team-keys-owner" label="Owner" value={owner} options={ownerOptions} onChange={setOwner} /></div>
       <div className="keys-select-field"><span id="team-keys-module">Module</span><Select<"all" | GrantModule> labelledBy="team-keys-module" label="Module" value={module} options={moduleOptions} onChange={setModule} /></div>
       <div className="keys-select-field"><span id="team-keys-state">State</span><Select<"all" | InventoryState> labelledBy="team-keys-state" label="State" value={state} options={STATE_OPTIONS} onChange={setState} /></div>
+      <div className="keys-select-field"><span id="team-keys-surface">Surface</span><Select<"all" | "mcp" | "rest"> labelledBy="team-keys-surface" label="Surface" value={surface} options={SURFACE_OPTIONS} onChange={setSurface} /></div>
+      <div className="keys-select-field"><span id="team-keys-ip">Addresses</span><Select<"all" | "true" | "false"> labelledBy="team-keys-ip" label="Addresses" value={ipLimited} options={IP_OPTIONS} onChange={setIpLimited} /></div>
     </div>
     {error && <div className="team-state team-error" role="alert">
       <span className="team-state-icon"><TriangleAlert /></span>

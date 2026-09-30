@@ -8,7 +8,7 @@ import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPer
 
 export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin" | "whiteboards";
 export type KeyPermission = "read" | "comment" | "write" | "draft" | "publish" | "create";
-export type ResourceKind = "board" | "collection" | "calendar" | "whiteboard";
+export type ResourceKind = "folder" | "note" | "document" | "board" | "task_view" | "collection" | "calendar" | "routine" | "whiteboard";
 export type KeySurfaces = "mcp" | "rest" | "both";
 
 export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards"];
@@ -35,13 +35,36 @@ export const scopeFor = (module: GrantModule, permission: KeyPermission) => GRAN
 
 export const permissionsFor = (module: GrantModule) => Object.keys(GRANT_SCOPES[module]) as KeyPermission[];
 
-/** Modules whose grants may name chosen items in Wave 31, and what the items are called. */
-export const SELECTOR_KINDS: Partial<Record<GrantModule, { kind: ResourceKind; one: string; many: string }>> = {
-  tasks: { kind: "board", one: "board", many: "boards" },
-  collections: { kind: "collection", one: "collection", many: "collections" },
-  calendar: { kind: "calendar", one: "calendar", many: "calendars" },
-  whiteboards: { kind: "whiteboard", one: "whiteboard", many: "whiteboards" }
+/**
+ * Modules whose grants may name chosen items (Wave 34: every module with selectable items), the
+ * kinds each offers (mirrors server/keyGrants.ts SELECTOR_KINDS), and what the items are called.
+ * A folder covers the notes or files directly inside it (never its subfolders); a saved view is
+ * read only.
+ */
+export const SELECTOR_KINDS: Partial<Record<GrantModule, { kinds: readonly ResourceKind[]; one: string; many: string }>> = {
+  notes: { kinds: ["folder", "note"], one: "folder or note", many: "folders and notes" },
+  files: { kinds: ["folder", "document"], one: "folder or file", many: "folders and files" },
+  tasks: { kinds: ["board", "task_view"], one: "board or view", many: "boards and views" },
+  collections: { kinds: ["collection"], one: "collection", many: "collections" },
+  calendar: { kinds: ["calendar"], one: "calendar", many: "calendars" },
+  inbox: { kinds: ["routine"], one: "routine", many: "routines" },
+  whiteboards: { kinds: ["whiteboard"], one: "whiteboard", many: "whiteboards" }
 };
+
+export const KIND_LABELS: Record<ResourceKind, string> = {
+  folder: "Folder", note: "Note", document: "File", board: "Board", task_view: "View", collection: "Collection", calendar: "Calendar", routine: "Routine", whiteboard: "Whiteboard"
+};
+
+/** Kinds a key can only read through (a saved view is a query, never a write target). */
+export const READ_ONLY_KINDS: readonly ResourceKind[] = ["task_view"];
+
+/** A chosen item in the builder is one string, `kind:id`, so one picker can hold several kinds. */
+export const resourceToken = (kind: ResourceKind, id: string) => `${kind}:${id}`;
+export function parseResourceToken(token: string): { kind: ResourceKind; id: string } | null {
+  const at = token.indexOf(":");
+  if (at < 1) return null;
+  return { kind: token.slice(0, at) as ResourceKind, id: token.slice(at + 1) };
+}
 
 export function permissionLabel(module: GrantModule, permission: KeyPermission) {
   const scope = scopeFor(module, permission);
@@ -54,7 +77,11 @@ export function permissionHelp(module: GrantModule, permission: KeyPermission) {
   return item ? [item.help, item.warning].filter(Boolean).join(" ") : "";
 }
 
-export type PolicySummary = { keyMaxDays: number; keyDefaultDays: number; keyRequireExpiry: boolean; keysPerUser: number; modules: readonly GrantModule[]; mcpAllowed: boolean; restAllowed: boolean };
+export type PolicySummary = {
+  keyMaxDays: number; keyDefaultDays: number; keyRequireExpiry: boolean; keysPerUser: number; modules: readonly GrantModule[]; mcpAllowed: boolean; restAllowed: boolean;
+  /** Wave 34 (O-A7): whether this server can check client addresses (TRUSTED_PROXY_HOPS ≥ 1). */
+  ipAllowlistAvailable?: boolean;
+};
 
 export type PermissionChoice = { value: KeyPermission; label: string; description: string; disabled: boolean; reason: string | null };
 
@@ -85,7 +112,7 @@ export function moduleChoices(role: string | undefined, policy: Pick<PolicySumma
   });
 }
 
-/** One row of the grant builder. `resourceIds` is used when `applies` is "chosen". */
+/** One row of the grant builder. `resourceIds` (tokens from resourceToken) is used when `applies` is "chosen". */
 export type GrantRow = { key: string; module: GrantModule; permission: KeyPermission; applies: "all" | "chosen"; resourceIds: string[] };
 
 /** Where each module and permission is already used, by row number (1-based), leaving out `rowKey`. */
@@ -123,7 +150,7 @@ export function rowModuleChoices(role: string | undefined, policy: Pick<PolicySu
   });
 }
 
-export type GrantPayload = { module: GrantModule; permission: KeyPermission; resourceIds?: string[] };
+export type GrantPayload = { module: GrantModule; permission: KeyPermission; resources?: Array<{ kind: ResourceKind; id: string }> };
 
 /** The request body's grants, or an error to show next to Create. */
 export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[]; error: string | null } {
@@ -136,9 +163,11 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
     seen.add(id);
     if (row.applies === "chosen") {
       const selector = SELECTOR_KINDS[row.module];
-      if (!selector) return { grants: [], error: `${MODULE_LABELS[row.module]} covers every item for now.` };
+      if (!selector) return { grants: [], error: `${MODULE_LABELS[row.module]} covers every item.` };
       if (!row.resourceIds.length) return { grants: [], error: `Choose at least one ${selector.one} for ${MODULE_LABELS[row.module]}, or pick All ${selector.many}.` };
-      grants.push({ module: row.module, permission: row.permission, resourceIds: [...row.resourceIds] });
+      const resources = row.resourceIds.map(parseResourceToken).filter((item): item is { kind: ResourceKind; id: string } => item !== null);
+      if (row.permission !== "read" && resources.some((item) => READ_ONLY_KINDS.includes(item.kind))) return { grants: [], error: `${MODULE_LABELS[row.module]}: saved views can only be read. Remove them or choose Read.` };
+      grants.push({ module: row.module, permission: row.permission, resources });
     } else {
       grants.push({ module: row.module, permission: row.permission });
     }
@@ -171,13 +200,21 @@ export function grantChips(grants: readonly KeyGrantView[]) {
     let scope = "";
     if (first.resource) {
       const names = items.map((item) => item.resource?.name).filter((name): name is string => Boolean(name));
-      scope = items.length === 1 && names.length === 1 ? ` · ${names[0]}` : ` · ${items.length} ${items.length === 1 ? selector?.one ?? "item" : selector?.many ?? "items"}`;
+      const kinds = new Set(items.map((item) => item.resource!.kind));
+      // One kind: "3 boards"; mixed kinds: "2 items".
+      const noun = kinds.size === 1 ? KIND_NOUNS[first.resource.kind] : ["item", "items"] as const;
+      scope = items.length === 1 && names.length === 1 ? ` · ${names[0]}` : ` · ${items.length} ${items.length === 1 ? noun[0] : noun[1]}`;
     }
     const inactive = items.every((item) => !item.active);
     const reason = inactive ? items.find((item) => item.inactiveReason)?.inactiveReason ?? null : null;
     return { id, label: `${base}${scope}${reason ? ` (${INACTIVE_TEXT[reason]})` : ""}`, active: !inactive };
   });
 }
+
+const KIND_NOUNS: Record<ResourceKind, readonly [string, string]> = {
+  folder: ["folder", "folders"], note: ["note", "notes"], document: ["file", "files"], board: ["board", "boards"], task_view: ["view", "views"],
+  collection: ["collection", "collections"], calendar: ["calendar", "calendars"], routine: ["routine", "routines"], whiteboard: ["whiteboard", "whiteboards"]
+};
 
 /** One sentence under the builder: what the key can do, and what no key ever does (D265). */
 export function grantSummary(rows: readonly GrantRow[]) {
@@ -186,13 +223,26 @@ export function grantSummary(rows: readonly GrantRow[]) {
     const selector = SELECTOR_KINDS[row.module];
     // Creating a whiteboard makes a new, private board: it is not "on" any existing ones (QA Q7).
     const createOnly = row.module === "whiteboards" && row.permission === "write";
-    const where = createOnly ? "" : row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? selector.one : selector.many}` : selector ? ` on all ${selector.many}` : "";
+    const kinds = new Set(row.resourceIds.map((token) => parseResourceToken(token)?.kind));
+    const only = kinds.size === 1 ? [...kinds][0] : undefined;
+    const noun = only ? KIND_NOUNS[only] : ["item", "items"] as const;
+    const where = createOnly ? "" : row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? noun[0] : noun[1]}` : selector ? ` on all ${selector.many}` : "";
     return `${MODULE_LABELS[row.module]}: ${permissionLabel(row.module, row.permission).toLowerCase()}${where}`;
   });
   return `${parts.join("; ")}. Never shares, never manages access or keys, and never deletes forever.`;
 }
 
 export const SURFACE_LABELS: Record<KeySurfaces, string> = { mcp: "MCP", rest: "REST", both: "MCP and REST" };
+
+/** The line under a key: when it was last used on each surface it may use (Wave 34). */
+export function lastUsedLine(key: { surfaces: KeySurfaces; lastUsedAt: string | null; lastUsed?: { mcp: string | null; rest: string | null } }, relative: (iso: string) => string) {
+  if (!key.lastUsed || key.surfaces !== "both") return key.lastUsedAt ? `Used ${relative(key.lastUsedAt)}` : "Never used";
+  const part = (label: string, at: string | null) => `${label} ${at ? relative(at) : "never"}`;
+  return `${part("MCP", key.lastUsed.mcp)} · ${part("REST", key.lastUsed.rest)}`;
+}
+
+/** The allowlist textarea's lines, trimmed, blanks dropped (the server validates and canonicalises). */
+export const allowlistLines = (text: string) => text.split(/[\n,]+/).map((line) => line.trim()).filter(Boolean);
 
 export const GRACE_OPTIONS = [
   { value: "0", label: "Stop the old key now" },

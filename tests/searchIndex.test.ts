@@ -136,7 +136,7 @@ describe("search index sync", () => {
   });
 
   test("boot backfills a 007-shaped data directory from verified files, never from current.md", () => {
-    const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
     // 1–22 are on main; later waves (023 and up) may or may not be registered yet.

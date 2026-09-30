@@ -339,7 +339,7 @@ describe("document uploads", () => {
   });
 
   test("applies the TOTP setup gate to document routes", async () => {
-    const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "totpRequiredProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "totpRequiredProbe.ts")], { stdout: "pipe", stderr: "pipe" });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     expect(JSON.parse(output)).toEqual({
       upload: { status: 403, code: "TOTP_SETUP_REQUIRED" },

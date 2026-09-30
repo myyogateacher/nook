@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 test("with ALLOW_REGISTRATION=false an invite opens registration once, with its role; the empty instance's first account is still the admin", () => {
-  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "teamInvitesProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "teamInvitesProbe.ts")], { stdout: "pipe", stderr: "pipe" });
   const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(output) as Record<string, any>;
   // Bootstrap wins over any token on an empty instance (D163).

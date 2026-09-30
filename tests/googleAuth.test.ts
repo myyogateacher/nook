@@ -640,7 +640,7 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
     const person = await createUser("CLI person");
     // The host CLI keeps the full power: it resets a verified account too (the web refuses, N2b).
     verify(person);
-    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
     const allowed = cli("allow-google-link", person.email, "--reset");
     expect({ code: allowed.exitCode, err: allowed.stderr.toString() }).toEqual({ code: 0, err: "" });
     expect(allowed.stdout.toString()).toContain("Reset first");
@@ -657,7 +657,7 @@ describe("existing accounts (D292, D293, HIGH-1, MEDIUM-1, T254, T255)", () => {
   }, 30_000);
 
   test("F2: the host CLI re-link says what will happen; --keep-credentials keeps the password and two-factor", async () => {
-    const cli = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
+    const cli = (...args: string[]) => Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "..", "server", "team-admin.ts"), ...args], { env: { ...process.env }, stdout: "pipe", stderr: "pipe" });
     // Default: the re-link removes them.
     const removed = await createUser("CLI relink removes");
     verify(removed);

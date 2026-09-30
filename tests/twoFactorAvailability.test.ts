@@ -12,7 +12,7 @@ test("/api/about says two-factor is available when a TOTP key is configured, and
 });
 
 test("without a TOTP key /api/about says two-factor is not available", () => {
-  const probe = Bun.spawnSync(["bun", join(import.meta.dir, "support", "noTotpKeyProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "noTotpKeyProbe.ts")], { stdout: "pipe", stderr: "pipe" });
   const line = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
   const result = JSON.parse(line) as { twoFactor: unknown; keys: string[] };
   expect(result.twoFactor).toBe(false);

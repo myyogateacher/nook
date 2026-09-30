@@ -27,7 +27,7 @@ const env = {
 Object.assign(process.env, env);
 
 function cli(...args: string[]) {
-  const result = Bun.spawnSync(["bun", join(import.meta.dir, "..", "..", "server", "team-admin.ts"), ...args], { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "..", "..", "server", "team-admin.ts"), ...args], { env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
   return { code: result.exitCode, out: result.stdout.toString().trim(), err: result.stderr.toString().trim() };
 }
 

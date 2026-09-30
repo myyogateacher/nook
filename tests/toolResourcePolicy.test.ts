@@ -6,6 +6,9 @@ const { invokeMcpToolForTests, loadLiveKey, mcpToolSpecs, toolVisible } = await 
 const { ANCHOR_KINDS } = await import("../server/keyResources");
 const { SCOPE_GRANTS, SELECTOR_KINDS } = await import("../server/keyGrants");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
+// Wave 27: the vault tools (registered only for nkv_ vault keys) are held to the same declarations.
+const { vaultToolSpecs } = await import("../server/vault/mcpTools");
+const everyTool = [...mcpToolSpecs, ...(vaultToolSpecs as unknown as typeof mcpToolSpecs)];
 type Grant = import("../server/keyGrants").Grant;
 
 /**
@@ -55,7 +58,8 @@ export function undeclaredUuidArgs(spec: { inputSchema: unknown; access: { items
 describe("tool resource policy", () => {
   test("every registered tool declares what it touches", () => {
     expect(mcpToolSpecs.length).toBeGreaterThan(60);
-    for (const spec of mcpToolSpecs) {
+    expect(vaultToolSpecs.map((spec) => spec.name).sort()).toEqual(["create_secret", "list_secrets", "list_vaults", "read_secret", "read_vault", "write_secret_value"]);
+    for (const spec of everyTool) {
       expect({ tool: spec.name, mode: MODES.includes(spec.access?.mode) }).toEqual({ tool: spec.name, mode: true });
       const shape = shapeOf(spec);
       const declared = [...(spec.access.items ?? []).map((item) => item.arg), ...(spec.access.related ?? [])];
@@ -82,7 +86,7 @@ describe("tool resource policy", () => {
   });
 
   test("no tool deletes forever, shares, or manages keys, groups, templates, policies, or sign-in (D265)", () => {
-    for (const spec of mcpToolSpecs) {
+    for (const spec of everyTool) {
       expect(spec.name).not.toMatch(/key|grant|polic|access|token|permission|share|sharing|group|template|purge|delete|password|login|sign/);
     }
   });

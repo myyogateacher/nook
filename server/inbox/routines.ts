@@ -121,7 +121,7 @@ function normalize(ownerId: string, input: RoutineInput): Normalized {
   const problem = scheduleProblem(schedule);
   if (problem) throw new InboxError(400, problem, "INVALID_SCHEDULE");
   const keyId = input.keyId ? input.keyId.toLowerCase() : null;
-  if (keyId && !db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND user_id = ? AND revoked_at IS NULL").get(keyId, ownerId)) {
+  if (keyId && !db.query("SELECT 1 FROM mcp_api_keys WHERE id = ? AND user_id = ? AND revoked_at IS NULL AND kind = 'general'").get(keyId, ownerId)) {
     throw new InboxError(404, "API key not found", "KEY_NOT_FOUND");
   }
   return {

@@ -21,7 +21,9 @@ export type ItemKind =
   | "board" | "card" | "column" | "sprint" | "task_view"
   | "collection" | "row"
   | "calendar" | "event"
-  | "routine" | "run";
+  | "routine" | "run"
+  // Wave 27: a vault (its tools run only for `nkv_` vault keys; server/vault/mcpTools.ts).
+  | "vault";
 
 export type Anchor = { kind: ResourceKind; id: string };
 
@@ -48,6 +50,7 @@ const LOOKUPS: Record<ItemKind, Lookup | ((id: string) => Anchor[])> = {
   calendar: direct("calendar"),
   event: { sql: "SELECT calendar_id FROM events WHERE id = ?", anchors: (row) => [{ kind: "calendar", id: row.calendar_id! }] },
   routine: direct("routine"),
+  vault: direct("vault"),
   run: { sql: "SELECT routine_id FROM routine_runs WHERE id = ?", anchors: (row) => [{ kind: "routine", id: row.routine_id! }] }
 };
 
@@ -55,7 +58,8 @@ const LOOKUPS: Record<ItemKind, Lookup | ((id: string) => Anchor[])> = {
 export const ANCHOR_KINDS: Record<ItemKind, readonly ResourceKind[]> = {
   note: ["note", "folder"], folder: ["folder"], document: ["document", "folder", "whiteboard"], whiteboard: ["whiteboard"],
   board: ["board"], card: ["board"], column: ["board"], sprint: ["board"], task_view: ["task_view"],
-  collection: ["collection"], row: ["collection"], calendar: ["calendar"], event: ["calendar"], routine: ["routine"], run: ["routine"]
+  collection: ["collection"], row: ["collection"], calendar: ["calendar"], event: ["calendar"], routine: ["routine"], run: ["routine"],
+  vault: ["vault"]
 };
 
 /** The anchors of one item, or null when it does not exist. Ids compare in lower case. */

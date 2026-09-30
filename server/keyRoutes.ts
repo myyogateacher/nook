@@ -3,10 +3,12 @@ import { z } from "zod";
 import type { AppEnv } from "./auth";
 import { audit } from "./db";
 import {
-  checkCreateAllowlist, createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, checkRotation, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
+  asKeyError, checkCreateAllowlist, createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, checkRotation, grantsForKind, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
   revokeOwnKey, rotateApiKey, rotateKeySchema, validateGrants, type GrantInput
 } from "./apiKeys";
 import { keyEvents } from "./access/events";
+import { recordKeyGrantEvents, validateVaultGrants, vaultKeyEvents, type VaultGrantInput } from "./vault/keys";
+import { vaultStatus } from "./vault/status";
 import { grantsForScopes } from "./keyGrants";
 import type { McpScope } from "./mcpScopes";
 import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
@@ -90,8 +92,47 @@ export function aliasKeyRefusal(user: { id: string; role: Role }, scopes: readon
   }
 }
 
+/**
+ * `POST /api/keys` with `kind: "vault"` (Wave 27, D217): an `nkv_` key. The same order as a general
+ * key, every refusal before the password so no code is consumed: policy (surfaces, the expiry cap;
+ * a vault key always expires, 90 days by default and 365 at most), each grant within the creator's
+ * current vault access (and `protectedAccess` for a grant naming a protected environment), the IP
+ * list, and the count; then the rate limit, the re-authentication, and the key.
+ */
+async function createVaultKey(c: Context<AppEnv>, body: z.infer<typeof createKeySchema>, inputs: VaultGrantInput[]) {
+  const user = c.get("user");
+  if (!vaultStatus().enabled) return c.json({ error: "The vault is not available on this server", code: "VAULT_DISABLED" }, 503);
+  const policies = readPolicies();
+  if (body.expiresInDays === null) throw new KeyError(400, "EXPIRY_REQUIRED", "A vault key must have an expiry date (at most 365 days)");
+  const days = checkCreatePolicy(user.id, user.role, body, policies)!;
+  let validated: ReturnType<typeof validateVaultGrants>;
+  try {
+    validated = validateVaultGrants(user.id, inputs, body.protectedAccess);
+  } catch (error) {
+    asKeyError(error);
+  }
+  const ipAllowlist = checkCreateAllowlist(body.ipAllowlist);
+  checkKeyCount(user.id, policies);
+  if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
+  if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
+    audit(user.id, null, "mcp.key_create_failed");
+    return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+  }
+  if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+  checkKeyCount(user.id, readPolicies());
+  const created = createApiKey(user.id, {
+    name: body.name, description: body.description ?? null, kind: "vault", surfaces: body.surfaces, grants: validated.grants, expiresInDays: days,
+    limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null), ipAllowlist,
+    vaultFlags: { allowMcpValueReads: body.allowMcpValueReads, protectedAccess: validated.protectedAccess }
+  });
+  // Each vault the key reaches records it in its Activity (owners see who gave a key access).
+  recordKeyGrantEvents(created.id, user.id, validated.grants, "apikey.create");
+  mailApiKeyCreated(user.id, created.id);
+  return c.json({ key: { ...ownApiKey(user.id, created.id), token: created.token } }, 201);
+}
+
 /** What a rotation changes besides the secret (review Q2). */
-const rotationChanges = (body: z.infer<typeof rotateKeySchema>) => ({ grants: body.grants, surfaces: body.surfaces, ipAllowlist: body.ipAllowlist });
+const rotationChanges = (body: z.infer<typeof rotateKeySchema>) => ({ grants: body.grants, surfaces: body.surfaces, ipAllowlist: body.ipAllowlist, allowMcpValueReads: body.allowMcpValueReads, protectedAccess: body.protectedAccess });
 
 const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 
@@ -109,14 +150,18 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
   app.get("/api/keys/:id", (c) => {
     const id = keyId(c);
     const key = id ? ownApiKey(c.get("user").id, id) : null;
-    return key ? c.json({ key, events: keyEvents(key.id) }) : notFound(c);
+    return key ? c.json({ key, events: keyEvents(key.id), ...(key.kind === "vault" ? { vaultEvents: vaultKeyEvents(c.get("user").id, key.id) } : {}) }) : notFound(c);
   });
 
   app.post("/api/keys", async (c) => {
     const body = await parseJson(c.req.raw, createKeySchema);
     const user = c.get("user");
     try {
-      const { grants, days, ipAllowlist } = precheckKeyCreate(user, body);
+      // The kind wall first (T217): a general key never holds a vault grant, and a vault key nothing else.
+      const split = grantsForKind(body.kind, body.grants);
+      if (body.kind === "vault") return await createVaultKey(c, body, split.vault);
+      if (body.allowMcpValueReads || body.protectedAccess) throw new KeyError(400, "INVALID", "Only vault keys have these settings");
+      const { grants, days, ipAllowlist } = precheckKeyCreate(user, { ...body, grants: split.general });
       if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
       if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
         audit(user.id, null, "mcp.key_create_failed");

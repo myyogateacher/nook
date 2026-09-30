@@ -24,6 +24,7 @@ import { editableCollectionPredicate, readableCollectionPredicate } from "./coll
 import { readableDocumentPredicate } from "./documentAccess";
 import { whiteboardDisplayName } from "../shared/whiteboardScene";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
+import { isVaultNarrowing, validateVaultGrants, vaultEffectiveGrants, vaultGrantInactive, vaultGrantInput, vaultGrantNames, VaultKeyError, type VaultGrantInput } from "./vault/keys";
 
 /**
  * Nook keys (docs/plan/research/2026-09-28-access-management-api-keys.md §C.4, D261–D283): one
@@ -33,7 +34,11 @@ import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar
  *   effective = grants ∩ the owner's current role scopes ∩ org policy (modules per role)
  *
  * and the key is refused outright (KEY_POLICY) when policy blocks it (expiry rules, surfaces per
- * role), or inactive once revoked, expired, or past its rotation grace. The owner's live access to
+ * role), or inactive once revoked, expired, or past its rotation grace. Vault keys (`nkv_`, Wave 27,
+ * D264) hold vault grants only and general keys never do (the kind wall, also in the database): their
+ * effective grants are role-capped here and intersected with the creator's live vault access by
+ * server/vault/access.ts on every call; they carry two flags (`allowMcpValueReads`,
+ * `protectedAccess`) that can only be turned off after creation. The owner's live access to
  * each item is still checked by the module service the tool runs (sessions and keys use the same
  * readable predicates). Keys never manage access (D265): nothing here is reachable from a key.
  */
@@ -64,6 +69,29 @@ export const grantInput = z.object({
 }).strict().refine((value) => !(value.resourceIds && value.resources), "Send resourceIds or resources, not both");
 export type GrantInput = z.infer<typeof grantInput>;
 
+/** A grant of either kind as sent; the key's kind decides which it may be (the kind wall, T217). */
+export const anyGrantInput = z.union([grantInput, vaultGrantInput]);
+export type AnyGrantInput = z.infer<typeof anyGrantInput>;
+const isVaultInput = (input: AnyGrantInput): input is VaultGrantInput => input.module === "vault";
+
+/**
+ * Splits a request's grants by kind, refusing any that do not belong to the key's kind (400
+ * `KEY_KIND_WALL`): a general key never holds a vault grant, and a vault key holds nothing else.
+ */
+export function grantsForKind(kind: KeyKind, inputs: readonly AnyGrantInput[]): { general: GrantInput[]; vault: VaultGrantInput[] } {
+  const vault = inputs.filter(isVaultInput);
+  const general = inputs.filter((input): input is GrantInput => !isVaultInput(input));
+  if (kind === "general" && vault.length) throw new KeyError(400, "KEY_KIND_WALL", "Vault access needs a vault key (nkv_). Create a vault key instead.");
+  if (kind === "vault" && general.length) throw new KeyError(400, "KEY_KIND_WALL", "A vault key holds vault grants only. Create a general key for other modules.");
+  return { general, vault };
+}
+
+/** A vault key error as a key error (the same status, code, and message). */
+export function asKeyError(error: unknown): never {
+  if (error instanceof VaultKeyError) throw new KeyError(error.status, error.code, error.message);
+  throw error;
+}
+
 const reauthFields = {
   /** Omitted when the session confirmed the account with Google in the last 5 minutes (D297). */
   password: z.string().min(1).max(256).optional(),
@@ -74,10 +102,16 @@ const reauthFields = {
 export const createKeySchema = z.object({
   name: z.string().trim().min(1).max(KEY_NAME_MAX),
   description: z.string().trim().max(KEY_DESCRIPTION_MAX).nullish(),
+  /** `vault` makes an `nkv_` key holding vault grants only (Wave 27, D264). */
+  kind: z.enum(["general", "vault"]).default("general"),
   surfaces: z.enum(["mcp", "rest", "both"]).default("mcp"),
-  /** Days until the key expires; the policy default when omitted (D276); null for no expiry, unless policy requires one. */
+  /** Days until the key expires; the policy default when omitted (D276); null for no expiry, unless policy requires one (never for vault keys). */
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
-  grants: z.array(grantInput).min(1).max(MAX_GRANTS),
+  grants: z.array(anyGrantInput).min(1).max(MAX_GRANTS),
+  /** Vault keys only: MCP tools may return values (T191). Off by default; REST reads values either way. */
+  allowMcpValueReads: z.boolean().default(false),
+  /** Vault keys only: grants that name a protected environment reach it (D226). Off by default. */
+  protectedAccess: z.boolean().default(false),
   limits: z.object({ callsPerMinute: z.number().int().min(1).optional(), writesPerMinute: z.number().int().min(1).optional() }).strict().optional(),
   /** Wave 34 (D284): addresses or CIDR ranges the key may be used from; only when TRUSTED_PROXY_HOPS ≥ 1. */
   ipAllowlist: z.array(z.string().trim().min(1).max(64)).min(1).max(IP_ALLOWLIST_MAX).optional(),
@@ -91,7 +125,10 @@ export const narrowKeySchema = z.object({
   surfaces: z.enum(["mcp", "rest", "both"]).optional(),
   /** Closer only; null keeps a key that has no expiry as it is (giving one no expiry would widen it). */
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
-  grants: z.array(grantInput).min(1).max(MAX_GRANTS).optional(),
+  grants: z.array(anyGrantInput).min(1).max(MAX_GRANTS).optional(),
+  /** Vault keys: false turns a flag off; true is widening unless it is already on. */
+  allowMcpValueReads: z.boolean().optional(),
+  protectedAccess: z.boolean().optional(),
   limits: z.object({ callsPerMinute: z.number().int().min(1).nullable().optional(), writesPerMinute: z.number().int().min(1).nullable().optional() }).strict().optional(),
   /** Adding a list, or a list inside the current one, narrows; null (removing it) widens and is refused (D278). */
   ipAllowlist: z.array(z.string().trim().min(1).max(64)).min(1).max(IP_ALLOWLIST_MAX).nullable().optional()
@@ -106,9 +143,12 @@ export const rotateKeySchema = z.object({
    * do, widening included: its grants, surfaces, and address limit (null removes the limit).
    * Omitted fields keep the old key's values. Every change is validated like a new key.
    */
-  grants: z.array(grantInput).min(1).max(MAX_GRANTS).optional(),
+  grants: z.array(anyGrantInput).min(1).max(MAX_GRANTS).optional(),
   surfaces: z.enum(["mcp", "rest", "both"]).optional(),
   ipAllowlist: z.array(z.string().trim().min(1).max(64)).min(1).max(IP_ALLOWLIST_MAX).nullable().optional(),
+  /** Vault keys: the new key's flags (re-authenticated like creation); omitted keeps the old key's. */
+  allowMcpValueReads: z.boolean().optional(),
+  protectedAccess: z.boolean().optional(),
   ...reauthFields
 }).strict().refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
@@ -122,19 +162,20 @@ type KeyRow = {
   rotated_from: string | null; revoked_by: string | null; revoke_reason: string | null; limits_json: string | null;
   ip_allowlist: string | null; last_used_mcp_at: string | null; last_used_rest_at: string | null;
   last_denied_at: string | null; last_denied_reason: string | null; last_denied_surface: "mcp" | "rest" | null;
+  allow_mcp_value_reads: number; vault_protected_access: number;
   role: Role; disabled_at: string | null;
 };
 
 const keyColumns = `k.id, k.user_id, k.name, k.description, k.key_prefix, k.kind, k.surfaces, k.scopes, k.created_at, k.last_used_at, k.expires_at,
   k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, k.ip_allowlist, k.last_used_mcp_at, k.last_used_rest_at,
-  k.last_denied_at, k.last_denied_reason, k.last_denied_surface, u.role, u.disabled_at`;
+  k.last_denied_at, k.last_denied_reason, k.last_denied_surface, k.allow_mcp_value_reads, k.vault_protected_access, u.role, u.disabled_at`;
 
 const keyById = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`);
-const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
+const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id, env_id FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
 
 export function loadGrants(keyId: string): Grant[] {
-  return (grantsByKey.all(keyId) as Array<{ module: GrantModule; permission: KeyPermission; resource_kind: ResourceKind | null; resource_id: string | null }>)
-    .map((row) => ({ module: row.module, permission: row.permission, resourceKind: row.resource_kind, resourceId: row.resource_id }));
+  return (grantsByKey.all(keyId) as Array<{ module: GrantModule; permission: KeyPermission; resource_kind: ResourceKind | null; resource_id: string | null; env_id: string | null }>)
+    .map((row) => ({ module: row.module, permission: row.permission, resourceKind: row.resource_kind, resourceId: row.resource_id, ...(row.module === "vault" ? { envId: row.env_id } : {}) }));
 }
 
 export type KeyLimits = { callsPerMinute?: number; writesPerMinute?: number };
@@ -181,7 +222,8 @@ const ownedView = (userId: string, viewId: string) => Boolean(db.query("SELECT 1
 const foreignViewGrant = (grant: Grant, userId: string) => grant.resourceKind === "task_view" && grant.resourceId !== null && !ownedView(userId, grant.resourceId);
 
 /** Why one grant grants nothing right now, or null when it is active (T201: stored, listed, and dead weight). */
-function grantInactiveReason(grant: Grant, role: Role, modules: readonly GrantModule[], userId: string): InactiveReason | null {
+function grantInactiveReason(grant: Grant, role: Role, modules: readonly GrantModule[], userId: string, protectedAccess = false): InactiveReason | null {
+  if (grant.module === "vault") return vaultGrantInactive(userId, grant, protectedAccess);
   const scope = scopeFor(grant.module, grant.permission);
   if (!scope || !mcpScopesForRole(role).includes(scope)) return "role";
   if (!modules.includes(grant.module)) return "policy";
@@ -192,6 +234,8 @@ function grantInactiveReason(grant: Grant, role: Role, modules: readonly GrantMo
 
 /** What a live key can use now: role-capped, policy-filtered grants and the scopes they amount to. */
 function effectiveOf(row: KeyRow, grants: readonly Grant[], policies: Policies) {
+  // Vault keys (D264): vault grants only, capped by the creator's role; no MCP scopes of the general tools.
+  if (row.kind === "vault") return { grants: vaultEffectiveGrants(row.user_id, grants), scopes: [] as McpScope[] };
   const allowed = mcpScopesForRole(row.role);
   const modules = activeModules(row.role, policies);
   const active: Grant[] = [];
@@ -223,6 +267,8 @@ export type KeyActor = {
   limits: KeyLimits;
   /** Wave 34 (D284): the addresses the key may be used from, or null for anywhere. Checked per request. */
   ipAllowlist: string[] | null;
+  /** Vault keys (Wave 27): the MCP value-read and protected-environment flags; null for general keys. */
+  vault: { mcpValueReads: boolean; protectedAccess: boolean } | null;
 };
 
 export type KeyDenial = { code: "KEY_INACTIVE" | "KEY_POLICY"; message: string; reason?: PolicyBlock };
@@ -263,7 +309,10 @@ export function resolveKeyActor(keyId: string, surface: "mcp" | "rest" = "mcp", 
     return { code: "KEY_POLICY", message: policyBlockMessage(row, blocked, surface, policies), reason: blocked };
   }
   const effective = effectiveOf(row, loadGrants(row.id), policies);
-  return { keyId: row.id, userId: row.user_id, name: row.name, kind: row.kind, scopes: effective.scopes, grants: effective.grants, limits: parseLimits(row.limits_json), ipAllowlist: storedAllowlist(row.ip_allowlist) };
+  return {
+    keyId: row.id, userId: row.user_id, name: row.name, kind: row.kind, scopes: effective.scopes, grants: effective.grants, limits: parseLimits(row.limits_json), ipAllowlist: storedAllowlist(row.ip_allowlist),
+    vault: row.kind === "vault" ? { mcpValueReads: row.allow_mcp_value_reads === 1, protectedAccess: row.vault_protected_access === 1 } : null
+  };
 }
 
 export const isKeyDenial = (value: KeyActor | KeyDenial): value is KeyDenial => "code" in value;
@@ -517,7 +566,12 @@ type InsertInput = {
   userId: string; name: string; description: string | null; kind: KeyKind; surfaces: KeySurfaces; grants: readonly Grant[];
   expiresAt: string | null; limits: KeyLimits; rotatedFrom?: string | null; createdBy?: string | null; createdAt?: string;
   ipAllowlist?: readonly string[] | null;
+  /** Vault keys only (Wave 27). */
+  vaultFlags?: VaultFlags | null;
 };
+
+/** A vault key's two flags as the API names them. */
+export type VaultFlags = { allowMcpValueReads: boolean; protectedAccess: boolean };
 
 /** Inserts the key, its grants, and the `scopes` mirror (rollback for one release, D262). Call inside a transaction. */
 function insertKey(input: InsertInput) {
@@ -526,33 +580,47 @@ function insertKey(input: InsertInput) {
   const createdAt = input.createdAt ?? now();
   const scopes = grantsToScopes(input.grants);
   const limits = Object.keys(input.limits).length ? JSON.stringify(input.limits) : null;
-  db.query(`INSERT INTO mcp_api_keys (id, user_id, name, description, key_prefix, token_hash, scopes, created_at, kind, surfaces, expires_at, rotated_from, limits_json, created_by, ip_allowlist)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const flags = input.kind === "vault" ? input.vaultFlags ?? { allowMcpValueReads: false, protectedAccess: false } : { allowMcpValueReads: false, protectedAccess: false };
+  db.query(`INSERT INTO mcp_api_keys (id, user_id, name, description, key_prefix, token_hash, scopes, created_at, kind, surfaces, expires_at, rotated_from, limits_json, created_by, ip_allowlist,
+      allow_mcp_value_reads, vault_protected_access)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, input.userId, input.name, input.description, token.slice(0, 16), hashKeyToken(token), JSON.stringify(scopes), createdAt, input.kind, input.surfaces,
-      input.expiresAt, input.rotatedFrom ?? null, limits, input.createdBy ?? null, input.ipAllowlist?.length ? JSON.stringify(input.ipAllowlist) : null);
-  const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-  for (const grant of input.grants) insertGrant.run(crypto.randomUUID(), id, grant.module, grant.permission, grant.resourceKind, grant.resourceId, createdAt);
+      input.expiresAt, input.rotatedFrom ?? null, limits, input.createdBy ?? null, input.ipAllowlist?.length ? JSON.stringify(input.ipAllowlist) : null,
+      flags.allowMcpValueReads ? 1 : 0, flags.protectedAccess ? 1 : 0);
+  insertGrantRows(id, input.grants, createdAt);
   return { id, token, prefix: token.slice(0, 16), scopes, createdAt };
 }
 
-const grantSummary = (grants: readonly Grant[]) => grants.map((grant) => `${grant.module}:${grant.permission}${grant.resourceId ? `@${grant.resourceKind}` : ""}`);
+/** Inserts a key's grant rows (env_id for vault grants). */
+function insertGrantRows(keyId: string, grants: readonly Grant[], createdAt: string) {
+  const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, env_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const grant of grants) insertGrant.run(crypto.randomUUID(), keyId, grant.module, grant.permission, grant.resourceKind, grant.resourceId, grant.module === "vault" ? grant.envId ?? null : null, createdAt);
+}
+
+const grantSummary = (grants: readonly Grant[]) => grants.map((grant) => `${grant.module}:${grant.permission}${grant.resourceId ? `@${grant.resourceKind}` : ""}${grant.envId ? "+env" : ""}`);
 
 /**
  * Creates a general key. Validation, policy, and re-authentication are the caller's (the route
  * checks them in that order, so no code is consumed on a refusal).
  */
-export function createApiKey(userId: string, input: { name: string; description?: string | null; surfaces: KeySurfaces; grants: readonly Grant[]; expiresInDays: number | null; limits?: KeyLimits; ipAllowlist?: readonly string[] | null }, options: { via?: AccessVia; actorId?: string } = {}) {
+export function createApiKey(userId: string, input: { name: string; description?: string | null; kind?: KeyKind; surfaces: KeySurfaces; grants: readonly Grant[]; expiresInDays: number | null; limits?: KeyLimits; ipAllowlist?: readonly string[] | null; vaultFlags?: VaultFlags | null }, options: { via?: AccessVia; actorId?: string } = {}) {
   if (input.grants.length === 0) throw new KeyError(400, "INVALID_GRANT", "A key needs at least one permission");
+  const kind: KeyKind = input.kind ?? "general";
+  // The kind wall (T217), before the database's own triggers say it again.
+  if (input.grants.some((grant) => (grant.module === "vault") !== (kind === "vault"))) throw new KeyError(400, "KEY_KIND_WALL", "Vault grants need a vault key, and a vault key holds vault grants only");
+  // Vault keys always expire (D217): at most 365 days.
+  if (kind === "vault" && input.expiresInDays === null) throw new KeyError(400, "EXPIRY_REQUIRED", "A vault key must have an expiry date (at most 365 days)");
   const createdAt = now();
   const expiresAt = input.expiresInDays === null ? null : new Date(Date.parse(createdAt) + input.expiresInDays * DAY_MS).toISOString();
   // An admin creating an integration's key (D287) is the actor and `created_by`; the integration owns it.
   const actorId = options.actorId ?? userId;
   return db.transaction(() => {
-    const created = insertKey({ userId, name: input.name, description: input.description ?? null, kind: "general", surfaces: input.surfaces, grants: input.grants, expiresAt, limits: input.limits ?? {}, createdAt, ipAllowlist: input.ipAllowlist ?? null, createdBy: options.actorId ?? null });
+    const created = insertKey({ userId, name: input.name, description: input.description ?? null, kind, surfaces: input.surfaces, grants: input.grants, expiresAt, limits: input.limits ?? {}, createdAt, ipAllowlist: input.ipAllowlist ?? null, createdBy: options.actorId ?? null, vaultFlags: kind === "vault" ? input.vaultFlags ?? null : null });
     // The audit shape predates grants (Wave 8): keyId, name, and the scopes the grants amount to.
     audit(actorId, null, "mcp.key_created", { keyId: created.id, name: input.name, scopes: created.scopes, ...(actorId !== userId ? { ownerId: userId } : {}) });
     recordAccessEvent({ actorId, via: options.via ?? "web", action: "key.created", targetUserId: userId, keyId: created.id,
-      meta: { grants: grantSummary(input.grants), surfaces: input.surfaces, expiresInDays: input.expiresInDays, ...(input.ipAllowlist?.length ? { ipRanges: input.ipAllowlist.length } : {}) } }, createdAt);
+      meta: { grants: grantSummary(input.grants), surfaces: input.surfaces, expiresInDays: input.expiresInDays, ...(input.ipAllowlist?.length ? { ipRanges: input.ipAllowlist.length } : {}),
+        ...(kind === "vault" ? { kind, mcpValueReads: Boolean(input.vaultFlags?.allowMcpValueReads), protectedAccess: Boolean(input.vaultFlags?.protectedAccess) } : {}) } }, createdAt);
     return { id: created.id, token: created.token, prefix: created.prefix, scopes: created.scopes, createdAt, expiresAt, name: input.name };
   })();
 }
@@ -576,11 +644,24 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
   const changed: string[] = [];
   const current = loadGrants(row.id);
   let nextGrants: Grant[] | null = null;
-  if (patch.grants) {
+  const protectedAccess = row.vault_protected_access === 1;
+  if (patch.grants && row.kind === "vault") {
+    // Vault keys (D278): drop grants, write → read, or one environment for every one (see isVaultNarrowing).
+    const { vault } = grantsForKind("vault", patch.grants);
+    const candidate: Grant[] = vault.map((input) => ({ module: "vault", permission: input.permission, resourceKind: "vault", resourceId: input.vaultId, envId: input.envId ?? null }));
+    const unique = dedupeGrants(candidate);
+    if (!isVaultNarrowing(current, unique, protectedAccess)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only remove access. Create a new key to add access.");
+    if (unique.length > MAX_GRANTS) throw new KeyError(400, "INVALID_GRANT", `A key can hold at most ${MAX_GRANTS} grants`);
+    const same = unique.length === current.length && unique.every((grant) => current.some((held) => grantKey(held) === grantKey(grant)));
+    if (!same) {
+      nextGrants = unique;
+      changed.push("grants");
+    }
+  } else if (patch.grants) {
     // Narrowing validates like creation (vocabulary and access), except that it never needs the
     // role or policy to allow the grant again: removing power is always allowed.
     const candidate: Grant[] = [];
-    for (const input of patch.grants) {
+    for (const input of grantsForKind("general", patch.grants).general) {
       if (!permissionsForModule(input.module).includes(input.permission)) throw new KeyError(400, "INVALID_GRANT", `Keys cannot hold ${input.permission} on ${input.module}`);
       const chosen = chosenResources(input);
       if (!chosen) candidate.push({ module: input.module, permission: input.permission, resourceKind: null, resourceId: null });
@@ -651,6 +732,20 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
       changed.push("ipAllowlist");
     }
   }
+  // Vault flags (D278): only ever turned off here; turning one on is a new key or a rotation.
+  let flags: VaultFlags | null = null;
+  if (patch.allowMcpValueReads !== undefined || patch.protectedAccess !== undefined) {
+    if (row.kind !== "vault") throw new KeyError(400, "INVALID", "Only vault keys have these settings");
+    const current = { allowMcpValueReads: row.allow_mcp_value_reads === 1, protectedAccess };
+    const next = { allowMcpValueReads: patch.allowMcpValueReads ?? current.allowMcpValueReads, protectedAccess: patch.protectedAccess ?? current.protectedAccess };
+    if ((next.allowMcpValueReads && !current.allowMcpValueReads) || (next.protectedAccess && !current.protectedAccess)) {
+      throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only turn these settings off. Rotate the key or create a new one to turn one on.");
+    }
+    if (next.allowMcpValueReads !== current.allowMcpValueReads || next.protectedAccess !== current.protectedAccess) {
+      flags = next;
+      changed.push("vaultFlags");
+    }
+  }
   const name = patch.name ?? row.name;
   if (patch.name !== undefined && patch.name !== row.name) changed.push("name");
   const description = patch.description === undefined ? row.description : (patch.description?.trim() || null);
@@ -663,9 +758,9 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
       .run(name, description, surfaces, expiresAt, Object.keys(limits).length ? JSON.stringify(limits) : null, allowlist ? JSON.stringify(allowlist) : null, scopes ? JSON.stringify(scopes) : null, row.id, userId);
     if (nextGrants) {
       db.query("DELETE FROM api_key_grants WHERE key_id = ?").run(row.id);
-      const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-      for (const grant of nextGrants) insertGrant.run(crypto.randomUUID(), row.id, grant.module, grant.permission, grant.resourceKind, grant.resourceId, timestamp);
+      insertGrantRows(row.id, nextGrants, timestamp);
     }
+    if (flags) db.query("UPDATE mcp_api_keys SET allow_mcp_value_reads = ?, vault_protected_access = ? WHERE id = ?").run(flags.allowMcpValueReads ? 1 : 0, flags.protectedAccess ? 1 : 0, row.id);
     recordAccessEvent({ actorId, via: "web", action: "key.narrowed", targetUserId: userId, keyId: row.id,
       meta: { fields: changed, ...(nextGrants ? { grantsBefore: current.length, grantsAfter: nextGrants.length } : {}) } }, timestamp);
     audit(actorId, null, "key.narrowed", { keyId: row.id, fields: changed });
@@ -688,7 +783,7 @@ function supersedeProposals(keyId: string, ownerId: string, timestamp: string) {
  * the same transaction and needs none. An expired key may be rotated (with the password): that is
  * how its holder renews it without re-entering its grants.
  */
-export type RotationChanges = { grants?: readonly GrantInput[]; surfaces?: KeySurfaces; ipAllowlist?: readonly string[] | null };
+export type RotationChanges = { grants?: readonly AnyGrantInput[]; surfaces?: KeySurfaces; ipAllowlist?: readonly string[] | null; allowMcpValueReads?: boolean; protectedAccess?: boolean };
 
 export function checkRotation(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}) {
   const row = liveOwnKey(userId, keyId);
@@ -697,9 +792,28 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
   const surfaces = changes.surfaces ?? row.surfaces;
   checkCreatePolicy(userId, row.role, { surfaces, expiresInDays }, policies);
   let grants: Grant[];
-  if (changes.grants) {
+  let vaultFlags: VaultFlags | null = null;
+  if (row.kind !== "vault" && (changes.allowMcpValueReads !== undefined || changes.protectedAccess !== undefined)) throw new KeyError(400, "INVALID", "Only vault keys have these settings");
+  if (row.kind === "vault") {
+    if (expiresInDays === null) throw new KeyError(400, "EXPIRY_REQUIRED", "A vault key must have an expiry date (at most 365 days)");
+    // A rotation re-authenticates, so it may set the flags; the grants are checked against the
+    // holder's access now, like a new key's (a creator who lost access cannot carry it over).
+    const wanted = { allowMcpValueReads: changes.allowMcpValueReads ?? row.allow_mcp_value_reads === 1, protectedAccess: changes.protectedAccess ?? row.vault_protected_access === 1 };
+    const inputs: VaultGrantInput[] = changes.grants ? grantsForKind("vault", changes.grants).vault
+      : loadGrants(row.id).map((grant) => ({ module: "vault", permission: grant.permission === "write" ? "write" : "read", vaultId: grant.resourceId!, envId: grant.envId ?? null }));
+    if (!inputs.length) throw new KeyError(409, "NO_GRANTS", "This key has no permissions left. Create a new key instead.");
+    let validated: ReturnType<typeof validateVaultGrants>;
+    try {
+      validated = validateVaultGrants(userId, inputs, wanted.protectedAccess);
+    } catch (error) {
+      asKeyError(error);
+    }
+    grants = validated.grants;
+    vaultFlags = { allowMcpValueReads: wanted.allowMcpValueReads, protectedAccess: validated.protectedAccess };
+  } else if (changes.grants) {
     // New grants are validated exactly like a new key's (role, policy, reachable items, own views).
-    grants = validateGrants(userId, row.role, changes.grants, policies);
+    if (changes.allowMcpValueReads !== undefined || changes.protectedAccess !== undefined) throw new KeyError(400, "INVALID", "Only vault keys have these settings");
+    grants = validateGrants(userId, row.role, grantsForKind("general", changes.grants).general, policies);
   } else {
     grants = loadGrants(row.id);
     const allowed = mcpScopesForRole(row.role);
@@ -715,7 +829,7 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
   const ipAllowlist = changes.ipAllowlist === undefined ? storedAllowlist(row.ip_allowlist)
     : changes.ipAllowlist === null ? null : checkCreateAllowlist(changes.ipAllowlist);
   if (graceHours > 0) checkKeyCount(userId, policies);
-  return { row, policies, grants, surfaces, ipAllowlist };
+  return { row, policies, grants, surfaces, ipAllowlist, vaultFlags };
 }
 
 /**
@@ -724,7 +838,7 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
  * stops. Routines bound to the old key move to the new one in the same transaction.
  */
 export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}, actorId: string = userId) {
-  const { row, policies, grants, surfaces, ipAllowlist } = checkRotation(userId, keyId, graceHours, expiresInDays, changes);
+  const { row, policies, grants, surfaces, ipAllowlist, vaultFlags } = checkRotation(userId, keyId, graceHours, expiresInDays, changes);
   const lifetimeDays = row.expires_at === null ? policies.keyDefaultDays
     : Math.max(1, Math.round((Date.parse(row.expires_at) - Date.parse(row.created_at)) / DAY_MS));
   // A lifetime chosen in the rotate dialog (C2) was checked above; otherwise the old one, capped.
@@ -733,7 +847,7 @@ export function rotateApiKey(userId: string, keyId: string, graceHours: typeof G
   const expiresAt = days === null ? null : new Date(Date.parse(createdAt) + days * DAY_MS).toISOString();
   const revokeAfter = new Date(Date.parse(createdAt) + graceHours * 3_600_000).toISOString();
   return db.transaction(() => {
-    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist, createdBy: actorId === userId ? null : actorId });
+    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist, createdBy: actorId === userId ? null : actorId, vaultFlags });
     if (graceHours === 0) {
       db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoke_after = ? WHERE id = ?").run(createdAt, createdAt, row.id);
       supersedeProposals(row.id, userId, createdAt);
@@ -896,6 +1010,8 @@ function surfaceTotals14d(keyIds: readonly string[]) {
 export type GrantView = {
   module: GrantModule; permission: KeyPermission;
   resource: { kind: ResourceKind; id: string; name: string | null } | null;
+  /** Vault grants (Wave 27): one environment (its name only for the key's owner while they can read it), or null for every one. */
+  env?: { id: string; name: string | null; protected: boolean } | null;
   active: boolean; inactiveReason: InactiveReason | null;
 };
 
@@ -913,6 +1029,8 @@ export type ApiKeyView = {
   blockedSurfaces: Array<"mcp" | "rest">;
   /** Wave 34 (D284): whether the key is limited to addresses; the list itself only for its owner. */
   ipRestricted: boolean; ipAllowlist?: string[];
+  /** Vault keys (Wave 27): the two flags; null for general keys. */
+  vault: VaultFlags | null;
 };
 
 /**
@@ -941,7 +1059,15 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
     rotatedFrom: row.rotated_from, state, blockedBy, blockedMessage: blockedBy ? POLICY_BLOCK_MESSAGES[blockedBy] : null,
     revokedBy, revokeReason: viewerIsOwner || revokedBy === "admin" ? row.revoke_reason : null,
     grants: grants.map((grant) => {
-      const reason = grantInactiveReason(grant, row.role, modules, row.user_id);
+      const reason = grantInactiveReason(grant, row.role, modules, row.user_id, row.vault_protected_access === 1);
+      if (grant.module === "vault") {
+        // Names only for the key's owner while they can read the vault (D73, T204).
+        const names = viewerIsOwner ? vaultGrantNames(row.user_id, grant) : { vaultName: null, envName: null, envProtected: false };
+        return {
+          module: grant.module, permission: grant.permission, resource: grant.resourceId ? { kind: "vault" as const, id: grant.resourceId, name: names.vaultName } : null,
+          env: grant.envId ? { id: grant.envId, name: names.envName, protected: names.envProtected } : null, active: reason === null, inactiveReason: reason
+        };
+      }
       // Names only for items the key's owner can still read (T204); the owner is the viewer here.
       const name = grant.resourceKind && grant.resourceId && viewerIsOwner ? resourceName(row.user_id, grant.resourceKind, grant.resourceId) : null;
       return { module: grant.module, permission: grant.permission, resource: grant.resourceKind && grant.resourceId ? { kind: grant.resourceKind, id: grant.resourceId, name } : null, active: reason === null, inactiveReason: reason };
@@ -951,7 +1077,8 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
     lastDenied: row.last_denied_at && row.last_denied_reason ? { at: row.last_denied_at, reason: row.last_denied_reason, surface: row.last_denied_surface } : null,
     blockedSurfaces: (row.surfaces === "both" ? ["mcp", "rest"] as const : [row.surfaces]).filter((surface) => policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies) !== null),
     // Admins see that a key is address-limited, never the addresses of someone else's key.
-    ipRestricted: allowlist !== null, ...(viewerIsOwner && allowlist ? { ipAllowlist: allowlist } : {})
+    ipRestricted: allowlist !== null, ...(viewerIsOwner && allowlist ? { ipAllowlist: allowlist } : {}),
+    vault: row.kind === "vault" ? { allowMcpValueReads: row.allow_mcp_value_reads === 1, protectedAccess: row.vault_protected_access === 1 } : null
   };
 }
 
@@ -1009,6 +1136,8 @@ export type InventoryFilter = {
   surface?: "mcp" | "rest";
   /** Wave 34: only keys limited to addresses (true) or not (false). */
   ipRestricted?: boolean;
+  /** Wave 27: general keys or vault keys (`nkv_`). */
+  kind?: KeyKind;
 };
 
 export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean; /** 'service' for an integration (Wave 36, D287). */ kind: "person" | "service" } };
@@ -1071,6 +1200,10 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
     params.push(filter.surface);
   }
   if (filter.ipRestricted !== undefined) where += filter.ipRestricted ? " AND k.ip_allowlist IS NOT NULL" : " AND k.ip_allowlist IS NULL";
+  if (filter.kind) {
+    where += " AND k.kind = ?";
+    params.push(filter.kind);
+  }
   // Review Q14: how many keys the filters match (every page), next to the live total.
   const matching = (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE ${where}`).get(...params) as { count: number }).count;
   if (filter.cursor) {

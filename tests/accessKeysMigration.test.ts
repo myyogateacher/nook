@@ -88,7 +88,9 @@ describe("migration 025 access keys", () => {
     expect(() => key.run("v0", "mynotes_vvvvvvvv", "hv0", at, "vault")).toThrow("KEY_KIND_PREFIX");
     expect(() => key.run("g0", "nkv_gggggggggggg", "hg0", at, "general")).toThrow("KEY_KIND_PREFIX");
     key.run("v1", "nkv_vvvvvvvvvvvv", "hv1", at, "vault");
-    grant.run(crypto.randomUUID(), "v1", "vault", "read", at);
+    // 038 (Wave 27): a vault grant names its vault (resource_kind 'vault' and an id); the bare module is refused.
+    expect(() => grant.run(crypto.randomUUID(), "v1", "vault", "read", at)).toThrow("VAULT_GRANT_SHAPE");
+    db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, created_at) VALUES (?, 'v1', 'vault', 'read', 'vault', 'vault-1', ?)").run(crypto.randomUUID(), at);
     expect(() => grant.run(crypto.randomUUID(), "v1", "notes", "read", at)).toThrow("KEY_KIND_WALL");
     expect(() => db.query("UPDATE mcp_api_keys SET kind = 'vault' WHERE id = 'k1'").run()).toThrow("KEY_KIND_FIXED");
     expect(() => db.query("UPDATE api_key_grants SET module = 'notes' WHERE key_id = 'v1'").run()).toThrow("KEY_KIND_WALL");

@@ -23,7 +23,9 @@ export type AccessNoticeKind = "share_removed" | "share_lowered" | "access_reset
   // vault only while you can read it, and never a secret (D223). `vault_key_rotated` goes to a
   // vault's owners when people lost read outside its Access sheet (Team → Groups, Reset access, a
   // block, a role change): the data key rotates, and the real credentials should be rotated upstream.
-  | "vault_shared" | "vault_removed" | "vault_key_rotated";
+  | "vault_shared" | "vault_removed" | "vault_key_rotated"
+  // Wave 27 (Vault C): one of your vault keys hit its per-key rate limit (at most one notice a day per key).
+  | "key_vault_limited";
 
 export type AccessNotice = {
   userId: string;
@@ -93,6 +95,7 @@ function line(row: NoticeRow, recipientId: string) {
     case "group_added": return `${actor} added you to ${group}`;
     case "group_removed": return `${actor} removed you from ${group}`;
     case "key_revoked": return `${actor} revoked your API key${row.key_name ? ` “${row.key_name}”` : ""}`;
+    case "key_vault_limited": return `Your vault API key${row.key_name ? ` “${row.key_name}”` : ""} hit its rate limit. If you did not expect this much use, revoke it in Settings → API keys.`;
     case "google_allowed": return `${actor} allowed your account to be linked to Google at your next Google sign-in`;
     case "google_relink_allowed": return `${actor} allowed your account to be re-linked: the next Google sign-in with your address takes it over`;
     case "google_reset": {

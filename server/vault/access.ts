@@ -21,19 +21,54 @@ import { db } from "../db";
  * and export, and deleting a secret that holds a value there, goes through a grant, so the window is
  * enforced in one place. Metadata (names, versions list, statuses) needs no window.
  *
- * Actors: sessions only until Wave 27 adds `nkv_` keys, whose level is the key grant ∩ the
- * creator's live level ∩ the role cap (D218), computed here as well.
+ * Actors: sessions, and `nkv_` vault keys (Wave 27). A key's level on an environment is its grant ∩
+ * the creator's live level ∩ the creator's role cap (D218), recomputed on every call: a creator who
+ * loses access narrows the key at once, and a blocked or retired creator disables it (the key layer
+ * refuses it before it gets here). A key is never an owner here (owner-only operations, members,
+ * and access are session-only, D219), and a grant never exceeds `write`. Protected environments over
+ * keys: a key reaches one only when a grant names that environment explicitly AND the key carries
+ * `protectedAccess` (chosen at creation, under its re-authentication); a grant over every
+ * environment never covers a protected one. So a key needs no session window: the rule is in its
+ * level.
  */
 
 export type VaultLevel = "none" | "read" | "write" | "admin";
 export type VaultRole = "owner" | "member";
-export type VaultActor = { kind: "session"; userId: string; sessionId?: string | null };
+/** One vault grant of a key (access plan D264): a vault, one environment or every one (null), read or write. */
+export type VaultKeyGrant = { vaultId: string; envId: string | null; permission: "read" | "write" };
+/**
+ * A vault key calling REST (`via: "api"`) or MCP (`via: "mcp"`): its creator, its effective grants
+ * (already role-capped), and its two flags. Built fresh for every call by the key layer.
+ */
+export type VaultKeyActor = {
+  kind: "key"; userId: string; keyId: string; keyName: string; via: "api" | "mcp";
+  grants: readonly VaultKeyGrant[]; protectedAccess: boolean; mcpValueReads: boolean;
+};
+export type VaultActor = { kind: "session"; userId: string; sessionId?: string | null } | VaultKeyActor;
 export type VaultVia = "session" | "api" | "mcp" | "sweeper" | "cli";
 
 export const LEVEL_RANK: Record<VaultLevel, number> = { none: 0, read: 1, write: 2, admin: 3 };
 export const atLeast = (level: VaultLevel, min: VaultLevel) => LEVEL_RANK[level] >= LEVEL_RANK[min];
 export const minLevel = (a: VaultLevel, b: VaultLevel): VaultLevel => LEVEL_RANK[a] <= LEVEL_RANK[b] ? a : b;
 export const maxLevel = (a: VaultLevel, b: VaultLevel): VaultLevel => LEVEL_RANK[a] >= LEVEL_RANK[b] ? a : b;
+
+/** How an actor's events and grants are recorded: a session, or the key's surface. */
+export const viaOf = (actor: VaultActor): VaultVia => actor.kind === "key" ? actor.via : "session";
+
+/**
+ * A key's own level on one environment (before the creator's level and role cap): the best grant
+ * that covers it. A grant over every environment skips protected ones; a grant naming a protected
+ * environment counts only on a key with `protectedAccess`.
+ */
+export function keyEnvLevel(actor: VaultKeyActor, vaultId: string, env: { id: string; protected: 0 | 1 }): VaultLevel {
+  let best: VaultLevel = "none";
+  for (const grant of actor.grants) {
+    if (grant.vaultId !== vaultId) continue;
+    if (grant.envId === null ? env.protected === 1 : grant.envId !== env.id || (env.protected === 1 && !actor.protectedAccess)) continue;
+    best = maxLevel(best, grant.permission);
+  }
+  return best;
+}
 
 /** Group grants reuse the item ladder (025): view → read, edit → write, manage → admin (comment reads). */
 export const GROUP_TO_VAULT: Record<string, VaultLevel> = { view: "read", comment: "read", edit: "write", manage: "admin" };
@@ -160,7 +195,7 @@ export function levelIgnoringBin(vaultId: string, envId: string, userId: string)
 
 /** Until when the session may open protected environments (D226), or null. */
 export function reauthUntil(actor: VaultActor, nowMs = Date.now()): string | null {
-  if (!actor.sessionId) return null;
+  if (actor.kind !== "session" || !actor.sessionId) return null;
   const row = db.query("SELECT vault_reauth_at FROM sessions WHERE id = ? AND user_id = ?").get(actor.sessionId, actor.userId) as { vault_reauth_at: string | null } | null;
   if (!row?.vault_reauth_at) return null;
   const until = Date.parse(row.vault_reauth_at) + REAUTH_WINDOW_MS;
@@ -174,14 +209,21 @@ export function vaultAccess(actor: VaultActor, vaultId: string): VaultAccess | n
   const vault = db.query(liveVaultSql).get(vaultId) as VaultRow | null;
   if (!vault) return null;
   const environments = db.query(liveEnvsSql).all(vaultId) as EnvRow[];
+  if (actor.kind === "key" && !actor.grants.some((grant) => grant.vaultId === vaultId)) return null;
   const raw = rawLevels(vaultId, actor.userId, environments.map((env) => env.id));
   if (!raw) return null;
   const levels = new Map<string, VaultLevel>();
-  for (const env of environments) levels.set(env.id, minLevel(raw.levels.get(env.id) ?? "none", cap));
-  const readable = raw.role === "owner" || [...levels.values()].some((level) => atLeast(level, "read"));
+  for (const env of environments) {
+    const level = minLevel(raw.levels.get(env.id) ?? "none", cap);
+    // D218: a key reaches the least of its grant, its creator's live level, and the role cap.
+    levels.set(env.id, actor.kind === "key" ? minLevel(level, keyEnvLevel(actor, vaultId, env)) : level);
+  }
+  // A key is never an owner (D219): owner-only operations and the owner's locked columns are session-only.
+  const role: VaultRole = actor.kind === "key" ? "member" : raw.role;
+  const readable = role === "owner" || [...levels.values()].some((level) => atLeast(level, "read"));
   if (!readable) return null;
   const access: VaultAccess = Object.freeze({
-    actor: Object.freeze({ ...actor }), vault: Object.freeze(vault), role: raw.role, direct: raw.direct,
+    actor: Object.freeze({ ...actor }), vault: Object.freeze(vault), role, direct: raw.direct,
     environments: Object.freeze(environments.map((env) => Object.freeze(env))) as EnvRow[], levels, reauthUntil: reauthUntil(actor)
   });
   checked.add(access);
@@ -229,6 +271,9 @@ export const unlocked = (access: VaultAccess) => access.reauthUntil !== null;
 /** 403 `REAUTH_REQUIRED` naming every protected environment among `envIds` while the window is closed. */
 export function requireUnlocked(access: VaultAccess, envIds: readonly string[]) {
   requireChecked(access);
+  // A key's levels already leave out protected environments it was not given explicitly with
+  // `protectedAccess` (its creation re-authenticated for them); there is no window to open.
+  if (access.actor.kind === "key") return;
   if (unlocked(access)) return;
   const locked = access.environments.filter((env) => env.protected === 1 && envIds.includes(env.id)).map((env) => env.id);
   if (locked.length > 0) throw reauthRequired(locked);
@@ -239,7 +284,7 @@ export function requireUnlocked(access: VaultAccess, envIds: readonly string[]) 
  * `VAULT_LEVEL` when they can but their level is lower, and 403 `REAUTH_REQUIRED` when it is
  * protected and the session's window is closed (D226).
  */
-export function requireEnvGrant(access: VaultAccess, envId: string, min: Exclude<VaultLevel, "none">, via: VaultVia = "session"): VaultGrant {
+export function requireEnvGrant(access: VaultAccess, envId: string, min: Exclude<VaultLevel, "none">, via: VaultVia = viaOf(access.actor)): VaultGrant {
   requireEnvLevel(access, envId, min);
   requireUnlocked(access, [envId]);
   return mint({ vaultId: access.vault.id, envId, level: envLevel(access, envId), actorId: access.actor.userId, via });
@@ -250,7 +295,7 @@ export function requireEnvGrant(access: VaultAccess, envId: string, min: Exclude
  * secret's comment): read for anyone who can read the vault; write for owners and for anyone who
  * can write on at least one environment. The D216 rules for editing a secret live in the service.
  */
-export function vaultGrant(access: VaultAccess, min: "read" | "write", via: VaultVia = "session"): VaultGrant {
+export function vaultGrant(access: VaultAccess, min: "read" | "write", via: VaultVia = viaOf(access.actor)): VaultGrant {
   requireChecked(access);
   let best: VaultLevel = access.role === "owner" ? minLevel("admin", roleCap(access.actor.userId)) : "none";
   for (const level of access.levels.values()) if (LEVEL_RANK[level] > LEVEL_RANK[best]) best = level;
@@ -260,12 +305,13 @@ export function vaultGrant(access: VaultAccess, min: "read" | "write", via: Vaul
 
 /** Owner-only operations (D215): environments, order, members, the vault itself, rotation, and its Bin purges. */
 export function requireOwner(access: VaultAccess) {
-  if (access.role !== "owner" || roleCap(access.actor.userId) !== "admin") throw levelTooLow();
+  if (access.actor.kind !== "session" || access.role !== "owner" || roleCap(access.actor.userId) !== "admin") throw levelTooLow();
 }
 
 /** Ids of the live vaults `actor` can read, for the list: through their own row or a group. */
 export function readableVaultIds(actor: VaultActor): string[] {
   if (roleCap(actor.userId) === "none") return [];
+  if (actor.kind === "key" && actor.grants.length === 0) return [];
   const ids = db.query(`SELECT v.id FROM vaults v
     WHERE v.deleted_at IS NULL AND v.purge_started_at IS NULL AND (
       EXISTS (SELECT 1 FROM vault_members m WHERE m.vault_id = v.id AND m.user_id = $userId)

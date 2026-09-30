@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { audit, db } from "../db";
 import {
-  adminRevokeKey, checkKeyCount, checkRotation, createApiKey, createKeySchema, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
+  adminRevokeKey, grantsForKind, checkKeyCount, checkRotation, createApiKey, createKeySchema, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
   rotateApiKey, rotateKeySchema
 } from "../apiKeys";
 import { keyEvents } from "../access/events";
@@ -172,9 +172,12 @@ export function registerIntegrationRoutes(app: Hono<AppEnv>, gates: { read: Gate
     return run(c, async () => {
       refuseRetired(integration);
       if (integration.disabled_at !== null) throw new KeyError(409, "INTEGRATION_BLOCKED", "Unblock this integration before creating a key for it");
-      refuseExcludedModules(body.grants.map((grant) => grant.module));
+      // Integrations are never vault members (Wave 26), so their keys are never vault keys (Wave 27).
+      if (body.kind === "vault" || body.allowMcpValueReads || body.protectedAccess) throw new KeyError(403, "INTEGRATION_NOT_ALLOWED", "Integrations cannot hold vault keys");
+      const general = grantsForKind("general", body.grants).general;
+      refuseExcludedModules(general.map((grant) => grant.module));
       // Every check that needs no password runs first, against the integration (its role, policy, and shares).
-      const { grants, days, ipAllowlist } = precheckKeyCreate({ id: integration.id, role: integration.role }, body);
+      const { grants, days, ipAllowlist } = precheckKeyCreate({ id: integration.id, role: integration.role }, { ...body, grants: general });
       if (createLimited(admin.id)) throw new KeyError(429, "RATE_LIMITED", "Too many API keys created. Try again later.");
       if (!await verifyReauth(admin.id, body, "integration_key", c.get("sessionId"))) {
         audit(admin.id, null, "mcp.key_create_failed", { ownerId: integration.id });

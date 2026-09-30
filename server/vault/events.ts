@@ -20,6 +20,8 @@ export const EVENT_FAMILIES: Record<string, readonly string[]> = {
   access: ["member.add", "member.remove", "member.leave", "member.owner", "member.demote", "access.change", "access.level"],
   keys: ["key.rotate", "key.rotate.auto", "key.rotate.skipped", "key.retire", "reauth"],
   transfer: ["export", "import", "import.preview"],
+  /** Wave 27: what vault keys did here, and keys created or rotated with access to this vault (any event with a key). */
+  apikeys: ["apikey.create", "apikey.rotate", "key.limited"],
   structure: ["vault.create", "vault.update", "vault.delete", "vault.restore", "env.create", "env.update", "env.protect", "env.unprotect", "env.reorder", "env.delete", "env.restore", "env.purge", "integrity.fail"]
 };
 export type EventFamily = keyof typeof EVENT_FAMILIES;
@@ -29,6 +31,7 @@ type Row = {
   id: string; created_at: string; event: string; via: string; count: number | null; actor_id: string | null; actor_name: string | null;
   secret_id: string | null; secret_name: string | null; secret_deleted: string | null; env_id: string | null; env_name: string | null;
   target_id: string | null; target_name: string | null; level: string | null;
+  key_id: string | null; key_name: string | null; key_prefix: string | null;
 };
 
 const encode = (row: { created_at: string; id: string }) => Buffer.from(JSON.stringify([row.created_at, row.id])).toString("base64url");
@@ -53,13 +56,13 @@ export function listVaultActivity(actor: VaultActor, vaultId: string, filters: {
   const actorId = owner ? filters.actorId : actor.userId;
   const rows = db.query(`SELECT e.id, e.created_at, e.event, e.via, e.count, e.actor_id, u.display_name AS actor_name,
       e.secret_id, s.name AS secret_name, s.deleted_at AS secret_deleted, e.env_id, n.name AS env_name,
-      e.target_id, t.display_name AS target_name, e.level
-    FROM vault_events e LEFT JOIN users u ON u.id = e.actor_id LEFT JOIN users t ON t.id = e.target_id
+      e.target_id, t.display_name AS target_name, e.level, e.key_id, k.name AS key_name, k.key_prefix
+    FROM vault_events e LEFT JOIN users u ON u.id = e.actor_id LEFT JOIN users t ON t.id = e.target_id LEFT JOIN mcp_api_keys k ON k.id = e.key_id
       LEFT JOIN vault_secrets s ON s.id = e.secret_id AND s.vault_id = e.vault_id
       LEFT JOIN vault_environments n ON n.id = e.env_id AND n.vault_id = e.vault_id
     WHERE e.vault_id = $vaultId
       ${actorId ? "AND e.actor_id = $actorId" : ""}
-      ${events ? "AND e.event IN (SELECT value FROM json_each($events))" : ""}
+      ${events ? (filters.family === "apikeys" ? "AND (e.key_id IS NOT NULL OR e.event IN (SELECT value FROM json_each($events)))" : "AND e.event IN (SELECT value FROM json_each($events))") : ""}
       ${filters.envId ? "AND e.env_id = $envId" : ""}
       ${cursor ? "AND (e.created_at < $at OR (e.created_at = $at AND e.id < $cursorId))" : ""}
     ORDER BY e.created_at DESC, e.id DESC LIMIT $limit`).all({
@@ -86,7 +89,9 @@ export function listVaultActivity(actor: VaultActor, vaultId: string, filters: {
         environment: row.env_id === null ? null : envVisible ? { id: row.env_id, name: row.env_name } : { id: null, name: null },
         // Whom an access event was about (names only, QA L1), and the level it gave.
         target: row.target_id === null ? null : { displayName: row.target_name ?? "a former member", isYou: row.target_id === actor.userId },
-        level: row.level
+        level: row.level,
+        // Wave 27: the vault key that acted (shown as `key:<name>`), its creator being `actor`.
+        key: row.key_id === null ? null : { name: row.key_name ?? "a deleted key", prefix: row.key_prefix }
       };
     }),
     people: people.map((row) => ({ id: row.id, displayName: row.display_name })),

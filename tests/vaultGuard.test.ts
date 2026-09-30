@@ -44,7 +44,9 @@ test("vault tables stay inside the vault module (D223): no search, Today, or MCP
   const allowed = new Set([
     "vault/access.ts", "vault/bin.ts", "vault/crypto.ts", "vault/limits.ts", "vault/service.ts", "vault/status.ts", "vault/routes.ts", "vault-admin.ts", "migrations/031_vault.ts",
     // Wave 26 (Vault B): sharing, Activity, rotation, import and export, and the stored-bytes triggers.
-    "vault/members.ts", "vault/events.ts", "vault/rotation.ts", "vault/transfer.ts", "migrations/037_vault_sharing.ts"
+    "vault/members.ts", "vault/events.ts", "vault/rotation.ts", "vault/transfer.ts", "migrations/037_vault_sharing.ts",
+    // Wave 27 (Vault C): vault keys (their Activity rows and "Keys with access"), their REST routes, and 038.
+    "vault/keys.ts", "vault/rest.ts", "migrations/038_vault_keys.ts"
   ]);
   const readers = (await sources()).filter(({ path, source }) => !allowed.has(path) && /\bvault_(secrets|values|value_versions|keys|environments|events)\b/.test(source)).map(({ path }) => path);
   expect(readers).toEqual([]);

@@ -29,6 +29,7 @@ import { whiteboardTools } from "./whiteboards/mcpTools";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { countRunToolCall } from "./inbox/routineHooks";
 import { canWriteContent } from "./team/userRole";
+import { registerVaultTools } from "./vault/mcpTools";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -88,7 +89,7 @@ function toolFits(spec: McpToolSpec, reach: ToolReach) {
 
 const ITEM_LABELS: Record<ItemKind, string> = {
   note: "Note", folder: "Folder", document: "File", whiteboard: "Whiteboard", board: "Board", card: "Card", column: "Column", sprint: "Sprint",
-  task_view: "View", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", routine: "Routine", run: "Run"
+  task_view: "View", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", routine: "Routine", run: "Run", vault: "Vault"
 };
 
 /**
@@ -479,8 +480,16 @@ function wholeModuleScopes(key: McpKeyContext): McpScope[] {
 /** The tools a key may see now, in registration order (MCP tools/list and REST GET /api/v1/tools). */
 export const visibleTools = (key: McpKeyContext) => mcpToolSpecs.filter((spec) => toolVisible(spec, key));
 
-/** Registers the tools this key may use on a per-request server. */
+/**
+ * Registers the tools this key may use on a per-request server. The kind wall (D221, T217): a vault
+ * key (`nkv_`) gets the vault tools and nothing else; a general key never gets them (they are not in
+ * `mcpToolSpecs`, and a general key holds no vault grant).
+ */
 export function registerMcpTools(server: McpServer, key: McpKeyContext) {
+  if (key.kind === "vault") {
+    registerVaultTools(server, key);
+    return;
+  }
   for (const spec of visibleTools(key)) {
     server.registerTool(spec.name, {
       title: spec.title,

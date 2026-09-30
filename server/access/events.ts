@@ -19,6 +19,8 @@ export type AccessAction =
   | "key.policy_blocked"
   // Wave 34 review Q1: a refused call (address, surface, expired, revoked), one per reason per hour per key.
   | "key.denied"
+  // Wave 27: a vault key hit a per-key vault limit (at most one per key per 10 minutes).
+  | "key.vault.limited"
   | "policy.changed"
   // Groups and item access (Wave 32, D267, D270).
   | "group.created"

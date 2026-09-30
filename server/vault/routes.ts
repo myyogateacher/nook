@@ -11,6 +11,7 @@ import { EVENT_FAMILIES, listVaultActivity, type EventFamily } from "./events";
 import { chargeVault } from "./limits";
 import { leaveVault, MAX_VAULT_GROUPS, MAX_VAULT_PEOPLE, readVaultAccess, writeVaultAccess } from "./members";
 import { rotateVault, rotationStatus } from "./rotation";
+import { keysWithAccess } from "./keys";
 import { exportEnvironment, importEntries } from "./transfer";
 import {
   clearValue, createEnvironment, createSecret, createVault, deleteEnvironment, deleteSecret, deleteVault, getSecret, getVault, listSecrets, listVaults,
@@ -31,8 +32,9 @@ import "./bin";
  * input: validation failures name the field only (T188).
  *
  * Wave 26 adds sharing (`…/access`, `…/leave`), the protected-environment window (`/api/vault/reauth`),
- * import and export, key rotation, Activity, and the byte quota. There are still no API keys and no
- * MCP tools: `/api/v1/vault/*` and the `nkv_` MCP tools arrive in Wave 27.
+ * import and export, key rotation, Activity, and the byte quota. Wave 27 adds `…/keys` (the vault
+ * keys that reach this vault, for its Access page); the keys themselves are made at `/api/keys` and
+ * used on `/api/v1/vault/*` (server/vault/rest.ts) and the vault MCP tools (server/vault/mcpTools.ts).
  */
 
 const actorOf = (c: Context<AppEnv>): VaultActor => ({ kind: "session", userId: c.get("user").id, sessionId: c.get("sessionId") ?? null });
@@ -196,6 +198,9 @@ export function registerVaultRoutes(app: Hono<AppEnv>) {
     await parseJson(c.req.raw, emptySchema);
     return leaveVault(actorOf(c), vaultId);
   }));
+
+  // The vault keys that reach this vault now (Wave 27): owners see each key, other readers the count and their own.
+  app.get("/api/vault/vaults/:vaultId/keys", handle((c) => keysWithAccess(c.get("user").id, id(c, "vaultId"))));
 
   // Data-key rotation (§3.3): owners start one; the sweeper re-encrypts in the background.
   app.post("/api/vault/vaults/:vaultId/rotate", handle(async (c) => {

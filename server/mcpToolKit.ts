@@ -26,6 +26,8 @@ export type McpKeyContext = {
   person?: true;
   /** The surface the call came through (Wave 34), set by runTool: uploads remember it (review S4). */
   surface?: "mcp" | "rest";
+  /** The key's kind (Wave 27): a vault key (`nkv_`) sees only the vault tools, a general key never does. */
+  kind?: "general" | "vault";
 };
 
 /**
@@ -102,6 +104,12 @@ export type McpErrorCode =
   | "RUN_ACTIVE"
   // Nook keys (Wave 31, D263): team policy blocks this key (not revoked; policy can allow it again).
   | "KEY_POLICY"
+  // Vault tools (Wave 27): the vault's own codes, as on its HTTP routes.
+  | "VAULT_LEVEL"
+  | "VALUE_CHANGED"
+  | "VALUE_NOT_SET"
+  | "VAULT_INTEGRITY"
+  | "VAULT_DISABLED"
   | "INTERNAL";
 
 /**

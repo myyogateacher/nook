@@ -68,8 +68,8 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
   const key = authInfo?.extra?.key as McpKeyContext | undefined;
   if (key) {
     registerMcpTools(server, key);
-    // Agent inbox O7: each routine this key may run is also an MCP prompt.
-    registerRoutinePrompts(server, key);
+    // Agent inbox O7: each routine this key may run is also an MCP prompt (never for a vault key).
+    if (key.kind !== "vault") registerRoutinePrompts(server, key);
   }
   return server;
 }, { maxSubscriptions: 0 });
@@ -219,7 +219,7 @@ export async function handleMcpRequest(request: Request, clientIp: string | null
     }
     // Effective grants and scopes: grants ∩ the holder's current role ∩ team policy (T81, D263).
     const { scopes, grants } = key.actor;
-    const context: McpKeyContext = { keyId: key.id, userId: key.user_id, name: key.name, scopes, grants };
+    const context: McpKeyContext = { keyId: key.id, userId: key.user_id, name: key.name, scopes, grants, kind: key.actor.kind };
     const authInfo: AuthInfo = { token, clientId: key.user_id, scopes, extra: { key: context } };
     const response = await mcpHandler.fetch(bounded, { authInfo });
     return mcpResponse(response.body, { status: response.status, statusText: response.statusText, headers: response.headers });

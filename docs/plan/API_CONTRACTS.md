@@ -1991,7 +1991,7 @@ Base path `/api/v1`, outside the `/api/*` session, CSRF, TOTP-setup, and role mi
 
 | Endpoint | Body | Success | Errors |
 | --- | --- | --- | --- |
-| `GET /api/v1/me` | | 200 `{ key: { id, name, prefix, kind, surfaces, createdAt, expiresAt, rotationEndsAt, ipRestricted }, owner: { id, displayName, role }, grants: [{ module, permission, resource: { kind, id } \| null }] (effective), scopes, limits: { perKey: { callsPerMinute, writesPerMinute }, perUser: {…}, note } }`. Never the token, its hash, or the allowlist. Counts as one call | 401, 403, 429 |
+| `GET /api/v1/me` | | 200 `{ key: { id, name, prefix, kind, surfaces, createdAt, expiresAt, rotationEndsAt, ipRestricted }, owner: { id, displayName, role, kind }, grants: [{ module, permission, resource: { kind, id } \| null }] (effective), scopes, limits: { perKey: { callsPerMinute, writesPerMinute }, perUser: {…}, note } }`. Never the token, its hash, or the allowlist. Counts as one call | 401, 403, 429 |
 | `GET /api/v1/tools` | | 200 `{ tools: [{ name, title, description, write, annotations, inputSchema }] }`: exactly the tools MCP `tools/list` offers this key now, with JSON Schema inputs. Counts as one call | 401, 403, 429 |
 | `POST /api/v1/tools/:name` | a JSON object with the tool's arguments (`{}` for none); `Content-Type: application/json` | 200 with the tool's JSON result (the same object MCP returns as text) | 415 `UNSUPPORTED_MEDIA_TYPE`, 400 `INVALID_JSON` (not a JSON object), 404 `NOT_FOUND` (no such tool, or a tool this key cannot see: the two look the same), and the tool's own `{ error, code, … }` with the status below |
 
@@ -2012,7 +2012,40 @@ curl -s -X POST https://nook.example.com/api/v1/tools/create_card \
   -d '{"boardId":"<BOARD_ID>","columnId":"<COLUMN_ID>","title":"Deploy finished"}'
 ```
 
-**Not in this wave:** service accounts (D287, O-A11) stay a follow-up; `users.kind` exists and is always `person`.
+`owner.kind` is `"person"`, or `"service"` for an integration's key (Wave 36).
+
+## Integrations (service accounts, Wave 36)
+
+D287, O-A11, T212. An integration is a `users` row with `kind = 'service'`: an account for an AI client or script that **never signs in** and acts only through its keys. Migration **036** (`service_accounts`) adds `users.description` (≤ 200) and triggers that refuse, in the database, a session row or a Google identity for an integration, a role other than `member` or `viewer`, and any change of `kind`.
+
+- **Identity:** `email` is `svc-<id>@service.invalid` (the reserved `.invalid` domain, RFC 2606): `isEmailAllowed` refuses every `.invalid` address whatever `ALLOWED_EMAILS` says, so registration, password sign-in, password reset, invites, and Google sign-in or linking can never reach it. `password_hash` is the unusable `!unusable:service`. No TOTP, no Google identity, no picture (`avatarUrl` is always null).
+- **Sign-in paths that refuse it:** `POST /api/auth/login` (the lookup is people only), `POST /api/auth/register` (reserved address), `POST /api/auth/password-reset/request|check|complete` (people only), invites bound to its address (`EMAIL_NOT_ALLOWED`), Google callback, second factor, link, and re-authentication (`kind = 'person'` lookups; the address is refused first), `createSession` (throws), `requireAuth` and `readSession` (`u.kind = 'person'`), `verifyReauth` (people only), and the admin Google routes `/api/team/:userId/google…` (404).
+- **Keys:** `mcp_api_keys.user_id` is the integration; `created_by` is the admin who created or rotated it. The key's rights are its grants ∩ the **integration's** role ∩ policy ∩ what owners shared with the integration. Key authentication does not apply `ALLOWED_EMAILS` to an integration (its address is never on it); blocking the integration pauses its keys. Integration keys never hold `inbox` or `team` grants (403 `KEY_POLICY`).
+- **Reach:** only what an owner shares with it **by name** (the Access sheet, like a person). It is never part of an `all_users` ("everyone signed in") audience (`audienceAllUsersFor` and the level resolvers require `kind = 'person'`), and it cannot join a group (`PUT /api/team/groups/:id/members` → 400 `INTEGRATION_NOT_ALLOWED`; templates never apply to it).
+- **Notices:** no email (`enqueueMail` and the dispatcher skip it), no bell (`notifyAccess`, proposal and routine notices skip it; its reminders advance without a notice).
+- **Directory:** `GET /api/users` adds every active integration after the (capped) people, each with `kind: "service"`. The Access sheet's `people[].kind` is `"service"` for it. `GET /api/team` lists people only.
+- **Attribution fields (web payloads):** task comments `author_is_integration` (0/1), cards `creator_is_integration` (0/1), the board payload's `users[id].is_integration`, note versions `author_is_integration` (0/1), whiteboards `ownerIsIntegration`.
+- **No MCP tools** manage integrations or their keys.
+
+All routes: session, CSRF, Origin, TOTP gate; admins only (guests 404, everyone else 403 `ADMIN_ONLY`); writes share Team's 30-a-minute limit.
+
+| Route | Body | Returns | Errors |
+| --- | --- | --- | --- |
+| `GET /api/team/integrations` | | `{ integrations: [{ id, displayName, description, role, status, createdAt, createdBy, blockedAt, blockedBy, keys: { live }, lastUsedAt }], limit }` (active first) | |
+| `POST /api/team/integrations` | `{ name ≤ 80, role: "member" \| "viewer", description? ≤ 200 }` | 201 `{ integration }` (detail) | 400 (role `admin`/`guest` fails validation), 409 `INTEGRATION_LIMIT` (100) |
+| `GET /api/team/integrations/:id` | | `{ integration: { …, events, ownsContent }, keys: { keys, policy, liveCount } }` (the `/api/keys` shape for its keys; `policy.modules` never lists `inbox`) | 404 |
+| `PATCH /api/team/integrations/:id` | `{ name?, description?, role?, expectedRole? }` | `{ changed, integration }` | 400 `SERVICE_ROLE`, 404, 409 `ROLE_CHANGED` |
+| `POST /api/team/integrations/:id/block` | `{ reason? }` | `{ blockedAt, sessionsRevoked: 0, mcpKeysPaused, integration }` | 404, 409 `ALREADY_BLOCKED` |
+| `POST /api/team/integrations/:id/unblock` | `{}` | `{ ok, integration }` | 404, 409 `NOT_BLOCKED` |
+| `DELETE /api/team/integrations/:id` | `{}` | Keys are revoked first (reason "Integration deleted"). `{ deleted: true, keysRevoked }` when it owns and wrote nothing (only its empty Default folder, its shares, and its logs); otherwise `{ deleted: false, retained: true, keysRevoked, integration }`: kept **blocked** so its content keeps its owner and name | 404 |
+| `GET /api/team/integrations/:id/resources?module=` | | `{ resources: [{ value: "kind:id", label, description?, writable }] }`: only items shared with the integration (the key builder's picker) | 400, 404 |
+| `GET /api/team/integrations/:id/keys/:keyId` | | `{ key, events }` | 404 |
+| `POST /api/team/integrations/:id/keys` | the `POST /api/keys` body; `password` (+ `totpCode`/`recoveryCode`) are **the admin's** | 201 `{ key: { …, token } }` (shown once) | the `/api/keys` codes checked against the integration (`SCOPE_NOT_ALLOWED`, `KEY_POLICY`, `RESOURCE_NOT_FOUND`, `KEY_LIMIT`), 401 `REAUTH_FAILED`, 409 `INTEGRATION_BLOCKED`, 429 |
+| `PATCH /api/team/integrations/:id/keys/:keyId` | the narrowing body (no password) | `{ changed, key }` | as `PATCH /api/keys/:id` |
+| `POST /api/team/integrations/:id/keys/:keyId/rotate` | the rotate body; the admin's re-authentication | 201 `{ key: { …, token }, oldKey }` | as rotate, 409 `INTEGRATION_BLOCKED` |
+| `DELETE /api/team/integrations/:id/keys/:keyId` | `{}` | `{ ok }` (recorded as an admin revoke) | 404 |
+
+Every write lands in `access_events` (`integration.created`, `integration.updated`, `integration.deleted`, `integration.retired`, and the usual `key.*` rows with the admin as actor) and in the audit log (ids only). Team → Access activity shows them under "Google sign-in and integrations".
 
 ## Changes to existing note endpoints (Wave 4)
 

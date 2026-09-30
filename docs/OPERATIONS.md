@@ -27,7 +27,7 @@ Every account has a team role: **admin**, **member**, **viewer** (reads what is 
 
 Blocking an account signs it out on every device at once and removes its push subscriptions. Its MCP keys and calendar feeds pause and resume when it is unblocked; its content stays where it is and stays shared as before. A blocked user who enters the right password is told the account is blocked; a wrong password still gets the usual error.
 
-The host CLI is the way out of an admin lockout, for example when the only admin was blocked or is no longer on `ALLOWED_EMAILS`: it lists accounts, promotes another account to admin (`set-role`), or unblocks one. It cannot set a password: a forgotten password needs **Forgot password?** on the sign-in page (with email on) or another admin account. Each change is recorded in the Team activity log as made from the command line:
+The host CLI is the way out of an admin lockout, for example when the only admin was blocked or is no longer on `ALLOWED_EMAILS`: it lists accounts (integrations are marked "(integration)"), promotes another account to admin (`set-role`), or unblocks one. It does not manage integrations: those are managed in Team → Integrations. It cannot set a password: a forgotten password needs **Forgot password?** on the sign-in page (with email on) or another admin account. Each change is recorded in the Team activity log as made from the command line:
 
 ```sh
 docker compose exec mynotes bun server/team-admin.ts list

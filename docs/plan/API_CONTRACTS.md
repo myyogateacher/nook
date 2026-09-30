@@ -1320,7 +1320,7 @@ The invite writes also count against the 30 Team writes a minute per admin. `/ap
 
 ### Host CLI
 
-`bun server/team-admin.ts list | set-role <email> admin|member|viewer|guest | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
+`bun server/team-admin.ts list | set-role <email> admin|member|viewer|guest | unblock <email>` (in Docker: `docker compose exec mynotes bun server/team-admin.ts …`). `list` shows integrations after people, marked "(integration)"; every other command refuses an integration's address ("That account is an integration; manage it in Team → Integrations.", exit 1). It runs the same service functions with no actor and `via = 'cli'`, so the last-admin rule applies; exit codes are 0 (done), 1 (refused or unknown account, with the error code), and 2 (usage).
 
 ### MCP (`team:read`)
 
@@ -2016,14 +2016,14 @@ curl -s -X POST https://nook.example.com/api/v1/tools/create_card \
 
 ## Integrations (service accounts, Wave 36)
 
-D287, O-A11, T212. An integration is a `users` row with `kind = 'service'`: an account for an AI client or script that **never signs in** and acts only through its keys. Migration **036** (`service_accounts`) adds `users.description` (≤ 200) and triggers that refuse, in the database, a session row or a Google identity for an integration, a role other than `member` or `viewer`, and any change of `kind`.
+D287, O-A11, T212. An integration is a `users` row with `kind = 'service'`: an account for an AI client or script that **never signs in** and acts only through its keys. Migration **036** (`service_accounts`) adds `users.description` (≤ 200), `users.retired_at` (a deleted integration kept for attribution: only an integration, only a blocked one), and triggers that refuse, in the database, a session row or a Google identity for an integration (inserted or moved onto it), a role other than `member` or `viewer`, any change of `kind`, and clearing `retired_at` or lifting a retired integration's block.
 
 - **Identity:** `email` is `svc-<id>@service.invalid` (the reserved `.invalid` domain, RFC 2606): `isEmailAllowed` refuses every `.invalid` address whatever `ALLOWED_EMAILS` says, so registration, password sign-in, password reset, invites, and Google sign-in or linking can never reach it. `password_hash` is the unusable `!unusable:service`. No TOTP, no Google identity, no picture (`avatarUrl` is always null).
 - **Sign-in paths that refuse it:** `POST /api/auth/login` (the lookup is people only), `POST /api/auth/register` (reserved address), `POST /api/auth/password-reset/request|check|complete` (people only), invites bound to its address (`EMAIL_NOT_ALLOWED`), Google callback, second factor, link, and re-authentication (`kind = 'person'` lookups; the address is refused first), `createSession` (throws), `requireAuth` and `readSession` (`u.kind = 'person'`), `verifyReauth` (people only), and the admin Google routes `/api/team/:userId/google…` (404).
 - **Keys:** `mcp_api_keys.user_id` is the integration; `created_by` is the admin who created or rotated it. The key's rights are its grants ∩ the **integration's** role ∩ policy ∩ what owners shared with the integration. Key authentication does not apply `ALLOWED_EMAILS` to an integration (its address is never on it); blocking the integration pauses its keys. Integration keys never hold `inbox` or `team` grants (403 `KEY_POLICY`).
 - **Reach:** only what an owner shares with it **by name** (the Access sheet, like a person). It is never part of an `all_users` ("everyone signed in") audience (`audienceAllUsersFor` and the level resolvers require `kind = 'person'`), and it cannot join a group (`PUT /api/team/groups/:id/members` → 400 `INTEGRATION_NOT_ALLOWED`; templates never apply to it).
 - **Notices:** no email (`enqueueMail` and the dispatcher skip it), no bell (`notifyAccess`, proposal and routine notices skip it; its reminders advance without a notice).
-- **Directory:** `GET /api/users` adds every active integration after the (capped) people, each with `kind: "service"`. The Access sheet's `people[].kind` is `"service"` for it. `GET /api/team` lists people only. `GET /api/team/keys` rows carry `owner.kind`, and Team → Keys marks an integration owner with the badge (its owner filter lists integrations too).
+- **Directory:** `GET /api/users` adds every active integration after the (capped) people, each with `kind: "service"` (blocked and retired ones are left out). The Tasks assignee picker (`GET /api/tasks/boards/:b/readers`) marks one with `isIntegration: true`, and a card's `assignees[]` in web answers with `is_integration: true`. The Access sheet's `people[].kind` is `"service"` for it. `GET /api/team` lists people only. `GET /api/team/keys` rows carry `owner.kind`, and Team → Keys marks an integration owner with the badge (its owner filter lists integrations too).
 - **Attribution fields (web payloads):** task comments `author_is_integration` (0/1), cards `creator_is_integration` (0/1), the board payload's `users[id].is_integration`, note versions `author_is_integration` (0/1), whiteboards `ownerIsIntegration`.
 - **No MCP tools** manage integrations or their keys.
 
@@ -2031,21 +2031,21 @@ All routes: session, CSRF, Origin, TOTP gate; admins only (guests 404, everyone 
 
 | Route | Body | Returns | Errors |
 | --- | --- | --- | --- |
-| `GET /api/team/integrations` | | `{ integrations: [{ id, displayName, description, role, status, createdAt, createdBy, blockedAt, blockedBy, keys: { live }, lastUsedAt }], limit }` (active first) | |
-| `POST /api/team/integrations` | `{ name ≤ 80, role: "member" \| "viewer", description? ≤ 200 }` | 201 `{ integration }` (detail) | 400 (role `admin`/`guest` fails validation), 409 `INTEGRATION_LIMIT` (100) |
-| `GET /api/team/integrations/:id` | | `{ integration: { …, events, ownsContent }, keys: { keys, policy, liveCount } }` (the `/api/keys` shape for its keys; `policy.modules` never lists `inbox`) | 404 |
-| `PATCH /api/team/integrations/:id` | `{ name?, description?, role?, expectedRole? }` | `{ changed, integration }` | 400 `SERVICE_ROLE`, 404, 409 `ROLE_CHANGED` |
-| `POST /api/team/integrations/:id/block` | `{ reason? }` | `{ blockedAt, sessionsRevoked: 0, mcpKeysPaused, integration }` | 404, 409 `ALREADY_BLOCKED` |
-| `POST /api/team/integrations/:id/unblock` | `{}` | `{ ok, integration }` | 404, 409 `NOT_BLOCKED` |
-| `DELETE /api/team/integrations/:id` | `{}` | Keys are revoked first (reason "Integration deleted"). `{ deleted: true, keysRevoked }` when it owns and wrote nothing (only its empty Default folder, its shares, and its logs); otherwise `{ deleted: false, retained: true, keysRevoked, integration }`: kept **blocked** so its content keeps its owner and name | 404 |
+| `GET /api/team/integrations` | | `{ integrations: [{ id, displayName, description, role, status: "active" \| "blocked" \| "retired", createdAt, createdBy, blockedAt, blockedBy, retiredAt, keys: { live }, lastUsedAt }], limit }` (active, then blocked, then retired) | |
+| `POST /api/team/integrations` | `{ name ≤ 80, role: "member" \| "viewer", description? ≤ 200 }` | 201 `{ integration }` (detail) | 400 (role `admin`/`guest` fails validation), 409 `INTEGRATION_LIMIT` (100, retired ones not counted) |
+| `GET /api/team/integrations/:id` | | `{ integration: { …, events, ownsContent, hadKeys }, keys: { keys, policy, liveCount } }` (the `/api/keys` shape for its keys; `policy.modules` never lists `inbox`) | 404 |
+| `PATCH /api/team/integrations/:id` | `{ name?, description?, role?, expectedRole? }` | `{ changed, integration }` | 400 `SERVICE_ROLE`, 404, 409 `ROLE_CHANGED`, 409 `INTEGRATION_RETIRED` |
+| `POST /api/team/integrations/:id/block` | `{ reason? }` | `{ blockedAt, sessionsRevoked: 0, mcpKeysPaused, integration }` | 404, 409 `ALREADY_BLOCKED`, 409 `INTEGRATION_RETIRED` |
+| `POST /api/team/integrations/:id/unblock` | `{}` | `{ ok, integration }` | 404, 409 `NOT_BLOCKED`, 409 `INTEGRATION_RETIRED` |
+| `DELETE /api/team/integrations/:id` | `{}` | Keys are revoked first (reason "Integration deleted"). `{ deleted: true, keysRevoked }` only when it **never had a key** and owns and wrote nothing (only its empty Default folder, its shares, and its logs); otherwise `{ deleted: false, retained: true, keysRevoked, integration }` with `status: "retired"`: kept blocked for good, so its keys' rows and usage history and its content keep its name. On a retired one: the same answer with `keysRevoked: 0`, and nothing changes | 404 |
 | `GET /api/team/integrations/:id/resources?module=` | | `{ resources: [{ value: "kind:id", label, description?, writable }] }`: only items shared with the integration (the key builder's picker) | 400, 404 |
 | `GET /api/team/integrations/:id/keys/:keyId` | | `{ key, events }` | 404 |
-| `POST /api/team/integrations/:id/keys` | the `POST /api/keys` body; `password` (+ `totpCode`/`recoveryCode`) are **the admin's** | 201 `{ key: { …, token } }` (shown once) | the `/api/keys` codes checked against the integration (`SCOPE_NOT_ALLOWED`, `KEY_POLICY`, `RESOURCE_NOT_FOUND`, `KEY_LIMIT`), 401 `REAUTH_FAILED`, 409 `INTEGRATION_BLOCKED`, 429 |
+| `POST /api/team/integrations/:id/keys` | the `POST /api/keys` body; `password` (+ `totpCode`/`recoveryCode`) are **the admin's** | 201 `{ key: { …, token } }` (shown once) | the `/api/keys` codes checked against the integration (`SCOPE_NOT_ALLOWED`, `KEY_POLICY`, `RESOURCE_NOT_FOUND`, `KEY_LIMIT`), 401 `REAUTH_FAILED`, 409 `INTEGRATION_BLOCKED`, 409 `INTEGRATION_RETIRED`, 429 |
 | `PATCH /api/team/integrations/:id/keys/:keyId` | the narrowing body (no password) | `{ changed, key }` | as `PATCH /api/keys/:id` |
-| `POST /api/team/integrations/:id/keys/:keyId/rotate` | the rotate body; the admin's re-authentication | 201 `{ key: { …, token }, oldKey }` | as rotate, 409 `INTEGRATION_BLOCKED` |
+| `POST /api/team/integrations/:id/keys/:keyId/rotate` | the rotate body; the admin's re-authentication | 201 `{ key: { …, token }, oldKey }` | as rotate, 409 `INTEGRATION_BLOCKED`, 409 `INTEGRATION_RETIRED` |
 | `DELETE /api/team/integrations/:id/keys/:keyId` | `{}` | `{ ok }` (recorded as an admin revoke) | 404 |
 
-Every write lands in `access_events` (`integration.created`, `integration.updated`, `integration.deleted`, `integration.retired`, and the usual `key.*` rows with the admin as actor) and in the audit log (ids only). Team → Access activity shows them under "Google sign-in and integrations".
+Every write lands in `access_events` (`integration.created`, `integration.updated`, `integration.blocked`, `integration.unblocked`, `integration.deleted`, `integration.retired`, and the usual `key.*` rows with the admin as actor) and in the audit log (ids only). Team → Access activity shows them under "Google sign-in and integrations".
 
 ## Changes to existing note endpoints (Wave 4)
 

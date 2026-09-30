@@ -105,6 +105,9 @@ export type ActivityEvent = {
   actor: { id: string; displayName: string; isYou: boolean } | null;
   secret: { name: string | null; state: "live" | "binned" | "gone" } | null;
   environment: { id: string | null; name: string | null } | null;
+  /** Whom an access event was about (names only), and the level it gave. Absent on older events. */
+  target?: { displayName: string; isYou: boolean } | null;
+  level?: string | null;
 };
 export type ActivityPage = {
   scope: "vault" | "own"; events: ActivityEvent[]; people: Array<{ id: string; displayName: string }>;

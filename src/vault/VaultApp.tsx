@@ -5,7 +5,7 @@ import { readHistoryDepth } from "../appShellNavigation";
 import { PHONE_QUERY, useMediaQuery } from "../calendar/hooks";
 import { relativeTime } from "../files/format";
 import { formatBytes } from "../files/filesApi";
-import { popStateClosedDialog } from "../historyDialogs";
+import { afterDialogsReleased, popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { Select } from "../ui/Select";
@@ -457,7 +457,7 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
       onCreated={(secret) => { setDialog(null); flash(`Created ${secret.name}`); void load(); }} />}
     {dialog?.kind === "settings" && <VaultSettingsDialog vault={vault} ask={ask} flash={flash} onCancel={() => { setDialog(null); void load(); }}
       onChanged={(next) => setData((current) => current ? { ...current, vault: next } : current)}
-      onDeleted={() => { setDialog(null); onDeleted(); }} onLeft={() => { setDialog(null); flash(`You left ${vault.name}`); onLeft(); }} />}
+      onDeleted={() => { setDialog(null); afterDialogsReleased(onDeleted); }} onLeft={() => { setDialog(null); flash(`You left ${vault.name}`); afterDialogsReleased(onLeft); }} />}
   </>;
 }
 

@@ -16,6 +16,10 @@ import { addColumn, type Migration } from "./types";
  * - `vault_members_person_only`: an integration (`users.kind = 'service'`) never becomes a vault
  *   member, whatever path tries (Wave 26 decision; the API refuses first with a clear message).
  * - `vault_secrets_vault`: every secret of a vault, binned ones included (rotation and quotas).
+ * - `vault_events.target_id` and `vault_events.level`: whom an access event was about and the level
+ *   it gave (QA L1: "added Ada", "gave Ada write on Development"). An id and a level word, never a
+ *   value; no foreign key, like `secret_id`, so a deleted account leaves the row as it is. 031's
+ *   append-only trigger is recreated to cover the two columns.
  *
  * Needs 001, 031, and 036. Transactional and filesystem-free; re-running changes nothing.
  */
@@ -28,7 +32,21 @@ export const vaultSharingMigration: Migration = {
   up(db) {
     addColumn(db, "sessions", "vault_reauth_at", "TEXT");
     addColumn(db, "vaults", "stored_bytes", "INTEGER NOT NULL DEFAULT 0 CHECK (stored_bytes >= 0)");
+    addColumn(db, "vault_events", "target_id", "TEXT CHECK (target_id IS NULL OR length(target_id) <= 64)");
+    addColumn(db, "vault_events", "level", "TEXT CHECK (level IS NULL OR level IN ('none', 'read', 'write', 'admin'))");
     db.exec(`
+      DROP TRIGGER IF EXISTS vault_events_no_update;
+      CREATE TRIGGER vault_events_no_update BEFORE UPDATE ON vault_events
+      WHEN NOT (
+        OLD.actor_id IS NOT NULL AND NEW.actor_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM users WHERE id = OLD.actor_id)
+        AND NEW.id = OLD.id AND NEW.vault_id = OLD.vault_id AND NEW.key_id IS OLD.key_id AND NEW.via = OLD.via
+        AND NEW.event = OLD.event AND NEW.secret_id IS OLD.secret_id AND NEW.env_id IS OLD.env_id
+        AND NEW.count IS OLD.count AND NEW.created_at = OLD.created_at
+        AND NEW.target_id IS OLD.target_id AND NEW.level IS OLD.level
+      )
+      BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY'); END;
+
       CREATE INDEX IF NOT EXISTS vault_secrets_vault ON vault_secrets(vault_id);
 
       CREATE TRIGGER IF NOT EXISTS vault_members_person_only BEFORE INSERT ON vault_members

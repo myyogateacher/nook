@@ -27,6 +27,17 @@ import { getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironme
  * page then leaves for the vault, or for the list when they can no longer read it (`onHandedOver`).
  */
 
+/** Not a failure a retry fixes (QA L3): members who manage nothing get this, and no Try again. */
+export const NOT_A_MANAGER = "Only the vault's owners and environment admins manage who has access.";
+
+/** A guest or an integration in the picker: listed, disabled, with the reason (V-O3; vault keys come later). */
+export function notOffered(person: Pick<PickerPerson, "id" | "displayName" | "kind" | "role">): Option {
+  return {
+    value: `person:${person.id}`, label: person.displayName, disabled: true, group: "Not offered",
+    description: person.kind === "service" ? "Integrations cannot be vault members yet; vault keys for machines arrive later" : "Guests never get vault access"
+  };
+}
+
 export const ENV_LEVEL_LABELS: Record<EnvLevel, string> = { none: "No access", read: "Read", write: "Write", admin: "Admin" };
 const LEVEL_DESCRIPTIONS: Record<EnvLevel, string> = { none: "Cannot see this environment", read: "See and copy values", write: "Also set, clear, and import values", admin: "Also rename and delete it, and give read or write" };
 
@@ -38,6 +49,23 @@ const bodyOf = (draft: Draft): AccessPutBody => ({
   groups: draft.groups.map((group) => ({ id: group.id, levels: group.levels }))
 });
 const sameDraft = (a: Draft, b: Draft) => JSON.stringify(bodyOf(a)) === JSON.stringify(bodyOf(b));
+
+/**
+ * The draft to show after the sheet (re)loads (QA D1): unsaved edits are kept, whatever made the
+ * page load again; only an explicit Discard or a successful save replaces them.
+ */
+export function draftAfterLoad(previous: { sheet: VaultAccessSheet; draft: Draft } | null, loaded: VaultAccessSheet): Draft {
+  if (previous && !sameDraft(previous.draft, draftOf(previous.sheet))) return previous.draft;
+  return draftOf(loaded);
+}
+
+/** The browser's own "Leave site?" prompt while there are unsaved changes (reload, closing the tab). */
+export function guardUnload(event: Pick<BeforeUnloadEvent, "preventDefault"> & { returnValue?: unknown }, dirty: boolean) {
+  if (!dirty) return false;
+  event.preventDefault();
+  event.returnValue = "";
+  return true;
+}
 
 /** The levels one cell offers, and why others are off. */
 export function levelOptions(options: { cap: EnvLevel; ownerOnly: boolean; current: EnvLevel }): Option<EnvLevel>[] {
@@ -66,13 +94,22 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The parent passes a new onMissing on every render (opening a dialog re-renders it): keep it in
+  // a ref so a render never reloads the sheet (QA D1).
+  const onMissingRef = useRef(onMissing);
+  onMissingRef.current = onMissing;
+  const current = useRef<{ sheet: VaultAccessSheet; draft: Draft } | null>(null);
+  current.current = sheet && draft ? { sheet, draft } : null;
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const loaded = await getVaultAccess(vaultId);
-      setSheet(loaded);
-      setDraft(draftOf(loaded));
+      const nextDraft = draftAfterLoad(current.current, loaded);
+      if (nextDraft !== current.current?.draft) {
+        setSheet(loaded);
+        setDraft(nextDraft);
+      }
       if (loaded.canManagePeople) {
         const [directory, groupList] = await Promise.all([
           listPeople().then((result) => result.users, () => [] as PickerPerson[]),
@@ -82,10 +119,10 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
         setGroups(groupList);
       }
     } catch (reason) {
-      if (errorCode(reason) === "NOT_FOUND") onMissing();
-      else setError(errorCode(reason) === "VAULT_LEVEL" ? "Only the vault's owners and environment admins manage who has access." : messageOf(reason, "Could not load who has access"));
+      if (errorCode(reason) === "NOT_FOUND") onMissingRef.current();
+      else setError(errorCode(reason) === "VAULT_LEVEL" ? NOT_A_MANAGER : messageOf(reason, "Could not load who has access"));
     }
-  }, [onMissing, vaultId]);
+  }, [vaultId]);
   useEffect(() => { void load(); }, [load]);
   const ready = sheet !== null || error !== null;
   useLayoutEffect(() => { if (ready) onReady(); }, [ready, onReady]);
@@ -94,6 +131,12 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
   const dirty = Boolean(sheet && draft && !sameDraft(draft, draftOf(sheet)));
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onUnload = (event: BeforeUnloadEvent) => { guardUnload(event, true); };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [dirty]);
   const [allowLeave, setAllowLeave] = useState(false);
   const repeatMove = useRef<PopDirection | null>(null);
   const discard = useMemo<ConfirmRequest>(() => ({ title: "Discard changes?", message: "The changes to who has access are not saved.", confirmLabel: "Discard", danger: true }), []);
@@ -120,7 +163,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
     setTimeout(() => whenHistorySettled(onBack), 0);
   };
 
-  if (error) return <div className="vault-state" role="alert"><h1>Could not open who has access</h1><p>{error}</p><button className="secondary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button><button className="secondary-button" onClick={onBack}>Back to the vault</button></div>;
+  if (error) return <div className="vault-state" role="alert"><h1>Could not open who has access</h1><p>{error}</p>{error !== NOT_A_MANAGER && <button className="secondary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>}<button className="secondary-button" onClick={onBack}>Back to the vault</button></div>;
   if (!sheet || !draft) return <p className="vault-loading" role="status">Loading…</p>;
 
   const envs = sheet.environments;
@@ -130,7 +173,9 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
   // V-O3: guests are never offered; integrations wait for vault keys (Wave 27); blocked accounts cannot be added.
   const pickerOptions: Option[] = owner ? [
     ...groups.filter((group) => !listedGroups.has(group.id)).map((group) => ({ value: `group:${group.id}`, label: group.name, description: `${group.memberCount} ${group.memberCount === 1 ? "member" : "members"}${group.guestCount ? ` · includes ${group.guestCount} ${group.guestCount === 1 ? "guest" : "guests"} (they get no access)` : ""}`, group: "Groups", icon: <UsersRound /> })),
-    ...people.filter((person) => !listedIds.has(person.id) && person.kind !== "service" && person.role !== "guest").map((person) => ({ value: `person:${person.id}`, label: person.displayName, description: person.role && isRole(person.role) ? ROLE_LABELS[person.role] + (person.role === "viewer" ? " · read only" : "") : undefined, group: "People" }))
+    ...people.filter((person) => !listedIds.has(person.id) && person.kind !== "service" && person.role !== "guest").map((person) => ({ value: `person:${person.id}`, label: person.displayName, description: person.role && isRole(person.role) ? ROLE_LABELS[person.role] + (person.role === "viewer" ? " · read only" : "") : undefined, group: "People" })),
+    // QA L7: a search that matches a guest or an integration says why they cannot be added.
+    ...people.filter((person) => !listedIds.has(person.id) && (person.kind === "service" || person.role === "guest")).map((person) => notOffered(person))
   ] : [];
 
   const setPerson = (id: string, change: (person: SheetPerson) => SheetPerson) => setDraft((current) => current ? { ...current, people: current.people.map((person) => person.id === id ? change(person) : person) } : current);

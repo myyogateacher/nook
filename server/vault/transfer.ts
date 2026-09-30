@@ -14,14 +14,18 @@ import { serializeCsv, serializeDotenv, serializeJson, type ExportEntry, type Tr
  * Import: the client parses the file (shared/vaultTransfer.ts) and sends at most 500 entries; the
  * server re-validates each one. `dryRun` answers what would happen per name (create, set, update,
  * same, skip, invalid) without writing; the preview compares with the current values, so it is a
- * read (charged and recorded as `import.preview` with a count). The import writes in one
+ * read (charged as one read and recorded as `import.preview` with a count). The import writes in one
  * transaction under the byte quota, records `import` with counts, and skips or overwrites changed
  * values by `mode`. It needs write on the environment, and the re-authentication window when the
- * environment is protected (the grant says so).
+ * environment is protected (the grant says so). Rate limits (QA D4): a preview or an import of up
+ * to 500 entries costs one read (the comparison) and one write, like any single request; the 500
+ * bound and the byte quota are what bound it, so an import the preview allows is never refused
+ * for its size alone.
  *
  * Export: `.env`, JSON, or CSV of every live secret with a value in that environment, decrypted on
  * the server and sent as an attachment (`no-store`, CSP `sandbox`, `nosniff`). It needs read on the
- * environment (and the window when protected), counts 10 an hour, and is audited: `export` in
+ * environment (and the window when protected), costs one read and one of the 10 exports an hour,
+ * charged only when the export is produced (a refused one costs no export), and is audited: `export` in
  * `vault_events` and `vault.export` in the audit log, with counts and never names or values.
  */
 
@@ -81,13 +85,13 @@ export function importEntries(actor: VaultActor, vaultId: string, envId: string,
   const counts = { create: 0, set: 0, update: 0, same: 0, skip: 0, invalid: 0 };
   for (const item of plan) counts[item.status] += 1;
   const preview = { mode: input.mode, counts, entries: plan.map((item) => ({ name: item.entry.name, status: item.status, reason: item.reason })) };
-  if (compared > 0) chargeVault("read", actor.userId, compared);
+  if (compared > 0) chargeVault("read", actor.userId);
   if (input.dryRun) {
     recordVaultEvent(vaultId, actor.userId, "import.preview", { envId, count: input.entries.length });
     return { ...preview, dryRun: true };
   }
   const writes = plan.filter((item) => item.status === "create" || item.status === "set" || item.status === "update");
-  chargeVault("write", actor.userId, Math.max(1, writes.length));
+  chargeVault("write", actor.userId);
   db.transaction(() => enforceQuota(vaultId, actor.userId, () => {
     const timestamp = now();
     for (const item of writes) {
@@ -128,8 +132,10 @@ export function exportEnvironment(actor: VaultActor, vaultId: string, envId: str
   const env = access.environments.find((item) => item.id === envId)!;
   const rows = db.query(`SELECT s.id, s.name, s.type, v.value_ct, v.comment_ct, v.generation, v.version FROM vault_secrets s JOIN vault_values v ON v.secret_id = s.id AND v.env_id = ?
     WHERE s.vault_id = ? AND s.deleted_at IS NULL AND s.purge_started_at IS NULL ORDER BY s.name COLLATE NOCASE, s.id`).all(envId, vaultId) as Array<{ id: string; name: string; type: SecretType; value_ct: string; comment_ct: string | null; generation: number; version: number }>;
-  chargeVault("export", actor.userId);
-  chargeVault("read", actor.userId, Math.max(1, rows.length));
+  // Check the hourly export budget without spending it, then charge one read; the export itself is
+  // charged once the file is ready, so a refusal on the way costs no export (QA D4).
+  chargeVault("export", actor.userId, 0);
+  chargeVault("read", actor.userId);
   const entries: ExportEntry[] = rows.map((row) => {
     const opened = integrity(vaultId, actor.userId, { secretId: row.id, envId }, () => openValue(grant, { secretId: row.id, envId, version: row.version, generation: row.generation, valueCt: row.value_ct, commentCt: row.comment_ct }));
     return { name: row.name, value: opened.value, comment: opened.comment, type: row.type };
@@ -142,6 +148,7 @@ export function exportEnvironment(actor: VaultActor, vaultId: string, envId: str
     skipped = result.skipped;
   } else if (format === "json") body = serializeJson(entries, { comments, vault: access.vault.name, environment: env.slug });
   else body = serializeCsv(entries, { comments });
+  chargeVault("export", actor.userId);
   recordVaultEvent(vaultId, actor.userId, "export", { envId, count: entries.length - skipped.length });
   audit(actor.userId, null, "vault.export", { vaultId, envId, format, count: entries.length - skipped.length, skipped: skipped.length, comments });
   return { body, contentType: CONTENT_TYPES[format], fileName: fileName(access.vault.name, env.slug, format), count: entries.length - skipped.length, skipped: skipped.length };

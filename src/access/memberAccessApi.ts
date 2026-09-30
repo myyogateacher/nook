@@ -249,7 +249,12 @@ export const DENIAL_TEXT: Record<string, string> = {
 
 const keyName = (event: ActivityEvent) => event.key?.name ? `“${event.key.name}”` : "(deleted)";
 const groupName = (event: ActivityEvent) => event.group?.name ? `“${event.group.name}”` : "a deleted group";
-const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? event.item.title.replace(/^(\w)/, (letter) => letter.toLowerCase()).replace(/^/, "a ") : `“${event.item.title}”`;
+/** A hidden title in a sentence: "Board owned by Carol" → "a board owned by Carol"; "A vault" stays "a vault" (QA L5). */
+export function hiddenItemPhrase(title: string) {
+  const lowered = title.replace(/^(\w)/, (letter) => letter.toLowerCase());
+  return /^an? /.test(lowered) ? lowered : `a ${lowered}`;
+}
+const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? hiddenItemPhrase(event.item.title) : `“${event.item.title}”`;
 
 /** F10: an action this build does not know still reads as a sentence, never as its code. */
 export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => `${who(row)} changed access`))(event);

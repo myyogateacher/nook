@@ -62,6 +62,14 @@ function parseTagInput(text: string): { tags: string[]; error: string | null } {
 // ---------------------------------------------------------------------------------------------
 // New vault
 
+/** What the New vault sheet says about protected environments (QA L4): which ones, and what it means. */
+export function protectedHint(envs: ReadonlyArray<{ name: string; slug: string; protected: boolean }>) {
+  const names = envs.filter((env) => env.protected).map((env) => `${env.name.trim() || env.slug}${env.slug ? ` (${env.slug})` : ""}`);
+  if (!names.length) return null;
+  const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${list} ${names.length === 1 ? "is" : "are"} protected: opening ${names.length === 1 ? "it" : "them"} asks for your password again. You can change this in the vault's settings.`;
+}
+
 type EnvDraft = { key: string; slug: string; name: string; protected: boolean };
 
 export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; onCreated: (vault: VaultSummary) => void }) {
@@ -107,6 +115,7 @@ export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; 
         </li>)}
       </ul>
       {envs.length < VAULT_BOUNDS.environments && <button type="button" className="secondary-button vault-inline-button" onClick={() => setEnvs((current) => [...current, { key: crypto.randomUUID(), slug: "", name: "", protected: false }])}><Plus />Add environment</button>}
+      {protectedHint(envs) && <p className="file-dialog-hint">{protectedHint(envs)}</p>}
       <p className="file-dialog-hint">Names and tags are not encrypted. Put anything sensitive in a value or a comment.</p>
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">

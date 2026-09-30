@@ -132,7 +132,7 @@ export function ImportDialog({ vault, initialEnvId, onClose, onImported }: { vau
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         {!preview
           ? <button type="button" className="primary-button" disabled={busy || !parsed || parsed.entries.length === 0 || !envId || parsed.entries.length > VAULT_BOUNDS.importEntries} onClick={() => { void send(true); }}>{busy ? "Checking…" : "Preview"}</button>
-          : <button type="button" className="primary-button" disabled={busy || writes === 0} onClick={() => { void send(false); }}><Upload />{busy ? "Importing…" : `Import ${writes}`}</button>}
+          : <button type="button" className="primary-button" disabled={busy || writes === 0} onClick={() => { void send(false); }}><Upload />{busy ? "Importing…" : writes === 0 ? "Nothing to import" : `Import ${writes}`}</button>}
       </footer>
     </div>
   </ModalDialog>;

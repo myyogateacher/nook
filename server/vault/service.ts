@@ -47,9 +47,9 @@ type ValueRow = { secret_id: string; env_id: string; value_ct: string; comment_c
 // ---------------------------------------------------------------------------------------------
 // Events (ids and counts only, never values or names)
 
-export function recordVaultEvent(vaultId: string, actorId: string | null, event: string, detail: { secretId?: string | null; envId?: string | null; count?: number | null } = {}, via: VaultVia = "session") {
-  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, via, event, secret_id, env_id, count, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)")
-    .run(crypto.randomUUID(), vaultId, actorId, via, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, now());
+export function recordVaultEvent(vaultId: string, actorId: string | null, event: string, detail: { secretId?: string | null; envId?: string | null; count?: number | null; targetId?: string | null; level?: string | null } = {}, via: VaultVia = "session") {
+  db.query("INSERT INTO vault_events (id, vault_id, actor_id, key_id, via, event, secret_id, env_id, count, target_id, level, created_at) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(crypto.randomUUID(), vaultId, actorId, via, event, detail.secretId ?? null, detail.envId ?? null, detail.count ?? null, detail.targetId ?? null, detail.level ?? null, now());
 }
 
 /**

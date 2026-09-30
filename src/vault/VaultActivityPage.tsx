@@ -20,7 +20,7 @@ const WORDS: Record<string, string> = {
   "value.read": "revealed", "version.read": "opened an old version of", "comment.read": "opened the comment of",
   "value.write": "set", "value.clear": "cleared", "value.restore": "restored an old version of",
   "secret.create": "created", "secret.update": "edited", "secret.delete": "deleted", "secret.restore": "restored", "secret.purge": "purged",
-  "member.add": "added people", "member.remove": "removed people", "member.leave": "left the vault", "member.owner": "made someone an owner", "member.demote": "made an owner a member", "access.change": "changed who has access",
+  "member.add": "added people", "member.remove": "removed people", "member.leave": "left the vault", "member.owner": "made someone an owner", "member.demote": "made an owner a member", "access.change": "changed which groups have access", "access.level": "changed access",
   "key.rotate": "rotated the data key", "key.rotate.auto": "started a data-key rotation (someone lost access)", "key.rotate.skipped": "left rows that did not open under their key (rotation)", "key.retire": "retired old data keys",
   "export": "exported", "import": "imported into", "import.preview": "previewed an import into",
   "vault.create": "created the vault", "vault.update": "renamed or described the vault", "vault.delete": "moved the vault to the Bin", "vault.restore": "restored the vault",
@@ -39,6 +39,21 @@ export function activityLine(event: ActivityEvent) {
   if (event.event === "import" || event.event === "import.preview") return `${who} ${verb} ${env ?? "an environment"} (${event.count ?? 0} ${(event.count ?? 0) === 1 ? "entry" : "entries"})`;
   if (event.event === "value.read" && !secret) return `${who} revealed ${event.count ?? 1} ${(event.count ?? 1) === 1 ? "value" : "values"}`;
   if (event.event.startsWith("env.") && env && event.event !== "env.reorder") return `${who} ${verb} ${env}`;
+  // QA L1: access lines name whom they were about (names and levels only, never a value).
+  if (event.target) {
+    const target = event.target.isYou ? (event.actor?.isYou ? "yourself" : "you") : event.target.displayName;
+    const where = env ?? "an environment";
+    switch (event.event) {
+      case "member.add": return `${who} added ${target}`;
+      case "member.remove": return `${who} removed ${target}`;
+      case "member.owner": return `${who} made ${target} an owner`;
+      case "member.demote": return `${who} made ${target} a member`;
+      case "access.level": return event.level === "none" || !event.level
+        ? `${who} took away ${target === "yourself" ? "your own" : `${target}'s`} access to ${where}`
+        : `${who} gave ${target} ${event.level} access to ${where}`;
+      default: break;
+    }
+  }
   if (event.event.startsWith("member.") || event.event.startsWith("access.") || event.event.startsWith("key.") || event.event.startsWith("vault.") || event.event === "env.reorder") {
     return `${who} ${verb}${count ? ` (${count})` : ""}`;
   }

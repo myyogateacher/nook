@@ -215,7 +215,7 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
     };
     const setRole = (person: NextPerson) => {
       db.query("UPDATE vault_members SET role = ?, revision = revision + 1 WHERE vault_id = ? AND user_id = ?").run(person.role, vaultId, person.id);
-      recordVaultEvent(vaultId, actor.userId, person.role === "owner" ? "member.owner" : "member.demote");
+      recordVaultEvent(vaultId, actor.userId, person.role === "owner" ? "member.owner" : "member.demote", { targetId: person.id });
     };
     for (const person of nextPeople) {
       const had = beforeMembers.get(person.id);
@@ -260,10 +260,24 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
       if (had.size === 0 && has.size > 0) gained.push(userId);
       if ([...had].some((envId) => !has.has(envId))) lost.push(userId);
     }
-    const added = nextPeople.filter((person) => !beforeMembers.has(person.id)).length;
-    if (added) recordVaultEvent(vaultId, actor.userId, "member.add", { count: added });
-    if (removed.length) recordVaultEvent(vaultId, actor.userId, "member.remove", { count: removed.length });
-    recordVaultEvent(vaultId, actor.userId, "access.change", { count: nextPeople.length + nextGroups.length });
+    // Activity names whom each change was about (QA L1): one event per person added or removed, and
+    // one per person and environment whose own level changed (members; owners hold admin everywhere).
+    const addedPeople = nextPeople.filter((person) => !beforeMembers.has(person.id));
+    for (const person of addedPeople) recordVaultEvent(vaultId, actor.userId, "member.add", { targetId: person.id });
+    for (const userId of removed) recordVaultEvent(vaultId, actor.userId, "member.remove", { targetId: userId });
+    for (const person of nextPeople) {
+      if (person.role === "owner") continue;
+      const had = current.people.find((item) => item.id === person.id);
+      for (const envId of envIds) {
+        const from = had && had.role !== "owner" ? had.levels[envId] ?? "none" : "none";
+        const to = person.levels[envId] ?? "none";
+        if (from !== to && (had?.role !== "owner" || to !== "none")) recordVaultEvent(vaultId, actor.userId, "access.level", { targetId: person.id, envId, level: to });
+      }
+    }
+    const groupsChanged = nextGroups.length !== current.groups.length
+      || nextGroups.some((group) => { const was = current.groups.find((item) => item.id === group.id); return !was || envIds.some((envId) => (was.levels[envId] ?? "none") !== group.levels[envId]); });
+    if (groupsChanged) recordVaultEvent(vaultId, actor.userId, "access.change", { count: nextGroups.length });
+    const added = addedPeople.length;
     for (const userId of gained) notifyAccess({ userId, kind: "vault_shared", actorId: actor.userId, resource: { kind: "vault", id: vaultId } }, timestamp);
     // Email only for people added by name (as other modules: groups hear through the bell, §C.11).
     mailVaultShared(actor.userId, vaultId, gained.filter((userId) => nextPeople.some((person) => person.id === userId)));
@@ -461,7 +475,7 @@ export function resetVaultMemberships(adminId: string, userId: string): Map<stri
   const perOwner = new Map<string, number>();
   for (const row of rows) {
     db.query("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?").run(row.vault_id, userId);
-    recordVaultEvent(row.vault_id, adminId, "member.remove", { count: 1 });
+    recordVaultEvent(row.vault_id, adminId, "member.remove", { targetId: userId });
     perOwner.set(row.owner_id, (perOwner.get(row.owner_id) ?? 0) + 1);
   }
   return perOwner;
@@ -484,7 +498,7 @@ export function adminRemoveVaultMember(adminId: string, userId: string, vaultId:
     }
     moveBillingOwner(vaultId);
     const timestamp = now();
-    recordVaultEvent(vaultId, adminId, "member.remove", { count: 1 });
+    recordVaultEvent(vaultId, adminId, "member.remove", { targetId: userId });
     recordAccessEvent({ actorId: adminId, via: "web", action: "access.share_removed", targetUserId: userId, resource: { kind: "vault", id: vaultId }, meta: { role: row.role } }, timestamp);
     audit(adminId, null, "team.access_removed", { targetId: userId, kind: "vault" });
     notifyAccess({ userId, kind: "vault_removed", actorId: adminId, resource: { kind: "vault", id: vaultId } }, timestamp);

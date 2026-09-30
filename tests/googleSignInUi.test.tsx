@@ -66,6 +66,21 @@ describe("the shared Avatar (D299)", () => {
       expect({ file, letter: /charAt\(0\)|\{initials\([^)]*\)\}<\/span>|\{initialOf\(/.test(source) }).toEqual({ file, letter: false });
     }
   });
+
+  test("F9: no component draws a person's letter by hand; the card comments (activity) and the assignee picker use the component too", () => {
+    const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const files: string[] = [];
+    const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); if (statSync(path).isDirectory()) walk(path); else if (path.endsWith(".tsx")) files.push(path); } };
+    walk(src);
+    const handDrawn = /charAt\(0\)|\{initials\([^)]*\)\}\s*<\/span>|\{initialOf\([^)]*\)\}|\{avatarInitial\([^)]*\)\}|\.(?:display_?[nN]ame|author_name|owner_name|name)\s*(?:\?\.|\.)?\s*(?:\[0\]|slice\(0, 1\)|at\(0\))/;
+    const offenders = files.filter((path) => !path.endsWith(join("ui", "Avatar.tsx")) && handDrawn.test(readFileSync(path, "utf8"))).map((path) => path.slice(src.length + 1));
+    expect(offenders).toEqual([]);
+    for (const file of ["tasks/CardDialog.tsx", "tasks/CardFields.tsx"]) {
+      const source = readFileSync(join(src, file), "utf8");
+      expect({ file, uses: source.includes("<Avatar ") }).toEqual({ file, uses: true });
+    }
+    expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
+  });
 });
 
 describe("Google sign-in helpers (D300)", () => {

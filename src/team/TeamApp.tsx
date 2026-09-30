@@ -21,7 +21,7 @@ import { GroupPage } from "./GroupPage";
 import { MemberAccess } from "./MemberAccess";
 import { Templates } from "./Templates";
 import { AccessActivity } from "./AccessActivity";
-import { eventLabel, filterTeam, joinedLabel, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
+import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 

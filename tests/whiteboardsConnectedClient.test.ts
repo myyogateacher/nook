@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { MarkdownManager } from "@tiptap/markdown";
 import { markdownOptions, noteContentExtensions } from "../src/editor/extensions";
-import { embedLinkText, embedMarkdown, parseEmbedLine, pastedBoardId } from "../src/editor/whiteboardEmbed";
-import { hasUnsupportedElements, isKeptElement, keptLink, refusedLinks, sceneForSave } from "../src/whiteboards/historyGuard";
+import { cardSummary, clearCardSummaries, embedLinkText, embedMarkdown, parseEmbedLine, pastedBoardId } from "../src/editor/whiteboardEmbed";
+import { hasUnsupportedElements, isKeptElement, keptLink, refusedImagesMessage, refusedLinks, sceneForSave, withoutRefusedImages } from "../src/whiteboards/historyGuard";
+import { autosaveReducer, changedSince, hasPendingWork, initialAutosave, nextSaveDelay, shouldSave } from "../src/whiteboards/autosave";
 import { placedSize } from "../src/whiteboards/boardImages";
 
 /**
@@ -101,5 +102,52 @@ describe("the note embed card (D208)", () => {
     expect(pastedBoardId(`https://elsewhere.example.test/whiteboards/${doc}`, origin)).toBeNull();
     expect(pastedBoardId(`see ${origin}/whiteboards/${doc}`, origin)).toBeNull();
     expect(pastedBoardId(`${origin}/notes/${doc}`, origin)).toBeNull();
+  });
+});
+
+describe("review fixes on the canvas", () => {
+  const refs = new Map([[doc, { id: doc, mimeType: "image/png", nookDocumentId: doc }], [other, { id: other, mimeType: "image/png", nookDocumentId: other }]]);
+
+  test("M1: pictures a save was refused for leave the scene and the references; the rest is kept and saves", () => {
+    const elements = [rect("r"), image("i1", doc), image("i2", other), image("i3", doc, { isDeleted: true })];
+    const fixed = withoutRefusedImages(elements, refs, [doc]);
+    expect(fixed.removed).toBe(1);
+    expect([...fixed.fileIds]).toEqual([doc]);
+    expect(fixed.elements.map((element) => element.id)).toEqual(["r", "i2"]);
+    expect([...fixed.refs.keys()]).toEqual([other]);
+    const scene = sceneForSave(fixed.elements, {}, fixed.refs, origin);
+    expect(scene.ok && Object.keys(scene.scene.files)).toEqual([other]);
+    // Ids not on this canvas: nothing to take off, so the canvas does not retry.
+    expect(withoutRefusedImages(elements, refs, ["2d9e3c74-5a7b-4f8a-9c73-2e8c9b4d1f33"]).fileIds.size).toBe(0);
+    expect(refusedImagesMessage(1)).toContain("no longer shared");
+    expect(refusedImagesMessage(2)).toStartWith("2 pictures");
+  });
+
+  test("M1: after the refused pictures are removed, the save that failed is retried at once", () => {
+    let state = autosaveReducer(initialAutosave(3), { type: "edited", at: 0 });
+    state = autosaveReducer(state, { type: "saveStarted" });
+    state = autosaveReducer(state, { type: "retry" });
+    expect(state.status).toBe("dirty");
+    expect(shouldSave(state)).toBe(true);
+    expect(hasPendingWork(state)).toBe(true);
+    expect(nextSaveDelay(state, 10_000)).toBe(0);
+    // Only a save in flight (or a refused one) is retried.
+    const idle = initialAutosave(3);
+    expect(autosaveReducer(idle, { type: "retry" })).toBe(idle);
+  });
+
+  test("M2: a restored version replaces the canvas only when nothing changed since the confirm", () => {
+    const mark = { editVersion: 4, key: "3:96:#fff:20:false" };
+    expect(changedSince(mark, { ...mark })).toBe(false);
+    expect(changedSince(mark, { ...mark, editVersion: 5 })).toBe(true);
+    expect(changedSince(mark, { ...mark, key: "4:128:#fff:20:false" })).toBe(true);
+  });
+
+  test("L3: card summaries are forgotten at sign-out", async () => {
+    const first = cardSummary(doc);
+    expect(cardSummary(doc)).toBe(first);
+    clearCardSummaries();
+    expect(cardSummary(doc)).not.toBe(first);
+    await Promise.allSettled([first]);
   });
 });

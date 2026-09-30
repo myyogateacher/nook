@@ -106,6 +106,27 @@ export function sceneForSave(elements: readonly LooseElement[], appState: Record
   });
 }
 
+/**
+ * Review M1: the pictures a save was refused for (400 IMAGE_NOT_AVAILABLE, `documentIds`: files
+ * deleted or no longer shared with this person, brought back by an undo, a pending copy, or another
+ * tab) leave the board: their references and their image elements go, so the next save succeeds.
+ * `removed` is the number of image elements taken off; `fileIds` the references dropped. Nothing
+ * dropped (the refused ids are not on this canvas) means the save cannot be fixed this way.
+ */
+export function withoutRefusedImages<T extends LooseElement>(elements: readonly T[], refs: ImageRefs, documentIds: readonly string[]) {
+  const refused = new Set(documentIds);
+  const fileIds = new Set([...refs.values()].filter((file) => refused.has(file.nookDocumentId)).map((file) => file.id));
+  for (const [key, file] of refs) if (refused.has(file.nookDocumentId)) fileIds.add(key);
+  const kept = elements.filter((element) => !(element.type === "image" && typeof element.fileId === "string" && fileIds.has(element.fileId)));
+  const nextRefs = new Map([...refs].filter(([key]) => !fileIds.has(key)));
+  const removed = elements.filter((element) => element.isDeleted !== true && element.type === "image" && typeof element.fileId === "string" && fileIds.has(element.fileId)).length;
+  return { elements: kept, refs: nextRefs, fileIds, removed };
+}
+
+export const refusedImagesMessage = (count: number) => count === 1
+  ? "A picture was removed from this whiteboard because its file is no longer shared with you (or was deleted)."
+  : `${count} pictures were removed from this whiteboard because their files are no longer shared with you (or were deleted).`;
+
 /** Elements whose link the save drops (to tell the person once). */
 export const refusedLinks = (elements: readonly LooseElement[], origin: string) =>
   elements.filter((element) => element.isDeleted !== true && typeof element.link === "string" && element.link.trim() !== "" && keptLink(element.link, origin) === null).length;

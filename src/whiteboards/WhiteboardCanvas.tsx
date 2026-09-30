@@ -13,11 +13,11 @@ import { isInsertableImageType, uploadImageDocument } from "../editor/imageUploa
 import { useRole } from "../team/roleAccess";
 import type { DocumentSummary } from "../types";
 import {
-  autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, mayCaptureEdit, maySendCapture, nextSaveDelay,
-  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS, type CaptureOrigin
+  autosaveLabel, autosaveReducer, changedSince, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, mayCaptureEdit, maySendCapture, nextSaveDelay,
+  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS, type CaptureOrigin, type SceneMark
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
-import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedLinks, restoreMessage, sceneForLoad, sceneForSave } from "./historyGuard";
+import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedImagesMessage, refusedLinks, restoreMessage, sceneForLoad, sceneForSave, withoutRefusedImages } from "./historyGuard";
 import { IMAGE_PLACE_MAX_SIDE, loadNookImage, placedSize } from "./boardImages";
 import { HistorySheet } from "./HistorySheet";
 import { ImagePickerSheet, LinkPickerSheet } from "./NookPickers";
@@ -122,6 +122,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const [layer, setLayer] = useState<Layer | null>(null);
   const [excalidrawLayer, setExcalidrawLayer] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  /** Review M2: a version is being restored; its confirm stays open and busy, and the canvas is read-only. */
+  const [restoring, setRestoring] = useState(false);
+  const restoringRef = useRef(false);
+  /** While a restore is on its way to the server, autosave waits (a save would only race it into a 409). */
+  const holdSavesRef = useRef(false);
   const [autosave, dispatch] = useReducer(autosaveReducer, initialAutosave(1));
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const stateRef = useRef(autosave);
@@ -289,11 +294,35 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     }, THUMBNAIL_IDLE_MS);
   }, [refreshThumbnail]);
 
+  /**
+   * Review M1: takes the pictures a save was refused for off the captured scene (and the editor, while
+   * it is mounted), so the next save succeeds. False when none of them is on this canvas.
+   */
+  const removeRefusedImages = useCallback((payload: unknown) => {
+    const documentIds = (payload as { documentIds?: unknown } | null)?.documentIds;
+    const captured = sceneRef.current;
+    if (!Array.isArray(documentIds) || !documentIds.length || !captured) return false;
+    const next = withoutRefusedImages(captured.elements, refsRef.current, documentIds.filter((id): id is string => typeof id === "string"));
+    if (!next.fileIds.size) return false;
+    refsRef.current = next.refs;
+    const files = { ...filesRef.current };
+    for (const id of next.fileIds) delete files[id];
+    filesRef.current = files;
+    sceneRef.current = { ...captured, elements: next.elements, live: liveCount(next.elements), origin: "edit" };
+    const live = apiRef.current;
+    if (live && readyRef.current) {
+      live.updateScene({ elements: live.getSceneElementsIncludingDeleted().filter((element) => !(element.type === "image" && typeof element.fileId === "string" && next.fileIds.has(element.fileId))) as never });
+    }
+    flash(refusedImagesMessage(Math.max(1, next.removed)));
+    return true;
+  }, [flash]);
+
   const runSave = useCallback((options: { leaving?: boolean } = {}): Promise<void> => {
     if (savingRef.current) return savingRef.current;
     const state = stateRef.current;
     if (!shouldSave(state) || !boardRef.current?.canEdit) return Promise.resolve();
     if (tearingDownRef.current && !options.leaving) return Promise.resolve();
+    if (holdSavesRef.current && !options.leaving) return Promise.resolve();
     // Only a captured edit is ever sent (QA E1), on every path: the timer, the maximum wait, a
     // hidden tab, and the leave flush. An empty board from a real edit is sent like any other.
     if (!maySendCapture(state, sceneRef.current)) return Promise.resolve();
@@ -327,6 +356,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         } else if (lostAccess(reason)) {
           dispatch({ type: "rejected", message: "You no longer have access to this whiteboard" });
           loseAccess();
+        } else if (payload?.code === "IMAGE_NOT_AVAILABLE" && !tearingDownRef.current && removeRefusedImages((reason as ApiError).payload)) {
+          // Review M1: a picture whose file is gone or no longer shared came back (an undo, a pending
+          // copy, another tab); it leaves the board, the person is told, and the board saves again.
+          dispatch({ type: "retry" });
+          writePendingNow();
         } else if (reason instanceof ApiError && (reason.status === 400 || reason.status === 413 || reason.status === 403)) {
           dispatch({ type: "rejected", message: reason.message });
           writePendingNow();
@@ -340,7 +374,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     })();
     savingRef.current = promise;
     return promise;
-  }, [boardId, currentScene, loseAccess, scheduleThumbnail, userId, writePendingNow]);
+  }, [boardId, currentScene, loseAccess, removeRefusedImages, scheduleThumbnail, userId, writePendingNow]);
 
   // The timer after an edit (1.5 s after the last, 5 s after the oldest), and the retry backoff.
   useEffect(() => {
@@ -829,10 +863,15 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   }, [download, flash, name]);
 
   // ------------------------------------------------------------------ conflict, pending copy, versions
-  const showServerScene = useCallback(async (message: string) => {
+  /**
+   * Shows the server's scene in place of the canvas. With `unchangedSince`, only when the person has
+   * not edited since that mark (review M2); false when they have, and nothing is replaced.
+   */
+  const showServerScene = useCallback(async (message: string, unchangedSince?: SceneMark) => {
     const { whiteboard, scene } = await getWhiteboard(boardId);
     // Left meanwhile (a restore that was still on its way): the server has it; the next open shows it.
-    if (tearingDownRef.current || !mounted.current) return;
+    if (tearingDownRef.current || !mounted.current) return true;
+    if (unchangedSince && changedSince(unchangedSince, { editVersion: stateRef.current.editVersion, key: lastKeyRef.current })) return false;
     const safe = sceneForLoad(scene);
     if (!safe) throw new Error("This whiteboard could not be read");
     refsRef.current = new Map([...refsRef.current, ...refsOf(safe)]);
@@ -850,6 +889,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     flash(message);
     scheduleThumbnail(whiteboard.revision);
     void hydrate(Object.values(safe.files));
+    return true;
   }, [boardId, flash, hydrate, scheduleThumbnail, userId]);
 
   const reloadLatest = useCallback(async () => {
@@ -864,25 +904,53 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   /**
    * D207: a kept version becomes a NEW revision through the revision check. Anything unsaved is
    * saved first, so a restore never discards work; if that cannot be saved now, nothing happens.
+   * Review M2: from the confirm until the restored scene is shown, the confirm stays open (busy) and
+   * the canvas is read-only; should the scene change anyway, it is kept (pending copy and the
+   * conflict choice) rather than replaced by the restored version.
    */
   const restoreVersion = useCallback(async (snapshot: WhiteboardSnapshot) => {
-    setLayer(null);
-    if (!await flush()) {
-      flash("Your latest changes are not saved yet, so nothing was restored. Try again in a moment.");
-      return;
-    }
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    setRestoring(true);
+    const keepLocal = (revision: number) => {
+      dispatch({ type: "conflict", revision });
+      void writePendingNow();
+      if (!tearingDownRef.current) setLayer({ kind: "conflict" });
+      flash(`Restored the version from ${formatTime(snapshot.createdAt)}. Changes you made meanwhile are kept on this device: choose which to keep.`);
+    };
     try {
-      await restoreSnapshot(boardId, snapshot.id, stateRef.current.baseRevision);
-      await showServerScene(`Restored the version from ${formatTime(snapshot.createdAt)}`);
-    } catch (reason) {
-      const payload = codeOf(reason);
-      if (payload?.code === "REVISION_CONFLICT") {
-        dispatch({ type: "conflict", revision: payload.revision ?? stateRef.current.baseRevision });
-        if (!tearingDownRef.current) setLayer({ kind: "conflict" });
-      } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
-      else if (!tearingDownRef.current) flash(messageOf(reason, "Could not restore that version"));
+      if (!await flush()) {
+        if (!tearingDownRef.current) setLayer(null);
+        flash("Your latest changes are not saved yet, so nothing was restored. Try again in a moment.");
+        return;
+      }
+      const before: SceneMark = { editVersion: stateRef.current.editVersion, key: lastKeyRef.current };
+      holdSavesRef.current = true;
+      try {
+        const restored = await restoreSnapshot(boardId, snapshot.id, stateRef.current.baseRevision);
+        if (tearingDownRef.current) return;
+        if (changedSince(before, { editVersion: stateRef.current.editVersion, key: lastKeyRef.current })) {
+          keepLocal(restored.revision);
+          return;
+        }
+        if (!await showServerScene(`Restored the version from ${formatTime(snapshot.createdAt)}`, before)) keepLocal(restored.revision);
+      } catch (reason) {
+        const payload = codeOf(reason);
+        if (payload?.code === "REVISION_CONFLICT") {
+          dispatch({ type: "conflict", revision: payload.revision ?? stateRef.current.baseRevision });
+          if (!tearingDownRef.current) setLayer({ kind: "conflict" });
+        } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
+        else if (!tearingDownRef.current) {
+          setLayer(null);
+          flash(messageOf(reason, "Could not restore that version"));
+        }
+      }
+    } finally {
+      holdSavesRef.current = false;
+      restoringRef.current = false;
+      if (mounted.current) setRestoring(false);
     }
-  }, [boardId, flash, flush, loseAccess, showServerScene]);
+  }, [boardId, flash, flush, loseAccess, showServerScene, writePendingNow]);
 
   /** A private copy of this board (or of one kept version), opened once it exists. */
   const duplicate = useCallback(async (snapshot?: WhiteboardSnapshot) => {
@@ -958,7 +1026,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   }, [currentScene, saveAsCopy]);
 
   useHistoryDialogGuard(layer?.kind === "conflict" || layer?.kind === "discard" || layer?.kind === "restoreVersion" || layer?.kind === "external",
-    () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : layer?.kind === "restoreVersion" ? { kind: "history" } : null));
+    () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : layer?.kind === "restoreVersion" ? { kind: "history" } : null),
+    { blocked: restoring });
 
   // ------------------------------------------------------------------ render
   if (loadError) {
@@ -1031,7 +1100,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         theme="dark"
         langCode="en"
         name={name}
-        viewModeEnabled={!canEdit}
+        viewModeEnabled={!canEdit || restoring}
         validateEmbeddable={false}
         renderTopRightUI={() => null}
         UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, clearCanvas: canEdit, toggleTheme: false, changeViewBackgroundColor: canEdit }, tools: { image: canEdit } }}
@@ -1077,7 +1146,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       onCopy={(snapshot) => duplicate(snapshot)} />}
     {layer?.kind === "restoreVersion" && <ConfirmDialog title="Restore this version?"
       message={restoreMessage({ createdAt: layer.snapshot.createdAt, elementCount: layer.snapshot.elementCount ?? 0 }, sceneRef.current?.live ?? autosave.savedLive, formatTime)}
-      confirmLabel="Restore" onCancel={() => setLayer({ kind: "history" })} onConfirm={() => { void restoreVersion(layer.snapshot); }} />}
+      confirmLabel="Restore" busy={restoring} onCancel={() => { if (!restoring) setLayer({ kind: "history" }); }} onConfirm={() => { void restoreVersion(layer.snapshot); }} />}
     {layer?.kind === "external" && <ModalDialog title="Open this link?" onClose={() => setLayer(null)}>
       <p className="file-dialog-copy">This opens a page outside Nook in a new tab:</p>
       <p className="whiteboard-link-url"><code>{layer.url}</code></p>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { ChevronLeft, Cloud, CloudOff, Copy, Ellipsis, ImageDown, ImagePlus, Link as LinkIcon, LoaderCircle, Share2, TriangleAlert } from "lucide-react";
-import { CaptureUpdateAction, convertToExcalidrawElements, Excalidraw, exportToBlob, exportToSvg, MainMenu, newElementWith, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, convertToExcalidrawElements, Excalidraw, exportToBlob, exportToSvg, MainMenu, newElementWith, restoreElements, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
 import type { AppState, BinaryFileData, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { api, ApiError } from "../api";
@@ -836,9 +836,12 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const safe = sceneForLoad(scene);
     if (!safe) throw new Error("This whiteboard could not be read");
     refsRef.current = new Map([...refsRef.current, ...refsOf(safe)]);
-    lastKeyRef.current = changeKey(safe.elements, initialAppState(safe));
-    sceneRef.current = { elements: safe.elements, appState: initialAppState(safe), live: safe.elements.length, origin: "server" };
-    apiRef.current?.updateScene({ elements: safe.elements as never, appState: { viewBackgroundColor: safe.appState.viewBackgroundColor ?? "#ffffff" } as never });
+    // The editor takes complete elements: a stored scene may leave out defaults (one written by
+    // import, MCP, or an older version), which Excalidraw fills in on load but not in updateScene.
+    const elements = restoreElements(safe.elements as never, null, { refreshDimensions: false, repairBindings: true }) as unknown as ReadonlyArray<Record<string, unknown>>;
+    lastKeyRef.current = changeKey(elements, initialAppState(safe));
+    sceneRef.current = { elements, appState: initialAppState(safe), live: elements.length, origin: "server" };
+    apiRef.current?.updateScene({ elements: elements as never, appState: { viewBackgroundColor: safe.appState.viewBackgroundColor ?? "#ffffff" } as never });
     apiRef.current?.history.clear();
     dispatch({ type: "reset", revision: whiteboard.revision, live: safe.elements.length });
     void clearPending(userId, boardId);

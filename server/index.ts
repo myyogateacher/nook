@@ -34,6 +34,8 @@ import { registerTodayRoutes } from "./today/routes";
 import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerWhiteboardRoutes } from "./whiteboards/routes";
+import { registerVaultRoutes } from "./vault/routes";
+import { initVaultStatus, vaultStatus } from "./vault/status";
 import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -306,7 +308,10 @@ app.get("/api/auth/me", (c) => {
     // UI-only (D92): which modules this user hid. Never used for authorization (T97).
     preferences: readPreferences(user.id),
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
-    notices: { googleReset: googleResetNotice(user.id) }
+    notices: { googleReset: googleResetNotice(user.id) },
+    // Wave 25: whether this person sees the Vault module. Off on the server hides it from everyone but
+    // admins, who get its "not configured" screen; guests never see it (V-O3). UI only (T97).
+    features: { vault: user.role !== "guest" && (vaultStatus().enabled || user.role === "admin") }
   });
 });
 
@@ -862,6 +867,8 @@ registerTodayRoutes(app);
 registerCollectionRoutes(app);
 // Whiteboards on Files (Wave 23): create, list, read, CAS save, thumbnails.
 registerWhiteboardRoutes(app);
+// The Vault (Wave 25): vaults, environments, secrets, values, and history, for sessions only.
+registerVaultRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerMailRoutes(app);
@@ -925,6 +932,8 @@ async function reconcilePublishedMirrors() {
 }
 
 await reconcilePublishedMirrors();
+// Wave 25 (D212, T199): the vault module is on only with a key that opens every live vault's data key.
+initVaultStatus();
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can

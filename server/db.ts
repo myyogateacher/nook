@@ -12,6 +12,9 @@ export const db = new Database(config.databasePath, { create: true, strict: true
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
 db.exec("PRAGMA busy_timeout = 5000");
+// V-O7 (vault plan, accepted for every module): deleted rows are overwritten with zeros, so a purged
+// secret or note does not linger in free pages of the database file (T196).
+db.exec("PRAGMA secure_delete = ON");
 
 runMigrations(db);
 

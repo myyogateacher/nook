@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  canonicalSceneJson, emptyScene, isAllowedLink, jsonDepth, sceneTexts, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_IMAGES_ENABLED,
+  canonicalSceneJson, emptyScene, isAllowedLink, jsonDepth, sceneImageDocumentIds, sceneTexts, sceneWithoutImages, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_IMAGES_ENABLED,
   WHITEBOARD_MAX_ELEMENTS, WHITEBOARD_MAX_POINTS, WHITEBOARD_MAX_POINTS_PER_ELEMENT, WHITEBOARD_MAX_TEXT_CHARS
 } from "../shared/whiteboardScene";
 
@@ -126,15 +126,34 @@ describe("whiteboard scene validator", () => {
     expect(code(scene([rect({ link: "" })]))).toBe("OK");
   });
 
-  test("Wave 23 has no images: image elements and a non-empty files map are IMAGES_NOT_SUPPORTED (review L1)", () => {
+  test("Wave 24 turns images on (D198); { images: false } still refuses them as IMAGES_NOT_SUPPORTED", () => {
     const fileId = "f".repeat(40);
     const image = { ...rect({ id: "img" }), type: "image", fileId, status: "pending", scale: [1, 1], crop: null };
     const nook = { [fileId]: { id: fileId, mimeType: "image/png", nookDocumentId: "123e4567-e89b-42d3-a456-426614174000" } };
-    expect(WHITEBOARD_IMAGES_ENABLED).toBe(false);
-    expect(code(scene([image], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
-    expect(code(scene([], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
-    expect(code(scene([image], { files: {} }))).toBe("IMAGES_NOT_SUPPORTED");
-    expect(code(scene([rect()], { files: {} }))).toBe("OK");
+    expect(WHITEBOARD_IMAGES_ENABLED).toBe(true);
+    expect(code(scene([image], { files: nook }))).toBe("OK");
+    const off = (input: unknown) => { const result = validateScene(input, { images: false }); return result.ok ? "OK" : result.code; };
+    expect(off(scene([image], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
+    expect(off(scene([], { files: nook }))).toBe("IMAGES_NOT_SUPPORTED");
+    expect(off(scene([rect()], { files: {} }))).toBe("OK");
+  });
+
+  test("only files a live image uses are kept; a duplicate can leave out images by document (T165)", () => {
+    const a = "a".repeat(20), b = "b".repeat(20), c = "c".repeat(20);
+    const doc = (n: number) => `123e4567-e89b-42d3-a456-42661417400${n}`;
+    const files = Object.fromEntries([[a, 1], [b, 2], [c, 3]].map(([id, n]) => [id, { id, mimeType: "image/png", nookDocumentId: doc(n as number) }]));
+    const image = (id: string, fileId: string, extra: Record<string, unknown> = {}) => ({ ...rect({ id }), type: "image", fileId, ...extra });
+    const result = validateScene(scene([image("i1", a), image("i2", b, { isDeleted: true }), rect({ id: "r1" })], { files }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Object.keys(result.scene.files)).toEqual([a]);
+    expect([...sceneImageDocumentIds(result.scene)]).toEqual([doc(1)]);
+    const both = validateScene(scene([image("i1", a), image("i3", c), rect({ id: "r2" })], { files }));
+    if (!both.ok) throw new Error("expected ok");
+    const without = sceneWithoutImages(both.scene, new Set([doc(3)]));
+    expect(without.elements.map((item) => item.id)).toEqual(["i1", "r2"]);
+    expect(Object.keys(without.files)).toEqual([a]);
+    expect(sceneWithoutImages(both.scene, new Set())).toBe(both.scene);
   });
 
   test("with images on (Wave 24): dataURL is refused; images must refer to a listed Nook file", () => {

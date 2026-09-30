@@ -4,7 +4,11 @@ import type { AppEnv } from "../auth";
 import { REVALIDATE_CACHE } from "../documents";
 import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
-import { createWhiteboard, listWhiteboardsPage, previousVersion, restorePreviousVersion, WHITEBOARD_SORTS, type WhiteboardSort, putThumbnail, readThumbnail, readWhiteboard, saveScene, THUMBNAIL_MAX_BYTES, WhiteboardError } from "./service";
+import {
+  createWhiteboard, duplicateWhiteboard, listSnapshots, listWhiteboardsPage, previousVersion, putThumbnail, readableWhiteboard, readSnapshot, readThumbnail, readWhiteboard,
+  restorePreviousVersion, restoreSnapshot, saveScene, THUMBNAIL_MAX_BYTES, WHITEBOARD_SORTS, WhiteboardError, type WhiteboardSort
+} from "./service";
+import { importWhiteboard, WHITEBOARD_IMPORT_MAX_BYTES } from "./import";
 
 /**
  * docs/plan/API_CONTRACTS.md § Whiteboards (whiteboard plan §8). Every route needs a session;
@@ -45,6 +49,12 @@ async function readJson(c: Context<AppEnv>, limit: number, tooLargeCode: string)
 const idParam = (c: Context<AppEnv>) => {
   const parsed = uuid.safeParse(c.req.param("id")?.toLowerCase());
   if (!parsed.success) throw new WhiteboardError(404, "NOT_FOUND", "Whiteboard not found");
+  return parsed.data;
+};
+
+const snapshotParam = (c: Context<AppEnv>) => {
+  const parsed = uuid.safeParse(c.req.param("snapshotId")?.toLowerCase());
+  if (!parsed.success) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no such version");
   return parsed.data;
 };
 
@@ -116,6 +126,70 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
       const parsed = z.object({ baseRevision: z.number().int().min(1) }).strict().safeParse(await readJson(c, 1024, "INVALID"));
       if (!parsed.success) throw new WhiteboardError(400, "INVALID", "Send baseRevision");
       return c.json(await restorePreviousVersion(id, c.get("user").id, parsed.data.baseRevision));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // D207: the History sheet. The owner's only; anyone else gets 404 like a missing board.
+  app.get("/api/whiteboards/:id/snapshots", async (c) => {
+    try {
+      return c.json(await listSnapshots(idParam(c), c.get("user").id));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  app.get("/api/whiteboards/:id/snapshots/:snapshotId", async (c) => {
+    try {
+      return c.json(await readSnapshot(idParam(c), c.get("user").id, snapshotParam(c)));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  app.post("/api/whiteboards/:id/snapshots/:snapshotId/restore", async (c) => {
+    try {
+      const id = idParam(c);
+      const snapshotId = snapshotParam(c);
+      const parsed = z.object({ baseRevision: z.number().int().min(1) }).strict().safeParse(await readJson(c, 1024, "INVALID"));
+      if (!parsed.success) throw new WhiteboardError(400, "INVALID", "Send baseRevision");
+      return c.json(await restoreSnapshot(id, c.get("user").id, snapshotId, parsed.data.baseRevision));
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // A copy owned by the caller (any reader who writes), from the board or, for its owner, a snapshot.
+  app.post("/api/whiteboards/:id/duplicate", async (c) => {
+    try {
+      const id = idParam(c);
+      const parsed = z.object({ folderId: uuid.nullish(), snapshotId: uuid.nullish() }).strict().safeParse(await readJson(c, 1024, "INVALID"));
+      if (!parsed.success) throw new WhiteboardError(400, "INVALID", "Send folderId or snapshotId, or nothing");
+      return c.json(await duplicateWhiteboard(id, c.get("user").id, { folderId: parsed.data.folderId ?? null, snapshotId: parsed.data.snapshotId ?? null }), 201);
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // Import `.excalidraw`: the parsed file, through the same validator as a save; embedded images become Files.
+  app.post("/api/whiteboards/import", async (c) => {
+    try {
+      const body = await readJson(c, WHITEBOARD_IMPORT_MAX_BYTES, "IMPORT_TOO_LARGE");
+      const parsed = z.object({ name: z.string().max(1024), folderId: uuid.nullish(), file: z.unknown() }).strict().safeParse(body);
+      if (!parsed.success) throw new WhiteboardError(400, "INVALID_SCENE", "Send name and file");
+      return c.json(await importWhiteboard(c.get("user").id, { name: parsed.data.name, folderId: parsed.data.folderId ?? null, file: parsed.data.file }), 201);
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // The embed card in notes (D208): only what the card shows, for readers; 404 for anyone else (D73).
+  app.get("/api/whiteboards/:id/summary", (c) => {
+    try {
+      const board = readableWhiteboard(idParam(c), c.get("user").id);
+      if (!board) throw new WhiteboardError(404, "NOT_FOUND", "Whiteboard not found");
+      return c.json({ whiteboard: { id: board.id, name: board.name, updated_at: board.updated_at, hasThumbnail: board.hasThumbnail, thumbRevision: board.thumbRevision, elementCount: board.elementCount, owner_name: board.owner_name, is_owner: board.is_owner } });
     } catch (error) {
       return fail(c, error);
     }

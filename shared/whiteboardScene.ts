@@ -35,10 +35,11 @@ export const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/
 export type SceneErrorCode = "INVALID_SCENE" | "TOO_MANY_ELEMENTS" | "UNSUPPORTED_ELEMENT" | "TOO_MANY_POINTS" | "INVALID_LINK" | "DATA_URL_NOT_ALLOWED" | "IMAGES_NOT_SUPPORTED";
 
 /**
- * Wave 23 has no images (review L1): image elements and a non-empty `files` map are refused with
- * IMAGES_NOT_SUPPORTED. Wave 24 turns this on (D198); the image rules below already hold.
+ * Images (Wave 24, D198): an image element refers to a `files` entry that is only a reference to a
+ * Nook document (`{ id, mimeType, nookDocumentId }`, never a dataURL). Callers may still pass
+ * `{ images: false }` to refuse them (IMAGES_NOT_SUPPORTED).
  */
-export const WHITEBOARD_IMAGES_ENABLED = false;
+export const WHITEBOARD_IMAGES_ENABLED = true;
 export type SceneOptions = { images?: boolean };
 
 /**
@@ -321,7 +322,12 @@ export function validateScene(input: unknown, options: SceneOptions = {}): Scene
       if (ids.has(item.id)) throw invalid("Element ids must be unique");
       ids.add(item.id);
     }
-    const scene: CanonicalScene = { type: "excalidraw", version: 2, source: "nook", elements, appState: appState(input.appState), files };
+    // Only files a live image element uses are kept (a deleted image's entry is dropped), so the
+    // stored references are exactly what the board shows (D198).
+    const used = new Set(elements.flatMap((item) => item.type === "image" && typeof item.fileId === "string" ? [item.fileId] : []));
+    const kept: Record<string, SceneFile> = {};
+    for (const key of Object.keys(files).sort()) if (used.has(key)) kept[key] = files[key]!;
+    const scene: CanonicalScene = { type: "excalidraw", version: 2, source: "nook", elements, appState: appState(input.appState), files: kept };
     return { ok: true, scene, stats: { elementCount: elements.length, textBytes: tally.textBytes, pointCount: tally.points } };
   } catch (error) {
     if (error instanceof SceneError) return { ok: false, code: error.code, message: error.message };
@@ -357,6 +363,22 @@ export function sceneTexts(scene: CanonicalScene) {
     }
   }
   return { texts, frameNames: [...frames.values()].filter((name): name is string => Boolean(name)) };
+}
+
+/** The Nook documents a scene's images refer to (D198). */
+export const sceneImageDocumentIds = (scene: Pick<CanonicalScene, "files">) => new Set(Object.values(scene.files).map((file) => file.nookDocumentId));
+
+/**
+ * The scene without the images that refer to `documentIds` (their elements and files entries):
+ * a duplicate keeps only the images its new owner can open (whiteboard plan §8, T165).
+ */
+export function sceneWithoutImages(scene: CanonicalScene, documentIds: ReadonlySet<string>): CanonicalScene {
+  if (documentIds.size === 0) return scene;
+  const dropped = new Set(Object.values(scene.files).filter((file) => documentIds.has(file.nookDocumentId)).map((file) => file.id));
+  if (dropped.size === 0) return scene;
+  const elements = scene.elements.filter((item) => !(item.type === "image" && typeof item.fileId === "string" && dropped.has(item.fileId)));
+  const files = Object.fromEntries(Object.entries(scene.files).filter(([key]) => !dropped.has(key)));
+  return { ...scene, elements, files };
 }
 
 /** Board names are stored with the `.excalidraw` suffix (D192); the UI shows them without it. */

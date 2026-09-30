@@ -65,6 +65,9 @@ function elementSummaries(scene: CanonicalScene) {
       id: item.id, type: item.type, x: round(item.x), y: round(item.y), width: round(item.width), height: round(item.height),
       ...(item.type === "text" && typeof item.text === "string" ? { text: item.text } : {}),
       ...(typeof item.link === "string" ? { link: item.link } : {}),
+      // D198, T165: an image names the Nook file it shows, never its bytes; reading that file needs
+      // the Files tools and this key's own access to it.
+      ...(item.type === "image" && typeof item.fileId === "string" && scene.files[item.fileId] ? { documentId: scene.files[item.fileId]!.nookDocumentId } : {}),
       ...(from ? { from } : {}), ...(to ? { to } : {}),
       ...(typeof item.frameId === "string" ? { frameId: item.frameId } : {}),
       ...(item.type === "frame" && typeof item.name === "string" ? { name: item.name } : {})
@@ -134,7 +137,7 @@ export const whiteboardTools: McpToolSpec[] = [
   defineTool({
     name: "read_whiteboard",
     title: "Read a whiteboard",
-    description: `Read a whiteboard's text: every text element (wrapped text in full), with the shape it sits in and its frame. With include "elements", also up to ${MCP_WHITEBOARD_ELEMENTS} element summaries (type, position, size, text, link, arrow ends); never raw points or image bytes. The result is capped at 256 KiB and says when it was truncated. ${UNTRUSTED}`,
+    description: `Read a whiteboard's text: every text element (wrapped text in full), with the shape it sits in and its frame. With include "elements", also up to ${MCP_WHITEBOARD_ELEMENTS} element summaries (type, position, size, text, link, arrow ends, and for an image the id of the Nook file it shows); never raw points or image bytes. An image's file can be read only with the Files tools, and only if this key may read that file. The result is capped at 256 KiB and says when it was truncated. ${UNTRUSTED}`,
     scopes: ["whiteboards:read"],
     resource: { arg: "id", kind: "whiteboard" },
     write: false,

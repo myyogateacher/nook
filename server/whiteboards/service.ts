@@ -2,14 +2,14 @@ import { createHash } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import { config } from "../config";
 import { audit, db, ensureDefaultFolder, now } from "../db";
-import { documentSummarySelect, readableDocumentPredicate, type DocumentSummary } from "../documentAccess";
+import { documentSummarySelect, readableDocumentPredicate, readableSinglePredicate, type DocumentSummary } from "../documentAccess";
 import { DocumentIntegrityError, openObjectForRead, removeObject, writeObject } from "../documentStorage";
 import { storedBytes } from "../documents";
 import { withResourceLock } from "../storage";
 import { sanitizeDisplayName } from "../validation";
 import { canWriteContent } from "../team/userRole";
 import {
-  canonicalSceneJson, emptyScene, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_MAX_SCENE_BYTES, WHITEBOARD_MIME,
+  canonicalSceneJson, emptyScene, sceneImageDocumentIds, sceneWithoutImages, validateScene, whiteboardDisplayName, whiteboardFileName, WHITEBOARD_MAX_SCENE_BYTES, WHITEBOARD_MIME,
   type CanonicalScene, type SceneErrorCode
 } from "../../shared/whiteboardScene";
 import { indexWhiteboard } from "./search";
@@ -225,6 +225,36 @@ export function prepareScene(input: unknown) {
   return { scene: result.scene, stats: result.stats, bytes, sha256: sha256(bytes) };
 }
 
+/**
+ * D198, T165: the image references in `scene` that `userId` may NOT place on a board: the document
+ * is missing or being purged, is not a PNG, JPEG, GIF, or WebP image (by the server's own sniff), the
+ * scene's MIME type does not match it, or `userId` can neither read it nor owns it. The owner's own
+ * binned image still counts as theirs (it shows as a placeholder until it is restored). Returns ids.
+ */
+export function unavailableImages(userId: string, scene: Pick<CanonicalScene, "files">): Set<string> {
+  const failing = new Set<string>();
+  const check = db.query(`SELECT d.mime_type FROM documents d WHERE d.id = $documentId AND d.purge_started_at IS NULL AND d.preview_kind = 'image'
+    AND (d.owner_id = $userId OR ${readableSinglePredicate})`);
+  for (const file of Object.values(scene.files)) {
+    const row = check.get({ documentId: file.nookDocumentId, userId }) as { mime_type: string } | null;
+    if (!row || row.mime_type !== file.mimeType) failing.add(file.nookDocumentId);
+  }
+  return failing;
+}
+
+const imagesUnavailable = (documentIds: Iterable<string>) => new WhiteboardError(400, "IMAGE_NOT_AVAILABLE", "An image on this whiteboard is not a file you can open", { documentIds: [...documentIds] });
+
+/** The image references of the scene a board holds now (read only when a new reference fails its check). */
+async function currentImageIds(documentId: string) {
+  try {
+    const { bytes } = await readSceneBytes(documentId);
+    const result = validateScene(JSON.parse(new TextDecoder().decode(bytes)));
+    return result.ok ? sceneImageDocumentIds(result.scene) : new Set<string>();
+  } catch {
+    return new Set<string>();
+  }
+}
+
 async function ensureDiskSpace(bytes: number) {
   const disk = await statfs(config.dataDir);
   if (disk.bavail * disk.bsize < config.minFreeDiskBytes + bytes) throw new WhiteboardError(507, "DISK_FULL", "Storage is full");
@@ -256,7 +286,7 @@ function replay(userId: string, uploadKey: string) {
  * POST /api/whiteboards and MCP create_whiteboard: an empty board in an owned folder (Default when
  * none is given). `uploadKey` makes a retry return the same board.
  */
-export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string } }) {
+export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string }; scene?: CanonicalScene; thumbnail?: { png: Uint8Array; sha256: string } | null; audit?: { action: string; details: Record<string, unknown> } }) {
   const name = whiteboardStoredName(input.name);
   const uploadKey = input.uploadKey ?? null;
   if (uploadKey) {
@@ -266,8 +296,12 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
   charge("create", userId);
   const folderId = input.folderId ?? ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
-  const prepared = prepareScene(emptyScene());
-  checkQuota(userId, prepared.bytes.byteLength);
+  const prepared = prepareScene(input.scene ?? emptyScene());
+  // A copy or an import starts with a scene; every image in it must be one the new owner can open.
+  const unavailable = unavailableImages(userId, prepared.scene);
+  if (unavailable.size) throw imagesUnavailable(unavailable);
+  const thumbBytes = input.thumbnail?.png.byteLength ?? 0;
+  checkQuota(userId, prepared.bytes.byteLength + thumbBytes);
   await ensureDiskSpace(prepared.bytes.byteLength);
   const documentId = crypto.randomUUID();
   const objectId = crypto.randomUUID();
@@ -284,15 +318,16 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
           return;
         }
       }
-      checkQuota(userId, prepared.bytes.byteLength);
+      checkQuota(userId, prepared.bytes.byteLength + thumbBytes);
       const timestamp = now();
       db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, upload_key, purpose, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'none', ?, ?, ?, 'file', ?, ?)`)
         .run(documentId, userId, folderId, name, WHITEBOARD_MIME, prepared.bytes.byteLength, prepared.sha256, uploadKey, timestamp, timestamp);
-      db.query("INSERT INTO whiteboards (document_id, revision, object_id, element_count, text_bytes, created_at, updated_at) VALUES (?, 1, ?, 0, 0, ?, ?)")
-        .run(documentId, objectId, timestamp, timestamp);
+      db.query("INSERT INTO whiteboards (document_id, revision, object_id, element_count, text_bytes, thumb_png, thumb_revision, thumb_sha256, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(documentId, objectId, prepared.stats.elementCount, prepared.stats.textBytes, input.thumbnail?.png ?? null, input.thumbnail ? 1 : null, input.thumbnail?.sha256 ?? null, timestamp, timestamp);
       indexWhiteboard(documentId, name, prepared.scene, prepared.sha256);
-      if (input.via) audit(userId, null, "mcp.whiteboard_create", { via: "mcp", keyId: input.via.keyId, documentId, folderId });
+      if (input.audit) audit(userId, null, input.audit.action, { documentId, folderId, ...input.audit.details });
+      else if (input.via) audit(userId, null, "mcp.whiteboard_create", { via: "mcp", keyId: input.via.keyId, documentId, folderId });
       else audit(userId, null, "whiteboard.create", { documentId, folderId });
     })();
   } catch (error) {
@@ -368,8 +403,12 @@ export type SaveResult = { revision: number; savedAt: string; sha256: string; si
  * quota delta, write a new object, and switch to it in one transaction with the index. The old
  * object is removed after the commit; a crash in between leaves an orphan the sweeper removes.
  */
-/** Safety snapshots kept per board (QA D1–D3 defence in depth); they count toward the quota. */
-export const SAFETY_SNAPSHOTS = 5;
+/** Snapshots kept per board (D207, and the QA D1–D3 safety net); they count toward the quota. */
+export const WHITEBOARD_SNAPSHOT_LIMIT = 20;
+/** Kept for callers of the Wave 23 name. */
+export const SAFETY_SNAPSHOTS = WHITEBOARD_SNAPSHOT_LIMIT;
+/** D207: a save keeps the scene it replaces when the newest snapshot is at least this old (or there is none). */
+export const SNAPSHOT_INTERVAL_MS = 30 * 60_000;
 
 /**
  * Whether a save from `before` to `after` live elements keeps the scene it replaces as a snapshot:
@@ -377,7 +416,14 @@ export const SAFETY_SNAPSHOTS = 5;
  */
 export const keepsSafetySnapshot = (before: number, after: number) => (before > 0 && after === 0) || (before >= 10 && after < before / 2);
 
-export async function saveScene(documentId: string, userId: string, baseRevision: number, input: unknown, options: { keepSnapshot?: boolean } = {}): Promise<SaveResult> {
+/**
+ * D207: the periodic snapshot. A save that supersedes a non-empty scene keeps it when the newest
+ * snapshot is at least 30 minutes old, or when there is none. An empty scene is never worth keeping.
+ */
+export const keepsPeriodicSnapshot = (before: number, newestSnapshotAt: string | null, at: string) =>
+  before > 0 && (newestSnapshotAt === null || Date.parse(at) - Date.parse(newestSnapshotAt) >= SNAPSHOT_INTERVAL_MS);
+
+export async function saveScene(documentId: string, userId: string, baseRevision: number, input: unknown, options: { keepSnapshot?: boolean; carriedImages?: ReadonlySet<string> } = {}): Promise<SaveResult> {
   charge("save", userId);
   const prepared = prepareScene(input);
   return withResourceLock(lockKey(documentId), async () => {
@@ -387,9 +433,20 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     if (board.sha256 === prepared.sha256) {
       return { revision: board.revision, savedAt: now(), sha256: board.sha256, sizeBytes: board.size_bytes, unchanged: true as const };
     }
+    // D198: every image the owner adds must be a file they can open. Images already on the board
+    // (or in the version being restored) are carried as they are: a file deleted or unshared since
+    // shows as a placeholder, and never makes the board unsavable.
+    const unavailable = unavailableImages(userId, prepared.scene);
+    if (unavailable.size) {
+      const carried = new Set([...(options.carriedImages ?? []), ...await currentImageIds(documentId)]);
+      const refused = [...unavailable].filter((id) => !carried.has(id));
+      if (refused.length) throw imagesUnavailable(refused);
+    }
     // A save that empties a board, or drops more than half of a big one, keeps the replaced scene
-    // as a snapshot the owner can restore (the old object stays instead of being removed).
-    const keep = options.keepSnapshot === true || keepsSafetySnapshot(board.element_count, prepared.stats.elementCount);
+    // as a snapshot the owner can restore (the old object stays instead of being removed); so does
+    // the first save 30 minutes after the newest snapshot (D207).
+    const newestAt = (db.query("SELECT MAX(created_at) AS at FROM whiteboard_snapshots WHERE document_id = ?").get(documentId) as { at: string | null }).at;
+    const keep = options.keepSnapshot === true || keepsSafetySnapshot(board.element_count, prepared.stats.elementCount) || keepsPeriodicSnapshot(board.element_count, newestAt, now());
     const delta = prepared.bytes.byteLength - (keep ? 0 : board.size_bytes);
     checkQuota(userId, delta);
     await ensureDiskSpace(prepared.bytes.byteLength);
@@ -413,7 +470,7 @@ export async function saveScene(documentId: string, userId: string, baseRevision
             ON CONFLICT (document_id, revision) DO NOTHING`)
             .run(crypto.randomUUID(), documentId, board.revision, board.object_id, board.size_bytes, board.sha256, savedAt);
           const old = db.query(`SELECT id, object_id FROM whiteboard_snapshots WHERE document_id = ? ORDER BY created_at DESC, revision DESC LIMIT -1 OFFSET ?`)
-            .all(documentId, SAFETY_SNAPSHOTS) as Array<{ id: string; object_id: string }>;
+            .all(documentId, WHITEBOARD_SNAPSHOT_LIMIT) as Array<{ id: string; object_id: string }>;
           for (const row of old) db.query("DELETE FROM whiteboard_snapshots WHERE id = ?").run(row.id);
           dropped = old.map((row) => row.object_id);
           audit(userId, null, "whiteboard.snapshot", { documentId, revision: board.revision, elementsBefore: board.element_count, elementsAfter: prepared.stats.elementCount });
@@ -430,18 +487,25 @@ export async function saveScene(documentId: string, userId: string, baseRevision
   });
 }
 
-/** The newest safety snapshot of an owned board, or null. */
+type SnapshotRow = { id: string; revision: number; object_id: string; size_bytes: number; created_at: string };
+const SNAPSHOT_SELECT = "SELECT id, revision, object_id, size_bytes, created_at FROM whiteboard_snapshots WHERE document_id = ?";
+
+/** The newest snapshot of an owned board, or null. */
 export function newestSnapshot(documentId: string, userId: string) {
   if (!ownedBoard(documentId, userId)) return null;
-  return db.query("SELECT id, revision, object_id, size_bytes, created_at FROM whiteboard_snapshots WHERE document_id = ? ORDER BY created_at DESC, revision DESC LIMIT 1")
-    .get(documentId) as { id: string; revision: number; object_id: string; size_bytes: number; created_at: string } | null;
+  return db.query(`${SNAPSHOT_SELECT} ORDER BY created_at DESC, revision DESC LIMIT 1`).get(documentId) as SnapshotRow | null;
 }
 
-/**
- * POST …/restore-previous: the owner saves the newest snapshot as a NEW revision through the usual
- * CAS (409 on a stale base); the scene it replaces is kept as the newest snapshot, so nothing is lost.
- */
-async function readSnapshotScene(snapshot: { object_id: string; size_bytes: number }): Promise<unknown> {
+/** One snapshot of an owned board, or null (a recipient, a stranger, or another board's id). */
+function ownedSnapshot(documentId: string, userId: string, snapshotId: string) {
+  if (!ownedBoard(documentId, userId)) return null;
+  return db.query(`${SNAPSHOT_SELECT} AND id = ?`).get(documentId, snapshotId) as SnapshotRow | null;
+}
+
+const noSnapshot = () => new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+
+/** A snapshot's scene, validated like any stored scene (T160). Snapshot objects never change. */
+async function readSnapshotScene(snapshot: { object_id: string; size_bytes: number }): Promise<CanonicalScene> {
   const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
   let bytes: Uint8Array;
   try {
@@ -449,7 +513,42 @@ async function readSnapshotScene(snapshot: { object_id: string; size_bytes: numb
   } finally {
     await handle.close();
   }
-  return JSON.parse(new TextDecoder().decode(bytes));
+  const result = validateScene(JSON.parse(new TextDecoder().decode(bytes)));
+  if (!result.ok) throw new Error("Stored whiteboard snapshot failed validation");
+  return result.scene;
+}
+
+/** Shape counts of snapshot objects, which never change once written (bounded, per process). */
+const snapshotCounts = new Map<string, number>();
+async function snapshotElementCount(snapshot: SnapshotRow) {
+  const known = snapshotCounts.get(snapshot.object_id);
+  if (known !== undefined) return known;
+  let count = 0;
+  try {
+    count = (await readSnapshotScene(snapshot)).elements.length;
+  } catch {
+    return null;
+  }
+  if (snapshotCounts.size > 5000) snapshotCounts.clear();
+  snapshotCounts.set(snapshot.object_id, count);
+  return count;
+}
+
+/** GET …/snapshots (D207): the owner's versions, newest first, with their shape counts. */
+export async function listSnapshots(documentId: string, userId: string) {
+  if (!ownedBoard(documentId, userId)) throw notFound();
+  const rows = db.query(`${SNAPSHOT_SELECT} ORDER BY created_at DESC, revision DESC`).all(documentId) as SnapshotRow[];
+  const snapshots = [];
+  for (const row of rows) snapshots.push({ id: row.id, revision: row.revision, createdAt: row.created_at, sizeBytes: row.size_bytes, elementCount: await snapshotElementCount(row) });
+  return { snapshots };
+}
+
+/** GET …/snapshots/:snapshotId: one version's scene, for its preview (the owner's only). */
+export async function readSnapshot(documentId: string, userId: string, snapshotId: string) {
+  const snapshot = ownedSnapshot(documentId, userId, snapshotId);
+  if (!snapshot) throw noSnapshot();
+  const scene = await readSnapshotScene(snapshot);
+  return { snapshot: { id: snapshot.id, revision: snapshot.revision, createdAt: snapshot.created_at, sizeBytes: snapshot.size_bytes, elementCount: scene.elements.length }, scene };
 }
 
 /**
@@ -458,20 +557,73 @@ async function readSnapshotScene(snapshot: { object_id: string; size_bytes: numb
  */
 export async function previousVersion(documentId: string, userId: string) {
   const snapshot = newestSnapshot(documentId, userId);
-  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+  if (!snapshot) throw noSnapshot();
   const scene = await readSnapshotScene(snapshot);
-  const elements = scene && typeof scene === "object" && Array.isArray((scene as { elements?: unknown }).elements) ? (scene as { elements: Array<{ isDeleted?: unknown }> }).elements : [];
-  return { revision: snapshot.revision, createdAt: snapshot.created_at, elementCount: elements.filter((element) => element?.isDeleted !== true).length };
+  return { id: snapshot.id, revision: snapshot.revision, createdAt: snapshot.created_at, elementCount: scene.elements.length };
 }
 
-export async function restorePreviousVersion(documentId: string, userId: string, baseRevision: number) {
-  const snapshot = newestSnapshot(documentId, userId);
-  if (!snapshot) throw new WhiteboardError(404, "NO_SNAPSHOT", "There is no earlier version to restore");
+/**
+ * POST …/snapshots/:snapshotId/restore (D207): the owner saves a snapshot as a NEW revision through
+ * the usual CAS (409 on a stale base). What is on the board now is kept as the newest snapshot, so a
+ * restore can itself be undone the same way; the version's own images are carried as they are.
+ */
+export async function restoreSnapshot(documentId: string, userId: string, snapshotId: string | null, baseRevision: number) {
+  const snapshot = snapshotId === null ? newestSnapshot(documentId, userId) : ownedSnapshot(documentId, userId, snapshotId);
+  if (!snapshot) throw noSnapshot();
   const scene = await readSnapshotScene(snapshot);
-  // What is on the board now is kept too, so a restore can itself be undone the same way.
-  const saved = await saveScene(documentId, userId, baseRevision, scene, { keepSnapshot: true });
+  const saved = await saveScene(documentId, userId, baseRevision, scene, { keepSnapshot: true, carriedImages: sceneImageDocumentIds(scene) });
   audit(userId, null, "whiteboard.restore_snapshot", { documentId, fromRevision: snapshot.revision, revision: saved.revision });
-  return { ...saved, restoredFrom: { revision: snapshot.revision, createdAt: snapshot.created_at } };
+  return { ...saved, restoredFrom: { id: snapshot.id, revision: snapshot.revision, createdAt: snapshot.created_at } };
+}
+
+/** POST …/restore-previous (Wave 23): the newest snapshot, the first entry of the History sheet. */
+export const restorePreviousVersion = (documentId: string, userId: string, baseRevision: number) => restoreSnapshot(documentId, userId, null, baseRevision);
+
+/** "Name (copy)", then "Name (copy 2)", "Name (copy 3)"… among `userId`'s live boards in the folder. */
+export function copyName(userId: string, folderId: string, sourceName: string) {
+  const base = whiteboardDisplayName(sourceName).replace(/ \(copy(?: \d+)?\)$/, "");
+  const taken = new Set((db.query(`SELECT d.name FROM documents d JOIN whiteboards w ON w.document_id = d.id
+    WHERE d.owner_id = ? AND d.folder_id = ? AND d.deleted_at IS NULL`).all(userId, folderId) as Array<{ name: string }>).map((row) => whiteboardDisplayName(row.name).toLowerCase()));
+  const trimmed = [...base].slice(0, WHITEBOARD_NAME_MAX - 12).join("");
+  for (let index = 1; index < 1000; index += 1) {
+    const candidate = `${trimmed} (copy${index === 1 ? "" : ` ${index}`})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${trimmed} (copy ${Date.now()})`;
+}
+
+/**
+ * POST …/duplicate (whiteboard plan §8, D195): a new private board owned by the caller, from the
+ * board as it is saved now or, for its owner, from one of its snapshots. Images the caller cannot
+ * open are left out (T165), and the thumbnail is copied only when nothing was left out.
+ */
+export async function duplicateWhiteboard(documentId: string, userId: string, input: { folderId?: string | null; snapshotId?: string | null } = {}) {
+  const source = readableWhiteboard(documentId, userId);
+  if (!source) throw notFound();
+  let scene: CanonicalScene;
+  let fromRevision = source.revision;
+  if (input.snapshotId) {
+    const snapshot = ownedSnapshot(documentId, userId, input.snapshotId);
+    if (!snapshot) throw noSnapshot();
+    scene = await readSnapshotScene(snapshot);
+    fromRevision = snapshot.revision;
+  } else {
+    scene = (await readWhiteboard(documentId, userId)).scene;
+  }
+  const unavailable = unavailableImages(userId, scene);
+  const copy = sceneWithoutImages(scene, unavailable);
+  const ownsSourceFolder = source.is_owner === 1 && source.folder_id !== null && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(source.folder_id, userId));
+  const folderId = input.folderId ?? (ownsSourceFolder ? source.folder_id! : ensureDefaultFolder(userId));
+  if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
+  const thumb = !input.snapshotId && unavailable.size === 0
+    ? db.query("SELECT thumb_png, thumb_sha256 FROM whiteboards WHERE document_id = ? AND thumb_png IS NOT NULL").get(documentId) as { thumb_png: Uint8Array; thumb_sha256: string } | null
+    : null;
+  const { whiteboard } = await createWhiteboard(userId, {
+    name: copyName(userId, folderId, source.name), folderId, scene: copy,
+    thumbnail: thumb ? { png: thumb.thumb_png, sha256: thumb.thumb_sha256 } : null,
+    audit: { action: "whiteboard.duplicate", details: { sourceId: documentId, fromRevision, imagesLeftOut: unavailable.size } }
+  });
+  return { whiteboard, imagesLeftOut: copy === scene ? 0 : Object.keys(scene.files).length - Object.keys(copy.files).length };
 }
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];

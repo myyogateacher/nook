@@ -511,8 +511,8 @@ export function readThumbnail(documentId: string, userId: string) {
 }
 
 /** The newest boards `userId` can read, for Today's `whiteboardsRecent` (titles and times only). */
-export function recentWhiteboards(userId: string, limit: number) {
-  return listWhiteboards(userId, "all", { limit });
+export function recentWhiteboards(userId: string, limit: number, ids?: readonly string[]) {
+  return listWhiteboards(userId, "all", { limit, ...(ids ? { ids } : {}) });
 }
 
 /**

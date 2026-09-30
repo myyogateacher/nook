@@ -281,6 +281,11 @@ export type QueryInput = {
   /** IANA zone for today, week, and overdue; validated by the caller. */
   tz: string;
   now?: Date;
+  /**
+   * Wave 34: an API key limited to chosen boards. Only cards on these boards match (before the
+   * page cut and the total), and `refs` names only these boards and their columns and tags.
+   */
+  boardIds?: readonly string[];
 };
 
 export type QueryResult = { query: string; cards: QueriedCard[]; nextCursor: string | null; total?: number; refs?: QueryRefs };
@@ -373,6 +378,8 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
   const parts: KeyPart[] = [...GROUP_PARTS[group], ...sortParts, { sql: "k.id", desc: sortParts[sortParts.length - 1]!.desc }];
   const key = cursorKey([canonical, sort, group, ...(dependsOnToday(query, group) ? [input.tz, today] : [])]);
   const params: Record<string, Binding> = { ...compiled.params, today, weekEnd: addQueryDays(today, 6) };
+  const boardScope = input.boardIds ? "k.board_id IN (SELECT value FROM json_each($keyBoards))" : "1";
+  if (input.boardIds) params.keyBoards = JSON.stringify(input.boardIds);
   let after = "1";
   if (input.cursor) {
     const values = decodeCursor(input.cursor, userId, key, parts.length);
@@ -383,7 +390,7 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
     after = keysetAfter(parts, names);
   }
   const from = `FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id
-    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where})`;
+    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${boardScope}`;
   const rows = db.query(`SELECT k.id, k.board_id, b.name AS board_name, k.column_id, col.name AS column_name, ${COLUMN_STATE} AS column_state, col.is_done,
       k.position, k.title, k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
       k.due_on, k.due_time, k.due_tz, k.created_at, k.updated_at, k.parent_card_id, k.level,
@@ -392,7 +399,7 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
       (SELECT s.name FROM board_sprints s WHERE s.board_id = k.board_id AND s.id = ${EFFECTIVE_SPRINT_SQL}) AS sprint_name,
       ${parts.map((part, index) => `${part.sql} AS sk${index}`).join(", ")}
     FROM cards k JOIN boards b ON b.id = k.board_id JOIN board_columns col ON col.id = k.column_id LEFT JOIN users cu ON cu.id = k.created_by
-    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${after}
+    WHERE k.deleted_at IS NULL AND ${readableBoardPredicate} AND (${compiled.where}) AND ${boardScope} AND ${after}
     ORDER BY ${parts.map((part) => `${part.sql} ${part.desc ? "DESC" : "ASC"}`).join(", ")}
     LIMIT $pageLimit`).all({ ...params, pageLimit: limit + 1 }) as Array<Record<string, unknown>>;
 
@@ -401,9 +408,9 @@ export function runQuery(userId: string, query: TaskQuery, input: Omit<QueryInpu
   const nextCursor = rows.length > limit && last ? encodeCursor(userId, key, parts.map((_, index) => last[`sk${index}`] as Binding)) : null;
   const result: QueryResult = { query: canonical, cards: withCardDetails(page), nextCursor };
   if (!input.cursor) {
-    const counted = (db.query(`SELECT COUNT(*) AS count FROM (SELECT 1 ${from} LIMIT $cap)`).get({ ...compiled.params, cap: QUERY_TOTAL_CAP + 1 }) as { count: number }).count;
+    const counted = (db.query(`SELECT COUNT(*) AS count FROM (SELECT 1 ${from} LIMIT $cap)`).get({ ...compiled.params, ...(input.boardIds ? { keyBoards: params.keyBoards! } : {}), cap: QUERY_TOTAL_CAP + 1 }) as { count: number }).count;
     if (counted <= QUERY_TOTAL_CAP) result.total = counted;
-    result.refs = resolveRefs(userId, query, result.cards);
+    result.refs = resolveRefs(userId, query, result.cards, input.boardIds);
   }
   return result;
 }
@@ -466,7 +473,9 @@ function withCardDetails(rows: Array<Record<string, unknown>>): QueriedCard[] {
  * for themselves, a creator or assignee of a card on this page, or a reader of a board they can
  * read; any other user id is `unknown`, so `creator:<uuid>` is no directory lookup.
  */
-export function resolveRefs(userId: string, query: TaskQuery, pageCards: readonly Pick<QueriedCard, "created_by" | "assignees">[] = []): QueryRefs {
+export function resolveRefs(userId: string, query: TaskQuery, pageCards: readonly Pick<QueriedCard, "created_by" | "assignees">[] = [], keyBoards?: readonly string[]): QueryRefs {
+  // A key limited to chosen boards (Wave 34) sees names only on those boards; others are restricted.
+  const inKey = (boardId: string) => !keyBoards || keyBoards.includes(boardId);
   const valuesOf = (...keys: FilterTerm["key"][]) => [...new Set(query.terms.filter((term) => keys.includes(term.key)).flatMap((term) => term.values))];
   const uuids = (values: string[]) => values.filter((value) => /^[0-9a-f-]{36}$/.test(value));
   const boardIds = uuids(valuesOf("board"));
@@ -491,10 +500,11 @@ export function resolveRefs(userId: string, query: TaskQuery, pageCards: readonl
           OR (b.visibility = 'selected' AND (EXISTS (SELECT 1 FROM board_members bm WHERE bm.board_id = b.id AND bm.user_id = u.id)
             OR ${groupGrantExists("board", "b.id", "u.id")})))))`)
     .all({ ids: JSON.stringify(userIds), userId, directory: directory ? 1 : 0, onPage: JSON.stringify(onPage) }) as Array<{ id: string; display_name: string }>).map((row) => [row.id, row]));
+  const keep = <T extends { board_id: string }>(row: T | undefined) => row && inKey(row.board_id) ? row : undefined;
   return {
-    boards: boardIds.map((id) => readableBoards.get(id) ?? { id, restricted: true as const }),
-    columns: columnIds.map((id) => readableColumns.get(id) ?? { id, restricted: true as const }),
-    tags: tagIds.map((id) => readableTags.get(id) ?? { id, restricted: true as const }),
+    boards: boardIds.map((id) => (inKey(id) ? readableBoards.get(id) : undefined) ?? { id, restricted: true as const }),
+    columns: columnIds.map((id) => keep(readableColumns.get(id)) ?? { id, restricted: true as const }),
+    tags: tagIds.map((id) => keep(readableTags.get(id)) ?? { id, restricted: true as const }),
     users: userIds.map((id) => users.get(id) ?? { id, unknown: true as const })
   };
 }

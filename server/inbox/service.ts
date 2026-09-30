@@ -1,7 +1,8 @@
 import { audit, db, now, withProposalAuditContext } from "../db";
 import { emitNotifications } from "../calendar/reminders";
+import { anchorsOf, keyReach, reachCovers, type ItemKind } from "../keyResources";
+import type { ScopeReach } from "../keyGrants";
 import { consumeMcpLimits } from "../mcpRateLimit";
-import { hasScope } from "../mcpScopes";
 import { McpToolError, type McpErrorCode, type McpKeyContext } from "../mcpToolKit";
 import { canWriteContent } from "../team/userRole";
 import { DraftActionError, rejectAgentDraft, type RejectDraftOutcome } from "../noteDrafts";
@@ -75,7 +76,11 @@ const pendingCount = db.query("SELECT COUNT(*) AS count FROM (SELECT 1 FROM prop
 export async function submitProposal(key: McpKeyContext, item: SubmitItem, timestamp = new Date(), open: OpenRun | null = null): Promise<{ proposalId: string; status: "pending"; expiresAt: string }> {
   if (!isProposalKind(item.kind)) throw new McpToolError("INVALID", "Unknown proposal kind");
   const kind = PROPOSAL_KIND_DEFS[item.kind];
-  if (!hasScope(key.scopes, kind.scope)) throw new McpToolError("SCOPE_REQUIRED", `This API key needs the ${kind.scope} scope to suggest ${item.kind} changes`);
+  // The kind's module scope, over every item or chosen ones (Wave 34): a key limited to chosen
+  // boards may suggest changes only on those boards (access plan §K, T203).
+  const reach = keyReach(key, kind.scope);
+  if (reach === null) throw new McpToolError("SCOPE_REQUIRED", `This API key needs the ${kind.scope} scope to suggest ${item.kind} changes`);
+  if (reach !== "all" && item.kind === "note_draft") checkNoteDraftReach(reach, item.payload);
   if (!canWriteContent(key.userId)) throw new McpToolError("READ_ONLY", "Your team role is read-only");
   if (open) checkRunKind(open, item.kind);
   if ((pendingCount.get(key.userId, PENDING_CEILING) as { count: number }).count >= PENDING_CEILING) {
@@ -94,6 +99,9 @@ export async function submitProposal(key: McpKeyContext, item: SubmitItem, times
     const retryAfter = consumeMcpLimits({ keyId: key.keyId, userId: key.userId }, ["proposal_write"], timestamp.getTime());
     if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many proposals from this key today. Try again later.", { retryAfterSeconds: retryAfter });
     const result = await kind.submit(key, item.payload);
+    // Other kinds validate without side effects, so the target is checked against the key's
+    // chosen items before anything is stored; outside them is the same NOT_FOUND as missing.
+    if (reach !== "all" && item.kind !== "note_draft" && !reachCovers(reach, anchorsOf(result.targetType as ItemKind, result.targetId))) throw new McpToolError("NOT_FOUND", "Not found");
     // Other kinds validate without side effects, so their pins are checked before anything is stored.
     if (open && item.kind !== "note_draft") checkTargetPin(open, result.targetType, result.targetId);
     const outcome = store(key, item.kind, title, rationale, result, timestamp, open);
@@ -105,6 +113,21 @@ export async function submitProposal(key: McpKeyContext, item: SubmitItem, times
 }
 
 type KindSubmitResult = Awaited<ReturnType<typeof PROPOSAL_KIND_DEFS[ProposalKind]["submit"]>>;
+
+/**
+ * A note draft is written as soon as it validates, so a key limited to chosen notes or folders is
+ * checked first: the note must be one of them (or sit in a chosen folder), and a new note needs a
+ * chosen folder (the Default folder is not one unless it was chosen).
+ */
+function checkNoteDraftReach(reach: Exclude<ScopeReach, "all" | null>, payload: unknown) {
+  const data = (payload && typeof payload === "object" ? payload : {}) as { noteId?: unknown; folderId?: unknown };
+  if (typeof data.noteId === "string") {
+    if (!reachCovers(reach, anchorsOf("note", data.noteId))) throw new McpToolError("NOT_FOUND", "Note not found");
+    return;
+  }
+  if (typeof data.folderId !== "string") throw new McpToolError("INVALID", "This API key covers only chosen items: pass folderId");
+  if (!reachCovers(reach, anchorsOf("folder", data.folderId))) throw new McpToolError("NOT_FOUND", "Folder not found");
+}
 
 function store(key: McpKeyContext, kindName: ProposalKind, title: string, rationale: string | null, result: KindSubmitResult, timestamp: Date, open: OpenRun | null) {
   const payload = JSON.stringify(result.payload);

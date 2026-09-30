@@ -114,8 +114,9 @@ describe("/api/keys", () => {
     const theirs = await board(admin, "Private board");
     expect((await createKey(owner, { ...wrong, grants: grants(["tasks", "read", [theirs]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
     expect((await createKey(owner, { ...wrong, grants: grants(["tasks", "read", [crypto.randomUUID()]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
-    // Chosen items exist only for boards, collections, and calendars in Wave 31.
-    expect((await createKey(owner, { ...wrong, grants: grants(["notes", "read", [crypto.randomUUID()]]) })).body.code).toBe("INVALID_GRANT");
+    // Today, Team, and the Bin cover every item; notes take chosen folders and notes since Wave 34.
+    expect((await createKey(owner, { ...wrong, grants: grants(["today", "read", [crypto.randomUUID()]]) })).body.code).toBe("INVALID_GRANT");
+    expect((await createKey(owner, { ...wrong, grants: grants(["notes", "read", [crypto.randomUUID()]]) })).body.code).toBe("RESOURCE_NOT_FOUND");
     expect((await createKey(owner, { ...wrong, grants: grants(["notes", "manage"]) })).status).toBe(400);
     expect((await createKey(owner, { ...wrong, grants: [] })).status).toBe(400);
     // Now the password is checked: 401, and nothing was created.

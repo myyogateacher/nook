@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { readableBoardPredicate } from "./access";
+import { NO_FILTER, type SqlFilter } from "../keyResources";
 
 /**
  * Card search for the relation picker (WAVE_13_TASK_CARD_UX.md D106, T95). Not full-text search:
@@ -18,7 +19,9 @@ export type CardSearchHit = { id: string; board_id: string; board_name: string; 
  * Order: cards on `boardId` first (a hint only; it never widens or narrows the readable set), then
  * titles that start with `q`, then the most recently updated.
  */
-export function searchCards(userId: string, q: string, options: { boardId?: string | null; excludeCardId?: string | null; limit?: number } = {}) {
+/** `keyScope` (Wave 34): an API key limited to chosen boards, over `k.board_id`, applied before the LIMIT. */
+export function searchCards(userId: string, q: string, options: { boardId?: string | null; excludeCardId?: string | null; limit?: number; keyScope?: SqlFilter } = {}) {
+  const keyScope = options.keyScope ?? NO_FILTER;
   const limit = options.limit ?? CARD_SEARCH_LIMIT_MAX;
   const rows = db.query(`
     SELECT k.id, k.board_id, b.name AS board_name, k.title, c.name AS column_name, c.is_done
@@ -26,9 +29,10 @@ export function searchCards(userId: string, q: string, options: { boardId?: stri
     WHERE k.deleted_at IS NULL AND ${readableBoardPredicate}
       AND instr(lower(k.title), lower($q)) > 0
       AND ($excludeCardId IS NULL OR k.id <> $excludeCardId)
+      AND ${keyScope.sql}
     ORDER BY CASE WHEN k.board_id = $boardId THEN 0 ELSE 1 END, CASE WHEN instr(lower(k.title), lower($q)) = 1 THEN 0 ELSE 1 END,
              k.updated_at DESC, k.id
-    LIMIT $limit`).all({ userId, q, boardId: options.boardId ?? null, excludeCardId: options.excludeCardId ?? null, limit: limit + 1 }) as CardSearchHit[];
+    LIMIT $limit`).all({ ...keyScope.params, userId, q, boardId: options.boardId ?? null, excludeCardId: options.excludeCardId ?? null, limit: limit + 1 }) as CardSearchHit[];
   return { results: rows.slice(0, limit), truncated: rows.length > limit };
 }
 

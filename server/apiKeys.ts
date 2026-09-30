@@ -4,10 +4,13 @@ import { audit, db, now } from "./db";
 import { recordAccessEvent, type AccessVia } from "./access/events";
 import { notifyAccess } from "./access/notices";
 import {
-  dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, SCOPE_GRANTS, scopeFor, scopeReach, SELECTOR_KINDS,
+  dedupeGrants, GENERAL_KEY_MODULES, grantKey, grantsToScopes, isNarrowing, permissionsForModule, READ_ONLY_KINDS, RESOURCE_KINDS, SCOPE_GRANTS, scopeFor, SELECTOR_KINDS,
   type Grant, type GrantModule, type KeyKind, type KeyPermission, type KeySurfaces, type ResourceKind
 } from "./keyGrants";
-import { hasScope, type McpScope } from "./mcpScopes";
+import type { McpScope } from "./mcpScopes";
+
+import { readableViewPredicate } from "./tasks/views";
+import { listReadableFolders, readableNotePredicate } from "./access";
 import { MCP_LIMITS } from "./mcpRateLimit";
 import { recoveryCode, totpCode } from "./validation";
 import { activeModules, blockedKeySql, policyBlock, POLICY_BLOCK_MESSAGES, readPolicies, surfaceBlocks, type PolicyBlock, type Policies } from "./team/policies";
@@ -50,9 +53,11 @@ const uuid = z.string().uuid().transform((value) => value.toLowerCase());
 export const grantInput = z.object({
   module: z.enum(GENERAL_KEY_MODULES as [GrantModule, ...GrantModule[]]),
   permission: z.enum(["read", "comment", "write", "draft", "publish", "create"]),
-  /** Omitted or null: every resource in the module. */
-  resourceIds: z.array(uuid).min(1).max(MAX_RESOURCE_IDS).nullish()
-}).strict();
+  /** Omitted or null (with no `resources`): every resource in the module. Ids of the module's main kind (SELECTOR_KINDS[module][0]). */
+  resourceIds: z.array(uuid).min(1).max(MAX_RESOURCE_IDS).nullish(),
+  /** Chosen items of any kind the module offers (Wave 34: notes in folders and single notes, boards and views). */
+  resources: z.array(z.object({ kind: z.enum(RESOURCE_KINDS), id: uuid }).strict()).min(1).max(MAX_RESOURCE_IDS).nullish()
+}).strict().refine((value) => !(value.resourceIds && value.resources), "Send resourceIds or resources, not both");
 export type GrantInput = z.infer<typeof grantInput>;
 
 const reauthFields = {
@@ -99,11 +104,12 @@ type KeyRow = {
   id: string; user_id: string; name: string; description: string | null; key_prefix: string; kind: KeyKind; surfaces: KeySurfaces;
   scopes: string; created_at: string; last_used_at: string | null; expires_at: string | null; revoke_after: string | null; revoked_at: string | null;
   rotated_from: string | null; revoked_by: string | null; revoke_reason: string | null; limits_json: string | null;
+  ip_allowlist: string | null; last_used_mcp_at: string | null; last_used_rest_at: string | null;
   role: Role; disabled_at: string | null;
 };
 
 const keyColumns = `k.id, k.user_id, k.name, k.description, k.key_prefix, k.kind, k.surfaces, k.scopes, k.created_at, k.last_used_at, k.expires_at,
-  k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, u.role, u.disabled_at`;
+  k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, k.ip_allowlist, k.last_used_mcp_at, k.last_used_rest_at, u.role, u.disabled_at`;
 
 const keyById = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`);
 const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
@@ -230,32 +236,6 @@ function notePolicyBlock(row: KeyRow, reason: PolicyBlock, time: number) {
 
 // ------------------------------------------------------------------------------ resources
 
-/** A resource a tool touches (D281), resolved to the container kind grants name in Wave 31. */
-export type ToolResourceArg = "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event" | "whiteboard";
-
-const containerLookups: Record<ToolResourceArg, { kind: ResourceKind; sql: string | null }> = {
-  board: { kind: "board", sql: null },
-  card: { kind: "board", sql: "SELECT board_id AS id FROM cards WHERE id = ?" },
-  column: { kind: "board", sql: "SELECT board_id AS id FROM board_columns WHERE id = ?" },
-  sprint: { kind: "board", sql: "SELECT board_id AS id FROM board_sprints WHERE id = ?" },
-  collection: { kind: "collection", sql: null },
-  row: { kind: "collection", sql: "SELECT collection_id AS id FROM collection_rows WHERE id = ?" },
-  calendar: { kind: "calendar", sql: null },
-  event: { kind: "calendar", sql: "SELECT calendar_id AS id FROM events WHERE id = ?" },
-  // A whiteboard is its own container (Wave 23); only ids of real boards resolve.
-  whiteboard: { kind: "whiteboard", sql: "SELECT document_id AS id FROM whiteboards WHERE document_id = ?" }
-};
-
-export const containerKindOf = (arg: ToolResourceArg) => containerLookups[arg].kind;
-
-/** The container of a tool argument (a card's board, a row's collection, an event's calendar), or null. */
-export function resolveContainer(arg: ToolResourceArg, id: string): { kind: ResourceKind; id: string } | null {
-  const lookup = containerLookups[arg];
-  if (!lookup.sql) return { kind: lookup.kind, id: id.toLowerCase() };
-  const row = db.query(lookup.sql).get(id.toLowerCase()) as { id: string } | null;
-  return row ? { kind: lookup.kind, id: row.id } : null;
-}
-
 /** Whether `userId` can reach a selectable resource now, at a level that fits `permission`. */
 export function resourceReachable(userId: string, kind: ResourceKind, id: string, permission: KeyPermission) {
   const write = permission !== "read";
@@ -267,6 +247,17 @@ export function resourceReachable(userId: string, kind: ResourceKind, id: string
     // Whiteboards: readers read, only the owner writes (D195).
     case "whiteboard": return Boolean(db.query(`SELECT 1 FROM documents d JOIN whiteboards w ON w.document_id = d.id WHERE d.id = $id AND d.purpose = 'file'
       AND ${write ? "d.owner_id = $userId AND d.deleted_at IS NULL" : readableDocumentPredicate}`).get({ id, userId }));
+    // Wave 34. Note and file writes through a key are the owner's (MCP note tools stay owner-only),
+    // so a writing grant may name only the holder's own folders, notes, and files.
+    case "folder": return write
+      ? Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(id, userId))
+      : listReadableFolders(userId).some((folder) => folder.id === id);
+    case "note": return Boolean(db.query(`SELECT 1 FROM notes n WHERE n.id = $id AND n.deleted_at IS NULL AND ${write ? "n.owner_id = $userId" : readableNotePredicate}`).get({ id, userId }));
+    case "document": return Boolean(db.query(`SELECT 1 FROM documents d WHERE d.id = $id AND d.purpose = 'file'
+      AND ${write ? "d.owner_id = $userId AND d.deleted_at IS NULL" : readableDocumentPredicate}`).get({ id, userId }));
+    case "task_view": return !write && Boolean(db.query(`SELECT 1 FROM task_views v JOIN users u ON u.id = v.owner_id WHERE v.id = $id AND ${readableViewPredicate}`).get({ id, userId }));
+    // Routines are private to their owner.
+    case "routine": return Boolean(db.query("SELECT 1 FROM routines WHERE id = ? AND owner_id = ?").get(id, userId));
     default: return false;
   }
 }
@@ -280,27 +271,14 @@ function resourceName(userId: string, kind: ResourceKind, id: string): string | 
       const name = (db.query(`SELECT d.name FROM documents d JOIN whiteboards w ON w.document_id = d.id WHERE d.id = $id AND d.purpose = 'file' AND ${readableDocumentPredicate}`).get({ id, userId }) as { name: string } | null)?.name;
       return name ? whiteboardDisplayName(name) : null;
     }
+    case "folder": return listReadableFolders(userId).find((folder) => folder.id === id)?.name ?? null;
+    case "note": return (db.query(`SELECT CASE WHEN n.owner_id = $userId THEN n.title ELSE (SELECT v.title FROM note_versions v WHERE v.note_id = n.id AND v.version_number = n.current_version) END AS title
+      FROM notes n WHERE n.id = $id AND n.deleted_at IS NULL AND ${readableNotePredicate}`).get({ id, userId }) as { title: string | null } | null)?.title || (resourceReachable(userId, "note", id, "read") ? "Untitled" : null);
+    case "document": return (db.query(`SELECT d.name FROM documents d WHERE d.id = $id AND d.purpose = 'file' AND ${readableDocumentPredicate}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
+    case "task_view": return (db.query(`SELECT v.name FROM task_views v JOIN users u ON u.id = v.owner_id WHERE v.id = $id AND ${readableViewPredicate}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
+    case "routine": return (db.query("SELECT name FROM routines WHERE id = ? AND owner_id = ?").get(id, userId) as { name: string } | null)?.name ?? null;
     default: return null;
   }
-}
-
-/**
- * How a key reaches the scopes a tool needs (D281): "all" when some grant covers the whole module,
- * a selector (kind and ids) when only resource grants do, or null when it cannot use the tool.
- * `anyOf` needs one scope; `allOf` needs each (alsoRequires, D172).
- */
-export function toolReach(grants: readonly Grant[], held: readonly McpScope[], anyOf: readonly McpScope[], allOf: readonly McpScope[] = []) {
-  const selectors: Array<{ kind: ResourceKind; ids: ReadonlySet<string> }> = [];
-  const reachFor = (scope: McpScope) => hasScope(held, scope) ? scopeReach(grants, scope) : null;
-  const any = anyOf.map(reachFor).filter((reach) => reach !== null);
-  if (!any.length) return null;
-  if (!any.includes("all")) selectors.push(...any.filter((reach) => reach !== "all"));
-  for (const scope of allOf) {
-    const reach = reachFor(scope);
-    if (reach === null) return null;
-    if (reach !== "all") selectors.push(reach);
-  }
-  return { all: selectors.length === 0, selectors };
 }
 
 // ------------------------------------------------------------------------------ creating keys
@@ -310,6 +288,28 @@ export class KeyError extends Error {
     super(message);
     this.name = "KeyError";
   }
+}
+
+/**
+ * The chosen items of one grant input as `{kind, id}` (deduplicated), or null for "every item".
+ * Bare `resourceIds` name the module's main kind; `resources` may name any kind the module offers.
+ */
+export function chosenResources(input: GrantInput): Array<{ kind: ResourceKind; id: string }> | null {
+  if (!input.resourceIds && !input.resources) return null;
+  const kinds = SELECTOR_KINDS[input.module];
+  if (!kinds) throw new KeyError(400, "INVALID_GRANT", `Keys for ${input.module} cover every item`);
+  const items = input.resources ?? input.resourceIds!.map((id) => ({ kind: kinds[0]!, id }));
+  const seen = new Set<string>();
+  const out: Array<{ kind: ResourceKind; id: string }> = [];
+  for (const item of items) {
+    if (!kinds.includes(item.kind)) throw new KeyError(400, "INVALID_GRANT", `Keys for ${input.module} cannot name a ${item.kind.replace("_", " ")}`);
+    if (READ_ONLY_KINDS.includes(item.kind) && input.permission !== "read") throw new KeyError(400, "INVALID_GRANT", "A saved view can only be read through a key");
+    const marker = `${item.kind}:${item.id}`;
+    if (seen.has(marker)) continue;
+    seen.add(marker);
+    out.push({ kind: item.kind, id: item.id });
+  }
+  return out;
 }
 
 /** Grants from the request, validated against the vocabulary, the holder's role, policy, and access (§C.4). */
@@ -323,15 +323,14 @@ export function validateGrants(userId: string, role: Role, inputs: readonly Gran
     const scope = scopeFor(input.module, input.permission)!;
     if (!allowed.includes(scope)) throw new KeyError(403, "SCOPE_NOT_ALLOWED", "Your team role cannot create a key with these permissions");
     if (!modules.includes(input.module)) throw new KeyError(403, "KEY_POLICY", "Team policy does not allow keys for this module for your team role", { module: input.module });
-    if (!input.resourceIds) {
+    const chosen = chosenResources(input);
+    if (!chosen) {
       grants.push({ module: input.module, permission: input.permission, resourceKind: null, resourceId: null });
       continue;
     }
-    const kind = SELECTOR_KINDS[input.module];
-    if (!kind) throw new KeyError(400, "INVALID_GRANT", `Keys for ${input.module} cover every item for now`);
-    resourceCount += input.resourceIds.length;
+    resourceCount += chosen.length;
     if (resourceCount > MAX_RESOURCE_IDS) throw new KeyError(400, "INVALID_GRANT", `A key can name at most ${MAX_RESOURCE_IDS} items`);
-    for (const id of new Set(input.resourceIds)) {
+    for (const { kind, id } of chosen) {
       // Missing and unreadable look the same (T205).
       if (!resourceReachable(userId, kind, id, input.permission)) throw new KeyError(404, "RESOURCE_NOT_FOUND", "One of the chosen items was not found");
       grants.push({ module: input.module, permission: input.permission, resourceKind: kind, resourceId: id });
@@ -350,6 +349,17 @@ export function validateGrants(userId: string, role: Role, inputs: readonly Gran
     }
   }
   return unique;
+}
+
+/**
+ * When a key was used, per surface (Wave 34, migration 033): at most every five minutes per
+ * surface, so a busy key does not write on every call. `last_used_at` stays the latest of both.
+ */
+export function markKeyUsed(keyId: string, surface: "mcp" | "rest", time = Date.now()) {
+  const column = surface === "mcp" ? "last_used_mcp_at" : "last_used_rest_at";
+  const cutoff = new Date(time - 300_000).toISOString();
+  const at = new Date(time).toISOString();
+  db.query(`UPDATE mcp_api_keys SET ${column} = $at, last_used_at = $at WHERE id = $id AND (${column} IS NULL OR ${column} < $cutoff)`).run({ id: keyId, at, cutoff });
 }
 
 export function liveKeyCount(userId: string, time = Date.now()) {
@@ -442,12 +452,9 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
     const candidate: Grant[] = [];
     for (const input of patch.grants) {
       if (!permissionsForModule(input.module).includes(input.permission)) throw new KeyError(400, "INVALID_GRANT", `Keys cannot hold ${input.permission} on ${input.module}`);
-      if (!input.resourceIds) candidate.push({ module: input.module, permission: input.permission, resourceKind: null, resourceId: null });
-      else {
-        const kind = SELECTOR_KINDS[input.module];
-        if (!kind) throw new KeyError(400, "INVALID_GRANT", `Keys for ${input.module} cover every item for now`);
-        for (const id of new Set(input.resourceIds)) candidate.push({ module: input.module, permission: input.permission, resourceKind: kind, resourceId: id });
-      }
+      const chosen = chosenResources(input);
+      if (!chosen) candidate.push({ module: input.module, permission: input.permission, resourceKind: null, resourceId: null });
+      else for (const { kind, id } of chosen) candidate.push({ module: input.module, permission: input.permission, resourceKind: kind, resourceId: id });
     }
     const unique = dedupeGrants(candidate);
     if (!isNarrowing(current, unique)) throw new KeyError(400, "WIDENING_NOT_ALLOWED", "Editing a key can only remove access. Create a new key to add access.");
@@ -634,7 +641,9 @@ export function sweepKeyGraces(nowMs = Date.now()) {
     })();
   }
   flushKeyUsage();
-  const trimmed = db.query("DELETE FROM api_key_usage WHERE day < ?").run(new Date(nowMs - 90 * DAY_MS).toISOString().slice(0, 10)).changes;
+  const cutoffDay = new Date(nowMs - 90 * DAY_MS).toISOString().slice(0, 10);
+  const trimmed = db.query("DELETE FROM api_key_usage WHERE day < ?").run(cutoffDay).changes;
+  db.query("DELETE FROM api_key_surface_usage WHERE day < ?").run(cutoffDay);
   return { gracesEnded: due.length, usageTrimmed: trimmed };
 }
 
@@ -644,10 +653,13 @@ type Usage = { calls: number; writes: number; denied: number };
 const pendingUsage = new Map<string, Usage>();
 let usageTimer: ReturnType<typeof setInterval> | null = null;
 
-/** Counts one call in memory; flushed every minute and before any read (lossy by up to a minute on a crash). */
-export function countKeyUsage(keyId: string, kind: "call" | "write" | "denied") {
+/**
+ * Counts one call in memory, per surface (Wave 34); flushed every minute and before any read
+ * (lossy by up to a minute on a crash). The daily total and the per-surface split are both kept.
+ */
+export function countKeyUsage(keyId: string, kind: "call" | "write" | "denied", surface: "mcp" | "rest" = "mcp") {
   const day = new Date().toISOString().slice(0, 10);
-  const marker = `${keyId}|${day}`;
+  const marker = `${keyId}|${day}|${surface}`;
   const usage = pendingUsage.get(marker) ?? { calls: 0, writes: 0, denied: 0 };
   if (kind === "call") usage.calls += 1;
   else if (kind === "write") usage.writes += 1;
@@ -661,11 +673,14 @@ export function flushKeyUsage() {
   pendingUsage.clear();
   const upsert = db.query(`INSERT INTO api_key_usage (key_id, day, calls, writes, denied) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(key_id, day) DO UPDATE SET calls = calls + excluded.calls, writes = writes + excluded.writes, denied = denied + excluded.denied`);
+  const upsertSurface = db.query(`INSERT INTO api_key_surface_usage (key_id, day, surface, calls, writes, denied) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key_id, day, surface) DO UPDATE SET calls = calls + excluded.calls, writes = writes + excluded.writes, denied = denied + excluded.denied`);
   db.transaction(() => {
     for (const [marker, usage] of entries) {
-      const [keyId, day] = marker.split("|") as [string, string];
+      const [keyId, day, surface] = marker.split("|") as [string, string, "mcp" | "rest"];
       if (!db.query("SELECT 1 FROM mcp_api_keys WHERE id = ?").get(keyId)) continue;
       upsert.run(keyId, day, usage.calls, usage.writes, usage.denied);
+      upsertSurface.run(keyId, day, surface, usage.calls, usage.writes, usage.denied);
     }
   })();
 }
@@ -699,6 +714,18 @@ function usage14d(keyIds: readonly string[]) {
   return result;
 }
 
+/** Admitted calls in the last 14 days per surface, for each key (Wave 34). */
+function surfaceTotals14d(keyIds: readonly string[]) {
+  const since = new Date(Date.now() - 13 * DAY_MS).toISOString().slice(0, 10);
+  const result = new Map<string, { mcp: number; rest: number }>();
+  if (!keyIds.length) return result;
+  const rows = db.query(`SELECT key_id, surface, SUM(calls + writes) AS calls FROM api_key_surface_usage WHERE day >= ? AND key_id IN (${keyIds.map(() => "?").join(",")}) GROUP BY key_id, surface`)
+    .all(since, ...keyIds) as Array<{ key_id: string; surface: "mcp" | "rest"; calls: number }>;
+  for (const id of keyIds) result.set(id, { mcp: 0, rest: 0 });
+  for (const row of rows) result.get(row.key_id)![row.surface] = row.calls;
+  return result;
+}
+
 // ------------------------------------------------------------------------------ listing
 
 export type GrantView = {
@@ -713,6 +740,8 @@ export type ApiKeyView = {
   rotatedFrom: string | null; state: KeyState; blockedBy: PolicyBlock | null; blockedMessage: string | null;
   revokedBy: "self" | "admin" | "rotation" | null; revokeReason: string | null;
   grants: GrantView[]; scopes: McpScope[]; effectiveScopes: McpScope[]; limits: KeyLimits; usage14d: number[];
+  /** Wave 34: last use and 14-day calls per surface. */
+  lastUsed: { mcp: string | null; rest: string | null }; usageBySurface14d: { mcp: number; rest: number };
 };
 
 /**
@@ -727,7 +756,7 @@ function revokedByOf(row: KeyRow, state: KeyState): ApiKeyView["revokedBy"] {
   return row.revoked_at === null || Date.parse(row.revoked_at) >= Date.parse(row.revoke_after) ? "rotation" : "self";
 }
 
-function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usage: number[], viewerIsOwner: boolean): ApiKeyView {
+function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usage: number[], viewerIsOwner: boolean, bySurface: { mcp: number; rest: number } = { mcp: 0, rest: 0 }): ApiKeyView {
   const { state, blockedBy } = keyState(row, policies);
   const modules = activeModules(row.role, policies);
   const effective = effectiveOf(row, grants, policies);
@@ -743,7 +772,8 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
       const name = grant.resourceKind && grant.resourceId && viewerIsOwner ? resourceName(row.user_id, grant.resourceKind, grant.resourceId) : null;
       return { module: grant.module, permission: grant.permission, resource: grant.resourceKind && grant.resourceId ? { kind: grant.resourceKind, id: grant.resourceId, name } : null, active: reason === null, inactiveReason: reason };
     }),
-    scopes: grantsToScopes(grants), effectiveScopes: effective.scopes, limits: parseLimits(row.limits_json), usage14d: usage
+    scopes: grantsToScopes(grants), effectiveScopes: effective.scopes, limits: parseLimits(row.limits_json), usage14d: usage,
+    lastUsed: { mcp: row.last_used_mcp_at, rest: row.last_used_rest_at }, usageBySurface14d: bySurface
   };
 }
 
@@ -754,7 +784,8 @@ export function listApiKeys(userId: string) {
     WHERE k.user_id = ? AND (k.revoked_at IS NULL OR k.revoked_at >= ?) ORDER BY k.revoked_at IS NOT NULL, k.created_at DESC LIMIT 100`).all(userId, since) as KeyRow[];
   const policies = readPolicies();
   const usage = usage14d(rows.map((row) => row.id));
-  const keys = rows.map((row) => present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], true));
+  const bySurface = surfaceTotals14d(rows.map((row) => row.id));
+  const keys = rows.map((row) => present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], true, bySurface.get(row.id)));
   return { keys, policy: { keyMaxDays: policies.keyMaxDays, keyDefaultDays: policies.keyDefaultDays, keyRequireExpiry: policies.keyRequireExpiry, keysPerUser: policies.keysPerUser, modules: activeModules(userRole(userId) ?? "guest", policies), mcpAllowed: policies.mcpRoles.includes((userRole(userId) ?? "guest") as "admin"), restAllowed: policies.restRoles.includes((userRole(userId) ?? "guest") as "admin") }, liveCount: liveKeyCount(userId) };
 }
 
@@ -787,12 +818,16 @@ export function keysReachingItem(ownerId: string, module: GrantModule, resourceK
 export function ownApiKey(userId: string, keyId: string) {
   const row = ownKey(userId, keyId);
   if (!row) return null;
-  return present(row, loadGrants(row.id), readPolicies(), usage14d([row.id]).get(row.id) ?? [], true);
+  return present(row, loadGrants(row.id), readPolicies(), usage14d([row.id]).get(row.id) ?? [], true, surfaceTotals14d([row.id]).get(row.id));
 }
 
 // ------------------------------------------------------------------------------ admin inventory (T215, T218)
 
-export type InventoryFilter = { owner?: string; module?: GrantModule; state?: "active" | "expiring" | "no_expiry" | "blocked" | "grace" | "unused" | "expired"; cursor?: string };
+export type InventoryFilter = {
+  owner?: string; module?: GrantModule; state?: "active" | "expiring" | "no_expiry" | "blocked" | "grace" | "unused" | "expired"; cursor?: string;
+  /** Wave 34: keys that may use this surface (a `both` key matches either). */
+  surface?: "mcp" | "rest";
+};
 
 export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean } };
 
@@ -849,6 +884,10 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
     where += " AND EXISTS (SELECT 1 FROM api_key_grants g WHERE g.key_id = k.id AND g.module = ?)";
     params.push(filter.module);
   }
+  if (filter.surface) {
+    where += " AND k.surfaces IN (?, 'both')";
+    params.push(filter.surface);
+  }
   if (filter.cursor) {
     const [createdAt, id] = filter.cursor.split("|");
     if (createdAt && id) {
@@ -860,8 +899,9 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
     WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string }>;
   const page = rows.slice(0, INVENTORY_PAGE);
   const usage = usage14d(page.map((row) => row.id));
+  const bySurface = surfaceTotals14d(page.map((row) => row.id));
   const keys: InventoryKey[] = page.map((row) => ({
-    ...present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], false),
+    ...present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], false, bySurface.get(row.id)),
     owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null }
   })).map((key) => ({ ...key, grants: key.grants.map((grant) => ({ ...grant, resource: grant.resource ? { kind: grant.resource.kind, id: grant.resource.id, name: null } : null })) }));
   const last = page.at(-1);

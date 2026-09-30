@@ -657,12 +657,13 @@ export const UPCOMING_LIMIT = 10;
  * readable calendars from now through the next `days` local days in `tz`, not yet ended, at most
  * 10 with `more` when there are others. Uses the same predicate and expansion as the range API.
  */
-export function listUpcoming(userId: string, tz: string, days = 7, nowMs = Date.now()) {
+/** `calendarIds` (Wave 34): only these calendars, for an API key limited to chosen calendars. */
+export function listUpcoming(userId: string, tz: string, days = 7, nowMs = Date.now(), calendarIds: string[] | null = null) {
   if (!isValidTimeZone(tz)) throw invalid("Unknown time zone");
   const span = Math.min(100, Math.max(1, Math.floor(days)));
   const today = checked(() => utcToZoned(nowMs, tz).slice(0, 10));
   const range = checked(() => rangeFor(today, addDays(today, span), tz));
-  const live = listOccurrences(userId, range, null).occurrences
+  const live = listOccurrences(userId, range, calendarIds).occurrences
     .filter((item) => item.allDay ? item.end > today : Date.parse(item.end) > nowMs);
   return { items: live.slice(0, UPCOMING_LIMIT), more: live.length > UPCOMING_LIMIT };
 }

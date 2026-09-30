@@ -6,6 +6,7 @@ import { buildFtsQuery, HIT_END, HIT_START, MAX_QUERY_LENGTH, toSegments, type S
 import { searchCollectionRows } from "./collections/search";
 import { searchWhiteboards } from "./whiteboards/search";
 import { uuid } from "./validation";
+import { NO_FILTER, type SqlFilter } from "./keyResources";
 
 /** docs/plan/API_CONTRACTS.md § Search. */
 export type NoteSearchHit = {
@@ -136,7 +137,7 @@ export type PublishedSearchHit = {
  * draft-derived `notes.title`. Snippets carry no markers, so the text is
  * plain. The same live ACL applies before LIMIT.
  */
-const publishedSearch = db.query(`
+const publishedSearchSql = (keyCondition: string) => `
   SELECT n.id, v.title, n.current_version AS version,
          snippet(note_fts, 1, '', '', $ellipsis, $snippetTokens) AS snippet,
          ${folderIdExpression} AS folder_id,
@@ -153,14 +154,23 @@ const publishedSearch = db.query(`
     AND n.deleted_at IS NULL AND n.current_version > 0
     AND ${readableNotePredicate}
     AND ($folderId IS NULL OR ${folderIdExpression} = $folderId)
+    AND ${keyCondition}
   ORDER BY bm25(note_fts, 8.0, 1.0), n.updated_at DESC
   LIMIT $limit
-`);
+`;
+const publishedSearch = db.query(publishedSearchSql("1"));
 
-export function searchPublishedNotes(userId: string, q: string, options: { folderId: string | null; limit: number }) {
+/**
+ * `keyScope` (Wave 34): an API key limited to chosen notes or folders passes its filter over
+ * `n.id` and `n.folder_id`, applied before the LIMIT so results and `truncated` only count them.
+ */
+export function searchPublishedNotes(userId: string, q: string, options: { folderId: string | null; limit: number; keyScope?: SqlFilter }) {
   const query = buildFtsQuery(q);
   if (query === null) return { results: [] as PublishedSearchHit[], truncated: false };
-  const rows = publishedSearch.all({
+  const scope = options.keyScope ?? NO_FILTER;
+  const statement = scope.sql === "1" ? publishedSearch : db.query(publishedSearchSql(scope.sql));
+  const rows = statement.all({
+    ...scope.params,
     userId,
     query,
     folderId: options.folderId,

@@ -6,8 +6,8 @@
  * A grant is `{module, permission, resource?}`. Permissions map one-to-one onto MCP scopes
  * (`scopeFor`), so tool registration keeps working on scopes: a key's scopes are a compatibility
  * view derived from its grants. A NULL resource is "all" (every resource in the module, including
- * future ones). A grant naming resources covers only those resources and, in Wave 31, only the
- * tools that declare which resource they touch (D281); everything else is hidden from it.
+ * future ones). A grant naming resources covers only those resources and what sits directly in
+ * them; every MCP tool declares what it touches (D281, Wave 34) and runTool enforces it.
  */
 import { MCP_SCOPES, normalizeScopes, type McpScope } from "./mcpScopes";
 
@@ -68,12 +68,24 @@ export function permissionsForModule(module: GrantModule): KeyPermission[] {
 export const GENERAL_KEY_MODULES: readonly GrantModule[] = GRANT_MODULES.filter((module) => module !== "vault" && permissionsForModule(module).length > 0);
 
 /**
- * Which resource kinds a module's grants may name in Wave 31 (D281). Tasks, collections, and
- * calendar take their container; whiteboards (Wave 23) take chosen boards (the access plan's
- * `folder` selector for whiteboards waits for Wave 34's list filters); every other module is "all"
- * only until Wave 34.
+ * Which resource kinds a module's grants may name (D281, Wave 34). A grant on a container covers
+ * the items directly inside it (a card's board, a row's collection, an event's calendar, a note's
+ * or file's immediate folder; folders never cascade, D271). The first kind is the module's main
+ * one: a grant input that sends bare `resourceIds` names items of that kind. Task views are read
+ * only (a saved query, never a write target); Today, Team, and the Bin cover every item.
  */
-export const SELECTOR_KINDS: Partial<Record<GrantModule, ResourceKind>> = { tasks: "board", collections: "collection", calendar: "calendar", whiteboards: "whiteboard" };
+export const SELECTOR_KINDS: Partial<Record<GrantModule, readonly ResourceKind[]>> = {
+  notes: ["folder", "note"],
+  files: ["folder", "document"],
+  tasks: ["board", "task_view"],
+  collections: ["collection"],
+  calendar: ["calendar"],
+  inbox: ["routine"],
+  whiteboards: ["whiteboard"]
+};
+
+/** Kinds that can only be named with the read permission (a saved view is never written through a key). */
+export const READ_ONLY_KINDS: readonly ResourceKind[] = ["task_view"];
 
 /** What a permission implies (write ⇒ read, draft ⇒ read, publish ⇒ read, comment ⇒ read). */
 export function permissionImplies(held: KeyPermission, needed: KeyPermission) {
@@ -96,24 +108,45 @@ export const grantsForScopes = (scopes: readonly McpScope[]): Grant[] =>
   normalizeScopes(scopes).map((scope) => ({ ...SCOPE_GRANTS[scope], resourceKind: null, resourceId: null }));
 
 /**
- * What a key holds for one scope: `"all"`, a set of resource ids of one kind, or null (nothing).
- * A write grant on board A gives read on board A too.
+ * What a key holds for one scope: `"all"`, chosen items (ids per kind, possibly of several kinds:
+ * notes in a folder and single notes), or null (nothing). A write grant on board A gives read on
+ * board A too.
  */
-export type ScopeReach = "all" | { kind: ResourceKind; ids: ReadonlySet<string> } | null;
+export type Selection = { kinds: ReadonlyMap<ResourceKind, ReadonlySet<string>> };
+export type ScopeReach = "all" | Selection | null;
 
 export function scopeReach(grants: readonly Grant[], scope: McpScope): ScopeReach {
   const needed = SCOPE_GRANTS[scope];
-  let ids: Set<string> | null = null;
-  let kind: ResourceKind | null = null;
+  let kinds: Map<ResourceKind, Set<string>> | null = null;
   for (const grant of grants) {
     if (grant.module !== needed.module || !permissionImplies(grant.permission, needed.permission)) continue;
     if (grant.resourceKind === null) return "all";
-    if (kind && grant.resourceKind !== kind) continue;
-    kind = grant.resourceKind;
-    ids ??= new Set();
+    kinds ??= new Map();
+    const ids = kinds.get(grant.resourceKind) ?? new Set<string>();
     ids.add(grant.resourceId!);
+    kinds.set(grant.resourceKind, ids);
   }
-  return kind && ids ? { kind, ids } : null;
+  return kinds ? { kinds } : null;
+}
+
+/** Whether a selection names `kind`/`id`. */
+export const selectionHas = (selection: Selection, kind: ResourceKind, id: string) => selection.kinds.get(kind)?.has(id) ?? false;
+
+/** The ids of one kind in a reach; empty for "all" and null, which callers handle first. */
+export const selectionIds = (reach: ScopeReach, kind: ResourceKind): string[] => reach && reach !== "all" ? [...(reach.kinds.get(kind) ?? [])] : [];
+
+/** Items narrowed to chosen ids (null: every item), for whole lists that have no LIMIT to cut. */
+export const onlyChosen = <T extends { id: string }>(items: readonly T[], ids: readonly string[] | null): T[] =>
+  ids === null ? [...items] : items.filter((item) => ids.includes(item.id));
+
+/** The union of two reaches (a tool that any one of several scopes allows). */
+export function unionReach(a: ScopeReach, b: ScopeReach): ScopeReach {
+  if (a === "all" || b === "all") return "all";
+  if (!a) return b;
+  if (!b) return a;
+  const kinds = new Map<ResourceKind, Set<string>>();
+  for (const source of [a, b]) for (const [kind, ids] of source.kinds) kinds.set(kind, new Set([...(kinds.get(kind) ?? []), ...ids]));
+  return { kinds };
 }
 
 /** Whether `grant` covers `needed` on a resource (or on its container). */

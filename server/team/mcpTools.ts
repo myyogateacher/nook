@@ -35,6 +35,7 @@ export const teamTools: McpToolSpec[] = [
     title: "List team members",
     description: "List the accounts on this Nook instance with their display name, team role, and status (active or blocked). Emails are never returned.",
     scopes: ["team:read"],
+    access: { mode: "global" },
     write: false,
     inputSchema: z.object({
       role: z.enum(ROLES).optional().describe("Only members with this team role"),
@@ -52,6 +53,7 @@ export const teamTools: McpToolSpec[] = [
     title: "Get a team member",
     description: "One account's display name, team role, status, and its latest team activity (role changes, blocks, sign-outs). Emails and block reasons are never returned.",
     scopes: ["team:read"],
+    access: { mode: "global", related: ["userId"] },
     write: false,
     inputSchema: z.object({ userId: z.string().uuid() }),
     handler: ({ userId }, key) => {
@@ -76,6 +78,7 @@ export const teamTools: McpToolSpec[] = [
     title: "List team invites",
     description: "List this Nook's invite links with their team role, status (live, used, expired, or revoked), dates, and who created or used them. Tokens, token prefixes, emails, and labels are never returned; invites are created and revoked in the web app only.",
     scopes: ["team:read"],
+    access: { mode: "global" },
     write: false,
     inputSchema: z.object({
       status: z.enum(["live", "all"]).optional().describe("Only live invites, or all (the default: live ones plus the latest 100 others)")

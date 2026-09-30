@@ -158,7 +158,9 @@ describe("foreign items a key may not read (T203)", () => {
     const context = loadLiveKey(keyId)!;
     // Sample arguments for each resource argument, all inside the grants.
     const samples: Record<string, unknown> = {
-      boardId: w.a.boardId, cardId: w.cardA, columnId: w.a.columnId, collectionId: w.collectionX.id, rowId: w.rowX.id, calendarId: w.calendarC, eventId: w.eventC
+      boardId: w.a.boardId, cardId: w.cardA, columnId: w.a.columnId, collectionId: w.collectionX.id, rowId: w.rowX.id, calendarId: w.calendarC, eventId: w.eventC,
+      // Wave 34: the cross-board and cross-calendar reads are offered to chosen-item keys too.
+      query: "a", filter: "", from: new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10), to: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)
     };
     const visible = mcpToolSpecs.filter((spec) => toolVisible(spec, context));
     const reads = visible.filter((spec) => !spec.write);

@@ -1,5 +1,6 @@
 import { readableNotePredicate } from "../access";
 import { purgeAfterFrom } from "../bin";
+import { NO_FILTER, type SqlFilter } from "../keyResources";
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { planInsert, POSITION_STEP, type Positioned } from "../tasks/boardOrder";
@@ -158,8 +159,9 @@ export function collectionDetail(collectionId: string, userId: string) {
   return row ? toDetail(row, userId) : null;
 }
 
-export function listCollections(userId: string): CollectionSummary[] {
-  const rows = db.query(`${summarySelect} WHERE ${readableCollectionPredicate} ORDER BY is_owner DESC, c.name COLLATE NOCASE, c.id LIMIT 500`).all({ userId }) as SummaryRow[];
+/** `keyScope` (Wave 34): an API key limited to chosen collections, over `c.id`, applied before the LIMIT. */
+export function listCollections(userId: string, keyScope: SqlFilter = NO_FILTER): CollectionSummary[] {
+  const rows = db.query(`${summarySelect} WHERE ${readableCollectionPredicate} AND ${keyScope.sql} ORDER BY is_owner DESC, c.name COLLATE NOCASE, c.id LIMIT 500`).all({ ...keyScope.params, userId }) as SummaryRow[];
   // The page's levels in three queries, and the Team role once, not per collection (C10).
   const levels = collectionLevels(rows, userId);
   let canWrite: boolean | undefined;
@@ -938,9 +940,9 @@ export type RecentRow = { rowId: string; collectionId: string; collectionName: s
  * `updated_at`, so the newest `limit` rows lie in the `limit` most recently updated collections;
  * only those are scanned. Titles only, never other values.
  */
-export function listRecentRows(userId: string, limit: number): RecentRow[] {
-  const collections = db.query(`SELECT c.id, c.name, c.schema_json FROM collections c WHERE ${readableCollectionPredicate}
-      ORDER BY c.updated_at DESC, c.id LIMIT $limit`).all({ userId, limit }) as Array<{ id: string; name: string; schema_json: string }>;
+export function listRecentRows(userId: string, limit: number, keyScope: SqlFilter = NO_FILTER): RecentRow[] {
+  const collections = db.query(`SELECT c.id, c.name, c.schema_json FROM collections c WHERE ${readableCollectionPredicate} AND ${keyScope.sql}
+      ORDER BY c.updated_at DESC, c.id LIMIT $limit`).all({ ...keyScope.params, userId, limit }) as Array<{ id: string; name: string; schema_json: string }>;
   if (!collections.length) return [];
   const byId = new Map(collections.map((collection) => [collection.id, { name: collection.name, schema: parseStoredSchema(collection.schema_json) }]));
   const rows = db.query(`SELECT r.id, r.collection_id, r.values_json, r.updated_at, r.updated_via_key_id FROM collection_rows r

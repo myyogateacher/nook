@@ -144,19 +144,6 @@ export function recordPopDepth(ref: { current: number }, poppedDepth: number) {
   return previous;
 }
 
-/**
- * Settings → "Manage team" (Team plan §6.2): opens the gate for this visit, then closes it again when
- * the switch did not happen (Notes kept open by a note that could not be saved), so a later Back or
- * Forward onto /team still follows the toggle. The flag is set first so the render that shows Team
- * already has it; setting it after the switch would let the route gate send the admin Home.
- */
-export async function openTeamViaSettings(setViaSettings: (value: boolean) => void, open: () => Promise<boolean>) {
-  setViaSettings(true);
-  const opened = await open();
-  if (!opened) setViaSettings(false);
-  return opened;
-}
-
 /** The Today sections of modules that are off. */
 export function hiddenTodaySections(disabled: readonly ModuleId[]): string[] {
   return MODULES.filter((module) => disabled.includes(module.id)).flatMap((module) => module.todaySections);

@@ -1,6 +1,9 @@
 /* Settings → Modules (D92) and the hint shown when a hidden module's route is opened. */
 .modules-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .modules-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: #17171a; }
+/* Q5: the row "Turn on in Settings" came for, highlighted briefly. */
+.modules-row { transition: border-color .4s ease, background-color .4s ease, box-shadow .4s ease; }
+.modules-row.highlight { border-color: var(--yellow); background: #262012; box-shadow: 0 0 0 3px rgb(245 207 121 / 18%); }
 .modules-row-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: #29251b; color: var(--yellow); }
 .modules-row.off .modules-row-icon { background: #1f1f23; color: var(--muted); }
 .modules-row-icon svg { width: 18px; }

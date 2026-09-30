@@ -37,13 +37,13 @@ describe("central access on the client", () => {
   test("/team/:userId/access, /team/templates, /team/activity, and /settings/access are real URLs", () => {
     const userId = crypto.randomUUID();
     expect(parseRoute(`/team/${userId.toUpperCase()}/access`)).toEqual({ app: "team", userId, access: true });
-    expect(formatRoute({ app: "team", userId, access: true })).toBe(`/team/${userId}/access`);
+    expect(formatRoute({ app: "team", userId, access: true })).toBe(`/settings/team/members/${userId}/access`);
     expect(parseRoute(`/team/${userId}`)).toEqual({ app: "team", userId });
     expect(parseRoute("/team/not-an-id/access")).toEqual({ app: "team", userId: null });
     expect(parseRoute("/team/templates")).toEqual({ app: "team", userId: null, templates: true });
-    expect(formatRoute({ app: "team", userId: null, templates: true })).toBe("/team/templates");
+    expect(formatRoute({ app: "team", userId: null, templates: true })).toBe("/settings/team/templates");
     expect(parseRoute("/team/activity")).toEqual({ app: "team", userId: null, activity: true });
-    expect(formatRoute({ app: "team", userId: null, activity: true })).toBe("/team/activity");
+    expect(formatRoute({ app: "team", userId: null, activity: true })).toBe("/settings/team/activity");
     expect(parseSettingsPath("/settings/access")).toBe("access");
     expect(settingsDocumentTitle("access")).toBe("Settings · My access · Nook");
   });

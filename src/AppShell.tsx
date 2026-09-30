@@ -88,17 +88,23 @@ function TeamButton({ nav }: { nav: TeamNav }) {
 
 type AccountProps = {
   displayName: string;
-  onSettings: () => void;
+  /** Opens the Settings page; absent on the Settings page itself, which leaves the button out. */
+  onSettings?: () => void;
   onSignOut: () => void;
   /** Shown only where the Bin is a utility action (Home, which is Today); the Bin app itself leaves it out. */
   onBin?: () => void;
   binCount?: number;
 };
 
+/**
+ * The account row of every app header. Wave 37 order, left to right: Bin · Team · Settings · Inbox ·
+ * the bell · the signed-in person (picture and name) · Sign out, so Sign out is always the rightmost
+ * action. Phones keep the same order with icon-only buttons (the name is hidden, the picture stays).
+ */
 export function AccountActions({ displayName, onSettings, onSignOut, onBin, binCount = 0 }: AccountProps) {
   // Bin turned off (D92): no Bin button, whatever the app passes. Deleting still moves items to the Bin.
   const binEnabled = useModuleEnabled("bin");
-  // Team turned off hides its button too (admins still reach Team from Settings → Manage team).
+  // Team turned off hides its button too (admins still reach Team from Settings, where it now lives).
   const teamEnabled = useModuleEnabled("team");
   const team = useContext(TeamNavContext);
   const inbox = useContext(InboxNavContext);
@@ -106,14 +112,16 @@ export function AccountActions({ displayName, onSettings, onSignOut, onBin, binC
   const binLabel = binCount > 0 ? `Bin, ${binCount} item${binCount === 1 ? "" : "s"}` : "Bin";
   // Wave 35 (QA U4): the signed-in person's own picture beside their name (the letter without one).
   const selfAvatar = useSelfAvatar();
-  // The bell sits beside the group (it renders only inside the signed-in shell).
-  return <><div className="app-account" role="group" aria-label="Account">
-    <span className="app-home-user"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span className="app-home-user-name">{displayName}</span></span>
-    <button className="app-account-button" onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>
+  return <div className="app-account" role="group" aria-label="Account">
     {onBin && binEnabled && <button className="app-account-button app-account-bin" onClick={onBin} aria-label={binLabel} title="Bin"><Trash2 /><span className="app-account-label">Bin</span>{binCount > 0 && <span className="app-account-badge" aria-hidden="true">{binCount > 99 ? "99+" : binCount}</span>}</button>}
     {team && teamEnabled && canSeeTeam(team.role) && !team.onTeam && <TeamButton nav={team} />}
-    <button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
-  </div>{inbox && inboxEnabled && inbox.role !== "guest" && !inbox.onInbox && <InboxButton nav={inbox} />}<NotificationBell /></>;
+    {onSettings && <button className="app-account-button" onClick={onSettings} aria-label={`Open settings for ${displayName}`} title="Settings"><Settings /><span className="app-account-label">Settings</span></button>}
+    {inbox && inboxEnabled && inbox.role !== "guest" && !inbox.onInbox && <InboxButton nav={inbox} />}
+    {/* The bell renders only inside the signed-in shell. */}
+    <NotificationBell />
+    <span className="app-home-user"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span className="app-home-user-name">{displayName}</span></span>
+    <button className="app-account-button app-account-signout" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button>
+  </div>;
 }
 
 /**

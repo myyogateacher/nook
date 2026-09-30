@@ -693,7 +693,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onBin, 
         </button>)}
       </nav>
       <footer className="sidebar-footer">
-        <button className="footer-settings" title={displayName} onClick={onSettings} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${displayName}`}>
+        <button className="footer-settings" title={displayName} onClick={onSettings} aria-label={`Open settings for ${displayName}`}>
           <strong className="footer-identity"><Avatar className="app-user-avatar" name={displayName} url={selfAvatar} /><span>{displayName}</span></strong>
           <span><Settings />Settings</span>
         </button>

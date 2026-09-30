@@ -15,7 +15,6 @@ import {
   ModulesContext,
   moduleOffHint,
   normalizeDisabledModules,
-  openTeamViaSettings,
   parsePreferences,
   recordPopDepth,
   SETTINGS_MODULES,
@@ -233,13 +232,4 @@ describe("gating (client only)", () => {
     }
   });
 
-  test("Manage team keeps the gate open only when Team actually opened", async () => {
-    const seen: boolean[] = [];
-    // Notes could not save the open note: the switch fails and the flag is cleared again.
-    expect(await openTeamViaSettings((value) => seen.push(value), async () => false)).toBe(false);
-    expect(seen).toEqual([true, false]);
-    seen.length = 0;
-    expect(await openTeamViaSettings((value) => seen.push(value), async () => true)).toBe(true);
-    expect(seen).toEqual([true]);
-  });
 });

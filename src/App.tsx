@@ -1,9 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Bot,
   ArrowUpDown,
-  Bell,
   Check,
   Copy,
   ChevronLeft,
@@ -19,9 +18,7 @@ import {
   FolderPlus,
   History,
   Info,
-  KeyRound,
   FolderInput,
-  LayoutGrid,
   Lock,
   LogOut,
   Menu,
@@ -31,7 +28,6 @@ import {
   PenTool,
   Search,
   Settings,
-  ShieldCheck,
   Share2,
   Smartphone,
   Sparkles,
@@ -50,7 +46,10 @@ const WhiteboardsApp = lazy(() => import("./whiteboards/WhiteboardsApp").then((m
 // The Vault (Wave 25) is its own chunk too: nobody who never opens it downloads it.
 const VaultApp = lazy(() => import("./vault/VaultApp").then((module) => ({ default: module.VaultApp })));
 import { lineDiff } from "./diff/lineDiff";
-import { TeamApp } from "./team/TeamApp";
+import { TeamSection } from "./team/TeamApp";
+import { SettingsHubShell } from "./settings/SettingsHub";
+import { hubBackAction, hubEntries, hubEntryLabel, hubEntryOf, hubListGoesUnder, hubPopRoute, isHubRoute, isNestedHubRoute, leaveGuardAction, settingsRoute, teamGroupShown, type HubEntry, type HubEntryId } from "./settings/hubModel";
+import { HubBeforeLeaveContext, type BeforeHubLeave } from "./settings/hubLeave";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
 import { initialInvite } from "./auth/inviteLink";
 import { passwordResetOffered, registrationPrompt, type RegistrationInfo } from "./auth/registrationPrompt";
@@ -63,8 +62,9 @@ import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
 import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
-import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
-import { InboxNavContext, SidebarInboxRow, TeamNavContext } from "./AppShell";
+import { AuthDivider, currentReturnPath, GOOGLE_ONLY_HINT, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, initialGoogleTeamResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
+import { AccountActions, InboxNavContext, SidebarInboxRow, TeamNavContext, useBinCount } from "./AppShell";
+import { repeatDelta, useLeaveGuard } from "./ui/useLeaveGuard";
 import { canManageTeam, canWriteContent, type Role } from "./team/teamRoles";
 import { ReadOnlyBanner, RoleContext } from "./team/roleAccess";
 import { FilesApp } from "./files/FilesApp";
@@ -74,14 +74,13 @@ import { carriedCollectionsState } from "./collectionsRoute";
 import { carriedTasksState } from "./tasksNavigation";
 import { CalendarApp } from "./calendar/CalendarApp";
 import { NotificationsApp } from "./notifications/NotificationsApp";
-import { centerActiveTab } from "./ui/tabStrip";
 import { publishedElsewhere, usePublishWatch } from "./editor/publishWatch";
 import { NotificationsContext } from "./notifications/notificationsApi";
 import { NotificationSettings } from "./notifications/NotificationSettings";
 import { forgetThisDevice } from "./notifications/pushClient";
 import { carriedCalendarState } from "./calendarNavigation";
 import { calendarHomeRoute, localDate } from "./calendarRoute";
-import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undoDialogPop } from "./historyDialogs";
+import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled, type PopDirection } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
@@ -105,7 +104,7 @@ import { usePendingWhiteboardSync } from "./whiteboards/pendingSync";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
-import { formatRoute, isLegacySettingsPath, locationUrl, parseRoute, parseSettingsPath, routeFromLocation, settingsPath, settingsTitleScope, type Route, type SettingsSection } from "./router";
+import { formatRoute, hubDocumentTitle, locationUrl, parseRoute, routeFromLocation, SETTINGS_SECTION_NAMES, settingsDocumentTitle, settingsPath, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
@@ -114,7 +113,7 @@ import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { useWhiteboardSearch, WhiteboardSearchResults } from "./search/WhiteboardSearchResults";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, unavailableModules, type ModuleId } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, unavailableModules, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
@@ -323,8 +322,43 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
   );
 }
 
-function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, modules, initialSection = "security", onSectionChange, pendingRef, googleResult = null }: { session: SessionResponse; onClose: () => void; onSecurityChanged: (state: TotpState, keepOpen?: boolean) => void; onManageTeam: () => void; modules: ModulesSettingsProps; initialSection?: SettingsSection; onSectionChange?: (section: SettingsSection) => void; pendingRef?: React.MutableRefObject<boolean>; googleResult?: GoogleSettingsResult }) {
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+type SettingsPageProps = {
+  session: SessionResponse;
+  modules: ModulesSettingsProps;
+  googleResult?: GoogleSettingsResult;
+  /** The app's navigate: pushes (or replaces) the entry for a hub route. */
+  navigate: (route: Route, options?: { replace?: boolean }) => void;
+  flash: (message: string) => void;
+  /** Absent while two-factor setup is required (Settings → Security is then the only screen). */
+  onHome?: () => void;
+  onBin?: () => void;
+  onSignOut: () => void;
+  onSecurityChanged: (state: TotpState) => void;
+  teamModuleEnabled: boolean;
+  /** "Turn on in Settings" (Q5): the module row Settings → Modules scrolls to and highlights once. */
+  highlightModule?: ModuleId | null;
+  onHighlightDone?: () => void;
+};
+
+/** The hub route on the URL: an account section, the list, or a Team section. */
+function hubRouteFromLocation(): Route {
+  const route = routeFromLocation(window.location);
+  return isHubRoute(route) ? route : settingsRoute(null);
+}
+
+/**
+ * The Settings page (Wave 37; before, a dialog over the app). A route of its own: the list at
+ * /settings, an account section at /settings/:section, and Team sections at /settings/team/…, each a
+ * history entry, so Back returns through the sections to where Settings was opened. The account
+ * sections are the ones the dialog had; Team (for the roles that see it) is TeamSection in the hub.
+ */
+function SettingsPage({ session, modules, googleResult = null, navigate, flash, onHome, onBin, onSignOut, onSecurityChanged, teamModuleEnabled, highlightModule = null, onHighlightDone }: SettingsPageProps) {
+  const setupRequired = session.totp.setupRequired;
+  const [locationRoute, setLocationRoute] = useState<Route>(hubRouteFromLocation);
+  // Two-factor setup first: Security is the only screen, whatever the URL says.
+  const route: Route = setupRequired ? settingsRoute("security") : locationRoute;
+  const routeRef = useRef(route);
+  routeRef.current = route;
   // Wave 35: how this account signs in and re-authenticates (password, Google, or neither).
   const { account, reload: reloadAccount } = useAccountAuthLoader();
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
@@ -332,7 +366,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.22.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.23.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -340,53 +374,115 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
-  const [mcpKeyPending, setMcpKeyPending] = useState(false);
-  const [nestedDialogOpen, setNestedDialogOpen] = useState(false);
   const { ask, confirmOpen, confirmElement } = useConfirm();
   // Q4: the codes shown right after turning two-factor on, until the person says they saved them.
   const [codesDialog, setCodesDialog] = useState(false);
+  const binCount = useBinCount(Boolean(onBin));
 
-  const guardedClose = useCallback(async () => {
-    if (mcpKeyPending && !await ask(unsavedKeyConfirm("close"))) return;
-    onClose();
-  }, [ask, mcpKeyPending, onClose]);
-
-  async function selectSection(next: SettingsSection) {
-    if (next !== "mcp" && mcpKeyPending && !await ask(unsavedKeyConfirm("section"))) return;
-    setSection(next);
-    onSectionChange?.(next);
-  }
-  // The app asks before Back leaves Settings while a new key is still on screen.
-  useEffect(() => { if (pendingRef) pendingRef.current = mcpKeyPending; }, [mcpKeyPending, pendingRef]);
-
-  // "Settings · Notifications · Nook" while open; the title from before comes back on close.
-  const titleScope = useRef<ReturnType<typeof settingsTitleScope> | null>(null);
-  useEffect(() => {
-    const scope = settingsTitleScope(document);
-    titleScope.current = scope;
-    return () => { titleScope.current = null; scope.restore(); };
+  // A new key shown only once (C1): Settings → API keys, or (review R4) an integration's page in Team.
+  const [mcpKeyPending, setMcpKeyPending] = useState(false);
+  const [integrationKeyPending, setIntegrationKeyPending] = useState(false);
+  const pending = mcpKeyPending || integrationKeyPending;
+  const pendingRef = useRef({ mcp: false, integration: false });
+  pendingRef.current = { mcp: mcpKeyPending, integration: integrationKeyPending };
+  const onIntegrationKeyPending = useCallback((value: boolean) => { pendingRef.current.integration = value; setIntegrationKeyPending(value); }, []);
+  const onMcpKeyPending = useCallback((value: boolean) => { pendingRef.current.mcp = value; setMcpKeyPending(value); }, []);
+  const confirmFor = (action: "section" | "leave") => unsavedKeyConfirm(pendingRef.current.integration ? "integration" : action);
+  // Review L1: the section on screen may hold something else a move would lose (Team → Policies with
+  // unsaved changes); its hook asks first, then the key check below runs.
+  const beforeLeaveRef = useRef<BeforeHubLeave | null>(null);
+  const registerBeforeLeave = useCallback((hook: BeforeHubLeave) => {
+    beforeLeaveRef.current = hook;
+    return () => { if (beforeLeaveRef.current === hook) beforeLeaveRef.current = null; };
   }, []);
-  useEffect(() => { titleScope.current?.show(section); }, [section]);
-  // Phones scroll the section strip sideways: keep the active tab in view on a deep link and on change (3c).
-  const navRef = useRef<HTMLElement>(null);
-  useEffect(() => { centerActiveTab(navRef.current); }, [section]);
+  // A move asked about and confirmed runs once the key no longer holds the page (its guard is gone).
+  const afterRelease = useRef<{ direction: PopDirection } | { leave: () => void } | null>(null);
+  const release = () => {
+    pendingRef.current = { mcp: false, integration: false };
+    setMcpKeyPending(false);
+    setIntegrationKeyPending(false);
+  };
+  /** Runs `leave` now, or once the person chose to leave a key shown only once behind. */
+  const guardLeave = useCallback((leave: () => void, action: "section" | "leave" = "leave") => {
+    const keyGuarded = () => {
+      if (!pendingRef.current.mcp && !pendingRef.current.integration) return leave();
+      void ask(confirmFor(action)).then((confirmed) => {
+        if (!confirmed || (!pendingRef.current.mcp && !pendingRef.current.integration)) return;
+        afterRelease.current = { leave };
+        release();
+      });
+    };
+    if (beforeLeaveRef.current?.(keyGuarded)) return;
+    keyGuarded();
+  }, [ask]);
+  // Browser Back or Forward with a key on screen: undone, then asked; leaving repeats the move.
+  useLeaveGuard(pending && !confirmOpen, (direction) => {
+    void ask(confirmFor(leaveGuardAction(routeFromLocation(window.location), routeRef.current))).then((confirmed) => {
+      if (!confirmed || (!pendingRef.current.mcp && !pendingRef.current.integration)) return;
+      afterRelease.current = { direction };
+      release();
+    });
+  });
+  useEffect(() => {
+    const next = afterRelease.current;
+    if (pending || !next) return undefined;
+    afterRelease.current = null;
+    // After the guard's sentinel (if any) is popped: its release is queued before this runs.
+    let cancel = () => undefined as void;
+    const timer = setTimeout(() => { cancel = whenHistorySettled(() => "direction" in next ? window.history.go(repeatDelta(next.direction)) : next.leave()); }, 0);
+    return () => { clearTimeout(timer); cancel(); };
+  }, [pending]);
+
+  // Back and Forward between the hub's entries (a dialog open at the time only closes). Review M2: a
+  // move that was undone (a dialog's, a leave guard's, or the route gate's skip of a Team entry whose
+  // module is off, D92) is read again once it settled, so the screen always follows the URL.
+  const teamShownRef = useRef(teamGroupShown(session.user.role, teamModuleEnabled));
+  teamShownRef.current = teamGroupShown(session.user.role, teamModuleEnabled);
+  useEffect(() => {
+    let cancel = () => undefined as void;
+    const follow = () => {
+      const next = hubPopRoute(routeFromLocation(window.location), teamShownRef.current);
+      if (next) setLocationRoute((current) => formatRoute(current) === formatRoute(next) ? current : next);
+    };
+    const onPopState = (event: PopStateEvent) => {
+      cancel();
+      if (popStateClosedDialog(event)) { cancel = whenHistorySettled(follow); return; }
+      follow();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => { cancel(); window.removeEventListener("popstate", onPopState); };
+  }, []);
+
+  const go = useCallback((next: Route, options: { replace?: boolean } = {}) => {
+    setLocationRoute(next);
+    navigate(next, options);
+  }, [navigate]);
+
+  /** Phones: the section's back arrow. Back onto the list when this visit came from it, else the list replaces the section. */
+  const backToList = useCallback(() => {
+    if (hubBackAction(window.history.state) === "history") window.history.back();
+    else go(settingsRoute(null), { replace: true });
+  }, [go]);
+
+  const entries = useMemo(() => hubEntries(session.user.role, { teamModuleEnabled, setupRequired }), [session.user.role, setupRequired, teamModuleEnabled]);
+  const listScreen = route.app === "settings" && route.section === null;
+  // Q6: guests have no My access; its URL opens Security (replaced below).
+  const guestAccess = route.app === "settings" && route.section === "access" && session.user.role === "guest";
+  const section: SettingsSection | null = route.app === "settings" ? guestAccess ? "security" : route.section ?? "security" : null;
+  const selected: HubEntryId = guestAccess ? "security" : hubEntryOf(route) ?? "security";
+  useEffect(() => { if (guestAccess) go(settingsRoute("security"), { replace: true }); }, [go, guestAccess]);
+  const title = route.app === "team" ? hubEntryLabel(selected) : SETTINGS_SECTION_NAMES[section ?? "security"];
+
+  // "Settings · Notifications · Nook"; Team's sections name themselves.
+  useEffect(() => {
+    if (route.app !== "settings") return;
+    document.title = listScreen && isMobileViewport() ? hubDocumentTitle(null) : settingsDocumentTitle(section ?? "security");
+  }, [listScreen, route.app, section]);
 
   useEffect(() => {
     api<TotpState>("/auth/totp/status").then(setState).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load security settings"));
     api<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>("/about").then(setAppInfo).catch(() => undefined);
   }, []);
-
-  useEffect(() => {
-    if (state.setupRequired || nestedDialogOpen || confirmOpen || codesDialog) return;
-    // An app confirm over Settings (its own, or the app's for a scrim click or Back) takes Escape itself.
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector(".app-confirm-layer")) void guardedClose(); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [guardedClose, state.setupRequired, nestedDialogOpen, confirmOpen, codesDialog]);
-
-  useEffect(() => { if (state.setupRequired) setSection("security"); }, [state.setupRequired]);
-  // Wave 28: Settings is a history entry of its own (/settings/:section), so Back closes it and
-  // Forward reopens it; the app's popstate handler does both (no dialog guard here).
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -415,8 +511,9 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
       setQrCode("");
       setRecoveryCodes(next.recoveryCodes);
       setState(next);
-      // Q4: Settings stays open on the new recovery codes; "I saved them" finishes as before.
-      onSecurityChanged(next, true);
+      // Q4: the new recovery codes show in a dialog; "I saved them" finishes as before. While setup
+      // was required, the rest of Nook opens only then.
+      if (!next.setupRequired && !setupRequired) onSecurityChanged(next);
       setCodesDialog(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication");
@@ -486,50 +583,85 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
     window.setTimeout(() => setCopied(false), 1800);
   }
 
+  const selectEntry = (entry: HubEntry) => {
+    // Already on screen (a computer's nav): nothing to do; a phone's list always opens it.
+    if (!listScreen && entry.id === selected && !isNestedHubRoute(route)) return;
+    guardLeave(() => go(entry.route), "section");
+  };
+
+  const securitySection = <section className="settings-content" aria-labelledby="security-heading">
+    {googleNoticeLine}
+    {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} /> : <PasswordStateCard account={account} />)}
+    {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} />}
+    <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
+    {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {state.enabled ? <div className="security-card enabled-card">
+      <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account asks for an authentication code at every sign-in, after your password or Google.</small></div></div>
+      {reauthNotice}
+      {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
+      <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
+      {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
+        <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
+        <div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
+      </form>}
+    </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
+      <strong>Not available on this Nook</strong>
+      <p>{TWO_FACTOR_OFF_TEXT}</p>
+    </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
+      <strong>Authenticator not configured</strong>
+      <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
+      {reauthField ? <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label> : reauthNotice}
+      <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
+    </form> : <div className="security-card enrollment-card">
+      <div className="enrollment-grid">
+        <div className="qr-frame"><img src={qrCode} alt="QR code for Nook two-factor authentication" /></div>
+        <div><span className="step-label">1 · Scan the code</span><h4>Add Nook to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
+      </div>
+      <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
+    </div>}
+  </section>;
+
+  const content = route.app === "team"
+    ? <TeamSection route={route} role={session.user.role ?? "member"} totpEnabled={state.enabled} navigate={go} flash={flash} onLeave={() => go(settingsRoute(null), { replace: true })} guardLeave={guardLeave} onKeyPendingChange={onIntegrationKeyPending} />
+    : section === "modules" ? <ModulesSettings {...modules} highlight={highlightModule} onHighlightDone={onHighlightDone} />
+    : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={onMcpKeyPending} totpEnabled={state.enabled} role={session.user.role} />
+    : section === "access" ? <MyAccess />
+    : section === "notifications" ? <NotificationSettings />
+    : section === "about" ? <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>
+    : securitySection;
+
+  // While setup is required there is nowhere else to go: Sign out is the only header action.
+  const accountActions = setupRequired
+    ? <div className="app-account" role="group" aria-label="Account"><button className="app-account-button" onClick={onSignOut} title="Sign out"><LogOut /><span className="app-account-label">Sign out</span></button></div>
+    : <AccountActions displayName={session.user.displayName} onSignOut={() => guardLeave(onSignOut)} onBin={onBin ? () => guardLeave(onBin) : undefined} binCount={binCount} />;
+  // Review M1: the header's Inbox button and the bell's items come from app-wide contexts; inside the
+  // hub they go through the same leave guard as Home, Bin, and Sign out.
+  const inboxNav = useContext(InboxNavContext);
+  const notificationsNav = useContext(NotificationsContext);
+  const hubInboxNav = useMemo(() => inboxNav && { ...inboxNav, openInbox: () => guardLeave(inboxNav.openInbox) }, [guardLeave, inboxNav]);
+  const hubNotificationsNav = useMemo(() => notificationsNav && { openList: () => guardLeave(notificationsNav.openList), openPath: (path: string) => guardLeave(() => notificationsNav.openPath(path)) }, [guardLeave, notificationsNav]);
+
   return (
     <AccountAuthContext.Provider value={account}>
-    <section id="account-settings-dialog" className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <header className="settings-header">
-        <div className="settings-identity"><Avatar className="app-user-avatar settings-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><div><span className="eyebrow">Account · {session.user.displayName}</span><h2 id="settings-title">Settings</h2></div></div>
-        {!state.setupRequired && <button className="icon-button" onClick={() => { void guardedClose(); }} aria-label="Close settings"><X /></button>}
-      </header>
-      <div className="settings-body">
-        <nav ref={navRef} className="settings-nav" aria-label="Settings sections"><button className={section === "security" ? "active" : ""} aria-current={section === "security" ? "page" : undefined} onClick={() => { void selectSection("security"); }}><ShieldCheck />Security</button>{!state.setupRequired && <><button className={section === "modules" ? "active" : ""} aria-current={section === "modules" ? "page" : undefined} onClick={() => { void selectSection("modules"); }}><LayoutGrid />Modules</button><button className={section === "mcp" ? "active" : ""} aria-current={section === "mcp" ? "page" : undefined} onClick={() => { void selectSection("mcp"); }}><KeyRound />API keys</button>{session.user.role !== "guest" && <button className={section === "access" ? "active" : ""} aria-current={section === "access" ? "page" : undefined} onClick={() => { void selectSection("access"); }}><Share2 />My access</button>}<button className={section === "notifications" ? "active" : ""} aria-current={section === "notifications" ? "page" : undefined} onClick={() => { void selectSection("notifications"); }}><Bell />Notifications</button><button className={section === "about" ? "active" : ""} aria-current={section === "about" ? "page" : undefined} onClick={() => { void selectSection("about"); }}><Info />About</button>{canManageTeam(session.user.role) && <button className="settings-nav-link" onClick={() => { void (async () => { if (!mcpKeyPending || await ask(unsavedKeyConfirm("leave"))) onManageTeam(); })(); }}><Users />Manage team</button>}</>}</nav>
-        {section === "security" ? <section className="settings-content" aria-labelledby="security-heading">
-          {googleNoticeLine}
-          {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} /> : <PasswordStateCard account={account} />)}
-          {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} onDialogChange={setNestedDialogOpen} />}
-          <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
-          {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          {state.enabled ? <div className="security-card enabled-card">
-            <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account asks for an authentication code at every sign-in, after your password or Google.</small></div></div>
-            {reauthNotice}
-            {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
-            <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
-            {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
-              <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
-              <div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
-            </form>}
-          </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
-            <strong>Not available on this Nook</strong>
-            <p>{TWO_FACTOR_OFF_TEXT}</p>
-          </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
-            <strong>Authenticator not configured</strong>
-            <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
-            {reauthField ? <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label> : reauthNotice}
-            <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
-          </form> : <div className="security-card enrollment-card">
-            <div className="enrollment-grid">
-              <div className="qr-frame"><img src={qrCode} alt="QR code for Nook two-factor authentication" /></div>
-              <div><span className="step-label">1 · Scan the code</span><h4>Add Nook to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
-            </div>
-            <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
-          </div>}
-        </section> : section === "modules" ? <ModulesSettings {...modules} /> : section === "mcp" ? <KeysSettings notice={googleNoticeLine} onPendingChange={setMcpKeyPending} onNestedDialogChange={setNestedDialogOpen} totpEnabled={state.enabled} role={session.user.role} /> : section === "access" ? (session.user.role !== "guest" ? <MyAccess /> : <section className="settings-content" aria-labelledby="my-access-none"><h3 id="my-access-none">My access</h3><p>Guests see what is shared with them by name in each module.</p></section>) : section === "notifications" ? <NotificationSettings /> : <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About Nook</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>Nook</h4><p>Built by Pankaj</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>}
-      </div>
-      {confirmElement}
-    </section>
+    <InboxNavContext.Provider value={hubInboxNav}><NotificationsContext.Provider value={hubNotificationsNav}><HubBeforeLeaveContext.Provider value={registerBeforeLeave}>
+    <SettingsHubShell
+      displayName={session.user.displayName}
+      avatarUrl={session.user.avatarUrl}
+      role={session.user.role}
+      entries={entries}
+      selected={selected}
+      listScreen={listScreen && !setupRequired}
+      title={title}
+      screenKey={formatRoute(route)}
+      showBack={!setupRequired && !isNestedHubRoute(route)}
+      onBack={() => guardLeave(backToList, "section")}
+      onSelect={selectEntry}
+      onHome={onHome ? () => guardLeave(onHome) : undefined}
+      account={accountActions}
+    >{content}</SettingsHubShell>
+    </HubBeforeLeaveContext.Provider></NotificationsContext.Provider></InboxNavContext.Provider>
+    {confirmElement}
     {codesDialog && recoveryCodes.length > 0 && <RecoveryCodesDialog codes={recoveryCodes} onClose={() => setCodesDialog(false)} onSaved={() => { setCodesDialog(false); onSecurityChanged(state); }} />}
     </AccountAuthContext.Provider>
   );
@@ -696,7 +828,13 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const state = historyStateFor(userId, route, panel, filesPanel, search);
   // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
   if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location), [PUSHED_OVER_CHAIN_KEY]: pushedOverChain(current, locationUrl(window.location)) }, depth + 1), "", url);
-  else window.history.replaceState(withHistoryDepth(state, depth), "", url);
+  else {
+    // A hub screen replaced in place (a redirect, an alias) keeps the URL it was pushed over, so the
+    // phone's back arrow still knows the section list is below it.
+    const below = isHubRoute(route) && current && typeof current === "object" ? current as Record<string, unknown> : null;
+    const kept = below && typeof below[PUSHED_OVER_KEY] === "string" ? { [PUSHED_OVER_KEY]: below[PUSHED_OVER_KEY], [PUSHED_OVER_CHAIN_KEY]: below[PUSHED_OVER_CHAIN_KEY] } : {};
+    window.history.replaceState(withHistoryDepth({ ...state, ...kept }, depth), "", url);
+  }
 }
 
 export function App() {
@@ -714,6 +852,8 @@ export function App() {
   // Wave 35: /login#error=… or #google=code after Google, and /settings/…#google=… (read once, stripped at once).
   const [googleSignIn] = useState(initialGoogleSignInResult);
   const [googleSettings] = useState(initialGoogleSettingsResult);
+  // An admin's Google confirmation that came back to Team → member: read before the URL is rewritten.
+  useState(initialGoogleTeamResult);
   const [activeApp, setActiveApp] = useState<AppSection>(() => routeFromLocation(window.location).app);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [notes, setNotes] = useState<NoteSummary[]>([]);
@@ -742,15 +882,7 @@ export function App() {
   // The note whose Move to the Bin is being confirmed, and the trash button that asked (focus returns to it).
   const [deletingNote, setDeletingNote] = useState<{ id: string; title: string } | null>(null);
   const deleteOpenerRef = useRef<HTMLElement | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("security");
-  // A /settings/:section deep link, applied once the workspace is ready (outbound email §E.1).
-  const initialSettingsRef = useRef<SettingsSection | null>(parseSettingsPath(window.location.pathname));
-  const settingsOpenRef = useRef(false);
-  settingsOpenRef.current = settingsOpen;
-  // True while Settings shows a new MCP key that is shown only once.
-  const settingsPendingRef = useRef(false);
-  // The app's own confirms (C1): leaving Settings with an unsaved key, discarding a draft.
+  // The app's own confirms: signing out with unsaved whiteboard copies, discarding a draft.
   const appConfirm = useConfirm();
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
@@ -781,13 +913,14 @@ export function App() {
   }, [featuresKnown, featuresUserId]);
   const searchEnabled = isModuleEnabled(disabledModules, "search");
   const binEnabled = isModuleEnabled(disabledModules, "bin");
-  // True from Settings → "Manage team" until the admin leaves Team: that visit passes the route gate
-  // even when the Team module is hidden (Team plan §6.2). Anything else follows the toggle.
-  const [teamViaSettings, setTeamViaSettings] = useState(false);
-  const previousAppRef = useRef<AppSection | null>(null);
-  const teamGateOpen = activeApp === "team" && teamViaSettings && canManageTeam(session?.user.role);
+  // Wave 37: Team lives in the Settings hub, and admins keep it there with the Team module turned off
+  // (Team plan §6.2, formerly Settings → "Manage team"), so their Team routes pass the route gate.
+  // Everyone else follows the toggle.
+  const teamGateOpen = activeApp === "team" && canManageTeam(session?.user.role);
   // The module whose route was just replaced with Home, for the one-line hint (D92).
   const [moduleHint, setModuleHint] = useState<ModuleId | null>(null);
+  // Q5: the module "Turn on in Settings" opened Settings → Modules for, scrolled to and highlighted once.
+  const [highlightModule, setHighlightModule] = useState<ModuleId | null>(null);
   const leavingHiddenModuleRef = useRef(false);
   const hiddenLeaveFailedRef = useRef<string | null>(null);
   // The depth of the entry on screen, so a popstate can tell Back from Forward (route gate, D92).
@@ -887,8 +1020,8 @@ export function App() {
 
   useEffect(() => {
     if (!session) return;
-    if (session.totp.setupRequired) setSettingsOpen(true);
-    else {
+    // While two-factor setup is required, the Settings page (Security) is all there is.
+    if (!session.totp.setupRequired) {
       const userId = session.user.id;
       // Later session updates (for example a two-factor change) only refresh data; the route was already applied.
       const applyRoute = routeAppliedUserRef.current !== userId;
@@ -927,13 +1060,14 @@ export function App() {
         setMobilePanel(panel);
         setActiveApp(route.app);
         const target: Route = route.app === "notes" ? notesRoute(selection.folder, selection.noteId) : route;
-        writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
+        if (isHubRoute(target) && readHistoryDepth(window.history.state) === 0) {
+          // Review L5 (as Wave 28 did): a Settings deep link the page loaded on gets Home underneath,
+          // so Back from Settings goes Home instead of leaving Nook (phones: the list, then Home).
+          writeHistory(userId, { app: "home" }, panel, "replace");
+          if (hubListGoesUnder(target, { app: "home" }, isMobileViewport())) writeHistory(userId, settingsRoute(null), panel, "push");
+          writeHistory(userId, target, panel, "push");
+        } else writeHistory(userId, target, panel, "replace", undefined, route.app === "notes" ? searchHint : null);
         historyDepthRef.current = readHistoryDepth(window.history.state);
-        // A /settings/:section link: the entry below is Home, and Settings gets an entry of its own,
-        // so Back closes it without leaving Nook and Forward reopens it.
-        const deepSettings = initialSettingsRef.current;
-        initialSettingsRef.current = null;
-        if (deepSettings) openSettings(deepSettings);
       }).catch((reason) => {
         if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
         flash(reason instanceof Error ? reason.message : "Could not open your notes");
@@ -941,12 +1075,12 @@ export function App() {
     }
   }, [flash, session, loadNavigation, startupRetry]);
   useEffect(() => {
-    // The Settings dialog owns the title while it is open, and restores it on close.
-    if (settingsOpen) return;
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox", whiteboards: "Whiteboards", vault: "Vault" }[activeApp];
+    // The Settings hub names its own screens (Team's sections too).
+    if (activeApp === "settings" || activeApp === "team") return;
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", inbox: "Inbox", whiteboards: "Whiteboards", vault: "Vault" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
-  }, [activeApp, note, selectedNoteId, session, settingsOpen]);
+  }, [activeApp, note, selectedNoteId, session]);
   useEffect(() => {
     if (!session || selectionOwner !== session.user.id) return;
     localStorage.setItem(`mynotes:last:${session.user.id}`, JSON.stringify({ folder: selectedFolder, noteId: selectedNoteId }));
@@ -1094,6 +1228,8 @@ export function App() {
       removedStepBackRef.current = formatRoute(route);
       return;
     }
+    // Phones (review L4): a hub section opened from outside the hub gets the section list under it.
+    if (!options.replace && hubListGoesUnder(route, routeFromLocation(window.location), isMobileViewport())) writeHistory(session.user.id, settingsRoute(null), options.panel ?? mobilePanel, "push");
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
@@ -1462,6 +1598,7 @@ export function App() {
     if (section === "collections") return { app: "collections", collectionId: null, viewId: null, rowId: null };
     if (section === "calendar") return calendarHomeRoute(isMobileViewport(), localDate(new Date()));
     if (section === "team") return { app: "team", userId: null };
+    if (section === "settings") return settingsRoute(isMobileViewport() ? null : "security");
     if (section === "inbox") return { app: "inbox", view: "pending", proposalId: null };
     if (section === "whiteboards") return { app: "whiteboards", folder: "all", boardId: null };
     if (section === "vault") return { app: "vault", vaultId: null, envId: null, secretId: null, page: null };
@@ -1648,7 +1785,7 @@ export function App() {
 
   // Ctrl/⌘+K anywhere in Notes, or "/" outside a text field, focuses search.
   useEffect(() => {
-    if (!session || activeApp !== "notes" || settingsOpen || !searchEnabled) return;
+    if (!session || activeApp !== "notes" || !searchEnabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       const typing = Boolean(target && (target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true']")));
@@ -1702,38 +1839,10 @@ export function App() {
       // Back/Forward while a Files dialog is open only closes the dialog (D18).
       if (popStateClosedDialog(event)) return;
       if (session.totp.setupRequired) return;
-      // Settings entries (/settings/:section): Forward onto one reopens the dialog over the app that
-      // is on screen; Back off one closes it, then the entry below is restored as usual.
-      const poppedSettings = parseSettingsPath(window.location.pathname);
-      if (poppedSettings) {
-        // An old /settings/mcp entry shows the canonical /settings/keys, in place (C3).
-        if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, "", settingsPath(poppedSettings));
-        setPanel(null);
-        setSharingFolder(null);
-        setSettingsSection(poppedSettings);
-        setSettingsOpen(true);
-        return;
-      }
-      if (settingsOpenRef.current) {
-        if (settingsPendingRef.current) {
-          // Stay on Settings and ask; leaving repeats the move once the key no longer holds it.
-          const direction = dialogPopDirection(previousDepth, poppedDepth) ?? "back";
-          historyDepthRef.current = previousDepth;
-          undoDialogPop(direction);
-          void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => {
-            if (!leave || !settingsOpenRef.current) return;
-            settingsPendingRef.current = false;
-            window.history.go(direction === "back" ? -1 : 1);
-          });
-          return;
-        }
-        settingsPendingRef.current = false;
-        setSettingsOpen(false);
-      }
       const route = routeFromLocation(window.location);
       // D92: Back or Forward onto a module that is off skips that entry instead of replacing it
       // with a second Home entry. Depth 0 still falls through to the gate below, which replaces it.
-      const hiddenRoute = route.app === "team" && teamGateOpen ? null : hiddenModuleForApp(disabledModules, route.app);
+      const hiddenRoute = route.app === "team" && canManageTeam(session.user.role) ? null : hiddenModuleForApp(disabledModules, route.app);
       const step = hiddenRoute ? hiddenEntryStep(dialogPopDirection(previousDepth, poppedDepth), poppedDepth) : "replace";
       if (hiddenRoute && step !== "replace") {
         setModuleHint(hiddenRoute);
@@ -1805,10 +1914,6 @@ export function App() {
     })();
   });
   useEffect(() => {
-    if (previousAppRef.current === "team" && activeApp !== "team") setTeamViaSettings(false);
-    previousAppRef.current = activeApp;
-  }, [activeApp]);
-  useEffect(() => {
     if (moduleHint && (isModuleEnabled(disabledModules, moduleHint) || activeApp !== "home")) setModuleHint(null);
   }, [activeApp, disabledModules, moduleHint]);
   // Search turned off: drop any query so the Notes list is not left filtered by a hidden box.
@@ -1816,53 +1921,21 @@ export function App() {
     if (!searchEnabled && query) clearSearch();
   }, [searchEnabled, query]);
 
-  function openSettings(section: SettingsSection = "security") {
-    setPanel(null);
-    setSharingFolder(null);
-    setSettingsSection(section);
-    setSettingsOpen(true);
-    if (!session || session.totp.setupRequired) return;
-    const state = window.history.state as Record<string, unknown> | null;
-    if (parseSettingsPath(window.location.pathname)) {
-      window.history.replaceState(state, "", settingsPath(section));
-      return;
-    }
-    // Settings pushes an entry (Wave 28), remembering the URL it opened over.
-    const depth = readHistoryDepth(state);
-    window.history.pushState(withHistoryDepth({ ...(state ?? {}), "mynotes.settings-over": locationUrl(window.location) }, depth + 1), "", settingsPath(section));
-    historyDepthRef.current = depth + 1;
-  }
-
-  /** The dialog moved to another section: the URL follows in place (no new entry). */
-  function settingsSectionChanged(section: SettingsSection) {
-    setSettingsSection(section);
-    if (parseSettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, "", settingsPath(section));
-  }
-
   /**
-   * Closes Settings. From its own entry, "back" steps back onto the entry it opened over (so Forward
-   * reopens it); "replace" rewrites the entry to that URL, for a navigation that follows at once.
-   * A deep link at depth 0 has nothing below, so it is replaced with Home.
+   * Opens the Settings page (Wave 37): a route like any app's, so Back returns here. Without a
+   * section, a phone opens the section list and a computer Security (the list sits beside it).
    */
-  function closeSettings(mode: "back" | "replace" = "back") {
-    setSettingsOpen(false);
-    settingsPendingRef.current = false;
-    if (!parseSettingsPath(window.location.pathname)) return;
-    const state = window.history.state as Record<string, unknown> | null;
-    const over = typeof state?.["mynotes.settings-over"] === "string" ? state["mynotes.settings-over"] as string : "/";
-    if (mode === "back" && readHistoryDepth(state) > 0) {
-      window.history.back();
-      return;
-    }
-    const { ["mynotes.settings-over"]: _over, ...rest } = state ?? {};
-    window.history.replaceState(rest, "", over);
+  function openSettings(section: SettingsSection | null = null) {
+    void openRoute(settingsRoute(section ?? (isMobileViewport() ? null : "security")));
   }
 
-  /** A click outside Settings: asks first while a new key is still on screen (C1). */
-  function requestCloseSettings() {
-    if (session?.totp.setupRequired) return;
-    if (!settingsPendingRef.current) return closeSettings();
-    void appConfirm.ask(unsavedKeyConfirm("close")).then((leave) => { if (leave && settingsOpenRef.current) closeSettings(); });
+  /** Opens a route as a new entry, leaving Notes first (the open note is saved or published). */
+  async function openRoute(route: Route) {
+    if (!session) return false;
+    if (activeApp === "notes" && !await leaveNotes()) return false;
+    navigate(route);
+    setActiveApp(route.app);
+    return true;
   }
 
   // Review L4: unsaved whiteboard copies on this device are deleted at sign-out; if there are any,
@@ -1902,7 +1975,6 @@ export function App() {
     routeAppliedUserRef.current = null;
     startupFailedUserRef.current = null;
     pendingRouteRef.current = { app: "home" };
-    initialSettingsRef.current = null;
     // A bare entry: drops the search hint (the query text) and every other hint from the current
     // entry. Older entries keep theirs, but each is tied to the user id and ignored while signed out.
     window.history.replaceState(null, "", "/");
@@ -1983,12 +2055,7 @@ export function App() {
   if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} googleResult={googleSignIn} />;
 
   const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role, unavailable };
-  // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
-  // lets that one visit through; Back, Forward, and links still follow the toggle.
-  const settingsDialog = settingsOpen && <SettingsDialog session={session} googleResult={googleSettings} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp, keepOpen) => {
-    setSession((current) => current ? { ...current, totp } : current);
-    if (!totp.setupRequired && !keepOpen) closeSettings();
-  }} />;
+  const securityChanged = (totp: TotpState) => setSession((current) => current ? { ...current, totp } : current);
   const resetNotice = session.notices?.googleReset ?? null;
   const dismissResetNotice = () => {
     setSession((current) => current ? { ...current, notices: { ...current.notices, googleReset: null } } : current);
@@ -1996,7 +2063,7 @@ export function App() {
   };
   const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
     <p>{unavailable.includes(moduleHint) ? "The vault is not available on this server." : moduleOffHint(moduleHint)}</p>
-    {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
+    {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setHighlightModule(moduleHint); setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
   </div>}</>;
   const openBin = binEnabled ? () => { void openApp("bin"); } : undefined;
@@ -2006,7 +2073,8 @@ export function App() {
 
   // Notifications off (D92): no provider, so every bell renders nothing and stops polling.
   const notificationsContext = isModuleEnabled(disabledModules, "notifications") ? { openList: () => { void openApp("notifications"); }, openPath: openNotificationPath } : null;
-  const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: shownApp === "team" };
+  // The Settings hub lists Team in its nav, so the header's Team button stays off the whole hub.
+  const teamNav = { role: session.user.role, openTeam: () => { void openApp("team"); }, onTeam: shownApp === "team" || shownApp === "settings" };
   const inboxNav = { role: session.user.role, openInbox: () => { void openApp("inbox"); }, onInbox: shownApp === "inbox" };
   // The Inbox opens a proposal's target as a new entry: a note through the Notes loader, anything else by its route.
   const openInboxPath = (path: string) => {
@@ -2015,20 +2083,42 @@ export function App() {
     else openNotificationPath(path);
   };
 
-  if (shownApp !== "notes" && !session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}><InboxNavContext.Provider value={inboxNav}>
+  // Wave 37: the Settings hub, one element for its account and Team routes (moving between them
+  // never remounts it). Its moves keep the app's section in step with the URL.
+  const settingsPage = (setup: boolean) => <SettingsPage
+    key="settings-hub"
+    session={session}
+    googleResult={googleSettings}
+    modules={modulesSettings}
+    navigate={(route, options) => { navigate(route, options); setActiveApp(route.app); }}
+    flash={flash}
+    onHome={setup ? undefined : () => { void openHome(); }}
+    onBin={setup ? undefined : openBin}
+    onSignOut={signOut}
+    onSecurityChanged={securityChanged}
+    teamModuleEnabled={isModuleEnabled(disabledModules, "team")}
+    highlightModule={highlightModule}
+    onHighlightDone={() => setHighlightModule(null)}
+  />;
+
+  // While two-factor setup is required, Settings → Security is the only screen.
+  if (session.totp.setupRequired) return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}>
+    {settingsPage(true)}
+    {toastStatus}
+  </RoleContext.Provider></ModulesContext.Provider>;
+
+  if (shownApp !== "notes") return <ModulesContext.Provider value={disabledModules}><RoleContext.Provider value={session.user.role}><NotificationsContext.Provider value={notificationsContext}><TeamNavContext.Provider value={teamNav}><InboxNavContext.Provider value={inboxNav}>
     {shownApp === "home" ? <TodayHome {...account} userId={session.user.id} onOpen={(section) => { void openApp(section); }} onOpenRoute={(route) => { void openTodayRoute(route); }} />
       : shownApp === "files" ? <FilesApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenWhiteboard={isModuleEnabled(disabledModules, "whiteboards") ? (id) => openNotificationPath(`/whiteboards/${id}`) : undefined} />
       : shownApp === "tasks" ? <TasksApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
-      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "settings" || shownApp === "team" ? settingsPage(false)
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : shownApp === "vault" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading the vault…</p></main>}><VaultApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} /></Suspense>
       : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} /></Suspense>
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
-    {settingsDialog}
-    {settingsOpen && <button className="panel-scrim" onClick={requestCloseSettings} aria-label="Close panel" />}
     {toastStatus}
   </InboxNavContext.Provider></TeamNavContext.Provider></NotificationsContext.Provider></RoleContext.Provider></ModulesContext.Provider>;
 
@@ -2071,7 +2161,7 @@ export function App() {
           {!folders.length && <p className="nav-empty">Create a folder to organize your notes.</p>}
         </nav>
         <footer className="sidebar-footer">
-          <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-haspopup="dialog" aria-controls="account-settings-dialog" aria-label={`Open settings for ${session.user.displayName}`}>
+          <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-label={`Open settings for ${session.user.displayName}`}>
             <strong className="footer-identity"><Avatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
             <span><Settings />Settings</span>
           </button>
@@ -2228,10 +2318,7 @@ export function App() {
         onCancel={closeNewFolder}
       />}
       {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder access updated"); }} />}
-      {settingsDialog}
-      {((panel && panel !== "share") || settingsOpen) && (settingsOpen && session.totp.setupRequired
-        ? <div className="panel-scrim" aria-hidden="true" />
-        : <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); if (settingsOpen) requestCloseSettings(); }} aria-label="Close panel" />)}
+      {panel && panel !== "share" && <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); }} aria-label="Close panel" />}
       {toastStatus}
       <nav className="mobile-tabbar">
         <button className={mobilePanel === "folders" ? "active" : ""} onClick={() => showMobilePanel("folders")}><Menu />Folders</button>

@@ -5,7 +5,7 @@ import { AccountActions, TeamNavContext, type TeamNav } from "../src/AppShell";
 import type { TeamEvent, TeamMember } from "../src/team/teamApi";
 import { eventLabel, filterTeam, isNewAccount, lastAdminReason, NEW_ACCOUNT_MS, statusLabel, teamBackAction, teamFilters } from "../src/team/teamFormat";
 import { canManageTeam, canSeeTeam, roleOptions, ROLE_DESCRIPTIONS, ROLES, SELECTABLE_ROLES } from "../src/team/teamRoles";
-import { TeamApp } from "../src/team/TeamApp";
+import { TeamSection } from "../src/team/TeamApp";
 import { Select } from "../src/ui/Select";
 
 const member = (overrides: Partial<TeamMember>): TeamMember => ({
@@ -111,28 +111,23 @@ describe("Team chrome", () => {
   test("the account row shows Team after Bin for everyone but guests, and not on Team itself", () => {
     const markup = withNav({ role: "member", openTeam: () => undefined, onTeam: false });
     const titles = [...markup.matchAll(/title="([^"]+)"/g)].map((match) => match[1]);
-    expect(titles).toEqual(["Settings", "Bin", "Team", "Sign out"]);
+    // Wave 37: Bin · Team · Settings · … · Sign out, the rightmost action.
+    expect(titles).toEqual(["Bin", "Team", "Settings", "Sign out"]);
     expect(withNav({ role: "admin", openTeam: () => undefined, onTeam: false })).toContain('title="Team"');
     expect(withNav({ role: "guest", openTeam: () => undefined, onTeam: false })).not.toContain('title="Team"');
     expect(withNav({ role: "admin", openTeam: () => undefined, onTeam: true })).not.toContain('title="Team"');
     expect(withNav(null)).not.toContain('title="Team"');
   });
 
-  test("the Team app renders its list shell, and tells guests it is unavailable", () => {
-    const props = { displayName: "Ada", totpEnabled: false, navigate: () => undefined, flash: () => undefined, onHome: () => undefined, onSettings: () => undefined, onSignOut: () => undefined };
-    // The app reads its route from the URL when it mounts.
-    const globals = globalThis as { window?: unknown };
-    const previous = globals.window;
-    globals.window = { location: { pathname: "/team" } };
-    try {
-      const markup = renderToStaticMarkup(<TeamApp {...props} role="admin" />);
-      expect(markup).toContain('<h1 id="team-title">Team</h1>');
-      expect(markup).toContain("Search names or emails");
-      expect(markup).not.toContain("<select");
-      expect(renderToStaticMarkup(<TeamApp {...props} role="member" />)).toContain("Search names");
-      expect(renderToStaticMarkup(<TeamApp {...props} role="guest" />)).toContain("Team is not available for your account");
-    } finally {
-      globals.window = previous;
-    }
+  test("Team → Members in the Settings hub renders its list shell, and tells guests it is unavailable", () => {
+    const props = { route: { app: "team" as const, userId: null }, totpEnabled: false, navigate: () => undefined, flash: () => undefined, onLeave: () => undefined, guardLeave: (leave: () => void) => leave(), onKeyPendingChange: () => undefined };
+    const markup = renderToStaticMarkup(<TeamSection {...props} role="admin" />);
+    expect(markup).toContain('class="team-app team-layout split-layout"');
+    expect(markup).toContain("Search names or emails");
+    expect(markup).not.toContain("<select");
+    // The admin sections are the hub's nav entries now, not rows above the list.
+    expect(markup).not.toContain("team-invites-row");
+    expect(renderToStaticMarkup(<TeamSection {...props} role="member" />)).toContain("Search names");
+    expect(renderToStaticMarkup(<TeamSection {...props} role="guest" />)).toContain("Team is not available for your account");
   });
 });

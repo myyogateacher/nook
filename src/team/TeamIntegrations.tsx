@@ -7,6 +7,7 @@ import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
 import { createIntegration, INTEGRATION_ROLE_OPTIONS, lastUsedText, listIntegrations, RETIRED_LABEL, type Integration, type IntegrationRole } from "./integrationsApi";
 import "../keys/keys.css";
+import { hubDocumentTitle } from "../router";
 
 /** The help line under Team → Integrations (Wave 36, D287, T212): what an integration can and cannot reach. */
 export const INTEGRATIONS_HELP = "Accounts for AI clients and scripts. An integration never signs in: it acts only through the API keys you create for it here. "
@@ -35,7 +36,7 @@ export function TeamIntegrations({ onBack, onOpen, flash }: { onBack: () => void
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { document.title = "Integrations · Team · Nook"; }, []);
+  useEffect(() => { document.title = hubDocumentTitle("Integrations"); }, []);
 
   return <article className="team-detail team-integrations" aria-labelledby="team-integrations-title">
     <button type="button" className="team-back" onClick={onBack}><ChevronLeft />Team</button>
@@ -60,7 +61,7 @@ export function TeamIntegrations({ onBack, onOpen, flash }: { onBack: () => void
     </div>}
     {!error && integrations && integrations.length > 0 && <ul className="team-list" aria-label="Integrations">
       {integrations.map((integration) => <li key={integration.id}>
-        <button type="button" className={`team-row team-group-row${integration.status !== "active" ? " blocked" : ""}`} onClick={() => onOpen(integration.id)}>
+        <button type="button" className={`team-row team-group-row team-integration-row${integration.status !== "active" ? " blocked" : ""}`} onClick={() => onOpen(integration.id)}>
           <Avatar className="team-avatar" name={integration.displayName} integration />
           <span className="team-row-copy">
             <span className="team-row-title"><strong>{integration.displayName}</strong></span>

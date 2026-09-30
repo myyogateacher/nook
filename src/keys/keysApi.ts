@@ -153,7 +153,7 @@ export function integrationKeysApi(integrationId: string): KeysApi {
     revoke: (id) => api<{ ok: true }>(`${base}/keys/${id}`, { method: "DELETE", body: "{}" }),
     // Only what is shared with the integration, never the admin's own items (T212).
     loadResources: (module) => api<{ resources: ResourceOption[] }>(`${base}/resources?module=${encodeURIComponent(module)}`).then((result) => result.resources),
-    returnTo: `/team/integrations/${integrationId}`,
+    returnTo: `/settings/team/integrations/${integrationId}`,
     opener: "the integration"
   };
 }

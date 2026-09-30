@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { Check, ShieldAlert, X } from "lucide-react";
 import { api, ApiError } from "../api";
-import { GoogleMark, initialGoogleTeamResult } from "../auth/googleSignIn";
+import { GoogleMark, googleTeamResultFor } from "../auth/googleSignIn";
 import { useAccountAuthLoader } from "../auth/accountAuth";
 import { googleSettingsNotice, reauthBody, ReauthFields, reauthProblems } from "../auth/GoogleAccountCard";
 import { fieldName, useFieldErrors } from "../auth/fieldChecks";
@@ -88,6 +88,11 @@ type Outcome = { allowedUntil: string; reset: ResetCounts | null; relink?: boole
 /** Whether the Team → member Google card asks for its state: only once the account says Google sign-in is on. */
 export const googleCardShown = (account: { methods?: { google?: boolean } } | null) => account?.methods?.google === true;
 
+/** A Google confirmation's result on the Team page it came back to (a member's, or an integration's), dismissible. */
+export function GoogleReturnNotice({ notice, onDismiss }: { notice: { tone: string; text: string }; onDismiss: () => void }) {
+  return <p className={`settings-google-notice ${notice.tone}`} role={notice.tone === "error" ? "alert" : "status"}>{notice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={onDismiss}><X /></button></p>;
+}
+
 export function TeamGoogleCard({ userId, name }: { userId: string; name: string }) {
   const [state, setState] = useState<GoogleAdminState | null>(null);
   const [step, setStep] = useState<Step | null>(null);
@@ -100,8 +105,8 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
   const [removeCredentials, setRemoveCredentials] = useState(true);
   // Q2: an admin's Google confirmation comes back to this member's page; its result shows here.
   const [returned, setReturned] = useState(() => {
-    const result = initialGoogleTeamResult();
-    return result && typeof window !== "undefined" && window.location.pathname.startsWith(`/team/${userId}`) ? googleSettingsNotice(result) : null;
+    const result = googleTeamResultFor(userId);
+    return result ? googleSettingsNotice(result) : null;
   });
   // Q6: the reset step is its own history layer over the Allow dialog: Back returns to the first step,
   // as the dialog's own Back button does.
@@ -172,7 +177,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
 
   return <section className="team-card team-google" aria-labelledby={`team-google-${userId}`}>
     <h3 id={`team-google-${userId}`} className="team-google-heading"><GoogleMark />Google sign-in</h3>
-    {returned && <p className={`settings-google-notice ${returned.tone}`} role={returned.tone === "error" ? "alert" : "status"}>{returned.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setReturned(null)}><X /></button></p>}
+    {returned && <GoogleReturnNotice notice={returned} onDismiss={() => setReturned(null)} />}
     <p className="team-muted">
       {state.linked ? `Signs in with Google (${state.linked.email}).${state.allowedUntil ? ` Re-linking allowed until ${until(state.allowedUntil)}.` : ""}`
         : state.allowedUntil ? `Allowed: the next Google sign-in with this account's address links it, until ${until(state.allowedUntil)}.`
@@ -217,7 +222,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
       {step !== "done" && <>
         <p className="team-google-copy team-google-note">Confirm it's you to continue.</p>
         <form id={formId} className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
-          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/team/${userId}`} disabled={busy} />
+          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/settings/team/members/${userId}`} disabled={busy} />
         </form>
       </>}
       {step === "done" && result && <>

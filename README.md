@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.19.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.20.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -111,6 +111,16 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.20.0
+
+- **Vault (first release)**: a new app for your services' secrets, with environments (dev, staging, prod, or your own). Each secret holds one value per environment, with an encrypted comment, twenty kept versions, and the Bin. On a computer it is a secrets × environments grid; on a phone, one environment's cards, picked with the app's own selector and kept in the URL. Values stay masked until you press **Reveal** and hide again after 30 seconds, when the tab is hidden, or when the dialog closes; **Copy** clears the clipboard after 30 seconds unless you copied something else since. The editor masks the value too, with a Show toggle. A generator makes passwords, hex and base64url tokens, and six-word passphrases in the browser. Saving into several environments at once checks every environment's version, so nobody's newer value is overwritten silently.
+- **Honest labelling**: **encrypted at rest; anyone with the server and its key can read every secret.** The Vault is for your services' credentials, not a replacement for a personal password manager. Values and comments are encrypted with AES-256-GCM under a per-vault data key wrapped by `VAULT_ENCRYPTION_KEY`; names and tags are plain so you can search them.
+- **Off until you set a key**: set `VAULT_ENCRYPTION_KEY` (`openssl rand -base64 32`, different from `TOTP_ENCRYPTION_KEY`) or `VAULT_ENCRYPTION_KEY_FILE` (a file outside the data directory, so backups never contain it). Without it, members see nothing and admins see a "not configured" screen. `bun server/vault-admin.ts verify-key` checks the key; `rotate-kek` re-wraps the data keys under a new key read from a file, refuses while a server is running, and prints fingerprints, never the key. See [docs/OPERATIONS.md](docs/OPERATIONS.md#vault).
+- **In this release each vault is its owner's alone**: another member, a viewer, a guest, or an admin who does not own it gets "not found" everywhere. Sharing with people per environment, import and export, `nkv_` API keys, and MCP tools come in the next two releases.
+- **Also**: SQLite now runs with `secure_delete` on for every module, so deleted rows are overwritten instead of lingering; the server writes a `server.heartbeat` file in the data directory while it runs.
+- **For developers using MCP**: no new tools; no key can reach the Vault yet.
+- Migration 031 runs on the first boot, so back up first. It only adds tables; its number is lower than 032–036, which your instance already applied (expected: each migration runs by its own number). See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.19.0
 

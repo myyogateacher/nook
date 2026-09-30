@@ -11,6 +11,7 @@ import type { McpScope } from "./mcpScopes";
 import { AllowlistError, allowlistNarrows, ipAllowlistAvailable, normalizeAllowlist, storedAllowlist, IP_ALLOWLIST_MAX } from "./ipAllowlist";
 
 import { readableViewPredicate } from "./tasks/views";
+import { anchorsOf, type ItemKind } from "./keyResources";
 import { listReadableFolders, readableNotePredicate } from "./access";
 import { MCP_LIMITS } from "./mcpRateLimit";
 import { recoveryCode, totpCode } from "./validation";
@@ -846,13 +847,15 @@ const userRole = (userId: string) => (db.query("SELECT role FROM users WHERE id 
 export function keysReachingItem(ownerId: string, module: GrantModule, resourceKind: string, resourceId: string) {
   const rows = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.user_id = ? AND k.revoked_at IS NULL`).all(ownerId) as KeyRow[];
   const policies = readPolicies();
+  // Wave 34: a grant reaches the item through the item itself or its container (a note's folder).
+  const anchors = anchorsOf(resourceKind as ItemKind, resourceId) ?? [{ kind: resourceKind as ResourceKind, id: resourceId }];
   let count = 0;
   for (const row of rows) {
     const { state } = keyState(row, policies);
     if (state !== "active" && state !== "grace") continue;
     const modules = activeModules(row.role, policies);
     const reaches = loadGrants(row.id).some((grant) => grant.module === module
-      && (grant.resourceId === null || (grant.resourceKind === resourceKind && grant.resourceId === resourceId))
+      && (grant.resourceId === null || anchors.some((anchor) => anchor.kind === grant.resourceKind && anchor.id === grant.resourceId))
       && grantInactiveReason(grant, row.role, modules, row.user_id) === null);
     if (reaches) count += 1;
   }

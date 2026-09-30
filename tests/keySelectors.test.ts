@@ -75,6 +75,14 @@ describe("chosen notes and files (Wave 34)", () => {
     for (const result of [listed, searched]) expect(result.text).not.toContain("Hidden heron");
   });
 
+  test("the Access sheet's key count includes keys over the note's folder", async () => {
+    const w = await notesWorld("Selectors access count");
+    const before = (await api(w.owner, "GET", `/notes/${w.n1}/access`)).body.keysWithAccess as number;
+    key(w.owner, [on("notes", "read", "folder", w.f1)]);
+    expect((await api(w.owner, "GET", `/notes/${w.n1}/access`)).body.keysWithAccess).toBe(before + 1);
+    expect((await api(w.owner, "GET", `/notes/${w.n2}/access`)).body.keysWithAccess).toBe(before);
+  });
+
   test("a draft key over a folder creates only there and never in Default; writes need owned items", async () => {
     const w = await notesWorld("Selectors drafts");
     const scoped = key(w.owner, [on("notes", "draft", "folder", w.f1)]);

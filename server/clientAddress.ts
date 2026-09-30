@@ -98,6 +98,22 @@ function socketAddress(c: Context) {
   }
 }
 
+/**
+ * The client's exact canonical address (not its /64 bucket), by the same rule as clientAddress,
+ * for per-key IP allowlists (Wave 34, server/ipAllowlist.ts); null when there is none. Forwarding
+ * headers count only with TRUSTED_PROXY_HOPS ≥ 1, and only the entry the outermost trusted proxy
+ * added: entries further left are client-controlled and never read (T211).
+ */
+export function clientIp(c: Context, hops = config.trustedProxyHops): string | null {
+  const socket = normalizeIp(socketAddress(c));
+  if (hops <= 0) return socket;
+  const header = c.req.header("X-Forwarded-For");
+  if (!header) return socket;
+  const entries = header.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length < hops) return socket;
+  return normalizeIp(entries[entries.length - hops]) ?? socket;
+}
+
 /** The client's rate-limit bucket (see above); "unknown" when there is none. */
 export function clientAddress(c: Context, hops = config.trustedProxyHops): string {
   const socket = socketAddress(c);

@@ -183,7 +183,8 @@ function registerAccessRoutes(app: Hono<AppEnv>) {
     if (refused) return refused;
     const query = inventoryQuerySchema.safeParse({
       owner: c.req.query("owner") || undefined, module: c.req.query("module") || undefined,
-      state: c.req.query("state") || undefined, cursor: c.req.query("cursor") || undefined
+      state: c.req.query("state") || undefined, cursor: c.req.query("cursor") || undefined,
+      surface: c.req.query("surface") || undefined, ipRestricted: c.req.query("ipRestricted") || undefined
     });
     if (!query.success) return c.json({ error: "Invalid request", details: query.error.issues.map((issue) => issue.message) }, 400);
     return c.json(listInventory(query.data));
@@ -213,7 +214,10 @@ const inventoryQuerySchema = z.object({
   owner: z.string().uuid().transform((value) => value.toLowerCase()).optional(),
   module: z.enum(GENERAL_KEY_MODULES as [GrantModule, ...GrantModule[]]).optional(),
   state: z.enum(["active", "expiring", "no_expiry", "blocked", "grace", "unused", "expired"]).optional(),
-  cursor: z.string().max(120).optional()
+  cursor: z.string().max(120).optional(),
+  // Wave 34: keys that may use a surface, and keys limited to addresses (the addresses never show).
+  surface: z.enum(["mcp", "rest"]).optional(),
+  ipRestricted: z.enum(["true", "false"]).transform((value) => value === "true").optional()
 });
 const bulkRevokeSchema = z.object({ keyIds: z.array(z.string().uuid()).min(1).max(50), reason: adminRevokeSchema.shape.reason }).strict();
 

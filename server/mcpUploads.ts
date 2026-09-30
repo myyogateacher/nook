@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
-import { authenticateMcpRequest, mcpJsonError, mcpResponse, withMcpRequestSlot } from "./mcp";
+import { authenticateKeyRequest, mcpJsonError, mcpResponse, withMcpRequestSlot } from "./mcp";
 import { storeForKey, ticketBudgetError, ticketExpired, uploadTicket } from "./mcpFileTools";
 import { hasScope } from "./mcpScopes";
 import { loadLiveKey } from "./mcpTools";
@@ -18,10 +18,11 @@ import { canWriteContent } from "./team/userRole";
 const json = (status: number, body: Record<string, unknown>) => mcpResponse(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export async function handleMcpUpload(request: Request, uploadId: string) {
-  const authenticated = authenticateMcpRequest(request);
+export async function handleMcpUpload(request: Request, uploadId: string, clientIp: string | null = null) {
+  // The same key checks as a tool call, IP allowlist included, on the surface the key holds (Wave 34).
+  const authenticated = authenticateKeyRequest(request, { surface: "upload", clientIp });
   if (authenticated instanceof Response) return authenticated;
-  const key = loadLiveKey(authenticated.id);
+  const key = loadLiveKey(authenticated.id, authenticated.surface);
   if (!key) return mcpJsonError("Invalid or revoked API key", 401, true);
   if (!hasScope(key.scopes, "files:write") || !canWriteContent(key.userId)) return json(403, { error: "This API key cannot upload files", code: "SCOPE_REQUIRED" });
 

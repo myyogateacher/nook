@@ -1,14 +1,15 @@
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
-import { db, now } from "./db";
+import { db } from "./db";
 import { registerMcpTools, type McpKeyContext } from "./mcpTools";
 import { registerRoutinePrompts } from "./inbox/prompts";
 import { DEFAULT_MCP_SCOPES, normalizeScopes, type McpScope } from "./mcpScopes";
 import { HTTPException } from "hono/http-exception";
 import { boundedRequest } from "./validation";
 import { type Role } from "./team/roles";
-import { createApiKey, hashKeyToken, isKeyDenial, listApiKeys, resolveKeyActor, revokeOwnKey, type KeyActor } from "./apiKeys";
-import { grantsForScopes } from "./keyGrants";
+import { countKeyUsage, createApiKey, hashKeyToken, isKeyDenial, listApiKeys, markKeyUsed, resolveKeyActor, revokeOwnKey, type KeyActor } from "./apiKeys";
+import { grantsForScopes, type KeySurfaces } from "./keyGrants";
+import { addressAllowed, ipAllowlistAvailable } from "./ipAllowlist";
 import { readPolicies } from "./team/policies";
 
 type McpKeyRow = {
@@ -23,6 +24,8 @@ type McpKeyRow = {
   role: Role;
   /** The key's effective grants and scopes for this request (Nook keys, D263). */
   actor: KeyActor;
+  /** The surface the key was checked for (Wave 34). */
+  surface: "mcp" | "rest";
 };
 
 export const hashMcpToken = hashKeyToken;
@@ -69,8 +72,8 @@ const mcpHandler = createMcpHandler(({ authInfo }) => {
   return server;
 }, { maxSubscriptions: 0 });
 
-let invalidAuthCount = 0;
-let invalidAuthResetAt = Date.now() + 60_000;
+/** Failed Bearer authentications per surface per minute; past 60, every failure answers 429. */
+const invalidAuth = { mcp: { count: 0, resetAt: Date.now() + 60_000 }, rest: { count: 0, resetAt: Date.now() + 60_000 } };
 let activeRequests = 0;
 
 function mcpResponse(body: BodyInit | null, init: ResponseInit) {
@@ -80,73 +83,106 @@ function mcpResponse(body: BodyInit | null, init: ResponseInit) {
   return new Response(body, { ...init, headers });
 }
 
-function mcpJsonError(error: string, status: number, authenticate = false) {
+function mcpJsonError(error: string, status: number, authenticate = false, code?: string) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (authenticate) headers["WWW-Authenticate"] = "Bearer";
-  return mcpResponse(JSON.stringify({ error }), { status, headers });
+  return mcpResponse(JSON.stringify(code ? { error, code } : { error }), { status, headers });
 }
 
-function recordInvalidAuth() {
+function recordInvalidAuth(surface: "mcp" | "rest") {
+  const bucket = invalidAuth[surface];
   const time = Date.now();
-  if (time >= invalidAuthResetAt) {
-    invalidAuthCount = 0;
-    invalidAuthResetAt = time + 60_000;
+  if (time >= bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = time + 60_000;
   }
-  invalidAuthCount += 1;
-  return invalidAuthCount > 60;
+  bucket.count += 1;
+  return bucket.count > 60;
+}
+
+/** The hosts `/mcp` and `/api/v1` answer on: the app origins, plus the loopback spellings of a local origin. */
+function allowedHosts() {
+  const hosts = new Set<string>();
+  for (const allowedOrigin of config.appOrigins) {
+    const appUrl = new URL(allowedOrigin);
+    hosts.add(appUrl.host);
+    if (["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname)) {
+      const port = appUrl.port ? `:${appUrl.port}` : "";
+      hosts.add(`localhost${port}`);
+      hosts.add(`127.0.0.1${port}`);
+      hosts.add(`[::1]${port}`);
+    }
+  }
+  return hosts;
 }
 
 /**
- * The Host/Origin checks and the Bearer key lookup of every MCP entry point: /mcp and, since Wave 19,
- * PUT /mcp/uploads/:id (server/mcpUploads.ts). Returns the live key and its holder, or the error
- * response (401 with WWW-Authenticate, 403 for a bad host or origin, 429 after many failures).
+ * Which surface a request authenticates for: `/mcp` is "mcp", `/api/v1` is "rest", and an upload's
+ * PUT (`/mcp/uploads/:id`) is "upload": it only finishes a ticket a tool call already opened, so a
+ * key may use it on whichever surface it holds (REST-only keys too).
  */
-export function authenticateMcpRequest(request: Request): McpKeyRow | Response {
-  const allowedHosts = new Set<string>();
-  for (const allowedOrigin of config.appOrigins) {
-    const appUrl = new URL(allowedOrigin);
-    allowedHosts.add(appUrl.host);
-    if (["localhost", "127.0.0.1", "[::1]"].includes(appUrl.hostname)) {
-      const port = appUrl.port ? `:${appUrl.port}` : "";
-      allowedHosts.add(`localhost${port}`);
-      allowedHosts.add(`127.0.0.1${port}`);
-      allowedHosts.add(`[::1]${port}`);
-    }
-  }
+export type AuthSurface = "mcp" | "rest" | "upload";
+
+/**
+ * The Host/Origin checks, the Bearer key lookup, and the per-key IP allowlist of every key entry
+ * point: /mcp, PUT /mcp/uploads/:id (server/mcpUploads.ts), and /api/v1 (server/restV1.ts, Wave 34).
+ * Returns the live key, its holder, and the surface it was checked for, or the error response (401
+ * with WWW-Authenticate, 403 for a bad host or origin, a surface or policy refusal, or an address
+ * outside the key's allowlist; 429 after many failures). Keys are read only from the Authorization
+ * header, never from a URL or a cookie; nothing here logs or echoes the token.
+ */
+export function authenticateKeyRequest(request: Request, options: { surface: AuthSurface; clientIp?: string | null }): McpKeyRow | Response {
+  const limiter = options.surface === "rest" ? "rest" : "mcp";
   const host = request.headers.get("host");
   const origin = request.headers.get("origin");
-  if (!host || !allowedHosts.has(host)) return mcpJsonError("Invalid host", 403);
+  if (!host || !allowedHosts().has(host)) return mcpJsonError("Invalid host", 403);
   if (origin && !isOriginAllowed(origin)) return mcpJsonError("Invalid origin", 403);
 
   const authorization = request.headers.get("authorization") ?? "";
   const match = /^Bearer ([A-Za-z0-9_-]{40,80})$/.exec(authorization);
   if (!match) {
-    const limited = recordInvalidAuth();
+    const limited = recordInvalidAuth(limiter);
     return mcpJsonError(limited ? "Too many authentication failures" : "A valid Bearer API key is required", limited ? 429 : 401, true);
   }
   const token = match[1]!;
   const row = db.query(`
-    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, u.email, u.role
+    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, k.surfaces, u.email, u.role
     FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
     WHERE k.token_hash = ? AND k.revoked_at IS NULL AND u.disabled_at IS NULL
-  `).get(hashMcpToken(token)) as Omit<McpKeyRow, "actor"> | null;
+  `).get(hashMcpToken(token)) as (Omit<McpKeyRow, "actor" | "surface"> & { surfaces: KeySurfaces }) | null;
   if (!row || !isEmailAllowed(row.email)) {
-    const limited = recordInvalidAuth();
+    const limited = recordInvalidAuth(limiter);
     return mcpJsonError(limited ? "Too many authentication failures" : "Invalid or revoked API key", limited ? 429 : 401, true);
   }
-  // Expired, past its rotation grace, or blocked by team policy (D263, D276, D277, T209).
-  const actor = resolveKeyActor(row.id, "mcp");
+  const surface: "mcp" | "rest" = options.surface === "upload" ? (row.surfaces === "rest" ? "rest" : "mcp") : options.surface;
+  // Expired, past its rotation grace, not allowed on this surface, or blocked by team policy (D263, D276, D277, D279, T209).
+  const actor = resolveKeyActor(row.id, surface);
   if (isKeyDenial(actor)) {
-    if (actor.code === "KEY_POLICY") return mcpResponse(JSON.stringify({ error: actor.message, code: "KEY_POLICY" }), { status: 403, headers: { "Content-Type": "application/json" } });
-    const limited = recordInvalidAuth();
+    if (actor.code === "KEY_POLICY") {
+      countKeyUsage(row.id, "denied", surface);
+      return mcpResponse(JSON.stringify({ error: actor.message, code: "KEY_POLICY" }), { status: 403, headers: { "Content-Type": "application/json" } });
+    }
+    const limited = recordInvalidAuth(limiter);
     return mcpJsonError(limited ? "Too many authentication failures" : actor.message, limited ? 429 : 401, true);
   }
-
-  if (!row.last_used_at || Date.now() - new Date(row.last_used_at).getTime() > 300_000) {
-    db.query("UPDATE mcp_api_keys SET last_used_at = ? WHERE id = ?").run(now(), row.id);
+  // Wave 34 (D284, T211): a key limited to addresses works only from inside its list, and only
+  // where the server can see client addresses; the refusal never echoes the list or the address.
+  if (actor.ipAllowlist !== null) {
+    if (!ipAllowlistAvailable()) {
+      countKeyUsage(row.id, "denied", surface);
+      return mcpJsonError("This API key is limited to certain addresses, and this server cannot check addresses. Ask an admin.", 403, false, "IP_NOT_ALLOWED");
+    }
+    if (!addressAllowed(actor.ipAllowlist, options.clientIp ?? null)) {
+      countKeyUsage(row.id, "denied", surface);
+      return mcpJsonError("This API key cannot be used from this address", 403, false, "IP_NOT_ALLOWED");
+    }
   }
-  return { ...row, actor };
+  markKeyUsed(row.id, surface);
+  return { ...row, actor, surface };
 }
+
+/** The MCP endpoint's authentication (kept for callers and tests from before Wave 34). */
+export const authenticateMcpRequest = (request: Request, clientIp: string | null = null) => authenticateKeyRequest(request, { surface: "mcp", clientIp });
 
 /** Runs `operation` in one of the shared MCP request slots (24 at once), or answers 503. */
 export async function withMcpRequestSlot(operation: () => Promise<Response>) {
@@ -161,8 +197,8 @@ export async function withMcpRequestSlot(operation: () => Promise<Response>) {
 
 export { mcpJsonError, mcpResponse };
 
-export async function handleMcpRequest(request: Request) {
-  const authenticated = authenticateMcpRequest(request);
+export async function handleMcpRequest(request: Request, clientIp: string | null = null) {
+  const authenticated = authenticateMcpRequest(request, clientIp);
   if (authenticated instanceof Response) return authenticated;
   const key = authenticated;
   const token = /^Bearer (.+)$/.exec(request.headers.get("authorization") ?? "")![1]!;

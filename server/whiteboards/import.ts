@@ -5,7 +5,7 @@ import { storeRawUpload, storedBytes } from "../documents";
 import { purgeOwnedItem } from "../bin";
 import { sanitizeDisplayName } from "../validation";
 import { canonicalSceneJson, IMAGE_MIME_TYPES, jsonDepth, sceneWithoutImages, validateScene, WHITEBOARD_MAX_DEPTH, WHITEBOARD_MAX_FILES, WHITEBOARD_MAX_SCENE_BYTES, type CanonicalScene } from "../../shared/whiteboardScene";
-import { createWhiteboard, unavailableImages, WhiteboardError, whiteboardStoredName } from "./service";
+import { chargeWhiteboardCreate, createWhiteboard, unavailableImages, WhiteboardError, whiteboardStoredName } from "./service";
 
 /**
  * Import `.excalidraw` (Wave 24, whiteboard plan §8, T160, T164). The file goes through the same
@@ -100,6 +100,8 @@ export async function importWhiteboard(userId: string, input: { name: string; fo
   const images = plan.embedded.reduce((sum, item) => sum + item.bytes.byteLength, 0);
   const quota = config.userStorageQuotaBytes;
   if (quota > 0 && storedBytes(userId) + images > quota) refuse("QUOTA_EXCEEDED", "Storage quota exceeded: this drawing's images do not fit", 507);
+  // Review L2: the new board is charged before any picture is stored, so a refused import stores nothing.
+  chargeWhiteboardCreate(userId);
 
   const stored = new Map<string, { id: string; mimeType: string }>();
   const displayName = boardName.replace(/\.excalidraw$/i, "");
@@ -123,7 +125,7 @@ export async function importWhiteboard(userId: string, input: { name: string; fo
     }
     const scene = sceneWithoutImages(withDocumentIds(plan.scene, stored), foreign);
     const { whiteboard } = await createWhiteboard(userId, {
-      name: boardName, folderId, scene,
+      name: boardName, folderId, scene, charged: true,
       audit: { action: "whiteboard.import", details: { images: stored.size, imagesLeftOut: plan.missing + foreign.size } }
     });
     return { whiteboard, images: stored.size, imagesLeftOut: plan.missing + foreign.size };

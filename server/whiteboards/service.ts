@@ -63,6 +63,14 @@ function charge(name: LimitName, userId: string, nowMs = Date.now()) {
   window.count += 1;
 }
 
+/**
+ * Review L2: an import charges its new board before it stores any picture, so a refused import
+ * stores nothing; `createWhiteboard` is then told not to charge again.
+ */
+export function chargeWhiteboardCreate(userId: string) {
+  charge("create", userId);
+}
+
 /** Test hook: forget the whiteboard rate windows. */
 export function resetWhiteboardLimitsForTests() {
   windows.clear();
@@ -260,9 +268,13 @@ async function ensureDiskSpace(bytes: number) {
   if (disk.bavail * disk.bsize < config.minFreeDiskBytes + bytes) throw new WhiteboardError(507, "DISK_FULL", "Storage is full");
 }
 
-function checkQuota(userId: string, delta: number) {
+const quotaFits = (userId: string, delta: number) => {
   const quota = config.userStorageQuotaBytes;
-  if (quota > 0 && storedBytes(userId) + delta > quota) throw new WhiteboardError(507, "QUOTA_EXCEEDED", "Storage quota exceeded");
+  return !(quota > 0 && storedBytes(userId) + delta > quota);
+};
+
+function checkQuota(userId: string, delta: number) {
+  if (!quotaFits(userId, delta)) throw new WhiteboardError(507, "QUOTA_EXCEEDED", "Storage quota exceeded");
 }
 
 /** The name as stored: §6.4 rules, 1–200 characters before the suffix, always ending in `.excalidraw`. */
@@ -286,14 +298,14 @@ function replay(userId: string, uploadKey: string) {
  * POST /api/whiteboards and MCP create_whiteboard: an empty board in an owned folder (Default when
  * none is given). `uploadKey` makes a retry return the same board.
  */
-export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string }; scene?: CanonicalScene; thumbnail?: { png: Uint8Array; sha256: string } | null; audit?: { action: string; details: Record<string, unknown> } }) {
+export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string }; scene?: CanonicalScene; thumbnail?: { png: Uint8Array; sha256: string } | null; audit?: { action: string; details: Record<string, unknown> }; charged?: boolean }) {
   const name = whiteboardStoredName(input.name);
   const uploadKey = input.uploadKey ?? null;
   if (uploadKey) {
     const existing = replay(userId, uploadKey);
     if (existing) return { whiteboard: existing, replay: true };
   }
-  charge("create", userId);
+  if (!input.charged) charge("create", userId);
   const folderId = input.folderId ?? ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
   const prepared = prepareScene(input.scene ?? emptyScene());
@@ -446,8 +458,12 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     // as a snapshot the owner can restore (the old object stays instead of being removed); so does
     // the first save 30 minutes after the newest snapshot (D207).
     const newestAt = (db.query("SELECT MAX(created_at) AS at FROM whiteboard_snapshots WHERE document_id = ?").get(documentId) as { at: string | null }).at;
-    const keep = options.keepSnapshot === true || keepsSafetySnapshot(board.element_count, prepared.stats.elementCount) || keepsPeriodicSnapshot(board.element_count, newestAt, now());
-    const delta = prepared.bytes.byteLength - (keep ? 0 : board.size_bytes);
+    const safety = options.keepSnapshot === true || keepsSafetySnapshot(board.element_count, prepared.stats.elementCount);
+    // Review M3: the periodic snapshot is optional. When keeping the replaced scene would not fit
+    // the quota it is skipped (the next save tries again), so it never refuses an edit that fits.
+    const periodic = !safety && keepsPeriodicSnapshot(board.element_count, newestAt, now());
+    let keep = safety || (periodic && quotaFits(userId, prepared.bytes.byteLength));
+    let delta = prepared.bytes.byteLength - (keep ? 0 : board.size_bytes);
     checkQuota(userId, delta);
     await ensureDiskSpace(prepared.bytes.byteLength);
     const objectId = crypto.randomUUID();
@@ -458,6 +474,10 @@ export async function saveScene(documentId: string, userId: string, baseRevision
       db.transaction(() => {
         // T80: a save that authenticated before its owner was blocked must not commit after it.
         if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw notFound();
+        if (periodic && keep && !quotaFits(userId, delta)) {
+          keep = false;
+          delta = prepared.bytes.byteLength - board.size_bytes;
+        }
         checkQuota(userId, delta);
         const moved = db.query(`UPDATE whiteboards SET revision = revision + 1, object_id = ?, element_count = ?, text_bytes = ?, updated_at = ?
           WHERE document_id = ? AND revision = ?`).run(objectId, prepared.stats.elementCount, prepared.stats.textBytes, savedAt, documentId, baseRevision);
@@ -473,6 +493,7 @@ export async function saveScene(documentId: string, userId: string, baseRevision
             .all(documentId, WHITEBOARD_SNAPSHOT_LIMIT) as Array<{ id: string; object_id: string }>;
           for (const row of old) db.query("DELETE FROM whiteboard_snapshots WHERE id = ?").run(row.id);
           dropped = old.map((row) => row.object_id);
+          rememberSnapshotCount(board.object_id, board.element_count);
           audit(userId, null, "whiteboard.snapshot", { documentId, revision: board.revision, elementsBefore: board.element_count, elementsAfter: prepared.stats.elementCount });
         }
       })();
@@ -518,19 +539,38 @@ async function readSnapshotScene(snapshot: { object_id: string; size_bytes: numb
   return result.scene;
 }
 
-/** Shape counts of snapshot objects, which never change once written (bounded, per process). */
+/**
+ * Shape counts of snapshot objects, which never change once written (bounded, per process; review
+ * L4). A snapshot taken by this process is counted when it is taken (the board row knows the count
+ * of the scene it replaces); an older one is counted once from its object, with a plain parse (the
+ * object was validated when it was written and is validated again whenever it is opened).
+ */
 const snapshotCounts = new Map<string, number>();
+function rememberSnapshotCount(objectId: string, count: number) {
+  if (snapshotCounts.size > 5000) snapshotCounts.clear();
+  snapshotCounts.set(objectId, count);
+}
 async function snapshotElementCount(snapshot: SnapshotRow) {
   const known = snapshotCounts.get(snapshot.object_id);
   if (known !== undefined) return known;
-  let count = 0;
+  let count: number;
   try {
-    count = (await readSnapshotScene(snapshot)).elements.length;
+    const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
+    let text: string;
+    try {
+      text = await handle.readFile("utf8");
+    } finally {
+      await handle.close();
+    }
+    const elements = (JSON.parse(text) as { elements?: unknown }).elements;
+    if (!Array.isArray(elements)) return null;
+    count = elements.length;
   } catch {
     return null;
   }
-  if (snapshotCounts.size > 5000) snapshotCounts.clear();
-  snapshotCounts.set(snapshot.object_id, count);
+  rememberSnapshotCount(snapshot.object_id, count);
+  // Let other requests run between two uncounted snapshots.
+  await new Promise((resolve) => setImmediate(resolve));
   return count;
 }
 

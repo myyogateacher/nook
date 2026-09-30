@@ -2,7 +2,8 @@ import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
 
-const { resetWhiteboardLimitsForTests } = await import("../server/whiteboards/service");
+const { resetWhiteboardLimitsForTests, WHITEBOARD_LIMITS } = await import("../server/whiteboards/service");
+const { sceneForSave, withoutRefusedImages } = await import("../src/whiteboards/historyGuard");
 
 /**
  * Wave 24 independent review probes: the embed summary for binned boards, snapshot and duplicate
@@ -82,11 +83,10 @@ describe("Wave 24 review probes", () => {
     expect(JSON.stringify(scene)).not.toContain(theirs.id);
   }, 30_000);
 
-  // FINDING (MEDIUM): "a picture deleted or unshared since … never makes the board unsavable" does
-  // not hold once the picture has left the board: an undo (or a pending copy, or another tab) that
-  // brings it back makes every later save of the board fail with 400 IMAGE_NOT_AVAILABLE, and the
-  // client does not strip the refused ids (it only does so in saveAsCopy).
-  test("an undo that brings back a picture unshared since it left the board is refused", async () => {
+  // Review M1 (fixed on the canvas): a save that brings back a picture unshared since it left the
+  // board is refused with the picture's id; the canvas takes that picture off and saves again, so
+  // the board never stays unsavable.
+  test("an undo that brings back a picture unshared since it left the board: refused once, then saved without it", async () => {
     const owner = await createUser("W24R undo owner");
     const other = await createUser("W24R undo other");
     const picture = await upload(other, PNG, "shared.png");
@@ -97,17 +97,29 @@ describe("Wave 24 review probes", () => {
     expect((await save(owner, board.id, 2, sceneWith([rect("r")]))).status).toBe(200);
     await share(other, picture.id, []);
     // Undo on the canvas: the picture element comes back with the same file id.
-    const undo = await save(owner, board.id, 3, sceneWith([rect("r"), rect("s")], [picture.id]));
+    const undone = sceneWith([rect("r"), rect("s")], [picture.id]);
+    const undo = await save(owner, board.id, 3, undone);
     expect(undo.status).toBe(400);
     expect(undo.body.code).toBe("IMAGE_NOT_AVAILABLE");
-    // … and so is every further edit while the picture is on the canvas.
-    expect((await save(owner, board.id, 3, sceneWith([rect("r"), rect("s"), rect("t")], [picture.id]))).body.code).toBe("IMAGE_NOT_AVAILABLE");
+    expect(undo.body.documentIds).toEqual([picture.id]);
+    // The canvas removes the refused picture (its reference and its element) and saves again.
+    const refs = new Map(Object.entries(undone.files));
+    const fixed = withoutRefusedImages(undone.elements as Array<Record<string, unknown>>, refs, undo.body.documentIds);
+    expect(fixed.removed).toBe(1);
+    expect(fixed.refs.size).toBe(0);
+    const retry = sceneForSave(fixed.elements, {}, fixed.refs);
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) return;
+    const saved = await save(owner, board.id, 3, retry.scene);
+    expect(saved.status).toBe(200);
+    const stored = (await api(owner, "GET", `/whiteboards/${board.id}`)).body.scene;
+    expect(stored.elements.map((element: Json) => element.id)).toEqual(["r", "s"]);
+    expect(JSON.stringify(stored)).not.toContain(picture.id);
   }, 30_000);
 
-  // FINDING (MEDIUM): the optional periodic snapshot (D207) is charged to the save, so near the quota
-  // an ordinary small edit is refused 507 although the edit itself fits; the next save is refused the
-  // same way (the snapshot is still due), so the board cannot be saved until space is freed.
-  test("near the quota, a small edit is refused only because a periodic snapshot is due", async () => {
+  // Review M3 (fixed): the optional periodic snapshot (D207) is skipped when keeping it would not fit
+  // the quota; the edit itself is saved. The safety snapshot and restores are unchanged.
+  test("near the quota, a small edit is saved and the due periodic snapshot is skipped", async () => {
     const { config } = await import("../server/config");
     const { storedBytes } = await import("../server/documents");
     const owner = await createUser("W24R quota owner");
@@ -124,8 +136,32 @@ describe("Wave 24 review probes", () => {
       VALUES (?, ?, NULL, 'filler.bin', 'application/octet-stream', 'none', ?, ?, ?, ?)`).run(crypto.randomUUID(), owner.userId, filler, "0".repeat(64), timestamp, timestamp);
     // A one-character edit: the scene grows by a byte, well within the 100 KB left.
     const edit = await save(owner, board.id, 2, sceneWith(texts(1)));
-    expect(edit.status).toBe(507);
-    expect(edit.body.code).toBe("QUOTA_EXCEEDED");
-    expect((await save(owner, board.id, 2, sceneWith(texts(2)))).status).toBe(507);
+    expect(edit.status).toBe(200);
+    expect(edit.body.snapshotKept).toBeUndefined();
+    const next = await save(owner, board.id, 3, sceneWith(texts(2)));
+    expect(next.status).toBe(200);
+    expect(next.body.snapshotKept).toBeUndefined();
+    expect((await api(owner, "GET", `/whiteboards/${board.id}/snapshots`)).body.snapshots).toEqual([]);
+    // Freeing space brings the periodic snapshot back on the next save.
+    db.query("DELETE FROM documents WHERE owner_id = ? AND name = 'filler.bin'").run(owner.userId);
+    const roomy = await save(owner, board.id, 4, sceneWith(texts(3)));
+    expect(roomy.status).toBe(200);
+    expect(roomy.body.snapshotKept).toBe(true);
   }, 30_000);
+
+  // Review L2: an import is charged against the new-board limit before any picture is stored.
+  test("an import refused by the new-board limit stores none of its pictures", async () => {
+    const owner = await createUser("W24R import limit");
+    for (let index = 0; index < WHITEBOARD_LIMITS.create; index += 1) expect((await api(owner, "POST", "/whiteboards", { name: `B${index}` })).status).toBe(201);
+    const count = () => (db.query("SELECT COUNT(*) AS n FROM documents WHERE owner_id = ?").get(owner.userId) as { n: number }).n;
+    const before = count();
+    const file = {
+      type: "excalidraw", version: 2, source: "x", appState: {},
+      elements: [rect("r"), imageEl("i", "k")],
+      files: { k: { id: "k", mimeType: "image/png", dataURL: `data:image/png;base64,${PNG.toString("base64")}` } }
+    };
+    const result = await api(owner, "POST", "/whiteboards/import", { name: "Limited", file });
+    expect(result.status).toBe(429);
+    expect(count()).toBe(before);
+  }, 60_000);
 });

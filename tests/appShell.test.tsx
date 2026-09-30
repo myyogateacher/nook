@@ -55,7 +55,7 @@ test("Today keeps the greeting and a launcher row of real links, without the Bin
   const markup = home();
   expect(markup).toContain("Good to see you, Ada.");
   const launcher = markup.match(/<nav class="today-launcher" aria-label="Apps">(.*?)<\/nav>/)?.[1] ?? "";
-  expect([...launcher.matchAll(/<a class="today-app today-app-(\w+)" href="([^"]+)"/g)].map((match) => [match[1], match[2]])).toEqual([["notes", "/notes"], ["files", "/files"], ["tasks", "/tasks"], ["collections", "/collections"], ["calendar", "/calendar"], ["whiteboards", "/whiteboards"]]);
+  expect([...launcher.matchAll(/<a class="today-app today-app-(\w+)" href="([^"]+)"/g)].map((match) => [match[1], match[2]])).toEqual([["notes", "/notes"], ["files", "/files"], ["tasks", "/tasks"], ["collections", "/collections"], ["calendar", "/calendar"], ["whiteboards", "/whiteboards"], ["vault", "/vault"]]);
   expect(launcher).not.toContain("Bin");
   expect(markup).not.toContain("app-card");
 });

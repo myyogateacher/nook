@@ -45,6 +45,8 @@ import { InboxApp } from "./inbox/InboxApp";
 // Whiteboards (Wave 23) load as their own chunks: the list here, and the Excalidraw canvas inside it
 // (D191), so nobody who never opens Whiteboards downloads either.
 const WhiteboardsApp = lazy(() => import("./whiteboards/WhiteboardsApp").then((module) => ({ default: module.WhiteboardsApp })));
+// The Vault (Wave 25) is its own chunk too: nobody who never opens it downloads it.
+const VaultApp = lazy(() => import("./vault/VaultApp").then((module) => ({ default: module.VaultApp })));
 import { lineDiff } from "./diff/lineDiff";
 import { TeamApp } from "./team/TeamApp";
 import { InviteRegister, InviteWhileSignedIn, type InviteRegisterBody } from "./auth/InviteRegister";
@@ -108,14 +110,14 @@ import { isSearchPushedEntry, markSearchPushed, nextSearchHint, readSearchHint, 
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
-import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
+import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, unavailableModules, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 // `notices` (Wave 35 review N2c) comes with /api/auth/me only.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null } };
-type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role };
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean } };
+type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role; unavailable?: readonly ModuleId[] };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 
 const noteSortOptions: Array<{ value: NoteSort; label: string }> = [
@@ -756,7 +758,22 @@ export function App() {
   const [toast, setToast] = useState("");
   // Settings → Modules (D92): per-user, saved on the server, UI only.
   const modulePreferences = usePreferences(session?.user.id ?? null, session && session.preferences !== undefined ? parsePreferences(session.preferences) : undefined);
-  const disabledModules = modulePreferences.preferences.disabledModules;
+  // Wave 25: modules the server does not offer this person (the Vault without its key) are hidden
+  // like modules turned off; Settings has no switch for them.
+  const unavailable = useMemo(() => unavailableModules(session?.features), [session?.features]);
+  const preferredDisabled = modulePreferences.preferences.disabledModules;
+  const disabledModules = useMemo(() => unavailable.length ? normalizeDisabledModules([...preferredDisabled, ...unavailable]) : preferredDisabled, [preferredDisabled, unavailable]);
+  // A sign-in path that did not say which modules the server offers (Google): ask once.
+  const featuresUserId = session?.user.id ?? null;
+  const featuresKnown = session?.features !== undefined;
+  useEffect(() => {
+    if (!featuresUserId || featuresKnown) return;
+    let live = true;
+    api<SessionResponse>("/auth/me").then((me) => {
+      if (live) setSession((current) => current && current.user.id === me.user.id && current.features === undefined ? { ...current, features: me.features ?? {} } : current);
+    }, () => undefined);
+    return () => { live = false; };
+  }, [featuresKnown, featuresUserId]);
   const searchEnabled = isModuleEnabled(disabledModules, "search");
   const binEnabled = isModuleEnabled(disabledModules, "bin");
   // True from Settings → "Manage team" until the admin leaves Team: that visit passes the route gate
@@ -921,7 +938,7 @@ export function App() {
   useEffect(() => {
     // The Settings dialog owns the title while it is open, and restores it on close.
     if (settingsOpen) return;
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox", whiteboards: "Whiteboards" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", bin: "Bin", team: "Team", inbox: "Inbox", whiteboards: "Whiteboards", vault: "Vault" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · Nook` : "Sign in · Nook";
   }, [activeApp, note, selectedNoteId, session, settingsOpen]);
@@ -1435,6 +1452,7 @@ export function App() {
     if (section === "team") return { app: "team", userId: null };
     if (section === "inbox") return { app: "inbox", view: "pending", proposalId: null };
     if (section === "whiteboards") return { app: "whiteboards", folder: "all", boardId: null };
+    if (section === "vault") return { app: "vault", vaultId: null, envId: null, secretId: null };
     return { app: section };
   }
 
@@ -1930,7 +1948,7 @@ export function App() {
   }} />;
   if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} googleResult={googleSignIn} />;
 
-  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role };
+  const modulesSettings: ModulesSettingsProps = { disabledModules: modulePreferences.preferences.disabledModules, status: modulePreferences.status, onToggle: modulePreferences.setModuleEnabled, role: session.user.role, unavailable };
   // Admins keep "Manage team" in Settings even when Team is hidden (Team plan §6.2), so the route gate
   // lets that one visit through; Back, Forward, and links still follow the toggle.
   const settingsDialog = settingsOpen && <SettingsDialog session={session} googleResult={googleSettings} modules={modulesSettings} initialSection={settingsSection} onSectionChange={settingsSectionChanged} pendingRef={settingsPendingRef} onManageTeam={() => { closeSettings("replace"); void openTeamViaSettings(setTeamViaSettings, () => openApp("team")); }} onClose={() => { if (!session.totp.setupRequired) closeSettings(); }} onSecurityChanged={(totp, keepOpen) => {
@@ -1943,8 +1961,8 @@ export function App() {
     void api("/auth/notices/google-reset/dismiss", { method: "POST", body: "{}" }).catch(() => undefined);
   };
   const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
-    <p>{moduleOffHint(moduleHint)}</p>
-    <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>
+    <p>{unavailable.includes(moduleHint) ? "The vault is not available on this server." : moduleOffHint(moduleHint)}</p>
+    {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
   </div>}</>;
   const openBin = binEnabled ? () => { void openApp("bin"); } : undefined;
@@ -1972,6 +1990,7 @@ export function App() {
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
       : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
+      : shownApp === "vault" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading the vault…</p></main>}><VaultApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} /></Suspense>
       : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} /></Suspense>
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}
     {settingsDialog}

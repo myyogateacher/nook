@@ -195,13 +195,28 @@ async function seed() {
     if (index === 0) whiteboard = created.body.whiteboard;
   }
   seeded.whiteboard = whiteboard;
+
+  // Vault (Wave 25): 60 secrets over 9 environments (the grid scrolls sideways inside itself), when
+  // the instance has VAULT_ENCRYPTION_KEY; otherwise the vault routes are left out.
+  seeded.vault = null;
+  if ((await api(admin, "GET", "/vault/status")).body?.enabled) {
+    const vault = (await api(admin, "POST", "/vault/vaults", { name: `Scroll vault ${RUN}` })).body.vault;
+    for (let index = 0; index < 6; index += 1) await api(admin, "POST", `/vault/vaults/${vault.id}/environments`, { slug: `extra${index}`, name: `Extra ${index}` });
+    const environments = (await api(admin, "GET", `/vault/vaults/${vault.id}`)).body.vault.environments;
+    let secretId = null;
+    for (let index = 0; index < 60; index += 1) {
+      const created = await api(admin, "POST", `/vault/vaults/${vault.id}/secrets`, { name: `SCROLL_SECRET_${String(index).padStart(2, "0")}`, tags: ["scroll"], values: { [environments[0].id]: { value: `scroll value ${index}` } } });
+      if (index === 0) secretId = created.body.secret.id;
+    }
+    seeded.vault = { id: vault.id, envId: environments[1].id, secretId };
+  }
   admin.browserContext().close();
   // Ids only: a later run against the same instance reuses them (SEED_FILE), under the registration limits.
   return {
     longNote: { id: seeded.longNote.id }, sharedNote: { id: seeded.sharedNote.id }, longFile: { id: seeded.longFile.id },
     board: { id: seeded.board.id }, card: { id: seeded.card.id }, collection: { id: seeded.collection.id }, row: { id: seeded.row.id },
     group: { id: seeded.group.id }, members: seeded.members.map((member) => ({ userId: member.userId })), inviteToken: seeded.inviteToken,
-    whiteboard: { id: seeded.whiteboard.id }
+    whiteboard: { id: seeded.whiteboard.id }, vault: seeded.vault
   };
 }
 
@@ -517,6 +532,14 @@ const ROUTES = (s) => [
   ["Whiteboards list (64 boards)", "/whiteboards", async (page) => { await tapText(page, ".whiteboards-view-toggle button", "List"); }],
   // The canvas is a fixed full-screen page: nothing may scroll and nothing may sit below the fold.
   ["Whiteboard canvas", `/whiteboards/${s.whiteboard.id}`, async (page) => { await page.waitForSelector(".excalidraw canvas"); }],
+  // The Vault (Wave 25): list, grid, one environment's cards, a secret, and the settings sheet.
+  ...(s.vault ? [
+    ["Vault list", "/vault"],
+    ["Vault grid (60 secrets, 9 environments)", `/vault/${s.vault.id}`],
+    ["Vault environment cards", `/vault/${s.vault.id}/env/${s.vault.envId}`],
+    ["Vault secret (9 environments)", `/vault/${s.vault.id}/secrets/${s.vault.secretId}`],
+    ["Vault settings sheet (9 environments)", `/vault/${s.vault.id}`, async (page) => { await tapText(page, "button", "Vault settings"); await page.waitForSelector(".vault-settings"); }, { scope: ".vault-settings" }]
+  ] : []),
   ["Inbox", "/inbox", null, { split: true, check: splitPanes }],
   ["Inbox routines", "/inbox/routines"],
   ["Notifications", "/notifications"],

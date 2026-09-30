@@ -59,6 +59,8 @@ export function registerBinRoutes(app: Hono<AppEnv>) {
         return c.json({ error: outcome.message ?? "Restore its collection from the Bin first", code: "PARENT_IN_BIN" }, 409);
       case "limit_reached":
         return c.json({ error: outcome.message, code: "LIMIT_REACHED" }, 409);
+      case "name_taken":
+        return c.json({ error: outcome.message, code: "NAME_TAKEN" }, 409);
       case "purging":
         return c.json({ error: "This item is being permanently deleted", code: "PURGING" }, 409);
       default:

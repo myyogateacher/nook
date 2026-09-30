@@ -57,6 +57,10 @@ Calendars with agenda and month views, repeating events, links to notes, cards, 
 
 Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG, and share view-only through the same Access sheet as files. The editor loads only when you open a board and makes no requests outside your Nook.
 
+### Vault
+
+Team secrets per environment (dev, staging, prod, or your own): values, logins, and notes with encrypted comments, a secrets × environments grid on a computer and one environment's cards on a phone, reveal that hides again after 30 seconds, copy that clears the clipboard, a password and token generator in the browser, 20 versions per value, and the Bin. **Encrypted at rest; anyone with the server and its key can read every secret**, so it is for your services' credentials, not a replacement for a personal password manager. Off until `VAULT_ENCRYPTION_KEY` is set; see [docs/OPERATIONS.md](docs/OPERATIONS.md#vault). In this release each vault is its owner's alone; sharing, API keys, and MCP tools come later.
+
 ### Team
 
 - Roles: **admin**, **member**, **viewer** (reads what is shared with them or with everyone, changes nothing), and **guest** (reads only what is shared with them by name). Read-only roles are enforced on the server, not just hidden in the app.

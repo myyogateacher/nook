@@ -440,6 +440,8 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>TRUSTED_PROXY_ADDRESSES</code></td><td>empty</td><td>The proxies' own addresses or ranges, comma-separated (for example <code>127.0.0.1,172.16.0.0/12</code>). When set, <code>X-Forwarded-For</code> is read only from those connections, so a direct caller cannot choose an address. Empty: trusted from any connection, with a startup warning.</td></tr>
           <tr><td><code>GOOGLE_ALLOWED_DOMAINS</code></td><td>empty</td><td>Comma-separated email domains allowed to use Google sign-in (the Workspace <code>hd</code> claim must match).</td></tr>
           <tr><td><code>TOTP_ENCRYPTION_KEY</code></td><td>empty</td><td>Base64 32-byte AES key. Required for mandatory TOTP.</td></tr>
+          <tr><td><code>VAULT_ENCRYPTION_KEY</code></td><td>empty</td><td>The Vault's base64 32-byte key, different from the TOTP key. Empty keeps the Vault off. Keep it away from the backups.</td></tr>
+          <tr><td><code>VAULT_ENCRYPTION_KEY_FILE</code></td><td>empty</td><td>Instead of the variable: an absolute path to a file holding the key, outside <code>DATA_DIR</code>.</td></tr>
           <tr><td><code>SESSION_DAYS</code></td><td><code>14</code></td><td>Session lifetime in days, minimum one.</td></tr>
           <tr><td><code>MAX_MARKDOWN_BYTES</code></td><td><code>2000000</code></td><td>Maximum note body, minimum 1024 bytes.</td></tr>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td><code>104857600</code> (100 MiB)</td><td>Largest single file; integer from 1 MiB to 2 GiB. JSON bodies stay limited to 2.1 MB.</td></tr>

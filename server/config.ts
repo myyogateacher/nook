@@ -1,3 +1,5 @@
+import { timingSafeEqual } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseEntry } from "./ipRanges";
 
@@ -52,6 +54,35 @@ const totpEncryptionKeyValue = process.env.TOTP_ENCRYPTION_KEY ?? "";
 const totpEncryptionKey = totpEncryptionKeyValue ? Buffer.from(totpEncryptionKeyValue, "base64") : null;
 if (totpEncryptionKey && totpEncryptionKey.length !== 32) throw new Error("TOTP_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
 if (totpPolicy === "required" && !totpEncryptionKey) throw new Error("TOTP_ENCRYPTION_KEY is required when TOTP_POLICY=required");
+
+// The Vault (Wave 25, D212): its own key-encryption key, base64 of 32 bytes, from VAULT_ENCRYPTION_KEY or
+// a file (VAULT_ENCRYPTION_KEY_FILE, for Docker secrets). Unset: the vault module is off, not broken.
+// A malformed key, both variables at once, or a key equal to TOTP_ENCRYPTION_KEY refuses to start:
+// one leaked key must never open both second factors and secrets. Never logged.
+export function parseVaultKey(env: Record<string, string | undefined>, totpKey: Buffer | null, dataRoot: string | null = null): { key: Buffer | null; source: "env" | "file" | null } {
+  const inline = env.VAULT_ENCRYPTION_KEY?.trim() ?? "";
+  const file = env.VAULT_ENCRYPTION_KEY_FILE?.trim() ?? "";
+  if (inline && file) throw new Error("Set VAULT_ENCRYPTION_KEY or VAULT_ENCRYPTION_KEY_FILE, not both");
+  let raw = inline;
+  if (file) {
+    if (!file.startsWith("/")) throw new Error("VAULT_ENCRYPTION_KEY_FILE must be an absolute path");
+    // T180: scripts/backup.sh archives the data directory, so a key file inside it would travel with
+    // every backup, which is exactly the combination that opens every secret.
+    const real = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
+    if (dataRoot && `${real(file)}/`.startsWith(`${real(dataRoot)}/`)) throw new Error("VAULT_ENCRYPTION_KEY_FILE must be outside DATA_DIR: backups archive the data directory");
+    try {
+      raw = readFileSync(file, "utf8").trim();
+    } catch {
+      throw new Error("VAULT_ENCRYPTION_KEY_FILE could not be read");
+    }
+  }
+  if (!raw) return { key: null, source: null };
+  const key = /^[A-Za-z0-9+/]{43}=$/.test(raw) ? Buffer.from(raw, "base64") : null;
+  if (!key || key.length !== 32) throw new Error("VAULT_ENCRYPTION_KEY must be a base64-encoded 32-byte key (openssl rand -base64 32)");
+  if (totpKey && timingSafeEqual(key, totpKey)) throw new Error("VAULT_ENCRYPTION_KEY must differ from TOTP_ENCRYPTION_KEY");
+  return { key, source: file ? "file" : "env" };
+}
+const vaultKey = parseVaultKey(process.env, totpEncryptionKey, dataDir);
 
 // Web Push (WAVES_10-12.md D65). auto: on only when APP_ORIGIN is https (browsers need a secure origin).
 const pushEnabledValue = process.env.PUSH_ENABLED?.trim() || "auto";
@@ -210,6 +241,8 @@ export const config = {
   allowRegistration: process.env.ALLOW_REGISTRATION === "true",
   totpPolicy,
   totpEncryptionKey,
+  /** The vault's key-encryption key (D212), or null when the vault module is off. Tests switch it in process. */
+  vault: { key: vaultKey.key, source: vaultKey.source },
   signupRole,
   sessionDays: Math.max(1, Number(process.env.SESSION_DAYS ?? 14)),
   maxMarkdownBytes: Math.max(1024, Number(process.env.MAX_MARKDOWN_BYTES ?? 2_000_000)),

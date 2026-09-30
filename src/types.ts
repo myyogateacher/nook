@@ -67,7 +67,7 @@ export type DocumentSummary = {
   updated_at: string;
 };
 export type BinItem = {
-  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event";
+  type: "note" | "document" | "card" | "board" | "collection" | "collection_row" | "calendar" | "event" | "vault" | "vault_environment" | "vault_secret";
   id: string;
   title: string;
   folder_id: string | null;

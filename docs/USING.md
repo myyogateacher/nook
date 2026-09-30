@@ -215,7 +215,7 @@ Things to know:
 
 ## Bin
 
-Deleting a note, a file, a card, a board, a collection, a row, a calendar, or an event moves it to the shared **Bin** (the **Bin** button in the account row, the **Bin** entry in the Notes and Files sidebar footers, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists your own deleted items, newest first, with the days left for each; the chips filter by Notes, Files, Tasks (cards and boards), Collections (collections and their rows; see [Collections](#collections) for who sees a binned row), or Calendar (calendars and events). Viewers and guests cannot restore or empty the Bin; their items leave after 30 days.
+Deleting a note, a file, a card, a board, a collection, a row, a calendar, an event, or a vault, a vault environment, or a secret moves it to the shared **Bin** (the **Bin** button in the account row, the **Bin** entry in the Notes and Files sidebar footers, or `/bin`) for exactly **30 days**. The retention period is fixed. The Bin lists your own deleted items, newest first, with the days left for each; the chips filter by Notes, Files, Tasks (cards and boards), Collections (collections and their rows; see [Collections](#collections) for who sees a binned row), or Calendar (calendars and events). Viewers and guests cannot restore or empty the Bin; their items leave after 30 days.
 
 - **Cards and boards.** A deleted board is listed for its owner. A deleted card is listed for the board's owner and for the person who deleted it (while they can still open the board); either can restore it, but only the owner can delete it forever. A restored card returns to the bottom of its column, or of the first column if its column was deleted. A card on a deleted board can be restored only after the board. Deleting a card or a board from Tasks offers **Undo** in the toast.
 - **Attachments.** When a card or board is deleted forever, or a file is removed from the last card that used it, the file moves to its uploader's Bin, labelled as a card attachment. Restoring it puts it in Files, in your Default folder.
@@ -225,6 +225,26 @@ Deleting a note, a file, a card, a board, a collection, a row, a calendar, or an
 - **Blank notes** that were never published skip the Bin and are removed at once. Any note with content, published or not, goes to the Bin, including an unpublished note whose draft you discard.
 - **Delete forever** and **Empty Bin** remove items permanently. After 30 days an hourly sweeper (which also runs at boot) deletes expired items for you.
 - Files in the Bin still count towards your storage quota until they are deleted forever.
+
+## Vault
+
+The **Vault** keeps a team's secrets (API keys, database URLs, service passwords, certificates) with a value per environment: dev, staging, prod, or names you choose. **Encrypted at rest; anyone with the server and its key can read every secret.** It is a secrets manager for your own services, not a personal password manager: there is no browser extension or autofill (use Bitwarden or Vaultwarden for website passwords). Names, environment names, and tags are not encrypted, so put anything sensitive in a value or a comment. The Vault appears only when your admin has set the server's vault key; guests never see it.
+
+- **Vaults.** **New vault** asks for a name, an optional description, and its environments (dev, staging, and prod to start; add, rename, or remove them). In this release a vault is yours alone: you are its owner and nobody else, admins included, can open it. Sharing with members and per-environment access come later.
+- **Secrets.** Each secret has a name, a type (**Value** for one string, **Login** for a username, password, and URL, **Note** for multi-line text), an optional encrypted comment, and tags. It can hold a different value in each environment.
+- **On a computer** a vault is a grid: secrets are rows and environments are columns. A cell shows `••••••••` and its version, **Not set**, or a lock. Click a cell to **Reveal** (it hides again after 30 seconds, when you close the dialog, or when you switch tabs), **Copy** (the clipboard is cleared after 30 seconds while Nook has focus; clipboard managers may keep a copy), **Edit**, or **Clear**. Many environments scroll sideways inside the grid.
+- **On a phone** choose the environment at the top (it stays in the URL), then each secret is a card with **Reveal** and **Copy**. Tap a name to see the secret with one card per environment; Back returns to the list with the same environment.
+- **Editing** starts from the current value (opening it counts as a reveal). **Generate** makes a random value in your browser: characters (8–128, with the character sets you pick), a hex or base64url token (16–64 bytes), or a passphrase (3–12 words); it shows the strength in bits. **Also save in** writes the same value to other environments at once. If someone changed the value since you opened it, nothing is saved and you can load the latest.
+- **History.** Every change, including a clear, is a new version; the last 20 per environment are kept, and earlier values can be restored as a new version (over the API in this release).
+- **Deleting** a secret, an environment (with its values), or a vault moves it to the Bin for 30 days (the **Vault** chip there). Restoring a secret whose name was reused, or an environment whose short name was reused, asks you to rename the other one first. Deleting a vault forever destroys its key.
+- Every reveal, copy, and change is recorded for the vault (never the value itself). Reads and changes are each limited to 300 per 10 minutes.
+
+| URL | View |
+| --- | --- |
+| `/vault` | Your vaults |
+| `/vault/<vault-id>` | One vault (the grid; on phones, its first environment) |
+| `/vault/<vault-id>/env/<env-id>` | One vault on a phone, showing one environment |
+| `/vault/<vault-id>/secrets/<secret-id>` | One secret, with a card per environment |
 
 ## Settings → Modules
 
@@ -237,6 +257,7 @@ Open **Settings → Modules** to choose which parts of Nook you see. Each module
 | Bin | The **Bin** buttons and **Leaving the Bin soon**. Deleting still moves items to the Bin, and they are still deleted forever after 30 days; turn the Bin back on to restore something. |
 | Notifications | The bell and `/notifications`. Reminders are still created, and push notifications still arrive on devices where you turned them on. |
 | Inbox | The **Inbox** button, `/inbox`, and **Proposals awaiting you**. Agents can still suggest changes while it is off; nothing is applied until you approve it. Guests do not see this row. |
+| Vault | Its tile on Home and `/vault`. Hidden for guests, and for everyone but admins while the server has no vault key (then there is no switch either). |
 | Team | The **Team** button and `/team`. Guests do not see this row. Admins keep **Settings → Manage team**, which still opens Team while the module is off. Roles and blocking apply as before. |
 
 **Back and Forward past a module that is off.** Back steps over an entry of a module that is off to the page before it. Forward cannot pass beyond such an entry: it stays where you are and shows the hint. For example, after Home, then Team, then Calendar, with Team turned off and Back to Home, Forward stops at Home, and Calendar is not reachable with Forward. Turning the module back on restores it: Forward then goes to Team and on to Calendar again.

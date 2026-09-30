@@ -54,6 +54,8 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "POST", path: "/api/keys/:id/rotate", why: "rotate own API keys (same grants, re-authenticated)" },
   { method: "DELETE", path: "/api/keys/:id", why: "revoke own API keys" },
   { method: "POST", path: "/api/collections/:collectionId/query", why: "a read sent as POST" },
+  // The Vault (Wave 25, vault plan §6.1): viewers read values; revealing several cells is a read sent as POST.
+  { method: "POST", path: "/api/vault/vaults/:vaultId/reveal", roles: ["viewer"], why: "a read sent as POST (reveal batch)" },
   { method: "POST", path: "/api/tasks/query", why: "a read sent as POST; guests only with assignee:me (isGuestTaskQuery)" },
   // Personal task views (task hierarchy plan Q12): viewers keep private views; sharing stays refused
   // except withdrawing one. The service allows PATCH/DELETE only while the view is private and PUT

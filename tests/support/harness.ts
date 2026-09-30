@@ -47,6 +47,8 @@ process.env.TOTP_POLICY = "optional";
 // and tests/teamBootstrap.test.ts.
 process.env.SIGNUP_ROLE = "member";
 process.env.TOTP_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+// The Vault (Wave 25) is on in the shared server; tests/vaultStartup.test.ts covers it off and misconfigured.
+process.env.VAULT_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
 process.env.ALLOWED_EMAILS = allowedTestEmails.join(",");
 // Small limits keep the upload tests fast. Bun's maxRequestBodySize becomes
 // max(MAX_UPLOAD_BYTES, 2_100_000) + 1 MiB, which stays above the 2.1 MB JSON

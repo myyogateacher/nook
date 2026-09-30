@@ -2,7 +2,7 @@
 
 **Status:** research and plan, 2026-09-30. Nothing here is built yet. This picks up the TODO.md item "Agentic chat module" (layout, Settings for MCP tool servers and an OpenAI-compatible endpoint, agents, external API keys with a separate **Audit log**, rich Markdown, private and shared chats, an FAQ knowledge base, and UI research).
 
-**Numbering.** The Messages research is being written at the same time and continues the numbering first. This plan assumes Messages takes the next 30 decisions (**D301–D330**) and 25 threat rows (**T277–T301**), so it reserves decisions **D331–D360**, threat rows **T302–T326**, and open decisions **AC-O1…**. The latest ones in use today are D300 (Wave 35) and T276 (Wave 34). **Migration:** 031 stays reserved for the vault and 035 is the latest one that exists. This plan assumes Messages takes **036**, so it takes **`037_agent_chat`**. The waves are called **AC-A … AC-E** until the director assigns numbers. Whoever merges the plans renumbers if the blocks collide.
+**Numbering.** The Messages research ([2026-09-30-messages-module.md](2026-09-30-messages-module.md)) reserved decisions **D301–D340**, threat rows **T280–T299** (T277–T279 are a gap for late additions to other plans), and migration **`036_messages`**. This plan therefore takes decisions **D341–D370**, threat rows **T302–T326** (T300–T301 are left as a gap), open decisions **AC-O1…**, and migration **`037_agent_chat`**. Migration 031 stays reserved for the vault. The waves are called **AC-A … AC-E** until the director assigns numbers. Whoever merges the plans renumbers if the blocks collide.
 
 **Rules this plan follows** (DEVELOPMENT_PLAN.md and the operator's standing rules):
 - mobile first, with Back/Forward parity at 390 px, and sheets that close on Back;
@@ -21,16 +21,16 @@
 
 ## 0. Summary
 
-1. **The agent loop runs inside the Bun process** (`server/agents/loop.ts`) against **OpenAI-compatible Chat Completions** with streamed `tool_calls`. It needs no SDK: it uses `fetch`, an in-house SSE parser, and zod. Each step is one model call. The loop stops at the agent's `max_steps` (default 8, ceiling 25). There are timeouts at every layer, cancellation through one `AbortController` per run, a global limit of 4 concurrent runs (2 per user, 2 per key), and token accounting from `stream_options.include_usage`, with daily budgets. The browser receives the run as **SSE over a `fetch` POST** (not EventSource). The run keeps going when the browser disconnects, and the client resumes with `?after=<seq>` (D331–D335).
-2. **The MCP client is in-house** (about 400 lines, `server/agents/mcpClient.ts`) and speaks **Streamable HTTP (spec 2025-11-25)**. It validates results with the zod schemas in `@modelcontextprotocol/core`, which is already installed as a dependency of the server SDK. The official `@modelcontextprotocol/client` package is **rejected** because it pulls in five new packages (`cross-spawn`, `jose`, `eventsource`, `eventsource-parser`, `pkce-challenge`). Every outbound request goes through one **egress guard**: https only, no credentials in the URL, DNS resolved and checked against private ranges, no redirects, bounded time and bytes, and an admin allowlist for private hosts. **stdio is off.** It can be turned on only through an environment flag, and only for servers the host declares in a file. It can never be configured from the UI (D336–D339).
-3. **Tool results are data.** Each result is capped at 16 KiB of text for the model (configurable up to 64 KiB). Non-text content is replaced by a placeholder. Nook never fetches a URL that appears in a result. The system preamble marks results as untrusted. **Write tools need confirmation:** a tool whose admin policy is `confirm` pauses the run on a card in the chat ("Allow once / Deny"). Nook's own writes go through **agent inbox proposals** by default. Direct Nook writes are a separate agent flag, and a key must also allow them (D340–D343).
-4. **Secrets:** provider API keys and MCP server credentials are encrypted with AES-256-GCM under a new **`AGENT_SECRETS_KEY`** (or `_FILE`), in the `totp.ts` envelope format with AAD bound to the row. The key must differ from `TOTP_ENCRYPTION_KEY` and `VAULT_ENCRYPTION_KEY`, and the module is disabled without it. After a secret is saved, the browser only ever sees a mask (`sk-…a1B2`) (D344).
-5. **Agents** = name, description, system prompt, model override (provider plus model), max steps, temperature, and a **tool picker** with three sources: remote MCP servers, **Nook** (Nook's own tools), and **Knowledge** (knowledge bases). Agents are shared through the existing Access vocabulary: `view` means "can chat with it", and `manage` means "can edit it" (D345–D348).
-6. **Nook's own tools** run **in process** through `runTool(spec, args, keyId)`, with a **Nook key that the person running the chat owns and has linked** to the agent. For an API call, the calling key is used. The effective rights are the agent's tool allowlist ∩ the key's grants ∩ the holder's live access. The agent's owner never lends their own Nook access (D349).
-7. **Chats** are private by default. A chat is a tree of messages, which gives edit-and-regenerate branches with a "2 / 3" switcher. Streaming is persisted every second. Stop, Retry, and Regenerate are supported. A chat is shared read-only with **people or groups, all users, or a public link**. A public link is a **frozen snapshot**, off unless an admin enables it, and it hides tool results by default (D350–D353).
-8. **External invocation:** `POST /api/v1/agents/:id/runs` with a **general Nook key** that has the REST surface and an **`agents:run`** grant on that agent. The same run is available over MCP as `run_agent`. These runs **never create chat threads**. They go to a separate **Audit log** that stores the input, every step, every tool call with its arguments and result, the output, and timings. **The key's owner reads everything. Admins see metadata only** (D73). Entries are kept for 30 days by default (D354–D356).
-9. **Knowledge bases:** sources are Nook notes, text Files documents, and pasted text. Sources are chunked with Markdown awareness (FAQ pairs stay whole) and embedded through the same provider (`text-embedding-3-small` at **512 dimensions** by default). Vectors are stored as float32 BLOBs in SQLite and searched with **pure-TS cosine plus FTS5, fused by reciprocal rank**. There is **no sqlite-vec**, because it is a native extension. A knowledge base appears in the tool picker as `search_knowledge` (D357–D359).
-10. **Markdown** is rendered from `marked` tokens (marked is already installed, through `@tiptap/markdown`) **straight to React elements**. That means no HTML strings, raw HTML shown as text, **no remote images at all**, and external links that open through a sheet showing the full URL (D360).
+1. **The agent loop runs inside the Bun process** (`server/agents/loop.ts`) against **OpenAI-compatible Chat Completions** with streamed `tool_calls`. It needs no SDK: it uses `fetch`, an in-house SSE parser, and zod. Each step is one model call. The loop stops at the agent's `max_steps` (default 8, ceiling 25). There are timeouts at every layer, cancellation through one `AbortController` per run, a global limit of 4 concurrent runs (2 per user, 2 per key), and token accounting from `stream_options.include_usage`, with daily budgets. The browser receives the run as **SSE over a `fetch` POST** (not EventSource). The run keeps going when the browser disconnects, and the client resumes with `?after=<seq>` (D341–D345).
+2. **The MCP client is in-house** (about 400 lines, `server/agents/mcpClient.ts`) and speaks **Streamable HTTP (spec 2025-11-25)**. It validates results with the zod schemas in `@modelcontextprotocol/core`, which is already installed as a dependency of the server SDK. The official `@modelcontextprotocol/client` package is **rejected** because it pulls in five new packages (`cross-spawn`, `jose`, `eventsource`, `eventsource-parser`, `pkce-challenge`). Every outbound request goes through one **egress guard**: https only, no credentials in the URL, DNS resolved and checked against private ranges, no redirects, bounded time and bytes, and an admin allowlist for private hosts. **stdio is off.** It can be turned on only through an environment flag, and only for servers the host declares in a file. It can never be configured from the UI (D346–D349).
+3. **Tool results are data.** Each result is capped at 16 KiB of text for the model (configurable up to 64 KiB). Non-text content is replaced by a placeholder. Nook never fetches a URL that appears in a result. The system preamble marks results as untrusted. **Write tools need confirmation:** a tool whose admin policy is `confirm` pauses the run on a card in the chat ("Allow once / Deny"). Nook's own writes go through **agent inbox proposals** by default. Direct Nook writes are a separate agent flag, and a key must also allow them (D350–D353).
+4. **Secrets:** provider API keys and MCP server credentials are encrypted with AES-256-GCM under a new **`AGENT_SECRETS_KEY`** (or `_FILE`), in the `totp.ts` envelope format with AAD bound to the row. The key must differ from `TOTP_ENCRYPTION_KEY` and `VAULT_ENCRYPTION_KEY`, and the module is disabled without it. After a secret is saved, the browser only ever sees a mask (`sk-…a1B2`) (D354).
+5. **Agents** = name, description, system prompt, model override (provider plus model), max steps, temperature, and a **tool picker** with three sources: remote MCP servers, **Nook** (Nook's own tools), and **Knowledge** (knowledge bases). Agents are shared through the existing Access vocabulary: `view` means "can chat with it", and `manage` means "can edit it" (D355–D358).
+6. **Nook's own tools** run **in process** through `runTool(spec, args, keyId)`, with a **Nook key that the person running the chat owns and has linked** to the agent. For an API call, the calling key is used. The effective rights are the agent's tool allowlist ∩ the key's grants ∩ the holder's live access. The agent's owner never lends their own Nook access (D359).
+7. **Chats** are private by default. A chat is a tree of messages, which gives edit-and-regenerate branches with a "2 / 3" switcher. Streaming is persisted every second. Stop, Retry, and Regenerate are supported. A chat is shared read-only with **people or groups, all users, or a public link**. A public link is a **frozen snapshot**, off unless an admin enables it, and it hides tool results by default (D360–D363).
+8. **External invocation:** `POST /api/v1/agents/:id/runs` with a **general Nook key** that has the REST surface and an **`agents:run`** grant on that agent. The same run is available over MCP as `run_agent`. These runs **never create chat threads**. They go to a separate **Audit log** that stores the input, every step, every tool call with its arguments and result, the output, and timings. **The key's owner reads everything. Admins see metadata only** (D73). Entries are kept for 30 days by default (D364–D366).
+9. **Knowledge bases:** sources are Nook notes, text Files documents, and pasted text. Sources are chunked with Markdown awareness (FAQ pairs stay whole) and embedded through the same provider (`text-embedding-3-small` at **512 dimensions** by default). Vectors are stored as float32 BLOBs in SQLite and searched with **pure-TS cosine plus FTS5, fused by reciprocal rank**. There is **no sqlite-vec**, because it is a native extension. A knowledge base appears in the tool picker as `search_knowledge` (D367–D369).
+10. **Markdown** is rendered from `marked` tokens (marked is already installed, through `@tiptap/markdown`) **straight to React elements**. That means no HTML strings, raw HTML shown as text, **no remote images at all**, and external links that open through a sheet showing the full URL (D370).
 11. **Waves:** AC-A (the loop, chats, agents, the provider, and the UI shell; L), AC-B (tool servers, the MCP client, Nook tools, confirmations; L), AC-C (external API, `run_agent`, the Audit log; M), AC-D (sharing and public snapshots; M), AC-E (knowledge bases; M). One migration, 037, creates every table.
 
 ---
@@ -83,10 +83,10 @@ for (let step = 1; step <= agent.maxSteps; step++) {
   usage.add(reply.usage); budgets.charge(actor, reply.usage);           // may throw BUDGET_EXCEEDED before the next step
   messages.push(reply.message);
   if (!reply.toolCalls.length) return sink.done("stop");
-  for (const call of reply.toolCalls) {                                  // sequential in v1 (D333)
+  for (const call of reply.toolCalls) {                                  // sequential in v1 (D343)
     const decision = await gate(call, actor, sink);                      // auto | confirm (pauses) | off
     const result = decision.ok ? await execute(call, actor, signal) : denied(call, decision);
-    messages.push(toolMessage(call.id, capResult(result)));              // capped text only (D340)
+    messages.push(toolMessage(call.id, capResult(result)));              // capped text only (D350)
   }
 }
 return sink.done("step_limit");
@@ -163,7 +163,7 @@ Implemented against spec **2025-11-25** [10]:
 The container runs as user `bun` on a **read-only root filesystem** with `cap_drop: ALL` and `no-new-privileges` (compose.yaml). There is no `node`, `npx`, `uvx`, or Python in the image.
 - A stdio child would run **as the same user as Nook**, which can read `/data` (the SQLite database, objects, and keys). It would also inherit the network. Nook has no way to sandbox it.
 - Most stdio servers are `npx` or `uvx` packages. They would download code at run time (a supply-chain risk), and that would fail anyway on the read-only root.
-- **Decision (D338):** the UI offers **Streamable HTTP only** (as Open WebUI does [3]). stdio exists only when the host sets `AGENT_MCP_STDIO=on` **and** declares servers in `AGENT_MCP_STDIO_SERVERS_FILE`. That file is JSON of `{id, name, command (absolute path), args[], env: {NAME: value}}`, and only the listed variables reach the child. The child gets `env` scrubbed of everything Nook has (so no `*_KEY`, `DATABASE`, or `RESEND_*` variables), `cwd` set to an empty tmpfs directory, 5 s to start, a 30 s tool timeout, 1 MiB of stdout per message, and one process per server, restarted at most 3 times in 10 minutes. The Settings row shows "Declared by the host · runs as Nook's user".
+- **Decision (D348):** the UI offers **Streamable HTTP only** (as Open WebUI does [3]). stdio exists only when the host sets `AGENT_MCP_STDIO=on` **and** declares servers in `AGENT_MCP_STDIO_SERVERS_FILE`. That file is JSON of `{id, name, command (absolute path), args[], env: {NAME: value}}`, and only the listed variables reach the child. The child gets `env` scrubbed of everything Nook has (so no `*_KEY`, `DATABASE`, or `RESEND_*` variables), `cwd` set to an empty tmpfs directory, 5 s to start, a 30 s tool timeout, 1 MiB of stdout per message, and one process per server, restarted at most 3 times in 10 minutes. The Settings row shows "Declared by the host · runs as Nook's user".
 - **OPERATIONS will recommend** running stdio servers in their own container behind an HTTP bridge (for example `mcp-proxy` or `supergateway`) and adding the bridge as an HTTP server listed in `AGENT_ALLOWED_PRIVATE_HOSTS`.
 
 ---
@@ -177,7 +177,7 @@ The container runs as user `bun` on a **read-only root filesystem** with `cap_dr
 - **Policies** (`agent_settings`): who can create agents (**admin and member**), who can chat (**admin, member, viewer**; guests off, AC-O2), token budgets (§2.2), public chat links (**off**), audit retention (**30 days**, 7–365), a per-user cap on agents (50), and a per-user cap on knowledge bases (10).
 - **Usage**: tokens and runs per day by person, key, and agent (counts only, D73).
 
-### 4.2 Secrets (D344)
+### 4.2 Secrets (D354)
 
 - `AGENT_SECRETS_KEY` or `AGENT_SECRETS_KEY_FILE` is base64 for 32 bytes. Boot refuses a value equal to `TOTP_ENCRYPTION_KEY` or `VAULT_ENCRYPTION_KEY`. Without it the module answers 503 `AGENTS_DISABLED` and is hidden, and Settings → AI explains what to set.
 - The ciphertext is `v1:<nonce>:<tag>:<ct>` (the `totp.ts` format), AES-256-GCM with AAD `nook:agent-secret:v1:<provider|server>:<rowId>`. Moving a ciphertext to another row fails to decrypt.
@@ -211,7 +211,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 
 **The lethal trifecta badge:** when an agent combines private data (Nook or Knowledge tools) with an **open-world** remote tool (`openWorldHint` not false, or unknown), the editor and the chat header show "This agent can read your data and reach outside services. Content it reads could steer it." [14].
 
-### 5.3 Nook's own tools through the runner's key (D349)
+### 5.3 Nook's own tools through the runner's key (D359)
 
 - **In a UI chat:** the first time a person uses an agent that has Nook tools, the chat shows "Connect a Nook key so this agent can read your Nook". They pick one of **their own** live `general` keys that has the MCP surface. A shortcut creates one prefilled with the read grants that match the agent's Nook tools, with the usual password and TOTP re-authentication. The link is stored as `agent_user_links(agent_id, user_id, nook_key_id)`. That is **a pointer, never a token**. The link is settable only through the session, only by the key's owner, and it is checked at every step (`key.user_id = runner`, live, not expired, not blocked by policy).
 - **Over the API or MCP:** the **calling key** is the Nook key, so there is no second credential.
@@ -230,7 +230,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 ### 6.1 Model
 
 - `chats`: owner, agent (fixed per chat; switching agents starts a new chat, which is the simplest and most honest option for audit purposes), title (the first user message trimmed to 60 characters, renamable; there is **no model-generated title** in v1, which saves a call), pinned, `active_leaf_id`, visibility, and `revision`.
-- `chat_messages` form **a tree**: `parent_id`, and `role` ∈ `user`, `assistant`, or `tool`. An assistant row holds `content`, `tool_calls_json`, `status` (`streaming`, `complete`, `error`, `cancelled`, `interrupted`, `awaiting_confirmation`, or `step_limit`), `usage_json`, `model`, and `run_id`. A tool row holds `tool_call_id`, `tool_name`, `server_id`, the result text (capped per D340), `ok`, and `duration_ms`.
+- `chat_messages` form **a tree**: `parent_id`, and `role` ∈ `user`, `assistant`, or `tool`. An assistant row holds `content`, `tool_calls_json`, `status` (`streaming`, `complete`, `error`, `cancelled`, `interrupted`, `awaiting_confirmation`, or `step_limit`), `usage_json`, `model`, and `run_id`. A tool row holds `tool_call_id`, `tool_name`, `server_id`, the result text (capped per D350), `ok`, and `duration_ms`.
 - **Edit and regenerate:**
   - Editing a user message creates a **sibling** user message and starts a run from it.
   - Regenerate creates a sibling assistant turn.
@@ -240,7 +240,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 - **Delete** moves the chat to the **Bin** for 30 days (a `chat` BinProvider). Purging deletes its messages, runs, confirmations, and public snapshot.
 - **Limits:** 2,000 messages per chat, 5,000 live chats per user, and search over titles and user messages (FTS5, owner and recipients).
 
-### 6.2 Sharing (D351–D353)
+### 6.2 Sharing (D361–D363)
 
 - **Audience**, from the existing vocabulary: `private` (default), `selected` (people and groups through the shared Access sheet, level **view** only), or `all_users` (guests never match, `AUDIENCE_ALL_USERS`).
 - **Recipients** see the **live** transcript read-only (D2: one owner writes), including tool calls and results. The share sheet warns: "People you share with see tool calls and results, including anything the agent read from your Nook."
@@ -256,9 +256,9 @@ The picker lists three kinds of source, each as a collapsible section with a che
 
 ## 7. External invocation and the Audit log
 
-### 7.1 Keys and grants (D354)
+### 7.1 Keys and grants (D364)
 
-- Keys are **`general` Nook keys** with the **REST** surface (or both), plus a grant `{module:'agents', permission:'run', resource_kind:'agent', resource_id}`, or "all" agents. Migration 037 **rebuilds `api_key_grants`** to widen its CHECK lists: module `agents`, permission `run`, and resource kinds `agent` and `knowledge_base` (§10). **If Messages lands its own rebuild first, it should include these values. Otherwise 037 includes Messages' values, `messages` and `post` on `channel`.** Coordinate so only one rebuild happens.
+- Keys are **`general` Nook keys** with the **REST** surface (or both), plus a grant `{module:'agents', permission:'run', resource_kind:'agent', resource_id}`, or "all" agents. The grant needs module `agents`, permission `run`, and resource kinds `agent` and `knowledge_base`, and the CHECK lists from migration 025 do not allow them. Migration 036 (Messages) already rebuilds `api_key_grants` for `messages`, `post`, and `channel`, and leaves it to the director whether to widen for agents at the same time (Messages doc §5). **Recommended: 036 widens for both modules, and 037 has no rebuild.** If 036 ships without the agent values, 037 repeats the same 12-step rebuild with them added (§10).
 - Effective right = key live ∧ policy ∧ surface ∧ the grant covers the agent ∧ **the key owner can `view` the agent now**. It is recomputed per call and per step. A run notices a revocation at its next step and ends `KEY_INACTIVE`.
 - New MCP scopes are `agents:read` (list agents, read your own and shared chats, and search knowledge bases you can view) and `agents:run`. `agents:run` is member-only in `mcpScopesForRole`.
 
@@ -273,7 +273,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 
 **Rate limits:** 2 concurrent runs, 20 runs a minute, and 500 runs a day per key, plus the per-user and instance slots and the token budgets. The answer is 429 with `Retry-After`. **MCP:** `run_agent({agentId, input})` has the same semantics (non-streaming, 5 min), requires `agents:run`, and **cannot be called from inside an agent run** (an `AsyncLocalStorage` depth guard plus exclusion from the Nook tool set, T318).
 
-### 7.3 The Audit log (D355, D356)
+### 7.3 The Audit log (D365, D366)
 
 - **What is stored**, per API or MCP run: `agent_runs` (agent id, the agent revision and a hash of its prompt, the preamble version, model, provider, key id, invoking user, `via`, status, error code, step and tool-call counts, tokens, cost estimate, `queued_at`, `started_at`, `first_token_at`, `finished_at`, client address as the existing audit stores it, and label) and `agent_audit_steps` (seq, kind `model` or `tool`, for model steps the assistant text and tool calls and tokens and duration, for tool steps the server, tool, arguments (≤ 16 KiB), result (≤ 16 KiB, with a `truncated` flag), `ok`, and duration). The input (≤ 32 KiB) and output (≤ 256 KiB) sit on `agent_audit_entries`.
 - **UI chats are not in the Audit log.** Their content is the chat itself, and they count only in usage. **API and MCP runs never create chats** (the operator's rule).
@@ -286,7 +286,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 
 ---
 
-## 8. Markdown rendering (D360)
+## 8. Markdown rendering (D370)
 
 - **Renderer:** `src/agents/markdown/render.tsx` turns `marked.lexer(text, {gfm: true})` tokens into React elements. `marked` becomes a **direct, exact-pinned dependency** at the version `@tiptap/markdown` already brings in (17.0.6), so nothing new is downloaded. **No HTML string is ever produced**, and `dangerouslySetInnerHTML` stays absent from the repo (the guard test is extended to `src/agents`).
 - **Supported:** paragraphs, headings (rendered one level smaller, so an h1 in a message is not a page title), emphasis, strikethrough, inline code, fenced code (a monospace block with the language label and a **Copy** button, and **no syntax highlighting in v1**), blockquotes, ordered, bullet, and task lists (read-only checkboxes), GFM tables (in a horizontally scrolling container, so the page never scrolls sideways at 390 px), horizontal rules, and autolinks.
@@ -298,7 +298,7 @@ The picker lists three kinds of source, each as a collapsible section with a che
 
 ---
 
-## 9. Knowledge bases (D357–D359)
+## 9. Knowledge bases (D367–D369)
 
 - **A knowledge base** has an owner, a name, a description, the embedding provider, model, and dimensions (fixed at creation; changing any of them means re-indexing), a status, and a revision. It is shared with the Access sheet: **view** = can search it in the UI and attach it to agents you edit, **manage** = can edit its sources. The UI states: **"Anyone who can use an agent with this knowledge base can read its text."**
 - **Sources:**
@@ -419,8 +419,8 @@ CREATE TABLE kb_chunks (id INTEGER PRIMARY KEY, kb_id TEXT NOT NULL REFERENCES k
 CREATE INDEX kb_chunks_kb ON kb_chunks(kb_id, id);
 CREATE VIRTUAL TABLE kb_chunk_fts USING fts5(text, content='kb_chunks', content_rowid='id', tokenize='unicode61 remove_diacritics 2');
 -- api_key_grants rebuild (12-step: new table, copy, drop, rename, recreate indexes and the kind-wall triggers) widening:
---   module + 'agents' (and Messages' 'messages' if it has not rebuilt first); permission + 'run' (+ 'post');
---   resource_kind + 'agent', 'knowledge_base' (+ 'channel'). A test checks row counts and that every trigger and index exists afterwards.
+--   module + 'agents'; permission + 'run'; resource_kind + 'agent', 'knowledge_base'. Only needed if 036 (Messages, which already
+--   rebuilds this table for 'messages', 'post', and 'channel') did not include these values; the recommendation is that it does. A test checks row counts and that every trigger and index exists afterwards.
 -- access_grants_v: DROP VIEW and re-CREATE it with a UNION ALL over agent_access (and over chats by visibility), so the Team member access page lists them.
 -- AFTER DELETE triggers on agents, knowledge_bases, chats, and agent_tool_servers delete matching agent_access and api_key_grants rows (T206 parity).
 -- Triggers: agent_audit_steps and agent_audit_entries refuse UPDATE; DELETE only via cascade or while agent_retention_guard holds a row (sweeper).
@@ -430,40 +430,40 @@ CREATE VIRTUAL TABLE kb_chunk_fts USING fts5(text, content='kb_chunks', content_
 
 ---
 
-## 11. Decisions (D331–D360)
+## 11. Decisions (D341–D370)
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| D331 | **The loop runs in the Bun process, with no LLM SDK.** It uses `fetch` against OpenAI-compatible Chat Completions, streamed tool calls, and an in-house SSE parser. | D20. Chat Completions is the widest-compatible surface. |
-| D332 | **Steps are model calls.** `max_steps` is per agent (default 8, 1–25, instance ceiling via env). The last step goes out without tools and ends `step_limit`. | Bounded cost (LLM10). The loop always ends with an answer. |
-| D333 | **Tool calls run one at a time** in v1, in the model's order. | Deterministic audit order and simpler confirmation. Parallel read-only calls are AC-O7. |
-| D334 | **Timeouts at every layer and one AbortController per run** (§2.2). Disconnecting does not cancel; Stop does. A restart makes runs `interrupted`. | Predictable behaviour on flaky phones. |
-| D335 | **SSE over fetch POST, events with seq numbers, a 2,000-event ring, and resume with `?after`.** Persisted every 1 s or 2 KiB. | Back/Forward and tab switches never lose output. |
-| D336 | **The MCP client is in-house (Streamable HTTP 2025-11-25)** and validates with `@modelcontextprotocol/core` schemas. `@modelcontextprotocol/client` is rejected (5 new dependencies). | D20, and every byte goes through the egress guard. |
-| D337 | **One egress guard** for the provider, MCP, and embeddings: https, private-address refusal with an env allowlist, no redirects, byte and time caps, no forwarded credentials, Nook's own origin refused. | SSRF and token passthrough [12] (T305–T307). |
-| D338 | **stdio: UI never; host-declared only behind `AGENT_MCP_STDIO=on`**, with a scrubbed environment, a tmp cwd, and restart caps. OPERATIONS recommends an HTTP bridge container instead. | A child runs as Nook's user and can read `/data` (T308). |
-| D339 | **Tool servers are admin-configured** with availability (admins, selected people and groups, or all members), synced tool lists, and a per-tool policy defaulting from `readOnlyHint`. Annotations never loosen the policy. | Open WebUI's model [3]. Annotations are untrusted hints [13]. |
-| D340 | **Tool results are capped** (16 KiB by default, 64 KiB at most, per server). Only text reaches the model; images, audio, and embedded resources become placeholders; resource links are never fetched. | Context flooding and indirect injection (T302, T313). |
-| D341 | **A fixed, versioned preamble** marks tool and knowledge content as untrusted. Its version is recorded per run. | Defence in depth. It is not a guarantee (T302). |
-| D342 | **`confirm` tools pause UI runs on an Allow once / Deny card** (10 min, then Deny), plus an optional "Always allow in this chat" that resets on an agent change. API and MCP runs are offered `auto` tools only. | Excessive agency (LLM06). No unattended writes by default. |
-| D343 | **Nook writes go through inbox proposals by default.** Direct Nook write tools need the agent flag `nook_direct_writes`, the key's write grant, and a confirmation in UI chats. | D146 extended. Every change stays reviewable. |
-| D344 | **Secrets are encrypted with `AGENT_SECRETS_KEY`** (AES-256-GCM, AAD per row), which must differ from the TOTP and vault keys. They are write-only in the API, shown only as a mask, and the module is disabled without the key. | The operator's "encrypted at rest like TOTP". Key separation (T309). |
-| D345 | **An agent** = prompt, tools, model override, max steps, temperature, output cap, and starters. Switching agents means starting a new chat. | A clear audit trail per chat. |
-| D346 | **Agent sharing uses the Access vocabulary:** `view` = can chat, `manage` = can edit, the owner deletes. Viewers see name, description, model, and tool names, but **not the system prompt**. The UI says prompts are not secret. | GPTs parity. Prompts leak through the model anyway (LLM07). |
-| D347 | **Roles:** admins and members create agents and knowledge bases. Admins, members, and viewers chat. Guests have no module by default (AC-O2). Keys with `agents:run` are for members and above. | Cost control. Read-only roles can still use shared agents. |
-| D348 | **An agent's tools are an allowlist,** re-resolved at every step against live rights (server availability, policies, key grants). A server that becomes unavailable drops its tools silently at the next step. | T81 applied to tools. |
-| D349 | **Nook tools run as the runner's own linked Nook key** (a pointer, checked every step) in UI chats, and as the calling key over the API and MCP, in process through `runTool`. The agent owner's access is never lent. | Reuses grants, policies, the inventory, and revoke. D73 (T311). |
-| D350 | **Chats are message trees** with `active_leaf_id`: edit makes a sibling user turn, regenerate makes a sibling assistant turn, and a "‹ n / m ›" switcher shows siblings. Nothing is deleted by branching. | ChatGPT, LibreChat, and Open WebUI parity. Simple, auditable data. |
-| D351 | **Chat audience:** private (default), selected people and groups (view), or all users. Recipients get a live, read-only view including tool results, with a warning, and can **continue in their own chat as a copy**. | D2 (one writer). Honest disclosure (T315). |
-| D352 | **Public links are frozen snapshots** behind the admin policy `public_chat_links` (off). The token is hashed; there is "Update link" and revoke; tool results are excluded by default; the page is no-index. | ChatGPT and Claude snapshot semantics [1][2]. The earlier "no public links" rule gets an explicit, reversible exception (AC-O1). |
-| D353 | **Chats go to the Bin** (30 days). A purge removes messages, runs, and the public snapshot. | D11 parity. |
-| D354 | **External calls use general Nook keys** with the REST surface and an `agents:run` grant per agent, plus the owner's live `view` on the agent. `api_key_grants` is rebuilt once in 037 to widen its CHECK lists, coordinated with Messages. | One key system (D261). SQLite cannot alter a CHECK. |
-| D355 | **API and MCP runs never create chats; they write the Audit log** (input, steps, tool calls with arguments and results, output, timings, tokens). UI chats are not audited there. | The operator's rule. |
-| D356 | **Audit readers:** the key owner in full; admins metadata only; agent managers counts only. Retention 30 days (7–365), append-only, JSON export for the owner. | D73. A bounded store (T317). |
-| D357 | **Knowledge bases** are owned and shared (view = search and attach, manage = edit sources). Sources are notes, text Files, and pasted text, read as the owner at index time. The UI says the text is readable by anyone using an attached agent. | FAQ semantics: the text is deliberately published into the base. |
-| D358 | **Embeddings go through the same provider** (`text-embedding-3-small`, 512 dimensions by default), stored as float32 BLOBs. Search is pure-TS cosine plus FTS5, fused by RRF, with an LRU cache. **No sqlite-vec.** | No native dependency. Fast enough at 10,000 chunks per base. |
-| D359 | **Chunking is Markdown- and FAQ-aware** (headings, Q/A pairs whole, about 800 tokens, 15% overlap). Re-indexing is driven by content hashes. The tool is `search_knowledge`. | FAQ answers stay whole. Re-index cost stays low. |
-| D360 | **Markdown renders from marked tokens to React elements** (marked exact-pinned; already installed). No HTML, raw HTML as text, no remote images, external links through a full-URL sheet, no highlighting in v1. | XSS and exfiltration (T303, T304). No new dependency. |
+| D341 | **The loop runs in the Bun process, with no LLM SDK.** It uses `fetch` against OpenAI-compatible Chat Completions, streamed tool calls, and an in-house SSE parser. | D20. Chat Completions is the widest-compatible surface. |
+| D342 | **Steps are model calls.** `max_steps` is per agent (default 8, 1–25, instance ceiling via env). The last step goes out without tools and ends `step_limit`. | Bounded cost (LLM10). The loop always ends with an answer. |
+| D343 | **Tool calls run one at a time** in v1, in the model's order. | Deterministic audit order and simpler confirmation. Parallel read-only calls are AC-O7. |
+| D344 | **Timeouts at every layer and one AbortController per run** (§2.2). Disconnecting does not cancel; Stop does. A restart makes runs `interrupted`. | Predictable behaviour on flaky phones. |
+| D345 | **SSE over fetch POST, events with seq numbers, a 2,000-event ring, and resume with `?after`.** Persisted every 1 s or 2 KiB. | Back/Forward and tab switches never lose output. |
+| D346 | **The MCP client is in-house (Streamable HTTP 2025-11-25)** and validates with `@modelcontextprotocol/core` schemas. `@modelcontextprotocol/client` is rejected (5 new dependencies). | D20, and every byte goes through the egress guard. |
+| D347 | **One egress guard** for the provider, MCP, and embeddings: https, private-address refusal with an env allowlist, no redirects, byte and time caps, no forwarded credentials, Nook's own origin refused. | SSRF and token passthrough [12] (T305–T307). |
+| D348 | **stdio: UI never; host-declared only behind `AGENT_MCP_STDIO=on`**, with a scrubbed environment, a tmp cwd, and restart caps. OPERATIONS recommends an HTTP bridge container instead. | A child runs as Nook's user and can read `/data` (T308). |
+| D349 | **Tool servers are admin-configured** with availability (admins, selected people and groups, or all members), synced tool lists, and a per-tool policy defaulting from `readOnlyHint`. Annotations never loosen the policy. | Open WebUI's model [3]. Annotations are untrusted hints [13]. |
+| D350 | **Tool results are capped** (16 KiB by default, 64 KiB at most, per server). Only text reaches the model; images, audio, and embedded resources become placeholders; resource links are never fetched. | Context flooding and indirect injection (T302, T313). |
+| D351 | **A fixed, versioned preamble** marks tool and knowledge content as untrusted. Its version is recorded per run. | Defence in depth. It is not a guarantee (T302). |
+| D352 | **`confirm` tools pause UI runs on an Allow once / Deny card** (10 min, then Deny), plus an optional "Always allow in this chat" that resets on an agent change. API and MCP runs are offered `auto` tools only. | Excessive agency (LLM06). No unattended writes by default. |
+| D353 | **Nook writes go through inbox proposals by default.** Direct Nook write tools need the agent flag `nook_direct_writes`, the key's write grant, and a confirmation in UI chats. | D146 extended. Every change stays reviewable. |
+| D354 | **Secrets are encrypted with `AGENT_SECRETS_KEY`** (AES-256-GCM, AAD per row), which must differ from the TOTP and vault keys. They are write-only in the API, shown only as a mask, and the module is disabled without the key. | The operator's "encrypted at rest like TOTP". Key separation (T309). |
+| D355 | **An agent** = prompt, tools, model override, max steps, temperature, output cap, and starters. Switching agents means starting a new chat. | A clear audit trail per chat. |
+| D356 | **Agent sharing uses the Access vocabulary:** `view` = can chat, `manage` = can edit, the owner deletes. Viewers see name, description, model, and tool names, but **not the system prompt**. The UI says prompts are not secret. | GPTs parity. Prompts leak through the model anyway (LLM07). |
+| D357 | **Roles:** admins and members create agents and knowledge bases. Admins, members, and viewers chat. Guests have no module by default (AC-O2). Keys with `agents:run` are for members and above. | Cost control. Read-only roles can still use shared agents. |
+| D358 | **An agent's tools are an allowlist,** re-resolved at every step against live rights (server availability, policies, key grants). A server that becomes unavailable drops its tools silently at the next step. | T81 applied to tools. |
+| D359 | **Nook tools run as the runner's own linked Nook key** (a pointer, checked every step) in UI chats, and as the calling key over the API and MCP, in process through `runTool`. The agent owner's access is never lent. | Reuses grants, policies, the inventory, and revoke. D73 (T311). |
+| D360 | **Chats are message trees** with `active_leaf_id`: edit makes a sibling user turn, regenerate makes a sibling assistant turn, and a "‹ n / m ›" switcher shows siblings. Nothing is deleted by branching. | ChatGPT, LibreChat, and Open WebUI parity. Simple, auditable data. |
+| D361 | **Chat audience:** private (default), selected people and groups (view), or all users. Recipients get a live, read-only view including tool results, with a warning, and can **continue in their own chat as a copy**. | D2 (one writer). Honest disclosure (T315). |
+| D362 | **Public links are frozen snapshots** behind the admin policy `public_chat_links` (off). The token is hashed; there is "Update link" and revoke; tool results are excluded by default; the page is no-index. | ChatGPT and Claude snapshot semantics [1][2]. The earlier "no public links" rule gets an explicit, reversible exception (AC-O1). |
+| D363 | **Chats go to the Bin** (30 days). A purge removes messages, runs, and the public snapshot. | D11 parity. |
+| D364 | **External calls use general Nook keys** with the REST surface and an `agents:run` grant per agent, plus the owner's live `view` on the agent. The CHECK lists on `api_key_grants` are widened for `agents`, `run`, `agent`, and `knowledge_base`, preferably inside Messages' 036 rebuild, otherwise in 037. | One key system (D261). SQLite cannot alter a CHECK. |
+| D365 | **API and MCP runs never create chats; they write the Audit log** (input, steps, tool calls with arguments and results, output, timings, tokens). UI chats are not audited there. | The operator's rule. |
+| D366 | **Audit readers:** the key owner in full; admins metadata only; agent managers counts only. Retention 30 days (7–365), append-only, JSON export for the owner. | D73. A bounded store (T317). |
+| D367 | **Knowledge bases** are owned and shared (view = search and attach, manage = edit sources). Sources are notes, text Files, and pasted text, read as the owner at index time. The UI says the text is readable by anyone using an attached agent. | FAQ semantics: the text is deliberately published into the base. |
+| D368 | **Embeddings go through the same provider** (`text-embedding-3-small`, 512 dimensions by default), stored as float32 BLOBs. Search is pure-TS cosine plus FTS5, fused by RRF, with an LRU cache. **No sqlite-vec.** | No native dependency. Fast enough at 10,000 chunks per base. |
+| D369 | **Chunking is Markdown- and FAQ-aware** (headings, Q/A pairs whole, about 800 tokens, 15% overlap). Re-indexing is driven by content hashes. The tool is `search_knowledge`. | FAQ answers stay whole. Re-index cost stays low. |
+| D370 | **Markdown renders from marked tokens to React elements** (marked exact-pinned; already installed). No HTML, raw HTML as text, no remote images, external links through a full-URL sheet, no highlighting in v1. | XSS and exfiltration (T303, T304). No new dependency. |
 
 ---
 
@@ -571,16 +571,16 @@ New trust boundaries:
 
 | # | Threat | Mitigation | Status |
 | --- | --- | --- | --- |
-| T302 | **Indirect prompt injection** through tool results, knowledge chunks, or shared content steers the agent | Results are data in `tool` messages; the preamble (D341); capped text only (D340); `confirm` on writes (D342); Nook writes via proposals (D343); no URL fetching; the trifecta badge. Residual: a model can still be steered within `auto` tools. | Required (residual documented) |
+| T302 | **Indirect prompt injection** through tool results, knowledge chunks, or shared content steers the agent | Results are data in `tool` messages; the preamble (D351); capped text only (D350); `confirm` on writes (D352); Nook writes via proposals (D353); no URL fetching; the trifecta badge. Residual: a model can still be steered within `auto` tools. | Required (residual documented) |
 | T303 | **XSS through model output** | marked tokens → React elements, no HTML strings, raw HTML as text, link schemes allowlisted, a guard test for `dangerouslySetInnerHTML`, CSP unchanged. Fuzz tests with payloads. | Required |
 | T304 | **Data exfiltration through Markdown** (image URLs, crafted links with data in the query) | Images never load (chip only); external links show the host and open through a full-URL sheet; `img-src 'self' data:`. | Required |
-| T305 | **SSRF through provider, MCP, or embedding URLs** | The egress guard (D337): https, DNS resolution with private-range refusal on every request, no redirects, env allowlist for private hosts, Nook origins refused; admin-only configuration. | Required |
+| T305 | **SSRF through provider, MCP, or embedding URLs** | The egress guard (D347): https, DNS resolution with private-range refusal on every request, no redirects, env allowlist for private hosts, Nook origins refused; admin-only configuration. | Required |
 | T306 | **Token passthrough or credential leakage to tool servers** | Only the configured header is sent; cookies, sessions, and Nook keys never leave; Nook tools run in process, never over HTTP to themselves. | Required |
 | T307 | **DNS rebinding between check and connect** | The check runs on every request; the answer is cached by the resolver for its TTL only; the residual race is accepted and documented; admins are advised to use the private-host allowlist for internal endpoints. | Accepted (documented) |
 | T308 | **stdio child reads Nook data or escapes** | Off by default; host-declared only; scrubbed environment; tmp cwd; restart caps; OPERATIONS recommends an HTTP bridge in a separate container. Residual: same UID as Nook. | Accepted when enabled (documented) |
 | T309 | **Provider or MCP secrets exposed** (API response, logs, backups, the wrong key) | AES-256-GCM with row AAD under `AGENT_SECRETS_KEY` (distinct from other keys); write-only API; mask only; canary test over logs, errors, and responses; the key file kept apart from backups. | Required |
 | T310 | **Excessive agency: unattended writes** | `confirm` default for non-read-only tools; API runs get `auto` only; proposals for Nook; step and time caps; no `run_agent` inside runs. | Required |
-| T311 | **Confused deputy: a shared agent reads its owner's Nook data** | Nook tools use the runner's own linked key (D349); the pointer is checked to be the runner's live key at every step; the agent owner's access is never used. | Required |
+| T311 | **Confused deputy: a shared agent reads its owner's Nook data** | Nook tools use the runner's own linked key (D359); the pointer is checked to be the runner's live key at every step; the agent owner's access is never used. | Required |
 | T312 | **A shared agent's remote tools used by people the admin did not mean to reach** | Server availability limits who can *attach* tools; sharing an agent with remote tools shows a warning naming the servers; admins can set a server to `off` or disable it, which takes effect at the next step. | Accepted (documented) |
 | T313 | **Oversized or hostile tool output** (context flooding, binary, deep JSON) | Byte caps before parsing (1 MiB) and in context (≤ 64 KiB); text only; JSON depth 32; invalid UTF-8 replaced. | Required |
 | T314 | **Unbounded consumption** (cost, loops, floods) | Step caps, timeouts, concurrency slots, daily token budgets per user, key, and instance, API rate limits, budget checks before each step. | Required |
@@ -588,8 +588,8 @@ New trust boundaries:
 | T316 | **Public link guessing or leakage** | 32-byte tokens stored as hashes; revocable; rate-limited; no-index; `no-referrer` (global); the snapshot is frozen, so later messages never appear. | Required |
 | T317 | **Audit log disclosure or tampering** | Full content only for the key owner; admins get metadata (D73); append-only triggers; retention sweeper; export only for the owner. | Required |
 | T318 | **Recursion and self-invocation** (an agent calling `run_agent`, or Nook's `/mcp` added as a tool server) | `run_agent` excluded from Nook tools; an AsyncLocalStorage depth guard; Nook origins refused as tool server URLs. | Required |
-| T319 | **Key revocation or demotion not honoured mid-run** | Rights re-resolved at every step and every tool call (D348, T81); the run ends `KEY_INACTIVE`. | Required |
-| T320 | **Knowledge base leakage** (a private note added as a source becomes readable through agents) | Only the owner or managers add sources; the UI warning (D357); sources re-read as the owner at index time; unreadable sources are removed; source links are shown only to runners who can read them. | Required (residual documented) |
+| T319 | **Key revocation or demotion not honoured mid-run** | Rights re-resolved at every step and every tool call (D358, T81); the run ends `KEY_INACTIVE`. | Required |
+| T320 | **Knowledge base leakage** (a private note added as a source becomes readable through agents) | Only the owner or managers add sources; the UI warning (D367); sources re-read as the owner at index time; unreadable sources are removed; source links are shown only to runners who can read them. | Required (residual documented) |
 | T321 | **Embedding and vector weaknesses** (poisoned sources, inversion) | Sources come from people with manage on the base; results are data (T302); vectors never leave the server except to the provider that produced them. | Accepted (LLM08) |
 | T322 | **System prompt leakage** | Prompts are hidden in the UI below manage, and the UI states they are not secret; the preamble forbids revealing secrets, and no secrets belong in prompts. | Accepted (LLM07) |
 | T323 | **Data sent to the provider** (notes, files, knowledge text leave the host) | The Settings → AI page and the Link Nook key sheet both say so; admins choose the provider; a private-host provider (Ollama, vLLM) is supported. | Accepted (documented) |
@@ -628,7 +628,7 @@ New trust boundaries:
 | **AC-D: sharing** | Agent access (view and manage) and chat access with groups; forks; public snapshots and the policy; public read route; `access_grants_v` rows | The Access sheet on agents and chats; "Shared with me"; the public page `/share/c/:token`; Continue as a copy | `get_chat` gains shared chats | **M** (2 sessions) |
 | **AC-E: knowledge bases** | Sources, chunker, embeddings, index state and hooks, cosine plus FTS plus RRF search, the LRU, `search_knowledge` as a built-in tool | Settings → Knowledge (sources, status, Try it); Knowledge in the tool picker | `search_knowledge` for keys | **M** (2–3 sessions) |
 
-**Ordering:** 037 lands after Messages' 036 (or carries both CHECK widenings; see D354). AC-A and AC-B are the minimum useful product. AC-E may move ahead of AC-C and AC-D if the FAQ use case is the operator's priority (AC-O9). **Gate for every wave:** all tests; a fresh-session `/security-review` focused on that wave's T-rows (AC-B and AC-C get an external review, because they open the outbound boundaries); the 390 px Back/Forward pass; release notes that name every new outbound call.
+**Ordering:** 037 lands after Messages' 036, which should also widen `api_key_grants` for agents (D364). AC-A and AC-B are the minimum useful product. AC-E may move ahead of AC-C and AC-D if the FAQ use case is the operator's priority (AC-O9). **Gate for every wave:** all tests; a fresh-session `/security-review` focused on that wave's T-rows (AC-B and AC-C get an external review, because they open the outbound boundaries); the 390 px Back/Forward pass; release notes that name every new outbound call.
 
 ---
 

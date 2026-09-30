@@ -77,6 +77,15 @@ test("Whiteboards: the list scrolls as a page with a fixed header; the canvas fi
   expect(stage).toContain("min-height: 0");
 });
 
+test("F2: Home (Today) keeps its header fixed while its content scrolls, like the module pages", async () => {
+  const today = await read("today/today.css");
+  expect(bounded(rule(today, ".today-home"))).toBe(true);
+  const header = rule(today, ".today-home > .app-home-header") ?? "";
+  expect(header).toContain("position: sticky");
+  expect(header).toContain("top: 0");
+  expect(await read("today/TodayHome.tsx")).toMatch(/<main className="app-home today-home">\s*<header className="app-home-header">/);
+});
+
 test("F1: two-pane pages (Team and its sections, Inbox proposals) scroll each pane on its own on a computer, as one page on phones", async () => {
   const shell = await read("appShell.css");
   const desktop = /@media \(min-width: 761px\) \{\s*\.app-page:not\(\.tasks-app\):not\(\.collections-app\):has\(> \.split-layout\)[\s\S]*?\n\}/.exec(shell)?.[0] ?? "";

@@ -5,7 +5,7 @@ import { isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Avatar, avatarInitial, AvatarView, isAvatarPath } from "../src/ui/Avatar";
 import { currentReturnPath, GOOGLE_ONLY_HINT, GOOGLE_ONLY_PASSWORD_TEXT, GoogleButton, googleErrorMessage, googleStartUrl, linkRequiredText, takeGoogleSettingsResult, takeGoogleSignInResult } from "../src/auth/googleSignIn";
-import { resetLines } from "../src/team/TeamGoogle";
+import { googleCardShown, resetLines } from "../src/team/TeamGoogle";
 import { draftFrom } from "../src/access/accessModel";
 import { takeInviteFromLocation } from "../src/auth/inviteLink";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, type AccountAuth } from "../src/auth/accountAuth";
@@ -175,6 +175,16 @@ describe("Team → Google sign-in and the Settings link dialog (review HIGH-1, L
     expect(dialog).toContain("useHistoryDialogGuard(");
     const teamApp = readFileSync(join(src, "team", "TeamApp.tsx"), "utf8");
     expect(teamApp).toContain("<TeamGoogleCard");
+  });
+
+  test("F3: with Google sign-in off the member page neither asks for the Google state (a 404) nor shows the card", () => {
+    expect(googleCardShown(null)).toBe(false);
+    expect(googleCardShown({ methods: { google: false } })).toBe(false);
+    expect(googleCardShown({ methods: { google: true } })).toBe(true);
+    const team = readFileSync(join(src, "team", "TeamGoogle.tsx"), "utf8");
+    // The request waits for the account's methods and is skipped while Google is off.
+    expect(team).toMatch(/if \(!googleOn\) return;\s*api<GoogleAdminState>\(`\/team\/\$\{userId\}\/google`\)/);
+    expect(team).toContain("if (!state || !account || !googleOn) return null;");
   });
 });
 

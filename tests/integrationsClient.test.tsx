@@ -22,8 +22,8 @@ describe("Integrations on the client", () => {
     expect(parseRoute("/team/integrations")).toEqual({ app: "team", userId: null, integrations: true });
     expect(parseRoute(`/team/integrations/${id.toUpperCase()}`)).toEqual({ app: "team", userId: null, integrations: true, integrationId: id });
     expect(parseRoute("/team/integrations/not-an-id")).toEqual({ app: "team", userId: null, integrations: true });
-    expect(formatRoute({ app: "team", userId: null, integrations: true })).toBe("/team/integrations");
-    expect(formatRoute({ app: "team", userId: null, integrations: true, integrationId: id })).toBe(`/team/integrations/${id}`);
+    expect(formatRoute({ app: "team", userId: null, integrations: true })).toBe("/settings/team/integrations");
+    expect(formatRoute({ app: "team", userId: null, integrations: true, integrationId: id })).toBe(`/settings/team/integrations/${id}`);
   });
 
   test("only admins stay on the integrations pane", () => {
@@ -59,7 +59,7 @@ describe("Integrations on the client", () => {
 
   test("an integration's key screen reads its own endpoints and only its shared items", () => {
     const api = integrationKeysApi("abc");
-    expect(api.returnTo).toBe("/team/integrations/abc");
+    expect(api.returnTo).toBe("/settings/team/integrations/abc");
     expect(ownKeysApi.returnTo).toBe("/settings/keys");
     const source = readFileSync(join(src, "keys", "keysApi.ts"), "utf8");
     expect(source).toContain("`${base}/resources?module=");
@@ -91,11 +91,15 @@ describe("Integrations on the client", () => {
     expect(page).toContain("onPendingChange={pendingChanged} reopenOnForward={false}");
     expect(page).not.toContain("onPendingChange={noop}");
     expect(page).toContain("if (keyPendingRef.current) staleKeysRef.current = true;");
+    // Wave 37: Team lives in the Settings hub, which holds the one leave guard for both kinds of key.
     const team = readFileSync(join(src, "team", "TeamApp.tsx"), "utf8");
-    expect(team).toContain("useLeaveGuard(keyPending && !leaveConfirm.confirmOpen,");
     expect(team).toContain("onBack={() => guardLeave(closeIntegration)}");
-    expect(team).toContain("onClick={() => guardLeave(onHome)}");
-    expect(team.match(/askLeave\(unsavedKeyConfirm\("integration"\)\)/g)?.length).toBe(2);
+    expect(team).toContain("onKeyPendingChange={onKeyPendingChange}");
+    const app = readFileSync(join(src, "App.tsx"), "utf8");
+    expect(app).toContain("useLeaveGuard(pending && !confirmOpen,");
+    expect(app).toContain("onHome={onHome ? () => guardLeave(onHome) : undefined}");
+    expect(app).toContain("onKeyPendingChange={onIntegrationKeyPending}");
+    expect(app).toContain('unsavedKeyConfirm(pendingRef.current.integration ? "integration" : action)');
     expect(unsavedKeyConfirm("integration")).toMatchObject({ title: "Leave without saving the key?", confirmLabel: "Leave without saving", danger: true });
     expect(unsavedKeyConfirm("integration").message).toContain("Leave this integration without copying it?");
   });

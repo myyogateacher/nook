@@ -86,7 +86,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
     }
   }
 
-  if (error) return <article className="team-detail"><button type="button" className="team-back" onClick={onBack}><ChevronLeft />Groups</button><div className="team-state team-error" role="alert">
+  if (error) return <article className="team-detail"><button type="button" className="team-back team-back-visible" onClick={onBack}><ChevronLeft />Groups</button><div className="team-state team-error" role="alert">
     <span className="team-state-icon"><TriangleAlert /></span>
     <h2>Could not load the group</h2>
     <p>{error}</p>

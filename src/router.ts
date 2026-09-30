@@ -22,6 +22,9 @@ export type Route =
   // Wave 33: a member's access page at /team/:userId/access (`access` with a userId), Team → Templates
   // at /team/templates, and Team → Access activity at /team/activity.
   // Wave 36: Team → Integrations at /team/integrations, and one integration at /team/integrations/:integrationId.
+  // Wave 37: Team lives in the Settings hub. Its canonical URLs are /settings/team/members,
+  // /settings/team/members/:userId(/access), and /settings/team/<section>(/:id); every old /team/…
+  // URL still parses to the same route and is rewritten in place to the canonical one.
   | { app: "team"; userId: string | null; invites?: true; email?: true; keys?: true; policies?: true; groups?: true; groupId?: string; access?: true; templates?: true; activity?: true; integrations?: true; integrationId?: string }
   // The agent inbox (Wave 21): pending at /inbox, resolved at /inbox/history, one proposal at
   // /inbox/p/:id (or /inbox/history/p/:id, so the list beside it on desktop stays History).
@@ -33,7 +36,10 @@ export type Route =
   // The Vault (Wave 25, vault plan §10): the list at /vault, one vault at /vault/:vaultId (the grid on
   // desktop, its first environment's cards on phones), one environment at /vault/:vaultId/env/:envId,
   // and one secret at /vault/:vaultId/secrets/:secretId (its values stacked per environment).
-  | { app: "vault"; vaultId: string | null; envId: string | null; secretId: string | null };
+  | { app: "vault"; vaultId: string | null; envId: string | null; secretId: string | null }
+  // The Settings hub (Wave 37): a page at /settings (the section list on phones), and one account
+  // section at /settings/:section. Team sections are `team` routes under /settings/team/… (above).
+  | { app: "settings"; section: SettingsSection | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -140,22 +146,8 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "calendar") return parseCalendar(rest);
   if (app === "notifications" && rest.length === 0) return { app: "notifications" };
   if (app === "bin" && rest.length === 0) return { app: "bin" };
-  // /team and /team/:userId. A malformed id, or anything after it, opens the list.
-  // /team/invites is matched before the id rule (D167).
-  if (app === "team" && rest.length === 1 && rest[0] === "invites") return { app: "team", userId: null, invites: true };
-  if (app === "team" && rest.length === 1 && rest[0] === "email") return { app: "team", userId: null, email: true };
-  if (app === "team" && rest.length === 1 && rest[0] === "keys") return { app: "team", userId: null, keys: true };
-  if (app === "team" && rest.length === 1 && rest[0] === "policies") return { app: "team", userId: null, policies: true };
-  if (app === "team" && rest[0] === "groups" && rest.length <= 2) {
-    return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, groups: true, groupId: rest[1]!.toLowerCase() } : { app: "team", userId: null, groups: true };
-  }
-  if (app === "team" && rest[0] === "integrations" && rest.length <= 2) {
-    return rest.length === 2 && isRouteId(rest[1]!) ? { app: "team", userId: null, integrations: true, integrationId: rest[1]!.toLowerCase() } : { app: "team", userId: null, integrations: true };
-  }
-  if (app === "team" && rest.length === 1 && rest[0] === "templates") return { app: "team", userId: null, templates: true };
-  if (app === "team" && rest.length === 1 && rest[0] === "activity") return { app: "team", userId: null, activity: true };
-  if (app === "team" && rest.length === 2 && rest[1] === "access" && isRouteId(rest[0]!)) return { app: "team", userId: rest[0]!.toLowerCase(), access: true };
-  if (app === "team") return { app: "team", userId: rest.length === 1 && isRouteId(rest[0]!) ? rest[0]!.toLowerCase() : null };
+  if (app === "team") return parseTeam(rest, false);
+  if (app === "settings") return parseSettings(rest);
   if (app === "inbox") return parseInbox(rest);
   if (app === "whiteboards") {
     const { folder, itemId } = parseCollection(rest);
@@ -163,6 +155,49 @@ export function parseRoute(pathname: string, search = ""): Route {
   }
   if (app === "vault") return parseVault(rest);
   return { app: "home" };
+}
+
+/**
+ * Team sections, shared by the canonical /settings/team/… URLs (`hub`) and the old /team/… aliases.
+ * The hub names the member list `members` (/settings/team/members/:userId); the old scheme put the
+ * member id right after /team (D167: named sections are matched before the id rule). Anything
+ * malformed opens the member list.
+ */
+function parseTeam(rest: string[], hub: boolean): Route {
+  const list = { app: "team" as const, userId: null };
+  const [first, second, third] = rest;
+  if (first === undefined) return list;
+  if (hub && first === "members") {
+    if (rest.length === 1 || second === undefined || !isRouteId(second)) return list;
+    if (rest.length === 2) return { app: "team", userId: second.toLowerCase() };
+    return rest.length === 3 && third === "access" ? { app: "team", userId: second.toLowerCase(), access: true } : list;
+  }
+  if (rest.length === 1 && first === "invites") return { ...list, invites: true };
+  if (rest.length === 1 && first === "email") return { ...list, email: true };
+  if (rest.length === 1 && first === "keys") return { ...list, keys: true };
+  if (rest.length === 1 && first === "policies") return { ...list, policies: true };
+  if (first === "groups" && rest.length <= 2) {
+    return rest.length === 2 && isRouteId(second!) ? { ...list, groups: true, groupId: second!.toLowerCase() } : { ...list, groups: true };
+  }
+  if (first === "integrations" && rest.length <= 2) {
+    return rest.length === 2 && isRouteId(second!) ? { ...list, integrations: true, integrationId: second!.toLowerCase() } : { ...list, integrations: true };
+  }
+  if (rest.length === 1 && first === "templates") return { ...list, templates: true };
+  if (rest.length === 1 && first === "activity") return { ...list, activity: true };
+  if (hub) return list;
+  if (rest.length === 2 && second === "access" && isRouteId(first)) return { app: "team", userId: first.toLowerCase(), access: true };
+  return { app: "team", userId: rest.length === 1 && isRouteId(first) ? first.toLowerCase() : null };
+}
+
+/**
+ * The Settings hub (Wave 37): /settings (the section list), /settings/:section (an account section;
+ * the old /settings/mcp opens API keys), and /settings/team/… (Team sections). An unknown section
+ * opens the list.
+ */
+function parseSettings(rest: string[]): Route {
+  if (rest[0] === "team") return parseTeam(rest.slice(1), true);
+  const section = rest.length === 1 ? settingsSectionForSlug(rest[0]!) : null;
+  return { app: "settings", section };
 }
 
 // /vault, /vault/:v, /vault/:v/env/:e, and /vault/:v/secrets/:s. Anything malformed after a valid
@@ -218,8 +253,8 @@ export function formatRoute(route: Route): string {
   }
   if (route.app === "notifications") return "/notifications";
   if (route.app === "bin") return "/bin";
-  if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups")
-    : route.integrations ? (route.integrationId && isRouteId(route.integrationId) ? `/team/integrations/${route.integrationId.toLowerCase()}` : "/team/integrations") : "/team";
+  if (route.app === "team") return formatTeam(route);
+  if (route.app === "settings") return route.section && SETTINGS_SECTIONS.includes(route.section) ? settingsPath(route.section) : "/settings";
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
   if (route.app === "vault") {
     if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";
@@ -236,6 +271,21 @@ export function formatRoute(route: Route): string {
   return "/";
 }
 
+/** The canonical Team URL (Wave 37): always under /settings/team. */
+function formatTeam(route: Extract<Route, { app: "team" }>) {
+  const base = "/settings/team";
+  if (route.userId && isRouteId(route.userId)) return `${base}/members/${route.userId.toLowerCase()}${route.access ? "/access" : ""}`;
+  if (route.templates) return `${base}/templates`;
+  if (route.activity) return `${base}/activity`;
+  if (route.invites) return `${base}/invites`;
+  if (route.email) return `${base}/email`;
+  if (route.keys) return `${base}/keys`;
+  if (route.policies) return `${base}/policies`;
+  if (route.groups) return route.groupId && isRouteId(route.groupId) ? `${base}/groups/${route.groupId.toLowerCase()}` : `${base}/groups`;
+  if (route.integrations) return route.integrationId && isRouteId(route.integrationId) ? `${base}/integrations/${route.integrationId.toLowerCase()}` : `${base}/integrations`;
+  return `${base}/members`;
+}
+
 function formatTasksHome(home: TasksHome) {
   if (home.section === "my") return `/tasks/my${formatHomeSearch(home)}`;
   if (home.section === "view" && (home.viewId === NEW_VIEW || isRouteId(home.viewId))) return `/tasks/views/${home.viewId.toLowerCase()}${formatHomeSearch(home)}`;
@@ -243,10 +293,9 @@ function formatTasksHome(home: TasksHome) {
 }
 
 /**
- * Settings deep links (Wave 28, outbound email §E.1): `/settings/:section` opens the Settings dialog
- * at that section over the app. They are not a Route: the app under the dialog stays what it was
- * (Home for a deep link), and `parseRoute` reads the path as Home. Back closes the dialog and
- * Forward reopens it, because opening it pushes this entry.
+ * Settings sections (Wave 28 deep links, Wave 37 hub): `/settings/:section` is an account section of
+ * the Settings page, a route like any other (`{ app: "settings" }`), so Back and Forward move between
+ * sections and back to the page Settings was opened from.
  */
 // `access` (Wave 33): Settings → My access, read-only, every role but guest.
 export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notifications", "about"] as const;
@@ -259,11 +308,14 @@ export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 const SETTINGS_SLUGS: Record<SettingsSection, string> = { security: "security", modules: "modules", mcp: "keys", access: "access", notifications: "notifications", about: "about" };
 const LEGACY_SETTINGS_SLUGS: Record<string, SettingsSection> = { mcp: "mcp" };
 
+function settingsSectionForSlug(slug: string): SettingsSection | null {
+  return (Object.keys(SETTINGS_SLUGS) as SettingsSection[]).find((section) => SETTINGS_SLUGS[section] === slug) ?? (Object.hasOwn(LEGACY_SETTINGS_SLUGS, slug) ? LEGACY_SETTINGS_SLUGS[slug]! : null);
+}
+
+/** The account section a `/settings/:section` path names, or null (the list, Team, or anything else). */
 export function parseSettingsPath(pathname: string): SettingsSection | null {
   const match = /^\/settings\/([a-z]+)\/?$/.exec(pathname);
-  if (!match) return null;
-  const slug = match[1]!;
-  return (Object.keys(SETTINGS_SLUGS) as SettingsSection[]).find((section) => SETTINGS_SLUGS[section] === slug) ?? LEGACY_SETTINGS_SLUGS[slug] ?? null;
+  return match ? settingsSectionForSlug(match[1]!) : null;
 }
 
 export const settingsPath = (section: SettingsSection) => `/settings/${SETTINGS_SLUGS[section]}`;
@@ -274,22 +326,13 @@ export function isLegacySettingsPath(pathname: string) {
   return section !== null && pathname !== settingsPath(section);
 }
 
-const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", about: "About" };
+export const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", about: "About" };
 
-/** The document title while Settings is open: "Settings · Notifications · Nook". */
-export const settingsDocumentTitle = (section: SettingsSection) => `Settings · ${SETTINGS_SECTION_NAMES[section]} · Nook`;
+/** The document title on an account section: "Settings · Notifications · Nook". */
+export const settingsDocumentTitle = (section: SettingsSection) => hubDocumentTitle(SETTINGS_SECTION_NAMES[section]);
 
-/**
- * The Settings dialog's hold on the document title: `show` names the open section, and `restore`
- * (on close) puts back the title from before the dialog opened.
- */
-export function settingsTitleScope(doc: { title: string }) {
-  const previous = doc.title;
-  return {
-    show(section: SettingsSection) { doc.title = settingsDocumentTitle(section); },
-    restore() { doc.title = previous; }
-  };
-}
+/** The document title on a Settings hub screen (Wave 37): "Settings · Members · Nook", or "Settings · Nook" on the list. */
+export const hubDocumentTitle = (name: string | null) => name ? `Settings · ${name} · Nook` : "Settings · Nook";
 
 /** A location's route, with its query (the one way DOM callers should parse the current URL). */
 export const routeFromLocation = (location: { pathname: string; search: string }) => parseRoute(location.pathname, location.search);

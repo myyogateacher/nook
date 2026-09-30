@@ -20,13 +20,12 @@ test("the confirm layer is a history layer whose Back is Cancel, above every pan
 
 test("every former native confirm site asks through useConfirm", async () => {
   const app = await read("App.tsx");
-  expect(app.match(/await ask\(unsavedKeyConfirm\("(close|section|leave)"\)\)/g)?.length).toBe(3);
-  expect(app).toContain("appConfirm.ask(unsavedKeyConfirm(\"close\"))");
+  // Wave 37: the Settings page asks before leaving a key shown only once (section, Back, Home, sign-out).
+  expect(app).toContain('unsavedKeyConfirm(pendingRef.current.integration ? "integration" : action)');
+  expect(app.match(/void ask\(confirmFor\(/g)?.length).toBe(2);
   expect(app).toContain('title: "Disable two-factor authentication?"');
   expect(app).toContain('title: "Generate new recovery codes?"');
   expect(app).toContain("const confirmed = await appConfirm.ask({");
-  // Escape on a confirm over Settings cancels the confirm only; Settings' own Escape stands aside.
-  expect(app).toContain('!event.defaultPrevented && !document.querySelector(".app-confirm-layer")) void guardedClose();');
   const bin = await read("bin/BinApp.tsx");
   expect(bin).toContain('title: "Delete forever?"');
   expect(bin).toContain('title: "Empty the Bin?"');

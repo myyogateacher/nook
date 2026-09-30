@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatRoute, isLegacySettingsPath, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath, settingsTitleScope } from "../src/router";
+import { formatRoute, hubDocumentTitle, isLegacySettingsPath, parseRoute, parseSettingsPath, settingsDocumentTitle, settingsPath } from "../src/router";
 import { renderToStaticMarkup } from "react-dom/server";
 import { takeMailLinkFromLocation, UnsubscribeDone, unsubscribeCategory, verifyErrorText } from "../src/auth/mailPages";
 import { emailOffText } from "../src/notifications/EmailSettings";
@@ -37,13 +37,14 @@ describe("email off (3a/6)", () => {
 });
 
 describe("routes", () => {
-  test("/team/email is the admin Email log; /settings/:section is a Settings entry over Home", () => {
+  test("/team/email is the admin Email log; /settings/:section is a Settings page route (Wave 37)", () => {
     expect(parseRoute("/team/email")).toEqual({ app: "team", userId: null, email: true });
-    expect(formatRoute({ app: "team", userId: null, email: true })).toBe("/team/email");
+    expect(formatRoute({ app: "team", userId: null, email: true })).toBe("/settings/team/email");
     expect(parseRoute("/team/email/x")).toEqual({ app: "team", userId: null });
     for (const section of ["security", "modules", "mcp", "notifications", "about"] as const) {
       expect(parseSettingsPath(settingsPath(section))).toBe(section);
-      expect(parseRoute(settingsPath(section))).toEqual({ app: "home" });
+      expect(parseRoute(settingsPath(section))).toEqual({ app: "settings", section });
+      expect(formatRoute(parseRoute(settingsPath(section)))).toBe(settingsPath(section));
     }
     expect(parseSettingsPath("/settings/nope")).toBeNull();
     expect(parseSettingsPath("/settings")).toBeNull();
@@ -68,7 +69,10 @@ describe("routes", () => {
       expect(section).not.toBeNull();
       expect(settingsPath(section!)).toBe(`/settings/${slug}`);
     }
-    // The popstate path rewrites an old entry in place, without a new history entry.
+    // The app rewrites an old entry in place, without a new history entry: /settings/mcp is the API
+    // keys route, whose canonical URL is /settings/keys (every non-Notes popstate and the startup do this).
+    expect(parseRoute("/settings/mcp")).toEqual({ app: "settings", section: "mcp" });
+    expect(formatRoute(parseRoute("/settings/mcp"))).toBe("/settings/keys");
     // The Google re-auth round trip from API keys comes back to /settings/keys (Wave 35 merge).
     const keys = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
     // Wave 36: the return address comes from the keys API (Settings or an integration's page).
@@ -77,7 +81,7 @@ describe("routes", () => {
     expect(keysApi).toContain('returnTo: "/settings/keys"');
     expect(keys).not.toContain("/settings/mcp");
     const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
-    expect(app).toContain("if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, \"\", settingsPath(poppedSettings));");
+    expect(app).toContain("if (formatRoute(route) !== locationUrl(window.location)) navigate(route, { replace: true });");
   });
 });
 
@@ -106,17 +110,11 @@ describe("mail link pages", () => {
     expect(unsubscribeCategory(`${Buffer.from("1|x|security|0").toString("base64url")}.${"b".repeat(22)}`)).toBeNull();
   });
 
-  test("Settings names its section in the document title and restores the title on close", () => {
+  test("Settings names its section in the document title (the page owns it; Wave 37)", () => {
     expect(settingsDocumentTitle("notifications")).toBe("Settings · Notifications · Nook");
     expect(settingsDocumentTitle("mcp")).toBe("Settings · API keys · Nook");
-    const doc = { title: "Home · Nook" };
-    const scope = settingsTitleScope(doc);
-    scope.show("notifications");
-    expect(doc.title).toBe("Settings · Notifications · Nook");
-    scope.show("security");
-    expect(doc.title).toBe("Settings · Security · Nook");
-    scope.restore();
-    expect(doc.title).toBe("Home · Nook");
+    expect(hubDocumentTitle(null)).toBe("Settings · Nook");
+    expect(hubDocumentTitle("Members")).toBe("Settings · Members · Nook");
   });
 
   test("the done state is neutral, since the server answers 200 for any token (L5)", () => {

@@ -54,12 +54,17 @@ export function initialGoogleSignInResult() {
 
 export type GoogleSettingsResult = { kind: "linked" | "reauthed" } | { kind: "error"; code: string; domain?: string } | null;
 
+/** A Team page (Wave 37: under /settings/team/…, or its old /team/… alias), where an admin's confirmation returns. */
+const isTeamPath = (pathname: string) => pathname.startsWith("/team/") || pathname.startsWith("/settings/team/");
+
 /**
  * Reads `#google=linked|reauthed` or `#google-error=<code>` once and strips it: on a Settings URL
- * (any section, Q2), or on Team → member when `prefix` is "/team/" (an admin's re-authentication).
+ * (any account section, Q2), or on Team → member when `prefix` is "/team/" (an admin's
+ * re-authentication; Team's pages are under /settings/team/ since Wave 37, and are Team's, not Settings').
  */
 export function takeGoogleSettingsResult(location: Pick<Location, "pathname" | "search" | "hash"> = window.location, history: Pick<History, "state" | "replaceState"> = window.history, prefix = "/settings"): GoogleSettingsResult {
-  if (!location.pathname.startsWith(prefix) || !location.hash) return null;
+  const matches = prefix === "/team/" ? isTeamPath(location.pathname) : location.pathname.startsWith(prefix) && !isTeamPath(location.pathname);
+  if (!matches || !location.hash) return null;
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
   const ok = params.get("google");
   const error = params.get("google-error");
@@ -77,10 +82,24 @@ export function initialGoogleSettingsResult() {
 }
 
 let initialTeam: GoogleSettingsResult | undefined;
-/** The result of an admin's Google confirmation that came back to Team → member, read once per page load. */
+let initialTeamPath = "";
+/**
+ * The result of an admin's Google confirmation that came back to Team → member, read once per page
+ * load. The app reads it before its first route rewrite (an old /team/:id link becomes
+ * /settings/team/members/:id), so the page it came back to is remembered with it.
+ */
 export function initialGoogleTeamResult() {
-  if (initialTeam === undefined) initialTeam = typeof window === "undefined" ? null : takeGoogleSettingsResult(window.location, window.history, "/team/");
+  if (initialTeam === undefined) {
+    initialTeamPath = typeof window === "undefined" ? "" : window.location.pathname;
+    initialTeam = typeof window === "undefined" ? null : takeGoogleSettingsResult(window.location, window.history, "/team/");
+  }
   return initialTeam;
+}
+
+/** The Team result for this member's page, or null (it came back to someone else's, or nowhere). */
+export function googleTeamResultFor(userId: string): GoogleSettingsResult {
+  const result = initialGoogleTeamResult();
+  return result && (initialTeamPath.startsWith(`/team/${userId}`) || initialTeamPath.startsWith(`/settings/team/members/${userId}`)) ? result : null;
 }
 
 const MESSAGES: Record<string, string> = {

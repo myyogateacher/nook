@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import { Check, ShieldAlert, X } from "lucide-react";
 import { api, ApiError } from "../api";
-import { GoogleMark, initialGoogleTeamResult } from "../auth/googleSignIn";
+import { GoogleMark, googleTeamResultFor } from "../auth/googleSignIn";
 import { useAccountAuthLoader } from "../auth/accountAuth";
 import { googleSettingsNotice, reauthBody, ReauthFields, reauthProblems } from "../auth/GoogleAccountCard";
 import { fieldName, useFieldErrors } from "../auth/fieldChecks";
@@ -100,8 +100,8 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
   const [removeCredentials, setRemoveCredentials] = useState(true);
   // Q2: an admin's Google confirmation comes back to this member's page; its result shows here.
   const [returned, setReturned] = useState(() => {
-    const result = initialGoogleTeamResult();
-    return result && typeof window !== "undefined" && window.location.pathname.startsWith(`/team/${userId}`) ? googleSettingsNotice(result) : null;
+    const result = googleTeamResultFor(userId);
+    return result ? googleSettingsNotice(result) : null;
   });
   // Q6: the reset step is its own history layer over the Allow dialog: Back returns to the first step,
   // as the dialog's own Back button does.
@@ -217,7 +217,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
       {step !== "done" && <>
         <p className="team-google-copy team-google-note">Confirm it's you to continue.</p>
         <form id={formId} className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
-          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/team/${userId}`} disabled={busy} />
+          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/settings/team/members/${userId}`} disabled={busy} />
         </form>
       </>}
       {step === "done" && result && <>

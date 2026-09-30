@@ -47,7 +47,7 @@ async function session(email, name, width = 1280, height = 800) {
   return page;
 }
 
-const api = (page, method, path, body, headers = {}) => page.evaluate(async ({ method, path, body, csrf, headers }) => {
+const apiOnce = (page, method, path, body, headers = {}) => page.evaluate(async ({ method, path, body, csrf, headers }) => {
   const init = { method, headers: { "X-CSRF-Token": csrf, ...headers } };
   if (body instanceof Array && body[0] === "file") {
     const form = new FormData();
@@ -63,6 +63,14 @@ const api = (page, method, path, body, headers = {}) => page.evaluate(async ({ m
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
   return { status: response.status, body: parsed };
 }, { method, path, body, csrf: page.csrf, headers });
+/** Team writes are rate limited per admin (30 a minute): seeding waits the window out instead of failing. */
+async function api(page, method, path, body, headers = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    const result = await apiOnce(page, method, path, body, headers);
+    if (result.status !== 429 || attempt >= 20) return result;
+    await sleep(5000);
+  }
+}
 
 /** A signed-in account without a browser, for seeding: its own client address, a cookie, and a CSRF token. */
 let clientNumber = 10;
@@ -464,6 +472,33 @@ async function lastMember(page) {
   return problems;
 }
 
+/**
+ * The Settings hub on a computer (Wave 37): the page does not scroll; the nav and the section on
+ * screen are each their own scroller, bounded by the window under the header. Team → Members adds its
+ * two panes (splitPanes) inside the section.
+ */
+async function hubPanes(page) {
+  if (page.mobile) return [];
+  const problems = [];
+  const layout = await page.evaluate((header) => {
+    const main = document.querySelector("main.settings-hub");
+    if (!main) return null;
+    const top = document.querySelector(header).getBoundingClientRect().bottom;
+    const box = (node) => { if (!node) return null; const rect = node.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, overflow: getComputedStyle(node).overflowY }; };
+    return { height: innerHeight, top, pageScrolls: main.scrollHeight > main.clientHeight + 2, nav: box(document.querySelector(".settings-hub-nav")), section: box(document.querySelector(".settings-hub-main > .settings-content")), split: document.querySelectorAll(".settings-hub-main > .split-layout > .split-pane").length };
+  }, HEADER);
+  if (!layout) return ["not the Settings hub"];
+  if (layout.pageScrolls) problems.push("the hub page scrolls as well as its panes");
+  for (const [name, pane] of [["nav", layout.nav], ["section", layout.section]]) {
+    if (!pane) { if (name === "section" && layout.split === 2) continue; problems.push(`no ${name} pane`); continue; }
+    if (pane.overflow !== "auto") problems.push(`the ${name} is not its own scroller`);
+    if (pane.top < layout.top - 1 || pane.bottom > layout.height + 1) problems.push(`the ${name} runs outside the window (${Math.round(pane.top)}–${Math.round(pane.bottom)})`);
+  }
+  return problems;
+}
+const HUB = { split: true, check: hubPanes };
+const HUB_SPLIT = { split: true, check: async (page) => [...await hubPanes(page), ...await splitPanes(page)] };
+
 // ------------------------------------------------------------------ page keys (F6)
 
 /**
@@ -546,28 +581,34 @@ const ROUTES = (s) => [
   ["Inbox", "/inbox", null, { split: true, check: splitPanes }],
   ["Inbox routines", "/inbox/routines"],
   ["Notifications", "/notifications"],
-  ["Settings · Security", "/settings/security"],
-  ["Settings · Modules", "/settings/modules"],
-  ["Settings · API keys", "/settings/keys"],
+  // The Settings hub (Wave 37): a page with its nav beside the section on a computer; on a phone the
+  // nav is the first screen (/settings) and each section a screen of its own.
+  ["Settings · section list", "/settings", null, HUB],
+  ["Settings · Security", "/settings/security", null, HUB],
+  ["Settings · Modules", "/settings/modules", null, HUB],
+  ["Settings · API keys", "/settings/keys", null, HUB],
   ["Settings · New key (many permissions)", "/settings/keys", async (page) => { await tapText(page, "button", "New key"); await page.waitForSelector(".keys-dialog"); for (let index = 0; index < 8; index += 1) await tapText(page, ".keys-dialog button", "Add permission").catch(() => undefined); }, { scope: ".keys-dialog" }],
-  ["Settings · My access", "/settings/access"],
-  ["Settings · Notifications", "/settings/notifications"],
-  ["Settings · About", "/settings/about"],
-  // Two-pane pages (F1): a long list on the left and long details on the right, each scrolling on its own.
-  ["Team members", "/team", null, SPLIT],
-  ["Team policies", "/team/policies", null, SPLIT],
-  ["Team keys", "/team/keys", null, SPLIT],
-  ["Team activity", "/team/activity", null, SPLIT],
-  ["Team groups", "/team/groups", null, SPLIT],
-  ["Team group page", `/team/groups/${s.group.id}`, null, SPLIT],
-  ["Team templates", "/team/templates", null, SPLIT],
-  ["Team integrations", "/team/integrations", null, SPLIT],
-  ["Team integration page (6 keys)", `/team/integrations/${s.integration.id}`, null, SPLIT],
-  ["Team invites", "/team/invites", null, SPLIT],
-  ["Team member page", `/team/${s.members[3].userId}`, null, SPLIT],
-  ["Team member access", `/team/${s.members[3].userId}/access`, null, SPLIT],
-  ["Team email log", "/team/email", null, SPLIT],
-  ["Team last member after scrolling the list", "/team", null, { split: true, check: lastMember }]
+  ["Settings · My access", "/settings/access", null, HUB],
+  ["Settings · Notifications", "/settings/notifications", null, HUB],
+  ["Settings · About", "/settings/about", null, HUB],
+  // Team in the hub. Members is a two-pane section (F1): a long list on the left and long details on
+  // the right, each scrolling on its own; every other section is one scroller like the account ones.
+  ["Team members", "/settings/team/members", null, HUB_SPLIT],
+  ["Team policies", "/settings/team/policies", null, HUB],
+  ["Team keys", "/settings/team/keys", null, HUB],
+  ["Team activity", "/settings/team/activity", null, HUB],
+  ["Team groups", "/settings/team/groups", null, HUB],
+  ["Team group page", `/settings/team/groups/${s.group.id}`, null, HUB],
+  ["Team templates", "/settings/team/templates", null, HUB],
+  ["Team integrations", "/settings/team/integrations", null, HUB],
+  ["Team integration page (6 keys)", `/settings/team/integrations/${s.integration.id}`, null, HUB],
+  ["Team invites", "/settings/team/invites", null, HUB],
+  ["Team member page", `/settings/team/members/${s.members[3].userId}`, null, HUB_SPLIT],
+  ["Team member access", `/settings/team/members/${s.members[3].userId}/access`, null, HUB],
+  ["Team email log", "/settings/team/email", null, HUB],
+  // The old /team URLs still open the same screens (rewritten in place).
+  ["Team members (old /team link)", "/team", null, HUB_SPLIT],
+  ["Team last member after scrolling the list", "/settings/team/members", null, { split: true, check: lastMember }]
 ];
 const SPLIT = { split: true, check: splitPanes };
 

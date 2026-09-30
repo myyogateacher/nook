@@ -1,20 +1,27 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { ChevronLeft, Copy, Eye, EyeOff, House, KeyRound, Lock, Pencil, Plus, RotateCcw, Search, Settings2, ShieldAlert, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, Copy, Download, Eye, EyeOff, History, House, KeyRound, Lock, Pencil, Plus, RotateCcw, Search, Settings2, ShieldAlert, Sparkles, Trash2, TriangleAlert, Upload, UsersRound } from "lucide-react";
 import { AccountActions, AppPageName, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
 import { PHONE_QUERY, useMediaQuery } from "../calendar/hooks";
 import { relativeTime } from "../files/format";
+import { formatBytes } from "../files/filesApi";
 import { popStateClosedDialog } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { Select } from "../ui/Select";
+import { Combobox } from "../ui/Combobox";
 import { useConfirm } from "../ui/useConfirm";
 import { vaultBackAction, vaultRoute, type VaultRoute } from "../vaultRoute";
 import { parseLoginValue, type EnvLevel } from "../../shared/vault";
 import { canWriteEnv, CellDialog, errorCode, Masked, messageOf, NewSecretDialog, NewVaultDialog, RevealedText, SecretMetaDialog, TYPE_LABELS, ValueEditorDialog, VaultSettingsDialog } from "./VaultDialogs";
 import { cellKey, copySecret, useRevealedValues, type Revealed } from "./reveal";
+import { VaultAccessPage } from "./VaultAccessPage";
+import { VaultActivityPage } from "./VaultActivityPage";
+import { VersionHistoryDialog } from "./VaultHistory";
+import { ReauthCancelled, useReauthProvider, useVaultReauth, VaultReauthContext } from "./VaultReauth";
+import { ExportDialog, ImportDialog } from "./VaultTransfer";
 import {
-  clearValue, deleteSecret, getSecret, listSecrets, listVaults, readValue, vaultStatus,
+  clearValue, deleteSecret, getQuota, getSecret, listSecrets, listVaults, readValue, vaultStatus,
   type SecretDetail, type SecretSummary, type VaultEnvironment, type VaultStatus, type VaultSummary
 } from "./vaultApi";
 import "../files/files.css";
@@ -62,6 +69,10 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onBin, on
   const scrollMemory = useRef(new Map<string, number>());
   const pageCache = useRef(new Map<string, PageData>());
   const confirm = useConfirm();
+  const reauthProvider = useReauthProvider();
+  // "Show what they read" from the Access page: the person the Activity page starts filtered by.
+  const [activityActor, setActivityActor] = useState<string | null>(null);
+  const vaultNames = useRef(new Map<string, string>());
 
   const remember = useCallback(() => {
     if (mainRef.current) scrollMemory.current.set(formatRoute(currentRoute()), mainRef.current.scrollTop);
@@ -118,6 +129,14 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onBin, on
     body = <NotConfigured status={status} admin={role === "admin"} />;
   } else if (!route.vaultId) {
     body = <VaultList key="list" onOpen={(vault) => go(vaultRoute(vault.id))} onReady={restoreScroll} flash={flash} />;
+  } else if (route.page === "access") {
+    body = <VaultAccessPage key={`access:${route.vaultId}`} vaultId={route.vaultId} onBack={back} onReady={restoreScroll} flash={flash} ask={confirm.ask}
+      onMissing={() => { flash("That vault is not available"); go(vaultRoute(), true); }}
+      onOpenActivity={(actorId) => { setActivityActor(actorId); go(vaultRoute(route.vaultId, { page: "activity" })); }} />;
+  } else if (route.page === "activity") {
+    body = <VaultActivityPage key={`activity:${route.vaultId}:${activityActor ?? ""}`} vaultId={route.vaultId} vaultName={vaultNames.current.get(route.vaultId) ?? pageCache.current.get(route.vaultId)?.vault.name ?? null}
+      initialActor={activityActor} onBack={back} onReady={restoreScroll}
+      onMissing={() => { flash("That vault is not available"); go(vaultRoute(), true); }} />;
   } else if (route.secretId) {
     body = <SecretPage key={`secret:${route.secretId}`} vaultId={route.vaultId} secretId={route.secretId} onBack={back} onReady={restoreScroll} flash={flash} ask={confirm.ask}
       onMissing={() => { flash("That secret is not available"); go(vaultRoute(route.vaultId), true); }}
@@ -126,6 +145,8 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onBin, on
     body = <VaultPage key={`vault:${route.vaultId}`} vaultId={route.vaultId} envId={route.envId} cache={pageCache} onBack={back} onReady={restoreScroll} flash={flash} ask={confirm.ask}
       onEnvironment={(envId) => go(vaultRoute(route.vaultId, { envId }), true)}
       onOpenSecret={(secretId) => go(vaultRoute(route.vaultId, { secretId }))}
+      onOpenPage={(page, name) => { vaultNames.current.set(route.vaultId!, name); setActivityActor(null); go(vaultRoute(route.vaultId, { page })); }}
+      onLeft={() => { pageCache.current.delete(route.vaultId!); const target = vaultRoute(); setRoute(target); navigateRef.current(target, { replace: true, removed: true }); }}
       onMissing={() => { flash("That vault is not available"); go(vaultRoute(), true); }}
       onDeleted={() => { pageCache.current.delete(route.vaultId!); const target = vaultRoute(); setRoute(target); navigateRef.current(target, { replace: true, removed: true }); flash("Moved the vault to the Bin"); }} />;
   }
@@ -133,7 +154,10 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onBin, on
   return <main ref={mainRef} className="app-page vault-app">
     {header}
     <ReadOnlyBanner />
-    <section className="vault-body">{body}</section>
+    <VaultReauthContext.Provider value={reauthProvider.run}>
+      <section className="vault-body">{body}</section>
+      {reauthProvider.element}
+    </VaultReauthContext.Provider>
     {confirm.confirmElement}
   </main>;
 }
@@ -159,10 +183,12 @@ function VaultList({ onOpen, onReady, flash }: { onOpen: (vault: VaultSummary) =
   const [vaults, setVaults] = useState<VaultSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [quota, setQuota] = useState<{ storedBytes: number; quotaBytes: number } | null>(null);
   const load = useCallback(async () => {
     setError(null);
     try {
       setVaults((await listVaults()).vaults);
+      getQuota().then(setQuota, () => setQuota(null));
     } catch (reason) {
       setError(messageOf(reason, "Could not load your vaults"));
     }
@@ -186,16 +212,20 @@ function VaultList({ onOpen, onReady, flash }: { onOpen: (vault: VaultSummary) =
       <p>Keep a team's API keys, database URLs, and passwords per environment: dev, staging, and prod.</p>
       {canWrite && <button className="primary-button vault-primary" onClick={() => setCreating(true)}><Plus />New vault</button>}
     </div>}
-    {vaults && vaults.length > 0 && <ul className="vault-cards" aria-label="Vaults">
-      {vaults.map((vault) => <li key={vault.id}>
-        <button type="button" className="vault-card" onClick={() => onOpen(vault)}>
-          <span className="vault-card-name">{vault.name}</span>
-          {vault.description && <span className="vault-card-description">{vault.description}</span>}
-          <span className="vault-chips">{vault.environments.map((env) => <span key={env.id} className={`vault-chip level-${env.level}`}>{env.level === "none" && <Lock aria-hidden="true" />}{env.name}<span className="sr-only">: {LEVEL_LABELS[env.level]}</span></span>)}</span>
-          <span className="vault-card-meta">{vault.role === "owner" ? "Owner" : "Member"} · {vault.secretCount === 1 ? "1 secret" : `${vault.secretCount} secrets`} · updated <time dateTime={vault.updatedAt}>{relativeTime(vault.updatedAt)}</time></span>
-        </button>
-      </li>)}
-    </ul>}
+    {vaults && vaults.length > 0 && ([["Your vaults", vaults.filter((vault) => vault.role === "owner")], ["Shared with me", vaults.filter((vault) => vault.role !== "owner")]] as const).map(([heading, list]) => list.length > 0 && <section key={heading} className="vault-list-section" aria-labelledby={`vault-list-${heading === "Your vaults" ? "own" : "shared"}`}>
+      <h2 id={`vault-list-${heading === "Your vaults" ? "own" : "shared"}`} className="vault-list-heading">{heading}<span className="vault-count"> · {list.length}</span></h2>
+      <ul className="vault-cards" aria-label={heading}>
+        {list.map((vault) => <li key={vault.id}>
+          <button type="button" className="vault-card" onClick={() => onOpen(vault)}>
+            <span className="vault-card-name">{vault.name}</span>
+            {vault.description && <span className="vault-card-description">{vault.description}</span>}
+            <span className="vault-chips">{vault.environments.map((env) => <span key={env.id} className={`vault-chip level-${env.level}`}>{env.level === "none" && <Lock aria-hidden="true" />}{env.name}{env.protected && <ShieldAlert aria-label="protected" />}<span className="sr-only">: {LEVEL_LABELS[env.level]}</span></span>)}</span>
+            <span className="vault-card-meta">{vault.role === "owner" ? "Owner" : `Member${vault.via === "group" ? " through a group" : ""}${vault.ownerName ? ` · from ${vault.ownerName}` : ""}`} · {vault.secretCount === 1 ? "1 secret" : `${vault.secretCount} secrets`} · updated <time dateTime={vault.updatedAt}>{relativeTime(vault.updatedAt)}</time></span>
+          </button>
+        </li>)}
+      </ul>
+    </section>)}
+    {quota && vaults && vaults.some((vault) => vault.role === "owner") && <p className="vault-quota">Storage for vaults you created: {formatBytes(quota.storedBytes)} of {formatBytes(quota.quotaBytes)}</p>}
     {creating && <NewVaultDialog onCancel={() => setCreating(false)} onCreated={(vault) => { setCreating(false); flash(`Created ${vault.name}`); onOpen(vault); }} />}
   </>;
 }
@@ -207,54 +237,60 @@ type Ask = ReturnType<typeof useConfirm>["ask"];
 
 function useValueActions(vaultId: string, flash: (message: string) => void, reload: () => Promise<void>, ask: Ask) {
   const { revealed, show, hide, hideAll } = useRevealedValues();
+  // Protected environments ask to confirm it's you first, then retry once (D226).
+  const run = useVaultReauth();
   const reveal = useCallback(async (secret: SecretSummary, env: VaultEnvironment) => {
     try {
-      const { value } = await readValue(vaultId, secret.id, env.id);
+      const { value } = await run(() => readValue(vaultId, secret.id, env.id));
       show(cellKey(secret.id, env.id), { value: value.value, comment: value.comment, version: value.version });
     } catch (reason) {
-      flash(messageOf(reason, "Could not reveal the value"));
+      if (!(reason instanceof ReauthCancelled)) flash(messageOf(reason, "Could not reveal the value"));
     }
-  }, [flash, show, vaultId]);
+  }, [flash, run, show, vaultId]);
   const copy = useCallback(async (secret: SecretSummary, env: VaultEnvironment, known: Revealed | undefined) => {
     try {
-      const text = known?.value ?? (await readValue(vaultId, secret.id, env.id)).value.value;
+      const text = known?.value ?? (await run(() => readValue(vaultId, secret.id, env.id))).value.value;
       await copySecret(secret.type === "login" ? parseLoginValue(text)?.password ?? text : text);
       flash(COPIED);
     } catch (reason) {
-      flash(messageOf(reason, "Could not copy the value"));
+      if (!(reason instanceof ReauthCancelled)) flash(messageOf(reason, "Could not copy the value"));
     }
-  }, [flash, vaultId]);
+  }, [flash, run, vaultId]);
   const clear = useCallback(async (secret: SecretSummary, env: VaultEnvironment) => {
     const cell = secret.values[env.id];
     if (!cell || cell.status !== "set") return;
     if (!await ask({ title: `Clear ${secret.name} in ${env.name}?`, message: "The value is removed from this environment. Its earlier versions stay in history.", confirmLabel: "Clear value", danger: true })) return;
     try {
-      await clearValue(vaultId, secret.id, env.id, cell.version ?? 0);
+      await run(() => clearValue(vaultId, secret.id, env.id, cell.version ?? 0));
       hide(cellKey(secret.id, env.id));
       flash(`Cleared in ${env.name}`);
     } catch (reason) {
-      flash(errorCode(reason) === "VALUE_CHANGED" ? "This value changed since the page loaded. Nothing was cleared; the page is up to date now." : messageOf(reason, "Could not clear the value"));
+      if (!(reason instanceof ReauthCancelled)) flash(errorCode(reason) === "VALUE_CHANGED" ? "This value changed since the page loaded. Nothing was cleared; the page is up to date now." : messageOf(reason, "Could not clear the value"));
     }
     await reload();
-  }, [ask, flash, hide, reload, vaultId]);
+  }, [ask, flash, hide, reload, run, vaultId]);
   return { revealed, reveal, hide, hideAll, copy, clear };
 }
 
-type ValueDialog = { kind: "cell" | "edit"; secretId: string; envId: string } | { kind: "newSecret" } | { kind: "settings" };
+type ValueDialog = { kind: "cell" | "edit" | "history"; secretId: string; envId: string } | { kind: "newSecret" } | { kind: "settings" } | { kind: "import" } | { kind: "export" };
 
 // ---------------------------------------------------------------------------------------------
 // One vault: the grid (desktop) or one environment's cards (phone)
 
-function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvironment, onOpenSecret, onMissing, onDeleted }: {
+function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvironment, onOpenSecret, onOpenPage, onMissing, onDeleted, onLeft }: {
   vaultId: string; envId: string | null; cache: MutableRefObject<Map<string, PageData>>;
   onBack: () => void; onReady: () => void; flash: (message: string) => void; ask: Ask;
-  onEnvironment: (envId: string) => void; onOpenSecret: (secretId: string) => void; onMissing: () => void; onDeleted: () => void;
+  onEnvironment: (envId: string) => void; onOpenSecret: (secretId: string) => void; onOpenPage: (page: "access" | "activity", vaultName: string) => void;
+  onMissing: () => void; onDeleted: () => void; onLeft: () => void;
 }) {
   const { canWrite } = useRole();
   const phone = useMediaQuery(PHONE_QUERY);
   const [data, setData] = useState<PageData | null>(() => cache.current.get(vaultId) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // The tag filter (§10 toolbar): one tag at a time, offered from the tags the vault's secrets carry.
+  const [tag, setTag] = useState<string | null>(null);
+  const [knownTags, setKnownTags] = useState<string[]>([]);
   const [dialog, setDialog] = useState<ValueDialog | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const generation = useRef(0);
@@ -263,16 +299,19 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
     const current = ++generation.current;
     setError(null);
     try {
-      const page = await listSecrets(vaultId, { q: query.trim() || undefined });
+      const page = await listSecrets(vaultId, { q: query.trim() || undefined, tag });
       if (current !== generation.current) return;
       setData(page);
-      if (!query.trim()) cache.current.set(vaultId, page);
+      if (!query.trim() && !tag) {
+        cache.current.set(vaultId, page);
+        setKnownTags([...new Set(page.secrets.flatMap((secret) => secret.tags))].sort((a, b) => a.localeCompare(b)));
+      }
     } catch (reason) {
       if (current !== generation.current) return;
       if (errorCode(reason) === "NOT_FOUND") onMissing();
       else setError(messageOf(reason, "Could not load this vault"));
     }
-  }, [cache, onMissing, query, vaultId]);
+  }, [cache, onMissing, query, tag, vaultId]);
   useEffect(() => {
     const timer = setTimeout(() => { void load(); }, query ? 250 : 0);
     return () => clearTimeout(timer);
@@ -293,7 +332,7 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
     if (!data?.nextCursor) return;
     setLoadingMore(true);
     try {
-      const page = await listSecrets(vaultId, { q: query.trim() || undefined, cursor: data.nextCursor });
+      const page = await listSecrets(vaultId, { q: query.trim() || undefined, tag, cursor: data.nextCursor });
       setData((current) => current ? { ...current, secrets: [...current.secrets, ...page.secrets.filter((item) => !current.secrets.some((known) => known.id === item.id))], nextCursor: page.nextCursor } : current);
     } catch (reason) {
       flash(messageOf(reason, "Could not load more secrets"));
@@ -305,10 +344,13 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
   if (error) return <div className="vault-state" role="alert"><h1>Could not load this vault</h1><p>{error}</p><button className="secondary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button><button className="secondary-button" onClick={onBack}>All vaults</button></div>;
   if (!data || !vault) return <p className="vault-loading" role="status">Loading…</p>;
 
-  const openDialog = dialog && (dialog.kind === "cell" || dialog.kind === "edit") ? {
+  const openDialog = dialog && (dialog.kind === "cell" || dialog.kind === "edit" || dialog.kind === "history") ? {
     secret: data.secrets.find((item) => item.id === dialog.secretId), env: envs.find((env) => env.id === dialog.envId)
   } : null;
   const canCreate = canWrite && envs.some(canWriteEnv);
+  // Access for owners and environment admins; Import where you write; Export where you read.
+  const canManageAccess = canWrite && (vault.role === "owner" || envs.some((env) => env.level === "admin"));
+  const canExport = envs.some((env) => env.level !== "none");
 
   return <>
     <div className="vault-toolbar">
@@ -323,6 +365,16 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
       </div>
     </div>
     {vault.description && <p className="vault-description">{vault.description}</p>}
+    <div className="vault-page-actions">
+      {canManageAccess && <button type="button" className="secondary-button vault-inline-button" onClick={() => onOpenPage("access", vault.name)}><UsersRound />Access</button>}
+      <button type="button" className="secondary-button vault-inline-button" onClick={() => onOpenPage("activity", vault.name)}><History />Activity</button>
+      {canCreate && <button type="button" className="secondary-button vault-inline-button" aria-haspopup="dialog" onClick={() => setDialog({ kind: "import" })}><Upload />Import</button>}
+      {canExport && <button type="button" className="secondary-button vault-inline-button" aria-haspopup="dialog" onClick={() => setDialog({ kind: "export" })}><Download />Export</button>}
+      {(knownTags.length > 0 || tag) && <div className="vault-tag-filter">
+        <Combobox<string> label="Filter by tag" placeholder="Filter by tag…" value={tag ? [tag] : []} onChange={(next) => setTag(next.at(-1) ?? null)}
+          options={knownTags.map((item) => ({ value: item, label: item }))} emptyText="No tag matches" />
+      </div>}
+    </div>
 
     {phone && phoneEnv && <div className="vault-env-select">
       <Select label="Environment" value={phoneEnv.id} onChange={(next) => { if (next !== phoneEnv.id) onEnvironment(next); }} options={envs.map((env) => ({ value: env.id, label: env.name, description: `${env.slug} · ${LEVEL_LABELS[env.level]}` }))} />
@@ -330,14 +382,14 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
 
     {data.secrets.length === 0 && <div className="vault-state">
       <span className="vault-state-icon"><KeyRound /></span>
-      <h2>{query ? "No secrets match" : "No secrets yet"}</h2>
-      {!query && <p>Add a secret, then give it a value in each environment.</p>}
-      {canCreate && !query && <button className="primary-button vault-primary" onClick={() => setDialog({ kind: "newSecret" })}><Plus />New secret</button>}
+      <h2>{query || tag ? "No secrets match" : "No secrets yet"}</h2>
+      {!query && !tag && <p>Add a secret, then give it a value in each environment, or import a .env file.</p>}
+      {canCreate && !query && !tag && <button className="primary-button vault-primary" onClick={() => setDialog({ kind: "newSecret" })}><Plus />New secret</button>}
     </div>}
 
     {data.secrets.length > 0 && !phone && <div className="vault-grid-scroll" role="region" aria-label={`${vault.name} secrets by environment`} tabIndex={0}>
       <table className="vault-grid">
-        <thead><tr><th scope="col" className="vault-grid-name">Secret</th>{envs.map((env) => <th key={env.id} scope="col"><span>{env.name}</span><small>{env.slug}</small></th>)}</tr></thead>
+        <thead><tr><th scope="col" className="vault-grid-name">Secret</th>{envs.map((env) => <th key={env.id} scope="col"><span>{env.name}{env.protected && <ShieldAlert className="vault-protected-mark" aria-label="protected" />}</span><small>{env.slug}{env.protected ? " · protected" : ""}</small></th>)}</tr></thead>
         <tbody>
           {data.secrets.map((secret) => <tr key={secret.id}>
             <th scope="row" className="vault-grid-name">
@@ -388,17 +440,23 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
       onHide={() => actions.hide(cellKey(openDialog.secret!.id, openDialog.env!.id))}
       onCopy={() => { void actions.copy(openDialog.secret!, openDialog.env!, actions.revealed[cellKey(openDialog.secret!.id, openDialog.env!.id)]); }}
       onEdit={() => setDialog({ kind: "edit", secretId: dialog.secretId, envId: dialog.envId })}
+      onHistory={() => { actions.hide(cellKey(dialog.secretId, dialog.envId)); setDialog({ kind: "history", secretId: dialog.secretId, envId: dialog.envId }); }}
       onClear={() => { const { secret, env } = openDialog; setDialog(null); void actions.clear(secret!, env!); }}
       onOpenSecret={() => { setDialog(null); onOpenSecret(dialog.secretId); }}
       onClose={() => { actions.hide(cellKey(dialog.secretId, dialog.envId)); setDialog(null); }} />}
     {openDialog?.secret && openDialog.env && dialog?.kind === "edit" && <ValueEditorDialog vault={vault} secret={openDialog.secret} env={openDialog.env}
       onCancel={() => setDialog(null)}
       onSaved={(message) => { actions.hideAll(); setDialog(null); flash(message); void load(); }} />}
+    {openDialog?.secret && openDialog.env && dialog?.kind === "history" && <VersionHistoryDialog vaultId={vault.id} secret={openDialog.secret} env={openDialog.env} ask={ask} flash={flash}
+      onClose={() => setDialog(null)} onRestored={() => { void load(); }} />}
+    {dialog?.kind === "import" && <ImportDialog vault={vault} initialEnvId={phone ? phoneEnv?.id ?? null : null} onClose={() => setDialog(null)}
+      onImported={(message) => { setDialog(null); flash(message); void load(); }} />}
+    {dialog?.kind === "export" && <ExportDialog vault={vault} initialEnvId={phone ? phoneEnv?.id ?? null : null} onClose={() => setDialog(null)} flash={flash} />}
     {dialog?.kind === "newSecret" && <NewSecretDialog vault={vault} initialEnvId={phone ? phoneEnv?.id ?? null : null} onCancel={() => setDialog(null)}
       onCreated={(secret) => { setDialog(null); flash(`Created ${secret.name}`); void load(); }} />}
     {dialog?.kind === "settings" && <VaultSettingsDialog vault={vault} ask={ask} flash={flash} onCancel={() => { setDialog(null); void load(); }}
       onChanged={(next) => setData((current) => current ? { ...current, vault: next } : current)}
-      onDeleted={() => { setDialog(null); onDeleted(); }} />}
+      onDeleted={() => { setDialog(null); onDeleted(); }} onLeft={() => { setDialog(null); flash(`You left ${vault.name}`); onLeft(); }} />}
   </>;
 }
 
@@ -411,7 +469,8 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
   const { canWrite } = useRole();
   const [data, setData] = useState<{ vault: VaultSummary; secret: SecretDetail } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<{ kind: "edit"; envId: string } | { kind: "meta" } | null>(null);
+  const [dialog, setDialog] = useState<{ kind: "edit" | "history"; envId: string } | { kind: "meta" } | null>(null);
+  const run = useVaultReauth();
   const load = useCallback(async () => {
     setError(null);
     try {
@@ -428,21 +487,29 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
   const actions = useValueActions(vaultId, flash, load, ask);
   const { hideAll } = actions;
   useEffect(() => hideAll, [hideAll]);
-  const writable = useMemo(() => data ? data.vault.environments.some(canWriteEnv) : false, [data]);
+  // D216: editing or deleting a secret needs write wherever it has a value. The page knows the
+  // environments it can see; the server checks the rest (and says so).
+  const writable = useMemo(() => {
+    if (!data) return false;
+    const { environments } = data.vault;
+    const withValues = environments.filter((env) => data.secret.values[env.id]?.status === "set" || data.secret.values[env.id]?.status === "no-access");
+    return withValues.length > 0 ? withValues.every(canWriteEnv) : environments.some(canWriteEnv);
+  }, [data]);
 
   if (error) return <div className="vault-state" role="alert"><h1>Could not load this secret</h1><p>{error}</p><button className="secondary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button><button className="secondary-button" onClick={onBack}>Back</button></div>;
   if (!data) return <p className="vault-loading" role="status">Loading…</p>;
   const { vault, secret } = data;
   const editEnv = dialog?.kind === "edit" ? vault.environments.find((env) => env.id === dialog.envId) : undefined;
+  const historyEnv = dialog?.kind === "history" ? vault.environments.find((env) => env.id === dialog.envId) : undefined;
 
   async function remove() {
     if (!await ask({ title: `Delete ${secret.name}?`, message: `${secret.name} and its values in every environment move to the Bin for 30 days.`, confirmLabel: "Move to Bin", danger: true })) return;
     try {
-      await deleteSecret(vaultId, secretId);
+      await run(() => deleteSecret(vaultId, secretId));
       flash(`Moved ${secret.name} to the Bin`);
       onDeleted();
     } catch (reason) {
-      flash(messageOf(reason, "Could not delete the secret"));
+      if (!(reason instanceof ReauthCancelled)) flash(messageOf(reason, "Could not delete the secret"));
     }
   }
 
@@ -466,7 +533,7 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
         const shown = actions.revealed[key];
         const set = cell?.status === "set";
         return <li key={env.id} className="vault-env-card">
-          <header><strong>{env.name}</strong><small>{env.slug} · {LEVEL_LABELS[env.level]}</small></header>
+          <header><strong>{env.name}{env.protected && <ShieldAlert className="vault-protected-mark" aria-label="protected" />}</strong><small>{env.slug} · {LEVEL_LABELS[env.level]}</small></header>
           <div className="vault-card-value">
             {cell?.status === "no-access" ? <span className="vault-not-set"><Lock aria-hidden="true" />No access</span>
               : set ? (shown ? <RevealedText type={secret.type} revealed={shown} /> : <Masked />) : <span className="vault-not-set">Not set</span>}
@@ -479,6 +546,7 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
             {set && <button type="button" className="secondary-button" onClick={() => { void actions.copy(secret, env, shown); }} aria-label={`Copy ${secret.name} in ${env.name}`}><Copy />Copy</button>}
             {canWrite && canWriteEnv(env) && <button type="button" className="secondary-button" onClick={() => setDialog({ kind: "edit", envId: env.id })} aria-label={`${set ? "Edit" : "Set"} ${secret.name} in ${env.name}`}><Pencil />{set ? "Edit" : "Set value"}</button>}
             {canWrite && set && canWriteEnv(env) && <button type="button" className="danger-button" onClick={() => { void actions.clear(secret, env); }} aria-label={`Clear ${secret.name} in ${env.name}`}><Trash2 />Clear</button>}
+            {cell && cell.status !== "no-access" && (cell.version ?? 0) > 0 && <button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => { actions.hide(key); setDialog({ kind: "history", envId: env.id }); }} aria-label={`History of ${secret.name} in ${env.name}`}><History />History</button>}
           </div>
         </li>;
       })}
@@ -486,6 +554,7 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
     <p className="vault-honest"><ShieldAlert aria-hidden="true" />{HONEST_LABEL}</p>
     {editEnv && <ValueEditorDialog vault={vault} secret={secret} env={editEnv} onCancel={() => setDialog(null)}
       onSaved={(message) => { actions.hideAll(); setDialog(null); flash(message); void load(); }} />}
+    {historyEnv && <VersionHistoryDialog vaultId={vaultId} secret={secret} env={historyEnv} ask={ask} flash={flash} onClose={() => setDialog(null)} onRestored={() => { void load(); }} />}
     {dialog?.kind === "meta" && <SecretMetaDialog vault={vault} secret={secret} onCancel={() => setDialog(null)}
       onSaved={(next) => { setDialog(null); setData((current) => current ? { ...current, secret: next } : current); flash("Saved"); }} />}
   </>;

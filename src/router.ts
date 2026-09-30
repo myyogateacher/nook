@@ -33,7 +33,8 @@ export type Route =
   // The Vault (Wave 25, vault plan §10): the list at /vault, one vault at /vault/:vaultId (the grid on
   // desktop, its first environment's cards on phones), one environment at /vault/:vaultId/env/:envId,
   // and one secret at /vault/:vaultId/secrets/:secretId (its values stacked per environment).
-  | { app: "vault"; vaultId: string | null; envId: string | null; secretId: string | null };
+  // Wave 26: who has access at /vault/:vaultId/access, and its Activity at /vault/:vaultId/activity.
+  | { app: "vault"; vaultId: string | null; envId: string | null; secretId: string | null; page: "access" | "activity" | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -165,13 +166,14 @@ export function parseRoute(pathname: string, search = ""): Route {
   return { app: "home" };
 }
 
-// /vault, /vault/:v, /vault/:v/env/:e, and /vault/:v/secrets/:s. Anything malformed after a valid
-// vault id opens that vault; a malformed vault id opens the list.
+// /vault, /vault/:v, /vault/:v/env/:e, /vault/:v/secrets/:s, /vault/:v/access, and /vault/:v/activity.
+// Anything malformed after a valid vault id opens that vault; a malformed vault id opens the list.
 function parseVault(segments: string[]): Route {
-  const none = { app: "vault" as const, vaultId: null, envId: null, secretId: null };
+  const none = { app: "vault" as const, vaultId: null, envId: null, secretId: null, page: null };
   const [vault, kind, item] = segments;
   if (vault === undefined || !isRouteId(vault)) return none;
   const vaultId = vault.toLowerCase();
+  if (segments.length === 2 && (kind === "access" || kind === "activity")) return { ...none, vaultId, page: kind };
   const itemId = segments.length === 3 && item !== undefined && isRouteId(item) ? item.toLowerCase() : null;
   return { ...none, vaultId, envId: kind === "env" ? itemId : null, secretId: kind === "secrets" ? itemId : null };
 }
@@ -226,6 +228,7 @@ export function formatRoute(route: Route): string {
     const vault = `/vault/${route.vaultId.toLowerCase()}`;
     // A secret wins over an environment: the detail is the deeper entry.
     if (route.secretId && isRouteId(route.secretId)) return `${vault}/secrets/${route.secretId.toLowerCase()}`;
+    if (route.page === "access" || route.page === "activity") return `${vault}/${route.page}`;
     return route.envId && isRouteId(route.envId) ? `${vault}/env/${route.envId.toLowerCase()}` : vault;
   }
   if (route.app === "inbox") {

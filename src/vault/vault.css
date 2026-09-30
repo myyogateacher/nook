@@ -145,3 +145,74 @@
   .vault-card-actions button, .vault-cell-actions button, .vault-settings-actions button { min-height: 44px; }
   .vault-dialog { width: 100%; }
 }
+
+/* Wave 26 (Vault B): sharing, Activity, import and export, history, the protected window. */
+.vault-list-section { margin-bottom: 22px; }
+.vault-list-heading { margin: 0 0 10px; color: #c9c9ce; font-size: .82rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.vault-quota { margin: 4px 0 0; color: #85858c; font-size: .8rem; }
+.vault-chip svg[aria-label="protected"], .vault-protected-mark { width: 12px; height: 12px; margin-left: 3px; color: #d9b55f; vertical-align: -1px; }
+.vault-grid thead th .vault-protected-mark { width: 13px; height: 13px; }
+.vault-page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -2px 0 14px; }
+.vault-page-actions .vault-inline-button { min-height: 40px; }
+.vault-tag-filter { flex: 0 1 240px; min-width: 180px; }
+.vault-history-list, .vault-import-rows, .vault-import-problems, .vault-activity, .vault-access-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.vault-history-list li { display: grid; gap: 8px; border: 1px solid #26262b; border-radius: 12px; padding: 10px 12px; background: #131316; }
+.vault-history-list li.current { border-color: #4a3f25; }
+.vault-history-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.vault-history-head strong { color: #ededee; }
+.vault-history-head span { color: #f5cf79; font-size: .78rem; }
+.vault-history-head small { margin-left: auto; color: #85858c; font-size: .76rem; }
+.vault-history-value { display: grid; gap: 6px; }
+.vault-form .vault-file-pick { position: relative; justify-self: start; max-width: 100%; min-height: 42px; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: #ededee; font-size: .84rem; font-weight: 650; letter-spacing: normal; text-transform: none; cursor: pointer; }
+.vault-file-pick svg { width: 16px; height: 16px; flex: none; }
+.vault-import .file-dialog-actions button, .vault-export .file-dialog-actions button, .vault-history .file-dialog-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.vault-import .file-dialog-actions svg, .vault-export .file-dialog-actions svg { width: 16px; height: 16px; flex: none; }
+.vault-file-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.vault-file-pick:focus-within { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.vault-import-problems li { color: #ffc2ca; font-size: .8rem; }
+.vault-import-preview { display: grid; gap: 8px; border-top: 1px solid #26262b; padding-top: 10px; }
+.vault-import-counts { margin: 0; color: #ededee; font-weight: 650; font-size: .88rem; }
+.vault-import-rows { max-height: 280px; overflow-y: auto; gap: 4px; }
+.vault-import-rows li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; border-radius: 8px; padding: 6px 8px; background: #131316; font-size: .82rem; }
+.vault-import-rows code { overflow: hidden; color: #ededee; text-overflow: ellipsis; white-space: nowrap; }
+.vault-import-rows span { color: #b7b7bd; }
+.vault-import-rows small { grid-column: 1 / -1; color: #9a9aa1; }
+.vault-import-rows li.status-create span, .vault-import-rows li.status-set span { color: #9fe0b0; }
+.vault-import-rows li.status-update span { color: #f5cf79; }
+.vault-import-rows li.status-invalid span { color: #ff9aa8; }
+.vault-export-warning { background: #1d1a12; border-color: #4a3f25; color: #d8c79c; }
+.vault-activity-filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.vault-activity li { display: grid; gap: 2px; border-bottom: 1px solid #1f1f23; padding: 8px 2px; }
+.vault-activity-line { color: #ededee; font-size: .88rem; overflow-wrap: anywhere; }
+.vault-activity small { color: #85858c; font-size: .76rem; }
+.vault-access-grid { margin: 12px 0; }
+.vault-access-grid td { min-width: 150px; }
+.vault-access-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.vault-access-avatar { width: 32px; height: 32px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 50%; background: #25252a; color: #ededee; font-size: .82rem; font-weight: 700; }
+.vault-access-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.vault-access-avatar.group svg { width: 16px; height: 16px; }
+.vault-access-name { display: grid; min-width: 0; }
+.vault-access-name strong { overflow: hidden; color: #ededee; font-size: .88rem; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; }
+.vault-access-name small { color: #85858c; font-size: .74rem; font-weight: 500; }
+.vault-access-role, .vault-access-owner { color: #b7b7bd; font-size: .82rem; }
+.vault-access-remove { width: 40px; height: 40px; }
+.vault-access-cards { margin: 12px 0; }
+.vault-access-cards header { align-items: center; }
+.vault-access-card-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 10px; color: #c9c9ce; font-size: .84rem; }
+/* The Save row stays in reach while a long list scrolls. */
+.vault-access-actions { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; border-top: 1px solid #1f1f23; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); background: #0d0d0f; }
+.vault-access-actions button { min-height: 42px; display: inline-flex; align-items: center; gap: 6px; }
+.vault-access-actions svg { width: 16px; height: 16px; }
+.vault-access-note { margin-top: 8px; }
+.vault-protect-toggle { flex: none; min-height: 36px; gap: 4px; }
+.vault-protect-toggle svg { width: 15px; height: 15px; color: #d9b55f; }
+.vault-reauth .reauth-note { margin: 0; }
+.vault-reauth .vault-form > label { display: grid; gap: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.vault-reauth .vault-form > label input { width: 100%; min-height: 44px; box-sizing: border-box; letter-spacing: normal; text-transform: none; font-size: .95rem; }
+@media (max-width: 760px) {
+  .vault-page-actions .vault-inline-button { flex: 1 1 calc(50% - 8px); justify-content: center; min-height: 44px; }
+  .vault-tag-filter { flex: 1 1 100%; }
+  .vault-access-remove { width: 44px; height: 44px; }
+  .vault-access-actions button { flex: 1 1 auto; justify-content: center; min-height: 44px; }
+  .vault-activity-filters { grid-template-columns: minmax(0, 1fr); }
+}

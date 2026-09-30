@@ -1452,7 +1452,7 @@ export function App() {
     if (section === "team") return { app: "team", userId: null };
     if (section === "inbox") return { app: "inbox", view: "pending", proposalId: null };
     if (section === "whiteboards") return { app: "whiteboards", folder: "all", boardId: null };
-    if (section === "vault") return { app: "vault", vaultId: null, envId: null, secretId: null };
+    if (section === "vault") return { app: "vault", vaultId: null, envId: null, secretId: null, page: null };
     return { app: section };
   }
 

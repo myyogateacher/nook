@@ -31,6 +31,15 @@ export function kindBreakdown(counts: Pick<KindCount, "direct" | "groupItems" | 
 }
 export type ResetCounts = { directShares: number; groups: number; keys: number; feeds: number; routines: number };
 
+/**
+ * One vault membership (Wave 26): the vault's name only when the viewer can open it (else "Vault
+ * owned by …", D269), the vault role, and the level per environment. `handle` on the admin page only.
+ */
+export type VaultAccessRow = {
+  title: string; titleHidden: boolean; owner: { displayName: string }; role: "owner" | "member"; via: "direct" | "group";
+  environments: Array<{ name: string; level: "none" | "read" | "write" | "admin" }>; active: boolean; handle?: string;
+};
+
 export type AccessSummary = {
   member: { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
   groups: Array<{ id: string; name: string; grantCount: number; memberCount: number; addedAt: string; addedBy: { id: string; displayName: string } | null; selfAdded: boolean }>;
@@ -38,6 +47,8 @@ export type AccessSummary = {
   feeds: { live: number };
   routines: { enabled: number };
   kinds: KindCount[];
+  /** Wave 26: vault memberships (older servers omit it). */
+  vaults?: VaultAccessRow[];
   resetCounts: ResetCounts;
   pageSize: number;
 };

@@ -40,7 +40,7 @@ if (command === "verify-key") {
 
 let next: Buffer | null;
 try {
-  next = parseVaultKey({ VAULT_ENCRYPTION_KEY: process.env.VAULT_ENCRYPTION_KEY_NEW, VAULT_ENCRYPTION_KEY_FILE: process.env.VAULT_ENCRYPTION_KEY_NEW_FILE }, config.totpEncryptionKey).key;
+  next = parseVaultKey({ VAULT_ENCRYPTION_KEY: process.env.VAULT_ENCRYPTION_KEY_NEW, VAULT_ENCRYPTION_KEY_FILE: process.env.VAULT_ENCRYPTION_KEY_NEW_FILE }, config.totpEncryptionKey, config.dataDir).key;
 } catch (error) {
   fail((error instanceof Error ? error.message : "The new key is not valid").replaceAll("VAULT_ENCRYPTION_KEY", "VAULT_ENCRYPTION_KEY_NEW"), 2);
 }

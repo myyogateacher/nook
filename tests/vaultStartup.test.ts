@@ -57,10 +57,9 @@ describe("vault startup (T199)", () => {
     const short = probe("check", { DATA_DIR: dataDir(), VAULT_ENCRYPTION_KEY: Buffer.alloc(16, 1).toString("base64") });
     expect(short.code).not.toBe(0);
     expect(short.stderr).toContain("VAULT_ENCRYPTION_KEY must be a base64-encoded 32-byte key");
-    const dir = dataDir();
-    const file = join(dir, "vault.key");
+    const file = join(dataDir(), "vault.key");
     writeFileSync(file, `${keyA}\n`, { mode: 0o600 });
-    const both = probe("check", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_FILE: file });
+    const both = probe("check", { DATA_DIR: dataDir(), VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_FILE: file });
     expect(both.code).not.toBe(0);
     expect(both.stderr).toContain("not both");
   }, 30_000);
@@ -94,8 +93,14 @@ describe("vault startup (T199)", () => {
     expect(rotated.stdout + rotated.stderr).not.toContain(keyC);
     expect(admin("verify-key", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 1 });
 
-    // The new key, from a file, opens the vault and its value.
-    const file = join(dir, "vault.key");
+    // A key file inside DATA_DIR would be archived with every backup (T180): refused.
+    const inside = join(dir, "vault.key");
+    writeFileSync(inside, `${keyC}\n`, { mode: 0o600 });
+    const refused = probe("check", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY_FILE: inside, ...ids });
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toContain("VAULT_ENCRYPTION_KEY_FILE must be outside DATA_DIR");
+    // The new key, from a file elsewhere, opens the vault and its value.
+    const file = join(dataDir(), "vault.key");
     writeFileSync(file, `${keyC}\n`, { mode: 0o600 });
     const after = probe("check", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY_FILE: file, ...ids });
     expect(after.stdout).toContain("the key comes from VAULT_ENCRYPTION_KEY_FILE");

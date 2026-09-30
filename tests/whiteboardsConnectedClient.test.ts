@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { MarkdownManager } from "@tiptap/markdown";
 import { markdownOptions, noteContentExtensions } from "../src/editor/extensions";
-import { cardSummary, clearCardSummaries, embedLinkText, embedMarkdown, parseEmbedLine, pastedBoardId } from "../src/editor/whiteboardEmbed";
+import { cardSummary, clearCardSummaries, embedMarkdown, parseEmbedLine, pastedBoardId } from "../src/editor/whiteboardEmbed";
+import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { hasUnsupportedElements, isKeptElement, keptLink, refusedImagesMessage, refusedLinks, sceneForSave, withoutRefusedImages } from "../src/whiteboards/historyGuard";
 import { autosaveReducer, changedSince, hasPendingWork, initialAutosave, nextSaveDelay, shouldSave } from "../src/whiteboards/autosave";
 import { placedSize } from "../src/whiteboards/boardImages";
@@ -76,24 +77,53 @@ describe("the note embed card (D208)", () => {
   const roundTrip = (markdown: string) => { const md = manager(); return md.serialize(md.parse(markdown)).trim(); };
 
   test("the Markdown is a titled link alone in its paragraph, and it round-trips", () => {
-    const markdown = `# Plan\n\n${embedMarkdown(doc, "Floor plan")}\n\nAfter the board.`;
+    const markdown = `# Plan\n\n${embedMarkdown(doc)}\n\nAfter the board.`;
+    expect(embedMarkdown(doc)).toBe(`[Whiteboard](/whiteboards/${doc} "whiteboard")`);
     const json = manager().parse(markdown);
     const node = json.content?.find((item) => item.type === "whiteboardEmbed");
-    expect(node?.attrs).toMatchObject({ id: doc, name: "Floor plan" });
+    expect(node?.attrs).toMatchObject({ id: doc });
     expect(roundTrip(markdown)).toBe(markdown);
     expect(roundTrip(roundTrip(markdown))).toBe(markdown);
   });
 
-  test("names with brackets and backslashes survive; a plain link or one inside text stays a link", () => {
-    const name = "Plan [v2] \\ draft";
-    expect(parseEmbedLine(`${embedMarkdown(doc, name)}\n`)).toEqual({ raw: `${embedMarkdown(doc, name)}\n`, id: doc, name });
-    expect(roundTrip(embedMarkdown(doc, name))).toBe(embedMarkdown(doc, name));
-    expect(embedLinkText("two\nlines")).toBe("two lines");
+  test("QA H1: the board's name never reaches the Markdown; an older named line reads the same and saves neutral", () => {
+    const named = `[Plan [v2\\] \\ draft](/whiteboards/${doc} "whiteboard")`;
+    expect(parseEmbedLine(`${named}\n`)?.id).toBe(doc);
+    expect(roundTrip(named)).toBe(embedMarkdown(doc));
+    // A card inserted with a name (the picker) still writes the neutral text.
+    const md = manager();
+    const json = { type: "doc", content: [{ type: "whiteboardEmbed", attrs: { id: doc, name: "Secret merger plan" } }] };
+    expect(md.serialize(json).trim()).toBe(embedMarkdown(doc));
     const plain = `[Floor plan](/whiteboards/${doc})`;
     expect(manager().parse(plain).content?.some((item) => item.type === "whiteboardEmbed")).toBe(false);
-    const inline = `See ${embedMarkdown(doc, "Floor plan")} here`;
+    const inline = `See ${embedMarkdown(doc)} here`;
     expect(manager().parse(inline).content?.some((item) => item.type === "whiteboardEmbed")).toBe(false);
     expect(parseEmbedLine(`[x](/whiteboards/not-a-uuid "whiteboard")`)).toBeNull();
+  });
+
+  test("QA H1: the server-side normalisation rewrites embed lines only, outside code fences, idempotently", () => {
+    const text = [
+      "# Notes",
+      `[Secret](/whiteboards/${doc} "whiteboard")  `,
+      `See [Secret](/whiteboards/${doc} "whiteboard") inline`,
+      "```md",
+      `[Kept](/whiteboards/${other} "whiteboard")`,
+      "```",
+      `[A \\] b](/whiteboards/${other} "whiteboard")`
+    ].join("\n");
+    const out = neutralizeWhiteboardEmbeds(text);
+    expect(out.split("\n")).toEqual([
+      "# Notes",
+      `[Whiteboard](/whiteboards/${doc} "whiteboard")  `,
+      `See [Secret](/whiteboards/${doc} "whiteboard") inline`,
+      "```md",
+      `[Kept](/whiteboards/${other} "whiteboard")`,
+      "```",
+      `[Whiteboard](/whiteboards/${other} "whiteboard")`
+    ]);
+    expect(neutralizeWhiteboardEmbeds(out)).toBe(out);
+    const untouched = "# Nothing to do";
+    expect(neutralizeWhiteboardEmbeds(untouched)).toBe(untouched);
   });
 
   test("the paste rule: only this instance's board link, alone", () => {

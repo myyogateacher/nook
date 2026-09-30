@@ -19,6 +19,7 @@ import { cardDetail, listColumns, TaskError } from "../tasks/service";
 import { sprintNames } from "../tasks/sprintData";
 import { listBoardTags } from "../tasks/tags";
 import { noteRef, type NoteDraftPayload } from "./noteDraftProposals";
+import { neutralizeWhiteboardEmbeds } from "../../shared/whiteboardEmbed";
 
 /**
  * Proposal kinds (docs/plan/research/2026-09-28-agent-inbox-routines.md §4.2, D148–D151).
@@ -415,13 +416,13 @@ async function readPublished(note: NoteRow) {
   const metadata = db.query("SELECT checksum FROM note_versions WHERE note_id = ? AND version_number = ?").get(note.id, note.current_version) as { checksum: string } | null;
   const markdown = await storage.readVersion(note.id, note.current_version);
   if (!metadata || checksum(markdown) !== metadata.checksum) throw new McpToolError("INTERNAL", "Note content failed integrity verification");
-  return markdown;
+  return neutralizeWhiteboardEmbeds(markdown);
 }
 
 async function readDraftText(note: NoteRow) {
   const markdown = await storage.readDraft(note.id);
   if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new McpToolError("INTERNAL", "Draft content failed integrity verification");
-  return markdown;
+  return neutralizeWhiteboardEmbeds(markdown);
 }
 
 function assertMarkdownSize(markdown: string) {

@@ -93,7 +93,7 @@ Notes are Markdown documents organised in folders. Edits begin as drafts that sa
 Type `/` for the command menu. Besides headings, lists, checklists, quotes, and code blocks:
 
 - **`/image`**, or paste or drop an image into the editor, uploads it to the note's folder in Files and embeds it. Only PNG, JPEG, GIF, and WebP are accepted, and the server's own type check must agree. Removing an image from a note leaves the file in Files.
-- **`/whiteboard`** shows a whiteboard as a card in the note (thumbnail, name, **Open**): pick one of your boards or name a new one. Pasting a board's link alone on a line (⋯ → **Copy link for a note** on the board) does the same. The card follows the board's own sharing: people who cannot open the board see "Whiteboard unavailable" and not its name. **Open** goes to the board; Back returns to the note.
+- **`/whiteboard`** shows a whiteboard as a card in the note (thumbnail, name, **Open**): pick one of your boards or name a new one. Pasting a board's link alone on a line (⋯ → **Copy link for a note** on the board) does the same. The card follows the board's own sharing: people who cannot open the board see "Whiteboard unavailable" and not its name. The note itself stores only a link to the board, never its name, so Version history and agents reading the note do not show it either. **Open** goes to the board; Back returns to the note.
 - **`/table`** inserts a 3×3 table with a header row. A floating toolbar adds or removes rows and columns and deletes the table; tables are saved as GitHub-flavoured Markdown pipe tables and scroll sideways on phones.
 - **Download as PDF** (editor toolbar, or the actions menu on phones) opens the browser's print dialog with a print layout of the note; choose "Save as PDF".
 

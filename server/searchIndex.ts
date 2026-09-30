@@ -1,6 +1,7 @@
 import { db, now } from "./db";
 import { cleanIndexText, searchText } from "./search";
 import { checksum, storage, withNoteLock } from "./storage";
+import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 
 /**
  * Note search index sync (docs/plan/WAVES_7-9.md §2.2, D30–D34).
@@ -29,7 +30,8 @@ export function unindexNote(noteId: string, kind: SearchKind) {
  */
 export function indexNote(noteId: string, kind: SearchKind, title: string, markdown: string, sourceChecksum: string) {
   deleteRow.run(noteId, kind);
-  const text = searchText(markdown);
+  // A board name in an older card's link text is not searchable by the note's readers (QA H1).
+  const text = searchText(neutralizeWhiteboardEmbeds(markdown));
   if (text === "") return false;
   const indexedTitle = cleanIndexText(title);
   // The title is usually the first line; keep it out of the body so snippets do not repeat it.

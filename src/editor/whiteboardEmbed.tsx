@@ -5,12 +5,15 @@ import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tip
 import { Lock, PenTool } from "lucide-react";
 import { getWhiteboardSummary, thumbnailUrl, type WhiteboardCardSummary } from "../whiteboards/whiteboardsApi";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
+import { neutralEmbedMarkdown, WHITEBOARD_EMBED_TEXT, WHITEBOARD_EMBED_TITLE } from "../../shared/whiteboardEmbed";
 
 /**
  * A whiteboard shown as a card in a note (Wave 24, D208). The Markdown is an ordinary link alone in
- * its paragraph, `[Name](/whiteboards/<uuid> "whiteboard")`: the title is the marker, so it survives
- * round trips and reads as a plain link anywhere else. Published notes and note versions keep this
- * reference, never a copy of the board.
+ * its paragraph, `[Whiteboard](/whiteboards/<uuid> "whiteboard")`: the title is the marker, so it
+ * survives round trips and reads as a plain link anywhere else. Published notes and note versions
+ * keep this reference, never a copy of the board. The link text is always "Whiteboard", never the
+ * board's name (QA H1): the note's readers see its Markdown (Version history, MCP) and may not be
+ * able to open the board. Older notes whose link text is a name read the same; the text is ignored.
  *
  * The card asks the server as the reader (`GET /api/whiteboards/:id/summary`): someone who can read
  * the board sees its thumbnail (same origin), its current name, and Open; anyone else sees
@@ -18,7 +21,7 @@ import { whiteboardDisplayName } from "../../shared/whiteboardScene";
  * No iframe. Open is an in-app navigation, a history entry of its own, so Back returns to the note.
  */
 
-export const WHITEBOARD_EMBED_TITLE = "whiteboard";
+export { WHITEBOARD_EMBED_TITLE };
 /** Asks the app shell to open an in-app path (the board) as a new history entry. */
 export const OPEN_PATH_EVENT = "nook:open-path";
 
@@ -27,9 +30,8 @@ const uuid = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const embedLine = new RegExp(`^\\[((?:[^\\]\\\\\\n]|\\\\.)*)\\]\\(/whiteboards/(${uuid}) "${WHITEBOARD_EMBED_TITLE}"\\)[ \\t]*(?:\\n+|$)`);
 const embedLineAnywhere = new RegExp(`^\\[(?:[^\\]\\\\\\n]|\\\\.)*\\]\\(/whiteboards/${uuid} "${WHITEBOARD_EMBED_TITLE}"\\)[ \\t]*$`, "m");
 
-/** The name as the Markdown link text: brackets and backslashes escaped, one line, at most 200 characters. */
-export const embedLinkText = (name: string) => [...name.replace(/[\r\n\t]+/g, " ").trim()].slice(0, 200).join("").replace(/[\\[\]]/g, "\\$&") || "Whiteboard";
-export const embedMarkdown = (id: string, name: string) => `[${embedLinkText(name)}](/whiteboards/${id} "${WHITEBOARD_EMBED_TITLE}")`;
+/** One card's Markdown: never the board's name (QA H1). */
+export const embedMarkdown = (id: string) => neutralEmbedMarkdown(id);
 
 /** Parses one embed line (pure; exported for tests). */
 export function parseEmbedLine(src: string): { raw: string; id: string; name: string } | null {
@@ -122,14 +124,15 @@ export const WhiteboardEmbed = Node.create({
   addAttributes() {
     return {
       id: { default: null, parseHTML: (element) => element.getAttribute("data-id"), renderHTML: (attrs) => ({ "data-id": attrs.id }) },
-      name: { default: "Whiteboard", parseHTML: (element) => element.getAttribute("data-name") ?? "Whiteboard", renderHTML: (attrs) => ({ "data-name": attrs.name }) }
+      name: { default: "Whiteboard", parseHTML: (element) => element.getAttribute("data-name") ?? "Whiteboard", renderHTML: () => ({}) }
     };
   },
   parseHTML() {
     return [{ tag: "div[data-whiteboard-embed]", getAttrs: (element) => new RegExp(`^${uuid}$`).test((element as HTMLElement).getAttribute("data-id") ?? "") ? null : false }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["div", { ...HTMLAttributes, "data-whiteboard-embed": "", class: "whiteboard-embed" }, String(HTMLAttributes["data-name"] ?? "Whiteboard")];
+    // Copied HTML carries no board name either (QA H1).
+    return ["div", { ...HTMLAttributes, "data-whiteboard-embed": "", class: "whiteboard-embed" }, WHITEBOARD_EMBED_TEXT];
   },
   markdownTokenizer: {
     name: "whiteboardEmbed",
@@ -141,7 +144,7 @@ export const WhiteboardEmbed = Node.create({
     }
   },
   parseMarkdown: (token, helpers) => helpers.createNode("whiteboardEmbed", { id: (token as { id?: string }).id, name: (token as { name?: string }).name }),
-  renderMarkdown: (node) => typeof node.attrs?.id === "string" ? embedMarkdown(node.attrs.id, String(node.attrs.name ?? "Whiteboard")) : "",
+  renderMarkdown: (node) => typeof node.attrs?.id === "string" ? embedMarkdown(node.attrs.id) : "",
   addCommands() {
     return {
       insertWhiteboardEmbed: (attrs) => ({ commands }) => commands.insertContent({ type: this.name, attrs: { id: attrs.id, name: whiteboardDisplayName(attrs.name) } })
@@ -154,8 +157,7 @@ export const WhiteboardEmbed = Node.create({
 
 /**
  * The editing side (NoteEditor only): the slash item's picker and the paste rule. Pasting this
- * instance's board link alone becomes a card named as the pasting person sees the board (or plain
- * "Whiteboard" when they cannot read it, which never reveals a name).
+ * instance's board link alone becomes a card; its Markdown never carries the name (QA H1).
  */
 export const WhiteboardEmbedPicker = Extension.create<{ onOpenPicker: (editor: Editor) => void }>({
   name: "whiteboardEmbedPicker",

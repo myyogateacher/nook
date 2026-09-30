@@ -279,3 +279,51 @@ describe("the embed card and MCP", () => {
     expect(denied.isError).toBe(true);
   }, 30_000);
 });
+
+describe("QA H1: a note never gives away the name of a board it embeds", () => {
+  const embed = (id: string, text: string) => `[${text}](/whiteboards/${id} "whiteboard")`;
+  const noteKey = (userId: string) => createApiKey(userId, { name: "Reader", surfaces: "mcp", grants: [{ module: "notes", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 90 }).id;
+
+  test("the stored Markdown and every reader's view carry no board name, new notes and older ones alike", async () => {
+    const { storage, checksum } = await import("../server/storage");
+    const owner = await createUser("WBB H1 owner");
+    const reader = await createUser("WBB H1 reader");
+    const board = await create(owner, "Secret merger plan");
+    const created = await api(owner, "POST", "/notes", {});
+    const noteId = created.body.note.id as string;
+    // Whatever the client sends (an older client, an agent), the stored draft names no board.
+    const sent = `${embed(board.id, "Secret merger plan")}\n\nAfter.\n\n\`\`\`\n${embed(board.id, "kept in code")}\n\`\`\``;
+    const saved = await api(owner, "PUT", `/notes/${noteId}/draft`, { markdown: sent, revision: created.body.note.draft_revision });
+    expect(saved.status).toBe(200);
+    expect(saved.body.title).not.toContain("Secret");
+    const stored = await storage.readDraft(noteId);
+    expect(stored).not.toContain("Secret");
+    expect(stored).toContain(embed(board.id, "Whiteboard"));
+    expect(stored).toContain("kept in code");
+    expect((await api(owner, "POST", `/notes/${noteId}/publish`, { revision: saved.body.revision })).status).toBe(200);
+    expect(await storage.readVersion(noteId, 1)).not.toContain("Secret");
+    expect((await api(owner, "PUT", `/notes/${noteId}/sharing`, { visibility: "selected", userIds: [reader.userId] })).status).toBe(200);
+
+    // An older note, written before this fix: its draft and published version 2 name the board.
+    const old = `# Plan\n\n${embed(board.id, "Secret merger plan")}\n`;
+    await storage.writeDraft(noteId, old);
+    db.query("UPDATE notes SET draft_revision = ?, draft_checksum = ? WHERE id = ?").run(saved.body.revision + 1, checksum(old), noteId);
+    expect((await api(owner, "POST", `/notes/${noteId}/publish`, { revision: saved.body.revision + 1 })).status).toBe(200);
+    expect(await storage.readVersion(noteId, 2)).toBe(old);
+
+    for (const [label, path] of [["note", `/notes/${noteId}`], ["v1", `/notes/${noteId}/versions/1`], ["v2", `/notes/${noteId}/versions/2`]] as const) {
+      const response = await api(reader, "GET", path);
+      expect({ label, status: response.status }).toEqual({ label, status: 200 });
+      expect({ label, leaked: JSON.stringify(response.body).includes("Secret") }).toEqual({ label, leaked: false });
+      expect(response.body.markdown ?? response.body.note?.markdown).toContain(embed(board.id, "Whiteboard"));
+    }
+    const result = await invokeMcpToolForTests("read_note", { noteId }, noteKey(reader.userId));
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]!.text).not.toContain("Secret");
+    expect(result.content[0]!.text).toContain(`/whiteboards/${board.id}`);
+    // The card's summary stays closed to the reader, so the name is nowhere they can reach.
+    expect((await api(reader, "GET", `/whiteboards/${board.id}/summary`)).status).toBe(404);
+    // Stored versions are never rewritten.
+    expect(await storage.readVersion(noteId, 2)).toBe(old);
+  }, 30_000);
+});

@@ -37,6 +37,7 @@ import { registerWhiteboardRoutes } from "./whiteboards/routes";
 import { WHITEBOARD_IMPORT_MAX_BYTES } from "./whiteboards/import";
 import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
+import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { registerCalendarRoutes } from "./calendar/routes";
 import { readPreferences, registerPreferenceRoutes } from "./preferences";
 import { isFeedRequest } from "./calendar/feeds";
@@ -683,7 +684,8 @@ app.get("/api/notes/:id", async (c) => {
       hasDelta: canEdit && note.draft_revision !== null && expectedChecksum !== null
         ? hasDraftDelta(note, expectedChecksum)
         : false,
-      markdown
+      // Older notes may still name a board in a card's link text; no reader ever sees it (QA H1).
+      markdown: neutralizeWhiteboardEmbeds(markdown)
     }
   });
 });
@@ -768,7 +770,8 @@ app.get("/api/notes/:id/versions/:version", async (c) => {
   if (!metadata) return c.json({ error: "Version not found" }, 404);
   const markdown = await storage.readVersion(id, version);
   if (checksum(markdown) !== metadata.checksum) throw new Error("Version content failed integrity verification");
-  return c.json({ version: metadata, markdown });
+  // Stored versions are never rewritten; the board name in an older card's link text is (QA H1).
+  return c.json({ version: metadata, markdown: neutralizeWhiteboardEmbeds(markdown) });
 });
 
 app.post("/api/notes/:id/versions/:version/restore", async (c) => {
@@ -783,14 +786,17 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
     if (!metadata) return c.json({ error: "Version not found" }, 404);
     const markdown = await storage.readVersion(id, version);
     if (checksum(markdown) !== metadata.checksum) throw new Error("Version content failed integrity verification");
-    await storage.writeDraft(id, markdown);
+    // The restored draft is normalised like any save (QA H1); the stored version stays as it is.
+    const restored = neutralizeWhiteboardEmbeds(markdown);
+    const restoredChecksum = restored === markdown ? metadata.checksum : checksum(restored);
+    await storage.writeDraft(id, restored);
     const revision = (note.draft_revision ?? 0) + 1;
     db.transaction(() => {
       // The restored text is the owner's choice, so the draft is no longer an MCP key's.
       const result = db.query("UPDATE notes SET title = ?, draft_revision = ?, draft_checksum = ?, draft_mcp_key_id = NULL, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
-        .run(metadata.title, revision, metadata.checksum, now(), id, userId, note.draft_revision);
+        .run(metadata.title, revision, restoredChecksum, now(), id, userId, note.draft_revision);
       if (result.changes === 1) {
-        indexNote(id, "draft", metadata.title, markdown, metadata.checksum);
+        indexNote(id, "draft", metadata.title, restored, restoredChecksum);
         // The restored text replaces an agent's draft, so its note_draft proposal is superseded (D149).
         resolveNoteDraftProposals(id, { kind: "restored" });
       }

@@ -102,7 +102,7 @@ import { formatRoute, isLegacySettingsPath, locationUrl, parseRoute, parseSettin
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
-import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
+import { isSearchPushedEntry, markSearchPushed, nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { ModulesSettings } from "./ModulesSettings";
@@ -1553,7 +1553,7 @@ export function App() {
     const next = nextSearchHint(search.active, query, searchAll, current);
     if (sameSearchHint(current, next)) return;
     if (current === null && next && isMobileViewport()) {
-      window.history.pushState(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1), "", window.location.pathname);
+      window.history.pushState(markSearchPushed(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1)), "", window.location.pathname);
       historyDepthRef.current = readHistoryDepth(window.history.state);
     } else {
       window.history.replaceState(withSearchHint(userId, next, state), "", window.location.pathname);
@@ -1572,6 +1572,11 @@ export function App() {
   }
 
   function clearSearch() {
+    // N2: on a phone, the search's own entry is unwound as Back would; its popstate clears the query.
+    if (isMobileViewport() && isSearchPushedEntry(window.history.state)) {
+      window.history.back();
+      return;
+    }
     setQuery("");
     setSearchAll(false);
   }

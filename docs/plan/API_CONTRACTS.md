@@ -1587,7 +1587,7 @@ Plan §8 and D198, D199, D201, D207, D208 (WB-B). No migration: `whiteboard_snap
 
 | Endpoint | Who | Body | Success | Errors |
 | --- | --- | --- | --- | --- |
-| `GET /api/whiteboards/:id/summary` | readers | | 200 `{ whiteboard: { id, name, updated_at, hasThumbnail, thumbRevision, elementCount, owner_name, is_owner } }`: what a note's embed card shows (D208) | 404 (no board or no access; the body never names the board) |
+| `GET /api/whiteboards/:id/summary` | readers | | 200 `{ whiteboard: { id, name, updated_at, hasThumbnail, thumbRevision, elementCount, owner_name, is_owner } }`: what a note's embed card shows (D208) | 404 (no board or no access; the body never names the board). The owner of a board now in their Bin gets 404 `{ code: "BINNED", binned: true }` (QA L6); anyone else, `NOT_FOUND` |
 | `GET /api/whiteboards/:id/snapshots` | the owner | | 200 `{ snapshots: [{ id, revision, createdAt, sizeBytes, elementCount \| null }] }`, newest first | 404 |
 | `GET /api/whiteboards/:id/snapshots/:snapshotId` | the owner | | 200 `{ snapshot, scene: CanonicalScene }` (for the History preview) | 404 (`NO_SNAPSHOT` for an unknown id) |
 | `POST /api/whiteboards/:id/snapshots/:snapshotId/restore` | the owner | `{ baseRevision }` | 200 as for a scene save plus `restoredFrom: { id, revision, createdAt }`; the scene it replaces is kept as a snapshot; the version's own images are carried | 404, 409 `REVISION_CONFLICT`, 429, 507 |

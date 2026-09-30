@@ -20,6 +20,7 @@ import { onBeforeChunkReload } from "../chunkReload";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
 import { announceThumbnail, createWhiteboard, getPreviousVersion, getWhiteboard, putWhiteboardThumbnail, restorePreviousVersion, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
 import { Avatar } from "../ui/Avatar";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
 
 /**
  * One board's canvas (whiteboard plan §10.3, D194, D202, D210): Excalidraw under Nook's 44 px header
@@ -664,7 +665,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         <button className="icon-button whiteboard-menu" onClick={() => setLayer({ kind: "board", dialog: { kind: "actions", board } })} aria-haspopup="dialog" aria-label={`Actions for ${name}`}><Ellipsis /></button>
       </div>
     </header>
-    {!canEdit && <p className="whiteboard-banner" role="note"><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} /> {board.owner_name}</p>}
+    {!canEdit && <p className="whiteboard-banner" role="note"><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} integration={board.ownerIsIntegration} /> {board.owner_name}{board.ownerIsIntegration && <IntegrationBadge />}</p>}
     {status === "rejected" && <p className="whiteboard-banner warn" role="alert">Not saved: {autosave.message}. Your changes are kept on this device.</p>}
     {offer && <div className="whiteboard-banner warn" role="alert">
       <span>You have unsaved changes from an earlier visit that differ from this whiteboard as it is saved now.</span>

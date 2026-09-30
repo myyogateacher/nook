@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Avatar } from "../ui/Avatar";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { initials } from "./CardFace";
 import { ArrowRightLeft, Copy, Download, File as FileIcon, Maximize2, MessageSquare, Minimize2, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
@@ -543,7 +544,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
         {!loadError && !card && <p className="bin-loading" role="status">Loading the card…</p>}
         {card && <>
           <div className="task-card-side">
-          <p className="task-card-byline">{card.creator_name ? `Added by ${card.creator_name}` : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
+          <p className="task-card-byline">{card.creator_name ? <>Added by {card.creator_name}{card.creator_is_integration === 1 && <IntegrationBadge />}</> : "Added"} · <time dateTime={card.created_at}>{relativeTime(card.created_at)}</time>{card.updated_at !== card.created_at && <> · Updated <time dateTime={card.updated_at}>{relativeTime(card.updated_at)}</time></>}</p>
 
           <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} readOnly={readOnly} />
           {hierarchy && <div className="task-card-details"><CardParentFields card={card} context={hierarchy} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} readOnly={readOnly} />
@@ -610,8 +611,8 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
             <ol className="task-comments">
               {comments.map((comment) => <li key={comment.id} className="task-comment">
                 <header>
-                  <Avatar className="task-avatar task-comment-avatar" name={comment.author_name ?? "?"} url={comment.author_avatar_url} fallback={initials(comment.author_name ?? "?")} />
-                  <strong>{comment.author_name ?? "Former member"}</strong>
+                  <Avatar className="task-avatar task-comment-avatar" name={comment.author_name ?? "?"} url={comment.author_avatar_url} fallback={initials(comment.author_name ?? "?")} integration={comment.author_is_integration === 1} />
+                  <strong>{comment.author_name ?? "Former member"}{comment.author_is_integration === 1 && <IntegrationBadge />}</strong>
                   <time dateTime={comment.created_at}>{relativeTime(comment.created_at)}</time>
                   {comment.edited_at && <span className="task-comment-edited">edited</span>}
                   <span className="task-comment-actions">

@@ -11,7 +11,7 @@
  * - Audit rows carry `{inviteId, role}` only: never the token, its hash, or an email (D165).
  */
 import { createHash } from "node:crypto";
-import { isEmailAllowed } from "../config";
+import { isEmailAllowed, isReservedEmail } from "../config";
 import { audit, db, now, type TeamInviteRow } from "../db";
 import { mailEnabled, sendMail, type MailOutcome } from "../mail";
 import { inviteEmail } from "./inviteEmail";
@@ -195,6 +195,8 @@ export function createInvite(actor: Actor, input: CreateInviteInput, origin: str
     throw new InviteError(429, "RATE_LIMITED", "You created 10 invites in the last hour. Try again later.");
   }
   const email = input.email?.trim().toLowerCase() || null;
+  // A reserved `.invalid` address (an integration's, D287) is refused whatever the allowlist says.
+  if (email && isReservedEmail(email)) throw new InviteError(400, "EMAIL_NOT_ALLOWED", "This address cannot be invited");
   if (email && !isEmailAllowed(email)) throw new InviteError(400, "EMAIL_NOT_ALLOWED", "This email is not on this Nook's allowed list (ALLOWED_EMAILS)");
   const note = input.note?.trim() ? input.note.trim().slice(0, INVITE_NOTE_MAX) : null;
   const days = Math.min(INVITE_MAX_DAYS, Math.max(1, Math.trunc(input.expiresInDays ?? INVITE_MAX_DAYS)));

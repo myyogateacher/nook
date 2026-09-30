@@ -171,9 +171,10 @@ export function resetLines(counts: ResetCounts) {
 }
 
 const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
-  "key.created": (event) => `${who(event)} created the key ${keyName(event)}`,
-  "key.narrowed": (event) => `${who(event)} narrowed the key ${keyName(event)}`,
-  "key.rotated": (event) => `${who(event)} rotated the key ${keyName(event)}`,
+  // Q-L5: a key made for someone else (an integration's, by an admin) names its owner, like a revoke does.
+  "key.created": (event) => `${who(event)} created ${ownerOf(event)}key ${keyName(event)}`,
+  "key.narrowed": (event) => `${who(event)} narrowed ${ownerOf(event)}key ${keyName(event)}`,
+  "key.rotated": (event) => `${who(event)} rotated ${ownerOf(event)}key ${keyName(event)}`,
   "key.revoked": (event) => event.meta?.by === "admin" ? `${who(event)} revoked ${target(event)}'s key ${keyName(event)}`
     : event.meta?.by === "google_relink" ? `${target(event)}'s key ${keyName(event)} was revoked when a new Google account was linked`
       : event.meta?.by === "google_reset" ? `${target(event)}'s key ${keyName(event)} was revoked by a reset for Google sign-in`
@@ -201,8 +202,23 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
     : event.meta?.reset ? `${who(event)} reset ${target(event)}'s account and allowed Google sign-in` : `${who(event)} allowed Google sign-in for ${target(event)}`,
   "account.google_reset": (event) => `${who(event)} reset ${target(event)}'s account for Google sign-in`,
   "account.google_unlinked": (event) => `${who(event)} unlinked Google from ${target(event)}'s account`,
-  "account.google_relinked": (event) => `A new Google account was linked to ${target(event)}'s account`
+  "account.google_relinked": (event) => `A new Google account was linked to ${target(event)}'s account`,
+  // Wave 36: integrations (service accounts).
+  "integration.created": (event) => `${who(event)} created the integration ${target(event)}`,
+  "integration.updated": (event) => `${who(event)} ${integrationChange(event)} the integration ${target(event)}`,
+  "integration.blocked": (event) => `${who(event)} blocked the integration ${target(event)}`,
+  "integration.unblocked": (event) => `${who(event)} unblocked the integration ${target(event)}`,
+  "integration.deleted": (event) => `${who(event)} deleted an integration`,
+  "integration.retired": (event) => `${who(event)} deleted the integration ${target(event)}; it is kept, blocked for good, so its name stays on what it did`
 };
+/** "the key" for your own; "Bot's key" when the actor made or changed someone else's. */
+const ownerOf = (event: ActivityEvent) => event.target && event.actor?.id !== event.target.id ? `${event.target.displayName}'s ` : "the ";
+/** "renamed", "changed the role of", "renamed and changed the role of", … from the changed fields. */
+function integrationChange(event: ActivityEvent) {
+  const fields = Array.isArray(event.meta?.fields) ? event.meta.fields as unknown[] : [];
+  const words = [fields.includes("name") ? "renamed" : "", fields.includes("role") ? "changed the role of" : "", fields.includes("description") ? "changed the description of" : ""].filter(Boolean);
+  return words.length ? words.join(" and ") : "changed";
+}
 const templateName = (event: ActivityEvent) => typeof event.meta?.templateName === "string" ? `“${event.meta.templateName}”` : "(name not recorded)";
 const who = (event: ActivityEvent) => event.actor?.displayName ?? (event.via === "sweeper" ? "Nook" : "Someone");
 const target = (event: ActivityEvent) => event.target?.displayName ?? "someone";

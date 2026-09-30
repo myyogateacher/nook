@@ -254,7 +254,8 @@ describe("end-user QA fixes (U1–U11)", () => {
     const keys = readFileSync(join(src, "keys", "KeysSettings.tsx"), "utf8");
     expect(keys).toContain("|| needsGoogle}><Plus");
     expect(keys).toContain("onRotate={needsGoogle ? undefined");
-    expect(keys).toContain('returnTo="/settings/keys" startable={false}');
+    expect(keys).toContain('returnTo={keysApi.returnTo} startable={false}');
+    expect(readFileSync(join(src, "keys", "keysApi.ts"), "utf8")).toContain('returnTo: "/settings/keys"');
     const account: AccountAuth = { methods: { password: true, google: true }, hasPassword: false, google: { email: "g@nook.test" }, reauth: "google", reauthUntil: null, passwordReset: true };
     expect(renderToStaticMarkup(<GoogleReauthNotice account={account} returnTo="/" startable={false} />)).not.toContain("href=");
   });
@@ -332,7 +333,7 @@ describe("final fix round (S1, Q1, Q2, Q4, Q6, Q7, section 2)", () => {
     expect(activityLabel(event("account.google_reset"))).toBe("Ada reset Tom's account for Google sign-in");
     expect(activityLabel(event("account.google_unlinked"))).toBe("Ada unlinked Google from Tom's account");
     expect(activityLabel(event("account.google_relinked"))).toBe("A new Google account was linked to Tom's account");
-    expect(readFileSync(join(src, "team", "AccessActivity.tsx"), "utf8")).toContain(`{ value: "accounts", label: "Google sign-in" }`);
+    expect(readFileSync(join(src, "team", "AccessActivity.tsx"), "utf8")).toContain(`{ value: "accounts", label: "Google sign-in and integrations" }`);
   });
 
   test("Q7: the assignee picker shows each person's picture", () => {

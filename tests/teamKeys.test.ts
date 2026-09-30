@@ -114,7 +114,7 @@ describe("Team → Keys inventory", () => {
     expect(listed.status).toBe(200);
     expect(listed.body.keys.map((key: { name: string }) => key.name).sort()).toEqual(["CI bot", "Old laptop"]);
     const row = listed.body.keys.find((key: { id: string }) => key.id === scoped.id);
-    expect(row.owner).toEqual({ id: member.userId, displayName: "Inventory member", role: "member", blocked: false });
+    expect(row.owner).toEqual({ id: member.userId, displayName: "Inventory member", role: "member", blocked: false, kind: "person" });
     expect(row.prefix).toBe(scoped.prefix);
     expect(row.grants).toEqual([
       { module: "notes", permission: "read", resource: null, active: true, inactiveReason: null },

@@ -193,7 +193,8 @@ export function applyInviteTemplate(invite: { created_by: string | null; templat
 /** From the member access page: the template's groups for an existing person (never their role). */
 export function applyTemplateToMember(actorId: string, userId: string, templateId: string) {
   return db.transaction(() => {
-    if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL").get(userId)) throw new TemplateError(404, "NOT_FOUND", "Team member not found");
+    // Integrations (D287) never join groups, so a template never applies to one.
+    if (!db.query("SELECT 1 FROM users WHERE id = ? AND disabled_at IS NULL AND kind = 'person'").get(userId)) throw new TemplateError(404, "NOT_FOUND", "Team member not found");
     const result = applyTemplateGroups(actorId, userId, templateId, { notify: true, guests: "refuse" });
     if (!result) throw notFound();
     audit(actorId, null, "team.template_applied", { templateId, targetId: userId, added: result.added });

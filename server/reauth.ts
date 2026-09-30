@@ -86,7 +86,7 @@ export async function verifyFirstFactor(user: Pick<UserRow, "id" | "password_has
  * after the password verifies. `purpose` is recorded when a recovery code is used.
  */
 export async function verifyReauth(userId: string, input: ReauthInput, purpose: string, sessionId?: string) {
-  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL AND kind = 'person'").get(userId) as UserRow | null;
   if (!user || !await verifyFirstFactor(user, input.password, sessionId)) return false;
   if (!user.totp_enabled_at) return true;
   if (input.recoveryCode) {

@@ -126,6 +126,8 @@ export type CardSummary = {
   revision: number;
   created_by: string | null;
   creator_name: string | null;
+  /** 1 when an integration created the card through its key (Wave 36, D287). */
+  creator_is_integration: 0 | 1;
   /** Calendar date YYYY-MM-DD (migration 011); the civil date in `due_tz` when a time is set. */
   due_on: string | null;
   /** Optional wall time `HH:MM` in `due_tz` (D100); both NULL or both set. */
@@ -165,7 +167,7 @@ export type CardSummary = {
 const cardSelect = (extraColumns = "") => `
   SELECT k.id, k.board_id, k.column_id, k.position, k.title,
          CASE WHEN k.description <> '' THEN 1 ELSE 0 END AS has_description,
-         k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name,
+         k.description_excerpt, k.revision, k.created_by, cu.display_name AS creator_name, CASE WHEN cu.kind = 'service' THEN 1 ELSE 0 END AS creator_is_integration,
          k.due_on, k.due_time, k.due_tz,
          (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = k.id) AS comment_count,
          (SELECT COUNT(*) FROM card_attachments ca WHERE ca.card_id = k.id) AS attachment_count,

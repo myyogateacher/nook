@@ -113,10 +113,10 @@ const rateLimited = (retryAfter: number) =>
 type Authenticated = Exclude<ReturnType<typeof authenticateKeyRequest>, Response>;
 
 function presentMe(auth: Authenticated) {
-  const row = db.query(`SELECT k.id, k.name, k.key_prefix, k.kind, k.surfaces, k.created_at, k.expires_at, k.revoke_after, k.ip_allowlist, u.display_name, u.role
+  const row = db.query(`SELECT k.id, k.name, k.key_prefix, k.kind, k.surfaces, k.created_at, k.expires_at, k.revoke_after, k.ip_allowlist, u.display_name, u.role, u.kind AS owner_kind
       FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`).get(auth.id) as {
     id: string; name: string; key_prefix: string; kind: string; surfaces: string; created_at: string; expires_at: string | null; revoke_after: string | null;
-    ip_allowlist: string | null; display_name: string; role: string;
+    ip_allowlist: string | null; display_name: string; role: string; owner_kind: "person" | "service";
   };
   const own = auth.actor.limits;
   return {
@@ -124,7 +124,8 @@ function presentMe(auth: Authenticated) {
       id: row.id, name: row.name, prefix: row.key_prefix, kind: row.kind, surfaces: row.surfaces, createdAt: row.created_at,
       expiresAt: row.expires_at, rotationEndsAt: row.revoke_after, ipRestricted: row.ip_allowlist !== null
     },
-    owner: { id: auth.user_id, displayName: row.display_name, role: row.role },
+    // `kind` is 'service' for an integration's key (D287).
+    owner: { id: auth.user_id, displayName: row.display_name, role: row.role, kind: row.owner_kind },
     // Effective grants: stored grants ∩ the owner's role ∩ team policy, as every call checks them. Ids only.
     grants: auth.actor.grants.map((grant) => ({ module: grant.module, permission: grant.permission, resource: grant.resourceKind ? { kind: grant.resourceKind, id: grant.resourceId } : null })),
     scopes: auth.actor.scopes,

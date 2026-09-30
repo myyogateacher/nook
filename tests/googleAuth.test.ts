@@ -721,6 +721,17 @@ describe("allowlists and domains (T256, T258)", () => {
     expect(userRow("outsider@nook.test")).toBeNull();
   });
 
+  test("an integration's address never signs in with Google, even as an authoritative Workspace account (D287)", async () => {
+    const admin = await adminUser();
+    const { createIntegration, serviceEmailFor } = await import("../server/team/serviceAccounts");
+    const bot = createIntegration({ id: admin.userId, role: "admin" }, { name: "Google bot", role: "member" });
+    const email = serviceEmailFor(bot.id);
+    const attempt = await googleSignIn(identityFor(email, { hd: "service.invalid" }));
+    expect(attempt.location).toBe("/login#error=not_allowed");
+    expect(attempt.session).toBeNull();
+    expect(db.query("SELECT COUNT(*) AS count FROM google_identities WHERE user_id = ?").get(bot.id)).toEqual({ count: 0 });
+  });
+
   test("GOOGLE_ALLOWED_DOMAINS needs the listed domain and a matching signed hd", async () => {
     config.auth.google.allowedDomains = ["example.test"];
     const started = await start();

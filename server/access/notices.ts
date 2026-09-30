@@ -32,12 +32,15 @@ export type AccessNotice = {
   level?: Level | null;
 };
 
+const recipientIsPerson = db.query("SELECT 1 FROM users WHERE id = ? AND kind = 'person'");
 const insert = db.query(`INSERT INTO access_notices (id, user_id, kind, actor_id, target_user_id, resource_kind, resource_id, group_id, key_id, count, level, created_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
 /** Queues one bell notice; a notice to the actor about their own action is dropped. Call inside the action's transaction. */
 export function notifyAccess(notice: AccessNotice, timestamp = now()) {
   if (notice.actorId !== null && notice.actorId === notice.userId) return false;
+  // Integrations (D287) have no bell: nobody signs in as one.
+  if (!recipientIsPerson.get(notice.userId)) return false;
   insert.run(crypto.randomUUID(), notice.userId, notice.kind, notice.actorId, notice.targetUserId ?? null, notice.resource?.kind ?? null, notice.resource?.id ?? null,
     notice.groupId ?? null, notice.keyId ?? null, notice.count ?? null, notice.level ?? null, timestamp);
   return true;

@@ -22,6 +22,8 @@ type McpKeyRow = {
   scopes: string;
   email: string;
   role: Role;
+  /** 'service' when the key belongs to an integration (D287). */
+  kind: "person" | "service";
   /** The key's effective grants and scopes for this request (Nook keys, D263). */
   actor: KeyActor;
   /** The surface the key was checked for (Wave 34). */
@@ -150,7 +152,7 @@ export function authenticateKeyRequest(request: Request, options: { surface: Aut
   // Found even when revoked or its holder blocked, so the owner's key row can say why (review Q1);
   // the caller always gets the one code KEY_INVALID for a key that does not authenticate (review Q5).
   const row = db.query(`
-    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, k.surfaces, u.email, u.role
+    SELECT k.id, k.user_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.scopes, k.surfaces, u.email, u.role, u.kind
     FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
     WHERE k.token_hash = ?
   `).get(hashMcpToken(token)) as (Omit<McpKeyRow, "actor" | "surface"> & { surfaces: KeySurfaces }) | null;
@@ -159,7 +161,8 @@ export function authenticateKeyRequest(request: Request, options: { surface: Aut
     return limited ? mcpJsonError("Too many authentication failures", 429, true, "RATE_LIMITED")
       : mcpJsonError("This API key is not valid or no longer active", 401, true, "KEY_INVALID");
   };
-  if (!row || !isEmailAllowed(row.email)) return invalid();
+  // An integration's synthetic address is never on ALLOWED_EMAILS (D287): its keys live by its block state alone.
+  if (!row || (row.kind !== "service" && !isEmailAllowed(row.email))) return invalid();
   const surface: "mcp" | "rest" = options.surface === "upload" ? (row.surfaces === "rest" ? "rest" : "mcp") : options.surface;
   // Expired, past its rotation grace, revoked, not allowed on this surface, or blocked by team policy (D263, D276, D277, D279, T209).
   const actor = resolveKeyActor(row.id, surface);

@@ -30,7 +30,7 @@ import { parseJson, uuid } from "./validation";
 const CREATE_LIMIT = 20;
 const createWindows = new Map<string, { count: number; resetAt: number }>();
 
-function createLimited(userId: string) {
+export function createLimited(userId: string) {
   const time = Date.now();
   if (createWindows.size > 500) for (const [key, entry] of createWindows) if (entry.resetAt <= time) createWindows.delete(key);
   const entry = createWindows.get(userId);

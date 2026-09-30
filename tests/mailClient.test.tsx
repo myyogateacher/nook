@@ -71,7 +71,10 @@ describe("routes", () => {
     // The popstate path rewrites an old entry in place, without a new history entry.
     // The Google re-auth round trip from API keys comes back to /settings/keys (Wave 35 merge).
     const keys = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
-    expect(keys).toContain('returnTo="/settings/keys"');
+    // Wave 36: the return address comes from the keys API (Settings or an integration's page).
+    expect(keys).toContain("returnTo={keysApi.returnTo}");
+    const keysApi = await Bun.file(new URL("../src/keys/keysApi.ts", import.meta.url)).text();
+    expect(keysApi).toContain('returnTo: "/settings/keys"');
     expect(keys).not.toContain("/settings/mcp");
     const app = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
     expect(app).toContain("if (isLegacySettingsPath(window.location.pathname)) window.history.replaceState(window.history.state, \"\", settingsPath(poppedSettings));");

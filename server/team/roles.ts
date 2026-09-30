@@ -72,11 +72,12 @@ export function effectiveMcpScopes(stored: readonly McpScope[], role: Role): Mcp
 
 /**
  * True when the user `userExpression` names may be part of an `all_users` audience (D72, T84: every
- * role except guest). A primary-key lookup; SQLite evaluates the uncorrelated form once per
+ * role except guest; D287: people only, never an integration, which reaches only what is shared with
+ * it by name). A primary-key lookup; SQLite evaluates the uncorrelated form once per
  * statement. An unknown user yields NULL, which never matches (fail closed).
  */
 export const audienceAllUsersFor = (userExpression: string) =>
-  `((SELECT u_aud.role FROM users u_aud WHERE u_aud.id = ${userExpression}) <> 'guest')`;
+  `((SELECT u_aud.role <> 'guest' AND u_aud.kind = 'person' FROM users u_aud WHERE u_aud.id = ${userExpression}) = 1)`;
 
 /**
  * The fragment every `x.visibility = 'all_users'` in server SQL must be ANDed with, for the caller

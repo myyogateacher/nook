@@ -205,7 +205,7 @@ export function dueTimeNote(card: { due_time?: string | null; due_tz?: string | 
   return `${card.due_time} ${card.due_tz} (${shift}${local.time} your time)`;
 }
 
-type AssigneeLike = { id: string; display_name: string; can_read: 0 | 1; avatar_url?: string | null };
+type AssigneeLike = { id: string; display_name: string; can_read: 0 | 1; avatar_url?: string | null; is_integration?: boolean };
 
 /** The card's assignees (the deprecated single-assignee fields are gone since v0.9.0, D113). */
 export function cardAssignees(card: { assignees?: AssigneeLike[] }): AssigneeLike[] {

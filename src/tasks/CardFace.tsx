@@ -165,7 +165,7 @@ export function CardFace({ card, tags, done, today, excerptId, rollup, childLabe
         {subtasks}
       </span>}
       {people.length > 0 && <span className="task-card-people" title={assigned}>
-        {shownPeople.shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} />)}
+        {shownPeople.shown.map((person) => <Avatar key={person.id} className={`task-avatar tone-${avatarTone(person.id)}${person.can_read === 0 ? " former" : ""}`} name={person.display_name} url={person.avatar_url} fallback={initials(person.display_name)} integration={person.is_integration} />)}
         {shownPeople.more > 0 && <span className="task-avatar task-avatar-more">+{shownPeople.more}</span>}
       </span>}
     </span>}

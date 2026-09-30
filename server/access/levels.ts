@@ -80,8 +80,10 @@ export function roleWord(level: ItemLevel): "owner" | ShareRoleWord {
   return LEVEL_RANK[level] >= LEVEL_RANK.edit ? "editor" : "viewer";
 }
 
-const roleQuery = db.query("SELECT role FROM users WHERE id = ? AND disabled_at IS NULL");
+const roleQuery = db.query("SELECT role, kind FROM users WHERE id = ? AND disabled_at IS NULL");
 const userRoleNow = (userId: string) => (roleQuery.get(userId) as { role: Role } | null)?.role ?? null;
+/** Integrations (D287) are never part of an `all_users` audience: they reach only what is shared with them by name. */
+const inAudienceAll = (userId: string, role: Role) => role !== "guest" && (roleQuery.get(userId) as { kind: string } | null)?.kind === "person";
 
 /** One direct share row's level, or null (the per-module member tables all have `user_id` and `level`). */
 function directLevel(table: string, column: string, id: string, userId: string): Level | null {
@@ -111,7 +113,7 @@ export function audienceLevel(source: AudienceSource, userId: string): ItemLevel
   const role = userRoleNow(userId);
   if (role === null) return "none";
   let best: ItemLevel = "none";
-  if (source.visibility === "all_users" && role !== "guest") best = source.audienceLevel;
+  if (source.visibility === "all_users" && inAudienceAll(userId, role)) best = source.audienceLevel;
   else if (source.visibility === "selected") best = maxLevel(directLevel(source.memberTable, source.memberColumn, source.id, userId), ...groupLevels(source.kind, source.id, userId));
   return capByRole(best, role);
 }

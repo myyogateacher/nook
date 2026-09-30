@@ -39,7 +39,12 @@ export type AccessAction =
   | "template.created"
   | "template.updated"
   | "template.deleted"
-  | "template.applied";
+  | "template.applied"
+  // Integrations (service accounts, Wave 36, D287): created, renamed or re-roled, deleted, or kept blocked because it owns content.
+  | "integration.created"
+  | "integration.updated"
+  | "integration.deleted"
+  | "integration.retired";
 
 export type AccessEvent = {
   actorId: string | null;
@@ -89,7 +94,7 @@ const CATEGORY_SQL: Record<ActivityCategory, string> = {
   items: "(e.action LIKE 'item.%' OR e.action LIKE 'access.%')",
   policies: "e.action LIKE 'policy.%'",
   templates: "e.action LIKE 'template.%'",
-  accounts: "e.action LIKE 'account.%'"
+  accounts: "(e.action LIKE 'account.%' OR e.action LIKE 'integration.%')"
 };
 export const ACTIVITY_PAGE = 50;
 

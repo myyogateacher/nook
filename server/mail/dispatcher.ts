@@ -98,7 +98,8 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
     return "dead";
   }
   const template: TemplateName = row.template;
-  const user = db.query("SELECT id, email, display_name, role, disabled_at, email_verified_at FROM users WHERE id = ?").get(row.user_id) as UserState | null;
+  const user = db.query("SELECT id, email, display_name, role, disabled_at, email_verified_at FROM users WHERE id = ? AND kind = 'person'").get(row.user_id) as UserState | null;
+  // An integration (D287) is never mailed: the outbox refuses it, and a row that got in anyway is dropped here.
   if (!user) {
     finish(row.id, "skipped", { skipReason: "no_user", nowMs });
     return "skipped";

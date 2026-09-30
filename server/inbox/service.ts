@@ -238,6 +238,8 @@ export function withdrawProposal(key: McpKeyContext, proposalId: string) {
  * T135). Push goes through the usual payload-less path, only for users who opted in (O5).
  */
 export function notifyProposals(ownerId: string, keyId: string, count: number, nowMs = Date.now()) {
+  // Integrations (D287) have no bell and no mail (their keys cannot hold Inbox grants either).
+  if (!db.query("SELECT 1 FROM users WHERE id = ? AND kind = 'person'").get(ownerId)) return null;
   const timestamp = new Date(nowMs).toISOString();
   const created = db.transaction(() => {
     const open = db.query(`SELECT id FROM notifications WHERE user_id = ? AND kind = 'proposals' AND proposal_key_id = ? AND run_id IS NULL

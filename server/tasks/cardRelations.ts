@@ -3,7 +3,7 @@ import { relationTypeFor, storedRelation, type RelationKind, type RelationType, 
 import { getBoard, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 import { AUDIENCE_ALL_USERS } from "../team/roles";
 import { groupGrantExists } from "../access/groups";
-import { avatarUrlsFor } from "../avatars";
+import { avatarUrlsFor, integrationIdsAmong } from "../avatars";
 
 /**
  * Typed card relations (WAVE_13_TASK_CARD_UX.md D104–D107, §3.2, T90, T91).
@@ -197,7 +197,7 @@ export function getBoardWithRelationCounts(userId: string, boardId: string) {
 }
 
 /** One entry of the board payload's `users` map: every assignee on the board, once (D113 trim). */
-export type BoardPayloadUser = { display_name: string; can_read: 0 | 1; avatar_url?: string | null };
+export type BoardPayloadUser = { display_name: string; can_read: 0 | 1; avatar_url?: string | null; /** Wave 36 (D287): an integration, drawn with its icon and badge. */ is_integration?: boolean };
 
 /**
  * `GET /api/tasks/boards/:b` (D113 trim, v0.9.0): each card lists `assignee_ids` and the board
@@ -214,6 +214,10 @@ export function boardPayload(userId: string, boardId: string) {
   });
   // Wave 35 (D299): each assignee's picture, beside the name the map already carries.
   const avatars = avatarUrlsFor(Object.keys(users));
-  for (const [id, entry] of Object.entries(users)) entry.avatar_url = avatars.get(id) ?? null;
+  const integrations = integrationIdsAmong(Object.keys(users));
+  for (const [id, entry] of Object.entries(users)) {
+    entry.avatar_url = avatars.get(id) ?? null;
+    if (integrations.has(id)) entry.is_integration = true;
+  }
   return { ...detail, cards, users };
 }

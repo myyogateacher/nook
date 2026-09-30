@@ -332,7 +332,7 @@ describe("final fix round (S1, Q1, Q2, Q4, Q6, Q7, section 2)", () => {
     expect(activityLabel(event("account.google_reset"))).toBe("Ada reset Tom's account for Google sign-in");
     expect(activityLabel(event("account.google_unlinked"))).toBe("Ada unlinked Google from Tom's account");
     expect(activityLabel(event("account.google_relinked"))).toBe("A new Google account was linked to Tom's account");
-    expect(readFileSync(join(src, "team", "AccessActivity.tsx"), "utf8")).toContain(`{ value: "accounts", label: "Google sign-in" }`);
+    expect(readFileSync(join(src, "team", "AccessActivity.tsx"), "utf8")).toContain(`{ value: "accounts", label: "Google sign-in and integrations" }`);
   });
 
   test("Q7: the assignee picker shows each person's picture", () => {

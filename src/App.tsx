@@ -54,6 +54,7 @@ import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPa
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { Avatar } from "./ui/Avatar";
+import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
@@ -1642,6 +1643,8 @@ export function App() {
   }, [sessionUserId]);
   // QA E5: pending whiteboard copies are sent once the app is open and online.
   usePendingWhiteboardSync(sessionUserId);
+  // F6: End/Home/PageDown/PageUp scroll the Notes or Files panel on screen when focus is on the page.
+  usePageScrollKeys(workspaceScroller);
 
   useEffect(() => {
     if (!session) return;

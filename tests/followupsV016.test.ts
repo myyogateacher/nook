@@ -48,3 +48,26 @@ test("F10: Access activity details and unknown actions read as sentences, never 
   expect(activityLabel({ ...base, action: "future.thing", meta: null })).toBe("Ada changed access");
   expect(groupEventLabel({ id: "1", action: "group.future", createdAt: "", actor: { id: "a", displayName: "Ada" }, target: null, self: false })).toBe("Ada changed the group");
 });
+
+test("F6: End, Home, PageDown, and PageUp scroll the Notes or Files panel on screen when focus is on the page", async () => {
+  const { pageKeyScrollTop, PAGE_SCROLL_KEYS } = await import("../src/ui/pageScrollKeys");
+  expect([...PAGE_SCROLL_KEYS]).toEqual(["End", "Home", "PageDown", "PageUp"]);
+  // A 2 000 px list in a 400 px pane: the ends, or 350 px (seven eighths of the pane) at a time.
+  expect(pageKeyScrollTop("End", 0, 2000, 400)).toBe(1600);
+  expect(pageKeyScrollTop("Home", 900, 2000, 400)).toBe(0);
+  expect(pageKeyScrollTop("PageDown", 0, 2000, 400)).toBe(350);
+  expect(pageKeyScrollTop("PageDown", 1500, 2000, 400)).toBe(1600);
+  expect(pageKeyScrollTop("PageUp", 200, 2000, 400)).toBe(0);
+  expect(pageKeyScrollTop("ArrowDown", 200, 2000, 400)).toBe(200);
+  const source = await read("ui/pageScrollKeys.ts");
+  // Text fields, the editable note editor, menus, lists, and open dialogs keep the keys.
+  expect(source).toContain("[contenteditable='true']");
+  expect(source).toContain("[role=listbox]");
+  expect(source).toContain(`document.querySelector("[aria-modal='true']")`);
+  // Focus inside a scroller, or a click or tap in one, stays the browser's own paging.
+  expect(source).toContain("if (!onPage && insideScroller(target)) return;");
+  expect(source).toContain("if (onPage && pointed?.isConnected && insideScroller(pointed)) return;");
+  // The panel on screen: folders, the list, or the note or file preview on a phone; the note body in Notes and the list in Files on a computer.
+  expect(source).toContain(`panel === "folders" ? [".folder-nav"] : panel === "editor" ? [".document-shell", ".file-text-preview", ".file-preview-body"] : ["#file-list", ".note-list"]`);
+  expect(await read("App.tsx")).toContain("usePageScrollKeys(workspaceScroller);");
+});

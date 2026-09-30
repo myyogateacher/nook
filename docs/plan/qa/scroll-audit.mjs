@@ -126,6 +126,8 @@ async function seed() {
   }
   seeded.longNote = notes[0];
   seeded.sharedNote = notes[1];
+  // The long note is read only for one person, for the page keys in read mode (F6).
+  await putAccess(admin, `/notes/${notes[0].id}/access`, { audience: "selected", people: [{ id: members[3].userId, level: "view" }], groups: [] });
   // 30 rows: every seeded person and 13 groups.
   await putAccess(admin, `/notes/${notes[1].id}/access`, { audience: "selected", people: members.map((member) => ({ id: member.userId, level: "view" })), groups: groups.slice(1, 14).map((group) => ({ id: group.id, level: "view" })) });
   for (const note of notes.slice(30, 50)) await api(admin, "DELETE", `/notes/${note.id}`, {});
@@ -442,6 +444,44 @@ async function lastMember(page) {
   return problems;
 }
 
+// ------------------------------------------------------------------ page keys (F6)
+
+/**
+ * With focus on the page (nothing focused, as after a route loads), End, Home, PageDown, and PageUp
+ * scroll the page's main scroller: the Files list or grid, or a note's body.
+ */
+async function pageKeys(page, selector) {
+  await resetScroll(page);
+  await page.evaluate(() => document.activeElement?.blur());
+  const read = () => page.evaluate((selector) => { const node = document.querySelector(selector); return node ? { top: Math.round(node.scrollTop), max: node.scrollHeight - node.clientHeight } : null; }, selector);
+  const start = await read();
+  if (!start) return [`page keys: no ${selector}`];
+  if (start.max <= 2) return [];
+  const moves = [];
+  for (const key of ["End", "Home", "PageDown", "PageUp"]) {
+    await page.keyboard.press(key);
+    await sleep(250);
+    moves.push([key, (await read()).top]);
+  }
+  const [end, home, down, up] = moves.map(([, top]) => top);
+  const ok = end >= start.max - 2 && home === 0 && down > 0 && down < start.max && up === 0;
+  return ok ? [] : [`page keys do not scroll ${selector} (${moves.map(([key, top]) => `${key} ${top}`).join(", ")} of ${start.max})`];
+}
+
+/** The long note opened by the person it is shared with to read: the page keys scroll its body. */
+async function readOnlyNote(page, seeded) {
+  const { width, height } = page.viewport();
+  const viewer = await session(`${PREFIX}-3@nook.test`, "Scroll Person 3", width, height);
+  try {
+    await viewer.goto(`${ORIGIN}/notes/${seeded.longNote.id}`, { waitUntil: "networkidle2" });
+    await sleep(800);
+    if (await viewer.evaluate(() => document.querySelector(".ProseMirror")?.getAttribute("contenteditable")) !== "false") return ["the shared long note is not read only for its viewer"];
+    return await pageKeys(viewer, ".document-shell");
+  } finally {
+    await viewer.browserContext().close();
+  }
+}
+
 // ------------------------------------------------------------------ routes
 
 /** Every route and layer the audit covers: [name, path or null, setup(page, seeded)?, options?]. */
@@ -449,11 +489,12 @@ const ROUTES = (s) => [
   ["Today", "/"],
   ["Notes list", "/notes", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Notes"); }],
   ["Notes folders", "/notes", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Folders"); }],
-  ["Notes editor (long note)", `/notes/${s.longNote.id}`],
+  ["Notes editor (long note)", `/notes/${s.longNote.id}`, null, { check: (page) => pageKeys(page, ".document-shell") }],
+  ["Notes long note, read only", `/notes/${s.longNote.id}`, null, { check: (page) => readOnlyNote(page, s) }],
   ["Notes search results", "/notes", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Notes"); await page.type("input[type=search]", "scroll"); await sleep(900); }],
   ["Access sheet (30 people)", `/notes/${s.sharedNote.id}`, async (page) => { if (page.mobile) { await tapText(page, ".toolbar-actions .mobile-more"); await tapText(page, ".mobile-actions-menu button", "Share note"); } else await tapText(page, ".toolbar-actions button", "Share note"); await page.waitForSelector(".access-sheet"); }, { scope: ".access-sheet" }],
-  ["Files list", "/files", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Files"); }],
-  ["Files grid", "/files", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Files"); await tapText(page, "button", "Grid view"); }],
+  ["Files list", "/files", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Files"); }, { check: (page) => pageKeys(page, "#file-list") }],
+  ["Files grid", "/files", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Files"); await tapText(page, "button", "Grid view"); }, { check: (page) => pageKeys(page, "#file-list") }],
   ["Files folders", "/files", async (page) => { if (page.mobile) await tapText(page, ".mobile-tabbar button", "Folders"); }],
   ["Files preview (long text)", `/files/${s.longFile.id}`],
   ["Bin", "/bin"],

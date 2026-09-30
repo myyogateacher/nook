@@ -75,13 +75,16 @@ describe("per-environment levels for members (T181, T185)", () => {
     const admin = await createUser("EnvAdmin");
     const other = await createUser("EnvAdmin other");
     const vault = await newVault(owner);
-    await share(owner, vault, [{ session: admin, levels: { dev: "admin", staging: "read" } }, { session: other, levels: { staging: "read" } }]);
+    await share(owner, vault, [{ session: admin, levels: { dev: "admin", staging: "read" } }, { session: other, levels: { staging: "read", prod: "read" } }]);
     expect((await call(admin, "PATCH", `${base(vault.id)}/environments/${vault.envs.dev}`, { name: "Dev box" })).body.environment.name).toBe("Dev box");
     expect((await call(admin, "PATCH", `${base(vault.id)}/environments/${vault.envs.dev}`, { protected: true })).body.code).toBe("VAULT_LEVEL");
     const sheet = await call(admin, "GET", `${base(vault.id)}/access`);
     expect(sheet.status).toBe(200);
     expect(sheet.body.canManagePeople).toBe(false);
-    expect(sheet.body.environments.map((env: any) => [env.slug, env.manageable])).toEqual([["dev", true], ["staging", false], ["prod", false]]);
+    // Prod, which the environment admin cannot read, is not on their sheet at all (§6.2).
+    expect(sheet.body.environments.map((env: any) => [env.slug, env.manageable])).toEqual([["dev", true], ["staging", false]]);
+    expect(sheet.text).not.toContain(vault.envs.prod);
+    expect(sheet.text).not.toContain("Production");
     const as = (people: Parameters<typeof accessBody>[2]) => putAccess(admin, vault.id, accessBody(vault, owner, people));
     // Granting write on dev to an existing member works…
     expect((await as([{ session: admin, levels: { dev: "admin", staging: "read" } }, { session: other, levels: { dev: "write", staging: "read" } }])).status).toBe(200);
@@ -92,7 +95,8 @@ describe("per-environment levels for members (T181, T185)", () => {
     expect((await as([{ session: admin, levels: { dev: "admin", staging: "read" } }, { session: other, levels: { dev: "write", staging: "read" } }, { session: stranger, levels: { dev: "read" } }])).body.code).toBe("VAULT_LEVEL");
     expect((await as([{ session: admin, levels: { dev: "write", staging: "read" } }, { session: other, levels: { dev: "write", staging: "read" } }])).body.code).toBe("VAULT_LEVEL");
     expect((await as([{ session: admin, role: "owner" }, { session: other, levels: { dev: "write", staging: "read" } }])).body.code).toBe("VAULT_LEVEL");
-    expect((await call(other, "GET", `${base(vault.id)}`)).body.vault.environments.map((env: any) => [env.slug, env.level])).toEqual([["dev", "write"], ["staging", "read"]]);
+    // The save left prod as it was: the other member still reads it.
+    expect((await call(other, "GET", `${base(vault.id)}`)).body.vault.environments.map((env: any) => [env.slug, env.level])).toEqual([["dev", "write"], ["staging", "read"], ["prod", "read"]]);
   });
 });
 

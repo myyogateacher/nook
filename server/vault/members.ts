@@ -101,7 +101,9 @@ function authorize(actor: VaultActor, vaultId: string) {
 
 export function readVaultAccess(actor: VaultActor, vaultId: string) {
   const { access, manageable, owner } = authorize(actor, vaultId);
-  const envs = environmentsOf(access);
+  // An environment admin sees only the environments they can read (§6.2): the rest, their names and
+  // who holds them, stay hidden, and a save leaves them exactly as they are.
+  const envs = owner ? environmentsOf(access) : environmentsOf(access).filter((env) => atLeast(envLevel(access, env.id), "read"));
   const memberList = members(vaultId);
   const levels = envAccessRows(vaultId);
   const ids = memberList.map((row) => row.user_id);
@@ -262,7 +264,8 @@ export function writeVaultAccess(actor: VaultActor, vaultId: string, body: Vault
     if (removed.length) recordVaultEvent(vaultId, actor.userId, "member.remove", { count: removed.length });
     recordVaultEvent(vaultId, actor.userId, "access.change", { count: nextPeople.length + nextGroups.length });
     for (const userId of gained) notifyAccess({ userId, kind: "vault_shared", actorId: actor.userId, resource: { kind: "vault", id: vaultId } }, timestamp);
-    mailVaultShared(actor.userId, vaultId, gained);
+    // Email only for people added by name (as other modules: groups hear through the bell, §C.11).
+    mailVaultShared(actor.userId, vaultId, gained.filter((userId) => nextPeople.some((person) => person.id === userId)));
     for (const userId of lost.filter((id) => (after.get(id)?.size ?? 0) === 0)) notifyAccess({ userId, kind: "vault_removed", actorId: actor.userId, resource: { kind: "vault", id: vaultId } }, timestamp);
     const counts = { people: nextPeople.length, groups: nextGroups.length, added: gained.length, lost: lost.length, removed: removed.length };
     audit(actor.userId, null, "vault.access_changed", { vaultId, ...counts, ...(current.canManagePeople ? {} : { asEnvAdmin: true }) });

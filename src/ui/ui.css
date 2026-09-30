@@ -96,3 +96,8 @@
 
 /* useConfirm (C1): the app's confirm sits above every panel, sheet, and Settings (z-index 41–61). */
 .app-confirm-layer > :is(.panel-scrim, .file-dialog) { z-index: 80; }
+
+/* Integrations (Wave 36, D287): the icon avatar and the "Integration" mark beside a name. */
+.avatar-integration { display: inline-grid; place-items: center; background: #1f2633; color: #9cc0ff; }
+.avatar-integration > svg { width: 62%; height: 62%; }
+.integration-badge { display: inline-flex; align-items: center; flex: none; border-radius: 6px; padding: 1px 6px; margin-inline-start: 6px; background: #1f2633; color: #9cc0ff; font-size: .66rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; line-height: 1.5; vertical-align: middle; white-space: nowrap; }

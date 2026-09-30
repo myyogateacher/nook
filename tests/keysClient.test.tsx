@@ -185,7 +185,7 @@ describe("key grants on the client", () => {
     expect(source).toContain("onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id));");
     expect(source).toContain("onClose={() => closeDialogAfterReload(dialog.key.id)}");
     expect(source).toMatch(/\?\? \(newKeyRef\.current && !newKeyRef\.current\.disabled \? newKeyRef\.current : null\)\s+\?\? headingRef\.current;/);
-    expect(source).toContain('<h4 ref={headingRef} tabIndex={-1}>Your keys</h4>');
+    expect(source).toContain('<h4 ref={headingRef} tabIndex={-1}>{integration ? `Keys of ${integration.name}` : "Your keys"}</h4>');
     const review = await Bun.file(new URL("../src/McpBinnedReview.tsx", import.meta.url)).text();
     expect(review).toMatch(/refocusRef\.current = true;\s+setBusy\(false\);/);
     expect(review).toMatch(/if \(busy \|\| !refocusRef\.current\) return;\s+refocusRef\.current = false;\s+closeRef\.current\?\.focus\(\);/);

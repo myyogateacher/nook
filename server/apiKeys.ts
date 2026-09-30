@@ -541,15 +541,17 @@ const grantSummary = (grants: readonly Grant[]) => grants.map((grant) => `${gran
  * Creates a general key. Validation, policy, and re-authentication are the caller's (the route
  * checks them in that order, so no code is consumed on a refusal).
  */
-export function createApiKey(userId: string, input: { name: string; description?: string | null; surfaces: KeySurfaces; grants: readonly Grant[]; expiresInDays: number | null; limits?: KeyLimits; ipAllowlist?: readonly string[] | null }, options: { via?: AccessVia } = {}) {
+export function createApiKey(userId: string, input: { name: string; description?: string | null; surfaces: KeySurfaces; grants: readonly Grant[]; expiresInDays: number | null; limits?: KeyLimits; ipAllowlist?: readonly string[] | null }, options: { via?: AccessVia; actorId?: string } = {}) {
   if (input.grants.length === 0) throw new KeyError(400, "INVALID_GRANT", "A key needs at least one permission");
   const createdAt = now();
   const expiresAt = input.expiresInDays === null ? null : new Date(Date.parse(createdAt) + input.expiresInDays * DAY_MS).toISOString();
+  // An admin creating an integration's key (D287) is the actor and `created_by`; the integration owns it.
+  const actorId = options.actorId ?? userId;
   return db.transaction(() => {
-    const created = insertKey({ userId, name: input.name, description: input.description ?? null, kind: "general", surfaces: input.surfaces, grants: input.grants, expiresAt, limits: input.limits ?? {}, createdAt, ipAllowlist: input.ipAllowlist ?? null });
+    const created = insertKey({ userId, name: input.name, description: input.description ?? null, kind: "general", surfaces: input.surfaces, grants: input.grants, expiresAt, limits: input.limits ?? {}, createdAt, ipAllowlist: input.ipAllowlist ?? null, createdBy: options.actorId ?? null });
     // The audit shape predates grants (Wave 8): keyId, name, and the scopes the grants amount to.
-    audit(userId, null, "mcp.key_created", { keyId: created.id, name: input.name, scopes: created.scopes });
-    recordAccessEvent({ actorId: userId, via: options.via ?? "web", action: "key.created", targetUserId: userId, keyId: created.id,
+    audit(actorId, null, "mcp.key_created", { keyId: created.id, name: input.name, scopes: created.scopes, ...(actorId !== userId ? { ownerId: userId } : {}) });
+    recordAccessEvent({ actorId, via: options.via ?? "web", action: "key.created", targetUserId: userId, keyId: created.id,
       meta: { grants: grantSummary(input.grants), surfaces: input.surfaces, expiresInDays: input.expiresInDays, ...(input.ipAllowlist?.length ? { ipRanges: input.ipAllowlist.length } : {}) } }, createdAt);
     return { id: created.id, token: created.token, prefix: created.prefix, scopes: created.scopes, createdAt, expiresAt, name: input.name };
   })();
@@ -569,7 +571,7 @@ const liveOwnKey = (userId: string, keyId: string) => {
 };
 
 /** PATCH /api/keys/:id (D278): rename, describe, and narrow; anything that widens is refused. */
-export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeof narrowKeySchema>) {
+export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeof narrowKeySchema>, actorId: string = userId) {
   const row = liveOwnKey(userId, keyId);
   const changed: string[] = [];
   const current = loadGrants(row.id);
@@ -664,9 +666,9 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
       const insertGrant = db.query("INSERT INTO api_key_grants (id, key_id, module, permission, resource_kind, resource_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
       for (const grant of nextGrants) insertGrant.run(crypto.randomUUID(), row.id, grant.module, grant.permission, grant.resourceKind, grant.resourceId, timestamp);
     }
-    recordAccessEvent({ actorId: userId, via: "web", action: "key.narrowed", targetUserId: userId, keyId: row.id,
+    recordAccessEvent({ actorId, via: "web", action: "key.narrowed", targetUserId: userId, keyId: row.id,
       meta: { fields: changed, ...(nextGrants ? { grantsBefore: current.length, grantsAfter: nextGrants.length } : {}) } }, timestamp);
-    audit(userId, null, "key.narrowed", { keyId: row.id, fields: changed });
+    audit(actorId, null, "key.narrowed", { keyId: row.id, fields: changed });
   })();
   return { changed };
 }
@@ -721,7 +723,7 @@ export function checkRotation(userId: string, keyId: string, graceHours: typeof 
  * grants, surfaces, and limits, linked by `rotated_from`. The old key works for `graceHours`, then
  * stops. Routines bound to the old key move to the new one in the same transaction.
  */
-export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}) {
+export function rotateApiKey(userId: string, keyId: string, graceHours: typeof GRACE_HOURS[number], expiresInDays?: number | null, changes: RotationChanges = {}, actorId: string = userId) {
   const { row, policies, grants, surfaces, ipAllowlist } = checkRotation(userId, keyId, graceHours, expiresInDays, changes);
   const lifetimeDays = row.expires_at === null ? policies.keyDefaultDays
     : Math.max(1, Math.round((Date.parse(row.expires_at) - Date.parse(row.created_at)) / DAY_MS));
@@ -731,7 +733,7 @@ export function rotateApiKey(userId: string, keyId: string, graceHours: typeof G
   const expiresAt = days === null ? null : new Date(Date.parse(createdAt) + days * DAY_MS).toISOString();
   const revokeAfter = new Date(Date.parse(createdAt) + graceHours * 3_600_000).toISOString();
   return db.transaction(() => {
-    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist });
+    const created = insertKey({ userId, name: row.name, description: row.description, kind: row.kind, surfaces, grants, expiresAt, limits: parseLimits(row.limits_json), rotatedFrom: row.id, createdAt, ipAllowlist, createdBy: actorId === userId ? null : actorId });
     if (graceHours === 0) {
       db.query("UPDATE mcp_api_keys SET revoked_at = ?, revoke_after = ? WHERE id = ?").run(createdAt, createdAt, row.id);
       supersedeProposals(row.id, userId, createdAt);
@@ -739,10 +741,10 @@ export function rotateApiKey(userId: string, keyId: string, graceHours: typeof G
       db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(revokeAfter, row.id);
     }
     const routines = db.query("UPDATE routines SET key_id = ? WHERE key_id = ? AND owner_id = ?").run(created.id, row.id, userId).changes;
-    recordAccessEvent({ actorId: userId, via: "web", action: "key.rotated", targetUserId: userId, keyId: row.id, meta: { newKeyId: created.id, graceHours, routinesMoved: routines } }, createdAt);
-    recordAccessEvent({ actorId: userId, via: "web", action: "key.created", targetUserId: userId, keyId: created.id, meta: { rotatedFrom: row.id, grants: grantSummary(grants), expiresInDays: days } }, createdAt);
-    audit(userId, null, "mcp.key_created", { keyId: created.id, name: row.name, scopes: created.scopes, rotatedFrom: row.id });
-    audit(userId, null, "key.rotated", { keyId: row.id, newKeyId: created.id, graceHours });
+    recordAccessEvent({ actorId, via: "web", action: "key.rotated", targetUserId: userId, keyId: row.id, meta: { newKeyId: created.id, graceHours, routinesMoved: routines } }, createdAt);
+    recordAccessEvent({ actorId, via: "web", action: "key.created", targetUserId: userId, keyId: created.id, meta: { rotatedFrom: row.id, grants: grantSummary(grants), expiresInDays: days } }, createdAt);
+    audit(actorId, null, "mcp.key_created", { keyId: created.id, name: row.name, scopes: created.scopes, rotatedFrom: row.id });
+    audit(actorId, null, "key.rotated", { keyId: row.id, newKeyId: created.id, graceHours });
     return { id: created.id, token: created.token, prefix: created.prefix, scopes: created.scopes, createdAt, expiresAt, name: row.name, oldKey: { id: row.id, revokeAfter: graceHours === 0 ? createdAt : revokeAfter } };
   })();
 }
@@ -1009,7 +1011,7 @@ export type InventoryFilter = {
   ipRestricted?: boolean;
 };
 
-export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean } };
+export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean; /** 'service' for an integration (Wave 36, D287). */ kind: "person" | "service" } };
 
 export const INVENTORY_PAGE = 200;
 
@@ -1078,14 +1080,14 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
       params.push(createdAt, createdAt, id);
     }
   }
-  const rows = db.query(`SELECT ${keyColumns}, u.display_name AS owner_name FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string }>;
+  const rows = db.query(`SELECT ${keyColumns}, u.display_name AS owner_name, u.kind AS owner_kind FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
+    WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string; owner_kind: "person" | "service" }>;
   const page = rows.slice(0, INVENTORY_PAGE);
   const usage = usage14d(page.map((row) => row.id));
   const bySurface = surfaceTotals14d(page.map((row) => row.id));
   const keys: InventoryKey[] = page.map((row) => ({
     ...present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], false, bySurface.get(row.id)),
-    owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null }
+    owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null, kind: row.owner_kind }
   })).map((key) => ({ ...key, grants: key.grants.map((grant) => ({ ...grant, resource: grant.resource ? { kind: grant.resource.kind, id: grant.resource.id, name: null } : null })) }));
   const last = page.at(-1);
   const summary = db.query(`SELECT COUNT(*) AS live, SUM(CASE WHEN k.expires_at IS NULL THEN 1 ELSE 0 END) AS no_expiry

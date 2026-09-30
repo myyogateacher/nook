@@ -49,7 +49,8 @@ export function mergeIds(queued: unknown, incoming: unknown, max = PAYLOAD_MAX_I
 export function enqueueMail(input: EnqueueInput): string | null {
   if (!mailEnabled()) return null;
   const definition = TEMPLATES[input.template];
-  const user = db.query("SELECT email FROM users WHERE id = ?").get(input.userId) as { email: string } | null;
+  // Integrations (D287) never receive mail: their address is a synthetic `.invalid` one.
+  const user = db.query("SELECT email FROM users WHERE id = ? AND kind = 'person'").get(input.userId) as { email: string } | null;
   if (!user) return null;
   const nowMs = input.nowMs ?? Date.now();
   if (input.coalesceKey) {

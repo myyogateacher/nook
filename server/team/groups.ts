@@ -28,7 +28,7 @@ export const GROUP_DESCRIPTION_MAX = 200;
 const HISTORY_LIMIT = 50;
 const ITEMS_LIMIT = 200;
 
-export type GroupErrorCode = "NOT_FOUND" | "GROUP_CHANGED" | "NAME_TAKEN" | "LIMIT_REACHED" | "INVALID_MEMBERS" | "GUEST_SHARE_DISABLED";
+export type GroupErrorCode = "NOT_FOUND" | "GROUP_CHANGED" | "NAME_TAKEN" | "LIMIT_REACHED" | "INVALID_MEMBERS" | "GUEST_SHARE_DISABLED" | "INTEGRATION_NOT_ALLOWED";
 
 export class GroupError extends Error {
   constructor(readonly status: 400 | 404 | 409, readonly code: GroupErrorCode, message: string, readonly details: Record<string, unknown> = {}) {
@@ -206,6 +206,10 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
       const placeholders = added.map(() => "?").join(",");
       const valid = db.query(`SELECT id FROM users WHERE disabled_at IS NULL AND id IN (${placeholders})`).all(...added) as Array<{ id: string }>;
       if (valid.length !== added.length) throw new GroupError(400, "INVALID_MEMBERS", "One or more people were not found");
+      // D287 (Wave 36): an integration reaches only what an owner shared with it by name, so it never joins a group.
+      if (db.query(`SELECT 1 FROM users WHERE kind = 'service' AND id IN (${placeholders}) LIMIT 1`).get(...added)) {
+        throw new GroupError(400, "INTEGRATION_NOT_ALLOWED", "Integrations cannot join groups. Share items with the integration directly instead.");
+      }
       if (guestJoinRefused(groupId, added)) throw new GroupError(400, "GUEST_SHARE_DISABLED", GUEST_SHARE_DISABLED.error);
     }
     const timestamp = now();

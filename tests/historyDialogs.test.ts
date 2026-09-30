@@ -445,7 +445,9 @@ test("the Calendar and the key dialogs offer their layer back to Forward (Fricti
   const calendar = await Bun.file(new URL("../src/calendar/CalendarApp.tsx", import.meta.url)).text();
   expect(calendar).toMatch(/if \(calendarsOpen \|\| sharing \|\| feeds \|\| picker \|\| reminderPicker\) offerDialogReopen\(/);
   const keys = await Bun.file(new URL("../src/keys/KeysSettings.tsx", import.meta.url)).text();
-  expect(keys).toContain("<HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>");
+  expect(keys).toContain("<HistoryDialogReopen.Provider value={dialog && reopenOnForward ? () => setDialog(dialog) : null}>");
+  // Team → Integrations turns the reopen off, like its other sheets (Wave 36 review Q-L1).
+  expect(keys).toContain("reopenOnForward = true");
   const hook = await Bun.file(new URL("../src/ui/useHistoryDialogGuard.ts", import.meta.url)).text();
   expect(hook).toContain("reopenRef.current = options.reopen ?? ownerReopen;");
 });

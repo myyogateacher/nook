@@ -10,6 +10,7 @@ import { parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import type { Folder } from "../types";
 import { Avatar } from "../ui/Avatar";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { Select } from "../ui/Select";
 import { whiteboardsBackAction, whiteboardsRoute, type WhiteboardsRoute } from "../whiteboardsRoute";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
@@ -379,7 +380,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
                 <span className="whiteboard-name" title={name}>{name}</span>
                 <span className="whiteboard-meta">
                   <time dateTime={board.updated_at}>{relativeTime(board.updated_at)}</time>
-                  {board.is_owner === 0 && <span className="owner-badge"><Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} />{board.owner_name}</span>}
+                  {board.is_owner === 0 && <span className="owner-badge"><Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} integration={board.ownerIsIntegration} />{board.owner_name}{board.ownerIsIntegration && <IntegrationBadge />}</span>}
                   {board.visibility !== "private" && <Users className="whiteboard-shared" aria-label="Shared" />}
                 </span>
               </span>

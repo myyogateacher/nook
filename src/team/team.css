@@ -205,3 +205,8 @@
 
 /* A group's "Add people…" field: a 40 px input inside the 44 px field (it was 30 px, QA v0.13.0). */
 @media (max-width: 760px) { .team-group-page .ui-combobox-field .ui-combobox-input { min-height: 40px; } }
+
+/* An integration's page (Wave 36): its keys section is the Settings → API keys list, laid out in the
+   detail pane's own flow (no padding of its own and no scroller of its own: the pane scrolls). */
+.team-integration-page .keys-settings { overflow: visible; padding: 0; margin: 8px 0 4px; }
+.team-integration-page h2 .integration-badge { font-size: .62rem; }

@@ -30,6 +30,7 @@ import {
   type WhiteboardSnapshot, type WhiteboardSummary
 } from "./whiteboardsApi";
 import { Avatar } from "../ui/Avatar";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
 
 /**
  * One board's canvas (whiteboard plan §10.3, D194, D202, D210): Excalidraw under Nook's 44 px header
@@ -1097,7 +1098,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       </div>
     </header>
     {!canEdit && <div className="whiteboard-banner" role="note">
-      <span><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} /> {board.owner_name}</span>
+      <span><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} integration={board.ownerIsIntegration} /> {board.owner_name}{board.ownerIsIntegration && <IntegrationBadge />}</span>
       {canWrite && <button className="secondary-button" onClick={() => { void duplicate(); }}><Copy />Duplicate to my whiteboards</button>}
     </div>}
     {status === "rejected" && <p className="whiteboard-banner warn" role="alert">Not saved: {autosave.message}. Your changes are kept on this device.</p>}

@@ -39,11 +39,13 @@ function fail(message: string, code = 1): never {
   process.exit(code);
 }
 
+/** The person with that address. An integration (D287) is refused: it is managed in Team → Integrations. */
 function findUser(emailArgument: string | undefined) {
   const email = emailArgument?.trim().toLowerCase();
   if (!email) fail(usage, 2);
-  const user = db.query("SELECT id, role, disabled_at FROM users WHERE email = ? COLLATE NOCASE").get(email) as { id: string; role: string; disabled_at: string | null } | null;
+  const user = db.query("SELECT id, role, disabled_at, kind FROM users WHERE email = ? COLLATE NOCASE").get(email) as { id: string; role: string; disabled_at: string | null; kind: string } | null;
   if (!user) fail("No account exists for that email address.");
+  if (user.kind === "service") fail("That account is an integration; manage it in Team → Integrations.");
   return user;
 }
 
@@ -60,12 +62,14 @@ function run(operation: () => void, success: string) {
 const [command, ...args] = process.argv.slice(2);
 
 if (command === "list") {
-  const rows = db.query(`SELECT email, display_name, role, disabled_at, created_at FROM users
-    ORDER BY disabled_at IS NOT NULL, CASE role WHEN 'admin' THEN 0 WHEN 'member' THEN 1 WHEN 'viewer' THEN 2 ELSE 3 END, created_at`)
-    .all() as Array<{ email: string; display_name: string; role: string; disabled_at: string | null; created_at: string }>;
+  // People first; integrations (D287) are labelled, since their synthetic address signs nothing in.
+  const rows = db.query(`SELECT email, display_name, role, disabled_at, created_at, kind FROM users
+    ORDER BY kind = 'service', disabled_at IS NOT NULL, CASE role WHEN 'admin' THEN 0 WHEN 'member' THEN 1 WHEN 'viewer' THEN 2 ELSE 3 END, created_at`)
+    .all() as Array<{ email: string; display_name: string; role: string; disabled_at: string | null; created_at: string; kind: string }>;
   if (!rows.length) console.log("No accounts yet. The first account to register becomes the admin.");
   for (const row of rows) {
-    console.log([row.email, row.role, row.disabled_at ? "blocked" : "active", `created ${row.created_at.slice(0, 10)}`, row.display_name].join("\t"));
+    const name = row.kind === "service" ? `${row.display_name} (integration)` : row.display_name;
+    console.log([row.email, row.role, row.disabled_at ? "blocked" : "active", `created ${row.created_at.slice(0, 10)}`, name].join("\t"));
   }
 } else if (command === "set-role") {
   if (args.length !== 2) fail(usage, 2);

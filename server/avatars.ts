@@ -195,6 +195,18 @@ export function avatarUrlsFor(userIds: Iterable<string>) {
 }
 
 /**
+ * The integrations (service accounts, D287) among `userIds`, in one query: the web draws them with
+ * the integration icon and an "Integration" badge instead of a picture or letters. Integrations
+ * never have a picture (no Google identity).
+ */
+export function integrationIdsAmong(userIds: Iterable<string | null | undefined>) {
+  const ids = [...new Set([...userIds].filter((id): id is string => typeof id === "string"))];
+  if (!ids.length) return new Set<string>();
+  const rows = db.query("SELECT id FROM users WHERE kind = 'service' AND id IN (SELECT value FROM json_each(?))").all(JSON.stringify(ids)) as Array<{ id: string }>;
+  return new Set(rows.map((row) => row.id));
+}
+
+/**
  * Adds `avatar_url` to each card's assignees for the web payloads that draw assignee avatars (the
  * task query and saved views). MCP tools call the services directly and keep their output unchanged.
  */

@@ -24,7 +24,17 @@ export function secureCookie(c: Context) {
   return config.cookieSecure || Boolean(origin && new URL(origin).protocol === "https:");
 }
 
+/** Thrown when a session is asked for an integration (D287): it never signs in (migration 036 refuses the row too). */
+export class ServiceAccountSignInError extends Error {
+  constructor() {
+    super("Integrations cannot sign in");
+    this.name = "ServiceAccountSignInError";
+  }
+}
+
 export async function createSession(c: Context, userId: string) {
+  const kind = (db.query("SELECT kind FROM users WHERE id = ?").get(userId) as { kind: string } | null)?.kind;
+  if (kind !== "person") throw new ServiceAccountSignInError();
   const token = randomToken();
   const csrfToken = randomToken();
   const createdAt = now();
@@ -52,7 +62,7 @@ export function readSession(c: Context) {
   const row = db.query(`
     SELECT s.id AS session_id, u.id, u.email, u.role
     FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL
+    WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL AND u.kind = 'person'
   `).get(tokenHash(token), now()) as { session_id: string; id: string; email: string; role: UserRow["role"] } | null;
   if (!row || !isEmailAllowed(row.email)) return null;
   return { sessionId: row.session_id, user: { id: row.id, email: row.email, role: row.role } };
@@ -72,7 +82,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   const row = db.query(`
     SELECT s.id AS session_id, s.csrf_token, u.id, u.email, u.display_name, u.totp_enabled_at, u.role
     FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL
+    WHERE s.token_hash = ? AND s.expires_at > ? AND u.disabled_at IS NULL AND u.kind = 'person'
   `).get(tokenHash(token), now()) as (Pick<UserRow, "id" | "email" | "display_name" | "totp_enabled_at" | "role"> & { session_id: string; csrf_token: string }) | null;
   if (!row) {
     clearSession(c);

@@ -89,14 +89,16 @@ export type WhiteboardSummary = DocumentSummary & {
   snapshotAt: string | null;
   /** The owner's picture (the same-origin avatar route, Wave 35), or null. */
   ownerAvatarUrl: string | null;
+  /** Wave 36 (D287): the owner is an integration (its keys created the board); shown with a badge. */
+  ownerIsIntegration: boolean;
 };
 
-type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null; snapshot_count: number; snapshot_at: string | null; owner_avatar_id: string | null };
+type BoardColumns = { revision: number; element_count: number; has_thumb: 0 | 1; thumb_revision: number | null; snapshot_count: number; snapshot_at: string | null; owner_avatar_id: string | null; owner_kind: string };
 
 /** Safety snapshots are the owner's: others always see 0 (and no time). */
 const SNAPSHOT_COLUMNS = `CASE WHEN d.owner_id = $userId THEN (SELECT COUNT(*) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE 0 END AS snapshot_count,
   CASE WHEN d.owner_id = $userId THEN (SELECT MAX(ws.created_at) FROM whiteboard_snapshots ws WHERE ws.document_id = d.id) ELSE NULL END AS snapshot_at,
-  u.avatar_id AS owner_avatar_id`;
+  u.avatar_id AS owner_avatar_id, u.kind AS owner_kind`;
 
 const summarySelect = documentSummarySelect.replace(
   "FROM documents d JOIN users u ON u.id = d.owner_id",
@@ -104,10 +106,10 @@ const summarySelect = documentSummarySelect.replace(
 );
 
 function toSummary(row: DocumentSummary & BoardColumns, userId: string): WhiteboardSummary {
-  const { revision, element_count, has_thumb, thumb_revision, snapshot_count, snapshot_at, owner_avatar_id, ...document } = row;
+  const { revision, element_count, has_thumb, thumb_revision, snapshot_count, snapshot_at, owner_avatar_id, owner_kind, ...document } = row;
   return {
     ...document, kind: "whiteboard", revision, elementCount: element_count, hasThumbnail: has_thumb === 1, thumbRevision: thumb_revision,
-    snapshotCount: snapshot_count, snapshotAt: snapshot_at, ownerAvatarUrl: avatarUrlFor(document.owner_id, owner_avatar_id),
+    snapshotCount: snapshot_count, snapshotAt: snapshot_at, ownerAvatarUrl: avatarUrlFor(document.owner_id, owner_avatar_id), ownerIsIntegration: owner_kind === "service",
     canEdit: document.is_owner === 1 && canWriteContent(userId)
   };
 }

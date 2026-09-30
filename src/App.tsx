@@ -88,6 +88,8 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
+import { unsavedKeyConfirm } from "./keys/unsavedKeyConfirm";
+import { IntegrationBadge } from "./ui/IntegrationBadge";
 import { MyAccess } from "./settings/MyAccess";
 import { ConfirmDialog } from "./files/Dialog";
 import { useConfirm } from "./ui/useConfirm";
@@ -328,7 +330,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.18.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.19.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -531,18 +533,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   );
 }
 
-/**
- * The confirm for leaving an API key that is shown only once (C1): closing Settings (button, Escape,
- * scrim, Back), switching section, or "Manage team". Closing the browser tab is not guarded.
- */
-export function unsavedKeyConfirm(action: "close" | "section" | "leave") {
-  return {
-    title: "Leave without saving the key?",
-    message: `This API key is shown only once. ${action === "section" ? "Leave this section" : action === "close" ? "Close Settings" : "Leave Settings"} without copying it? You would have to rotate or create a key again.`,
-    confirmLabel: action === "section" ? "Leave section" : action === "close" ? "Close without saving" : "Leave without saving",
-    danger: true
-  };
-}
+// The confirm for leaving a key shown only once (C1) lives with the keys, so Team → Integrations uses it too.
+export { unsavedKeyConfirm };
 
 function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
   const [versions, setVersions] = useState<Version[]>([]);
@@ -589,7 +581,7 @@ function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: 
         {versions.map((version) => (
           <button key={version.id} className={selected === version.version_number ? "selected" : ""} onClick={() => setSelected(version.version_number)}>
             <span>Version {version.version_number}</span>
-            <small>{version.author_name} · {relativeTime(version.created_at)}</small>
+            <small>{version.author_name}{version.author_is_integration === 1 && <IntegrationBadge />} · {relativeTime(version.created_at)}</small>
           </button>
         ))}
         {!versions.length && <p className="empty-copy">Publish a draft to create the first version.</p>}
@@ -2012,7 +2004,7 @@ export function App() {
       : shownApp === "collections" ? <CollectionsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "calendar" ? <CalendarApp key={calendarKey} {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenNote={openLinkedNote} />
       : shownApp === "notifications" ? <NotificationsApp {...account} onHome={() => { void openHome(); }} onOpenPath={openNotificationPath} />
-      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
+      : shownApp === "team" ? <TeamApp {...account} role={session.user.role ?? "member"} totpEnabled={session.totp.enabled} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} />
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} />
       : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onBin={openBin} onOpenPath={openInboxPath} /></Suspense>
       : <BinApp {...account} flash={flash} onHome={() => { void openHome(); }} onRestored={(item) => { if (item.type === "note") void loadNavigation().catch(() => undefined); }} />}

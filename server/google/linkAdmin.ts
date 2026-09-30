@@ -63,7 +63,7 @@ export type ResetCounts = {
 };
 
 type Target = { id: string; email: string; role: string; password_hash: string; totp_enabled_at: string | null; disabled_at: string | null; google_link_allowed_until: string | null; email_verified_at: string | null; google_last_refusal_at: string | null; google_last_refusal_reason: string | null };
-const targetRow = (userId: string) => db.query("SELECT id, email, role, password_hash, totp_enabled_at, disabled_at, google_link_allowed_until, email_verified_at, google_last_refusal_at, google_last_refusal_reason FROM users WHERE id = ?").get(userId) as Target | null;
+const targetRow = (userId: string) => db.query("SELECT id, email, role, password_hash, totp_enabled_at, disabled_at, google_link_allowed_until, email_verified_at, google_last_refusal_at, google_last_refusal_reason FROM users WHERE id = ? AND kind = 'person'").get(userId) as Target | null;
 
 /**
  * Why the web may not reset this account (N2b), or null: a verified address means Nook knows the

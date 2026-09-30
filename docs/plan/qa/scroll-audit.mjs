@@ -112,6 +112,11 @@ async function seed() {
   for (let index = 0; index < 18; index += 1) await api(admin, "POST", "/team/templates", { name: `Scroll template ${index} ${RUN}`, role: "member", groupIds: groups.slice(0, 3).map((group) => group.id) });
   for (let index = 0; index < 18; index += 1) await api(admin, "POST", "/team/invites", { role: "member", note: `Scroll invite ${index}` });
   seeded.inviteToken = (await api(admin, "POST", "/team/invites", { role: "member" })).body.token;
+  // Wave 36: 16 integrations, the first with 6 keys, for Team → Integrations and one integration's page.
+  const integrations = [];
+  for (let index = 0; index < 16; index += 1) integrations.push((await api(admin, "POST", "/team/integrations", { name: `Scroll bot ${index} ${RUN}`, role: index % 3 ? "member" : "viewer", description: "Seeded by the scroll audit" })).body.integration);
+  for (let index = 0; index < 6; index += 1) await api(admin, "POST", `/team/integrations/${integrations[1].id}/keys`, { name: `Bot key ${index} ${RUN}`, password: PASSWORD, grants: [{ module: "tasks", permission: "read" }] });
+  seeded.integration = integrations[1];
 
   // Notes: many notes and folders, one long note, one shared with 30 people.
   const folders = [];
@@ -533,6 +538,8 @@ const ROUTES = (s) => [
   ["Team groups", "/team/groups", null, SPLIT],
   ["Team group page", `/team/groups/${s.group.id}`, null, SPLIT],
   ["Team templates", "/team/templates", null, SPLIT],
+  ["Team integrations", "/team/integrations", null, SPLIT],
+  ["Team integration page (6 keys)", `/team/integrations/${s.integration.id}`, null, SPLIT],
   ["Team invites", "/team/invites", null, SPLIT],
   ["Team member page", `/team/${s.members[3].userId}`, null, SPLIT],
   ["Team member access", `/team/${s.members[3].userId}/access`, null, SPLIT],

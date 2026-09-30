@@ -15,6 +15,8 @@ export type WhiteboardSummary = DocumentSummary & {
   snapshotAt: string | null;
   /** The owner's picture (Wave 35's same-origin avatar URL), or null for their letters. */
   ownerAvatarUrl: string | null;
+  /** Wave 36 (D287): the owner is an integration; older servers omit it. */
+  ownerIsIntegration?: boolean;
 };
 
 export type SaveResult = { revision: number; savedAt: string; sha256: string; sizeBytes: number; unchanged?: true; snapshotKept?: true };

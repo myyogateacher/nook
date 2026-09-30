@@ -19,7 +19,10 @@ export function audienceLevels(sources: readonly AudienceSource[], userId: strin
   if (sources.some((source) => source.kind !== kind || source.memberTable !== memberTable || source.memberColumn !== memberColumn)) {
     throw new Error("audienceLevels takes the items of one kind");
   }
-  const role = (db.query("SELECT role FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as { role: Role } | null)?.role ?? null;
+  const account = db.query("SELECT role, kind FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as { role: Role; kind: string } | null;
+  const role = account?.role ?? null;
+  // Integrations (D287) are never part of an `all_users` audience.
+  const audienceAll = role !== null && role !== "guest" && account?.kind === "person";
   const selected = sources.filter((source) => source.ownerId !== userId && source.visibility === "selected").map((source) => source.id);
   const direct = new Map<string, Level>();
   const groups = new Map<string, Level[]>();
@@ -40,7 +43,7 @@ export function audienceLevels(sources: readonly AudienceSource[], userId: strin
     if (source.ownerId === userId) { levels.set(source.id, role === null ? "none" : "owner"); continue; }
     if (role === null) { levels.set(source.id, "none"); continue; }
     let best: ItemLevel = "none";
-    if (source.visibility === "all_users" && role !== "guest") best = source.audienceLevel;
+    if (source.visibility === "all_users" && audienceAll) best = source.audienceLevel;
     else if (source.visibility === "selected") best = maxLevel(direct.get(source.id), ...groups.get(source.id) ?? []);
     levels.set(source.id, capByRole(best, role));
   }

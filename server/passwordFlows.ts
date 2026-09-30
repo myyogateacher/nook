@@ -108,7 +108,7 @@ function publicRequestRefusal(c: Context<AppEnv>) {
 export function processResetRequest(address: string) {
   if (limited(`reset-address:${addressHash(address)}`, RESET_LIMITS.perAddressHour, HOUR)) return;
   if (!isEmailAllowed(address)) return;
-  const user = db.query("SELECT id, disabled_at, email_verified_at FROM users WHERE email = ?").get(address) as { id: string; disabled_at: string | null; email_verified_at: string | null } | null;
+  const user = db.query("SELECT id, disabled_at, email_verified_at FROM users WHERE email = ? AND kind = 'person'").get(address) as { id: string; disabled_at: string | null; email_verified_at: string | null } | null;
   if (!user || user.disabled_at !== null || user.email_verified_at === null) return;
   const id = enqueueMail({ userId: user.id, template: "account.password_reset", payload: {}, coalesceKey: `account.password_reset:${user.id}`, merge: (queued) => queued });
   if (!id) return;
@@ -123,7 +123,7 @@ type TokenLookup = { kind: "live"; token: TokenRow; user: UserRow } | { kind: "i
 function lookupResetToken(token: string, nowMs = Date.now()): TokenLookup {
   const row = db.query("SELECT id, user_id, expires_at, used_at, email_at_issue FROM auth_tokens WHERE token_hash = ? AND purpose = 'password_reset'").get(hashAuthToken(token)) as TokenRow | null;
   if (!row || row.used_at !== null) return { kind: "invalid" };
-  const user = db.query("SELECT * FROM users WHERE id = ?").get(row.user_id) as UserRow | null;
+  const user = db.query("SELECT * FROM users WHERE id = ? AND kind = 'person'").get(row.user_id) as UserRow | null;
   if (!user || user.disabled_at !== null || user.email.toLowerCase() !== row.email_at_issue.toLowerCase()) return { kind: "invalid" };
   if (Date.parse(row.expires_at) <= nowMs) return { kind: "expired" };
   return { kind: "live", token: row, user };

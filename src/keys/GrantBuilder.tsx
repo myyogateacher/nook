@@ -6,7 +6,7 @@ import {
   CREATE_ONLY, MODULE_LABELS, permissionHelp, permissionLabel, rowModuleChoices, rowPermissionChoices, selectorFor, SELECTOR_KINDS, grantSummary,
   type GrantModule, type GrantRow, type KeyPermission, type PolicySummary
 } from "./keyGrants";
-import { loadResources, type ResourceOption } from "./keysApi";
+import { useKeysApi, type ResourceOption } from "./keysApi";
 
 /**
  * The grant builder (access plan §E "New key", step 3): one row per permission. Module → permission
@@ -29,6 +29,8 @@ export function GrantBuilder({ rows, onChange, role, policy, disabled = false, c
 }) {
   const [resources, setResources] = useState<Partial<Record<GrantModule, ResourceOption[] | "error">>>({});
   const narrowing = ceiling !== undefined;
+  // Settings: your own items; Team → Integrations: only what is shared with the integration.
+  const { loadResources } = useKeysApi();
   const needed = [...new Set(rows.filter((row) => row.applies === "chosen" || narrowing).filter((row) => selectorFor(row.module, row.permission)).map((row) => row.module))];
 
   useEffect(() => {
@@ -78,6 +80,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
   canRemove: boolean;
 }) {
   const id = useId();
+  const opener = useKeysApi().opener ?? "you";
   const selector = selectorFor(row.module, row.permission);
   let permissions: Option<KeyPermission>[] = rowPermissionChoices(row.module, role, policy, rows, row.key).map((choice) => ({ value: choice.value, label: choice.label, description: choice.description, disabled: choice.disabled && choice.value !== row.permission }));
   if (narrowing && ceiling) {
@@ -85,7 +88,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
     permissions = permissions.filter((option) => option.value === ceiling.permission || option.value === "read").map((option) => ({ ...option, disabled: false }));
   }
   const appliesOptions: Option<"all" | "chosen">[] = selector ? [
-    { value: "all", label: `All ${selector.many}`, description: `Every ${selector.one} you can open, now and later`, disabled: narrowing && ceiling?.applies === "chosen" },
+    { value: "all", label: `All ${selector.many}`, description: `Every ${selector.one} ${opener} can open, now and later`, disabled: narrowing && ceiling?.applies === "chosen" },
     { value: "chosen", label: `Chosen ${selector.many}`, description: `Only the ${selector.many} you pick` }
   ] : [];
   const writable = row.permission !== "read";

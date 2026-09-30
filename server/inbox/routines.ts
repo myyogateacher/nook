@@ -538,6 +538,8 @@ function proposalPush(userId: string) {
 /** D159: one notification per run that produced proposals; the title is built at read time from the routine's name. */
 function notifyRun(run: Pick<RunRow, "id" | "owner_id" | "key_id" | "proposals_count">, timestamp: string) {
   if (run.proposals_count <= 0) return;
+  // Integrations (D287) have no bell.
+  if (!db.query("SELECT 1 FROM users WHERE id = ? AND kind = 'person'").get(run.owner_id)) return;
   const id = crypto.randomUUID();
   db.query("INSERT INTO notifications (id, user_id, kind, run_id, proposal_key_id, proposal_count, created_at) VALUES (?, ?, 'proposals', ?, ?, ?, ?)")
     .run(id, run.owner_id, run.id, run.key_id, run.proposals_count, timestamp);

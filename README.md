@@ -98,7 +98,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.18.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.19.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -107,6 +107,16 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.19.0
+
+- **Integrations (service accounts)**: admins can set up accounts for AI clients and scripts that act as themselves rather than as a person: a CI job that posts results, a bot that files cards, an agent that reads a shared folder. **Team → Integrations** creates one with a name and a role (member or viewer), and admins create, rotate, narrow, and revoke its API keys there, with their own password. An integration **never signs in**: every sign-in path (password, reset, invite, Google) refuses it, and it gets no email or bell notifications.
+- **Reach only what is shared with it by name**: an integration is never part of "everyone signed in" and cannot join a group, so its keys reach only the notes, files, boards, collections, calendars, and whiteboards owners share with it explicitly from the Access sheet, where it appears under **Integrations** with a robot icon and an **Integration** badge. Because admins hold its keys, the sheet says so: *Admins hold its keys and can read what you share with it.* Admins still never read anything that was not shared with the integration.
+- **Attribution**: cards, comments, note versions, and whiteboards created through an integration's key show its name with the badge. Team → Keys lists the keys with the integration as owner. `GET /api/v1/me` reports `owner.kind: "service"` for such keys.
+- **Blocking and deleting**: block pauses its keys at once; delete revokes them and removes the account when it never had a key and created nothing, otherwise keeps it as **Deleted (kept for attribution)**, which can never be unblocked or re-keyed.
+- **Leaving with a new key on screen** now asks first on the integration's page too, including browser Back on phones.
+- **For developers using MCP**: no new tools; there are no tools that create or manage integrations or their keys.
+- Migration 036 runs on the first boot, so back up first. It only adds (a description and a retired marker on accounts, and database triggers that keep integrations out of sessions and Google sign-in). Nothing about existing people or keys changes. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.18.0
 

@@ -41,7 +41,7 @@ export type AccessPutBody = {
 };
 
 /** The picker's directories: people who can be shared with, and groups (names and counts only). */
-export type PickerPerson = { id: string; displayName: string; role?: Role; avatarUrl?: string | null };
+export type PickerPerson = { id: string; displayName: string; role?: Role; avatarUrl?: string | null; /** Wave 36: "service" for an integration (D287). */ kind?: "person" | "service" };
 export type PickerGroup = { id: string; name: string; memberCount: number; guestCount: number };
 
 const BASES: Record<AccessKind, string> = {

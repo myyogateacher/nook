@@ -1,6 +1,7 @@
 // Scroll audit (carry-overs P0, 2026-09-30): every page and tall dialog must let the person reach
 // its bottom-most control by wheel, touch, and keyboard, at 1280 × 800 and 390 × 844 (and a short
-// landscape phone, 844 × 390, for the sign-in pages), with no two nested vertical scrollers fighting.
+// landscape phone, 844 × 390, for the sign-in pages; a short computer window, 1280 × 600, for the
+// two-pane pages), with no two nested vertical scrollers fighting.
 //
 // Run against a scratch instance (never production data): a fresh data directory, the production
 // build, `ALLOW_REGISTRATION=true SIGNUP_ROLE=member TRUSTED_PROXY_HOPS=1`, and a TOTP key are
@@ -18,6 +19,8 @@
 const ORIGIN = process.env.ORIGIN ?? "http://localhost:22384";
 const { default: puppeteer } = await import(process.env.PUPPETEER_CORE ?? "puppeteer-core");
 const PASSWORD = "correct horse battery staple";
+// The seeded accounts are `<ACCOUNT_PREFIX>-admin@nook.test` and `<ACCOUNT_PREFIX>-0…16@nook.test`.
+const PREFIX = process.env.ACCOUNT_PREFIX ?? "co-scroll";
 const RUN = Date.now().toString(36).slice(-5);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -83,10 +86,10 @@ const putAccess = async (page, path, body) => api(page, "PUT", path, body, { "If
 // ------------------------------------------------------------------ seeding
 
 async function seed() {
-  const admin = await session(`co-scroll-admin@nook.test`, "Scroll Admin");
+  const admin = await session(`${PREFIX}-admin@nook.test`, "Scroll Admin");
   const seeded = { admin };
   const members = [];
-  for (let index = 0; index < 17; index += 1) members.push(await nodeSession(`co-scroll-${index}@nook.test`, `Scroll Person ${index}`));
+  for (let index = 0; index < 17; index += 1) members.push(await nodeSession(`${PREFIX}-${index}@nook.test`, `Scroll Person ${index}`));
   seeded.members = members;
   // A second admin, so the first gets group notices in the bell.
   const second = members[0];
@@ -300,10 +303,12 @@ const blankPoint = (page, key) => page.evaluate((key) => {
   return { x: Math.round((left + right) / 2), y: Math.round((top + bottom) / 2) };
 }, key);
 
-async function audit(page, name, { scope } = {}) {
+async function audit(page, name, { scope, check } = {}) {
   await sleep(600);
   const { regions, stranded, nested } = await survey(page, scope);
   const problems = [];
+  // A route's own extra checks (the two-pane pages), run before the regions are scrolled about.
+  if (check) problems.push(...await check(page));
   if (stranded.length) problems.push(`unreachable below the fold: ${stranded.slice(0, 3).join(" | ")}`);
   if (nested.length) problems.push(`double scrollbars: ${nested.join(", ")}`);
   const notes = [];
@@ -363,6 +368,80 @@ async function audit(page, name, { scope } = {}) {
   return { name, ok: problems.length === 0, detail: problems.length ? problems.join("; ") : notes.join(" · ") || "no scrollable region, nothing below the fold" };
 }
 
+// ------------------------------------------------------------------ two-pane checks (F1)
+
+/**
+ * Two-pane pages on a computer (Team and its sections, Inbox): the page does not scroll, each pane is
+ * its own scroller bounded by the window under the header, and Tab through the details pane always
+ * lands on a control that is fully in view (it once focused a button at y 802–846 in an 800 px window).
+ */
+const HEADER = ".app-page-header";
+async function splitPanes(page) {
+  if (page.mobile) return [];
+  const problems = [];
+  const layout = await page.evaluate((header) => {
+    const panes = [...document.querySelectorAll(".split-layout > .split-pane")];
+    const top = document.querySelector(header).getBoundingClientRect().bottom;
+    const main = document.querySelector("main.app-page");
+    return { count: panes.length, height: innerHeight, pageScrolls: main.scrollHeight > main.clientHeight + 2, panes: panes.map((pane) => { const rect = pane.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, overflow: getComputedStyle(pane).overflowY }; }), top };
+  }, HEADER);
+  if (layout.count !== 2) return [`expected two panes, found ${layout.count}`];
+  if (layout.pageScrolls) problems.push("the page scrolls as well as its panes");
+  for (const pane of layout.panes) {
+    if (pane.overflow !== "auto") problems.push("a pane is not its own scroller");
+    if (pane.top < layout.top - 1 || pane.bottom > layout.height + 1) problems.push(`a pane runs outside the window (${Math.round(pane.top)}–${Math.round(pane.bottom)})`);
+  }
+  // Tab from the details pane's first control through every one: each is in view, below the header.
+  const first = await page.evaluate(() => {
+    const control = document.querySelector(".team-detail-pane, .inbox-detail-pane")?.querySelector("button:not(:disabled), a[href], input:not([type=hidden]), [tabindex='0']");
+    control?.focus();
+    return Boolean(control);
+  });
+  for (let step = 0; first && step < 60; step += 1) {
+    const where = await page.evaluate((header) => {
+      const element = document.activeElement;
+      const pane = element?.closest(".split-pane");
+      if (!pane?.matches(".team-detail-pane, .inbox-detail-pane")) return null;
+      const rect = element.getBoundingClientRect();
+      const top = Math.max(document.querySelector(header).getBoundingClientRect().bottom, pane.getBoundingClientRect().top);
+      const bottom = Math.min(innerHeight, pane.getBoundingClientRect().bottom);
+      return { ok: rect.top >= top - 1 && rect.bottom <= bottom + 1, label: (element.getAttribute("aria-label") || element.textContent || element.tagName).trim().slice(0, 30), top: Math.round(rect.top), bottom: Math.round(rect.bottom) };
+    }, HEADER);
+    if (!where) break;
+    if (!where.ok) { problems.push(`Tab focused “${where.label}” out of view (${where.top}–${where.bottom})`); break; }
+    await page.keyboard.press("Tab");
+    await sleep(40);
+  }
+  return problems;
+}
+
+/** Scroll the member list to its end with the wheel, pick the last member: their name shows at the details pane's top. */
+async function lastMember(page) {
+  if (page.mobile) return [];
+  const problems = await splitPanes(page);
+  const center = (selector) => page.evaluate((selector) => { const rect = document.querySelector(selector).getBoundingClientRect(); return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }; }, selector);
+  // First a member whose details are long, scrolled down: the next member must not open part way down.
+  await page.$eval(".team-list .team-row", (row) => row.scrollIntoView({ block: "center" }));
+  const firstRow = await center(".team-list .team-row");
+  await page.mouse.click(firstRow.x, firstRow.y);
+  await page.waitForSelector(".team-detail-header h2");
+  await sleep(300);
+  const detailPoint = await center(".team-detail-pane");
+  await page.mouse.move(detailPoint.x, detailPoint.y);
+  for (let step = 0; step < 10; step += 1) { await page.mouse.wheel({ deltaY: 400 }); await sleep(30); }
+  const listPoint = await center(".team-list-pane");
+  await page.mouse.move(listPoint.x, listPoint.y);
+  for (let step = 0; step < 30; step += 1) { await page.mouse.wheel({ deltaY: 400 }); await sleep(30); }
+  const last = await page.evaluate(() => { const rows = [...document.querySelectorAll(".team-list .team-row")]; const rect = rows.at(-1).getBoundingClientRect(); return { x: Math.round(rect.left + 60), y: Math.round(rect.top + rect.height / 2), inView: rect.bottom <= innerHeight && rect.top >= 0, name: rows.at(-1).querySelector("strong").textContent }; });
+  if (!last.inView) problems.push("the wheel did not bring the last member into view");
+  await page.mouse.click(last.x, last.y);
+  await page.waitForFunction((name) => document.querySelector(".team-detail-header h2")?.textContent.includes(name), {}, last.name);
+  await sleep(300);
+  const heading = await page.evaluate((header) => ({ top: document.querySelector(".team-detail-header h2").getBoundingClientRect().top, header: document.querySelector(header).getBoundingClientRect().bottom, scrollTop: document.querySelector(".team-detail-pane").scrollTop }), HEADER);
+  if (heading.top < heading.header || heading.scrollTop !== 0) problems.push(`the chosen member's name is not at the pane's top (name at ${Math.round(heading.top)}, header ends ${Math.round(heading.header)}, pane scrolled ${heading.scrollTop})`);
+  return problems;
+}
+
 // ------------------------------------------------------------------ routes
 
 /** Every route and layer the audit covers: [name, path or null, setup(page, seeded)?, options?]. */
@@ -392,7 +471,7 @@ const ROUTES = (s) => [
   ["Whiteboards list (64 boards)", "/whiteboards", async (page) => { await tapText(page, ".whiteboards-view-toggle button", "List"); }],
   // The canvas is a fixed full-screen page: nothing may scroll and nothing may sit below the fold.
   ["Whiteboard canvas", `/whiteboards/${s.whiteboard.id}`, async (page) => { await page.waitForSelector(".excalidraw canvas"); }],
-  ["Inbox", "/inbox"],
+  ["Inbox", "/inbox", null, { split: true, check: splitPanes }],
   ["Inbox routines", "/inbox/routines"],
   ["Notifications", "/notifications"],
   ["Settings · Security", "/settings/security"],
@@ -402,18 +481,21 @@ const ROUTES = (s) => [
   ["Settings · My access", "/settings/access"],
   ["Settings · Notifications", "/settings/notifications"],
   ["Settings · About", "/settings/about"],
-  ["Team members", "/team"],
-  ["Team policies", "/team/policies"],
-  ["Team keys", "/team/keys"],
-  ["Team activity", "/team/activity"],
-  ["Team groups", "/team/groups"],
-  ["Team group page", `/team/groups/${s.group.id}`],
-  ["Team templates", "/team/templates"],
-  ["Team invites", "/team/invites"],
-  ["Team member page", `/team/${s.members[3].userId}`],
-  ["Team member access", `/team/${s.members[3].userId}/access`],
-  ["Team email log", "/team/email"]
+  // Two-pane pages (F1): a long list on the left and long details on the right, each scrolling on its own.
+  ["Team members", "/team", null, SPLIT],
+  ["Team policies", "/team/policies", null, SPLIT],
+  ["Team keys", "/team/keys", null, SPLIT],
+  ["Team activity", "/team/activity", null, SPLIT],
+  ["Team groups", "/team/groups", null, SPLIT],
+  ["Team group page", `/team/groups/${s.group.id}`, null, SPLIT],
+  ["Team templates", "/team/templates", null, SPLIT],
+  ["Team invites", "/team/invites", null, SPLIT],
+  ["Team member page", `/team/${s.members[3].userId}`, null, SPLIT],
+  ["Team member access", `/team/${s.members[3].userId}/access`, null, SPLIT],
+  ["Team email log", "/team/email", null, SPLIT],
+  ["Team last member after scrolling the list", "/team", null, { split: true, check: lastMember }]
 ];
+const SPLIT = { split: true, check: splitPanes };
 
 /** Signed-out pages, also on a short landscape phone. */
 const PUBLIC_ROUTES = (s) => [
@@ -439,21 +521,23 @@ try {
   const seeded = seedFile && existsSync(seedFile) ? JSON.parse(readFileSync(seedFile, "utf8")) : await seed();
   if (seedFile) writeFileSync(seedFile, JSON.stringify(seeded));
   const only = process.env.ONLY ? new RegExp(process.env.ONLY, "i") : null;
-  for (const [width, height] of [[1280, 800], [390, 844]]) {
-    const page = await session("co-scroll-admin@nook.test", "Scroll Admin", width, height);
+  // 1280 × 600 is a short computer window: only the two-pane pages, whose panes are bounded by it.
+  for (const [width, height] of [[1280, 800], [390, 844], [1280, 600]]) {
+    const page = await session(`${PREFIX}-admin@nook.test`, "Scroll Admin", width, height);
     for (const [name, path, setup, options] of ROUTES(seeded)) {
       if (only && !only.test(name)) continue;
+      if (height === 600 && !options?.split) continue;
       try {
         await page.goto(`${ORIGIN}${path}`, { waitUntil: "networkidle2" });
         await sleep(600);
         if (setup) await setup(page, seeded);
-        results.push({ width, ...(await audit(page, name, options)) });
+        results.push({ width: `${width}x${height}`, ...(await audit(page, name, options)) });
       } catch (error) {
-        results.push({ width, name, ok: false, detail: `setup failed: ${error.message}` });
+        results.push({ width: `${width}x${height}`, name, ok: false, detail: `setup failed: ${error.message}` });
       }
-      console.log(`${results.at(-1).ok ? "PASS" : "FAIL"} ${width} ${name} — ${results.at(-1).detail}`);
+      console.log(`${results.at(-1).ok ? "PASS" : "FAIL"} ${width}x${height} ${name} — ${results.at(-1).detail}`);
     }
-    if (page.nativeDialogs.length) results.push({ width, name: "native dialogs", ok: false, detail: page.nativeDialogs.join("; ") });
+    if (page.nativeDialogs.length) results.push({ width: `${width}x${height}`, name: "native dialogs", ok: false, detail: page.nativeDialogs.join("; ") });
     await page.browserContext().close();
   }
   for (const [width, height] of [[1280, 800], [390, 844], [844, 390]]) {

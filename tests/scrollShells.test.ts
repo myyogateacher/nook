@@ -76,3 +76,31 @@ test("Whiteboards: the list scrolls as a page with a fixed header; the canvas fi
   expect(stage).toContain("flex: 1 1 auto");
   expect(stage).toContain("min-height: 0");
 });
+
+test("F1: two-pane pages (Team and its sections, Inbox proposals) scroll each pane on its own on a computer, as one page on phones", async () => {
+  const shell = await read("appShell.css");
+  const desktop = /@media \(min-width: 761px\) \{\s*\.app-page:not\(\.tasks-app\):not\(\.collections-app\):has\(> \.split-layout\)[\s\S]*?\n\}/.exec(shell)?.[0] ?? "";
+  // The page stops scrolling; the layout fills the space under the header.
+  expect(rule(desktop, ".app-page:not(.tasks-app):not(.collections-app):has(> .split-layout)")).toContain("overflow: hidden");
+  const layout = rule(desktop, ".app-page > .split-layout") ?? "";
+  expect(layout).toContain("flex: 1 1 auto");
+  expect(layout).toContain("min-height: 0");
+  expect(layout).toContain("grid-template-rows: minmax(0, 1fr)");
+  // Each pane is a bounded scroller and never sticky (a sticky pane taller than the window hid its top).
+  const pane = rule(desktop, ".split-layout > .split-pane") ?? "";
+  expect(pane).toMatch(/overflow-y:\s*auto/);
+  expect(pane).toContain("max-height: 100%");
+  expect(pane).toContain("position: static");
+  // Phones keep the page scroller: the split rules live only in the computer media query.
+  expect(shell.replace(desktop, "")).not.toContain(".split-pane {");
+  const team = await read("team/TeamApp.tsx");
+  expect(team).toContain(`<div className="team-layout split-layout">`);
+  expect(team).toContain(`className="team-list-pane split-pane"`);
+  expect(team).toContain(`className="team-detail-pane split-pane"`);
+  // A newly chosen row (member, invites, groups, templates, keys, email log, ...) opens at the pane's top.
+  expect(team).toMatch(/detailPaneRef\.current\?\.scrollTo\(\{ top: 0 \}\); \}, \[paneKey\]\)/);
+  const inbox = await read("inbox/InboxApp.tsx");
+  expect(inbox).toContain(`" split-layout"`);
+  expect(inbox).toContain(`className="inbox-detail-pane split-pane"`);
+  expect(inbox).toMatch(/detailPaneRef\.current\?\.scrollTo\(\{ top: 0 \}\); \}, \[route\.proposalId\]\)/);
+});

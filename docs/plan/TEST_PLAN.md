@@ -880,6 +880,7 @@ Plan of record: [WAVE_35_GOOGLE_SIGNIN.md](WAVE_35_GOOGLE_SIGNIN.md) (D289–D30
 ## Follow-ups after v0.16.0
 
 - [x] `tests/googleSignInUi.test.tsx` (F3): with Google sign-in off (`/api/auth/account` `methods.google` false, the same check as `/api/about` `authMethods.google`) a Team member page never requests `GET /api/team/<id>/google` (it answered 404 and logged a console error) and shows no Google card.
+- [x] `tests/scrollShells.test.ts` and `docs/plan/qa/scroll-audit.mjs` (F1): on a computer the two-pane pages (Team members, groups, a group, invites, templates, keys, policies, email log, access activity, a member and their access; the Inbox proposals) no longer scroll as one page with a sticky right pane that could be taller than the window: the page is bounded under the header and each pane is its own scroller (wheel, keys, Tab), a newly chosen row opens the details pane at its top, phones keep one pane scrolling as a page. The audit checks both panes at 1280 × 800 and 1280 × 600 (long member list, long invites, keys, activity, and group details): the page itself does not scroll, each pane stays inside the window, Tab through the details pane never focuses a control out of view, and after wheeling the list to its end and choosing the last member (with the previous member scrolled down) the name sits at the top of the details pane.
 
 ## Manual QA (§M), required at the W4 and W5 gates
 

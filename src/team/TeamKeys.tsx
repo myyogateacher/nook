@@ -5,6 +5,8 @@ import { KeysDialog } from "../keys/KeysDialog";
 import { KeyRow } from "../keys/KeysSettings";
 import { GRANT_MODULES, MODULE_LABELS, type GrantModule } from "../keys/keyGrants";
 import { adminRevokeKey, listInventory, type Inventory, type InventoryKey, type InventoryState } from "../keys/keysApi";
+import { IntegrationBadge } from "../ui/IntegrationBadge";
+import { listIntegrations, type Integration } from "./integrationsApi";
 import "../keys/keys.css";
 
 /**
@@ -45,6 +47,8 @@ export function inventorySummary(summary: { live: number; noExpiry: number; matc
 
 export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ id: string; displayName: string }>; onBack: () => void; flash: (message: string) => void }) {
   const [owner, setOwner] = useState("all");
+  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  useEffect(() => { listIntegrations().then((result) => setIntegrations(result.integrations), () => setIntegrations([])); }, []);
   const [module, setModule] = useState<"all" | GrantModule>("all");
   const [state, setState] = useState<"all" | InventoryState>("all");
   const [surface, setSurface] = useState<"all" | "mcp" | "rest">("all");
@@ -72,7 +76,9 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { document.title = "Keys · Team · Nook"; }, []);
 
-  const ownerOptions: Option[] = [{ value: "all", label: "Everyone" }, ...members.map((member) => ({ value: member.id, label: member.displayName }))];
+  const ownerOptions: Option[] = [{ value: "all", label: "Everyone" }, ...members.map((member) => ({ value: member.id, label: member.displayName })),
+    // Wave 36: integrations own keys too.
+    ...integrations.map((integration) => ({ value: integration.id, label: integration.displayName, description: "Integration" }))];
   const moduleOptions: Option<"all" | GrantModule>[] = [{ value: "all", label: "Any module" }, ...GRANT_MODULES.map((value) => ({ value, label: MODULE_LABELS[value] }))];
 
   return <article className="team-detail team-keys" aria-labelledby="team-keys-title">
@@ -104,7 +110,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       <h2>No keys match.</h2>
     </div>}
     {!error && data && data.keys.length > 0 && <ul className="keys-list" aria-label="Keys">
-      {data.keys.map((key) => <KeyRow key={key.id} apiKey={key} owner={`${key.owner.displayName}${key.owner.blocked ? " (blocked)" : ""}`} onRevoke={() => setRevoking(key)} />)}
+      {data.keys.map((key) => <KeyRow key={key.id} apiKey={key} owner={<>{key.owner.displayName}{key.owner.kind === "service" && <IntegrationBadge />}{key.owner.blocked ? " (blocked)" : ""}</>} onRevoke={() => setRevoking(key)} />)}
     </ul>}
     {data?.nextCursor && <button type="button" className="secondary-button team-keys-more" onClick={() => { void load(data.nextCursor); }}>Show more</button>}
     {revoking && <AdminRevokeDialog apiKey={revoking} onClose={() => setRevoking(null)} onDone={() => { flash(`${revoking.name} was revoked`); setRevoking(null); void load(); }} />}

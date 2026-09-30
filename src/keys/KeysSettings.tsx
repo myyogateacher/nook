@@ -249,7 +249,7 @@ export function UsageBars({ usage }: { usage: readonly number[] }) {
 export const EXPIRY_BLOCKED_TEXT = "Blocked by team policy: keys need an expiry. Rotate it to give it one.";
 export const blockedLine = (key: Pick<ApiKey, "blockedBy" | "blockedMessage">) => key.blockedBy === "expiry_required" ? EXPIRY_BLOCKED_TEXT : key.blockedMessage ?? "";
 
-export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: { apiKey: ApiKey; owner?: string; onRotate?: () => void; onEdit?: () => void; onRevoke?: () => void; onReview?: () => void }) {
+export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: { apiKey: ApiKey; owner?: React.ReactNode; onRotate?: () => void; onEdit?: () => void; onRevoke?: () => void; onReview?: () => void }) {
   const state = keyStateLabel(apiKey);
   const binned = binnedTodayLine(apiKey.binnedToday);
   return <li className={`keys-row state-${apiKey.state}`} data-key-id={apiKey.id}>

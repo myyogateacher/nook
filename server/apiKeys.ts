@@ -1011,7 +1011,7 @@ export type InventoryFilter = {
   ipRestricted?: boolean;
 };
 
-export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean } };
+export type InventoryKey = ApiKeyView & { owner: { id: string; displayName: string; role: Role; blocked: boolean; /** 'service' for an integration (Wave 36, D287). */ kind: "person" | "service" } };
 
 export const INVENTORY_PAGE = 200;
 
@@ -1080,14 +1080,14 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
       params.push(createdAt, createdAt, id);
     }
   }
-  const rows = db.query(`SELECT ${keyColumns}, u.display_name AS owner_name FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string }>;
+  const rows = db.query(`SELECT ${keyColumns}, u.display_name AS owner_name, u.kind AS owner_kind FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
+    WHERE ${where} ORDER BY k.created_at DESC, k.id DESC LIMIT ${INVENTORY_PAGE + 1}`).all(...params) as Array<KeyRow & { owner_name: string; owner_kind: "person" | "service" }>;
   const page = rows.slice(0, INVENTORY_PAGE);
   const usage = usage14d(page.map((row) => row.id));
   const bySurface = surfaceTotals14d(page.map((row) => row.id));
   const keys: InventoryKey[] = page.map((row) => ({
     ...present(row, loadGrants(row.id), policies, usage.get(row.id) ?? [], false, bySurface.get(row.id)),
-    owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null }
+    owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null, kind: row.owner_kind }
   })).map((key) => ({ ...key, grants: key.grants.map((grant) => ({ ...grant, resource: grant.resource ? { kind: grant.resource.kind, id: grant.resource.id, name: null } : null })) }));
   const last = page.at(-1);
   const summary = db.query(`SELECT COUNT(*) AS live, SUM(CASE WHEN k.expires_at IS NULL THEN 1 ELSE 0 END) AS no_expiry

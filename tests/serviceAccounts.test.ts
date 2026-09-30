@@ -175,7 +175,7 @@ describe("Team → Integrations", () => {
 
     // Team → Keys lists it with the integration as its owner.
     const inventory = await send(admin, "GET", `/team/keys?owner=${bot.id}`);
-    expect(inventory.body.keys.map((key: { id: string; owner: { id: string } }) => [key.id, key.owner.id])).toEqual([[created.body.key.id, bot.id]]);
+    expect(inventory.body.keys.map((key: { id: string; owner: { id: string; kind: string } }) => [key.id, key.owner.id, key.owner.kind])).toEqual([[created.body.key.id, bot.id, "service"]]);
 
     // The detail lists it; narrowing and revoking need no password.
     const detail = await send(admin, "GET", `/team/integrations/${bot.id}`);

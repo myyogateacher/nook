@@ -150,7 +150,7 @@ export const useKeysApi = () => useContext(KeysApiContext);
 
 // ---------------------------------------------------------------- Team (admins)
 
-export type InventoryKey = ApiKey & { owner: { id: string; displayName: string; role: string; blocked: boolean } };
+export type InventoryKey = ApiKey & { owner: { id: string; displayName: string; role: string; blocked: boolean; /** Wave 36: "service" for an integration. */ kind?: "person" | "service" } };
 export type Inventory = { keys: InventoryKey[]; nextCursor: string | null; summary: { live: number; noExpiry: number; matching?: number } };
 export type InventoryState = "active" | "expiring" | "no_expiry" | "blocked" | "grace" | "unused" | "expired";
 

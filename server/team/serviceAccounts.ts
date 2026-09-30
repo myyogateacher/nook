@@ -221,20 +221,17 @@ function contentColumns() {
   return columns;
 }
 
-/** How many rows of content reference the account (its empty Default folder does not count). */
+/** Whether any content references the account (its empty Default folder does not count): 1 at the first one found, else 0. */
 export function contentReferences(id: string) {
-  let total = 0;
   for (const { table, column } of contentColumns()) {
-    if (table === "folders" && column === "owner_id") {
-      total += (db.query(`SELECT COUNT(*) AS count FROM folders f WHERE f.owner_id = ? AND NOT (f.is_default = 1
+    const found = table === "folders" && column === "owner_id"
+      ? db.query(`SELECT 1 FROM folders f WHERE f.owner_id = ? AND NOT (f.is_default = 1
         AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.folder_id = f.id) AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.folder_id = f.id)
-        AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_id = f.id))`).get(id) as { count: number }).count;
-      continue;
-    }
-    total += (db.query(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(id) as { count: number }).count;
-    if (total > 0) return total;
+        AND NOT EXISTS (SELECT 1 FROM folders c WHERE c.parent_id = f.id)) LIMIT 1`).get(id)
+      : db.query(`SELECT 1 FROM ${table} WHERE ${column} = ? LIMIT 1`).get(id);
+    if (found) return 1;
   }
-  return total;
+  return 0;
 }
 
 export const DELETED_REASON = "Integration deleted";

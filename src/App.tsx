@@ -353,8 +353,6 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   const [locationRoute, setLocationRoute] = useState<Route>(hubRouteFromLocation);
   // Two-factor setup first: Security is the only screen, whatever the URL says.
   const route: Route = setupRequired ? settingsRoute("security") : locationRoute;
-  const routeRef = useRef(route);
-  routeRef.current = route;
   // Wave 35: how this account signs in and re-authenticates (password, Google, or neither).
   const { account, reload: reloadAccount } = useAccountAuthLoader();
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));

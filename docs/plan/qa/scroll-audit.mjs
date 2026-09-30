@@ -224,7 +224,7 @@ async function seed() {
     longNote: { id: seeded.longNote.id }, sharedNote: { id: seeded.sharedNote.id }, longFile: { id: seeded.longFile.id },
     board: { id: seeded.board.id }, card: { id: seeded.card.id }, collection: { id: seeded.collection.id }, row: { id: seeded.row.id },
     group: { id: seeded.group.id }, members: seeded.members.map((member) => ({ userId: member.userId })), inviteToken: seeded.inviteToken,
-    whiteboard: { id: seeded.whiteboard.id }, vault: seeded.vault
+    whiteboard: { id: seeded.whiteboard.id }, vault: seeded.vault, integration: { id: seeded.integration.id }
   };
 }
 

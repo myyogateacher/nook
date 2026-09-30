@@ -55,7 +55,7 @@ Calendars with agenda and month views, repeating events, links to notes, cards, 
 
 ### Whiteboards
 
-Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG, and share view-only through the same Access sheet as files. The editor loads only when you open a board and makes no requests outside your Nook.
+Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excalidraw` files in your Files folders. Boards save as you draw (a conflict between two devices never overwrites silently), work offline for a moment, pinch-zoom on phones, export PNG and SVG, and share view-only through the same Access sheet as files. Place pictures from Files (or upload, drop, or paste them; they are stored as files and shown only to people who can open them), link shapes to notes, files, cards, boards, and events, restore earlier versions from History, duplicate boards, import `.excalidraw` files, show a board as a card in a note, and find boards by their text in search. The editor loads only when you open a board and makes no requests outside your Nook.
 
 ### Vault
 

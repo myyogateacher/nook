@@ -26,6 +26,7 @@ import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { inboxTools } from "./inbox/mcpTools";
 import { whiteboardTools } from "./whiteboards/mcpTools";
+import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { countRunToolCall } from "./inbox/routineHooks";
 import { canWriteContent } from "./team/userRole";
 
@@ -195,7 +196,8 @@ export async function readPublishedMarkdown(noteId: string, version: number) {
   if (!metadata) throw new McpToolError("INTERNAL", "Published version metadata is missing");
   const markdown = await storage.readVersion(noteId, version);
   if (checksum(markdown) !== metadata.checksum) throw new McpToolError("INTERNAL", "Note content failed integrity verification");
-  return { title: metadata.title, markdown };
+  // A card's link text in an older note may name the board; readers never see it (QA H1).
+  return { title: metadata.title, markdown: neutralizeWhiteboardEmbeds(markdown) };
 }
 
 const noteReadTools: McpToolSpec[] = [
@@ -277,7 +279,7 @@ async function currentOwnerText(note: NoteRow) {
   if (note.draft_revision !== null) {
     const markdown = await storage.readDraft(note.id);
     if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new McpToolError("INTERNAL", "Draft content failed integrity verification");
-    return markdown;
+    return neutralizeWhiteboardEmbeds(markdown);
   }
   if (note.current_version < 1) return "";
   return (await readPublishedMarkdown(note.id, note.current_version)).markdown;

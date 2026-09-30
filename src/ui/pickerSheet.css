@@ -1,0 +1,50 @@
+/*
+ * Picker sheets (Wave 24): Insert image and Link to a Nook item on a whiteboard, the History sheet,
+ * and Embed a whiteboard in a note. A dialog on desktop, a full-screen sheet at 390 px (ModalDialog's
+ * "sheet" variant); the list is the one part that scrolls, with wheel, touch, and keyboard.
+ */
+.file-dialog.nook-picker { width: min(620px, calc(100vw - 32px)); height: min(720px, calc(100dvh - 48px)); max-height: none; }
+.nook-picker .nook-picker-search { margin: 0 16px 8px 20px; min-height: 44px; display: flex; align-items: center; gap: 8px; border: 1px solid #2f2f35; border-radius: 10px; padding: 0 12px; background: #0f0f11; color: #8d8d94; }
+.nook-picker .nook-picker-search:focus-within { border-color: #6d5a2c; }
+.nook-picker .nook-picker-search svg { width: 16px; flex: none; }
+.nook-picker .nook-picker-search input { flex: 1; min-width: 0; min-height: 42px; border: 0; background: transparent; color: #ededee; font: inherit; outline: none; }
+.nook-picker-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px calc(16px + env(safe-area-inset-bottom)) 20px; }
+.nook-picker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 16px 10px 20px; }
+.nook-picker-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; }
+.nook-picker-actions button svg { width: 16px; }
+.nook-picker-hint { flex: 1 1 100%; margin: 0; color: #8d8d94; font-size: .78rem; line-height: 1.4; }
+.nook-picker-current { justify-content: space-between; color: #b4b4ba; font-size: .82rem; }
+.nook-picker-current span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nook-picker-current code, .whiteboard-link-url code { color: #f1d68f; font-size: .8rem; }
+.nook-picker-empty { margin: 18px 0; color: #8d8d94; font-size: .86rem; text-align: center; }
+.nook-picker-kinds { display: flex; gap: 6px; margin: 0 16px 10px 20px; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 2px; }
+.nook-picker-kinds button { flex: none; min-height: 40px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2f2f35; border-radius: 999px; padding: 0 12px; background: #151518; color: #b4b4ba; font-size: .8rem; cursor: pointer; }
+.nook-picker-kinds button svg { width: 15px; }
+.nook-picker-kinds button.active { border-color: #6d5a2c; background: #2b261b; color: #ffe19a; }
+.nook-picker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.nook-picker-list button { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 12px; border: 0; border-radius: 10px; padding: 6px 10px; background: transparent; color: #d6d6d9; text-align: left; cursor: pointer; }
+.nook-picker-list button:hover, .nook-picker-list button:focus-visible { background: #222226; }
+.nook-picker-list button > svg { width: 18px; flex: none; color: #b99b59; }
+.nook-picker-list button span { min-width: 0; display: grid; gap: 2px; }
+.nook-picker-list strong { overflow: hidden; font-size: .9rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.nook-picker-list small { overflow: hidden; color: #85858c; font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.nook-picker-thumb { width: 64px; height: 40px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: #f7f7f5; color: #6d6d73; }
+.nook-picker-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.nook-picker-thumb svg { width: 18px; }
+.nook-picker-images { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+.nook-picker-images button { width: 100%; display: grid; gap: 6px; border: 1px solid #26262b; border-radius: 12px; padding: 6px; background: #131316; color: #d6d6d9; text-align: left; cursor: pointer; }
+.nook-picker-images button:hover, .nook-picker-images button:focus-visible { border-color: #6d5a2c; }
+.nook-picker-image { aspect-ratio: 4 / 3; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: #1d1d21; }
+.nook-picker-image img { width: 100%; height: 100%; object-fit: cover; }
+.nook-picker-name { overflow: hidden; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.nook-picker-new { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 16px 10px 20px; }
+.nook-picker-new input { flex: 1 1 180px; min-width: 0; min-height: 44px; border: 1px solid #2f2f35; border-radius: 10px; padding: 0 12px; background: #0f0f11; color: #ededee; font: inherit; }
+.nook-picker-new button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; }
+.nook-picker-new button svg { width: 16px; }
+.spin { animation: nook-picker-spin 1s linear infinite; }
+@keyframes nook-picker-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+@media (max-width: 760px) {
+  .file-dialog.nook-picker { width: 100%; height: auto; }
+  .nook-picker-images { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ChainedCommands, Editor } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
@@ -14,7 +14,12 @@ import { ImageInsert } from "./imageInsert";
 import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
 import { NameDialog } from "../files/RenameDialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { isModuleEnabled, useDisabledModules } from "../modules";
+import { WhiteboardEmbedPicker } from "./whiteboardEmbed";
 import "./editor.css";
+
+// The "Embed a whiteboard" picker loads only when opened (Wave 24, D208), so notes stay light.
+const WhiteboardPicker = lazy(() => import("./WhiteboardPicker"));
 
 const tableActions: { label: string; Icon: LucideIcon; run: (chain: ChainedCommands) => ChainedCommands }[] = [
   { label: "Add row above", Icon: BetweenHorizontalStart, run: (chain) => chain.addRowBefore() },
@@ -58,6 +63,9 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
   // The editor is created once, so the upload handler reads the latest props through a ref.
   const latest = useRef({ folderId, onNotice, uploadImage });
   latest.current = { folderId, onNotice, uploadImage };
+  // Whiteboard cards (D208): the slash item and the paste rule, only while the module is on.
+  const whiteboards = isModuleEnabled(useDisabledModules(), "whiteboards");
+  const [boardPicker, setBoardPicker] = useState<Editor | null>(null);
 
   const insertImages = async (activeEditor: Editor, files: File[]) => {
     const notice = (message: string) => latest.current.onNotice?.(message);
@@ -87,6 +95,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       Placeholder.configure({ placeholder }),
       Markdown.configure({ markedOptions: markdownOptions }),
       ImageInsert.configure({ onFiles: (activeEditor, files) => { void insertImages(activeEditor, files); } }),
+      ...(whiteboards ? [WhiteboardEmbedPicker.configure({ onOpenPicker: (activeEditor: Editor) => setBoardPicker(activeEditor) })] : []),
       SlashCommands
     ],
     content: markdown,
@@ -164,6 +173,13 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         }}
         onCancel={closeLink}
       />}
+      {boardPicker && <Suspense fallback={null}><WhiteboardPicker folderId={latest.current.folderId}
+        onClose={() => { setBoardPicker(null); editor.commands.focus(); }}
+        onPick={(board) => {
+          const target = boardPicker;
+          setBoardPicker(null);
+          if (!target.isDestroyed && target.isEditable) target.chain().focus().insertWhiteboardEmbed(board).run();
+        }} /></Suspense>}
     </div>
   );
 }

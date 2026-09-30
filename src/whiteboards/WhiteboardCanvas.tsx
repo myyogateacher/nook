@@ -1,24 +1,34 @@
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
-import { ChevronLeft, Cloud, CloudOff, Ellipsis, ImageDown, LoaderCircle, Share2, TriangleAlert } from "lucide-react";
-import { Excalidraw, exportToBlob, MainMenu } from "@excalidraw/excalidraw";
-import type { AppState, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { ChevronLeft, Cloud, CloudOff, Copy, Ellipsis, ImageDown, ImagePlus, Link as LinkIcon, LoaderCircle, Share2, TriangleAlert } from "lucide-react";
+import { CaptureUpdateAction, convertToExcalidrawElements, Excalidraw, exportToBlob, exportToSvg, MainMenu, newElementWith, restoreElements, viewportCoordsToSceneCoords } from "@excalidraw/excalidraw";
+import type { AppState, BinaryFileData, BinaryFiles, ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { api, ApiError } from "../api";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { whenHistorySettled } from "../historyDialogs";
 import type { Folder } from "../types";
-import { canonicalSceneJson, whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
+import { canonicalSceneJson, sceneWithoutImages, whiteboardDisplayName, type CanonicalScene, type SceneFile } from "../../shared/whiteboardScene";
+import { isInsertableImageType, uploadImageDocument } from "../editor/imageUpload";
+import { useRole } from "../team/roleAccess";
+import type { DocumentSummary } from "../types";
 import {
-  autosaveLabel, autosaveReducer, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, mayCaptureEdit, maySendCapture, nextSaveDelay,
-  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS, type CaptureOrigin
+  autosaveLabel, autosaveReducer, changedSince, hasPendingWork, initialAutosave, LEAVE_FLUSH_MS, mayCaptureEdit, maySendCapture, nextSaveDelay,
+  pendingCopyAction, PENDING_WRITE_MS, shouldSave, THUMBNAIL_IDLE_MS, type CaptureOrigin, type SceneMark
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
-import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isKeptElement, linkTarget, openExcalidrawLayer, restoreMessage, sceneForLoad, sceneForSave } from "./historyGuard";
+import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedImagesMessage, refusedLinks, restoreMessage, sceneForLoad, sceneForSave, withoutRefusedImages } from "./historyGuard";
+import { IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize } from "./boardImages";
+import { isTouchLike, swallowNextClick } from "./touchClick";
+import { HistorySheet } from "./HistorySheet";
+import { ImagePickerSheet, LinkPickerSheet } from "./NookPickers";
 import { markBoardOpen } from "./pendingSync";
 import { onBeforeChunkReload } from "../chunkReload";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
-import { announceThumbnail, createWhiteboard, getPreviousVersion, getWhiteboard, putWhiteboardThumbnail, restorePreviousVersion, saveWhiteboardScene, type WhiteboardSummary } from "./whiteboardsApi";
+import {
+  announceThumbnail, createWhiteboard, duplicateWhiteboard, getWhiteboard, putWhiteboardThumbnail, restoreSnapshot, saveWhiteboardScene, whiteboardLink,
+  type WhiteboardSnapshot, type WhiteboardSummary
+} from "./whiteboardsApi";
 import { Avatar } from "../ui/Avatar";
 import { IntegrationBadge } from "../ui/IntegrationBadge";
 
@@ -54,7 +64,10 @@ type Props = {
 };
 
 type Loaded = { board: WhiteboardSummary; scene: CanonicalScene };
-type Layer = { kind: "board"; dialog: BoardDialog } | { kind: "conflict" } | { kind: "discard" } | { kind: "restore"; previous: { createdAt: string; elementCount: number } | null };
+type Layer =
+  | { kind: "board"; dialog: BoardDialog } | { kind: "conflict"; restoreFailed?: boolean } | { kind: "discard" }
+  /** Wave 24: Nook's image picker (D198), the link picker (D199), History (D207), a version's restore confirm, and the external-link confirm. */
+  | { kind: "image" } | { kind: "link" } | { kind: "history" } | { kind: "restoreVersion"; snapshot: WhiteboardSnapshot } | { kind: "external"; url: string };
 type Captured = { elements: ReadonlyArray<Record<string, unknown>>; appState: Record<string, unknown>; live: number; origin: CaptureOrigin };
 
 const THUMBNAIL_MAX_SIDE = 640;
@@ -67,6 +80,29 @@ const keptAppState = (appState: Record<string, unknown>) => ({ viewBackgroundCol
 const liveCount = (elements: ReadonlyArray<Record<string, unknown>>) => elements.reduce((count, element) => element.isDeleted === true ? count : count + 1, 0);
 const codeOf = (reason: unknown) => reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? (reason.payload as { code?: string; revision?: number }) : null;
 const lostAccess = (reason: unknown) => reason instanceof ApiError && (reason.status === 404 || reason.status === 403) && codeOf(reason)?.code !== "ROLE_READ_ONLY";
+const formatTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/**
+ * Where the person was looking (Wave 24, D199): kept on this device for half an hour after leaving,
+ * so Back from a Nook item a shape links to returns to the same part of the board.
+ */
+type Viewport = { scrollX: number; scrollY: number; zoom: number };
+const VIEWPORT_TTL_MS = 30 * 60_000;
+const viewportKey = (userId: string, boardId: string) => `nook.whiteboard.view.${userId}.${boardId}`;
+function readViewport(userId: string, boardId: string): Viewport | null {
+  try {
+    const raw = JSON.parse(window.sessionStorage.getItem(viewportKey(userId, boardId)) ?? "null") as (Viewport & { at: number }) | null;
+    if (!raw || Date.now() - raw.at > VIEWPORT_TTL_MS || ![raw.scrollX, raw.scrollY, raw.zoom].every((value) => typeof value === "number" && Number.isFinite(value)) || raw.zoom <= 0) return null;
+    return { scrollX: raw.scrollX, scrollY: raw.scrollY, zoom: raw.zoom };
+  } catch {
+    return null;
+  }
+}
+function writeViewport(userId: string, boardId: string, viewport: Viewport | null) {
+  if (!viewport) return;
+  try { window.sessionStorage.setItem(viewportKey(userId, boardId), JSON.stringify({ ...viewport, at: Date.now() })); } catch { /* private mode: not kept */ }
+}
+const refsOf = (scene: CanonicalScene) => new Map<string, SceneFile>(Object.entries(scene.files));
 
 /** A plain white PNG for an empty board, so a cleared board never keeps its old picture (QA Q3). */
 function emptyBoardPng(background: string): Promise<Blob | null> {
@@ -88,6 +124,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const [layer, setLayer] = useState<Layer | null>(null);
   const [excalidrawLayer, setExcalidrawLayer] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  /** Review M2: a version is being restored; its confirm stays open and busy, and the canvas is read-only. */
+  const [restoring, setRestoring] = useState(false);
+  const restoringRef = useRef(false);
+  /** While a restore is on its way to the server, autosave waits (a save would only race it into a 409). */
+  const holdSavesRef = useRef(false);
   const [autosave, dispatch] = useReducer(autosaveReducer, initialAutosave(1));
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const stateRef = useRef(autosave);
@@ -111,9 +152,25 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const mounted = useRef(true);
   const applyPendingRef = useRef<PendingEntry | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  /** QA L2: the last centre placement, so the next picture in the same view is offset from it. */
+  const placementRef = useRef<{ view: string; step: number } | null>(null);
   const accessLostRef = useRef(false);
   /** Asks the layer watcher to look again (QA E2); set once the canvas is on screen. */
   const checkLayersRef = useRef<() => void>(() => undefined);
+  /** D198: the board's image references (file id → Nook document), and the pictures loaded for display. */
+  const refsRef = useRef<Map<string, SceneFile>>(new Map());
+  const filesRef = useRef<BinaryFiles>({});
+  const [apiReady, setApiReady] = useState(false);
+  /** Uploads in flight (a picture joins the board only once its file is stored). */
+  const uploadsRef = useRef(new Set<AbortController>());
+  const [uploading, setUploading] = useState<string | null>(null);
+  /** The selected shapes, for "Link shape to a Nook item" (D199). */
+  const [selection, setSelection] = useState<{ count: number; link: string | null }>({ count: 0, link: null });
+  const selectionKey = useRef("0:");
+  const viewportRef = useRef<Viewport | null>(null);
+  const initialViewRef = useRef<Viewport | null>(null);
+  const linkWarned = useRef(0);
+  const { canWrite } = useRole();
 
   const canEdit = Boolean(loaded?.board.canEdit);
   const name = loaded ? whiteboardDisplayName(loaded.board.name) : "Whiteboard";
@@ -149,6 +206,10 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
           void clearPending(userId, boardId);
         }
         dispatch({ type: "reset", revision: whiteboard.revision, live: safe.elements.length });
+        // The references the board knows: the saved scene's, and an applied pending copy's.
+        refsRef.current = new Map([...refsOf(safe), ...refsOf(initial)]);
+        filesRef.current = {};
+        initialViewRef.current = readViewport(userId, boardId);
         // What Excalidraw reports for the loaded scene is not an edit; anything else is.
         lastKeyRef.current = changeKey(initial.elements, initialAppState(initial));
         sceneRef.current = { elements: initial.elements, appState: initialAppState(initial), live: initial.elements.length, origin: "load" };
@@ -174,7 +235,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const currentScene = useCallback(() => {
     const captured = sceneRef.current;
     if (!captured) return null;
-    return sceneForSave(captured.elements as never, captured.appState);
+    return sceneForSave(captured.elements as never, captured.appState, refsRef.current, window.location.origin);
   }, []);
 
   const writePendingNow = useCallback((): Promise<void> => {
@@ -198,11 +259,15 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       let blob: Blob | null;
       if (captured.live === 0) blob = await emptyBoardPng(String(captured.appState.viewBackgroundColor ?? "#ffffff"));
       else {
-        const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element)) as never;
+        const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refsRef.current)) as never;
         const appState = { ...captured.appState, exportBackground: true, exportWithDarkMode: false };
-        // The whole drawing, with padding, fitted into the longest side (QA Q3).
-        const first = await exportToBlob({ elements, appState, files: {}, maxWidthOrHeight: THUMBNAIL_MAX_SIDE, mimeType: "image/png", exportPadding: 24 });
-        blob = first.size <= THUMBNAIL_MAX_BYTES ? first : await exportToBlob({ elements, appState, files: {}, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 2, mimeType: "image/png", exportPadding: 16 });
+        // The whole drawing, with padding, fitted into the longest side (QA Q3). Never with its
+        // pictures (T165): everyone who can read the board sees the thumbnail, also people who
+        // cannot open a picture's file, so pictures are left blank in it.
+        const files: BinaryFiles = {};
+        const first = await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE, mimeType: "image/png", exportPadding: 24 });
+        blob = first.size <= THUMBNAIL_MAX_BYTES ? first : await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 2, mimeType: "image/png", exportPadding: 16 });
+        if (blob && blob.size > THUMBNAIL_MAX_BYTES) blob = await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 4, mimeType: "image/png", exportPadding: 8 });
       }
       if (blob && blob.size <= THUMBNAIL_MAX_BYTES) {
         await putWhiteboardThumbnail(boardId, revision, blob);
@@ -233,11 +298,35 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     }, THUMBNAIL_IDLE_MS);
   }, [refreshThumbnail]);
 
+  /**
+   * Review M1: takes the pictures a save was refused for off the captured scene (and the editor, while
+   * it is mounted), so the next save succeeds. False when none of them is on this canvas.
+   */
+  const removeRefusedImages = useCallback((payload: unknown) => {
+    const documentIds = (payload as { documentIds?: unknown } | null)?.documentIds;
+    const captured = sceneRef.current;
+    if (!Array.isArray(documentIds) || !documentIds.length || !captured) return false;
+    const next = withoutRefusedImages(captured.elements, refsRef.current, documentIds.filter((id): id is string => typeof id === "string"));
+    if (!next.fileIds.size) return false;
+    refsRef.current = next.refs;
+    const files = { ...filesRef.current };
+    for (const id of next.fileIds) delete files[id];
+    filesRef.current = files;
+    sceneRef.current = { ...captured, elements: next.elements, live: liveCount(next.elements), origin: "edit" };
+    const live = apiRef.current;
+    if (live && readyRef.current) {
+      live.updateScene({ elements: live.getSceneElementsIncludingDeleted().filter((element) => !(element.type === "image" && typeof element.fileId === "string" && next.fileIds.has(element.fileId))) as never });
+    }
+    flash(refusedImagesMessage(Math.max(1, next.removed)));
+    return true;
+  }, [flash]);
+
   const runSave = useCallback((options: { leaving?: boolean } = {}): Promise<void> => {
     if (savingRef.current) return savingRef.current;
     const state = stateRef.current;
     if (!shouldSave(state) || !boardRef.current?.canEdit) return Promise.resolve();
     if (tearingDownRef.current && !options.leaving) return Promise.resolve();
+    if (holdSavesRef.current && !options.leaving) return Promise.resolve();
     // Only a captured edit is ever sent (QA E1), on every path: the timer, the maximum wait, a
     // hidden tab, and the leave flush. An empty board from a real edit is sent like any other.
     if (!maySendCapture(state, sceneRef.current)) return Promise.resolve();
@@ -271,6 +360,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         } else if (lostAccess(reason)) {
           dispatch({ type: "rejected", message: "You no longer have access to this whiteboard" });
           loseAccess();
+        } else if (payload?.code === "IMAGE_NOT_AVAILABLE" && !tearingDownRef.current && removeRefusedImages((reason as ApiError).payload)) {
+          // Review M1: a picture whose file is gone or no longer shared came back (an undo, a pending
+          // copy, another tab); it leaves the board, the person is told, and the board saves again.
+          dispatch({ type: "retry" });
+          writePendingNow();
         } else if (reason instanceof ApiError && (reason.status === 400 || reason.status === 413 || reason.status === 403)) {
           dispatch({ type: "rejected", message: reason.message });
           writePendingNow();
@@ -284,7 +378,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     })();
     savingRef.current = promise;
     return promise;
-  }, [boardId, currentScene, loseAccess, scheduleThumbnail, userId, writePendingNow]);
+  }, [boardId, currentScene, loseAccess, removeRefusedImages, scheduleThumbnail, userId, writePendingNow]);
 
   // The timer after an edit (1.5 s after the last, 5 s after the oldest), and the retry backoff.
   useEffect(() => {
@@ -343,6 +437,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (thumbTimer.current !== null) window.clearTimeout(thumbTimer.current);
     pendingTimer.current = null;
     thumbTimer.current = null;
+    // Wave 24: a picture still uploading never joins the board (it is only placed once its file is
+    // stored, and nothing is placed after teardown); the upload is cancelled and the person told.
+    if (uploadsRef.current.size) {
+      for (const controller of uploadsRef.current) controller.abort();
+      uploadsRef.current.clear();
+      flash("A picture was still uploading when you left, so it was not added to the whiteboard.");
+    }
+    writeViewport(userId, boardId, viewportRef.current);
   };
   useLayoutEffect(() => () => teardownRef.current(), []);
   // QA E5: while this canvas is open, the background sync leaves this board's pending copy alone.
@@ -403,12 +505,24 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       return;
     }
     const loose = elements as ReadonlyArray<Record<string, unknown>>;
-    if (hasUnsupportedElements(loose)) {
-      // Images arrive in Wave 24 (D198); embeds and AI frames never (D199). Anything outside the
-      // supported types is removed before it is ever saved (review L2).
-      apiRef.current.updateScene({ elements: (elements as never[]).filter((element) => isKeptElement(element as Record<string, unknown>)) as never });
+    if (hasUnsupportedElements(loose, refsRef.current)) {
+      // Pictures are Nook files (D198): one that is not (a Mermaid diagram drawn as an image, a
+      // picture pasted from outside Nook) is removed before it is ever saved, and so are embeds and
+      // AI frames (D199, review L2).
+      apiRef.current.updateScene({ elements: (elements as never[]).filter((element) => isKeptElement(element as Record<string, unknown>, refsRef.current)) as never });
       flash(IMAGES_REFUSED_MESSAGE);
       return;
+    }
+    // Where the person looks (kept on leave, D199) and what they selected (the link picker).
+    const zoom = (appState as { zoom?: { value?: number } }).zoom?.value;
+    if (typeof appState.scrollX === "number" && typeof appState.scrollY === "number" && typeof zoom === "number") viewportRef.current = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom };
+    const selectedIds = Object.keys(appState.selectedElementIds ?? {}).filter((id) => (appState.selectedElementIds as Record<string, boolean>)[id]);
+    const firstSelected = selectedIds.length ? loose.find((element) => element.id === selectedIds[0]) : undefined;
+    const firstLink = typeof firstSelected?.link === "string" && firstSelected.link ? firstSelected.link : null;
+    const nextSelectionKey = `${selectedIds.length}:${firstLink ?? ""}`;
+    if (nextSelectionKey !== selectionKey.current) {
+      selectionKey.current = nextSelectionKey;
+      setSelection({ count: selectedIds.length, link: firstLink });
     }
     // Review L5: the shape library (and its "Browse libraries" link to a third-party site) is not
     // offered; the sidebar opens only on its search tab.
@@ -449,6 +563,10 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     dispatch({ type: "edited", at: Date.now() });
     schedulePendingWrite();
     if (thumbTimer.current !== null) window.clearTimeout(thumbTimer.current);
+    // D199: a link outside the allowlist is not saved; say so once per new one.
+    const refused = refusedLinks(loose, window.location.origin);
+    if (refused > linkWarned.current) flash("A link was not kept: shapes can link to web pages (https), email, or a Nook item.");
+    linkWarned.current = refused;
   }, [flash, schedulePendingWrite, scheduleThumbnail]);
 
   // D202: Back closes Excalidraw's own menus, dialogs, popups, and sidebar first. They are watched
@@ -514,40 +632,266 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     });
   });
 
+  // ------------------------------------------------------------------ pictures (D198)
+  /** Loads the pictures of `files` the viewer can open and hands them to the editor; the rest stay placeholders (T165). */
+  const hydrate = useCallback(async (files: Iterable<SceneFile>) => {
+    const pending = [...files].filter((file) => !filesRef.current[file.id]);
+    let next = 0;
+    const worker = async () => {
+      while (next < pending.length) {
+        const file = pending[next++]!;
+        try {
+          const image = await loadNookImage(file.nookDocumentId);
+          const live = apiRef.current;
+          if (!live || tearingDownRef.current || !mounted.current) return;
+          const data = { id: file.id, mimeType: image.mimeType, dataURL: image.dataURL, created: Date.now() } as unknown as BinaryFileData;
+          filesRef.current = { ...filesRef.current, [file.id]: data };
+          live.addFiles([data]);
+        } catch {
+          // Not a file this viewer can open (or it is gone): Excalidraw keeps drawing its placeholder.
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }, []);
+
+  const loadedKey = loaded ? loaded.board.id : null;
+  useEffect(() => {
+    if (!apiReady || !loadedKey) return;
+    void hydrate(refsRef.current.values());
+  }, [apiReady, hydrate, loadedKey]);
+
+  /**
+   * Places a Nook picture on the board: only once its file is stored and loaded, only while the
+   * editor is mounted, ready, and editable, and never after teardown began. The element refers to
+   * the document (file id = document id); the scene never holds the picture itself.
+   */
+  const placeImage = useCallback(async (document: Pick<DocumentSummary, "id" | "mime_type">, at?: { x: number; y: number }) => {
+    if (!apiRef.current || !readyRef.current || tearingDownRef.current || !boardRef.current?.canEdit) return false;
+    let image: Awaited<ReturnType<typeof loadNookImage>>;
+    try {
+      image = await loadNookImage(document.id);
+    } catch (reason) {
+      if (!tearingDownRef.current) flash(messageOf(reason, "Could not load the picture"));
+      return false;
+    }
+    const live = apiRef.current;
+    if (!live || !mounted.current || tearingDownRef.current || !readyRef.current) return false;
+    const fileId = document.id;
+    refsRef.current.set(fileId, { id: fileId, mimeType: document.mime_type, nookDocumentId: document.id });
+    if (!filesRef.current[fileId]) {
+      const data = { id: fileId, mimeType: image.mimeType, dataURL: image.dataURL, created: Date.now() } as unknown as BinaryFileData;
+      filesRef.current = { ...filesRef.current, [fileId]: data };
+      live.addFiles([data]);
+    }
+    const appState = live.getAppState();
+    const visibleSide = Math.min(appState.width, appState.height) / appState.zoom.value;
+    const size = placedSize(image.width, image.height, Math.max(64, Math.min(IMAGE_PLACE_MAX_SIDE, visibleSide * 0.6)));
+    let point = at;
+    if (!point) {
+      const placement = nextPlacement(placementRef.current, `${appState.scrollX}:${appState.scrollY}:${appState.zoom.value}:${appState.width}x${appState.height}`);
+      placementRef.current = placement;
+      point = { x: appState.offsetLeft + appState.width / 2 + placement.offsetPx, y: appState.offsetTop + appState.height / 2 + placement.offsetPx };
+    }
+    const center = viewportCoordsToSceneCoords({ clientX: point.x, clientY: point.y }, appState);
+    const [element] = convertToExcalidrawElements([{ type: "image", fileId: fileId as never, x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height, status: "saved" }]);
+    if (!element) return false;
+    live.updateScene({ elements: [...live.getSceneElementsIncludingDeleted(), element] as never, appState: { selectedElementIds: { [element.id]: true } } as never, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+    return true;
+  }, [flash]);
+
+  /** Uploads pictures into the board's folder as Files, then places each (D198). */
+  const uploadImages = useCallback(async (files: File[], at?: { x: number; y: number }) => {
+    const board = boardRef.current;
+    if (!board?.canEdit) return;
+    for (const file of files) {
+      if (tearingDownRef.current) return;
+      if (!isInsertableImageType(file.type)) {
+        flash("Only PNG, JPEG, GIF, and WebP pictures can be added to a whiteboard");
+        continue;
+      }
+      const controller = new AbortController();
+      uploadsRef.current.add(controller);
+      setUploading(file.name || "picture");
+      try {
+        const document = await uploadImageDocument(file, board.folder_id, controller.signal);
+        uploadsRef.current.delete(controller);
+        if (!tearingDownRef.current) await placeImage(document, at);
+      } catch (reason) {
+        if (!controller.signal.aborted && !tearingDownRef.current) flash(messageOf(reason, "Could not upload the picture"));
+      } finally {
+        uploadsRef.current.delete(controller);
+        if (mounted.current && !tearingDownRef.current) setUploading(null);
+      }
+    }
+  }, [flash, placeImage]);
+
+  // The image tool (toolbar, shortcut 9, command palette) opens Nook's picker (vite.config.ts patch).
+  useEffect(() => {
+    const onImageTool = () => {
+      apiRef.current?.setActiveTool({ type: "selection" });
+      if (boardRef.current?.canEdit && !tearingDownRef.current && readyRef.current) setLayer({ kind: "image" });
+    };
+    window.addEventListener("nook:excalidraw-image", onImageTool);
+    return () => window.removeEventListener("nook:excalidraw-image", onImageTool);
+  }, []);
+
+  // Dropped pictures go through the same upload (never Excalidraw's own path, which would embed them
+  // and resize them with WebAssembly); other dropped files (a drawing, a PDF) are not opened here.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !loadedKey) return;
+    const onDrop = (event: DragEvent) => {
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (!files.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!boardRef.current?.canEdit) return;
+      const images = files.filter((file) => isInsertableImageType(file.type));
+      if (!images.length) {
+        flash("Only PNG, JPEG, GIF, and WebP pictures can be dropped on a whiteboard. To open a drawing, use Import on the whiteboards list.");
+        return;
+      }
+      void uploadImages(images, { x: event.clientX, y: event.clientY });
+    };
+    stage.addEventListener("drop", onDrop, true);
+    return () => stage.removeEventListener("drop", onDrop, true);
+  }, [flash, loadedKey, uploadImages]);
+
+  /**
+   * Paste of a picture file: uploaded like a drop. Excalidraw inserts a pasted picture itself BEFORE
+   * it asks `onPaste` (embedding it, and resizing it with WebAssembly), so the paste is caught first,
+   * in the capture phase on window, whenever the editor has focus and the clipboard holds a picture.
+   */
+  useEffect(() => {
+    if (!loadedKey) return;
+    const onPasteCapture = (event: ClipboardEvent) => {
+      const stage = stageRef.current;
+      if (!stage || !stage.contains(document.activeElement) || !boardRef.current?.canEdit) return;
+      const pictures = Array.from(event.clipboardData?.files ?? []).filter((file) => isInsertableImageType(file.type));
+      if (!pictures.length) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void uploadImages(pictures);
+    };
+    window.addEventListener("paste", onPasteCapture, true);
+    return () => window.removeEventListener("paste", onPasteCapture, true);
+  }, [loadedKey, uploadImages]);
+
+  /**
+   * Paste of shapes: shapes copied from a Nook board keep their pictures when the pasted file ids are
+   * Nook documents this person can open; any other pasted picture is removed (onChange) with a message.
+   */
+  const onPaste = useCallback(async (data: { files?: BinaryFiles }, event: ClipboardEvent | null) => {
+    const pictures = Array.from(event?.clipboardData?.files ?? []).filter((file) => isInsertableImageType(file.type));
+    if (pictures.length) return false;
+    const files = data.files ?? {};
+    for (const id of Object.keys(files)) {
+      if (refsRef.current.has(id) || !isDocumentId(id)) continue;
+      try {
+        const { document } = await api<{ document: DocumentSummary }>(`/files/${encodeURIComponent(id)}`);
+        if (document.preview_kind === "image") refsRef.current.set(id, { id, mimeType: document.mime_type, nookDocumentId: id });
+      } catch {
+        // Not a file this person can open: the pasted picture is removed.
+      }
+    }
+    for (const [id, file] of Object.entries(files)) if (refsRef.current.has(id) && !filesRef.current[id]) filesRef.current = { ...filesRef.current, [id]: file };
+    return !tearingDownRef.current;
+  }, []);
+
+  // ------------------------------------------------------------------ links (D199)
   const onLinkOpen = useCallback((element: { link: string | null }, event: CustomEvent<{ nativeEvent: MouseEvent | React.PointerEvent<HTMLCanvasElement> }>) => {
     event.preventDefault();
-    const target = element.link ? linkTarget(element.link) : null;
-    if (!target) return;
-    if (target.kind === "app") onOpenPath(target.path);
-    else window.open(target.url, "_blank", "noopener,noreferrer");
-  }, [onOpenPath]);
+    const kept = element.link ? keptLink(element.link, window.location.origin) : null;
+    const target = kept ? linkTarget(kept) : null;
+    if (!target) {
+      flash("This link can't be opened: shapes can link to web pages (https), email, or a Nook item.");
+      return;
+    }
+    // A Nook item opens in the app as a new history entry; Back returns here, where the person was.
+    if (target.kind === "app") {
+      writeViewport(userId, boardId, viewportRef.current);
+      onOpenPath(target.path);
+    } else {
+      // QA M1: a tap's follow-up click would land on the confirm's scrim and close it at once.
+      if (isTouchLike(event.detail?.nativeEvent)) swallowNextClick();
+      setLayer({ kind: "external", url: target.url });
+    }
+  }, [boardId, flash, onOpenPath, userId]);
+
+  /** Sets (or clears) the link of the selected shapes, as one undoable edit. */
+  const applyLink = useCallback((link: string | null) => {
+    setLayer(null);
+    const live = apiRef.current;
+    if (!live || !readyRef.current || tearingDownRef.current || !boardRef.current?.canEdit) return;
+    const selected = live.getAppState().selectedElementIds;
+    const ids = new Set(Object.keys(selected).filter((id) => selected[id]));
+    if (!ids.size) {
+      flash("Select a shape first, then link it.");
+      return;
+    }
+    live.updateScene({ elements: live.getSceneElementsIncludingDeleted().map((element) => ids.has(element.id) ? newElementWith(element as never, { link } as never) : element) as never, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+    flash(link ? "Linked. Select the shape and use its link to open it." : "Link removed");
+  }, [flash]);
 
   // ------------------------------------------------------------------ export
+  const download = useCallback((blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }, []);
+
+  /** PNG (D201) with the pictures this viewer can open; the others stay blank. */
   const exportPng = useCallback(async () => {
     const captured = sceneRef.current;
     if (!captured) return;
     try {
-      const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element)) as never;
-      const blob = await exportToBlob({ elements, appState: { ...captured.appState, exportBackground: true, exportWithDarkMode: false }, files: {}, mimeType: "image/png", exportPadding: 16 });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${name}.png`;
-      anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refsRef.current)) as never;
+      download(await exportToBlob({ elements, appState: { ...captured.appState, exportBackground: true, exportWithDarkMode: false }, files: filesRef.current, mimeType: "image/png", exportPadding: 16 }), `${name}.png`);
     } catch {
       flash("Could not export this whiteboard");
     }
-  }, [flash, name]);
+  }, [download, flash, name]);
 
-  // ------------------------------------------------------------------ conflict, pending copy, restore
-  const showServerScene = useCallback(async (message: string) => {
+  /**
+   * SVG (D201): built here from the validated scene and only ever downloaded as a file. Fonts are not
+   * inlined (`skipInliningFonts`): inlining loads Excalidraw's font-subsetting chunk, which calls
+   * Function() and so is refused by the CSP; the file names Excalidraw's fonts instead.
+   */
+  const exportSvg = useCallback(async () => {
+    const captured = sceneRef.current;
+    if (!captured) return;
+    try {
+      const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refsRef.current)) as never;
+      const svg = await exportToSvg({ elements, appState: { ...captured.appState, exportBackground: true, exportWithDarkMode: false } as never, files: filesRef.current, exportPadding: 16, skipInliningFonts: true });
+      download(new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" }), `${name}.svg`);
+    } catch {
+      flash("Could not export this whiteboard");
+    }
+  }, [download, flash, name]);
+
+  // ------------------------------------------------------------------ conflict, pending copy, versions
+  /**
+   * Shows the server's scene in place of the canvas. With `unchangedSince`, only when the person has
+   * not edited since that mark (review M2); false when they have, and nothing is replaced.
+   */
+  const showServerScene = useCallback(async (message: string, unchangedSince?: SceneMark) => {
     const { whiteboard, scene } = await getWhiteboard(boardId);
+    // Left meanwhile (a restore that was still on its way): the server has it; the next open shows it.
+    if (tearingDownRef.current || !mounted.current) return true;
+    if (unchangedSince && changedSince(unchangedSince, { editVersion: stateRef.current.editVersion, key: lastKeyRef.current })) return false;
     const safe = sceneForLoad(scene);
     if (!safe) throw new Error("This whiteboard could not be read");
-    lastKeyRef.current = changeKey(safe.elements, initialAppState(safe));
-    sceneRef.current = { elements: safe.elements, appState: initialAppState(safe), live: safe.elements.length, origin: "server" };
-    apiRef.current?.updateScene({ elements: safe.elements as never, appState: { viewBackgroundColor: safe.appState.viewBackgroundColor ?? "#ffffff" } as never });
+    refsRef.current = new Map([...refsRef.current, ...refsOf(safe)]);
+    // The editor takes complete elements: a stored scene may leave out defaults (one written by
+    // import, MCP, or an older version), which Excalidraw fills in on load but not in updateScene.
+    const elements = restoreElements(safe.elements as never, null, { refreshDimensions: false, repairBindings: true }) as unknown as ReadonlyArray<Record<string, unknown>>;
+    lastKeyRef.current = changeKey(elements, initialAppState(safe));
+    sceneRef.current = { elements, appState: initialAppState(safe), live: elements.length, origin: "server" };
+    apiRef.current?.updateScene({ elements: elements as never, appState: { viewBackgroundColor: safe.appState.viewBackgroundColor ?? "#ffffff" } as never });
     apiRef.current?.history.clear();
     dispatch({ type: "reset", revision: whiteboard.revision, live: safe.elements.length });
     void clearPending(userId, boardId);
@@ -555,7 +899,9 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     setLayer(null);
     flash(message);
     scheduleThumbnail(whiteboard.revision);
-  }, [boardId, flash, scheduleThumbnail, userId]);
+    void hydrate(Object.values(safe.files));
+    return true;
+  }, [boardId, flash, hydrate, scheduleThumbnail, userId]);
 
   const reloadLatest = useCallback(async () => {
     try {
@@ -566,22 +912,111 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     }
   }, [flash, loseAccess, showServerScene]);
 
-  const restorePrevious = useCallback(async () => {
-    try {
-      await restorePreviousVersion(boardId, stateRef.current.baseRevision);
-      await showServerScene("Switched to the previous version");
-    } catch (reason) {
-      const payload = codeOf(reason);
-      if (payload?.code === "REVISION_CONFLICT") {
-        dispatch({ type: "conflict", revision: payload.revision ?? stateRef.current.baseRevision });
-        setLayer({ kind: "conflict" });
-      } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
-      else {
-        setLayer(null);
-        flash(messageOf(reason, "Could not restore the previous version"));
-      }
+  /**
+   * D207: a kept version becomes a NEW revision through the revision check. Anything unsaved is
+   * saved first, so a restore never discards work; if that cannot be saved now, nothing happens.
+   * Review M2: from the confirm until the restored scene is shown, the confirm stays open (busy) and
+   * the canvas is read-only; should the scene change anyway, it is kept (pending copy and the
+   * conflict choice) rather than replaced by the restored version.
+   */
+  /**
+   * Verification N2: a restored version carries its pictures as they were (the server keeps them),
+   * but one whose file this person can no longer open would stay only as pixels held in this tab.
+   * Such pictures are taken off like a refused save's (review M1): the message shows, and the next
+   * save drops the reference. The restored version itself stays in History.
+   */
+  const dropUnavailableRestoredImages = useCallback(async () => {
+    const ids = new Set<string>();
+    for (const element of sceneRef.current?.elements ?? []) {
+      if (element.type === "image" && !element.isDeleted && typeof element.fileId === "string" && refsRef.current.has(element.fileId)) ids.add(element.fileId);
     }
-  }, [boardId, flash, loseAccess, showServerScene]);
+    const unavailable: string[] = [];
+    for (const id of ids) {
+      const documentId = refsRef.current.get(id)?.nookDocumentId ?? id;
+      try {
+        const { document } = await api<{ document: DocumentSummary }>(`/files/${encodeURIComponent(documentId)}`);
+        if (document.preview_kind !== "image") unavailable.push(id);
+      } catch (reason) {
+        if (reason instanceof ApiError && reason.status === 404) unavailable.push(id);
+      }
+      if (tearingDownRef.current || !mounted.current) return;
+    }
+    if (unavailable.length) removeRefusedImages({ documentIds: unavailable });
+  }, [removeRefusedImages]);
+
+  const restoreVersion = useCallback(async (snapshot: WhiteboardSnapshot) => {
+    if (restoringRef.current) return;
+    restoringRef.current = true;
+    setRestoring(true);
+    const keepLocal = (revision: number) => {
+      dispatch({ type: "conflict", revision });
+      void writePendingNow();
+      if (!tearingDownRef.current) setLayer({ kind: "conflict" });
+      flash(`Restored the version from ${formatTime(snapshot.createdAt)}. Changes you made meanwhile are kept on this device: choose which to keep.`);
+    };
+    try {
+      if (!await flush()) {
+        if (!tearingDownRef.current) setLayer(null);
+        flash("Your latest changes are not saved yet, so nothing was restored. Try again in a moment.");
+        return;
+      }
+      const before: SceneMark = { editVersion: stateRef.current.editVersion, key: lastKeyRef.current };
+      holdSavesRef.current = true;
+      try {
+        const restored = await restoreSnapshot(boardId, snapshot.id, stateRef.current.baseRevision);
+        if (tearingDownRef.current) return;
+        if (changedSince(before, { editVersion: stateRef.current.editVersion, key: lastKeyRef.current })) {
+          keepLocal(restored.revision);
+          return;
+        }
+        if (!await showServerScene(`Restored the version from ${formatTime(snapshot.createdAt)}`, before)) keepLocal(restored.revision);
+        else void dropUnavailableRestoredImages();
+      } catch (reason) {
+        const payload = codeOf(reason);
+        if (payload?.code === "REVISION_CONFLICT") {
+          dispatch({ type: "conflict", revision: payload.revision ?? stateRef.current.baseRevision });
+          if (!tearingDownRef.current) setLayer({ kind: "conflict", restoreFailed: true });
+        } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
+        else if (!tearingDownRef.current) {
+          setLayer(null);
+          flash(messageOf(reason, "Could not restore that version"));
+        }
+      }
+    } finally {
+      holdSavesRef.current = false;
+      restoringRef.current = false;
+      if (mounted.current) setRestoring(false);
+    }
+  }, [boardId, dropUnavailableRestoredImages, flash, flush, loseAccess, showServerScene, writePendingNow]);
+
+  /** A private copy of this board (or of one kept version), opened once it exists. */
+  const duplicate = useCallback(async (snapshot?: WhiteboardSnapshot) => {
+    if (boardRef.current?.canEdit && !snapshot && !await flush()) {
+      flash("Your latest changes are not saved yet. Try again in a moment.");
+      return;
+    }
+    try {
+      const { whiteboard, imagesLeftOut } = await duplicateWhiteboard(boardId, snapshot ? { snapshotId: snapshot.id } : {});
+      if (tearingDownRef.current) return;
+      setLayer(null);
+      flash(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
+      onOpenBoard(whiteboard.id);
+    } catch (reason) {
+      if (!tearingDownRef.current) flash(messageOf(reason, "Could not duplicate this whiteboard"));
+    }
+  }, [boardId, flash, flush, onOpenBoard]);
+
+  /** The pictures on hand, for History previews (stable, so previews are drawn once). */
+  const heldFiles = useCallback(() => filesRef.current, []);
+
+  const copyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(whiteboardLink(boardId));
+      flash("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
+    } catch {
+      flash(`Could not copy. The link is ${whiteboardLink(boardId)}`);
+    }
+  }, [boardId, flash]);
 
   /** Saves a scene as a new board next to this one and opens it (the conflict's and the offer's way out). */
   const saveAsCopy = useCallback(async (scene: CanonicalScene) => {
@@ -589,7 +1024,15 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (!board) return;
     try {
       const { whiteboard } = await createWhiteboard(`${whiteboardDisplayName(board.name)} (copy)`, board.folder_id);
-      const saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, scene);
+      let saved;
+      try {
+        saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, scene);
+      } catch (reason) {
+        // A picture whose file this person can no longer open cannot start a new board: the copy keeps the rest.
+        const payload = reason instanceof ApiError ? reason.payload as { code?: string; documentIds?: string[] } | null : null;
+        if (payload?.code !== "IMAGE_NOT_AVAILABLE" || !payload.documentIds?.length) throw reason;
+        saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, sceneWithoutImages(scene, new Set(payload.documentIds)));
+      }
       // The copy gets its thumbnail right away (QA Q3); nothing else would draw it until it is opened.
       void (async () => {
         try {
@@ -619,18 +1062,24 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (result?.ok) void saveAsCopy(result.scene);
   }, [currentScene, saveAsCopy]);
 
-  /** QA E6: the restore dialog says which version it switches to, so it reads right either way. */
-  const openRestore = useCallback(async () => {
-    try {
-      const previous = await getPreviousVersion(boardId);
-      setLayer({ kind: "restore", previous });
-    } catch (reason) {
-      if (lostAccess(reason) && codeOf(reason)?.code !== "NO_SNAPSHOT") loseAccess();
-      else flash(messageOf(reason, "Could not find the previous version"));
-    }
-  }, [boardId, flash, loseAccess]);
+  // QA L7: when a Nook sheet or dialog closes (Back, Escape, a pick) and focus fell to the page,
+  // give it back to the canvas, so its shortcuts (9 for a picture) work without a click first.
+  const previousLayerRef = useRef<Layer | null>(null);
+  useEffect(() => {
+    const was = previousLayerRef.current;
+    previousLayerRef.current = layer;
+    if (!was || layer) return;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      stageRef.current?.querySelector<HTMLElement>(".excalidraw-container")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [layer]);
 
-  useHistoryDialogGuard(layer?.kind === "conflict" || layer?.kind === "discard" || layer?.kind === "restore", () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : null));
+  useHistoryDialogGuard(layer?.kind === "conflict" || layer?.kind === "discard" || layer?.kind === "restoreVersion" || layer?.kind === "external",
+    () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : layer?.kind === "restoreVersion" ? { kind: "history" } : null),
+    { blocked: restoring });
 
   // ------------------------------------------------------------------ render
   if (loadError) {
@@ -648,7 +1097,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const status = autosave.status;
   const StatusIcon = status === "offline" || status === "rejected" || status === "conflict" ? CloudOff : status === "saving" ? LoaderCircle : Cloud;
   const boardDialog = layer?.kind === "board" ? layer.dialog : null;
-  const formatTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  const initialView = initialViewRef.current;
+  const openLinkPicker = () => {
+    if (!selection.count) {
+      flash("Select a shape first, then link it to a Nook item.");
+      return;
+    }
+    setLayer({ kind: "link" });
+  };
 
   return <div className="whiteboard-canvas-page" data-status={status}>
     <header className="whiteboard-bar">
@@ -660,13 +1116,19 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         ? <button className={`whiteboard-status status-${status}`} onClick={() => setLayer({ kind: "conflict" })} aria-label="Conflict: choose which version to keep"><StatusIcon aria-hidden="true" /><span>{autosaveLabel(autosave)}</span></button>
         : <span className={`whiteboard-status status-${status}`} role="status" aria-live="polite"><StatusIcon aria-hidden="true" /><span>{leaving ? "Saving…" : autosaveLabel(autosave)}</span></span>)}
       <div className="whiteboard-bar-actions">
+        {canEdit && <button className="icon-button whiteboard-bar-icon" onClick={() => setLayer({ kind: "image" })} aria-label="Insert image" title="Insert image"><ImagePlus /></button>}
+        {canEdit && selection.count > 0 && <button className="icon-button whiteboard-bar-icon" onClick={openLinkPicker} aria-label="Link shape to a Nook item" title="Link to a Nook item"><LinkIcon /></button>}
         {canEdit && <button className="secondary-button whiteboard-bar-button desktop-only" onClick={() => setLayer({ kind: "board", dialog: { kind: "share", board } })}><Share2 />Share</button>}
         <button className="secondary-button whiteboard-bar-button desktop-only" onClick={() => { void exportPng(); }}><ImageDown />Export PNG</button>
         <button className="icon-button whiteboard-menu" onClick={() => setLayer({ kind: "board", dialog: { kind: "actions", board } })} aria-haspopup="dialog" aria-label={`Actions for ${name}`}><Ellipsis /></button>
       </div>
     </header>
-    {!canEdit && <p className="whiteboard-banner" role="note"><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} integration={board.ownerIsIntegration} /> {board.owner_name}{board.ownerIsIntegration && <IntegrationBadge />}</p>}
+    {!canEdit && <div className="whiteboard-banner" role="note">
+      <span><strong>View only</strong> · Owned by <Avatar className="whiteboard-owner-avatar" name={board.owner_name} url={board.ownerAvatarUrl} integration={board.ownerIsIntegration} /> {board.owner_name}{board.ownerIsIntegration && <IntegrationBadge />}</span>
+      {canWrite && <button className="secondary-button" onClick={() => { void duplicate(); }}><Copy />Duplicate to my whiteboards</button>}
+    </div>}
     {status === "rejected" && <p className="whiteboard-banner warn" role="alert">Not saved: {autosave.message}. Your changes are kept on this device.</p>}
+    {uploading && <p className="whiteboard-banner" role="status"><LoaderCircle className="spin" aria-hidden="true" />Uploading {uploading}… It joins the board once it is saved in Files.</p>}
     {offer && <div className="whiteboard-banner warn" role="alert">
       <span>You have unsaved changes from an earlier visit that differ from this whiteboard as it is saved now.</span>
       <button className="secondary-button" onClick={() => { void saveAsCopy(offer.scene); }}>Restore as a copy</button>
@@ -677,22 +1139,23 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       if (event.pointerType === "touch") event.currentTarget.dataset.touch = "true";
     }}>
       <Excalidraw
-        excalidrawAPI={(instance) => { apiRef.current = instance; }}
-        initialData={{ elements: scene.elements as never, appState: initialAppState(scene), scrollToContent: true }}
+        excalidrawAPI={(instance) => { apiRef.current = instance; setApiReady(true); }}
+        initialData={{
+          elements: scene.elements as never,
+          // Back to where the person was looking (D199), or the whole drawing.
+          appState: { ...initialAppState(scene), ...(initialView ? { scrollX: initialView.scrollX, scrollY: initialView.scrollY, zoom: { value: initialView.zoom } } : {}) } as never,
+          scrollToContent: !initialView
+        }}
         onChange={onChange}
         onLinkOpen={onLinkOpen as never}
-        onPaste={(data) => {
-          if (!Object.keys(data.files ?? {}).length) return true;
-          flash(IMAGES_REFUSED_MESSAGE);
-          return false;
-        }}
+        onPaste={onPaste as never}
         theme="dark"
         langCode="en"
         name={name}
-        viewModeEnabled={!canEdit}
+        viewModeEnabled={!canEdit || restoring}
         validateEmbeddable={false}
         renderTopRightUI={() => null}
-        UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, clearCanvas: canEdit, toggleTheme: false, changeViewBackgroundColor: canEdit }, tools: { image: false } }}
+        UIOptions={{ canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false, clearCanvas: canEdit, toggleTheme: false, changeViewBackgroundColor: canEdit }, tools: { image: canEdit } }}
       >
         {/* Nook's own main menu: no social links or promotions, only what works here. */}
         <MainMenu>
@@ -706,8 +1169,16 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
 
     <BoardDialogs dialog={boardDialog} folders={folders} flash={flash}
       onClose={() => setLayer(null)}
-      onExportPng={() => { void exportPng(); }}
-      onRestorePrevious={() => { void openRestore(); }}
+      extras={{
+        onExportPng: () => { void exportPng(); },
+        onExportSvg: () => { void exportSvg(); },
+        onHistory: () => setLayer({ kind: "history" }),
+        onInsertImage: () => setLayer({ kind: "image" }),
+        onLinkItem: selection.count > 0 ? () => setLayer({ kind: "link" }) : undefined,
+        onDuplicate: canWrite ? () => { void duplicate(); } : undefined,
+        // QA L5: only someone who writes notes can use a link for a note.
+        onCopyLink: canWrite ? () => { void copyLink(); } : undefined
+      }}
       onChanged={(patch) => setLoaded((current) => current ? { ...current, board: { ...current.board, ...patch } } : current)}
       onDeleted={() => {
         void clearPending(userId, boardId);
@@ -718,14 +1189,38 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         window.setTimeout(() => whenHistorySettled(onDeleted), 0);
       }}
       onAction={(action, target) => setLayer({ kind: "board", dialog: { kind: action, board: target } })} />
+    {layer?.kind === "image" && <ImagePickerSheet onClose={() => setLayer(null)}
+      onPick={(document) => { setLayer(null); void placeImage(document); }}
+      onUpload={(files) => { setLayer(null); void uploadImages(files); }} />}
+    {layer?.kind === "link" && <LinkPickerSheet currentLink={selection.link} onClose={() => setLayer(null)} onPick={(path) => applyLink(path)} onRemove={() => applyLink(null)} />}
+    {(layer?.kind === "history" || layer?.kind === "restoreVersion") && <HistorySheet boardId={boardId} files={heldFiles}
+      covered={layer.kind === "restoreVersion" || restoring}
+      onClose={() => { if (!restoring) setLayer(null); }}
+      onRestore={(snapshot) => setLayer({ kind: "restoreVersion", snapshot })}
+      onCopy={(snapshot) => duplicate(snapshot)} />}
+    {layer?.kind === "restoreVersion" && <ConfirmDialog title="Restore this version?"
+      message={restoreMessage({ createdAt: layer.snapshot.createdAt, elementCount: layer.snapshot.elementCount ?? 0 }, sceneRef.current?.live ?? autosave.savedLive, formatTime)}
+      confirmLabel="Restore" busy={restoring} onCancel={() => { if (!restoring) setLayer({ kind: "history" }); }} onConfirm={() => { void restoreVersion(layer.snapshot); }} />}
+    {layer?.kind === "external" && <ModalDialog title="Open this link?" onClose={() => setLayer(null)}>
+      <p className="file-dialog-copy">This opens a page outside Nook in a new tab:</p>
+      <p className="whiteboard-link-url"><code>{layer.url}</code></p>
+      <footer className="file-dialog-actions">
+        <button className="secondary-button" onClick={() => setLayer(null)}>Cancel</button>
+        <button className="primary-button" autoFocus onClick={() => {
+          const url = layer.url;
+          setLayer(null);
+          window.open(url, "_blank", "noopener,noreferrer");
+        }}>Open link</button>
+      </footer>
+    </ModalDialog>}
     {layer?.kind === "conflict" && <ModalDialog title="This whiteboard changed on another device" onClose={() => setLayer(null)}>
-      <p className="file-dialog-copy">Someone saved a newer version of this whiteboard, from another tab or device. Your changes here are kept on this device until you choose.</p>
+      <p className="file-dialog-copy">{layer.restoreFailed ? "The version you chose was not restored: s" : "S"}omeone saved a newer version of this whiteboard, from another tab or device. {hasPendingWork(stateRef.current) ? "Your changes here are kept on this device until you choose." : "You have no unsaved changes here."}</p>
       <footer className="file-dialog-actions whiteboard-conflict-actions">
-        <button className="secondary-button" onClick={() => setLayer({ kind: "discard" })}>Reload latest</button>
+        {/* QA L4: "Discard your changes?" only when there are changes to discard. */}
+        <button className="secondary-button" onClick={() => { if (hasPendingWork(stateRef.current)) setLayer({ kind: "discard" }); else void reloadLatest(); }}>Reload latest</button>
         <button className="primary-button" onClick={copyLocal} autoFocus>Save mine as a copy</button>
       </footer>
     </ModalDialog>}
     {layer?.kind === "discard" && <ConfirmDialog title="Discard your changes?" message="Reloading shows the latest saved version. The changes you made here since then are discarded." confirmLabel="Discard and reload" danger onCancel={() => setLayer({ kind: "conflict" })} onConfirm={() => { void reloadLatest(); }} />}
-    {layer?.kind === "restore" && <ConfirmDialog title="Restore previous version" message={restoreMessage(layer.previous, sceneRef.current?.live ?? autosave.savedLive, formatTime)} confirmLabel="Switch" onCancel={() => setLayer(null)} onConfirm={() => { void restorePrevious(); }} />}
   </div>;
 }

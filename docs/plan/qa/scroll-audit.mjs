@@ -532,6 +532,9 @@ const ROUTES = (s) => [
   ["Whiteboards list (64 boards)", "/whiteboards", async (page) => { await tapText(page, ".whiteboards-view-toggle button", "List"); }],
   // The canvas is a fixed full-screen page: nothing may scroll and nothing may sit below the fold.
   ["Whiteboard canvas", `/whiteboards/${s.whiteboard.id}`, async (page) => { await page.waitForSelector(".excalidraw canvas"); }],
+  // Wave 24: the canvas's History sheet, and the note editor's "Embed a whiteboard" picker (64 boards).
+  ["Whiteboard History sheet", `/whiteboards/${s.whiteboard.id}`, async (page) => { await page.waitForSelector(".excalidraw canvas"); await tapText(page, ".whiteboard-menu"); await tapText(page, ".whiteboard-sheet button", "History"); await page.waitForSelector(".whiteboard-history"); await sleep(600); }, { scope: ".whiteboard-history" }],
+  ["Note: Embed a whiteboard (64 boards)", `/notes/${s.longNote.id}`, async (page) => { await page.waitForSelector(".note-prose"); await page.click(".note-prose"); await page.keyboard.down("Control"); await page.keyboard.press("End"); await page.keyboard.up("Control"); await page.keyboard.press("Enter"); await page.keyboard.type("/whiteboard"); await sleep(400); await page.keyboard.press("Enter"); await page.waitForSelector(".nook-picker .nook-picker-list"); await sleep(400); }, { scope: ".nook-picker" }],
   // The Vault (Wave 25): list, grid, one environment's cards, a secret, and the settings sheet.
   ...(s.vault ? [
     ["Vault list", "/vault"],

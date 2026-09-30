@@ -35,6 +35,36 @@ export const restorePreviousVersion = (id: string, baseRevision: number) =>
 export const getPreviousVersion = (id: string) =>
   api<{ revision: number; createdAt: string; elementCount: number }>(`/whiteboards/${encodeURIComponent(id)}/previous-version`);
 
+/** D207: one kept version of a board (the owner's only). `elementCount` is null when it could not be read. */
+export type WhiteboardSnapshot = { id: string; revision: number; createdAt: string; sizeBytes: number; elementCount: number | null };
+
+export const listSnapshots = (id: string) => api<{ snapshots: WhiteboardSnapshot[] }>(`/whiteboards/${encodeURIComponent(id)}/snapshots`);
+
+export const getSnapshot = (id: string, snapshotId: string, signal?: AbortSignal) =>
+  api<{ snapshot: WhiteboardSnapshot; scene: CanonicalScene }>(`/whiteboards/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}`, signal ? { signal } : {});
+
+/** Saves a snapshot as a new revision (the revision check applies: 409 on a stale base). */
+export const restoreSnapshot = (id: string, snapshotId: string, baseRevision: number) =>
+  api<SaveResult & { restoredFrom: { id: string; revision: number; createdAt: string } }>(`/whiteboards/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, { method: "POST", body: JSON.stringify({ baseRevision }) });
+
+/** A private copy owned by the caller, of the board or (owner) of one snapshot; images the caller cannot open are left out. */
+export const duplicateWhiteboard = (id: string, options: { folderId?: string | null; snapshotId?: string | null } = {}) =>
+  api<{ whiteboard: WhiteboardSummary; imagesLeftOut: number }>(`/whiteboards/${encodeURIComponent(id)}/duplicate`, {
+    method: "POST", body: JSON.stringify({ ...(options.folderId ? { folderId: options.folderId } : {}), ...(options.snapshotId ? { snapshotId: options.snapshotId } : {}) })
+  });
+
+/** Import a parsed `.excalidraw` file; embedded images become Files in the board's folder. */
+export const importWhiteboard = (name: string, folderId: string | null, file: unknown) =>
+  api<{ whiteboard: WhiteboardSummary; images: number; imagesLeftOut: number }>("/whiteboards/import", { method: "POST", body: JSON.stringify({ name, ...(folderId ? { folderId } : {}), file }) });
+
+/** What the note embed card shows (D208), for people who can read the board; 404 for anyone else. */
+export type WhiteboardCardSummary = Pick<WhiteboardSummary, "id" | "name" | "updated_at" | "hasThumbnail" | "thumbRevision" | "elementCount" | "owner_name" | "is_owner">;
+export const getWhiteboardSummary = (id: string, signal?: AbortSignal) =>
+  api<{ whiteboard: WhiteboardCardSummary }>(`/whiteboards/${encodeURIComponent(id)}/summary`, signal ? { signal } : {});
+
+/** The link a note embeds (D208): this instance's board URL; pasted alone on a line, it becomes a card. */
+export const whiteboardLink = (id: string, origin = window.location.origin) => `${origin}/whiteboards/${id}`;
+
 export const getWhiteboard = (id: string) => api<{ whiteboard: WhiteboardSummary; scene: CanonicalScene }>(`/whiteboards/${encodeURIComponent(id)}`);
 
 export function createWhiteboard(name: string, folderId: string | null, idempotencyKey = crypto.randomUUID()) {

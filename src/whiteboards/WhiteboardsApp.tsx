@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Ellipsis, House, LayoutGrid, List as ListIcon, PenTool, Plus, RotateCcw, Sparkles, TriangleAlert, Users } from "lucide-react";
+import { Ellipsis, FileUp, House, LayoutGrid, List as ListIcon, PenTool, Plus, RotateCcw, Sparkles, TriangleAlert, Users } from "lucide-react";
 import { api } from "../api";
 import { AccountActions, AppPageName, useBinCount } from "../AppShell";
 import { readHistoryDepth } from "../appShellNavigation";
@@ -16,7 +16,7 @@ import { whiteboardsBackAction, whiteboardsRoute, type WhiteboardsRoute } from "
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { BoardDialogs, NewBoardDialog, type BoardDialog } from "./BoardDialogs";
 import { PENDING_SYNCED_EVENT, pendingSyncDeps, requestPendingSync } from "./pendingSync";
-import { listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, type WhiteboardSort, type WhiteboardSummary } from "./whiteboardsApi";
+import { duplicateWhiteboard, importWhiteboard, listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, whiteboardLink, type WhiteboardSort, type WhiteboardSummary } from "./whiteboardsApi";
 import "../files/files.css";
 import "./whiteboards.css";
 
@@ -90,6 +90,11 @@ function readView(userId: string): ViewMode {
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
+/** Import `.excalidraw` (Wave 24): the file's size cap, as the server's (32 MiB with its pictures). */
+export const IMPORT_MAX_BYTES = 32 * 1024 * 1024;
+/** The board name an imported file gets: its file name without the extension. */
+export const importedName = (fileName: string) => fileName.replace(/\.(excalidraw|json)$/i, "").trim().slice(0, 200) || "Imported drawing";
+
 /** QA Q6: the Files list's name and modified orders; the server pages in the chosen one. */
 export const WHITEBOARD_SORT_OPTIONS: Array<{ value: WhiteboardSort; label: string }> = [
   { value: "updated-desc", label: "Newest modified" },
@@ -125,6 +130,8 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   const [creating, setCreating] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importInput = useRef<HTMLInputElement>(null);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
   const generation = useRef(0);
@@ -239,6 +246,51 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     return () => window.removeEventListener(THUMBNAIL_EVENT, onThumbnail);
   }, [patchBoard]);
 
+  /** Import `.excalidraw`: the server runs the save validator and stores embedded pictures as Files. */
+  async function importFile(file: File) {
+    if (file.size > IMPORT_MAX_BYTES) {
+      flash("This drawing is too large to import (at most 32 MB, pictures included).");
+      return;
+    }
+    setImporting(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        flash("This file is not an Excalidraw drawing.");
+        return;
+      }
+      const owned = folders.find((folder) => folder.id === route.folder && folder.is_owner === 1);
+      const { whiteboard, images, imagesLeftOut } = await importWhiteboard(importedName(file.name), owned?.id ?? null, parsed);
+      flash(`Imported ${whiteboardDisplayName(whiteboard.name)}${images ? `; ${images === 1 ? "its picture is" : `its ${images} pictures are`} saved in Files` : ""}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} had no data or could not be opened and ${imagesLeftOut === 1 ? "was" : "were"} left out` : ""}.`);
+      openBoard(whiteboard);
+    } catch (reason) {
+      flash(messageOf(reason, "Could not import this drawing"));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function duplicate(board: WhiteboardSummary) {
+    try {
+      const { whiteboard, imagesLeftOut } = await duplicateWhiteboard(board.id);
+      flash(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
+      void loadList();
+    } catch (reason) {
+      flash(messageOf(reason, "Could not duplicate this whiteboard"));
+    }
+  }
+
+  async function copyLink(board: WhiteboardSummary) {
+    try {
+      await navigator.clipboard.writeText(whiteboardLink(board.id));
+      flash("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
+    } catch {
+      flash(`Could not copy. The link is ${whiteboardLink(board.id)}`);
+    }
+  }
+
   const folderOptions = useMemo(() => {
     const owned = folders.filter((folder) => folder.is_owner === 1).sort((a, b) => b.is_default - a.is_default || a.name.localeCompare(b.name));
     const shared = folders.filter((folder) => folder.is_owner !== 1);
@@ -293,6 +345,12 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
             <button type="button" className={view === "grid" ? "active" : ""} aria-pressed={view === "grid"} onClick={() => chooseView("grid")} aria-label="Grid" title="Grid"><LayoutGrid /></button>
             <button type="button" className={view === "list" ? "active" : ""} aria-pressed={view === "list"} onClick={() => chooseView("list")} aria-label="List" title="List"><ListIcon /></button>
           </div>
+          {canWrite && <button type="button" className="secondary-button whiteboards-import" onClick={() => importInput.current?.click()} disabled={importing} title="Import an .excalidraw file"><FileUp />{importing ? "Importing…" : "Import"}</button>}
+          {canWrite && <input ref={importInput} type="file" accept=".excalidraw,.json,application/json,application/vnd.excalidraw+json" hidden onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            if (file) void importFile(file);
+          }} />}
           {canWrite && <button type="button" className="primary-button whiteboards-new" onClick={() => setCreating(true)}><Plus />New</button>}
         </div>
       </div>
@@ -337,6 +395,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     <BoardDialogs dialog={dialog} folders={folders} flash={flash}
       onClose={() => setDialog(null)}
       onOpen={openBoard}
+      extras={{ onDuplicate: canWrite ? (board) => { void duplicate(board); } : undefined, onCopyLink: canWrite ? (board) => { void copyLink(board); } : undefined }}
       onChanged={(patch) => { patchBoard(patch); if (patch.folder_id !== undefined && route.folder !== "all") void loadList(); }}
       onDeleted={(board) => setBoards((current) => current?.filter((item) => item.id !== board.id) ?? current)}
       onAction={(action, board) => setDialog({ kind: action, board })} />

@@ -14,6 +14,7 @@ import {
   EyeOff,
   FileDown,
   FilePlus2,
+  FileText,
   Folder as FolderIcon,
   FolderPlus,
   History,
@@ -27,6 +28,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PenTool,
   Search,
   Settings,
   ShieldCheck,
@@ -80,6 +82,7 @@ import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undo
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
+import { OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
@@ -104,6 +107,7 @@ import { SearchResults, searchListId, searchOptionId } from "./search/SearchResu
 import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
+import { useWhiteboardSearch, WhiteboardSearchResults } from "./search/WhiteboardSearchResults";
 import { ModulesSettings } from "./ModulesSettings";
 import { hiddenEntryStep, hiddenModuleForApp, openTeamViaSettings, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, type ModuleId } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
@@ -697,6 +701,7 @@ export function App() {
   const [query, setQuery] = useState("");
   // "Search all notes" widens a search beyond the current section.
   const [searchAll, setSearchAll] = useState(false);
+  const [searchKind, setSearchKind] = useState<"notes" | "whiteboards">("notes");
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // The search hint new Notes history entries carry. Updated during render, and directly when
@@ -997,7 +1002,12 @@ export function App() {
   // (which only changes titles and times).
   const searchRefreshKey = useMemo(() => notes.map((item) => `${item.id}:${item.folder_id ?? ""}`).join(","), [notes]);
   const search = useNoteSearch(query, searchFolder, searchRefreshKey);
-  const showingSearchResults = search.active && search.status === "ready";
+  // Wave 24: the Whiteboards facet (whiteboard plan §10.7): board names and text, when the module is on.
+  const boardFacetAvailable = isModuleEnabled(disabledModules, "whiteboards");
+  const boardsFacet = boardFacetAvailable && searchKind === "whiteboards";
+  const boardSearch = useWhiteboardSearch(query, boardsFacet);
+  const showingBoards = boardsFacet && boardSearch.active;
+  const showingSearchResults = !showingBoards && search.active && search.status === "ready";
   searchHintRef.current = search.active ? { query, all: searchAll } : null;
   const activeSearchHit = showingSearchResults ? search.results[activeSearchIndex] ?? null : null;
   useEffect(() => setActiveSearchIndex(-1), [query, searchFolder]);
@@ -1485,6 +1495,25 @@ export function App() {
     navigate(notesRoute("all", noteId), { panel: "editor" });
     setActiveApp("notes");
   }
+
+  // Wave 24 (D208): a whiteboard card in a note or a card description opens its board as a new
+  // entry, so Back returns to where it was. Leaving Notes saves the note first, as any app switch does.
+  async function openContentPath(path: string) {
+    const route = parseRoute(path);
+    if (route.app !== "whiteboards" || !route.boardId) return;
+    if (activeApp === "notes" && !await leaveNotes()) return;
+    openNotificationPath(path);
+  }
+  const openContentPathRef = useRef(openContentPath);
+  openContentPathRef.current = openContentPath;
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const path = (event as CustomEvent<{ path?: unknown }>).detail?.path;
+      if (typeof path === "string") void openContentPathRef.current(path);
+    };
+    window.addEventListener(OPEN_PATH_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_PATH_EVENT, onOpen);
+  }, []);
 
   async function leaveNotesFromHistory(route: Route) {
     if (!session) return;
@@ -2022,7 +2051,11 @@ export function App() {
             />
             {query ? <button type="button" className="search-clear" onClick={() => { clearSearch(); searchInputRef.current?.focus(); }} aria-label="Clear search"><X /></button> : <kbd aria-hidden="true">/</kbd>}
           </div>}
-          {search.active && selectedFolder !== "all" && <div className="search-scope">
+          {search.active && boardFacetAvailable && <div className="search-scope search-facets" role="group" aria-label="Search in">
+            <button type="button" className="search-scope-chip" aria-pressed={!boardsFacet} onClick={() => setSearchKind("notes")}><FileText aria-hidden="true" />Notes</button>
+            <button type="button" className="search-scope-chip" aria-pressed={boardsFacet} onClick={() => setSearchKind("whiteboards")}><PenTool aria-hidden="true" />Whiteboards</button>
+          </div>}
+          {search.active && !showingBoards && selectedFolder !== "all" && <div className="search-scope">
             {!searchAll && <span>Searching {selectedFolder === "shared" ? "Shared with me" : folders.find((folder) => folder.id === selectedFolder)?.name ?? "this folder"}</span>}
             <button type="button" className="search-scope-chip" aria-pressed={searchAll} onClick={() => setSearchAll((all) => !all)}>{searchAll ? <Check aria-hidden="true" /> : <Archive aria-hidden="true" />}Search all notes</button>
           </div>}
@@ -2031,6 +2064,10 @@ export function App() {
         <ReadOnlyBanner />
         <div className="note-list">
           {search.status === "error" && <p className="search-error" role="alert">{search.error}</p>}
+          {showingBoards && boardSearch.status === "error" && <p className="search-error" role="alert">{boardSearch.error}</p>}
+          {showingBoards && boardSearch.status === "loading" && <p className="search-status" role="status">Searching whiteboards…</p>}
+          {showingBoards && boardSearch.status === "ready" && <WhiteboardSearchResults results={boardSearch.results} truncated={boardSearch.truncated} relativeTime={relativeTime} onOpen={(hit) => { void openContentPath(`/whiteboards/${hit.id}`); }} />}
+          {showingBoards && boardSearch.status === "ready" && !boardSearch.results.length && <div className="empty-state"><div><PenTool /></div><h2>No whiteboards match</h2><p>Names and the text on boards you can open are searched.</p></div>}
           {showingSearchResults && <SearchResults
             results={search.results}
             truncated={search.truncated}
@@ -2042,7 +2079,7 @@ export function App() {
             onHover={setActiveSearchIndex}
           />}
           {showingSearchResults && !search.results.length && <div className="empty-state"><div><Search /></div><h2>No matches</h2><p>{searchAll || selectedFolder === "all" ? "Try other words, or fewer of them." : "Try other words, or search all notes."}</p></div>}
-          {!showingSearchResults && visibleNotes.map((item) => <article
+          {!showingSearchResults && !showingBoards && visibleNotes.map((item) => <article
             key={item.id}
             className={`note-card${selectedNoteId === item.id ? " selected" : ""}${draggingNoteId === item.id ? " dragging" : ""}`}
             draggable={item.is_owner === 1 && canWrite}
@@ -2062,7 +2099,7 @@ export function App() {
             </button>
             {item.is_owner === 1 && canWrite && <button className="note-delete-button" disabled={editorLocked} onClick={(event) => askDeleteNote(item.id, item.title, event.currentTarget)} aria-label={`Delete ${item.title}`} title="Delete note"><Trash2 /></button>}
           </article>)}
-          {!showingSearchResults && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
+          {!showingSearchResults && !showingBoards && !visibleNotes.length && <div className="empty-state"><div><FilePlus2 /></div><h2>No notes here</h2><p>{query ? (search.status === "loading" ? "Searching note text…" : "Try another search.") : selectedFolder === "shared" ? "Notes shared with you will appear here." : (canWrite ? "Create a note and start writing." : "Notes shared with you appear here.")}</p>{!query && selectedFolder !== "shared" && canWrite && <button onClick={createNote}>New note</button>}</div>}
         </div>
       </section>
 

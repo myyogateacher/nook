@@ -9,6 +9,7 @@ import { NoteTable } from "./tableMarkdown";
 import TableRow from "@tiptap/extension-table-row";
 import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
+import { WhiteboardEmbed } from "./whiteboardEmbed";
 
 // Options for the marked lexer used by @tiptap/markdown. GFM enables pipe tables and task lists.
 export const markdownOptions = { gfm: true, breaks: false };
@@ -36,6 +37,8 @@ export function noteContentExtensions(): AnyExtension[] {
     NoteTable.configure({ resizable: false, renderWrapper: true, HTMLAttributes: { class: "note-table" } }),
     TableRow,
     TableHeader,
-    TableCell
+    TableCell,
+    // A whiteboard card (D208): `[Name](/whiteboards/<uuid> "whiteboard")` alone in its paragraph.
+    WhiteboardEmbed
   ];
 }

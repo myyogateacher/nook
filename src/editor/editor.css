@@ -11,3 +11,19 @@
 .note-prose th > p, .note-prose td > p { margin: 0; }
 .note-prose .selectedCell::after { content: ""; position: absolute; inset: 0; background: rgb(246 196 83 / 14%); pointer-events: none; }
 .table-menu { flex-wrap: wrap; max-width: calc(100vw - 24px); }
+/* Wave 24 (D208): a whiteboard as a card in a note; the whole card fits a 390 px phone. */
+.note-prose .whiteboard-embed { margin: 1.1em 0; }
+.whiteboard-embed-card { display: flex; align-items: center; gap: 12px; max-width: 520px; border: 1px solid #2c2c31; border-radius: 12px; padding: 8px; background: #151518; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; line-height: 1.35; user-select: none; }
+.whiteboard-embed.is-selected .whiteboard-embed-card { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.whiteboard-embed-thumb { width: 112px; height: 70px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: #f7f7f5; color: #6d6d73; }
+.whiteboard-embed-thumb.unavailable { background: #1d1d21; color: #85858c; }
+.whiteboard-embed-thumb img { width: 100%; height: 100%; object-fit: contain; margin: 0; border-radius: 0; }
+.whiteboard-embed-thumb svg { width: 22px; height: 22px; }
+.whiteboard-embed-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.whiteboard-embed-copy strong { overflow: hidden; color: #ededee; font-size: .92rem; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboard-embed-copy small { overflow: hidden; color: #85858c; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.whiteboard-embed-open { flex: none; min-height: 44px; padding: 0 14px; }
+@media (max-width: 420px) {
+  .whiteboard-embed-thumb { width: 72px; height: 48px; }
+  .whiteboard-embed-card { gap: 8px; }
+}

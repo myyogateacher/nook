@@ -301,7 +301,7 @@ describe("Wave 34 review: what people are told on the client", () => {
     expect(builder).toContain("Items can only be removed here; rotate the key to add.");
     expect(builder).toContain("<Combobox multiple backspaceRemoves={false}");
     const css = await Bun.file(new URL("../src/keys/keys.css", import.meta.url)).text();
-    expect(css).toContain(".grant-resources .ui-popup-body { max-height: 352px; }");
+    expect(css).toContain(".grant-resources .ui-popup-body { max-height: 352px; overflow: hidden; display: flex; flex-direction: column; }");
     const { comboboxKey } = await import("../src/ui/listNavigation");
     // The builder passes hasValues false when Backspace must not remove: nothing is removed.
     expect(comboboxKey({ open: true, active: 0 }, { key: "Backspace" }, [], { query: "", multiple: true, hasValues: false }).removeLast).toBeUndefined();

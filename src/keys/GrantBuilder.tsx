@@ -94,7 +94,10 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
     description: writable && option.readOnly ? "Views can only be read through a key" : writable && !option.writable ? "You can only view this one" : option.description,
     disabled: writable && !option.writable
   }));
-  if (narrowing && ceiling?.applies === "chosen") resourceOptions = resourceOptions.filter((option) => ceiling.resourceIds.includes(option.value));
+  // N1: in Edit, a grant already on chosen items can only lose items (chips with ×: adding would
+  // widen it); a grant on "all" may be narrowed to any chosen items with the full picker (D278).
+  const removeOnly = narrowing && ceiling?.applies === "chosen";
+  if (removeOnly) resourceOptions = resourceOptions.filter((option) => ceiling!.resourceIds.includes(option.value));
   // Chosen items leave the list (their chips hold them, with ×), so a pick never reads as a no-op (Friction 3).
   const unchosen = resourceOptions.filter((option) => !row.resourceIds.includes(option.value));
   const labels = { module: `${id}-module`, permission: `${id}-permission`, applies: `${id}-applies` };
@@ -121,7 +124,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
           onChange={(applies) => onChange({ applies, resourceIds: applies === "all" ? [] : narrowing && ceiling?.applies === "chosen" ? ceiling.resourceIds : row.resourceIds })} />
       </div>}
     </div>
-    {selector && row.applies === "chosen" && narrowing && <div className="grant-resources">
+    {selector && row.applies === "chosen" && removeOnly && <div className="grant-resources">
       {/* Review Q9: editing only removes items; adding needs a rotation (re-authenticated). */}
       <ul className="grant-chosen" aria-label={`Chosen ${selector.many}`}>
         {row.resourceIds.map((value) => {
@@ -132,7 +135,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
       </ul>
       <small className="grant-note">Items can only be removed here; rotate the key to add.</small>
     </div>}
-    {selector && row.applies === "chosen" && !narrowing && <div className="grant-resources">
+    {selector && row.applies === "chosen" && !removeOnly && <div className="grant-resources">
       {resources === "error" ? <p className="form-error" role="alert">Could not load your {selector.many}.</p>
         : <Combobox multiple backspaceRemoves={false} label={`Chosen ${selector.many}`} placeholder={`Choose ${selector.many}…`} placeholderWithValues={`Add another ${selector.one}…`} value={row.resourceIds} options={unchosen}
           selectedOptions={row.resourceIds.map((value) => resourceOptions.find((option) => option.value === value) ?? { value, label: "An item you cannot open now" })}

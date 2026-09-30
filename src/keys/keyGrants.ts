@@ -288,6 +288,29 @@ const DENIAL_LINE: Record<string, string> = {
   expired: "it has expired", rotated: "its rotation grace ended", paused: "your account is blocked"
 };
 
+/**
+ * One line of a key's own activity (Wave 34 verification Q1), for its owner in Settings. A refused
+ * call names the surface, why, and for an address refusal the shortened client address (the /24 or
+ * /64 the server kept), which only the key's owner ever sees.
+ */
+export function keyEventLine(event: { action: string; meta: Record<string, unknown> | null }) {
+  const meta = event.meta ?? {};
+  const surface = meta.surface === "rest" ? " over REST" : meta.surface === "mcp" ? " over MCP" : "";
+  switch (event.action) {
+    case "key.created": return meta.rotatedFrom ? "Created by rotating an older key" : "Created";
+    case "key.narrowed": return "Narrowed";
+    case "key.rotated": return "Rotated";
+    case "key.revoked": return meta.by === "admin" ? "Revoked by an admin" : "Revoked";
+    case "key.grace_ended": return "Rotation grace ended";
+    case "key.policy_blocked": return `Blocked by team policy${surface}`;
+    case "key.denied": {
+      const from = typeof meta.clientPrefix === "string" ? `, from ${meta.clientPrefix}` : "";
+      return `Refused${surface}: ${DENIAL_LINE[String(meta.reason)] ?? "not allowed"}${from}`;
+    }
+    default: return event.action;
+  }
+}
+
 export function deniedLine(key: { lastDenied?: { at: string; reason: string; surface: "mcp" | "rest" | null } | null }, relative: (iso: string) => string) {
   if (!key.lastDenied) return null;
   const surface = key.lastDenied.surface === "rest" ? " over REST" : key.lastDenied.surface === "mcp" ? " over MCP" : "";

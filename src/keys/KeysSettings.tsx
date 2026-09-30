@@ -8,10 +8,10 @@ import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
 import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
 import {
-  blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
+  blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, keyEventLine, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
 } from "./keyGrants";
-import { createKey, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyList, type NarrowBody } from "./keysApi";
+import { createKey, keyEvents, listKeys, narrowKey, revokeKey, rotateKey, type ApiKey, type KeyEvent, type KeyList, type NarrowBody } from "./keysApi";
 import "./keys.css";
 
 /**
@@ -264,6 +264,7 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
         const daily = apiKey.usageBySurface14d?.daily?.[surface] ?? [];
         return <div key={surface} className="keys-row-usage"><UsageBars usage={daily} /><small>{surface === "mcp" ? "MCP" : "REST"}: {usageLabel(daily).replace("No calls", "no calls")}</small></div>;
       })}
+      {!owner && apiKey.state !== "revoked" && <KeyActivity keyId={apiKey.id} />}
       {binned && onReview && <small className="mcp-key-binned">{binned} · <button type="button" className="text-button" onClick={onReview}>Review</button></small>}
     </div>
     {(onRotate || onEdit || onRevoke) && <div className="keys-row-actions">
@@ -272,6 +273,22 @@ export function KeyRow({ apiKey, owner, onRotate, onEdit, onRevoke, onReview }: 
       {onRevoke && <button type="button" className="keys-action danger" onClick={onRevoke}><Trash2 aria-hidden="true" />{apiKey.state === "grace" ? "Revoke now" : "Revoke"}</button>}
     </div>}
   </li>;
+}
+
+/**
+ * The key's own events for its owner (Wave 34 verification Q1), loaded when opened: created,
+ * narrowed, rotated, blocked, and refused calls with the shortened address they came from.
+ */
+function KeyActivity({ keyId }: { keyId: string }) {
+  const [events, setEvents] = useState<KeyEvent[] | "error" | null>(null);
+  return <details className="keys-activity" onToggle={(event) => {
+    if ((event.currentTarget as HTMLDetailsElement).open && events === null) keyEvents(keyId).then(setEvents, () => setEvents("error"));
+  }}>
+    <summary>Recent activity</summary>
+    {events === null ? <small role="status">Loading…</small> : events === "error" ? <small role="alert">Could not load this key's activity.</small>
+      : events.length === 0 ? <small>Nothing yet.</small>
+        : <ul>{events.map((event) => <li key={event.id}><small>{keyEventLine(event)} · {relativeTime(event.createdAt)}</small></li>)}</ul>}
+  </details>;
 }
 
 function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {

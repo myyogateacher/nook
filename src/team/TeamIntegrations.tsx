@@ -5,13 +5,13 @@ import { KeysDialog } from "../keys/KeysDialog";
 import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks";
 import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
-import { createIntegration, INTEGRATION_ROLE_OPTIONS, lastUsedText, listIntegrations, type Integration, type IntegrationRole } from "./integrationsApi";
+import { createIntegration, INTEGRATION_ROLE_OPTIONS, lastUsedText, listIntegrations, RETIRED_LABEL, type Integration, type IntegrationRole } from "./integrationsApi";
 import "../keys/keys.css";
 
 /** The help line under Team → Integrations (Wave 36, D287, T212): what an integration can and cannot reach. */
 export const INTEGRATIONS_HELP = "Accounts for AI clients and scripts. An integration never signs in: it acts only through the API keys you create for it here. "
   + "Its keys reach only what owners share with it by name in their Access sheet, never what is open to everyone, and never your own items. "
-  + "Admins hold its keys, but still cannot open anyone's private content.";
+  + "Admins hold its keys, so admins can read what owners share with it, and nothing else of theirs; owners see this when they share.";
 
 /**
  * Team → Integrations at /team/integrations (Wave 36, D287), admins only: every integration with its
@@ -60,7 +60,7 @@ export function TeamIntegrations({ onBack, onOpen, flash }: { onBack: () => void
     </div>}
     {!error && integrations && integrations.length > 0 && <ul className="team-list" aria-label="Integrations">
       {integrations.map((integration) => <li key={integration.id}>
-        <button type="button" className={`team-row team-group-row${integration.status === "blocked" ? " blocked" : ""}`} onClick={() => onOpen(integration.id)}>
+        <button type="button" className={`team-row team-group-row${integration.status !== "active" ? " blocked" : ""}`} onClick={() => onOpen(integration.id)}>
           <Avatar className="team-avatar" name={integration.displayName} integration />
           <span className="team-row-copy">
             <span className="team-row-title"><strong>{integration.displayName}</strong></span>
@@ -72,6 +72,7 @@ export function TeamIntegrations({ onBack, onOpen, flash }: { onBack: () => void
           <span className="team-row-chips">
             <span className={`team-role-chip ${integration.role}`}><span className="sr-only">Role: </span>{integration.role === "viewer" ? "Viewer" : "Member"}</span>
             {integration.status === "blocked" && <span className="team-status-chip">Blocked</span>}
+            {integration.status === "retired" && <span className="team-status-chip">{RETIRED_LABEL}</span>}
           </span>
           <ChevronRight aria-hidden="true" />
         </button>

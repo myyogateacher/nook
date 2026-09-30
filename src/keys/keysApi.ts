@@ -125,6 +125,8 @@ export type KeysApi = {
   loadResources: (module: GrantModule) => Promise<ResourceOption[]>;
   /** Where a Google re-authentication started from this screen comes back to. */
   returnTo: string;
+  /** Whose items an all-items grant covers, as the grant builder says it: "you" by default, "the integration" for one (Q-L5). */
+  opener?: string;
 };
 
 export const ownKeysApi: KeysApi = { list: listKeys, events: keyEvents, create: createKey, narrow: narrowKey, rotate: rotateKey, revoke: revokeKey, loadResources, returnTo: "/settings/keys" };
@@ -141,7 +143,8 @@ export function integrationKeysApi(integrationId: string): KeysApi {
     revoke: (id) => api<{ ok: true }>(`${base}/keys/${id}`, { method: "DELETE", body: "{}" }),
     // Only what is shared with the integration, never the admin's own items (T212).
     loadResources: (module) => api<{ resources: ResourceOption[] }>(`${base}/resources?module=${encodeURIComponent(module)}`).then((result) => result.resources),
-    returnTo: `/team/integrations/${integrationId}`
+    returnTo: `/team/integrations/${integrationId}`,
+    opener: "the integration"
   };
 }
 

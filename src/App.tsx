@@ -85,6 +85,7 @@ import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
 // Settings → API keys (Wave 31) replaced the MCP server section; the section id stays "mcp".
 import { KeysSettings } from "./keys/KeysSettings";
+import { unsavedKeyConfirm } from "./keys/unsavedKeyConfirm";
 import { IntegrationBadge } from "./ui/IntegrationBadge";
 import { MyAccess } from "./settings/MyAccess";
 import { ConfirmDialog } from "./files/Dialog";
@@ -528,18 +529,8 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   );
 }
 
-/**
- * The confirm for leaving an API key that is shown only once (C1): closing Settings (button, Escape,
- * scrim, Back), switching section, or "Manage team". Closing the browser tab is not guarded.
- */
-export function unsavedKeyConfirm(action: "close" | "section" | "leave") {
-  return {
-    title: "Leave without saving the key?",
-    message: `This API key is shown only once. ${action === "section" ? "Leave this section" : action === "close" ? "Close Settings" : "Leave Settings"} without copying it? You would have to rotate or create a key again.`,
-    confirmLabel: action === "section" ? "Leave section" : action === "close" ? "Close without saving" : "Leave without saving",
-    danger: true
-  };
-}
+// The confirm for leaving a key shown only once (C1) lives with the keys, so Team → Integrations uses it too.
+export { unsavedKeyConfirm };
 
 function HistoryPanel({ note, canRestore = true, onClose, onRestored }: { note: NoteDetail; canRestore?: boolean; onClose: () => void; onRestored: () => void }) {
   const [versions, setVersions] = useState<Version[]>([]);

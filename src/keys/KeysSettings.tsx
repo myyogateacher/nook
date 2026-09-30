@@ -26,10 +26,12 @@ type Dialog = { kind: "create" } | { kind: "edit"; key: ApiKey } | { kind: "rota
 
 const messageOf = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 
-export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null, integration }: {
+export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnabled, role, notice = null, integration, reopenOnForward = true }: {
   onPendingChange: (pending: boolean) => void; onNestedDialogChange?: (open: boolean) => void; totpEnabled: boolean; role: string | undefined; /** Q2: the result of a Google confirmation started here. */ notice?: React.ReactNode;
   /** Team → Integrations (Wave 36): an admin manages this integration's keys (wrap in KeysApiContext); `role` is the integration's. */
   integration?: { name: string };
+  /** Friction 12 (Settings): Forward after Back reopens the key dialog Back closed. Team → Integrations turns it off, like its other sheets (Q-L1). */
+  reopenOnForward?: boolean;
 }) {
   const keysApi = useKeysApi();
   const [data, setData] = useState<KeyList | null>(null);
@@ -155,7 +157,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     <div className="mcp-card mcp-config keys-rest-help"><div><h4 id="keys-rest-heading">Using the REST API</h4><p>A key whose “Where it is used” includes REST runs the same tools over plain HTTPS, for scripts and CI. Send it only in the Authorization header, never in a URL. Bodies are JSON. <code>GET /api/v1/tools</code> lists what the key can call, and <code>GET /api/v1/me</code> shows its permissions and limits. Replace the placeholder with your key.</p></div><pre aria-labelledby="keys-rest-heading"><code>{restExample}</code></pre><button type="button" className="secondary-button" onClick={() => copy(restExample, "rest")}><Copy />{copied === "rest" ? "Copied example" : "Copy example"}</button></div>
 
     {/* Back off the phone sentinel closes a key dialog; Forward shows the same one again (Friction 12). */}
-    <HistoryDialogReopen.Provider value={dialog ? () => setDialog(dialog) : null}>
+    <HistoryDialogReopen.Provider value={dialog && reopenOnForward ? () => setDialog(dialog) : null}>
     {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
     {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}

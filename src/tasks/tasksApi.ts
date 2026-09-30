@@ -131,7 +131,7 @@ export function hydrateBoard(payload: BoardPayload): BoardDetail {
 
 export const getBoard = (boardId: string) => api<BoardPayload>(`/tasks/boards/${boardId}`).then(hydrateBoard);
 export const renameBoard = (boardId: string, name: string) => api<{ board: BoardSummary }>(`/tasks/boards/${boardId}`, json("PATCH", { name }));
-export type BoardReader = { id: string; displayName: string; /** Q7: the same-origin picture (web payload). */ avatarUrl?: string | null };
+export type BoardReader = { id: string; displayName: string; /** Q7: the same-origin picture (web payload). */ avatarUrl?: string | null; /** Wave 36: an integration (web payload). */ isIntegration?: boolean };
 /**
  * Everyone who can open the board, for the assignee picker: up to 200 without `q`, or a
  * case-insensitive name match (1–64 characters) of at most `limit` (default 20). Display names only.

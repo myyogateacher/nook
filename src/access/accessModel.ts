@@ -59,6 +59,9 @@ export function groupSummary(group: Pick<PickerGroup, "memberCount" | "guestCoun
   return group.guestCount ? `${people} · includes ${group.guestCount} ${group.guestCount === 1 ? "guest" : "guests"}` : people;
 }
 
+/** What an owner must know before sharing with an integration (T212, review R2): admins hold its keys. */
+export const INTEGRATION_KEYS_NOTE = "Admins hold its keys and can read what you share with it";
+
 /**
  * The Add people or groups options: groups first (with their size and guests), then people (with
  * their Team role), leaving out the owner and everyone already on the list. With sharing with guests
@@ -78,7 +81,7 @@ export function pickerOptions(draft: Draft, access: Pick<ItemAccess, "owner" | "
     // Wave 36 (D287): integrations are offered like people, marked, and after them.
     group: person.kind === "service" ? "Integrations" : "People",
     description: person.kind === "service"
-      ? `Integration: an AI client or script with its own keys${roleCapHint(person.role ?? "member") ? " · reads only" : ""}`
+      ? `Integration: an AI client or script. ${INTEGRATION_KEYS_NOTE}${roleCapHint(person.role ?? "member") ? " · reads only" : ""}`
       : person.role ? `Team role: ${ROLE_LABELS[person.role]}${roleCapHint(person.role) ? " · reads only" : ""}` : undefined
   }));
   return [...groupOptions, ...personOptions.filter((option) => option.group === "People"), ...personOptions.filter((option) => option.group === "Integrations")];
@@ -168,16 +171,25 @@ export function groupBoost(person: DraftPerson, groups: readonly DraftGroup[]): 
  * B3: saving another audience clears every person and group row (the stored model keeps rows only
  * for "People and groups I choose"). How many saved rows would lose their access, or null when none.
  */
+/** Who loses access when the audience moves off People and groups; integrations are counted apart (Q-L5). */
 export function audienceLoss(draft: Pick<Draft, "audience">, access: Pick<ItemAccess, "audience" | "people" | "groups">) {
   if (access.audience !== "selected" || draft.audience === "selected") return null;
-  const people = access.people.length;
+  const integrations = access.people.filter((person) => person.kind === "service").length;
+  const people = access.people.length - integrations;
   const groups = access.groups.length;
-  return people || groups ? { people, groups } : null;
+  if (!people && !groups && !integrations) return null;
+  return integrations ? { people, groups, integrations } : { people, groups };
 }
 
-export function audienceLossMessage(loss: { people: number; groups: number }, audience: Audience) {
-  const who = [loss.people ? count(loss.people, "person", "people") : "", loss.groups ? count(loss.groups, "group", "groups") : ""].filter(Boolean).join(" and ");
-  const plural = loss.people + loss.groups > 1;
+export function audienceLossMessage(loss: { people: number; groups: number; integrations?: number }, audience: Audience) {
+  const integrations = loss.integrations ?? 0;
+  const parts = [
+    loss.people ? count(loss.people, "person", "people") : "",
+    integrations ? count(integrations, "integration", "integrations") : "",
+    loss.groups ? count(loss.groups, "group", "groups") : ""
+  ].filter(Boolean);
+  const who = parts.length > 2 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts.join(" and ");
+  const plural = loss.people + loss.groups + integrations > 1;
   const next = audience === "private" ? "Only you will be able to open it."
     : audience === "all_users" ? "Everyone signed in can open it instead, at the level you chose; their own levels are gone."
     : "It will use its folder's access instead.";

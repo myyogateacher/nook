@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { Share2, TriangleAlert, UsersRound, X } from "lucide-react";
+import { Bot, Share2, TriangleAlert, UsersRound, X } from "lucide-react";
 import { ApiError } from "../api";
 import { trapTabKey } from "../files/Dialog";
 import { Select } from "../ui/Select";
@@ -11,13 +11,17 @@ import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { getAccess, keysReachLine, listPeople, listPickerGroups, putAccess, type ItemAccess, type PickerGroup, type PickerPerson } from "./accessApi";
 import {
   accessErrorMessage, addPicked, afterGuestRefusal, audienceLoss, audienceLossMessage, audienceOptions, draftFrom, groupBoost, groupSummary, guestRefusal, guestRefusalMessage, isDirty,
-  KEPT_GUEST_NOTE, KEPT_GUEST_REASON, keptGuestLevel, levelOptions, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft
+  INTEGRATION_KEYS_NOTE, KEPT_GUEST_NOTE, KEPT_GUEST_REASON, keptGuestLevel, levelOptions, levelsUpTo, lockedForYou, pickerOptions, roleCapHint, saveBlocker, toPutBody, type Draft
 } from "./accessModel";
 import { LEVEL_LABELS, type AccessKind, type Level } from "./accessLevels";
 import { LevelSelect } from "./LevelSelect";
 import { PrincipalPicker } from "./PrincipalPicker";
 import { SheetConfirm } from "./SheetConfirm";
+import type { Option } from "../ui/Select";
 import "../files/files.css";
+
+/** Q-L3: integrations in the picker carry the integration (robot) icon, as on their rows. */
+const withIntegrationIcons = (options: Option[]) => options.map((option) => option.group === "Integrations" ? { ...option, icon: <Bot /> } : option);
 import "./access.css";
 
 export type AccessSheetProps = {
@@ -218,7 +222,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
           </fieldset> : <p className="access-note" role="note"><Share2 aria-hidden="true" />You manage this item: you can add and change people and groups up to {LEVEL_LABELS.edit}. Only {access.owner.displayName} changes managers or who can open it.</p>}
 
           {selected && <section className="access-principals" aria-label="People and groups">
-            <PrincipalPicker options={pickerOptions(draft, access, people, groups)} onPick={(value) => update((current) => addPicked(current, value, access, people, groups))} disabled={busy} onOpening={refreshGuestPolicy}
+            <PrincipalPicker options={withIntegrationIcons(pickerOptions(draft, access, people, groups))} onPick={(value) => update((current) => addPicked(current, value, access, people, groups))} disabled={busy} onOpening={refreshGuestPolicy}
               emptyText={people.length || groups.length ? "Nobody else to add" : "No one to share with yet"} />
             {draft.groups.length === 0 && draft.people.length === 0 && <p className="access-empty">Nobody yet. Add people or groups above.</p>}
             <ul className="access-list">
@@ -256,6 +260,7 @@ export function AccessSheet({ kind, id, title, onClose, onSaved, guardHistory = 
                   <span className="access-row-copy">
                     <strong>{person.displayName}{person.kind === "service" && <IntegrationBadge />}</strong>
                     <small>{person.kind === "service" ? `Its keys reach this at this level · ${ROLE_LABELS[person.teamRole]}` : `Team role: ${ROLE_LABELS[person.teamRole]}`}{yours ? " · You" : ""}{person.blocked ? " · Blocked" : ""}</small>
+                    {person.kind === "service" && <small className="access-row-hint">{INTEGRATION_KEYS_NOTE}.</small>}
                     {kept && <small className="access-row-hint access-kept">{KEPT_GUEST_NOTE}</small>}
                     {boost && <small className="access-row-hint access-boost">Also {LEVEL_LABELS[boost.level]} through {boost.group}; the higher level applies</small>}
                     {flagged && <small className="access-row-refused">Sharing with guests is off: remove this person{kept ? " or set their level back" : ""}.</small>}

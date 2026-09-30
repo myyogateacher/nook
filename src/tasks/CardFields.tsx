@@ -55,8 +55,8 @@ export function CardFields({ card, userId, idPrefix, done, saving, onSave, tags,
     <div className="task-card-field">
       <label htmlFor={`${idPrefix}-assignees`}><UsersRound aria-hidden="true" />Assignees</label>
       <AssigneePicker boardId={card.board_id} userId={userId} inputId={`${idPrefix}-assignees`} assignees={cardAssignees(card)} disabled={saving}
-        onCommit={(ids, names, avatars) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned",
-          { assignees: ids.map((id, index) => ({ id, display_name: names[index] ?? "", can_read: 1, avatar_url: avatars[index] ?? null })) })} />
+        onCommit={(ids, names, avatars, integrations) => onSave({ assigneeIds: ids }, ids.length ? `Assigned to ${assigneeSentence(names)}` : "Unassigned",
+          { assignees: ids.map((id, index) => ({ id, display_name: names[index] ?? "", can_read: 1, avatar_url: avatars[index] ?? null, ...(integrations[index] ? { is_integration: true } : {}) })) })} />
     </div>
     {tags && <div className="task-card-field">
       <label htmlFor={`${idPrefix}-tags`}><Tag aria-hidden="true" />Tags</label>
@@ -108,7 +108,7 @@ type AssigneePickerProps = {
   assignees: ReturnType<typeof cardAssignees>;
   disabled: boolean;
   /** Saves the whole list (D102); resolves once the save settled. */
-  onCommit: (ids: string[], names: string[], avatars: Array<string | null>) => Promise<unknown>;
+  onCommit: (ids: string[], names: string[], avatars: Array<string | null>, integrations: boolean[]) => Promise<unknown>;
 };
 
 /**
@@ -122,9 +122,11 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
   const wrapRef = useRef<HTMLDivElement>(null);
   const names = useRef(new Map<string, string>());
   const avatars = useRef(new Map<string, string | null>());
+  const integrations = useRef(new Set<string>());
   for (const assignee of assignees) {
     names.current.set(assignee.id, assignee.display_name);
     if (assignee.avatar_url !== undefined) avatars.current.set(assignee.id, assignee.avatar_url);
+    if (assignee.is_integration) integrations.current.add(assignee.id);
   }
   const saved = assignees.map((assignee) => assignee.id);
   const value = draft ?? saved;
@@ -138,7 +140,7 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
     }
     committing.current = true;
     try {
-      await onCommit(next, next.map((id) => names.current.get(id) ?? "them"), next.map((id) => avatars.current.get(id) ?? null));
+      await onCommit(next, next.map((id) => names.current.get(id) ?? "them"), next.map((id) => avatars.current.get(id) ?? null), next.map((id) => integrations.current.has(id)));
     } finally {
       // Saved or not (a conflict shows the other person's version), the chips follow the card.
       draftRef.current = null;
@@ -178,11 +180,12 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
     for (const user of users) {
       names.current.set(user.id, user.displayName);
       avatars.current.set(user.id, user.avatarUrl ?? null);
+      if (user.isIntegration) integrations.current.add(user.id);
     }
     return users.map((user) => {
-      const detail = pickerDetail(user, users);
-      // Q7: each person's picture beside the name (the initial only when there is none).
-      const icon = <Avatar className="task-avatar picker-avatar" name={user.displayName} url={user.avatarUrl ?? null} fallback={initials(user.displayName)} />;
+      const detail = user.isIntegration ? "Integration" : pickerDetail(user, users);
+      // Q7: each person's picture beside the name (the initial only when there is none); Q-L4: an integration's icon.
+      const icon = <Avatar className="task-avatar picker-avatar" name={user.displayName} url={user.avatarUrl ?? null} fallback={initials(user.displayName)} integration={user.isIntegration === true} />;
       return { value: user.id, label: user.id === userId ? `${user.displayName} (me)` : user.displayName, icon, ...(detail ? { description: detail } : {}) };
     });
   }, [boardId, userId]);
@@ -197,7 +200,9 @@ export function AssigneePicker({ boardId, userId, inputId, assignees, disabled, 
       value={value}
       maxSelected={MAX_ASSIGNEES}
       loadOptions={loadOptions}
-      selectedOptions={assignees.map((assignee) => ({ value: assignee.id, label: assigneeLabel(assignee) }))}
+      selectedOptions={assignees.map((assignee) => ({ value: assignee.id, label: assigneeLabel(assignee),
+        // Q-L4: an integration's chip carries its icon, as on the card face (people's chips stay text).
+        ...(assignee.is_integration ? { icon: <Avatar className="task-avatar picker-avatar" name={assignee.display_name} integration /> } : {}) }))}
       disabled={disabled}
       onChange={(next) => {
         setDraft(next);

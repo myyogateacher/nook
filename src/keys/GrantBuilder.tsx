@@ -80,6 +80,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
   canRemove: boolean;
 }) {
   const id = useId();
+  const opener = useKeysApi().opener ?? "you";
   const selector = selectorFor(row.module, row.permission);
   let permissions: Option<KeyPermission>[] = rowPermissionChoices(row.module, role, policy, rows, row.key).map((choice) => ({ value: choice.value, label: choice.label, description: choice.description, disabled: choice.disabled && choice.value !== row.permission }));
   if (narrowing && ceiling) {
@@ -87,7 +88,7 @@ function GrantRowEditor({ row, index, role, policy, disabled, rows, ceiling, nar
     permissions = permissions.filter((option) => option.value === ceiling.permission || option.value === "read").map((option) => ({ ...option, disabled: false }));
   }
   const appliesOptions: Option<"all" | "chosen">[] = selector ? [
-    { value: "all", label: `All ${selector.many}`, description: `Every ${selector.one} you can open, now and later`, disabled: narrowing && ceiling?.applies === "chosen" },
+    { value: "all", label: `All ${selector.many}`, description: `Every ${selector.one} ${opener} can open, now and later`, disabled: narrowing && ceiling?.applies === "chosen" },
     { value: "chosen", label: `Chosen ${selector.many}`, description: `Only the ${selector.many} you pick` }
   ] : [];
   const writable = row.permission !== "read";

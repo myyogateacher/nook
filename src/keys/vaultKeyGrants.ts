@@ -109,7 +109,7 @@ export function vaultGrantSummary(rows: readonly VaultGrantRow[], vaults: readon
   return `${parts.join("; ")}. Never deletes, never changes access or members, and never manages keys.`;
 }
 
-const INACTIVE = { role: "your team role cannot use it", "no-access": "no current access" } as Record<string, string>;
+const INACTIVE = { role: "your team role cannot use it", "no-access": "beyond your current access", binned: "in the Bin" } as Record<string, string>;
 
 /** The chips of a vault key row: "Payments · Production: read" (names only for the key's owner). */
 export function vaultGrantChips(grants: readonly VaultGrantView[]) {

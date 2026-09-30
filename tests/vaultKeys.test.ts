@@ -467,7 +467,9 @@ describe("narrowing and rotating vault keys (D277, D278)", () => {
     expect(key.key.vault.protectedAccess).toBe(true);
     // Dropping the prod grant is fine; replacing "every" with staging on this key is not (it could be protected later).
     expect((await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.staging }] })).body.code).toBe("WIDENING_NOT_ALLOWED");
-    expect((await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id }] })).body.changed).toEqual(["grants"]);
+    // Wave 27 QA M2: dropping the last protected grant turns the flag off too.
+    expect((await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id }] })).body.changed).toEqual(["grants", "vaultFlags"]);
+    expect((await keysApi(owner, "GET", `/${key.id}`)).body.key.vault.protectedAccess).toBe(false);
   });
 
   test("rotation keeps the kind, the grants, and the flags; it re-checks the creator's access", async () => {

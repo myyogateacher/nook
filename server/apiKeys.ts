@@ -211,7 +211,7 @@ function keyState(row: KeyRow, policies: Policies, time = Date.now()): { state: 
 
 // ------------------------------------------------------------------------------ effective rights
 
-export type InactiveReason = "role" | "policy" | "no-access" | "unavailable";
+export type InactiveReason = "role" | "policy" | "no-access" | "unavailable" | "binned";
 
 /**
  * Wave 34 review S2: a key may hold only saved views its holder owns. A view shared by someone else
@@ -761,6 +761,12 @@ export function narrowApiKey(userId: string, keyId: string, patch: z.infer<typeo
       flags = next;
       changed.push("vaultFlags");
     }
+  }
+  // Wave 27 QA M2: narrowing away every grant that reached a protected environment turns the flag
+  // off too, as creation and rotation store it only when needed.
+  if (row.kind === "vault" && nextGrants && protectedAccess && (flags?.protectedAccess ?? true) && !nextGrants.some((grant) => grant.protectedAtGrant === true)) {
+    flags = { allowMcpValueReads: flags?.allowMcpValueReads ?? row.allow_mcp_value_reads === 1, protectedAccess: false };
+    if (!changed.includes("vaultFlags")) changed.push("vaultFlags");
   }
   const name = patch.name ?? row.name;
   if (patch.name !== undefined && patch.name !== row.name) changed.push("name");

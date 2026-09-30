@@ -64,7 +64,7 @@ describe("vault key rows, Activity, and Keys with access", () => {
     { module: "vault" as const, permission: "read", resource: { kind: "vault" as const, id: "v2", name: null }, env: null, active: false, inactiveReason: "no-access" }
   ];
   test("owners see names; Team → Keys sees counts only (D73)", () => {
-    expect(vaultGrantChips(grants).map((chip) => chip.label)).toEqual(["Vault · Payments · Development: read and write", "Vault · A vault · every environment: read (no current access)"]);
+    expect(vaultGrantChips(grants).map((chip) => chip.label)).toEqual(["Vault · Payments · Development: read and write", "Vault · A vault · every environment: read (beyond your current access)"]);
     // Review L4: Team → Keys gets no ids either; the server's counts make the chip.
     const counted = vaultGrantCountChips(grants.map((grant) => ({ ...grant, resource: grant.resource && { ...grant.resource, id: null, name: null }, env: grant.env && { ...grant.env, id: null, name: null } })), { vaults: 2, writeVaults: 1 });
     expect(counted.map((chip) => chip.label)).toEqual(["Vault · 2 vaults · write in 1"]);

@@ -39,6 +39,9 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   const [data, setData] = useState<KeyList | null>(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  // Which kind the New key dialog is making, for the header's expiry line (QA L3).
+  const [creatingKind, setCreatingKind] = useState<"general" | "vault">("general");
+  useEffect(() => { if (dialog?.kind !== "create") setCreatingKind("general"); }, [dialog]);
   const [newToken, setNewToken] = useState<{ token: string; name: string; rotated: boolean } | null>(null);
   const [copied, setCopied] = useState("");
   const [status, setStatus] = useState("");
@@ -139,7 +142,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     <div className="mcp-card keys-card">
       <div className="keys-card-head">
-        <div><h4 ref={headingRef} tabIndex={-1}>{integration ? `Keys of ${integration.name}` : "Your keys"}</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount) : "Loading…"}</p></div>
+        <div><h4 ref={headingRef} tabIndex={-1}>{integration ? `Keys of ${integration.name}` : "Your keys"}</h4><p>{data ? keyPolicyLine(data.policy, data.liveCount, dialog?.kind === "create" ? creatingKind : "general") : "Loading…"}</p></div>
         {!guest && <button ref={newKeyRef} type="button" className="primary-button keys-new" onClick={() => { setStatus(""); openDialog({ kind: "create" }); }} disabled={!data || atLimit || Boolean(newToken) || needsGoogle}><Plus aria-hidden="true" />New key</button>}
       </div>
       {/* Q2: the confirmation state too ("Confirmed with Google until …"), not only the button. */}
@@ -163,7 +166,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
 
     {/* Back off the phone sentinel closes a key dialog; Forward shows the same one again (Friction 12). */}
     <HistoryDialogReopen.Provider value={dialog && reopenOnForward ? () => setDialog(dialog) : null}>
-    {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} allowVault={!integration} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
+    {dialog?.kind === "create" && data && <CreateKeyDialog policy={data.policy} role={role} totpEnabled={totpEnabled} allowVault={!integration} onKind={setCreatingKind} onClose={closeDialog} onCreated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: false }); load(); }} />}
     {dialog?.kind === "edit" && data && <EditKeyDialog apiKey={dialog.key} policy={data.policy} role={role} onClose={closeDialog} onSaved={(message) => { closeDialog(); setStatus(message); load(); }} />}
     {dialog?.kind === "rotate" && data && <RotateKeyDialog apiKey={dialog.key} policy={data.policy} role={role} totpEnabled={totpEnabled} onClose={closeDialog} onRotated={(key) => { closeDialog(); setNewToken({ token: key.token, name: key.name, rotated: true }); load(); }} />}
     {dialog?.kind === "revoke" && <RevokeKeyDialog apiKey={dialog.key} onClose={closeDialog} onRevoked={() => { closeDialogAfterReload(revokedFocusKey(dialog.key.id)); setStatus(`${dialog.key.name} was revoked.`); }} />}
@@ -255,7 +258,9 @@ export function keyAfterRevoke(liveIds: readonly string[], revokedId: string): s
   return rest[Math.min(index, rest.length - 1)]!;
 }
 
-function keyPolicyLine(policy: PolicySummary, liveCount: number) {
+/** The header line; while a vault key is being made it states the vault key rule (Wave 27 QA L3). */
+export function keyPolicyLine(policy: Pick<PolicySummary, "keysPerUser" | "keyMaxDays" | "keyRequireExpiry">, liveCount: number, kind: "general" | "vault" = "general") {
+  if (kind === "vault") return `${liveCount} of ${policy.keysPerUser} live keys. Vault keys expire after at most ${Math.min(policy.keyMaxDays, 365)} days, never “no expiry”.`;
   return `${liveCount} of ${policy.keysPerUser} live keys. New keys expire after at most ${policy.keyMaxDays} days${policy.keyRequireExpiry ? "" : ", or never"} (team policy).`;
 }
 
@@ -362,7 +367,7 @@ function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disable
   </div>;
 }
 
-function CreateKeyDialog({ policy, role, totpEnabled, allowVault, onClose, onCreated }: { policy: PolicySummary; role: string | undefined; totpEnabled: boolean; allowVault: boolean; onClose: () => void; onCreated: (key: ApiKey & { token: string }) => void }) {
+function CreateKeyDialog({ policy, role, totpEnabled, allowVault, onKind, onClose, onCreated }: { policy: PolicySummary; role: string | undefined; totpEnabled: boolean; allowVault: boolean; onKind?: (kind: "general" | "vault") => void; onClose: () => void; onCreated: (key: ApiKey & { token: string }) => void }) {
   const keysApi = useKeysApi();
   // Wave 27 (D264): a general key or a vault key (nkv_), never both in one.
   const [kind, setKind] = useState<"general" | "vault">("general");
@@ -428,6 +433,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, onClose, onCre
         ]}
         onChange={(next) => {
           setKind(next);
+          onKind?.(next);
           setError("");
           if (next === "vault") {
             // A vault key always expires; REST is the path for CI (T191).

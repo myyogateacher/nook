@@ -612,4 +612,5 @@ What to weigh:
   - **Team → Keys (L4)** gets no vault or environment ids, only `vaultCounts`.
   - **Activity key names (L5):** 038 adds `vault_events.key_name` and `key_prefix`, written with each event; the append-only trigger keeps them fixed.
   - The New key dialog suggests **MCP only** for a vault key that allows MCP value reads (the default surface stays MCP).
+  - QA: members who manage nothing open a read-only Access page with Keys with access (M1); narrowing that drops the last protected grant turns `protectedAccess` off (M2); a grant above the creator's live level shows `no-access` and a grant in the Bin shows its name with `binned` (L1, L2); the Keys header states the vault key expiry rule while a vault key is being made (L3).
 - **Deferred:** the external review of Waves 25–27 (the §12 gate, before release); rotation by write count (T190); a `vault:create` permission; an owner-side revoke on the Access page; MCP history tools.

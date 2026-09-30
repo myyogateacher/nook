@@ -2,7 +2,7 @@ import { z } from "zod";
 import { db } from "../db";
 import type { Grant, KeyPermission } from "../keyGrants";
 import {
-  atLeast, envLevel, keyEnvLevel, LEVEL_RANK, minLevel, requireVault, roleCap, vaultAccess, visibleEnvironments,
+  atLeast, envLevel, keyEnvLevel, LEVEL_RANK, levelIgnoringBin, minLevel, requireVault, roleCap, vaultAccess, visibleEnvironments,
   type VaultKeyActor, type VaultKeyGrant, type VaultLevel
 } from "./access";
 
@@ -113,26 +113,54 @@ export function vaultKeyActor(key: { keyId: string; userId: string; name: string
   };
 }
 
+/** Whether the vault is in the Bin (or being purged) and the creator is still one of its members. */
+function vaultBinnedFor(userId: string, vaultId: string) {
+  const row = db.query("SELECT deleted_at, purge_started_at FROM vaults WHERE id = ?").get(vaultId) as { deleted_at: string | null; purge_started_at: string | null } | null;
+  if (!row || (row.deleted_at === null && row.purge_started_at === null)) return false;
+  return Boolean(db.query("SELECT 1 FROM vault_members WHERE vault_id = ? AND user_id = ?").get(vaultId, userId));
+}
+
+/** A binned environment of a live vault the creator could read, or null. */
+function binnedEnvFor(userId: string, vaultId: string, envId: string) {
+  const row = db.query("SELECT name, protected FROM vault_environments WHERE id = ? AND vault_id = ? AND (deleted_at IS NOT NULL OR purge_started_at IS NOT NULL)").get(envId, vaultId) as { name: string; protected: 0 | 1 } | null;
+  return row && atLeast(levelIgnoringBin(vaultId, envId, userId), "read") ? row : null;
+}
+
 /**
  * Why a stored vault grant grants nothing now, or null: `role` when the creator's role holds no vault
- * access, `no-access` when the creator no longer reaches that vault or environment at the level.
+ * access; `binned` when its vault or environment is in the Bin (said only while the creator could
+ * still see it there, Wave 27 QA L2); `no-access` when the creator no longer reaches that vault or
+ * environment at the grant's level (QA L1: a write grant after the creator was lowered to read is
+ * `no-access`; the key still reads there). A viewer's write grant counts at read, as the role cap
+ * turns it into (T81).
  */
-export function vaultGrantInactive(userId: string, grant: Grant, protectedAccess: boolean): "role" | "no-access" | null {
+export function vaultGrantInactive(userId: string, grant: Grant, protectedAccess: boolean): "role" | "no-access" | "binned" | null {
   const cap = roleCap(userId);
   if (cap === "none") return "role";
   if (!grant.resourceId) return "no-access";
   const access = creatorAccess(userId, grant.resourceId);
-  if (!access) return "no-access";
+  if (!access) return vaultBinnedFor(userId, grant.resourceId) ? "binned" : "no-access";
+  if (grant.envId && !access.environments.some((env) => env.id === grant.envId)) return binnedEnvFor(userId, grant.resourceId, grant.envId) ? "binned" : "no-access";
+  const needed: VaultLevel = minLevel(grant.permission === "write" ? "write" : "read", cap);
   const actor: VaultKeyActor = { kind: "key", userId, keyId: "", keyName: "", via: "api", grants: [{ vaultId: grant.resourceId, envId: grant.envId ?? null, permission: grant.permission === "write" ? "write" : "read", protectedAtGrant: grant.protectedAtGrant === true }], protectedAccess, mcpValueReads: false };
-  const reaches = access.environments.some((env) => atLeast(minLevel(envLevel(access, env.id), keyEnvLevel(actor, grant.resourceId!, env)), "read"));
+  const reaches = access.environments.some((env) => atLeast(minLevel(envLevel(access, env.id), keyEnvLevel(actor, grant.resourceId!, env)), needed));
   return reaches ? null : "no-access";
 }
 
-/** The vault's and environment's names for the key's owner (only while they can read them), for the key list. */
+/**
+ * The vault's and environment's names for the key's owner (only while they can read them, or see
+ * them in the Bin: QA L2), for the key list.
+ */
 export function vaultGrantNames(userId: string, grant: Grant): { vaultName: string | null; envName: string | null; envProtected: boolean } {
-  const access = grant.resourceId ? creatorAccess(userId, grant.resourceId) : null;
-  if (!access) return { vaultName: null, envName: null, envProtected: false };
-  const env = grant.envId ? visibleEnvironments(access).find((item) => item.id === grant.envId) : null;
+  if (!grant.resourceId) return { vaultName: null, envName: null, envProtected: false };
+  const access = creatorAccess(userId, grant.resourceId);
+  if (!access) {
+    if (!vaultBinnedFor(userId, grant.resourceId)) return { vaultName: null, envName: null, envProtected: false };
+    const vault = db.query("SELECT name FROM vaults WHERE id = ?").get(grant.resourceId) as { name: string } | null;
+    const env = grant.envId ? db.query("SELECT name, protected FROM vault_environments WHERE id = ? AND vault_id = ?").get(grant.envId, grant.resourceId) as { name: string; protected: 0 | 1 } | null : null;
+    return { vaultName: vault?.name ?? null, envName: env?.name ?? null, envProtected: env?.protected === 1 };
+  }
+  const env = grant.envId ? visibleEnvironments(access).find((item) => item.id === grant.envId) ?? binnedEnvFor(userId, grant.resourceId, grant.envId) : null;
   return { vaultName: access.vault.name, envName: env?.name ?? null, envProtected: env?.protected === 1 };
 }
 

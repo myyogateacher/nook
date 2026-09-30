@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createUser, db, request, type Session } from "./support/harness";
-import { newVault, resetVaultLimits } from "./support/vault";
+import { createUser, db, origin, request, type Session } from "./support/harness";
+import { call, newSecret, newVault, resetVaultLimits, share } from "./support/vault";
 
 const { resetKeyAlertsForTests } = await import("../server/vault/keyApi");
 const { countKeyValueReads } = await import("../server/vault/limits");
@@ -29,7 +29,12 @@ async function keysApi(session: Session, method: string, path: string, body?: un
 async function vaultKey(session: Session, grants: VaultGrantBody[], extra: Record<string, unknown> = {}) {
   const created = await keysApi(session, "POST", "", { name: `F27 key ${crypto.randomUUID().slice(0, 6)}`, kind: "vault", surfaces: "both", grants, password: session.password, ...extra });
   if (created.status !== 201) throw new Error(`vault key refused: ${JSON.stringify(created.body)}`);
-  return { id: created.body.key.id as string };
+  return { id: created.body.key.id as string, token: created.body.key.token as string };
+}
+
+async function restValue(token: string, vaultId: string, secretId: string, envId: string) {
+  const response = await fetch(`${origin}/api/v1/vault/vaults/${vaultId}/secrets/${secretId}/values/${envId}`, { headers: { Authorization: `Bearer ${token}` } });
+  return { status: response.status, body: await response.json() as Record<string, any> };
 }
 
 describe("wave 27 fixes: the daily value-read alert (V-O6)", () => {
@@ -52,6 +57,43 @@ describe("wave 27 fixes: the daily value-read alert (V-O6)", () => {
     expect(notice?.title).toMatch(/^Your vault API key “F27 key .+” read more than 500 values today\. If you did not expect this much use, revoke it/);
     expect(keyEventLine({ action: "key.vault.volume", meta: { threshold: 500, surface: "rest" } })).toBe("Read more than 500 values today over REST");
     expect(keyEventLine({ action: "key.vault.limited", meta: { surface: "mcp" } })).toBe("Hit a vault limit over MCP");
+  });
+});
+
+describe("wave 27 QA fixes", () => {
+  test("M2: narrowing away the only protected grant turns protectedAccess off; protecting the kept environment later cuts the key", async () => {
+    const owner = await createUser("F27 qa m2");
+    const vault = await newVault(owner);
+    const secret = await newSecret(owner, vault, "QA_M2", { dev: "m2-dev" });
+    const key = await vaultKey(owner, [{ module: "vault", permission: "write", vaultId: vault.id, envId: vault.envs.dev }, { module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.prod }], { protectedAccess: true });
+    const narrowed = await keysApi(owner, "PATCH", `/${key.id}`, { grants: [{ module: "vault", permission: "write", vaultId: vault.id, envId: vault.envs.dev }] });
+    expect(narrowed.status).toBe(200);
+    expect(db.query("SELECT vault_protected_access FROM mcp_api_keys WHERE id = ?").get(key.id)).toEqual({ vault_protected_access: 0 });
+    expect(db.query("SELECT protected_at_grant FROM api_key_grants WHERE key_id = ?").all(key.id)).toEqual([{ protected_at_grant: 0 }]);
+    expect((await keysApi(owner, "GET", `/${key.id}`)).body.key.vault).toEqual({ allowMcpValueReads: false, protectedAccess: false });
+    db.query("UPDATE vault_environments SET protected = 1 WHERE id = ?").run(vault.envs.dev!);
+    expect((await restValue(key.token, vault.id, secret.id, vault.envs.dev!)).status).toBe(404);
+    db.query("UPDATE vault_environments SET protected = 0 WHERE id = ?").run(vault.envs.dev!);
+    // Narrowing that keeps a protected grant keeps the flag.
+    const kept = await vaultKey(owner, [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.dev }, { module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.prod }], { protectedAccess: true });
+    expect((await keysApi(owner, "PATCH", `/${kept.id}`, { grants: [{ module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.prod }] })).status).toBe(200);
+    expect(db.query("SELECT vault_protected_access FROM mcp_api_keys WHERE id = ?").get(kept.id)).toEqual({ vault_protected_access: 1 });
+  });
+
+  test("L1: a write grant shows no-access once the creator is lowered to read (it still reads); L2: a binned environment shows its name and 'binned'", async () => {
+    const owner = await createUser("F27 qa l1 owner");
+    const member = await createUser("F27 qa l1 member");
+    const vault = await newVault(owner);
+    const secret = await newSecret(owner, vault, "QA_L1", { dev: "l1", staging: "l1s" });
+    await share(owner, vault, [{ session: member, levels: { dev: "write", staging: "read" } }]);
+    const key = await vaultKey(member, [{ module: "vault", permission: "write", vaultId: vault.id, envId: vault.envs.dev }, { module: "vault", permission: "read", vaultId: vault.id, envId: vault.envs.staging }]);
+    const grants = async () => (await keysApi(member, "GET", `/${key.id}`)).body.key.grants as Array<any>;
+    expect((await grants()).map((grant) => grant.inactiveReason)).toEqual([null, null]);
+    await share(owner, vault, [{ session: member, levels: { dev: "read", staging: "read" } }]);
+    expect((await grants())[0]).toMatchObject({ permission: "write", active: false, inactiveReason: "no-access" });
+    expect((await restValue(key.token, vault.id, secret.id, vault.envs.dev!)).status).toBe(200);
+    expect((await call(owner, "DELETE", `/vaults/${vault.id}/environments/${vault.envs.staging}`)).status).toBe(200);
+    expect((await grants())[1]).toMatchObject({ active: false, inactiveReason: "binned", env: { id: vault.envs.staging, name: "Staging" } });
   });
 });
 

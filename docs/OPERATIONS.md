@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.18.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.19.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -237,7 +237,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_TRANSPORT` | `resend` | `resend`, or `file` for development and tests only (refused when `NODE_ENV=production`). |
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
-| `APP_VERSION` | `0.18.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.19.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.
@@ -317,6 +317,14 @@ curl http://localhost:2026/api/health
 ```
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
+
+**Upgrading to 0.19.0:** back up first with `./scripts/backup.sh --force`. Migration 036 (integrations: a `description` and a `retired_at` marker on accounts, and database triggers that refuse a session, a Google identity, an admin or guest role, or a kind change for an integration) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing about existing people or keys changes. Migration number 031 is still intentionally unused. No new environment variables are needed. Pull, rebuild with `APP_VERSION=0.19.0`, and restart as above.
+
+What an admin should know:
+
+- **Team → Integrations** creates accounts for AI clients and scripts (role member or viewer) that never sign in; admins create, rotate, narrow, and revoke their keys there with their own password, and Team → Keys lists those keys with the integration as owner. An integration reaches only what owners share with it by name (never "everyone signed in", never through a group), and the Access sheet tells owners that admins hold its keys. Integrations receive no email or bell notifications and cannot be invited, promoted to admin, or added to groups.
+- **Deleting an integration** revokes its keys; the account is removed only when it never had a key and created nothing, otherwise it is kept as "Deleted (kept for attribution)" and can never be unblocked or re-keyed. `team-admin list` marks integrations; the other `team-admin` commands refuse them.
+- **REST and MCP:** `GET /api/v1/me` reports `owner.kind` (`person` or `service`). No MCP tool creates or manages integrations or keys.
 
 **Upgrading to 0.18.0:** back up first with `./scripts/backup.sh --force`. Migration 033 (key use per surface: when each API key was last used over MCP and over REST, a new daily usage table split by surface, and the columns that record a key's last refused call; existing use is copied as MCP use) runs once on the first boot and can only be undone by restoring that backup. It only adds; nothing existing changes. Its number is lower than migrations 034 and 035, which your instance already applied: that is expected, because the app applies each migration by its own number. Migration number 031 is intentionally not used yet. Pull, rebuild with `APP_VERSION=0.18.0`, and restart as above.
 

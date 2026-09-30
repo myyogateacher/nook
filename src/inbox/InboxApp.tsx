@@ -98,6 +98,9 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
   routeRef.current = route;
   const listGeneration = useRef(0);
   const detailGeneration = useRef(0);
+  // F1: on a computer the proposal pane scrolls on its own; a newly chosen proposal starts at its top.
+  const detailPaneRef = useRef<HTMLElement>(null);
+  useEffect(() => { detailPaneRef.current?.scrollTo({ top: 0 }); }, [route.proposalId]);
   const status = route.view === "history" ? "resolved" : "pending";
   const routinesView = route.view === "routines";
 
@@ -315,8 +318,8 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
     </header>
     <ReadOnlyBanner />
 
-    <div className={`inbox-layout${routinesView ? " inbox-layout-single" : ""}`}>
-      <section className="inbox-list-pane" aria-labelledby="inbox-title">
+    <div className={`inbox-layout${routinesView ? " inbox-layout-single" : " split-layout"}`}>
+      <section className={`inbox-list-pane${routinesView ? "" : " split-pane"}`} aria-labelledby="inbox-title">
         <div className="inbox-intro">
           <h1 id="inbox-title">Inbox</h1>
           <p>Changes your MCP keys suggested. Nothing changes until you approve it{canWrite ? "" : ", and your team role can only reject"}.</p>
@@ -384,7 +387,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onBin, onSettin
         </>}
       </section>
 
-      {!routinesView && <section className="inbox-detail-pane" aria-label="Proposal">
+      {!routinesView && <section ref={detailPaneRef} className="inbox-detail-pane split-pane" aria-label="Proposal">
         {route.proposalId && detail?.id === route.proposalId
           ? <ProposalView proposal={detail} busy={busy !== null} canApprove={canWrite} onBack={back} onOpenPath={onOpenPath}
             onApprove={() => { void approve(detail, detail.position?.nextId); }}

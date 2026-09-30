@@ -21,7 +21,7 @@ import { GroupPage } from "./GroupPage";
 import { MemberAccess } from "./MemberAccess";
 import { Templates } from "./Templates";
 import { AccessActivity } from "./AccessActivity";
-import { eventLabel, filterTeam, joinedLabel, initialOf, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
+import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 
@@ -113,6 +113,10 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
   const routeAccess = view.access === true && admin && routeUserId !== null;
   const routeTemplates = view.templates === true && admin;
   const routeActivity = view.activity === true && admin;
+  // F1: on a computer the details pane scrolls on its own; a newly chosen row starts at its top.
+  const detailPaneRef = useRef<HTMLElement>(null);
+  const paneKey = [routeUserId, routeInvites, routeEmail, routeKeys, routePolicies, routeGroups, routeGroupId, routeAccess, routeTemplates, routeActivity].join("|");
+  useEffect(() => { detailPaneRef.current?.scrollTo({ top: 0 }); }, [paneKey]);
   const [invites, setInvites] = useState<TeamInviteList | null>(null);
   const [invitesError, setInvitesError] = useState<string | null>(null);
   const [members, setMembers] = useState<TeamMember[] | null>(null);
@@ -274,8 +278,8 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
       <h2>Team is not available for your account</h2>
       <p>Ask an admin if you need to see who else uses this Nook.</p>
       <button className="primary-button" onClick={onHome}><House />Home</button>
-    </div></div> : <div className="team-layout">
-      <section className="team-list-pane" aria-labelledby="team-title">
+    </div></div> : <div className="team-layout split-layout">
+      <section className="team-list-pane split-pane" aria-labelledby="team-title">
         <div className="team-intro">
           <span className="eyebrow">Team</span>
           <h1 id="team-title">Team</h1>
@@ -366,7 +370,7 @@ export function TeamApp({ displayName, role, navigate, flash, onHome, onBin, onS
         </ul>}
       </section>
 
-      <section className="team-detail-pane" aria-label={routeInvites ? "Invites" : routeEmail ? "Email log" : routeKeys ? "Keys" : routePolicies ? "Policies" : routeGroupId ? "Group" : routeGroups ? "Groups" : routeTemplates ? "Templates" : routeActivity ? "Access activity" : routeAccess ? "Access" : "Team member"}>
+      <section ref={detailPaneRef} className="team-detail-pane split-pane" aria-label={routeInvites ? "Invites" : routeEmail ? "Email log" : routeKeys ? "Keys" : routePolicies ? "Policies" : routeGroupId ? "Group" : routeGroups ? "Groups" : routeTemplates ? "Templates" : routeActivity ? "Access activity" : routeAccess ? "Access" : "Team member"}>
         {routeAccess && routeUserId
           ? <MemberAccess key={routeUserId} userId={routeUserId} onBack={() => closeAccess(routeUserId)} flash={flash} />
           : routeTemplates

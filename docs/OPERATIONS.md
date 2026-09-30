@@ -260,6 +260,8 @@ The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files
 
 **Whiteboards.** A whiteboard is a Files document whose bytes are its current scene, a canonical `.excalidraw` JSON object of at most 4 MiB under `documents/objects/<object-id>`. Each save writes a new object and removes the old one after the database switches to it; a crash in between leaves an orphan that the hourly sweeper removes after an hour. Boards count against the owner's quota like any file, together with their kept previous versions and their thumbnails (at most 128 KiB each, stored in SQLite). The Excalidraw editor and its self-hosted fonts add about 21 MB to the image's `dist/`, about 26 MB with the compressed copies Nook serves (fonts about 13 MB, of which the Xiaolai CJK font is about 12.7 MB); the editor is downloaded by a browser only when someone opens a board.
 
+**Whiteboard safety snapshots.** The `whiteboard_snapshots` table (created by migration 030) is in use since whiteboards shipped: a save that empties a board, or takes a board of 10 or more elements to fewer than half of them, keeps the scene it replaces as a snapshot, and **Restore previous version** keeps the scene it replaces too; at most 5 are kept per board, only the owner sees and restores them, and they count toward the owner's quota.
+
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 
 ## Backup and restore

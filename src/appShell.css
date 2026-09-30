@@ -64,3 +64,16 @@
 .app-home-header { justify-content: flex-start; gap: 4px; }
 .app-home-header .app-home-brand { margin-right: auto; min-width: 0; }
 .app-account-inbox .app-account-badge { background: var(--yellow); color: #281f0b; font-weight: 800; }
+/*
+ * F1 (v0.16.0 QA): two-pane pages (Team and its sections, the Inbox proposals) on a computer. Both
+ * panes used to scroll together as one page with a sticky right pane that could be taller than the
+ * window, so its top and focused controls ended up under the header or below the fold. Now the page
+ * itself does not scroll: the layout fills the space under the header and each pane is its own scroll
+ * container (wheel, keys, and focus scroll only that pane). Phones keep one pane that scrolls as a page.
+ */
+@media (min-width: 761px) {
+  .app-page:not(.tasks-app):not(.collections-app):has(> .split-layout) { display: flex; flex-direction: column; overflow: hidden; }
+  .app-page:has(> .split-layout) > :not(.split-layout) { flex: none; }
+  .app-page > .split-layout { flex: 1 1 auto; min-height: 0; padding-top: 0; padding-bottom: 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .split-layout > .split-pane { position: static; min-width: 0; min-height: 0; max-height: 100%; overflow-y: auto; overscroll-behavior-y: contain; margin: 0 -6px; padding: clamp(28px, 5vh, 56px) 6px calc(40px + env(safe-area-inset-bottom)); scroll-padding: 16px 0; }
+}

@@ -63,7 +63,8 @@ export function groupEventLabel(row: GroupHistoryRow) {
     case "group.updated": return `${actor} changed the name or description`;
     case "group.member_added": return row.self ? `${actor} added themselves` : `${actor} added ${target}`;
     case "group.member_removed": return row.self ? `${actor} left the group` : `${actor} removed ${target}`;
-    default: return row.action;
+    // F10: an action this build does not know still reads as a sentence, never as its code.
+    default: return `${actor} changed the group`;
   }
 }
 

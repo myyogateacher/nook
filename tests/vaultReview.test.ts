@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createUser, dataDir, db, origin } from "./support/harness";
 import { call, newSecret, newVault, resetVaultLimits } from "./support/vault";
 
-const { requireEnvGrant } = await import("../server/vault/access");
+const { requireEnvGrant, requireVault, vaultGrant } = await import("../server/vault/access");
 const { openValue, rotateKek, verifyKeys } = await import("../server/vault/crypto");
 const { chargeVault, VAULT_LIMITS } = await import("../server/vault/limits");
 const { config, parseVaultKey } = await import("../server/config");
@@ -14,8 +14,8 @@ const { GENERAL_KEY_MODULES, permissionsForModule } = await import("../server/ke
 const { copySecret } = await import("../src/vault/reveal");
 
 /**
- * Independent review probes for Wave 25 (Vault A). Tests named "FINDING" use `test.failing`: they
- * state the secure behaviour, fail today, and start passing (so bun flags them) once fixed.
+ * Independent review probes for Wave 25 (Vault A). The two review findings (the grant minters and
+ * the clipboard clear) were `test.failing` probes and are ordinary tests since their fixes.
  */
 
 beforeEach(() => resetVaultLimits());
@@ -70,9 +70,8 @@ describe("AAD binding beyond the implementer's swaps (T189)", () => {
 });
 
 describe("the grant brand (D213)", () => {
-  // FINDING (LOW): the grant is branded, but requireEnvGrant/vaultGrant accept any object shaped like
-  // a VaultAccess, so code holding no real access check can still mint a valid grant and decrypt.
-  test.failing("FINDING: a hand-made VaultAccess cannot mint a grant", async () => {
+  // Fixed (review L1): requireEnvGrant/vaultGrant accept only a VaultAccess that vaultAccess() made.
+  test("a hand-made VaultAccess cannot mint a grant", async () => {
     const owner = await createUser("Review brand owner");
     const stranger = await createUser("Review brand stranger");
     const vault = await newVault(owner);
@@ -94,6 +93,13 @@ describe("the grant brand (D213)", () => {
     const stored = db.query("SELECT value_ct, comment_ct, generation, version FROM vault_values WHERE secret_id = ?").get(secret.id) as { value_ct: string; comment_ct: string | null; generation: number; version: number };
     const opened = grant ? openValue(grant, { secretId: secret.id, envId: dev, version: stored.version, generation: stored.generation, valueCt: stored.value_ct, commentCt: stored.comment_ct }).value : null;
     expect(opened).toBeNull();
+    expect(() => vaultGrant(forged, "read")).toThrow("Vault access refused");
+    // A copy of a real access (or one with a field swapped) is not the checked object either.
+    const real = requireVault({ kind: "session", userId: owner.userId }, vault.id);
+    expect(requireEnvGrant(real, dev, "read").vaultId).toBe(vault.id);
+    expect(() => requireEnvGrant({ ...real, actor: { kind: "session", userId: stranger.userId } }, dev, "read")).toThrow("Vault access refused");
+    expect(() => vaultGrant({ ...real }, "read")).toThrow("Vault access refused");
+    expect(Object.isFrozen(real)).toBe(true);
   });
 });
 
@@ -284,9 +290,8 @@ describe("keys and rotation (T199)", () => {
 });
 
 describe("the clipboard (T187)", () => {
-  // FINDING (LOW): the 30-second clear writes "" without checking what the clipboard holds, so
-  // it wipes whatever the person copied after the secret (another app, or ordinary Nook text).
-  test.failing("FINDING: clearing never wipes something copied after the secret", async () => {
+  // Fixed (review L2): the 30-second clear reads the clipboard first and clears only the secret.
+  test("clearing never wipes something copied after the secret", async () => {
     const focus = (globalThis as { document?: unknown }).document;
     (globalThis as { document?: unknown }).document = { hasFocus: () => true };
     try {

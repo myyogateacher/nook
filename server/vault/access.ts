@@ -41,7 +41,11 @@ export type VaultRow = {
 };
 export type EnvRow = { id: string; vault_id: string; slug: string; name: string; position: number; protected: 0 | 1; created_at: string };
 
-/** The caller's view of one live vault: its row, their role, and their level on each live environment. */
+/**
+ * The caller's view of one live vault: its row, their role, and their level on each live
+ * environment. Only `vaultAccess` makes one (a WeakSet brand, like the grant's): the grant minters
+ * refuse a hand-made or copied object, so no code can skip the check and still reach plaintext.
+ */
 export type VaultAccess = {
   actor: VaultActor;
   vault: VaultRow;
@@ -71,6 +75,12 @@ function mint(grant: VaultGrant): VaultGrant {
 }
 export function isVaultGrant(value: unknown): value is VaultGrant {
   return typeof value === "object" && value !== null && minted.has(value);
+}
+
+const checked = new WeakSet<object>();
+function requireChecked(access: VaultAccess) {
+  // A programming error behind the routes: fail closed, loudly, without any data.
+  if (typeof access !== "object" || access === null || !checked.has(access)) throw new Error("Vault access refused");
 }
 
 /** The Team role cap (§6.1): viewers read at most; guests, blocked, and unknown accounts reach nothing. */
@@ -103,7 +113,10 @@ export function vaultAccess(actor: VaultActor, vaultId: string): VaultAccess | n
     for (const env of environments) levels.set(env.id, minLevel(granted.get(env.id) ?? "none", cap));
   }
   const readable = member.role === "owner" || [...levels.values()].some((level) => atLeast(level, "read"));
-  return readable ? { actor, vault, role: member.role, environments, levels } : null;
+  if (!readable) return null;
+  const access: VaultAccess = Object.freeze({ actor: Object.freeze({ ...actor }), vault: Object.freeze(vault), role: member.role, environments: Object.freeze(environments.map((env) => Object.freeze(env))) as EnvRow[], levels });
+  checked.add(access);
+  return access;
 }
 
 /** `vaultAccess` or the 404 every missing and forbidden vault gets. */
@@ -135,6 +148,7 @@ export function requireVisibleEnv(access: VaultAccess, envId: string): EnvRow {
  * `VAULT_LEVEL` when they can but their level is lower.
  */
 export function requireEnvGrant(access: VaultAccess, envId: string, min: Exclude<VaultLevel, "none">, via: VaultVia = "session"): VaultGrant {
+  requireChecked(access);
   requireVisibleEnv(access, envId);
   const level = envLevel(access, envId);
   if (!atLeast(level, min)) throw levelTooLow();
@@ -147,6 +161,7 @@ export function requireEnvGrant(access: VaultAccess, envId: string, min: Exclude
  * can write on at least one environment. The D216 rules for editing a secret live in the service.
  */
 export function vaultGrant(access: VaultAccess, min: "read" | "write", via: VaultVia = "session"): VaultGrant {
+  requireChecked(access);
   let best: VaultLevel = access.role === "owner" ? minLevel("admin", roleCap(access.actor.userId)) : "none";
   for (const level of access.levels.values()) if (LEVEL_RANK[level] > LEVEL_RANK[best]) best = level;
   if (!atLeast(best, min)) throw levelTooLow();

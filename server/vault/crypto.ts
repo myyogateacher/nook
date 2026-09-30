@@ -197,11 +197,14 @@ export function verifyKeys(key: Buffer, options: { liveOnly?: boolean } = {}): {
 /**
  * KEK rotation (`vault-admin.ts rotate-kek`): re-wraps every DEK from `oldKey` to `newKey` in one
  * transaction. Values are not touched (seconds, not a re-encryption). Any DEK the old key cannot
- * open aborts the whole run with nothing changed.
+ * open aborts the whole run with nothing changed. The rows are read inside a `BEGIN IMMEDIATE`
+ * transaction, so no other connection can add or change a data key between the read and the
+ * re-wrap (review L3); the CLI also refuses to run while a server heartbeat is fresh, because a
+ * running server keeps wrapping new data keys with the old key until it restarts.
  */
 export function rotateKek(oldKey: Buffer, newKey: Buffer): { keys: number } {
-  const rows = db.query("SELECT vault_id, generation, wrapped_dek FROM vault_keys").all() as Array<{ vault_id: string; generation: number; wrapped_dek: string }>;
   return db.transaction(() => {
+    const rows = db.query("SELECT vault_id, generation, wrapped_dek FROM vault_keys").all() as Array<{ vault_id: string; generation: number; wrapped_dek: string }>;
     for (const row of rows) {
       const dek = unwrapDek(oldKey, row.vault_id, row.generation, row.wrapped_dek);
       try {
@@ -213,7 +216,7 @@ export function rotateKek(oldKey: Buffer, newKey: Buffer): { keys: number } {
       }
     }
     return { keys: rows.length };
-  })();
+  }).immediate();
 }
 
 /** Records when a DEK was created (the service's vault creation uses this with `newWrappedDek`). */

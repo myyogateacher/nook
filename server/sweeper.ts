@@ -12,6 +12,7 @@ import { sweepMail } from "./mail/dispatcher";
 import { orphanGrantReport } from "./access/groups";
 import { sweepAvatarFiles } from "./avatars";
 import { sweepGoogleFlows } from "./google/flows";
+import { sweepVaultEvents } from "./vault/service";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -125,6 +126,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (mail.outbox || mail.tokens) console.info(`Mail sweep: ${mail.outbox} outbox rows and ${mail.tokens} tokens removed`);
       } catch (error) {
         console.error("Mail sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Vault event log (T195): kept for 90 days.
+        const events = sweepVaultEvents(options.nowMs);
+        if (events) console.info(`Vault event sweep: ${events} old events removed`);
+      } catch (error) {
+        console.error("Vault event sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       try {
         // Google sign-in (Wave 35): flows past their 10 minutes, and avatar files no account points at.

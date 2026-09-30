@@ -87,15 +87,24 @@ describe("the generator (§6.7)", () => {
 });
 
 describe("clipboard (T187)", () => {
-  test("copying writes the value, then clears it after the delay when the page has focus", async () => {
+  test("copying writes the value, then clears it after the delay when the page has focus and it still holds the value", async () => {
     const writes: string[] = [];
     const focus = (globalThis as { document?: unknown }).document;
     (globalThis as { document?: unknown }).document = { hasFocus: () => true };
     try {
-      await copySecret("s3cret", { writeText: async (text: string) => { writes.push(text); } }, 5);
+      await copySecret("s3cret", { writeText: async (text: string) => { writes.push(text); }, readText: async () => writes[writes.length - 1] ?? "" }, 5);
       expect(writes).toEqual(["s3cret"]);
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(writes).toEqual(["s3cret", ""]);
+      // A browser that refuses to read the clipboard (or cannot): it is left alone.
+      const refused: string[] = [];
+      await copySecret("s3cret", { writeText: async (text: string) => { refused.push(text); }, readText: async () => { throw new Error("NotAllowedError"); } }, 5);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(refused).toEqual(["s3cret"]);
+      const unreadable: string[] = [];
+      await copySecret("s3cret", { writeText: async (text: string) => { unreadable.push(text); } }, 5);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(unreadable).toEqual(["s3cret"]);
     } finally {
       (globalThis as { document?: unknown }).document = focus;
     }

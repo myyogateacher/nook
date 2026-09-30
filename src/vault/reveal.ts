@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * Revealed values and the clipboard (vault plan T187). A revealed value hides again after 30
  * seconds and whenever the tab is hidden; it lives only in React state (never in storage, the URL,
  * the title, or a toast). Copying writes to the clipboard and, 30 seconds later, clears it when the
- * page still has focus (best effort: clipboard managers may keep a copy, and the UI says so).
+ * page still has focus and the clipboard still holds that value (best effort: clipboard managers may
+ * keep a copy, and the UI says so).
  */
 
 export const REVEAL_MS = 30_000;
@@ -58,14 +59,25 @@ export function useRevealedValues(hideAfterMs = REVEAL_MS) {
 
 let clearTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Copies `text`, then clears the clipboard after 30 s if the page still has focus. */
-export async function copySecret(text: string, clipboard: Pick<Clipboard, "writeText"> | undefined = typeof navigator === "undefined" ? undefined : navigator.clipboard, clearAfterMs = CLIPBOARD_CLEAR_MS) {
+/**
+ * Copies `text`, then 30 s later clears the clipboard, but only when the page still has focus and
+ * the clipboard still holds exactly `text`: something the person copied afterwards is never wiped.
+ * When the browser refuses to read the clipboard (no permission, no `readText`), it is left alone.
+ */
+export async function copySecret(text: string, clipboard: Pick<Clipboard, "writeText"> & Partial<Pick<Clipboard, "readText">> | undefined = typeof navigator === "undefined" ? undefined : navigator.clipboard, clearAfterMs = CLIPBOARD_CLEAR_MS) {
   if (!clipboard) throw new Error("Copying is not available in this browser");
   await clipboard.writeText(text);
   if (clearTimer) clearTimeout(clearTimer);
   clearTimer = setTimeout(() => {
     clearTimer = null;
-    if (typeof document !== "undefined" && document.hasFocus()) void clipboard.writeText("").catch(() => undefined);
+    if (typeof document === "undefined" || !document.hasFocus() || typeof clipboard.readText !== "function") return;
+    void (async () => {
+      try {
+        if (await clipboard.readText!() === text) await clipboard.writeText("");
+      } catch {
+        // Reading was refused: leave the clipboard as it is.
+      }
+    })();
   }, clearAfterMs);
 }
 

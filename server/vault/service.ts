@@ -47,6 +47,21 @@ export function recordVaultEvent(vaultId: string, actorId: string | null, event:
 }
 
 /**
+ * `vault_events` retention (T195, review L5), run by the hourly sweeper: rows older than 90 days
+ * go. Newer rows stay append-only: 031's delete trigger refuses deleting them, so no count cap can
+ * evict a recent row (a reader flooding the log cannot push their own earlier reads out). The rate
+ * limits bound the growth meanwhile; a byte quota for the whole vault module is Wave 26. A purged
+ * vault's rows go with it (ON DELETE CASCADE).
+ */
+export const VAULT_EVENT_RETENTION_DAYS = 90;
+
+export function sweepVaultEvents(nowMs = Date.now()): number {
+  // Never past the trigger's own clock: a cutoff after its "now - 90 days" would hit APPEND_ONLY.
+  const cutoff = new Date(Math.min(nowMs, Date.now()) - VAULT_EVENT_RETENTION_DAYS * 86_400_000).toISOString();
+  return db.query("DELETE FROM vault_events WHERE created_at < ?").run(cutoff).changes;
+}
+
+/**
  * A ciphertext that does not open under its own ids (T189): audited, then a 500 `VAULT_INTEGRITY`
  * that names nothing. Never a silent value.
  */
@@ -95,8 +110,9 @@ export function createVault(actor: VaultActor, input: { name: string; descriptio
   const environments = input.environments ?? DEFAULT_ENVIRONMENTS;
   if (environments.length < 1 || environments.length > VAULT_BOUNDS.environments) throw new VaultError(400, "INVALID", `A vault has 1 to ${VAULT_BOUNDS.environments} environments`);
   if (new Set(environments.map((env) => env.slug)).size !== environments.length) throw new VaultError(409, "SLUG_TAKEN", "Two environments have the same short name");
-  const owned = (db.query("SELECT COUNT(*) AS count FROM vaults WHERE owner_id = ? AND deleted_at IS NULL").get(actor.userId) as { count: number }).count;
-  if (owned >= VAULT_BOUNDS.ownedVaults) throw new VaultError(409, "LIMIT_REACHED", `You can own up to ${VAULT_BOUNDS.ownedVaults} vaults`);
+  // T195 (review L5): vaults in the Bin count too, so binning and recreating cannot grow storage past the bound.
+  const owned = (db.query("SELECT COUNT(*) AS count FROM vaults WHERE owner_id = ?").get(actor.userId) as { count: number }).count;
+  if (owned >= VAULT_BOUNDS.ownedVaults) throw new VaultError(409, "LIMIT_REACHED", `You can own up to ${VAULT_BOUNDS.ownedVaults} vaults, counting those in the Bin`);
   chargeVault("write", actor.userId);
   const id = crypto.randomUUID();
   const timestamp = now();
@@ -303,13 +319,34 @@ export function listSecrets(actor: VaultActor, vaultId: string, options: { q?: s
   };
 }
 
-/** The secret with its decrypted comment and per-environment status (no values). */
+/**
+ * The secret with its decrypted comment and per-environment status (no values). Opening a comment
+ * is a read like a value's (review L4): it counts against the read limit and is audited
+ * `comment.read`. A secret without a comment decrypts nothing, so it costs nothing and is not
+ * recorded. Create and update answer with `writtenSecret`: they return the comment the caller just
+ * wrote, which is not a read.
+ */
 export function getSecret(actor: VaultActor, vaultId: string, secretId: string) {
   const access = requireVault(actor, vaultId);
   const row = liveSecret(access, secretId);
+  if (row.comment_ct === null) return secretDetail(access, row);
+  vaultGrant(access, "read");
+  chargeVault("read", actor.userId);
+  const detail = secretDetail(access, row);
+  recordVaultEvent(vaultId, actor.userId, "comment.read", { secretId, count: 1 });
+  return detail;
+}
+
+function secretDetail(access: VaultAccess, row: SecretRow) {
   const grant = vaultGrant(access, "read");
-  const comment = integrity(vaultId, actor.userId, { secretId }, () => openSecretComment(grant, { secretId, commentCt: row.comment_ct, generation: row.comment_generation }));
-  return { vault: summarize(access), secret: { ...toSummary(row, cellsFor(access, [secretId]).get(secretId)!), comment } };
+  const comment = integrity(access.vault.id, access.actor.userId, { secretId: row.id }, () => openSecretComment(grant, { secretId: row.id, commentCt: row.comment_ct, generation: row.comment_generation }));
+  return { vault: summarize(access), secret: { ...toSummary(row, cellsFor(access, [row.id]).get(row.id)!), comment } };
+}
+
+/** After a create or an update: the secret as the caller just wrote it (no read charge, no event). */
+function writtenSecret(actor: VaultActor, vaultId: string, secretId: string) {
+  const access = requireVault(actor, vaultId);
+  return secretDetail(access, liveSecret(access, secretId));
 }
 
 /**
@@ -343,8 +380,9 @@ export function createSecret(actor: VaultActor, vaultId: string, input: { name: 
   const valueEntries = Object.entries(input.values ?? {});
   const valueGrants = valueEntries.map(([envId]) => requireEnvGrant(access, envId, "write"));
   for (const [, entry] of valueEntries) checkValueForType(input.type, entry.value);
-  const live = (db.query("SELECT COUNT(*) AS count FROM vault_secrets WHERE vault_id = ? AND deleted_at IS NULL").get(vaultId) as { count: number }).count;
-  if (live >= VAULT_BOUNDS.secretsPerVault) throw new VaultError(409, "LIMIT_REACHED", `A vault holds at most ${VAULT_BOUNDS.secretsPerVault} secrets`);
+  // T195 (review L5): secrets in the Bin count too.
+  const stored = (db.query("SELECT COUNT(*) AS count FROM vault_secrets WHERE vault_id = ?").get(vaultId) as { count: number }).count;
+  if (stored >= VAULT_BOUNDS.secretsPerVault) throw new VaultError(409, "LIMIT_REACHED", `A vault holds at most ${VAULT_BOUNDS.secretsPerVault} secrets, counting those in the Bin`);
   if (nameTaken(vaultId, input.name, null)) throw nameTakenError();
   chargeVault("write", actor.userId, 1 + valueEntries.length);
   const id = crypto.randomUUID();
@@ -357,7 +395,7 @@ export function createSecret(actor: VaultActor, vaultId: string, input: { name: 
     db.query("UPDATE vaults SET updated_at = ? WHERE id = ?").run(timestamp, vaultId);
     recordVaultEvent(vaultId, actor.userId, "secret.create", { secretId: id, count: valueEntries.length });
   })();
-  return getSecret(actor, vaultId, id);
+  return writtenSecret(actor, vaultId, id);
 }
 
 export function updateSecret(actor: VaultActor, vaultId: string, secretId: string, input: { name?: string; type?: SecretType; comment?: string | null; tags?: string[]; expectedRevision: number }) {
@@ -384,7 +422,7 @@ export function updateSecret(actor: VaultActor, vaultId: string, secretId: strin
     if (result.changes !== 1) throw revisionChanged(row.revision);
     recordVaultEvent(vaultId, actor.userId, "secret.update", { secretId });
   })();
-  return getSecret(actor, vaultId, secretId);
+  return writtenSecret(actor, vaultId, secretId);
 }
 
 export function deleteSecret(actor: VaultActor, vaultId: string, secretId: string) {

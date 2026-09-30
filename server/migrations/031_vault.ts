@@ -16,7 +16,8 @@ import type { Migration } from "./types";
  *   `mcp_api_keys.kind = 'vault'` (prefix `nkv_`) and `api_key_grants` with `env_id` (025). Purging a
  *   vault or an environment removes the grants and group grants that name it (T206).
  * - `vault_events` is append-only (ids and counts, never values; T188), except the cascade when its
- *   vault is purged and an actor becoming NULL once that account is gone.
+ *   vault is purged, an actor becoming NULL once that account is gone, and the retention sweep
+ *   deleting rows older than 90 days (T195).
  * - `vault_rate_limits` holds the reveal, read, and write windows (§7), so they survive a restart.
  *
  * Triggers: the last owner of a live vault cannot be removed or demoted (`LAST_OWNER`); a value, a
@@ -187,8 +188,10 @@ export const vaultMigration: Migration = {
         AND NEW.count IS OLD.count AND NEW.created_at = OLD.created_at
       )
       BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY'); END;
+      -- Retention (T195): the hourly sweep deletes rows older than 90 days; anything newer stays.
       CREATE TRIGGER IF NOT EXISTS vault_events_no_delete BEFORE DELETE ON vault_events
       WHEN EXISTS (SELECT 1 FROM vaults WHERE id = OLD.vault_id)
+        AND OLD.created_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-90 days')
       BEGIN SELECT RAISE(ABORT, 'APPEND_ONLY'); END;
 
       -- A value, a version, or an access row never names an environment of another vault.

@@ -16,6 +16,7 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
+import { startServerHeartbeat } from "./serverHeartbeat";
 import { startDispatcher } from "./calendar/reminders";
 import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
@@ -968,6 +969,8 @@ try {
   console.error("Card excerpt reconcile failed", errorClass(error));
 }
 startSweeper();
+// Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
+startServerHeartbeat();
 // Nook key usage counts (D283) are kept in memory and written once a minute.
 startKeyUsageFlusher();
 try {

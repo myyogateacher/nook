@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,11 @@ function run(args: string[], env: Record<string, string>) {
   const stderr = result.stderr.toString();
   const line = stdout.split("\n").find((item) => item.startsWith("PROBE "));
   return { code: result.exitCode, stdout, stderr, probe: line ? JSON.parse(line.slice(6)) : null };
+}
+async function runAsync(args: string[], env: Record<string, string>) {
+  const child = Bun.spawn(["bun", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env }, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  return { code, stdout, stderr };
 }
 const probe = (mode: string, env: Record<string, string>) => run([join("tests", "support", "vaultStartupProbe.ts"), mode], env);
 const admin = (command: string, env: Record<string, string>) => run([join("server", "vault-admin.ts"), command], env);
@@ -64,7 +70,7 @@ describe("vault startup (T199)", () => {
     expect(both.stderr).toContain("not both");
   }, 30_000);
 
-  test("a wrong key turns the module off (not the app); verify-key and rotate-kek; VAULT_ENCRYPTION_KEY_FILE", () => {
+  test("a wrong key turns the module off (not the app); verify-key and rotate-kek; VAULT_ENCRYPTION_KEY_FILE", async () => {
     const dir = dataDir();
     const seeded = probe("seed", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA });
     expect(seeded.code).toBe(0);
@@ -87,11 +93,47 @@ describe("vault startup (T199)", () => {
     expect(admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 2 });
     expect(admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW: keyA })).toMatchObject({ code: 2 });
     expect(admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW: totpKey }).stderr).toContain("must differ from TOTP_ENCRYPTION_KEY");
-    const rotated = admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW: keyC });
+    // H1: an inline new key is refused unless the operator says it was saved; a file is the normal way.
+    const inline = admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW: keyC });
+    expect(inline.code).toBe(2);
+    expect(inline.stderr).toContain("VAULT_ENCRYPTION_KEY_NEW_FILE");
+    expect(inline.stdout + inline.stderr).not.toContain(keyC);
+    expect(admin("verify-key", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 0 });
+    expect(run([join("server", "vault-admin.ts"), "verify-key", "--key-saved"], { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 2 });
+    const newKeyFile = join(dataDir(), "vault.key.new");
+    writeFileSync(newKeyFile, `${keyC}\n`, { mode: 0o600 });
+    const fingerprintC = createHash("sha256").update(Buffer.from(keyC, "base64")).digest("hex").slice(0, 8);
+
+    // L3: refused while a server heartbeat in DATA_DIR stays fresh (the CLI waits 20 seconds first).
+    const heartbeat = join(dir, "server.heartbeat");
+    const keepBeating = setInterval(() => writeFileSync(heartbeat, "test heartbeat\n"), 1000);
+    writeFileSync(heartbeat, "test heartbeat\n");
+    try {
+      const busy = await runAsync([join("server", "vault-admin.ts"), "rotate-kek"], { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW_FILE: newKeyFile });
+      expect(busy.code).toBe(1);
+      expect(busy.stderr).toContain("still using this DATA_DIR");
+    } finally {
+      clearInterval(keepBeating);
+      rmSync(heartbeat, { force: true });
+    }
+    expect(admin("verify-key", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 0 });
+
+    const rotated = admin("rotate-kek", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW_FILE: newKeyFile });
     expect(rotated.code).toBe(0);
     expect(rotated.stdout).toContain("Re-wrapped 1 vault data keys");
+    expect(rotated.stdout).toContain(`New key fingerprint:     ${fingerprintC}`);
+    expect(rotated.stdout).toContain("Next steps:");
     expect(rotated.stdout + rotated.stderr).not.toContain(keyC);
     expect(admin("verify-key", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA })).toMatchObject({ code: 1 });
+    const verifiedC = admin("verify-key", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY_FILE: newKeyFile });
+    expect(verifiedC).toMatchObject({ code: 0 });
+    expect(verifiedC.stdout).toContain(`Key fingerprint: ${fingerprintC}`);
+    // Inline with --key-saved works too (rotating back and forth).
+    const back = run([join("server", "vault-admin.ts"), "rotate-kek", "--key-saved"], { DATA_DIR: dir, VAULT_ENCRYPTION_KEY_FILE: newKeyFile, VAULT_ENCRYPTION_KEY_NEW: keyA });
+    expect(back.code).toBe(0);
+    expect(back.stdout + back.stderr).not.toContain(keyA);
+    const forth = run([join("server", "vault-admin.ts"), "rotate-kek", "--key-saved"], { DATA_DIR: dir, VAULT_ENCRYPTION_KEY: keyA, VAULT_ENCRYPTION_KEY_NEW: keyC });
+    expect(forth.code).toBe(0);
 
     // A key file inside DATA_DIR would be archived with every backup (T180): refused.
     const inside = join(dir, "vault.key");
@@ -105,5 +147,5 @@ describe("vault startup (T199)", () => {
     const after = probe("check", { DATA_DIR: dir, VAULT_ENCRYPTION_KEY_FILE: file, ...ids });
     expect(after.stdout).toContain("the key comes from VAULT_ENCRYPTION_KEY_FILE");
     expect(after.probe).toMatchObject({ status: { enabled: true, reason: null }, vault: { status: 200 }, memberFeatures: { vault: true } });
-  }, 60_000);
+  }, 120_000);
 });

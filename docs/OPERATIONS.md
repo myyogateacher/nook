@@ -85,25 +85,57 @@ Set it as `VAULT_ENCRYPTION_KEY` in `.env`, or put it in a root-only file (or a 
 **Losing the key loses every vault.** There is no recovery without it: restoring a backup needs the key the vaults were created with. Check a key against the stored vaults at any time (it prints counts only):
 
 ```sh
-docker compose exec mynotes bun server/vault-admin.ts verify-key
+docker compose exec app bun server/vault-admin.ts verify-key
 ```
 
-**Rotating the key** re-wraps the data keys only (seconds; values are not re-encrypted). Take a backup, stop the app so nothing reads with the old key, run the rotation with both keys, then replace the key and start again:
+It also prints the key's fingerprint (the first 8 hex digits of its SHA-256), so you can tell which of two keys is configured without showing either.
 
-```sh
-./scripts/backup.sh --force
-docker compose stop mynotes
-docker compose run --rm -e VAULT_ENCRYPTION_KEY_NEW="$(openssl rand -base64 32)" mynotes bun server/vault-admin.ts rotate-kek
-```
+**Rotating the key** re-wraps the data keys only (seconds; values are not re-encrypted). After the rotation the new key is the only one that opens the vaults, so it goes into a file first, before anything changes. The commands below use the compose service name `app` from `compose.yaml`; `/path/outside/data` stands for any directory outside `DATA_DIR` and away from the backup location.
 
-Copy the new key from your shell before it scrolls away (or generate it into a file first and pass `VAULT_ENCRYPTION_KEY_NEW_FILE`), put it in place of `VAULT_ENCRYPTION_KEY`, start the app, and run `verify-key`. The old key opens nothing afterwards; archives taken before the rotation still need the old key, so keep it until those archives have rotated out.
+1. Generate the new key into a file readable only by you, check it is one 44-character line, and let the container user (uid 1000 in `compose.yaml`) read it:
+
+   ```sh
+   (umask 077; openssl rand -base64 32 > /path/outside/data/vault.key.new)
+   test "$(tr -d '\n' < /path/outside/data/vault.key.new | wc -c)" -eq 44 && echo "key file OK"
+   sudo chown 1000:1000 /path/outside/data/vault.key.new   # skip when you are uid 1000
+   ```
+
+2. Take a backup and stop the app. `rotate-kek` refuses to run while a server is using `DATA_DIR`: the server rewrites `DATA_DIR/server.heartbeat` every 5 seconds and removes it when it exits, and the command waits up to 20 seconds for a stopped server's heartbeat to go stale.
+
+   ```sh
+   ./scripts/backup.sh --force
+   docker compose stop app
+   ```
+
+3. Run the rotation with the new key file mounted read-only (the current key comes from `.env` as usual; if you use `VAULT_ENCRYPTION_KEY_FILE`, mount that file too):
+
+   ```sh
+   docker compose run --rm \
+     -v /path/outside/data/vault.key.new:/run/secrets/vault.key.new:ro \
+     -e VAULT_ENCRYPTION_KEY_NEW_FILE=/run/secrets/vault.key.new \
+     app bun server/vault-admin.ts rotate-kek
+   ```
+
+   It prints the fingerprints of both keys (the first 8 hex digits of each key's SHA-256; never the keys) and the next steps. A key given inline in `VAULT_ENCRYPTION_KEY_NEW` is refused unless you add `--key-saved`, your statement that you saved that exact key elsewhere; nothing prints it back to you.
+
+4. Replace the configured key with the new one: set `VAULT_ENCRYPTION_KEY` in `.env` to the contents of `vault.key.new`, or point `VAULT_ENCRYPTION_KEY_FILE` at that file (mounted into the container). Started with the old key, the app keeps running with the vault module off.
+
+5. Start the app and check the key. `verify-key` must print the new fingerprint that `rotate-kek` printed and open every data key:
+
+   ```sh
+   docker compose up -d app
+   docker compose exec app bun server/vault-admin.ts verify-key
+   ```
+
+Keep the old key: archives taken before the rotation still need it, so keep it until those archives have rotated out. Keep `vault.key.new` (or move the key to your password manager and delete the file) like any other copy of the key.
 
 What else to know:
 
 - Deleted vaults, environments, and secrets stay in the Bin for 30 days. Deleting a vault forever deletes its data key, so nothing of it can be decrypted again; older backup archives keep the ciphertext (and the old wrapped key) for up to about five weeks, as for notes. After a leak, rotate the real credentials upstream: the vault cannot take back values someone already read.
 - The database runs with `PRAGMA secure_delete = ON` (all modules), so deleted rows are overwritten instead of lingering in free pages.
 - In this release vaults have one member, their owner. Members and per-environment access, protected environments with re-authentication, import and export, vault API keys (`nkv_…`), REST, and MCP tools arrive in later releases. Admins get no access to other people's vaults.
-- Every reveal, copy, write, clear, and restore is recorded in the vault's own event log (ids and counts only, never values). Reads and writes are limited to 300 each per 10 minutes per person; the limits survive a restart.
+- Every reveal, copy, write, clear, and restore, and every opening of a secret's comment, is recorded in the vault's own event log (ids and counts only, never values). The hourly sweep deletes events older than 90 days; newer events cannot be deleted. Reads and writes are limited to 300 each per 10 minutes per person; the limits survive a restart.
+- Vaults and secrets in the Bin count toward the limits of 100 vaults per person and 1,000 secrets per vault until they are purged.
 
 ### Passwords
 
@@ -297,6 +329,7 @@ The container reads and writes `/data`, mapped by Compose to:
 │   ├── objects/<object-id>         a whiteboard's current scene (a new object per save)
 │   └── .staging/<document-id>.part uploads in progress (not backed up)
 ├── push/vapid.json                 Web Push signing keys (0600), created at first boot when push is on
+├── server.heartbeat                rewritten every 5 s while the server runs, removed when it exits
 └── backup/                         weekly archives (host backup script only)
 ```
 
@@ -304,7 +337,7 @@ Markdown files and documents are never exposed as static files; authenticated AP
 
 The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files use `0600`. The service refuses symlinked note directories and files.
 
-**Single instance.** Only one Nook instance may use a data directory at a time: upload slots, per-document locks, rate limits, and the sweeper live in the process. Do not run a second container or a development server against the same directory.
+**Single instance.** Only one Nook instance may use a data directory at a time: upload slots, per-document locks, rate limits, and the sweeper live in the process. Do not run a second container or a development server against the same directory. `server.heartbeat` lets host commands that need the server stopped (`vault-admin.ts rotate-kek`) refuse while one runs; it holds no secrets.
 
 **Web Push.** Pushes carry no content: a push only wakes the device, whose service worker then fetches unread notifications from Nook with the user's session, so push services see timing only. Outbound requests go only to allowlisted push-service hosts over https on port 443, never to IP literals or private addresses, with no redirects and a 5-second timeout. Each user may register 10 devices; a device is removed when the push service reports it gone (404 or 410) and paused after 5 failed deliveries. `push/vapid.json` is included in backups. If it is lost, a new key pair is created at the next boot and each device must enable push again in Settings → Notifications.
 

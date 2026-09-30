@@ -28,7 +28,11 @@ export type Route =
   | { app: "inbox"; view: "pending" | "history" | "routines"; proposalId: string | null }
   // Whiteboards (Wave 23, §10.1): /whiteboards, /whiteboards/shared, /whiteboards/folder/:id, and
   // one board at /whiteboards/:id (the canvas, a history entry of its own).
-  | { app: "whiteboards"; folder: "all" | "shared" | string; boardId: string | null };
+  | { app: "whiteboards"; folder: "all" | "shared" | string; boardId: string | null }
+  // The Vault (Wave 25, vault plan §10): the list at /vault, one vault at /vault/:vaultId (the grid on
+  // desktop, its first environment's cards on phones), one environment at /vault/:vaultId/env/:envId,
+  // and one secret at /vault/:vaultId/secrets/:secretId (its values stacked per environment).
+  | { app: "vault"; vaultId: string | null; envId: string | null; secretId: string | null };
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -153,7 +157,19 @@ export function parseRoute(pathname: string, search = ""): Route {
     const { folder, itemId } = parseCollection(rest);
     return { app: "whiteboards", folder, boardId: itemId };
   }
+  if (app === "vault") return parseVault(rest);
   return { app: "home" };
+}
+
+// /vault, /vault/:v, /vault/:v/env/:e, and /vault/:v/secrets/:s. Anything malformed after a valid
+// vault id opens that vault; a malformed vault id opens the list.
+function parseVault(segments: string[]): Route {
+  const none = { app: "vault" as const, vaultId: null, envId: null, secretId: null };
+  const [vault, kind, item] = segments;
+  if (vault === undefined || !isRouteId(vault)) return none;
+  const vaultId = vault.toLowerCase();
+  const itemId = segments.length === 3 && item !== undefined && isRouteId(item) ? item.toLowerCase() : null;
+  return { ...none, vaultId, envId: kind === "env" ? itemId : null, secretId: kind === "secrets" ? itemId : null };
 }
 
 // /inbox, /inbox/history, /inbox/p/:id, /inbox/history/p/:id, and /inbox/routines. Anything malformed opens the list it names.
@@ -200,6 +216,13 @@ export function formatRoute(route: Route): string {
   if (route.app === "bin") return "/bin";
   if (route.app === "team") return route.userId && isRouteId(route.userId) ? `/team/${route.userId.toLowerCase()}${route.access ? "/access" : ""}` : route.templates ? "/team/templates" : route.activity ? "/team/activity" : route.invites ? "/team/invites" : route.email ? "/team/email" : route.keys ? "/team/keys" : route.policies ? "/team/policies" : route.groups ? (route.groupId && isRouteId(route.groupId) ? `/team/groups/${route.groupId.toLowerCase()}` : "/team/groups") : "/team";
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
+  if (route.app === "vault") {
+    if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";
+    const vault = `/vault/${route.vaultId.toLowerCase()}`;
+    // A secret wins over an environment: the detail is the deeper entry.
+    if (route.secretId && isRouteId(route.secretId)) return `${vault}/secrets/${route.secretId.toLowerCase()}`;
+    return route.envId && isRouteId(route.envId) ? `${vault}/env/${route.envId.toLowerCase()}` : vault;
+  }
   if (route.app === "inbox") {
     if (route.view === "routines") return "/inbox/routines";
     const base = route.view === "history" ? "/inbox/history" : "/inbox";

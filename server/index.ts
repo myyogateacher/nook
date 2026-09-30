@@ -35,7 +35,7 @@ import { registerCollectionRoutes } from "./collections/routes";
 import { reconcileCollectionSearchIndex } from "./collections/search";
 import { registerWhiteboardRoutes } from "./whiteboards/routes";
 import { registerVaultRoutes } from "./vault/routes";
-import { initVaultStatus, vaultStatus } from "./vault/status";
+import { initVaultStatus, vaultFeature } from "./vault/status";
 import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -245,6 +245,7 @@ app.post("/api/auth/register", async (c) => {
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
+    features: { vault: vaultFeature(role) },
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
@@ -290,6 +291,7 @@ app.post("/api/auth/login", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
+    features: { vault: vaultFeature(user.role) },
     totp: totpState(user)
   });
 });
@@ -309,9 +311,8 @@ app.get("/api/auth/me", (c) => {
     preferences: readPreferences(user.id),
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
     notices: { googleReset: googleResetNotice(user.id) },
-    // Wave 25: whether this person sees the Vault module. Off on the server hides it from everyone but
-    // admins, who get its "not configured" screen; guests never see it (V-O3). UI only (T97).
-    features: { vault: user.role !== "guest" && (vaultStatus().enabled || user.role === "admin") }
+    // Wave 25: whether this person sees the Vault module (server/vault/status.ts). UI only (T97).
+    features: { vault: vaultFeature(user.role) }
   });
 });
 

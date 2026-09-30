@@ -31,6 +31,13 @@ export function initVaultStatus(log: (line: string) => void = (line) => console.
 
 export const vaultStatus = (): VaultStatus => status;
 
+/**
+ * Whether this person sees the Vault module (`features.vault` on sign-in and /api/auth/me): never
+ * for guests (V-O3); with the module off, only admins (they get its "not configured" screen). UI
+ * only (T97): the routes enforce access themselves.
+ */
+export const vaultFeature = (role: string) => role !== "guest" && (status.enabled || role === "admin");
+
 /** 503 VAULT_DISABLED while the module is off. */
 export function requireVaultEnabled() {
   if (!status.enabled) throw new VaultError(503, "VAULT_DISABLED", "The vault is not configured on this server");

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createUser, db } from "./support/harness";
+import { createUser, db, request } from "./support/harness";
 import { call, newSecret, newVault, resetVaultLimits, setRole } from "./support/vault";
 
 /**
@@ -134,6 +134,19 @@ describe("the access matrix for sessions (T181)", () => {
     for (const route of routes(vault.id, secret.id, vault.envs.dev!)) {
       const response = await call(owner, route.method, route.path, route.body);
       expect({ route: `${route.method} ${route.path}`, status: response.status }).toEqual({ route: `${route.method} ${route.path}`, status: 404 });
+    }
+  });
+
+  test("/api/auth/me says who sees the module: everyone but guests while it is on (UI only, T97)", async () => {
+    const member = await createUser("Features member");
+    const guest = await createUser("Features guest");
+    setRole(guest, "guest");
+    try {
+      const features = async (session: typeof member) => ((await (await request("/auth/me", {}, session)).json()) as { features: unknown }).features;
+      expect(await features(member)).toEqual({ vault: true });
+      expect(await features(guest)).toEqual({ vault: false });
+    } finally {
+      setRole(guest, "member");
     }
   });
 

@@ -1,11 +1,13 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, BinRestoreResult, Visibility } from "../types";
 
-export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar";
+export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar" | "vault";
 
 export const isTaskBinItem = (item: Pick<BinItem, "type">) => item.type === "card" || item.type === "board";
 export const isCollectionItem = (item: Pick<BinItem, "type">) => item.type === "collection" || item.type === "collection_row";
 export const isCalendarItem = (item: Pick<BinItem, "type">) => item.type === "calendar" || item.type === "event";
+/** Vaults, environments, and secrets (Wave 25, D225). */
+export const isVaultItem = (item: Pick<BinItem, "type">) => item.type === "vault" || item.type === "vault_environment" || item.type === "vault_secret";
 
 const DAY_MS = 86_400_000;
 
@@ -37,6 +39,8 @@ export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick
   if (item.type === "collection_row") return item.folder_name ?? "its collection";
   if (item.type === "calendar") return "Calendar";
   if (item.type === "event") return item.folder_name ?? "Calendar";
+  if (item.type === "vault") return "Vault";
+  if (item.type === "vault_environment" || item.type === "vault_secret") return item.folder_name ?? "its vault";
   return item.folder_name ?? "Default";
 }
 
@@ -46,10 +50,11 @@ export function filterBinItems(items: BinItem[], filter: BinFilter) {
   if (filter === "tasks") return items.filter(isTaskBinItem);
   if (filter === "collections") return items.filter(isCollectionItem);
   if (filter === "calendar") return items.filter(isCalendarItem);
+  if (filter === "vault") return items.filter(isVaultItem);
   return items.filter((item) => item.type === filter);
 }
 
-const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event" };
+const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event", vault: "Untitled vault", vault_environment: "Untitled environment", vault_secret: "Untitled secret" };
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
   return item.title.trim() || untitled[item.type];
@@ -82,6 +87,9 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partia
   if (item.type === "collection_row") return "Row";
   if (item.type === "calendar") return "Calendar";
   if (item.type === "event") return "Event";
+  if (item.type === "vault") return "Vault";
+  if (item.type === "vault_environment") return "Environment";
+  if (item.type === "vault_secret") return "Secret";
   return item.attachment ? attachmentKindLabel(item) : "File";
 }
 
@@ -101,6 +109,11 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
     return `Restored${where ? ` to ${where}` : ""}${extra}`;
   }
   if (item.type === "calendar" || item.type === "event") return restoredCalendarMessage({ type: item.type, title: "" }, result.calendarName, Boolean(result.alreadyRestored));
+  if (item.type === "vault") return result.alreadyRestored ? "The vault was already restored" : "Restored the vault";
+  if (item.type === "vault_environment" || item.type === "vault_secret") {
+    const where = result.folderName ?? item.folder_name ?? "its vault";
+    return result.alreadyRestored ? `Already restored to ${where}` : `Restored to ${where}`;
+  }
   if (item.type === "collection" || item.type === "collection_row") {
     const where = result.folderName ?? binFolderLabel({ type: item.type, folder_name: item.folder_name ?? null });
     return result.alreadyRestored ? `Already restored to ${where}` : restoredMessage(where, result.visibility);

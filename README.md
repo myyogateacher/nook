@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.22.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.23.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -111,6 +111,13 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.23.0
+
+- **Settings is a full page**: a left nav with an Account group (Security, Notifications, My access, API keys, Modules, About) and a Team group (Members, Invites, Groups, Integrations, Keys, Policies, Templates, Access activity, Email log), each section filling the rest of the screen and scrolling on its own. Team lives inside Settings now; the old `/team/...` links still work and open the same screens. On a phone, Settings opens as a list; a section opens on its own screen with a back arrow, and browser Back returns to the list, then to where you were.
+- **Top bar order**: Bin · Team · Settings · Inbox · bell · your name · Sign out, with Sign out as the rightmost action on every screen.
+- **Leaving with a new key on screen** asks first everywhere: switching section, the back arrow, Home, Bin, Inbox, the bell, Sign out, and browser Back or Forward.
+- No migration and no new settings. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.22.0
 

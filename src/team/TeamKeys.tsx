@@ -24,26 +24,51 @@ const STATE_OPTIONS: Option<"all" | InventoryState>[] = [
   { value: "unused", label: "Unused for 90 days" }
 ];
 
+const SURFACE_OPTIONS: Option<"all" | "mcp" | "rest">[] = [
+  { value: "all", label: "Any surface" },
+  { value: "mcp", label: "MCP", description: "Keys that may use MCP (including MCP and REST)" },
+  { value: "rest", label: "REST", description: "Keys that may use the REST API (including MCP and REST)" }
+];
+
+const IP_OPTIONS: Option<"all" | "true" | "false">[] = [
+  { value: "all", label: "Any address" },
+  { value: "true", label: "IP limited", description: "Keys limited to certain addresses" },
+  { value: "false", label: "Not IP limited" }
+];
+
+/** Review Q14: with filters on, "3 of 7 live keys match". */
+export function inventorySummary(summary: { live: number; noExpiry: number; matching?: number }, filtered: boolean) {
+  const keys = (count: number) => `${count} live ${count === 1 ? "key" : "keys"}`;
+  if (filtered && summary.matching !== undefined) return `${summary.matching} of ${keys(summary.live)} match · ${summary.noExpiry} without an expiry on this Nook`;
+  return `${keys(summary.live)} on this Nook · ${summary.noExpiry} without an expiry`;
+}
+
 export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ id: string; displayName: string }>; onBack: () => void; flash: (message: string) => void }) {
   const [owner, setOwner] = useState("all");
   const [module, setModule] = useState<"all" | GrantModule>("all");
   const [state, setState] = useState<"all" | InventoryState>("all");
+  const [surface, setSurface] = useState<"all" | "mcp" | "rest">("all");
+  const [ipLimited, setIpLimited] = useState<"all" | "true" | "false">("all");
   const [data, setData] = useState<Inventory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<InventoryKey | null>(null);
   const generation = useRef(0);
+  const filtered = owner !== "all" || module !== "all" || state !== "all" || surface !== "all" || ipLimited !== "all";
 
   const load = useCallback(async (cursor?: string | null) => {
     const current = ++generation.current;
     setError(null);
     try {
-      const result = await listInventory({ owner: owner === "all" ? undefined : owner, module: module === "all" ? undefined : module, state: state === "all" ? undefined : state, cursor: cursor ?? undefined });
+      const result = await listInventory({
+        owner: owner === "all" ? undefined : owner, module: module === "all" ? undefined : module, state: state === "all" ? undefined : state, cursor: cursor ?? undefined,
+        surface: surface === "all" ? undefined : surface, ipRestricted: ipLimited === "all" ? undefined : ipLimited
+      });
       if (current !== generation.current) return;
       setData((previous) => cursor && previous ? { ...result, keys: [...previous.keys, ...result.keys] } : result);
     } catch (reason) {
       if (current === generation.current) setError(reason instanceof Error ? reason.message : "Could not load keys");
     }
-  }, [module, owner, state]);
+  }, [ipLimited, module, owner, state, surface]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { document.title = "Keys · Team · Nook"; }, []);
 
@@ -55,13 +80,15 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
     <header className="team-invites-header">
       <div>
         <h2 id="team-keys-title">Keys</h2>
-        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, and use, never the secrets or the items a key is limited to. Revoking stops a key at once and tells its owner why.</p>
+        <p className="team-muted">Every live API key on this Nook. You see names, owners, permissions, surfaces, and use, never the secrets, the items a key is limited to, or the addresses it is limited to. Revoking stops a key at once and tells its owner why.</p>
       </div>
     </header>
     <div className="team-keys-filters" role="group" aria-label="Filter keys">
       <div className="keys-select-field"><span id="team-keys-owner">Owner</span><Select labelledBy="team-keys-owner" label="Owner" value={owner} options={ownerOptions} onChange={setOwner} /></div>
       <div className="keys-select-field"><span id="team-keys-module">Module</span><Select<"all" | GrantModule> labelledBy="team-keys-module" label="Module" value={module} options={moduleOptions} onChange={setModule} /></div>
       <div className="keys-select-field"><span id="team-keys-state">State</span><Select<"all" | InventoryState> labelledBy="team-keys-state" label="State" value={state} options={STATE_OPTIONS} onChange={setState} /></div>
+      <div className="keys-select-field"><span id="team-keys-surface">Surface</span><Select<"all" | "mcp" | "rest"> labelledBy="team-keys-surface" label="Surface" value={surface} options={SURFACE_OPTIONS} onChange={setSurface} /></div>
+      <div className="keys-select-field"><span id="team-keys-ip">Addresses</span><Select<"all" | "true" | "false"> labelledBy="team-keys-ip" label="Addresses" value={ipLimited} options={IP_OPTIONS} onChange={setIpLimited} /></div>
     </div>
     {error && <div className="team-state team-error" role="alert">
       <span className="team-state-icon"><TriangleAlert /></span>
@@ -70,7 +97,8 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!error && !data && <p className="team-loading" role="status">Loading keys…</p>}
-    {!error && data && <p className="team-keys-summary">{data.summary.live} live {data.summary.live === 1 ? "key" : "keys"} on this Nook · {data.summary.noExpiry} without an expiry</p>}
+    {!error && data && <p className="team-keys-summary">{inventorySummary(data.summary, filtered)}</p>}
+    {!error && data && <p className="team-muted team-keys-note">Calls per surface are counted per day; there is no per-call log in the app.</p>}
     {!error && data && data.keys.length === 0 && <div className="team-state">
       <span className="team-state-icon"><KeyRound /></span>
       <h2>No keys match.</h2>

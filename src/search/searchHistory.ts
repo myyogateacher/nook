@@ -43,3 +43,14 @@ export function nextSearchHint(active: boolean, query: string, all: boolean, cur
   if (active) return { query, all };
   return current ? { query: "", all: false } : null;
 }
+
+/**
+ * The entry a phone search pushed (Wave 34 verification N2). Escape or the clear button on that
+ * entry goes back to the list's own entry, as Back does, instead of leaving an entry whose Back
+ * shows nothing new.
+ */
+const pushedKey = "mynotes.notes-search-pushed";
+
+export const markSearchPushed = (state: Record<string, unknown>): Record<string, unknown> => ({ ...state, [pushedKey]: true });
+
+export const isSearchPushedEntry = (state: unknown) => Boolean(state && typeof state === "object" && (state as Record<string, unknown>)[pushedKey] === true);

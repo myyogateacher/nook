@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "./auth";
 import { audit } from "./db";
 import {
-  createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, checkRotation, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
+  checkCreateAllowlist, createApiKey, createKeySchema, checkCreatePolicy, checkKeyCount, checkRotation, KeyError, listApiKeys, narrowApiKey, narrowKeySchema, ownApiKey, parseLimits,
   revokeOwnKey, rotateApiKey, rotateKeySchema, validateGrants, type GrantInput
 } from "./apiKeys";
 import { keyEvents } from "./access/events";
@@ -65,12 +65,14 @@ async function run<T>(c: Context<AppEnv>, operation: () => T | Promise<T>, statu
  * role, policy (surfaces, expiry cap, modules), grants (scopes by role, access to chosen items),
  * then the count. Shared with the `/api/mcp/keys` alias. Returns the validated grants and days.
  */
-export function precheckKeyCreate(user: { id: string; role: Role }, input: { surfaces: "mcp" | "rest" | "both"; expiresInDays?: number | null; grants: readonly GrantInput[] }) {
+export function precheckKeyCreate(user: { id: string; role: Role }, input: { surfaces: "mcp" | "rest" | "both"; expiresInDays?: number | null; grants: readonly GrantInput[]; ipAllowlist?: readonly string[] }) {
   const policies = readPolicies();
   const days = checkCreatePolicy(user.id, user.role, input, policies);
   const grants = validateGrants(user.id, user.role, input.grants, policies);
+  // Wave 34 (D284): only where the server can see client addresses (TRUSTED_PROXY_HOPS ≥ 1).
+  const ipAllowlist = checkCreateAllowlist(input.ipAllowlist);
   checkKeyCount(user.id, policies);
-  return { grants, days };
+  return { grants, days, ipAllowlist };
 }
 
 /** The alias's scopes as grant inputs over "all" (the pre-grants `/api/mcp/keys` body). */
@@ -87,6 +89,9 @@ export function aliasKeyRefusal(user: { id: string; role: Role }, scopes: readon
     throw error;
   }
 }
+
+/** What a rotation changes besides the secret (review Q2). */
+const rotationChanges = (body: z.infer<typeof rotateKeySchema>) => ({ grants: body.grants, surfaces: body.surfaces, ipAllowlist: body.ipAllowlist });
 
 const restoreBinnedSchema = z.object({ window: z.enum(["1h", "24h", "7d"]) }).strict();
 
@@ -111,7 +116,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     const body = await parseJson(c.req.raw, createKeySchema);
     const user = c.get("user");
     try {
-      const { grants, days } = precheckKeyCreate(user, body);
+      const { grants, days, ipAllowlist } = precheckKeyCreate(user, body);
       if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
       if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
         audit(user.id, null, "mcp.key_create_failed");
@@ -120,7 +125,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
       if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
       // Counted again after the password check, which awaits: two parallel requests cannot both pass.
       checkKeyCount(user.id, readPolicies());
-      const created = createApiKey(user.id, { name: body.name, description: body.description ?? null, surfaces: body.surfaces, grants, expiresInDays: days, limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null) });
+      const created = createApiKey(user.id, { name: body.name, description: body.description ?? null, surfaces: body.surfaces, grants, expiresInDays: days, limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null), ipAllowlist });
       // Security mail (outbound email #5): the key's name and permissions, read at send time.
       mailApiKeyCreated(user.id, created.id);
       return c.json({ key: { ...ownApiKey(user.id, created.id), token: created.token } }, 201);
@@ -149,7 +154,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     // Refusals that need no password come first, so no code is consumed: missing key, already
     // rotating, and the creation checks (role, policy, count; review L1).
     try {
-      checkRotation(user.id, id, body.graceHours, body.expiresInDays);
+      checkRotation(user.id, id, body.graceHours, body.expiresInDays, rotationChanges(body));
     } catch (error) {
       if (error instanceof KeyError) return keyError(c, error);
       throw error;
@@ -161,7 +166,7 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
     }
     if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
     return run(c, () => {
-      const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays);
+      const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays, rotationChanges(body));
       // A rotation makes a new secret, so it gets the same security mail as a new key.
       mailApiKeyCreated(user.id, rotated.id);
       return { key: { ...ownApiKey(user.id, rotated.id), token: rotated.token }, oldKey: ownApiKey(user.id, id) };

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { audit, db, now } from "../db";
+import { keyFilter } from "../keyResources";
 import { emitNotifications } from "../calendar/reminders";
 import { mailProposalsAwaiting } from "../mail/triggers";
 import { readableCalendar } from "../calendar/access";
@@ -352,8 +353,10 @@ const visibleToKey = "r.owner_id = $userId AND (r.key_id IS NULL OR r.key_id = $
 /** The owner's routines this key may see (unbound, or bound to it), without instructions. */
 export function listRoutinesForKey(key: McpKeyContext, nowMs = Date.now()) {
   abandonExpiredRuns(nowMs, key.userId);
-  const rows = db.query(`${routineSelect} WHERE ${visibleToKey} ORDER BY r.name_fold LIMIT $limit`)
-    .all({ userId: key.userId, keyId: key.keyId, limit: ROUTINE_LIMIT }) as Array<RoutineRow & Record<string, string | null>>;
+  // A key limited to chosen routines (Wave 34) lists only those, in SQL.
+  const scope = keyFilter(key, "inbox:read", { routine: "r.id" });
+  const rows = db.query(`${routineSelect} WHERE ${visibleToKey} AND ${scope.sql} ORDER BY r.name_fold LIMIT $limit`)
+    .all({ ...scope.params, userId: key.userId, keyId: key.keyId, limit: ROUTINE_LIMIT }) as Array<RoutineRow & Record<string, string | null>>;
   return {
     routines: rows.map((row) => {
       const view = present(row, nowMs);
@@ -369,9 +372,10 @@ export function listRoutinesForKey(key: McpKeyContext, nowMs = Date.now()) {
 /** Enabled routines due now and visible to this key, at most 20, oldest due first (§7.2). */
 export function listDueRoutines(key: McpKeyContext, nowMs = Date.now()) {
   abandonExpiredRuns(nowMs, key.userId);
-  const rows = db.query(`${routineSelect} WHERE ${visibleToKey} AND r.enabled = 1 AND r.next_due_at IS NOT NULL AND r.next_due_at <= $now
+  const scope = keyFilter(key, "inbox:read", { routine: "r.id" });
+  const rows = db.query(`${routineSelect} WHERE ${visibleToKey} AND r.enabled = 1 AND r.next_due_at IS NOT NULL AND r.next_due_at <= $now AND ${scope.sql}
       ORDER BY r.next_due_at, r.name_fold LIMIT $limit`)
-    .all({ userId: key.userId, keyId: key.keyId, now: new Date(nowMs).toISOString(), limit: DUE_LISTED }) as Array<RoutineRow & Record<string, string | null>>;
+    .all({ ...scope.params, userId: key.userId, keyId: key.keyId, now: new Date(nowMs).toISOString(), limit: DUE_LISTED }) as Array<RoutineRow & Record<string, string | null>>;
   return {
     routines: rows.map((row) => ({
       routineId: row.id, name: row.name, dueAt: row.next_due_at, schedule: cadenceText({ cadence: row.cadence, atTime: row.at_time, weekday: row.weekday }),

@@ -28,6 +28,7 @@ import { emailDigestsMigration } from "./028_email_digests";
 import { accessLevelsMigration } from "./029_access_levels";
 import { whiteboardsMigration } from "./030_whiteboards";
 import { accessCentralMigration } from "./032_access_central";
+import { keySurfacesMigration } from "./033_key_surfaces";
 import { googleIdentitiesMigration } from "./034_google_identities";
 import { todayDigestPromptMigration } from "./035_today_digest_prompt";
 
@@ -47,7 +48,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   whiteboardsMigration,
   // 031 is reserved for a parallel wave. 032 (access central, Wave 33: notices, invite template snapshots, an actor index) needs 001, 018, and 025.
   accessCentralMigration,
-  // 033 belongs to a parallel wave. 034 (Google identities, flows, avatars, re-auth) needs only 001.
+  // 033 (key surfaces, Wave 34: per-surface last use and daily counts) needs only 025.
+  keySurfacesMigration,
+  // 034 (Google identities, flows, avatars, re-auth) needs only 001.
   googleIdentitiesMigration,
   // 035 (the Today digest prompt) needs only 026.
   todayDigestPromptMigration

@@ -1,7 +1,9 @@
-import { isIP } from "node:net";
 import type { Context } from "hono";
 import { getConnInfo } from "hono/bun";
 import { config } from "./config";
+import { addressInRanges, compressIpv6, ipv6Groups, normalizeIp } from "./ipRanges";
+
+export { normalizeIp };
 
 /**
  * The client address used for rate limits and audit entries, never for granting access (Wave 35
@@ -17,63 +19,6 @@ import { config } from "./config";
  * zone ids (`%eth0`) dropped, IPv4-mapped IPv6 in any spelling as plain IPv4, other IPv6 compressed
  * and lower-cased (RFC 5952). IPv6 is then bucketed by its /64, the block one client usually holds.
  */
-
-/** The eight 16-bit groups of an IPv6 address (already checked by `isIP`), or null. */
-function ipv6Groups(text: string): number[] | null {
-  let head = text;
-  const tail: number[] = [];
-  const dotted = /(\d{1,3}(?:\.\d{1,3}){3})$/.exec(head);
-  if (dotted) {
-    const bytes = dotted[1]!.split(".").map(Number);
-    tail.push((bytes[0]! << 8) | bytes[1]!, (bytes[2]! << 8) | bytes[3]!);
-    head = head.slice(0, -dotted[1]!.length);
-    if (head.endsWith(":") && !head.endsWith("::")) head = head.slice(0, -1);
-  }
-  const parse = (part: string) => part === "" ? [] : part.split(":").map((group) => parseInt(group, 16));
-  let groups: number[];
-  if (head.includes("::")) {
-    const [left, right] = head.split("::") as [string, string];
-    const l = parse(left), r = [...parse(right), ...tail];
-    groups = [...l, ...new Array<number>(Math.max(0, 8 - l.length - r.length)).fill(0), ...r];
-  } else {
-    groups = [...parse(head), ...tail];
-  }
-  return groups.length === 8 && groups.every((group) => Number.isInteger(group) && group >= 0 && group <= 0xffff) ? groups : null;
-}
-
-/** RFC 5952: lower-case hex, no leading zeros, the longest run (two or more) of zero groups as `::`. */
-function compressIpv6(groups: number[]) {
-  let best = -1, bestLength = 0;
-  for (let index = 0; index < 8;) {
-    if (groups[index] !== 0) { index += 1; continue; }
-    let end = index;
-    while (end < 8 && groups[end] === 0) end += 1;
-    if (end - index > bestLength) { best = index; bestLength = end - index; }
-    index = end;
-  }
-  const hex = groups.map((group) => group.toString(16));
-  if (bestLength < 2) return hex.join(":");
-  return `${hex.slice(0, best).join(":")}::${hex.slice(best + bestLength).join(":")}`;
-}
-
-/** The canonical form of one address (see above), or null when it is not an IP address. */
-export function normalizeIp(value: string | null | undefined): string | null {
-  if (!value) return null;
-  let text = value.trim();
-  if (text.startsWith("[") && text.includes("]")) text = text.slice(1, text.indexOf("]"));
-  const zone = text.indexOf("%");
-  if (zone >= 0) text = text.slice(0, zone);
-  const kind = isIP(text);
-  if (kind === 4) return text;
-  if (kind !== 6) return null;
-  const groups = ipv6Groups(text.toLowerCase());
-  if (!groups) return null;
-  // ::ffff:a.b.c.d, ::ffff:hhhh:hhhh, 0:0:0:0:0:ffff:…, with or without leading zeros.
-  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
-    return [groups[6]! >> 8, groups[6]! & 255, groups[7]! >> 8, groups[7]! & 255].join(".");
-  }
-  return compressIpv6(groups);
-}
 
 /** The rate-limit bucket of an address: IPv4 as is, IPv6 as its /64 (for example `2001:db8:1:2::/64`). */
 export function addressBucket(value: string | null | undefined): string | null {
@@ -98,8 +43,34 @@ function socketAddress(c: Context) {
   }
 }
 
+/**
+ * Whether forwarding headers may be read for this connection (Wave 34 review S1): only with
+ * TRUSTED_PROXY_HOPS ≥ 1, and, when TRUSTED_PROXY_ADDRESSES is set, only when the connection comes
+ * from one of those proxies. Anyone reaching Nook around the proxy is then seen as themselves.
+ */
+function forwardingTrusted(socket: string | null, hops: number, proxies: readonly string[]) {
+  if (hops <= 0) return false;
+  return proxies.length === 0 || addressInRanges(proxies, socket);
+}
+
+/**
+ * The client's exact canonical address (not its /64 bucket), by the same rule as clientAddress,
+ * for per-key IP allowlists (Wave 34, server/ipAllowlist.ts); null when there is none. Forwarding
+ * headers count only with TRUSTED_PROXY_HOPS ≥ 1, and only the entry the outermost trusted proxy
+ * added: entries further left are client-controlled and never read (T211).
+ */
+export function clientIp(c: Context, hops = config.trustedProxyHops, proxies: readonly string[] = config.trustedProxyAddresses): string | null {
+  const socket = normalizeIp(socketAddress(c));
+  if (!forwardingTrusted(socket, hops, proxies)) return socket;
+  const header = c.req.header("X-Forwarded-For");
+  if (!header) return socket;
+  const entries = header.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length < hops) return socket;
+  return normalizeIp(entries[entries.length - hops]) ?? socket;
+}
+
 /** The client's rate-limit bucket (see above); "unknown" when there is none. */
-export function clientAddress(c: Context, hops = config.trustedProxyHops): string {
+export function clientAddress(c: Context, hops = config.trustedProxyHops, proxies: readonly string[] = config.trustedProxyAddresses): string {
   const socket = socketAddress(c);
   const fallback = addressBucket(socket) ?? socket ?? "unknown";
   const header = c.req.header("X-Forwarded-For");
@@ -111,7 +82,7 @@ export function clientAddress(c: Context, hops = config.trustedProxyHops): strin
     }
     return fallback;
   }
-  if (!header) return fallback;
+  if (!header || !forwardingTrusted(normalizeIp(socket), hops, proxies)) return fallback;
   const entries = header.split(",").map((entry) => entry.trim()).filter(Boolean);
   if (entries.length < hops) return fallback;
   return addressBucket(entries[entries.length - hops]) ?? fallback;

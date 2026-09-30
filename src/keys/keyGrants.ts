@@ -1,3 +1,4 @@
+import { formatEntry, parseEntry } from "../../shared/ipRanges";
 import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPermissions";
 
 /**
@@ -8,7 +9,7 @@ import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPer
 
 export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin" | "whiteboards";
 export type KeyPermission = "read" | "comment" | "write" | "draft" | "publish" | "create";
-export type ResourceKind = "board" | "collection" | "calendar" | "whiteboard";
+export type ResourceKind = "folder" | "note" | "document" | "board" | "task_view" | "collection" | "calendar" | "routine" | "whiteboard";
 export type KeySurfaces = "mcp" | "rest" | "both";
 
 export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards"];
@@ -35,13 +36,45 @@ export const scopeFor = (module: GrantModule, permission: KeyPermission) => GRAN
 
 export const permissionsFor = (module: GrantModule) => Object.keys(GRANT_SCOPES[module]) as KeyPermission[];
 
-/** Modules whose grants may name chosen items in Wave 31, and what the items are called. */
-export const SELECTOR_KINDS: Partial<Record<GrantModule, { kind: ResourceKind; one: string; many: string }>> = {
-  tasks: { kind: "board", one: "board", many: "boards" },
-  collections: { kind: "collection", one: "collection", many: "collections" },
-  calendar: { kind: "calendar", one: "calendar", many: "calendars" },
-  whiteboards: { kind: "whiteboard", one: "whiteboard", many: "whiteboards" }
+/**
+ * Modules whose grants may name chosen items (Wave 34: every module with selectable items), the
+ * kinds each offers (mirrors server/keyGrants.ts SELECTOR_KINDS), and what the items are called.
+ * A folder covers the notes or files directly inside it (never its subfolders); a saved view is
+ * read only.
+ */
+export const SELECTOR_KINDS: Partial<Record<GrantModule, { kinds: readonly ResourceKind[]; one: string; many: string }>> = {
+  notes: { kinds: ["folder", "note"], one: "folder or note", many: "folders and notes" },
+  files: { kinds: ["folder", "document"], one: "folder or file", many: "folders and files" },
+  tasks: { kinds: ["board", "task_view"], one: "board or view", many: "boards and views" },
+  collections: { kinds: ["collection"], one: "collection", many: "collections" },
+  calendar: { kinds: ["calendar"], one: "calendar", many: "calendars" },
+  inbox: { kinds: ["routine"], one: "routine", many: "routines" },
+  whiteboards: { kinds: ["whiteboard"], one: "whiteboard", many: "whiteboards" }
 };
+
+export const KIND_LABELS: Record<ResourceKind, string> = {
+  folder: "Folder", note: "Note", document: "File", board: "Board", task_view: "View", collection: "Collection", calendar: "Calendar", routine: "Routine", whiteboard: "Whiteboard"
+};
+
+/**
+ * Permissions that only make something new and act on no existing item (review Q7): "Create
+ * whiteboards" makes a new private board, so it has no chosen items to offer.
+ */
+export const CREATE_ONLY: ReadonlySet<string> = new Set(["whiteboards:write"]);
+
+/** The chosen-item kinds a row offers: none for modules without items or create-only permissions. */
+export const selectorFor = (module: GrantModule, permission: KeyPermission) => CREATE_ONLY.has(`${module}:${permission}`) ? undefined : SELECTOR_KINDS[module];
+
+/** Kinds a key can only read through (a saved view is a query, never a write target). */
+export const READ_ONLY_KINDS: readonly ResourceKind[] = ["task_view"];
+
+/** A chosen item in the builder is one string, `kind:id`, so one picker can hold several kinds. */
+export const resourceToken = (kind: ResourceKind, id: string) => `${kind}:${id}`;
+export function parseResourceToken(token: string): { kind: ResourceKind; id: string } | null {
+  const at = token.indexOf(":");
+  if (at < 1) return null;
+  return { kind: token.slice(0, at) as ResourceKind, id: token.slice(at + 1) };
+}
 
 export function permissionLabel(module: GrantModule, permission: KeyPermission) {
   const scope = scopeFor(module, permission);
@@ -54,7 +87,13 @@ export function permissionHelp(module: GrantModule, permission: KeyPermission) {
   return item ? [item.help, item.warning].filter(Boolean).join(" ") : "";
 }
 
-export type PolicySummary = { keyMaxDays: number; keyDefaultDays: number; keyRequireExpiry: boolean; keysPerUser: number; modules: readonly GrantModule[]; mcpAllowed: boolean; restAllowed: boolean };
+export type PolicySummary = {
+  keyMaxDays: number; keyDefaultDays: number; keyRequireExpiry: boolean; keysPerUser: number; modules: readonly GrantModule[]; mcpAllowed: boolean; restAllowed: boolean;
+  /** Wave 34 (O-A7): whether this server can check client addresses (TRUSTED_PROXY_HOPS ≥ 1). */
+  ipAllowlistAvailable?: boolean;
+  /** Review S1: whether the operator named the proxies (TRUSTED_PROXY_ADDRESSES), so a direct caller cannot claim an address. */
+  ipProxyPinned?: boolean;
+};
 
 export type PermissionChoice = { value: KeyPermission; label: string; description: string; disabled: boolean; reason: string | null };
 
@@ -85,7 +124,7 @@ export function moduleChoices(role: string | undefined, policy: Pick<PolicySumma
   });
 }
 
-/** One row of the grant builder. `resourceIds` is used when `applies` is "chosen". */
+/** One row of the grant builder. `resourceIds` (tokens from resourceToken) is used when `applies` is "chosen". */
 export type GrantRow = { key: string; module: GrantModule; permission: KeyPermission; applies: "all" | "chosen"; resourceIds: string[] };
 
 /** Where each module and permission is already used, by row number (1-based), leaving out `rowKey`. */
@@ -123,7 +162,7 @@ export function rowModuleChoices(role: string | undefined, policy: Pick<PolicySu
   });
 }
 
-export type GrantPayload = { module: GrantModule; permission: KeyPermission; resourceIds?: string[] };
+export type GrantPayload = { module: GrantModule; permission: KeyPermission; resources?: Array<{ kind: ResourceKind; id: string }> };
 
 /** The request body's grants, or an error to show next to Create. */
 export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[]; error: string | null } {
@@ -134,11 +173,13 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
     const id = `${row.module}:${row.permission}`;
     if (seen.has(id)) return { grants: [], error: `${MODULE_LABELS[row.module]}: ${permissionLabel(row.module, row.permission)} is listed twice.` };
     seen.add(id);
-    if (row.applies === "chosen") {
+    if (row.applies === "chosen" && !CREATE_ONLY.has(`${row.module}:${row.permission}`)) {
       const selector = SELECTOR_KINDS[row.module];
-      if (!selector) return { grants: [], error: `${MODULE_LABELS[row.module]} covers every item for now.` };
+      if (!selector) return { grants: [], error: `${MODULE_LABELS[row.module]} covers every item.` };
       if (!row.resourceIds.length) return { grants: [], error: `Choose at least one ${selector.one} for ${MODULE_LABELS[row.module]}, or pick All ${selector.many}.` };
-      grants.push({ module: row.module, permission: row.permission, resourceIds: [...row.resourceIds] });
+      const resources = row.resourceIds.map(parseResourceToken).filter((item): item is { kind: ResourceKind; id: string } => item !== null);
+      if (row.permission !== "read" && resources.some((item) => READ_ONLY_KINDS.includes(item.kind))) return { grants: [], error: `${MODULE_LABELS[row.module]}: saved views can only be read. Remove them or choose Read.` };
+      grants.push({ module: row.module, permission: row.permission, resources });
     } else {
       grants.push({ module: row.module, permission: row.permission });
     }
@@ -149,10 +190,10 @@ export function rowsToGrants(rows: readonly GrantRow[]): { grants: GrantPayload[
 export type KeyGrantView = {
   module: GrantModule; permission: KeyPermission;
   resource: { kind: ResourceKind; id: string; name: string | null } | null;
-  active: boolean; inactiveReason: "role" | "policy" | "no-access" | null;
+  active: boolean; inactiveReason: "role" | "policy" | "no-access" | "unavailable" | null;
 };
 
-const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access" } as const;
+const INACTIVE_TEXT = { role: "your team role cannot use it", policy: "turned off by team policy", "no-access": "no current access", unavailable: "no longer available: keys hold only your own views" } as const;
 
 /**
  * The chips of a key row: one per module and permission, naming the chosen items (or "all"),
@@ -171,13 +212,21 @@ export function grantChips(grants: readonly KeyGrantView[]) {
     let scope = "";
     if (first.resource) {
       const names = items.map((item) => item.resource?.name).filter((name): name is string => Boolean(name));
-      scope = items.length === 1 && names.length === 1 ? ` · ${names[0]}` : ` · ${items.length} ${items.length === 1 ? selector?.one ?? "item" : selector?.many ?? "items"}`;
+      const kinds = new Set(items.map((item) => item.resource!.kind));
+      // One kind: "3 boards"; mixed kinds: "2 items".
+      const noun = kinds.size === 1 ? KIND_NOUNS[first.resource.kind] : ["item", "items"] as const;
+      scope = items.length === 1 && names.length === 1 ? ` · ${names[0]}` : ` · ${items.length} ${items.length === 1 ? noun[0] : noun[1]}`;
     }
     const inactive = items.every((item) => !item.active);
     const reason = inactive ? items.find((item) => item.inactiveReason)?.inactiveReason ?? null : null;
     return { id, label: `${base}${scope}${reason ? ` (${INACTIVE_TEXT[reason]})` : ""}`, active: !inactive };
   });
 }
+
+const KIND_NOUNS: Record<ResourceKind, readonly [string, string]> = {
+  folder: ["folder", "folders"], note: ["note", "notes"], document: ["file", "files"], board: ["board", "boards"], task_view: ["view", "views"],
+  collection: ["collection", "collections"], calendar: ["calendar", "calendars"], routine: ["routine", "routines"], whiteboard: ["whiteboard", "whiteboards"]
+};
 
 /** One sentence under the builder: what the key can do, and what no key ever does (D265). */
 export function grantSummary(rows: readonly GrantRow[]) {
@@ -186,13 +235,94 @@ export function grantSummary(rows: readonly GrantRow[]) {
     const selector = SELECTOR_KINDS[row.module];
     // Creating a whiteboard makes a new, private board: it is not "on" any existing ones (QA Q7).
     const createOnly = row.module === "whiteboards" && row.permission === "write";
-    const where = createOnly ? "" : row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? selector.one : selector.many}` : selector ? ` on all ${selector.many}` : "";
+    const kinds = new Set(row.resourceIds.map((token) => parseResourceToken(token)?.kind));
+    const only = kinds.size === 1 ? [...kinds][0] : undefined;
+    const noun = only ? KIND_NOUNS[only] : ["item", "items"] as const;
+    const where = createOnly ? "" : row.applies === "chosen" && selector ? ` on ${row.resourceIds.length} ${row.resourceIds.length === 1 ? noun[0] : noun[1]}` : selector ? ` on all ${selector.many}` : "";
     return `${MODULE_LABELS[row.module]}: ${permissionLabel(row.module, row.permission).toLowerCase()}${where}`;
   });
   return `${parts.join("; ")}. Never shares, never manages access or keys, and never deletes forever.`;
 }
 
 export const SURFACE_LABELS: Record<KeySurfaces, string> = { mcp: "MCP", rest: "REST", both: "MCP and REST" };
+
+/** The line under a key: when it was last used on each surface it may use (Wave 34). */
+export function lastUsedLine(key: { surfaces: KeySurfaces; lastUsedAt: string | null; lastUsed?: { mcp: string | null; rest: string | null } }, relative: (iso: string) => string) {
+  if (!key.lastUsed || key.surfaces !== "both") return key.lastUsedAt ? `Used ${relative(key.lastUsedAt)}` : "Never used";
+  const part = (label: string, at: string | null) => `${label} ${at ? relative(at) : "never"}`;
+  return `${part("MCP", key.lastUsed.mcp)} · ${part("REST", key.lastUsed.rest)}`;
+}
+
+/** The allowlist textarea's lines, trimmed, blanks dropped (the server validates and canonicalises). */
+export const allowlistLines = (text: string) => text.split(/[\n,]+/).map((line) => line.trim()).filter(Boolean);
+
+export const ALLOWLIST_MAX = 10;
+
+/**
+ * The address field checked as it is typed (review Q6), with the server's own parser: each entry's
+ * canonical form (203.0.113.5/24 is the range 203.0.113.0/24), which lines are wrong and why, and
+ * the ten-entry cap.
+ */
+export function checkAllowlist(text: string) {
+  const lines = allowlistLines(text);
+  const entries: Array<{ input: string; canonical: string | null; error: string | null }> = lines.map((input) => {
+    const range = parseEntry(input);
+    if (range) return { input, canonical: formatEntry(range), error: null };
+    const prefix = /\/(\d+)$/.exec(input.trim());
+    const error = prefix && Number(prefix[1]) === 0 ? "/0 would allow every address, so it is not a limit"
+      : prefix && parseEntry(input.trim().replace(/\/\d+$/, "")) ? "the range after / is too wide or too long for this address"
+      : "not an IPv4 or IPv6 address or range";
+    return { input, canonical: null, error };
+  });
+  const tooMany = entries.length > ALLOWLIST_MAX ? `At most ${ALLOWLIST_MAX} addresses or ranges; remove ${entries.length - ALLOWLIST_MAX}.` : null;
+  const invalid = entries.filter((entry) => entry.error);
+  const error = tooMany ?? (invalid.length ? invalid.map((entry) => `“${entry.input}”: ${entry.error}`).join("; ") : null);
+  const changed = entries.filter((entry) => entry.canonical && entry.canonical !== entry.input).map((entry) => `${entry.input} → ${entry.canonical}`);
+  return { entries, canonical: entries.map((entry) => entry.canonical).filter((value): value is string => value !== null), error, changed };
+}
+
+/** Why a key's last call was refused (review Q1). */
+const DENIAL_LINE: Record<string, string> = {
+  ip: "not allowed from its address", surface: "not set up for that surface", policy_surface_role: "team policy does not allow your role there",
+  policy_expiry_required: "team policy requires an expiry", policy_lifetime: "it lasts longer than team policy allows",
+  expired: "it has expired", rotated: "its rotation grace ended", paused: "your account is blocked"
+};
+
+/**
+ * One line of a key's own activity (Wave 34 verification Q1), for its owner in Settings. A refused
+ * call names the surface, why, and for an address refusal the shortened client address (the /24 or
+ * /64 the server kept), which only the key's owner ever sees.
+ */
+export function keyEventLine(event: { action: string; meta: Record<string, unknown> | null }) {
+  const meta = event.meta ?? {};
+  const surface = meta.surface === "rest" ? " over REST" : meta.surface === "mcp" ? " over MCP" : "";
+  switch (event.action) {
+    case "key.created": return meta.rotatedFrom ? "Created by rotating an older key" : "Created";
+    case "key.narrowed": return "Narrowed";
+    case "key.rotated": return "Rotated";
+    case "key.revoked": return meta.by === "admin" ? "Revoked by an admin" : "Revoked";
+    case "key.grace_ended": return "Rotation grace ended";
+    case "key.policy_blocked": return `Blocked by team policy${surface}`;
+    case "key.denied": {
+      const from = typeof meta.clientPrefix === "string" ? `, from ${meta.clientPrefix}` : "";
+      return `Refused${surface}: ${DENIAL_LINE[String(meta.reason)] ?? "not allowed"}${from}`;
+    }
+    default: return event.action;
+  }
+}
+
+export function deniedLine(key: { lastDenied?: { at: string; reason: string; surface: "mcp" | "rest" | null } | null }, relative: (iso: string) => string) {
+  if (!key.lastDenied) return null;
+  const surface = key.lastDenied.surface === "rest" ? " over REST" : key.lastDenied.surface === "mcp" ? " over MCP" : "";
+  return `Last refused ${relative(key.lastDenied.at)}${surface}: ${DENIAL_LINE[key.lastDenied.reason] ?? "not allowed"}`;
+}
+
+/** Review Q3: a key that may use both surfaces, with one blocked by team policy, says which one still works. */
+export function blockedSurfaceLine(key: { surfaces: KeySurfaces; state: string; blockedSurfaces?: ReadonlyArray<"mcp" | "rest"> }) {
+  const blocked = key.blockedSurfaces ?? [];
+  if (key.surfaces !== "both" || blocked.length !== 1 || key.state === "blocked") return null;
+  return blocked[0] === "rest" ? "REST blocked by team policy; MCP works" : "MCP blocked by team policy; REST works";
+}
 
 export const GRACE_OPTIONS = [
   { value: "0", label: "Stop the old key now" },

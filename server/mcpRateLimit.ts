@@ -8,6 +8,10 @@
  * more keys does not multiply the budget. A call is admitted only if every
  * bucket it touches has room, and then all of them are charged, so a refused
  * call costs nothing.
+ *
+ * Wave 34: the per-minute buckets are kept per surface (MCP and the REST `/api/v1` surface), per
+ * key and per user, so a flood on one surface cannot starve the other; daily budgets stay shared,
+ * so a key on both surfaces gets no second day's worth of writes. The web app has its own limits.
  */
 export type McpLimitBucket = "call" | "write" | "create_note" | "task_write" | "event_write" | "reminder_write" | "row_write" | "proposal_write"
   | "note_publish" | "bin_action" | "bin_burst" | "sprint_write" | "structure_write" | "file_write" | "run_start";
@@ -76,16 +80,19 @@ function sweep(time: number) {
  * Returns 0 when admitted, otherwise the seconds until the fullest blocking
  * bucket resets (fixed windows).
  */
-export function consumeMcpLimits(subject: { keyId: string; userId?: string; limits?: { callsPerMinute?: number; writesPerMinute?: number } }, buckets: readonly McpLimitBucket[], time = Date.now()) {
+export function consumeMcpLimits(subject: { keyId: string; userId?: string; limits?: { callsPerMinute?: number; writesPerMinute?: number }; surface?: "mcp" | "rest" }, buckets: readonly McpLimitBucket[], time = Date.now()) {
+  const surface = subject.surface ?? "mcp";
   sweep(time);
   const charges: Array<{ key: string; limit: Limit }> = [];
   for (const bucket of buckets) {
     // A key's own limits (access plan D282, T216) may only be lower than the global ones.
     const own = bucket === "call" ? subject.limits?.callsPerMinute : bucket === "write" ? subject.limits?.writesPerMinute : undefined;
     const base = MCP_LIMITS[bucket];
-    charges.push({ key: `key:${subject.keyId}:${bucket}`, limit: own !== undefined && own < base.limit ? { limit: own, windowMs: base.windowMs } : base });
+    // Minute windows per surface; MCP keeps its pre-Wave-34 bucket names.
+    const lane = base.windowMs <= MINUTE && surface !== "mcp" ? `:${surface}` : "";
+    charges.push({ key: `key:${subject.keyId}:${bucket}${lane}`, limit: own !== undefined && own < base.limit ? { limit: own, windowMs: base.windowMs } : base });
     const userLimit = MCP_USER_LIMITS[bucket];
-    if (subject.userId && userLimit) charges.push({ key: `user:${subject.userId}:${bucket}`, limit: userLimit });
+    if (subject.userId && userLimit) charges.push({ key: `user:${subject.userId}:${bucket}${lane}`, limit: userLimit });
   }
   const current = charges.map(({ key, limit }) => {
     let window = windows.get(key);

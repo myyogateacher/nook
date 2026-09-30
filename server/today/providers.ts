@@ -9,7 +9,7 @@ import { hasScope, type McpScope } from "../mcpScopes";
 import { checksum } from "../storage";
 import { readableBoardPredicate } from "../tasks/access";
 import { dueAt as dueAtOf } from "../tasks/dueTime";
-import { addDays, page, registerTodayProvider, TODAY_FETCH } from "./registry";
+import { addDays, page, registerTodayProvider, sectionIds, sectionScope, TODAY_FETCH } from "./registry";
 import { recentWhiteboards } from "../whiteboards/service";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 
@@ -73,22 +73,34 @@ const dueOrder = "k.due_on, k.due_time IS NULL, k.due_time";
 registerTodayProvider("tasksDue", {
   mcpScope: "tasks:read",
   href: "/tasks",
-  load: ({ userId, today, now }) => page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon
+  load: (context) => {
+    const { userId, today, now } = context;
+    const scope = sectionScope(context, "tasks:read", TASK_ANCHORS);
+    return page((db.query(`${taskSelect} AND k.due_on IS NOT NULL AND k.due_on <= $horizon AND ${scope.sql}
       ORDER BY (${assignedToCaller} OR k.created_by = $userId) DESC, ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
-    .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[]).map((row) => taskItem(row, today, now)))
+      .all({ ...scope.params, userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[]).map((row) => taskItem(row, today, now)));
+  }
 });
 
 registerTodayProvider("tasksMine", {
   mcpScope: "tasks:read",
   href: "/tasks",
-  load: ({ userId, today, now }) => page((db.query(`${taskSelect} AND (${assignedToCaller} OR k.created_by = $userId)
-      AND (k.due_on IS NULL OR k.due_on > $horizon)
+  load: (context) => {
+    const { userId, today, now } = context;
+    const scope = sectionScope(context, "tasks:read", TASK_ANCHORS);
+    return page((db.query(`${taskSelect} AND (${assignedToCaller} OR k.created_by = $userId)
+      AND (k.due_on IS NULL OR k.due_on > $horizon) AND ${scope.sql}
       ORDER BY k.due_on IS NULL, ${dueOrder}, k.updated_at DESC, k.id LIMIT $limit`)
-    .all({ userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[])
-    .map((row) => ({ ...taskItem(row, today, now), reason: row.assigned ? "assigned" as const : "created" as const })))
+      .all({ ...scope.params, userId, horizon: addDays(today, TASKS_DUE_DAYS), limit: TODAY_FETCH }) as TaskRow[])
+      .map((row) => ({ ...taskItem(row, today, now), reason: row.assigned ? "assigned" as const : "created" as const })));
+  }
 });
 
 const EMPTY_CHECKSUM = checksum("");
+
+/** Where a card or a note sits, for a key limited to chosen items (Wave 34). */
+const TASK_ANCHORS = { board: "k.board_id" } as const;
+const NOTE_ANCHORS = { note: "n.id", folder: "n.folder_id" } as const;
 
 /** A never-published note the drafts section lists: a saved, non-blank draft of the owner's own (not an agent's). */
 const listedAsUnpublishedDraft = "(n.draft_revision IS NOT NULL AND n.draft_mcp_key_id IS NULL AND n.draft_checksum <> $empty)";
@@ -103,29 +115,38 @@ const listedAsUnpublishedDraft = "(n.draft_revision IS NOT NULL AND n.draft_mcp_
 registerTodayProvider("notesRecent", {
   mcpScope: "notes:read",
   href: "/notes",
-  load: ({ userId }) => page((db.query(`
+  load: (context) => {
+    const { userId } = context;
+    const scope = sectionScope(context, "notes:read", NOTE_ANCHORS);
+    return page((db.query(`
       SELECT n.id, CASE WHEN n.owner_id = $userId THEN n.title ELSE v.title END AS title, u.display_name AS owner_name,
              CASE WHEN n.owner_id = $userId THEN 1 ELSE 0 END AS is_owner,
              CASE WHEN n.owner_id = $userId THEN n.updated_at ELSE v.created_at END AS updated_at
       FROM notes n JOIN users u ON u.id = n.owner_id
       LEFT JOIN note_versions v ON v.note_id = n.id AND v.version_number = n.current_version
       WHERE n.deleted_at IS NULL AND ${readableNotePredicate} AND (n.owner_id = $userId OR v.id IS NOT NULL)
-        AND NOT (n.owner_id = $userId AND n.current_version = 0 AND ${listedAsUnpublishedDraft})
-      ORDER BY 5 DESC, n.id LIMIT $limit`).all({ userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; owner_name: string; is_owner: 0 | 1; updated_at: string }>))
+        AND NOT (n.owner_id = $userId AND n.current_version = 0 AND ${listedAsUnpublishedDraft}) AND ${scope.sql}
+      ORDER BY 5 DESC, n.id LIMIT $limit`).all({ ...scope.params, userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; owner_name: string; is_owner: 0 | 1; updated_at: string }>));
+  }
 });
 
 /** The caller's own drafts that differ from what is published (blank never-published drafts are not drafts). */
 registerTodayProvider("drafts", {
   mcpScope: "notes:read",
   href: "/notes",
-  load: ({ userId }) => page((db.query(`
+  load: (context) => {
+    const { userId } = context;
+    const scope = sectionScope(context, "notes:read", NOTE_ANCHORS);
+    return page((db.query(`
       SELECT n.id, n.title, n.updated_at, n.current_version = 0 AS neverPublished
       FROM notes n
       WHERE n.owner_id = $userId AND n.deleted_at IS NULL AND n.draft_revision IS NOT NULL AND n.draft_mcp_key_id IS NULL
         AND ((n.current_version = 0 AND ${listedAsUnpublishedDraft}) OR EXISTS (
           SELECT 1 FROM note_versions v WHERE v.note_id = n.id AND v.version_number = n.current_version AND v.checksum <> n.draft_checksum))
-      ORDER BY n.updated_at DESC, n.id LIMIT $limit`).all({ userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; updated_at: string; neverPublished: number }>)
-    .map((row) => ({ ...row, neverPublished: row.neverPublished === 1 })))
+        AND ${scope.sql}
+      ORDER BY n.updated_at DESC, n.id LIMIT $limit`).all({ ...scope.params, userId, empty: EMPTY_CHECKSUM, limit: TODAY_FETCH }) as Array<{ id: string; title: string; updated_at: string; neverPublished: number }>)
+      .map((row) => ({ ...row, neverPublished: row.neverPublished === 1 })));
+  }
 });
 
 /**
@@ -139,17 +160,20 @@ registerTodayProvider("agentDrafts", {
   mcpScope: "notes:read",
   href: "/notes",
   available: hasAgentDrafts,
-  load: ({ userId }) => page(db.query(`
+  load: (context) => {
+    const scope = sectionScope(context, "notes:read", NOTE_ANCHORS);
+    return page(db.query(`
       SELECT n.id, n.title, k.name AS keyName, n.updated_at
       FROM notes n JOIN mcp_api_keys k ON k.id = n.draft_mcp_key_id
-      WHERE n.owner_id = $userId AND n.deleted_at IS NULL AND n.draft_revision IS NOT NULL
-      ORDER BY n.updated_at DESC, n.id LIMIT $limit`).all({ userId, limit: TODAY_FETCH }) as Array<{ id: string; title: string; keyName: string; updated_at: string }>)
+      WHERE n.owner_id = $userId AND n.deleted_at IS NULL AND n.draft_revision IS NOT NULL AND ${scope.sql}
+      ORDER BY n.updated_at DESC, n.id LIMIT $limit`).all({ ...scope.params, userId: context.userId, limit: TODAY_FETCH }) as Array<{ id: string; title: string; keyName: string; updated_at: string }>);
+  }
 });
 
 registerTodayProvider("files", {
   mcpScope: "files:read",
   href: "/files",
-  load: ({ userId }) => page(recentListableDocuments(userId, TODAY_FETCH).map((document) => ({
+  load: (context) => page(recentListableDocuments(context.userId, TODAY_FETCH, sectionScope(context, "files:read", { document: "d.id", folder: "d.folder_id" })).map((document) => ({
     id: document.id, name: document.name, mime_type: document.mime_type, preview_kind: document.preview_kind, size_bytes: document.size_bytes,
     owner_name: document.owner_name, is_owner: document.is_owner, updated_at: document.updated_at
   })))
@@ -175,15 +199,15 @@ export function binItemVisible(type: string, scopes: readonly McpScope[] | undef
 registerTodayProvider("collectionsRecent", {
   mcpScope: "collections:read",
   href: "/collections",
-  load: ({ userId }) => page(listRecentRows(userId, TODAY_FETCH))
+  load: (context) => page(listRecentRows(context.userId, TODAY_FETCH, sectionScope(context, "collections:read", { collection: "c.id" })))
 });
 
 /** Recently edited whiteboards the caller can read (Wave 23, D206): names and times only. */
 registerTodayProvider("whiteboardsRecent", {
   mcpScope: "whiteboards:read",
   href: "/whiteboards",
-  load: ({ userId }) => {
-    const boards = recentWhiteboards(userId, WHITEBOARDS_RECENT + 1);
+  load: (context) => {
+    const boards = recentWhiteboards(context.userId, WHITEBOARDS_RECENT + 1, sectionIds(context, "whiteboards:read", "whiteboard") ?? undefined);
     return {
       items: boards.slice(0, WHITEBOARDS_RECENT).map((board) => ({ id: board.id, name: whiteboardDisplayName(board.name), is_owner: board.is_owner, owner_name: board.owner_name, updated_at: board.updated_at })),
       more: boards.length > WHITEBOARDS_RECENT
@@ -214,8 +238,8 @@ registerTodayProvider("upcoming", {
   href: "/calendar",
   available: () => true,
   mcpScope: "calendar:read",
-  load: ({ userId, tz, now }) => {
-    const { items, more } = listUpcoming(userId, tz, UPCOMING_DAYS, now.getTime());
+  load: (context) => {
+    const { items, more } = listUpcoming(context.userId, context.tz, UPCOMING_DAYS, context.now.getTime(), sectionIds(context, "calendar:read", "calendar"));
     return {
       items: items.map((item) => ({ eventId: item.eventId, calendarId: item.calendarId, title: item.title, start: item.start, end: item.end, allDay: item.allDay, date: item.date })),
       more

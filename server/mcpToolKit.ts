@@ -2,7 +2,8 @@ import * as z from "zod/v4";
 import type { McpLimitBucket } from "./mcpRateLimit";
 import type { McpScope } from "./mcpScopes";
 import type { RestoreOutcome } from "./bin";
-import type { Grant } from "./keyGrants";
+import type { Grant, ResourceKind } from "./keyGrants";
+import type { ItemKind } from "./keyResources";
 
 /**
  * Building blocks shared by every module's MCP tools (server/mcpTools.ts and
@@ -23,17 +24,44 @@ export type McpKeyContext = {
    * proposal): what the key may see about foreign items (server/keyReach.ts) does not limit them.
    */
   person?: true;
+  /** The surface the call came through (Wave 34), set by runTool: uploads remember it (review S4). */
+  surface?: "mcp" | "rest";
 };
 
 /**
- * The one resource a tool touches, named by one argument (access plan D281, T203). A key whose
- * grant for the tool's module names chosen items sees only tools that declare this, and each call
- * must name an item inside a granted container (a card's board, a row's collection, an event's
- * calendar). Tools without it are hidden from such keys until Wave 34 adds list filters.
+ * One argument that names an item (access plan D281, T203): its kind decides where it is anchored
+ * (server/keyResources.ts). An array argument names several items, each checked. `ifAbsent:
+ * "allow"` is for optional arguments that only narrow a result (a list's folder, a query's view);
+ * any other optional argument must be given by a key limited to chosen items, since leaving it out
+ * would act somewhere the key was not given (a new note in the Default folder).
  */
-export type McpToolResource = {
-  arg: string;
-  kind: "board" | "card" | "column" | "sprint" | "collection" | "row" | "calendar" | "event" | "whiteboard";
+export type ToolItem = { arg: string; kind: ItemKind; ifAbsent?: "allow" };
+
+/**
+ * What a tool reads and writes, declared on every tool (Wave 34; tests/toolResourcePolicy.test.ts
+ * fails for a tool without one). Chosen-item keys are enforced from this, in runTool:
+ *
+ * - `items`: the tool acts on the items its `items` arguments name. Each must lie inside the
+ *   key's chosen items (for the tool's scopes, and for each `alsoRequires` scope); otherwise
+ *   NOT_FOUND, the same as missing (T205).
+ * - `list`: the tool lists items of the kinds in `lists`; its handler narrows its SQL with the
+ *   key's reach (keyFilter / keyContainerIds) before any LIMIT, so counts and pages hold only
+ *   granted items. Optional `items` (a folder to list) are checked as above.
+ * - `derived`: the tool gathers items of several modules (Today, proposals); each part is
+ *   filtered by that module's own reach inside the handler.
+ * - `own`: the tool touches only what this key itself made (its uploads, its proposals).
+ * - `global`: not about chosen items (team directory, a new top-level container). Hidden from a
+ *   key unless its grant covers the whole module.
+ *
+ * `related` lists the other id arguments and why they need no check of their own: the service
+ * ties them to a declared item (a column of the same board, a comment on the same card) or they
+ * name people, not content. The policy test fails for an id argument that is in neither list.
+ */
+export type ToolAccess = {
+  mode: "items" | "list" | "derived" | "own" | "global";
+  items?: readonly ToolItem[];
+  lists?: readonly ResourceKind[];
+  related?: readonly string[];
 };
 
 export type McpErrorCode =
@@ -75,6 +103,13 @@ export type McpErrorCode =
   // Nook keys (Wave 31, D263): team policy blocks this key (not revoked; policy can allow it again).
   | "KEY_POLICY"
   | "INTERNAL";
+
+/**
+ * Validation details for a tool, each naming its argument ("cardId: Invalid UUID"), on MCP and REST
+ * alike (Wave 34 review Q4). Every tool's validation path goes through this.
+ */
+export const issueDetails = (issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>) =>
+  issues.map((issue) => issue.path.length ? `${issue.path.map(String).join(".")}: ${issue.message}` : issue.message);
 
 export class McpToolError extends Error {
   constructor(readonly code: McpErrorCode, message: string, readonly details?: Record<string, unknown>) {
@@ -134,13 +169,8 @@ export type McpToolSpec<Schema extends z.ZodObject = z.ZodObject> = {
   dailyBucket?: Exclude<McpLimitBucket, "call" | "write">;
   /** Further buckets this tool counts against (Wave 19, for example a Bin tool's daily cap and burst). */
   buckets?: readonly Exclude<McpLimitBucket, "call" | "write">[];
-  /** The resource this tool touches (D281); see McpToolResource. */
-  resource?: McpToolResource;
-  /**
-   * A list tool whose result field is an array of containers `{id, …}` (D281 `list`): a key with
-   * chosen items gets only those entries back. The only other shape such a key may see.
-   */
-  listFilter?: { field: string; kind: "board" | "collection" | "calendar" | "whiteboard" };
+  /** What the tool reads and writes (D281); see ToolAccess. Required on every tool. */
+  access: ToolAccess;
   inputSchema: Schema;
   handler: (args: z.infer<Schema>, key: McpKeyContext) => Promise<unknown> | unknown;
 };

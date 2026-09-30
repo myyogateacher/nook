@@ -1754,7 +1754,7 @@ Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` (D261–D288
 
 **Scopes as a compatibility view.** Each grant `{module, permission}` is one MCP scope (`server/keyGrants.ts` `SCOPE_GRANTS`: `notes:read` = notes/read, `notes:write-draft` = notes/draft, `notes:publish` = notes/publish, `files:write` = files/write, `bin:write` = bin/write, …). Tool registration keeps using scopes; `mcp_api_keys.scopes` is still written as a mirror for one release.
 
-**Chosen items (D281, stored now, enforced narrowly).** Grants for `tasks`, `collections`, and `calendar` may name boards, collections, or calendars (`resourceIds`). Such a key sees only tools that declare their resource (`McpToolSpec.resource`: `list_cards`, `get_card`, `create_card`, `update_card`, `move_card`, `comment_on_card`, `bin_card`/`restore_card`, `manage_tags`, `set_wip_limit`, `create_sprint`, `start_sprint`, `list_sprints`, `list_children`; `query_rows`, `get_row`, `create_row`, `update_row`, `bin_row`/`restore_row`; `get_event`, `create_event`, `update_event`, `create_reminder`, `bin_event`/`restore_event`) and the list tools with `listFilter` (`list_boards`, `list_collections`, `list_calendars`, filtered to the chosen items). Each call must name an item inside a chosen container (a card's board, a row's collection, an event's calendar); anything else is `NOT_FOUND`, exactly like a missing item. Every other tool (search across boards, `link_cards`, `link_attachment`, `list_events`, Today, inbox proposals) is hidden from such a key, and handlers only see the scopes the key holds over whole modules, until Wave 34 adds per-tool resource filters. Foreign items a visible tool presents (relations, event links, note fields) are checked against the grants as well and come back restricted when outside them (see "Foreign items and key grants" under the MCP tools).
+**Chosen items (D281; as built in Wave 31, widened in Wave 34: see "Resource-scoped keys and REST v1" below).** Grants for `tasks`, `collections`, and `calendar` may name boards, collections, or calendars (`resourceIds`). Such a key sees only tools that declare their resource (`McpToolSpec.resource`: `list_cards`, `get_card`, `create_card`, `update_card`, `move_card`, `comment_on_card`, `bin_card`/`restore_card`, `manage_tags`, `set_wip_limit`, `create_sprint`, `start_sprint`, `list_sprints`, `list_children`; `query_rows`, `get_row`, `create_row`, `update_row`, `bin_row`/`restore_row`; `get_event`, `create_event`, `update_event`, `create_reminder`, `bin_event`/`restore_event`) and the list tools with `listFilter` (`list_boards`, `list_collections`, `list_calendars`, filtered to the chosen items). Each call must name an item inside a chosen container (a card's board, a row's collection, an event's calendar); anything else is `NOT_FOUND`, exactly like a missing item. Every other tool (search across boards, `link_cards`, `link_attachment`, `list_events`, Today, inbox proposals) is hidden from such a key, and handlers only see the scopes the key holds over whole modules, until Wave 34 adds per-tool resource filters. Foreign items a visible tool presents (relations, event links, note fields) are checked against the grants as well and come back restricted when outside them (see "Foreign items and key grants" under the MCP tools).
 
 ### Types
 
@@ -1961,6 +1961,79 @@ type ActivityEvent = {
 ```
 
 **MCP.** None: the plan lists no MCP tool for Access C, and keys never manage access (D265).
+
+## Resource-scoped keys and REST v1 (Wave 34, Access D)
+
+Plan: `docs/plan/research/2026-09-28-access-management-api-keys.md` (D279–D284, O-A7, O-A8, O-A12, T203, T210, T211). Migration **033** (`key_surfaces`) adds `mcp_api_keys.last_used_mcp_at`, `last_used_rest_at`, and the last refusal (`last_denied_at`, `last_denied_reason`, `last_denied_surface`), and the per-surface daily counts `api_key_surface_usage (key_id, day, surface, calls, writes, denied)`; everything else was created by 025.
+
+### Resource policy on every tool (D281)
+
+Every MCP tool declares what it touches (`McpToolSpec.access`, `server/mcpToolKit.ts`), and `runTool` enforces chosen-item keys from the declaration, not in each tool. `tests/toolResourcePolicy.test.ts` fails for a tool without one, for a declared argument the tool does not have, and for an id argument that is neither checked nor explained (`related`).
+
+| Mode | Meaning | Chosen-items key |
+| --- | --- | --- |
+| `items` | The tool acts on the items its arguments name (`{arg, kind}`; arrays name several) | Each named item must lie inside the key's chosen items for the tool's scopes (and for each `alsoRequires` scope); checked on the raw arguments **before** validation. Missing, unreadable, and outside the grant are the same `NOT_FOUND`, and the error never names the item. An optional container argument (a new note's `folderId`) must be given: leaving it out would act in the Default folder (`INVALID`) |
+| `list` | The tool lists items (`lists`) | The handler narrows its SQL with the key's reach (`keyFilter`, `keyContainerIds`) **before** any LIMIT, so pages, `truncated`, `more`, and totals count only granted items. Optional narrowing arguments (a list's folder, a query's view) are checked as above when given |
+| `derived` | Parts of several modules (`get_today`, `submit_proposals`) | Each part is filtered by its own module's reach: Today sections narrow their SQL; a proposal's target must be inside the kind's module grant (a note draft is checked before it is written) |
+| `own` | Only what this key itself made (`finish_upload`, `list_my_proposals`, `withdraw_proposal`) | Allowed |
+| `global` | Not item-scoped (team directory, `create_folder`, `create_collection`, `create_whiteboard`) | Hidden and refused (`SCOPE_REQUIRED`) unless the key covers the whole module |
+
+**Anchors.** An item is inside a grant when the grant names the item or its container: a card, column, or sprint by its board; a row by its collection; an event by its calendar; a note or a Files document by itself or its **immediate** folder (folders never cascade, D271); a whiteboard by itself; a routine run by its routine; a saved view by itself. A tool whose declared items the key's chosen kinds can never anchor (a view-only key and `get_card`) is not offered.
+
+**Selectable kinds per module** (`SELECTOR_KINDS`): notes `folder`, `note`; files `folder`, `document`; tasks `board`, `task_view` (read only, and only views the key's holder **owns** (review S2): a view someone else owns would follow their later edits across boards; a grant on one made before this rule is listed `inactiveReason: "unavailable"` and reaches nothing, and rotation or PATCH refuses to keep it with 400 `INVALID_GRANT`); collections `collection`; calendar `calendar`; inbox `routine`; whiteboards `whiteboard`. Today, Team, and the Bin cover every item (Bin tools also need the module grant on the item). Writing grants on folders, notes, and files may name only the holder's own (MCP note and file writes are the owner's).
+
+**Proposals (review S3).** `submit_proposals` checks each proposal's target (`boardId`, `cardId`, `calendarId`, `eventId`, `collectionId`, `rowId`; a note draft's `noteId` or `folderId`) against the key's chosen items **before** any validation that reads the owner's data, so an item outside the grant is `NOT_FOUND` whatever else is wrong with the proposal.
+
+**Cross-module reads** (`server/keyReach.ts` `keyMayRead`): relations, event links, and collection note fields present a target only when the key reaches it by the same anchors; otherwise the existing restricted shape. `query_cards` with a filter runs only over the key's chosen boards, and its `refs` name only those boards and their columns and tags; with `viewId` it runs a view the key was given, as the owner reads it. Routine prompts, `list_routines`, and `list_due_routines` list only chosen routines.
+
+### Key changes
+
+| Endpoint | Change |
+| --- | --- |
+| `POST /api/keys` | `grants[].resources?: [{ kind, id }] (1..100)` names chosen items of any kind the module offers (`resourceIds` still names the module's main kind; not both). A view needs `permission: "read"` (400 `INVALID_GRANT`); a kind the module does not offer is 400 `INVALID_GRANT`; a missing or unreachable item is 404 `RESOURCE_NOT_FOUND`. `ipAllowlist?: string[1..10]` (see below); 400 `IP_ALLOWLIST_UNAVAILABLE` when the server cannot check addresses, 400 `INVALID_IP_ALLOWLIST` for a bad entry. `surfaces` defaults to `"mcp"`; REST is opt-in and needs the role in `rest_roles` (403 `KEY_POLICY`) |
+| `PATCH /api/keys/:id` | `ipAllowlist?: string[] \| null`: adding a list, or a list whose every entry lies inside the current one, narrows (no password); `null` or a wider entry is 400 `WIDENING_NOT_ALLOWED`. `surfaces` can go from `both` to `mcp` or `rest`, never wider |
+| `POST /api/keys/:id/rotate` | Review Q2: rotation re-authenticates (D278), so it may also change the new key, **widening included**: `grants?` (validated like a new key), `surfaces?`, `ipAllowlist?: string[] \| null` (null removes the limit). Omitted fields keep the old key's values. PATCH stays narrowing-only and its refusals say "Rotate the key to change this." |
+| `grants[]` | A create-only permission (`whiteboards:write`) takes no chosen items: 400 `INVALID_GRANT` |
+| `GET /api/keys` | Each key adds `lastUsed: { mcp, rest }` (written at most once a minute per surface), `usageBySurface14d: { mcp, rest, daily: { mcp[14], rest[14] } }`, `lastDenied: { at, reason, surface } \| null` (review Q1; reasons `ip`, `surface`, `policy_surface_role`, `policy_expiry_required`, `policy_lifetime`, `expired`, `rotated`, `paused`), `blockedSurfaces` (review Q3: surfaces team policy blocks now), `ipRestricted`, and `ipAllowlist` (the owner's own keys only); `policy.ipAllowlistAvailable`, `policy.ipProxyPinned` (`TRUSTED_PROXY_ADDRESSES` is set). `GET /api/keys/:id` events include `key.denied` `{reason, surface, clientPrefix?}` at most once per reason per hour per key; `clientPrefix` (the /24 or /64, address refusals only) is shown only to the owner, never in Team → Access activity |
+| `GET /api/team/keys` | Adds `?surface=mcp\|rest` (a `both` key matches either) and `?ipRestricted=true\|false`; `summary.matching` counts the keys the filters match (review Q14). Keys show `ipRestricted`, never the addresses, plus per-surface last use and daily calls (review Q12); there is no per-call log |
+
+### IP allowlists (D284, O-A7, T211)
+
+A key may list up to 10 IPv4 or IPv6 addresses or CIDR ranges (canonical form, so `203.0.113.5/24` is stored as `203.0.113.0/24`; `/0` is refused because it allows every address). Every request on `/mcp`, `PUT /mcp/uploads/:id`, and `/api/v1` from a limited key is checked against the client address (`server/clientAddress.ts` `clientIp`: the socket address, or with `TRUSTED_PROXY_HOPS = N ≥ 1` the N-th `X-Forwarded-For` entry from the right; review S1: when `TRUSTED_PROXY_ADDRESSES` is set, the header is read only when the socket peer is one of those proxies, so a direct caller is seen as themselves). Allowlists are **offered and enforced only when `TRUSTED_PROXY_HOPS` is 1 or more**; with 0 they are hidden in the UI and refused by the API, and a key that already holds one is refused (403 `IP_NOT_ALLOWED`, "this server cannot check addresses") rather than let through. A refused call is 403 `{ error: "This API key cannot be used from this address", code: "IP_NOT_ALLOWED" }` and never echoes the list or the address.
+
+### REST v1
+
+Base path `/api/v1`, outside the `/api/*` session, CSRF, TOTP-setup, and role middleware (like `/mcp`).
+
+- **Authentication:** `Authorization: Bearer <key>` only (the scheme in any case, review S7). Cookies are never read. A key in a query string or path is refused before anything else: 400 `KEY_IN_URL` ("revoke this key: it may now be in logs"); parameter names `api_key`, `apikey`, `key`, `token`, `access_token`, `bearer`, `auth`, `authorization`, or any value starting `mynotes_` or `nkv_`. No key or another scheme: 401 `AUTH_REQUIRED`. A key that does not authenticate (unknown, mistyped, expired, past its rotation grace, revoked, or its holder blocked): always 401 `KEY_INVALID` with the same message, so a caller cannot tell which; the reason is recorded only for the key's owner (`lastDenied`, `key.denied`). Both carry `WWW-Authenticate: Bearer`; after 60 failures a minute per surface, 429 `RATE_LIMITED`.
+- **Surface and policy per request:** the key's `surfaces` must include REST and its owner's role must be in `rest_roles` (default admin, member), else 403 `KEY_POLICY`. Expired, past its rotation grace, revoked, or the owner blocked: 401. Allowlist: 403 `IP_NOT_ALLOWED`.
+- **Host and Origin:** the same checks as `/mcp` (403 `HOST_INVALID` for an unknown Host, 403 `ORIGIN_INVALID` for an Origin that is not one of `APP_ORIGINS`). No CORS headers are ever sent; `OPTIONS` answers 405. Responses are JSON with `Cache-Control: no-store, private` and `Vary: Authorization`.
+- **Limits:** the MCP limits and per-key lower limits, with the **per-minute buckets kept per surface** (per key and per user) so a REST flood cannot starve MCP: a key used on both surfaces therefore gets each minute's limit on each (`/api/v1/me` says so in `limits.perSurface` and `limits.note`); daily budgets are shared across surfaces. A refused call is counted once, on its surface (review S5). REST has its own 24 concurrent request slots (503 `BUSY` with `Retry-After: 1`). Bodies are bounded like every JSON body (2.1 MB, 413 `TOO_LARGE`).
+
+| Endpoint | Body | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/v1/me` | | 200 `{ key: { id, name, prefix, kind, surfaces, createdAt, expiresAt, rotationEndsAt, ipRestricted }, owner: { id, displayName, role }, grants: [{ module, permission, resource: { kind, id } \| null }] (effective), scopes, limits: { perKey: { callsPerMinute, writesPerMinute }, perUser: {…}, note } }`. Never the token, its hash, or the allowlist. Counts as one call | 401, 403, 429 |
+| `GET /api/v1/tools` | | 200 `{ tools: [{ name, title, description, write, annotations, inputSchema }] }`: exactly the tools MCP `tools/list` offers this key now, with JSON Schema inputs. Counts as one call | 401, 403, 429 |
+| `POST /api/v1/tools/:name` | a JSON object with the tool's arguments (`{}` for none); `Content-Type: application/json` | 200 with the tool's JSON result (the same object MCP returns as text) | 415 `UNSUPPORTED_MEDIA_TYPE`, 400 `INVALID_JSON` (not a JSON object), 404 `NOT_FOUND` (no such tool, or a tool this key cannot see: the two look the same), and the tool's own `{ error, code, … }` with the status below |
+
+Invalid arguments are 400 `INVALID` with `details` naming each argument (`"cardId: Invalid UUID"`, review Q4), on both surfaces. A `KEY_POLICY` refusal says which surface is blocked and, for a key on both, that the other still works (review Q3). `KEY_IN_URL` fires for any credential-like parameter and says to revoke the key only if it was a real one.
+
+**All REST codes:** `AUTH_REQUIRED` 401, `KEY_INVALID` 401, `RATE_LIMITED` 429, `HOST_INVALID` 403, `ORIGIN_INVALID` 403, `KEY_POLICY` 403, `IP_NOT_ALLOWED` 403, `KEY_IN_URL` 400, `NOT_FOUND` 404, `METHOD_NOT_ALLOWED` 405, `UNSUPPORTED_MEDIA_TYPE` 415, `INVALID_JSON` 400, `TOO_LARGE` 413, `BUSY` 503, and the tool codes below. `PUT /mcp/uploads/:id` adds `CONTENT_TYPE` 400, `LENGTH_REQUIRED` 411, `SIZE_MISMATCH` 400, and `UPLOAD_*`; it authenticates the key on the surface `begin_upload` was called on (review S4) and audits a REST ticket's upload as `via: "rest"`.
+
+Tool error codes to statuses: `INVALID` 400; `SCOPE_REQUIRED`, `READ_ONLY`, `KEY_POLICY`, `OWNER_ONLY`, `KIND_NOT_ALLOWED`, `TARGET_NOT_ALLOWED` 403; `NOT_FOUND` 404; `UPLOAD_EXPIRED` 410; `TOO_LARGE` 413; `NOT_TEXT`, `HASH_MISMATCH` 422; `*_CHANGED`, `DRAFT_NOT_SEEN`, `NO_DRAFT`, `NO_CHANGES`, `STALE_POSITION`, `LIMIT_REACHED`, `COLUMN_FULL`, `RELATION_EXISTS`, `REMINDER_EXISTS`, `PURGING`, `PARENT_IN_BIN`, `AUDIENCE_CHANGE`, `NAME_TAKEN`, `SPRINT_ACTIVE`, `UPLOAD_PENDING`, `QUOTA_EXCEEDED`, `RUN_ACTIVE` 409; `RATE_LIMITED` 429 with `Retry-After`; `INTERNAL` 500; anything else 400.
+
+**Parity.** A REST call runs the same `McpToolSpec` through the same `runTool` with `surface: "rest"`: the same validation, grants and chosen items, role checks, limits, output bounds, and untrusted-content wording in descriptions and fields. Writes are audited with `via: "rest"` (merged after the modules' `via: "mcp"`, `server/db.ts` `withSurfaceAuditContext`). Usage is counted per surface. A `begin_upload` ticket from a REST key is finished with `PUT /mcp/uploads/:id` using the same key (the upload endpoint accepts the key on whichever surface it holds). No resource-style routes in v1 (O-A12). `tests/restV1.test.ts` runs every tool through both surfaces.
+
+Example (placeholders):
+
+```sh
+curl -s https://nook.example.com/api/v1/me -H "Authorization: Bearer <YOUR_API_KEY>"
+curl -s -X POST https://nook.example.com/api/v1/tools/create_card \
+  -H "Authorization: Bearer <YOUR_API_KEY>" -H "Content-Type: application/json" \
+  -d '{"boardId":"<BOARD_ID>","columnId":"<COLUMN_ID>","title":"Deploy finished"}'
+```
+
+**Not in this wave:** service accounts (D287, O-A11) stay a follow-up; `users.kind` exists and is always `person`.
 
 ## Changes to existing note endpoints (Wave 4)
 

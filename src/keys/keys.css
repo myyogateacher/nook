@@ -124,3 +124,26 @@
   .keys-settings .mcp-endpoint .icon-button { width: 44px; height: 44px; }
   .keys-settings .mcp-config .secondary-button { min-height: 44px; }
 }
+
+/* Wave 34: the REST help and the address limit. */
+.keys-allowlist-off { margin: 0; color: #88888f; font-size: .78rem; line-height: 1.45; }
+.keys-input textarea { min-height: 72px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.keys-rest-help pre { overflow-x: auto; max-width: 100%; white-space: pre; }
+.keys-rest-help p code { overflow-wrap: anywhere; }
+
+/* Wave 34 review: address checks, narrowing chips, and a bounded picker (Q6, Q9, Q13). */
+.keys-field-error { color: #f2a3a3 !important; }
+.keys-field-note { color: #c9b27a !important; }
+.keys-input textarea.invalid { border-color: #8c3b3b; }
+.grant-chosen { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.grant-note { display: block; margin-top: 6px; color: #88888f; font-size: .74rem; }
+.grant-resources .ui-popup-body { max-height: 352px; overflow: hidden; display: flex; flex-direction: column; }
+/* Wave 34 verification Q13: the list itself scrolls, so it never grows past about eight rows on desktop. */
+.grant-resources .ui-popup .ui-listbox { max-height: 344px; overflow-y: auto; overscroll-behavior: contain; flex: 0 1 auto; min-height: 0; }
+.team-keys-note { margin: 0; font-size: .74rem; }
+
+/* Wave 34 verification Q1: the key's own activity, owner only. */
+.keys-activity { color: #9a9aa1; font-size: .78rem; }
+.keys-activity summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+.keys-activity ul { margin: 0; padding: 0 0 0 16px; display: grid; gap: 2px; }
+@media (min-width: 761px) { .keys-activity summary { min-height: 32px; } }

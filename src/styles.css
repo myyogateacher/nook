@@ -435,7 +435,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .mobile-actions-menu button { display: flex; align-items: center; gap: 10px; min-height: 42px; border: 0; border-radius: 7px; padding: 0 10px; background: transparent; color: #d0d0d4; font-size: .82rem; text-align: left; cursor: pointer; }
   .mobile-actions-menu button:hover { background: #2c2922; }
   .mobile-actions-menu svg { width: 17px; color: #b99b59; }
-  .publish-button { padding: 8px 10px; }
+  /* F5: a 44 px phone target (it was 34 px tall); the 58 px toolbar holds it. */
+  .publish-button { min-height: 44px; padding: 0 10px; }
   .document-shell { padding: 34px 21px 30vh; }
   .document-meta { margin-bottom: 24px; }
   .note-prose { font-size: 1.03rem; line-height: 1.72; }

@@ -56,6 +56,7 @@ import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPa
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { Avatar } from "./ui/Avatar";
+import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
@@ -104,7 +105,7 @@ import { formatRoute, isLegacySettingsPath, locationUrl, parseRoute, parseSettin
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { Folder, NoteDetail, NoteSummary, User, Version } from "./types";
 import { SearchResults, searchListId, searchOptionId } from "./search/SearchResults";
-import { nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
+import { isSearchPushedEntry, markSearchPushed, nextSearchHint, readSearchHint, sameSearchHint, withSearchHint, type SearchHint } from "./search/searchHistory";
 import { SEARCH_MAX_CHARS, type NoteSearchHit } from "./search/searchApi";
 import { useNoteSearch } from "./search/useNoteSearch";
 import { useWhiteboardSearch, WhiteboardSearchResults } from "./search/WhiteboardSearchResults";
@@ -327,7 +328,7 @@ function SettingsDialog({ session, onClose, onSecurityChanged, onManageTeam, mod
   const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
   const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
   const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.16.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.18.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -645,14 +646,44 @@ function historyStateFor(userId: string, route: Route, panel: MobilePanel, files
 export const PUSHED_OVER_KEY = "mynotes.pushed-over";
 
 /**
+ * F4: the URLs of the few entries under this one, nearest first, so a removed item's own panel steps
+ * (phones push one per tab over the same URL) can be skipped along with it.
+ */
+export const PUSHED_OVER_CHAIN_KEY = "mynotes.pushed-over-chain";
+const PUSHED_OVER_CHAIN_LENGTH = 4;
+
+/** The chain a new entry pushed over `current` (at `currentUrl`) records. */
+export function pushedOverChain(current: unknown, currentUrl: string) {
+  const state = current && typeof current === "object" ? current as Record<string, unknown> : null;
+  const below = Array.isArray(state?.[PUSHED_OVER_CHAIN_KEY]) ? (state![PUSHED_OVER_CHAIN_KEY] as unknown[]).filter((url): url is string => typeof url === "string")
+    : typeof state?.[PUSHED_OVER_KEY] === "string" ? [state![PUSHED_OVER_KEY] as string] : [];
+  return [currentUrl, ...below].slice(0, PUSHED_OVER_CHAIN_LENGTH);
+}
+
+/**
  * Q2: the item on screen was deleted or moved away. When its entry was pushed over `targetUrl` (the
  * list it was opened from), step back onto that entry instead of rewriting this one into a second
  * copy of it, which made Back repeat a step. Returns false when the caller should replace in place.
+ *
+ * F4: entries of the removed item itself (`removedUrl`, the URL on screen) between this one and the
+ * list are dropped too: on a phone, opening a note and then tapping the Notes tab leaves the note's
+ * editor entry under the list panel, and Back later landed on it (a note that is gone).
  */
-export function stepBackIfPushedOver(targetUrl: string, history: Pick<History, "state" | "back"> = window.history) {
+export function stepBackIfPushedOver(targetUrl: string, history: Pick<History, "state" | "back" | "go"> = window.history, removedUrl?: string) {
   const state = history.state as Record<string, unknown> | null;
-  if (!state || state[PUSHED_OVER_KEY] !== targetUrl || readHistoryDepth(state) <= 0) return false;
-  history.back();
+  if (!state) return false;
+  const chain = Array.isArray(state[PUSHED_OVER_CHAIN_KEY]) ? state[PUSHED_OVER_CHAIN_KEY] as unknown[] : [state[PUSHED_OVER_KEY]];
+  let steps = 0;
+  for (const url of chain) {
+    steps += 1;
+    if (url === targetUrl || steps === chain.length) break;
+    // Anything but another entry of the removed item stays: replace in place instead.
+    const removed = removedUrl ?? locationUrl(window.location);
+    if (url !== removed || targetUrl === removed) return false;
+  }
+  if (chain[steps - 1] !== targetUrl || readHistoryDepth(state) < steps) return false;
+  if (steps === 1) history.back();
+  else history.go(-steps);
   return true;
 }
 
@@ -670,7 +701,7 @@ function writeHistory(userId: string, route: Route, panel: MobilePanel, mode: "p
   const depth = readHistoryDepth(current);
   const state = historyStateFor(userId, route, panel, filesPanel, search);
   // From a dialog's depth-0 sentinel, the new route takes the sentinel's place instead of stacking on it.
-  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location) }, depth + 1), "", url);
+  if (mode === "push" && !(samePath && !isMobileViewport()) && !takeDialogSentinelEntry(current)) window.history.pushState(withHistoryDepth({ ...state, [PUSHED_OVER_KEY]: locationUrl(window.location), [PUSHED_OVER_CHAIN_KEY]: pushedOverChain(current, locationUrl(window.location)) }, depth + 1), "", url);
   else window.history.replaceState(withHistoryDepth(state, depth), "", url);
 }
 
@@ -762,6 +793,8 @@ export function App() {
   const loadedRef = useRef("");
   const savingPromiseRef = useRef<Promise<boolean> | null>(null);
   const switchingRef = useRef(false);
+  // F4: the list URL a removed item's entries were stepped back to, until that popstate lands.
+  const removedStepBackRef = useRef<string | null>(null);
   const autosaveTimerRef = useRef<number | null>(null);
   // The route requested before the workspace was ready (deep link, or the URL shown on the login page).
   const pendingRouteRef = useRef<Route | null>(routeFromLocation(window.location));
@@ -1045,7 +1078,11 @@ export function App() {
   function navigate(route: Route, options: { replace?: boolean; removed?: boolean; panel?: MobilePanel; filesPanel?: FilesPanel } = {}) {
     if (!session) return;
     // The item on screen is gone: Back onto the list it was opened from rather than a duplicate of it (Q2).
-    if (options.removed && stepBackIfPushedOver(formatRoute(route))) return;
+    removedStepBackRef.current = null;
+    if (options.removed && stepBackIfPushedOver(formatRoute(route))) {
+      removedStepBackRef.current = formatRoute(route);
+      return;
+    }
     writeHistory(session.user.id, route, options.panel ?? mobilePanel, options.replace ? "replace" : "push", options.filesPanel, route.app === "notes" ? searchHintRef.current : null);
     historyDepthRef.current = readHistoryDepth(window.history.state);
     // While the first load is in flight, the newest URL is the one to apply once it lands.
@@ -1366,6 +1403,12 @@ export function App() {
   async function restoreNotesRoute(route: NotesRoute, snapshot: MobileNavigationSnapshot | null, data: { folders: Folder[]; notes: NoteSummary[] } = { folders, notes }) {
     if (!session) return;
     if (switchingRef.current) {
+      // F4: Back over a removed note's entries lands on the list already on screen (the delete is
+      // still finishing): keep that entry instead of rewriting it with the selection being cleared.
+      if (removedStepBackRef.current === window.location.pathname) {
+        removedStepBackRef.current = null;
+        return;
+      }
       navigate(routeForApp(activeApp), { replace: true });
       return;
     }
@@ -1539,7 +1582,7 @@ export function App() {
     const next = nextSearchHint(search.active, query, searchAll, current);
     if (sameSearchHint(current, next)) return;
     if (current === null && next && isMobileViewport()) {
-      window.history.pushState(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1), "", window.location.pathname);
+      window.history.pushState(markSearchPushed(withHistoryDepth(withSearchHint(userId, next, state), readHistoryDepth(state) + 1)), "", window.location.pathname);
       historyDepthRef.current = readHistoryDepth(window.history.state);
     } else {
       window.history.replaceState(withSearchHint(userId, next, state), "", window.location.pathname);
@@ -1558,6 +1601,11 @@ export function App() {
   }
 
   function clearSearch() {
+    // N2: on a phone, the search's own entry is unwound as Back would; its popstate clears the query.
+    if (isMobileViewport() && isSearchPushedEntry(window.history.state)) {
+      window.history.back();
+      return;
+    }
     setQuery("");
     setSearchAll(false);
   }
@@ -1629,6 +1677,8 @@ export function App() {
   }, [sessionUserId]);
   // QA E5: pending whiteboard copies are sent once the app is open and online.
   usePendingWhiteboardSync(sessionUserId);
+  // F6: End/Home/PageDown/PageUp scroll the Notes or Files panel on screen when focus is on the page.
+  usePageScrollKeys(workspaceScroller);
 
   useEffect(() => {
     if (!session) return;

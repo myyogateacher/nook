@@ -1,5 +1,7 @@
 import * as z from "zod/v4";
 import { defineTool, McpToolError, type McpToolSpec } from "../mcpToolKit";
+import { keyContainerIds, keyFilter } from "../keyResources";
+import { grantsToScopes } from "../keyGrants";
 import { todayRateLimited } from "./rateLimit";
 import { loadToday, todayContext, todaySectionsForScopes, validTimeZone } from "./registry";
 import "./providers";
@@ -17,6 +19,7 @@ export const todayTools: McpToolSpec[] = [
     title: "Get Today",
     description: "The user's Today summary: tasks due within seven days and their open cards, recent notes and drafts, recent files, recently edited collection rows, upcoming events, Bin items deleted soon, and storage. Only sections this key may read are included; each has at most ten items and `more`.",
     scopes: ["today:read"],
+    access: { mode: "derived" },
     write: false,
     inputSchema: z.object({ tz: z.string().max(64).optional().describe("IANA time zone for today's date and overdue flags; defaults to UTC") }),
     handler: async ({ tz }, key) => {
@@ -25,9 +28,14 @@ export const todayTools: McpToolSpec[] = [
       if (retryAfter) throw new McpToolError("RATE_LIMITED", "Too many Today requests. Try again in a moment.", { retryAfterSeconds: retryAfter });
       const zone = validTimeZone(tz ?? "UTC");
       if (!zone) throw new McpToolError("INVALID", "tz must be an IANA time zone");
-      const allowed = todaySectionsForScopes(key.scopes);
+      // Sections follow every scope the key holds, also over chosen items (Wave 34); each section
+      // then narrows its own query by that module's reach. `scopes` in the context stays the
+      // whole-module scopes, for the Bin section, which lists items of many modules.
+      const held = key.grants ? grantsToScopes(key.grants) : key.scopes;
+      const allowed = todaySectionsForScopes(held);
       if (allowed.length === 0) return { generatedAt: new Date().toISOString(), date: todayContext(key.userId, zone).today, sections: {} };
-      return loadToday(todayContext(key.userId, zone, new Date(), key.scopes, key.keyId), allowed);
+      const context = todayContext(key.userId, zone, new Date(), key.scopes, key.keyId);
+      return loadToday({ ...context, keyScope: (scope, columns) => keyFilter(key, scope, columns), keyIds: (scope, kind) => keyContainerIds(key, scope, kind) }, allowed);
     }
   })
 ];

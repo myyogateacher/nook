@@ -5,7 +5,7 @@ import { config } from "./config";
 import { db, withAuditContext } from "./db";
 import { createFolder, FolderError } from "./folders";
 import { forgetSeenDraft, seenDraft } from "./mcpSeenDrafts";
-import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
+import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, notFound, restoreResult, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
 import { DraftActionError, moveNoteToBin, publishDraft } from "./noteDrafts";
 import { withNoteLock } from "./storage";
 import { folderSchema } from "./validation";
@@ -41,6 +41,7 @@ export const noteManageTools: McpToolSpec[] = [
     title: "Publish a note's draft",
     description: "Makes the draft the note's published text (a new version), visible to everyone the note is shared with. Only for notes the user owns. Call get_note_draft first and pass its revision: a revision this key was not shown fails with DRAFT_NOT_SEEN, and a draft that changed since you read it fails with DRAFT_CHANGED. Returns the new version and whether the note is private or shared.",
     scopes: ["notes:publish"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: true,
     buckets: ["note_publish"],
     inputSchema: z.object({ noteId: uuid, revision: z.number().int().min(1).describe("The revision get_note_draft returned") }).strict(),
@@ -70,12 +71,13 @@ export const noteManageTools: McpToolSpec[] = [
     title: "Create a folder",
     description: "Create a folder the user owns, at the top level or inside a folder they own. The new folder is private: it never takes its parent's sharing. \"Default\" is taken (NAME_TAKEN).",
     scopes: ["notes:write-draft", "files:write"],
+    access: { mode: "global", related: ["parentId"] },
     write: true,
     buckets: ["structure_write"],
     inputSchema: z.object({ name: z.string().min(1).max(120), parentId: uuid.optional().describe("A folder the user owns") }).strict(),
     handler: ({ name, parentId }, key) => {
       const parsed = folderSchema.safeParse({ name, parentId });
-      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: parsed.error.issues.map((issue) => issue.message) });
+      if (!parsed.success) throw new McpToolError("INVALID", "Invalid arguments", { details: issueDetails(parsed.error.issues) });
       try {
         return { folder: viaKey(key, () => createFolder(key.userId, parsed.data.name, parsed.data.parentId ?? null)) };
       } catch (error) {
@@ -89,6 +91,7 @@ export const noteManageTools: McpToolSpec[] = [
     title: "Move a note to the Bin",
     description: `Move a note the user owns to the Bin, with its drafts, versions, and sharing. ${BIN_DESCRIPTION} Restore it with restore_note.`,
     scopes: ["notes:write-draft"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     alsoRequires: ["bin:write"],
     write: true,
     buckets: BIN_BUCKETS,
@@ -107,6 +110,7 @@ export const noteManageTools: McpToolSpec[] = [
     title: "Restore a note from the Bin",
     description: "Restore a note the user owns from the Bin to its folder (or Default when that folder is gone). Its earlier sharing applies again.",
     scopes: ["notes:write-draft"],
+    access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     alsoRequires: ["bin:write"],
     write: true,
     inputSchema: z.object({ noteId: uuid }).strict(),

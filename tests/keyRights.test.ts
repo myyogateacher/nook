@@ -80,9 +80,12 @@ describe("Nook key rights", () => {
     const scoped = key(owner, [on("tasks", "write", "board", a.boardId), all("notes", "read")]);
     const names = await toolNames(scoped.token);
     for (const tool of ["list_boards", "list_cards", "get_card", "create_card", "update_card", "move_card", "comment_on_card", "list_sprints"]) expect(names).toContain(tool);
-    // Tools that reach across boards (or into Files) stay hidden until Wave 34 filters them.
-    for (const tool of ["search_cards", "link_cards", "link_attachment"]) expect(names).not.toContain(tool);
+    // Wave 34: tools that reach across boards are offered too, and filtered or checked per item.
+    for (const tool of ["search_cards", "link_cards", "link_attachment", "query_cards", "list_views"]) expect(names).toContain(tool);
     expect(names).toEqual(expect.arrayContaining(NOTES_READ));
+    const found = await call(scoped.id, "search_cards", { query: "card" });
+    expect(found.value.results.map((hit: { board_id: string }) => hit.board_id)).toEqual([a.boardId]);
+    expect((await call(scoped.id, "link_cards", { cardId: a.cardId, targetCardId: b.cardId, type: "relates_to" })).value.code).toBe("NOT_FOUND");
 
     const boards = await call(scoped.id, "list_boards");
     expect(boards.value.boards.map((item: { id: string }) => item.id)).toEqual([a.boardId]);
@@ -94,8 +97,11 @@ describe("Nook key rights", () => {
     expect((await call(scoped.id, "create_card", { boardId: b.boardId, columnId: b.columnId, title: "Nope" })).value.code).toBe("NOT_FOUND");
     expect((await call(scoped.id, "create_card", { boardId: a.boardId, columnId: a.columnId, title: "Yes" })).isError).toBe(false);
     expect((await call(scoped.id, "comment_on_card", { cardId: b.cardId, body: "x" })).value.code).toBe("NOT_FOUND");
-    // A hidden tool reached directly is refused by the handler check too.
-    expect((await call(scoped.id, "search_cards", { query: "card" })).value.code).toBe("SCOPE_REQUIRED");
+    // A hidden tool reached directly is refused by the handler check too: a key over one saved view
+    // sees no card tool, since a view grant anchors no card.
+    const viewOnly = key(owner, [on("tasks", "read", "task_view", crypto.randomUUID())]);
+    expect(await toolNames(viewOnly.token)).not.toContain("get_card");
+    expect((await call(viewOnly.id, "get_card", { cardId: a.cardId })).value.code).toBe("SCOPE_REQUIRED");
     // A missing card id looks exactly like one outside the grant.
     expect((await call(scoped.id, "get_card", { cardId: crypto.randomUUID() })).value.code).toBe("NOT_FOUND");
   });
@@ -153,7 +159,8 @@ describe("Nook key rights", () => {
     const owner = await createUser("Rights expiry");
     const expired = key(owner, [all("notes", "read")]);
     db.query("UPDATE mcp_api_keys SET expires_at = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), expired.id);
-    expect(await rpc(expired.token, "tools/list")).toEqual({ status: 401, body: { error: "This API key has expired" } });
+    // One code for every key that does not authenticate (review Q5); the reason is on the owner's key events.
+    expect(await rpc(expired.token, "tools/list")).toEqual({ status: 401, body: { error: "This API key is not valid or no longer active", code: "KEY_INVALID" } });
     expect((await call(expired.id, "list_notes")).value.code).toBe("SCOPE_REQUIRED");
     const rotated = key(owner, [all("notes", "read")]);
     db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), rotated.id);
@@ -184,12 +191,12 @@ describe("Nook key rights", () => {
     db.query("UPDATE users SET role = 'member' WHERE id = ?").run(owner.userId);
   });
 
-  test("toolVisible never offers a tool without a declared resource to a chosen-items key", () => {
+  test("toolVisible never offers a global tool to a chosen-items key (D281)", () => {
     const grants = [on("tasks", "write", "board", crypto.randomUUID()), on("collections", "write", "collection", crypto.randomUUID()), on("calendar", "write", "calendar", crypto.randomUUID())];
     const context = { keyId: "k", userId: "u", name: "k", scopes: ["tasks:read", "tasks:write", "collections:read", "collections:write", "calendar:read", "calendar:write"] as never, grants };
     for (const spec of mcpToolSpecs) {
       if (!toolVisible(spec, context)) continue;
-      expect({ name: spec.name, declared: Boolean(spec.resource || spec.listFilter) }).toEqual({ name: spec.name, declared: true });
+      expect({ name: spec.name, global: spec.access.mode === "global" }).toEqual({ name: spec.name, global: false });
     }
   });
 

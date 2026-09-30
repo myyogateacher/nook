@@ -13,6 +13,8 @@
  */
 
 import { hasScope, type McpScope } from "../mcpScopes";
+import { NO_FILTER, type SqlFilter } from "../keyResources";
+import type { ResourceKind } from "../keyGrants";
 
 export const TODAY_LIMIT = 10;
 export const TODAY_FETCH = TODAY_LIMIT + 1;
@@ -31,7 +33,20 @@ export type TodayContext = {
   scopes?: readonly McpScope[];
   /** The MCP key calling get_today, for sections that list only that key's own items (agent inbox T131). */
   keyId?: string;
+  /**
+   * Wave 34: an API key limited to chosen items. Each section narrows its SQL by its module's
+   * reach (`sectionScope`), before its LIMIT, so items and `more` count only granted items.
+   */
+  keyScope?: (scope: McpScope, columns: Partial<Record<ResourceKind, string>>) => SqlFilter;
+  /** The same, as the chosen container ids of one kind (null: every one), for list functions that take ids. */
+  keyIds?: (scope: McpScope, kind: ResourceKind) => string[] | null;
 };
+
+/** A section's key filter (`1` for sessions and keys over every item). */
+export const sectionScope = (context: TodayContext, scope: McpScope, columns: Partial<Record<ResourceKind, string>>) =>
+  context.keyScope ? context.keyScope(scope, columns) : NO_FILTER;
+/** A section's chosen container ids, or null when it lists every one. */
+export const sectionIds = (context: TodayContext, scope: McpScope, kind: ResourceKind) => context.keyIds ? context.keyIds(scope, kind) : null;
 
 export type TodayPage<T = unknown> = { items: T[]; more: boolean };
 

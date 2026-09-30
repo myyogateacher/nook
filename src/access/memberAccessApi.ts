@@ -179,7 +179,9 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
       : event.meta?.by === "google_reset" ? `${target(event)}'s key ${keyName(event)} was revoked by a reset for Google sign-in`
         : `${who(event)} revoked the key ${keyName(event)}`,
   "key.grace_ended": (event) => `The rotation grace of ${keyName(event)} ended`,
-  "key.policy_blocked": (event) => `A policy blocked the key ${keyName(event)}`,
+  "key.policy_blocked": (event) => `A policy blocked the key ${keyName(event)}${surfaceSuffix(event)}`,
+  // Wave 34 review Q1: a refused call, with the surface; never the address for admins.
+  "key.denied": (event) => `The key ${keyName(event)} was refused${surfaceSuffix(event)}: ${DENIAL_TEXT[String(event.meta?.reason)] ?? "not allowed"}`,
   "policy.changed": (event) => `${who(event)} changed team policies`,
   "group.created": (event) => `${who(event)} created the group ${groupName(event)}`,
   "group.updated": (event) => `${who(event)} changed the group ${groupName(event)}`,
@@ -204,8 +206,23 @@ const ACTION_LABELS: Record<string, (event: ActivityEvent) => string> = {
 const templateName = (event: ActivityEvent) => typeof event.meta?.templateName === "string" ? `“${event.meta.templateName}”` : "(name not recorded)";
 const who = (event: ActivityEvent) => event.actor?.displayName ?? (event.via === "sweeper" ? "Nook" : "Someone");
 const target = (event: ActivityEvent) => event.target?.displayName ?? "someone";
+const surfaceSuffix = (event: ActivityEvent) => event.meta?.surface === "rest" ? " over REST" : event.meta?.surface === "mcp" ? " over MCP" : "";
+
+/** Why a key's call was refused (review Q1), in the owner's and admins' words. */
+export const DENIAL_TEXT: Record<string, string> = {
+  ip: "not allowed from its address",
+  surface: "not set up for that surface",
+  policy_surface_role: "team policy does not allow the owner's role there",
+  policy_expiry_required: "team policy requires an expiry",
+  policy_lifetime: "it lasts longer than team policy allows",
+  expired: "it has expired",
+  rotated: "it was rotated and its grace period ended",
+  paused: "its owner's account is blocked"
+};
+
 const keyName = (event: ActivityEvent) => event.key?.name ? `“${event.key.name}”` : "(deleted)";
 const groupName = (event: ActivityEvent) => event.group?.name ? `“${event.group.name}”` : "a deleted group";
 const itemName = (event: ActivityEvent) => !event.item ? "an item that is gone" : event.item.titleHidden ? event.item.title.replace(/^(\w)/, (letter) => letter.toLowerCase()).replace(/^/, "a ") : `“${event.item.title}”`;
 
-export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => row.action))(event);
+/** F10: an action this build does not know still reads as a sentence, never as its code. */
+export const activityLabel = (event: ActivityEvent) => (ACTION_LABELS[event.action] ?? ((row: ActivityEvent) => `${who(row)} changed access`))(event);

@@ -63,7 +63,7 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - Admins block and unblock accounts, sign them out everywhere, and see activity. Admins never see anyone's private content.
 - New accounts get `SIGNUP_ROLE` (default `guest`). A host CLI (`server/team-admin.ts`) recovers from a lockout.
 - **Sign in with Google** (optional): `AUTH_METHODS=password|google|both` chooses the methods, enforced on the server. Google accounts are created automatically when registration would allow it (the first account, an invite, or open registration), `GOOGLE_ALLOWED_DOMAINS` limits them to your company domains, two-factor still applies, and Google profile pictures replace the letter avatars (downloaded and served by Nook itself). Setup: [docs/OPERATIONS.md](docs/OPERATIONS.md#google-sign-in).
-- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
+- **Behind a reverse proxy or Tailscale Serve**, set `TRUSTED_PROXY_HOPS=1` (and `TRUSTED_PROXY_ADDRESSES` to the proxy's own address, so nobody reaching the port directly can choose an address) so rate limits count each visitor separately (see [docs/OPERATIONS.md](docs/OPERATIONS.md#rate-limits-and-reverse-proxies)).
 - **Central access**: Team → a member → **Access** shows everything a person can open, per module and through what (direct, a group, or everyone), with titles hidden for items the admin cannot open. Admins can only take access away (remove, lower, leave a group, revoke keys, or **Reset access**), each confirmed, logged in **Team → Access activity**, and announced on the owner's bell. **Team → Templates** gives invites a role and groups. Everyone but guests sees their own in **Settings → My access**.
 
 ### Everywhere
@@ -72,6 +72,7 @@ Sketches, diagrams, and floor plans with the Excalidraw editor, saved as `.excal
 - **Settings → Modules**: turn apps on or off for your account on every device. Nothing is deleted and sharing is unchanged.
 - **Mobile first**: every app, item, and view has its own URL, phones get focused single-column screens, and browser Back and Forward work everywhere (Back closes an open dialog or sheet first).
 - **MCP server**: a Streamable HTTP endpoint for trusted AI clients with revocable API keys and per-key permissions across notes (read, write drafts), files (read), tasks (read, write), collections (read, write), calendar (read, write), Today, and team (admins). Agents write drafts; publishing always stays with you.
+- **REST API and scoped keys**: the same tools over plain HTTPS at `/api/v1` for scripts and CI, opt-in per key. A key can be limited to chosen folders, notes, files, boards, saved views, collections, calendars, routines, or whiteboards (lists, search, and Today then show only those), and to IP addresses behind a configured reverse proxy.
 
 <p align="center">
   <img src="docs/images/notes-editor-dark.png" alt="The Notes editor with a folder rail, note list, checklist, and table" width="49%" />
@@ -97,7 +98,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.16.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.18.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -106,6 +107,38 @@ Later registrations stay disabled unless you set `ALLOW_REGISTRATION=true`. Ever
 ## Upgrading
 
 Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations run on the first boot. Release-specific steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.18.0
+
+- **Keys limited to chosen items in every module**: an API key can now be limited to chosen folders and notes, folders and files, boards and saved views (only views you own, read only), collections, calendars, routines, and whiteboards. Every tool checks each item it touches: anything outside the key's choice answers "not found" as if it did not exist, and lists, search, Today, and counts include only the chosen items.
+- **A REST API for keys**: scripts and CI jobs can call the same tools as MCP over plain HTTPS: `GET /api/v1/me` (what the key can do), `GET /api/v1/tools` (the tools it may call, with their input schemas), and `POST /api/v1/tools/<name>` with a JSON body of the tool's arguments. The tools, arguments, results, limits, and rules are the same as over MCP. Send the key only as `Authorization: Bearer <key>`; a key in a URL is refused. Every error has a stable `code` (`AUTH_REQUIRED`, `KEY_INVALID`, `KEY_POLICY`, `IP_NOT_ALLOWED`, `KEY_IN_URL`, `NOT_FOUND`, `RATE_LIMITED`, and for file uploads `UPLOAD_NOT_FOUND`, `UPLOAD_CONFLICT`, and `UPLOAD_FAILED`; see [docs/USING.md](docs/USING.md#the-rest-api)). For example:
+
+  ```sh
+  curl -s -X POST "https://<your nook>/api/v1/tools/list_boards" \
+    -H "Authorization: Bearer <YOUR_API_KEY>" -H "Content-Type: application/json" -d '{}'
+  ```
+- **Where a key is used**: each key says whether it works over MCP (the default), REST, or both. Editing a key can only narrow this, without a password; to widen it, rotate the key or create a new one. Per-minute limits and "last used" are kept for each surface, so a busy script does not slow your AI client down. Admins decide which team roles may use REST and MCP in **Team → Policies** (REST: admins and members by default).
+- **Address limits for keys**: a key can be limited to up to ten IPv4 or IPv6 addresses or ranges. This is offered only when the server sits behind a reverse proxy it trusts (`TRUSTED_PROXY_HOPS` of 1 or more). A refused call shows on the owner's key row ("Last refused …") and in its **Recent activity** section, with a shortened address; admins see it in Team → Access activity, without the address.
+- **Rotating can change access**: because rotating asks for your password, it can now also change the new key's access, where it is used, and its allowed addresses, including widening them. **Edit** still only narrows, for example from all boards to chosen ones.
+- **New optional setting `TRUSTED_PROXY_ADDRESSES`**: the addresses or ranges your reverse proxy connects from. When set, forwarding headers are read only from those proxies. Set it as soon as `TRUSTED_PROXY_HOPS` is 1 or more; otherwise Nook logs a warning at startup and the app port must be reachable only through the proxy (for example `"127.0.0.1:2026:2026"` in `compose.yaml`).
+- **Small fixes**: on a computer the Team pages and the Inbox scroll the list and the details separately; the Home header stays in place while Today scrolls; member pages no longer log a console error while Google sign-in is off; Back after deleting a note or file from its list no longer takes an extra step; the **Publish version** button is larger on phones; End, Home, PageDown, and PageUp scroll the Files list and long notes; an open Access sheet stops offering guests once sharing with guests is turned off; and Access activity lines read as sentences.
+- **For developers using MCP**: there are no new tools, and no tool on either surface deletes forever, shares, or manages keys. Invalid arguments now name the argument on every tool (`"cardId: Invalid UUID"`), the `Bearer` scheme is accepted in any letter case, and every key that does not authenticate (mistyped, expired, rotated, or revoked) answers the one code `KEY_INVALID`; the reason is shown only to the key's owner.
+- **Not in this release**: service accounts.
+- Migration 033 runs on the first boot, so back up first. Existing keys are unchanged: they stay MCP-only with no address limit, and REST is off on new keys until chosen. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
+
+## What's new in v0.17.0
+
+- **Whiteboards**: a new app for sketches, diagrams, and floor plans, built on the Excalidraw editor: shapes, arrows, lines, freehand drawing, text, colours, undo and redo, and Mermaid diagrams turned into shapes. The editor ships inside Nook and runs entirely from your own server: it makes no requests to other sites, its fonts are included, and the content security policy is unchanged. A browser downloads it only when someone opens a board.
+- **Boards live in Files**: each board is a `.excalidraw` file in one of your folders and appears in the Files list with its own icon. You can rename it, move it to another folder, download the `.excalidraw` file, export a PNG, or delete it to the Bin and restore it from there. Boards count toward your storage.
+- **Saving**: changes save by themselves, at the latest every 5 seconds while you keep drawing. When the connection drops, a copy of your unsaved work is kept on the device and sent when the connection returns, even if you do not reopen the board. Leaving the page right after drawing keeps the change.
+- **Two devices**: if a board changed on another device, Nook asks whether to **Reload latest** or **Save mine as a copy**; nothing is overwritten silently.
+- **Safety net**: when a save empties a board, or leaves a board of 10 or more shapes with fewer than half of them, the version before is kept (the newest five per board), and the owner can bring it back with **Restore previous version**.
+- **Sharing**: share a board with people and groups through the Access sheet. Only the owner edits; everyone else gets a view-only canvas with a banner naming the owner.
+- **Search**: board names and the text on boards are indexed. For now you can search them through the web API and the MCP tool `list_whiteboards`; the Search screen in the app does not show whiteboards yet.
+- **Around the app**: Settings → Modules has a Whiteboards row (on by default), Today lists recent whiteboards, and on phones pinching zooms the canvas, not the page.
+- **API keys and MCP**: two new key permissions, **Read whiteboards** and **Create whiteboards**, and a key can be limited to chosen boards. New MCP tools `list_whiteboards`, `read_whiteboard`, and `create_whiteboard`; no tool edits, deletes, or shares a board. Existing keys gain nothing.
+- **Not in this release**: images on the canvas, links from shapes to Nook items, embedding a board in a note, a full version history, importing `.excalidraw` files as boards, SVG export, and a whiteboards filter in the Search screen.
+- Migration 030 runs on the first boot, so back up first. The Docker image grows by about 26 MB. No new settings; if you ever changed the key modules in **Team → Policies**, tick Whiteboards there before keys can use it. See [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
 ## What's new in v0.16.0
 

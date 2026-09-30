@@ -24,6 +24,8 @@ export const DAILY_UPLOAD_BYTES_PER_USER = 1_073_741_824;
 type Purpose = "file" | "task_attachment";
 export type UploadTicket = {
   id: string; keyId: string; userId: string; name: string; sizeBytes: number; sha256: string; folderId: string | null; purpose: Purpose;
+  /** The surface begin_upload was called on (review S4): the PUT must use the key on that surface. */
+  surface: "mcp" | "rest";
   expiresAt: number;
   state: "pending" | "receiving" | "committed" | "failed";
   documentId?: string;
@@ -150,6 +152,7 @@ export const fileWriteTools: McpToolSpec[] = [
     title: "Store a text file",
     description: `Store UTF-8 text (up to ${MCP_TEXT_FILE_MAX_BYTES} bytes, for example Markdown, CSV, or JSON) as a new private file in a folder the user owns (default: Default), or as a card attachment for link_attachment. Use a name with an extension such as .md, .csv, .json, or .txt. For binary files use begin_upload.`,
     scopes: ["files:write"],
+    access: { mode: "items", items: [{ arg: "folderId", kind: "folder" }] },
     write: true,
     buckets: ["file_write"],
     inputSchema: z.object({
@@ -177,6 +180,7 @@ export const fileWriteTools: McpToolSpec[] = [
     title: "Begin a file upload",
     description: `Start uploading a file of sizeBytes (up to ${config.maxUploadBytes} bytes) whose SHA-256 is sha256 (hex). Returns an uploadUrl: send the raw bytes with HTTP PUT to it, with this same API key as Authorization: Bearer, Content-Type: application/octet-stream, and Content-Length: sizeBytes. Then call finish_upload with the uploadId. The ticket works once and expires after 15 minutes; at most ${OPEN_TICKETS_PER_KEY} are open per key. The file is private (a folder the user owns, or Default), or a card attachment for link_attachment.`,
     scopes: ["files:write"],
+    access: { mode: "items", items: [{ arg: "folderId", kind: "folder" }] },
     write: true,
     buckets: ["file_write"],
     inputSchema: z.object({
@@ -199,7 +203,7 @@ export const fileWriteTools: McpToolSpec[] = [
       quotaCheck(key.userId, sizeBytes);
       const id = crypto.randomUUID();
       const expiresAt = Date.now() + UPLOAD_TICKET_TTL_MS;
-      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: kind, expiresAt, state: "pending" });
+      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: kind, expiresAt, state: "pending", surface: key.surface ?? "mcp" });
       return {
         uploadId: id,
         uploadUrl: `${config.appOrigin}/mcp/uploads/${id}`,
@@ -214,6 +218,7 @@ export const fileWriteTools: McpToolSpec[] = [
     title: "Finish a file upload",
     description: "Get the stored file of an upload started with begin_upload, once its PUT has succeeded. UPLOAD_PENDING while the bytes have not arrived, UPLOAD_EXPIRED after 15 minutes, HASH_MISMATCH when the bytes did not match sha256 (nothing was stored).",
     scopes: ["files:write"],
+    access: { mode: "own", related: ["uploadId"] },
     write: false,
     inputSchema: z.object({ uploadId: uuid }).strict(),
     handler: ({ uploadId }, key) => {
@@ -241,6 +246,7 @@ export const fileWriteTools: McpToolSpec[] = [
     title: "Rename a file",
     description: "Rename a Files document the user owns. Sharing does not change.",
     scopes: ["files:write"],
+    access: { mode: "items", items: [{ arg: "documentId", kind: "document" }] },
     write: true,
     buckets: ["structure_write"],
     inputSchema: z.object({ documentId: uuid, name: z.string().min(1).max(1024) }).strict(),
@@ -258,6 +264,7 @@ export const fileWriteTools: McpToolSpec[] = [
     title: "Move a file",
     description: "Move a Files document the user owns into another folder they own. Refuses moves that would change who can see the file (AUDIENCE_CHANGE): a file that follows its folder's sharing can only move between folders shared with the same people. A file with its own sharing moves freely.",
     scopes: ["files:write"],
+    access: { mode: "items", items: [{ arg: "documentId", kind: "document" }, { arg: "folderId", kind: "folder" }] },
     write: true,
     buckets: ["structure_write"],
     inputSchema: z.object({ documentId: uuid, folderId: uuid }).strict(),

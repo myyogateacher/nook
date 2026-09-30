@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { parseEntry } from "./ipRanges";
 
 function integerEnv(name: string, fallback: number, min: number, max: number) {
   const raw = process.env[name]?.trim();
@@ -141,9 +142,16 @@ const mailBlockedReason = resendApiKey && mailFrom ? mailLinksBlocked() : null;
 const mailEnabled = mailTransportValue === "file" || Boolean(resendApiKey && mailFrom && !mailBlockedReason);
 
 // Reverse proxies in front of Nook (Wave 35 review N1; access plan O-A7): 0 = the socket address and
-// no forwarding header is read; N = the N-th X-Forwarded-For entry from the right. Rate limits and
-// audit entries only, never access.
+// no forwarding header is read; N = the N-th X-Forwarded-For entry from the right. Rate limits, audit
+// entries, and (Wave 34) API keys limited to addresses.
 const trustedProxyHops = integerEnv("TRUSTED_PROXY_HOPS", 0, 0, 5);
+// Wave 34 review S1: the proxies' own addresses. When set, forwarding headers are read only from a
+// connection whose address is in this list; anyone reaching Nook around the proxy is seen as themselves.
+const trustedProxyAddresses = (process.env.TRUSTED_PROXY_ADDRESSES ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+for (const entry of trustedProxyAddresses) {
+  if (!parseEntry(entry)) throw new Error("TRUSTED_PROXY_ADDRESSES must be a comma-separated list of IP addresses or CIDR ranges, such as 127.0.0.1,172.16.0.0/12");
+}
+if (trustedProxyAddresses.length > 20) throw new Error("TRUSTED_PROXY_ADDRESSES takes at most 20 addresses or ranges");
 
 // Sign-in methods (Wave 35, D290): password (default, as before), google, or both.
 const authMethodsValue = process.env.AUTH_METHODS?.trim().toLowerCase() || "password";
@@ -209,7 +217,7 @@ export const config = {
   /** Live plus binned document bytes per user; 0 means unlimited. */
   userStorageQuotaBytes: integerEnv("USER_STORAGE_QUOTA_BYTES", 10_737_418_240, 0, Number.MAX_SAFE_INTEGER),
   minFreeDiskBytes: integerEnv("MIN_FREE_DISK_BYTES", 1_073_741_824, 0, Number.MAX_SAFE_INTEGER),
-  appVersion: process.env.APP_VERSION ?? "0.16.0",
+  appVersion: process.env.APP_VERSION ?? "0.18.0",
   gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40),
   pushEnabled: pushEnabledValue as "auto" | "true" | "false",
   pushSubject,
@@ -221,6 +229,8 @@ export const config = {
    */
   /** How many trusted reverse proxies add X-Forwarded-For entries (server/clientAddress.ts). */
   trustedProxyHops,
+  /** The proxies' addresses (Wave 34 review S1): forwarding headers are read only from these peers; empty = from any peer. */
+  trustedProxyAddresses,
   /** Sign-in methods and the Google OAuth client (Wave 35, D290). Tests switch these in process. */
   auth: {
     methods: authMethodsValue as "password" | "google" | "both",

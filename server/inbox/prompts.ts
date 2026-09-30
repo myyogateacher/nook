@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { db } from "../db";
+import { keyContainerIds } from "../keyResources";
 import { hasScope } from "../mcpScopes";
 import type { McpKeyContext } from "../mcpToolKit";
 import { PROPOSAL_KINDS } from "./kinds";
@@ -29,7 +30,10 @@ const visible = `SELECT id, name, instructions, output_kinds, max_proposals FROM
 
 export function registerRoutinePrompts(server: McpServer, key: McpKeyContext) {
   if (!hasScope(key.scopes, "inbox:read")) return;
-  const rows = db.query(`${visible} ORDER BY name_fold LIMIT $limit`).all({ userId: key.userId, keyId: key.keyId, limit: ROUTINE_LIMIT }) as PromptRow[];
+  // A key limited to chosen routines (Wave 34) is offered only those.
+  const chosen = keyContainerIds(key, "inbox:read", "routine");
+  const rows = (db.query(`${visible} ORDER BY name_fold LIMIT $limit`).all({ userId: key.userId, keyId: key.keyId, limit: ROUTINE_LIMIT }) as PromptRow[])
+    .filter((row) => chosen === null || chosen.includes(row.id));
   const taken = new Set<string>();
   for (const row of rows) {
     server.registerPrompt(`routine.${routineSlug(row.name, row.id, taken)}`, {

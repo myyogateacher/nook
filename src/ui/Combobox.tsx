@@ -36,6 +36,11 @@ export type ComboboxProps<V extends string> = {
   openOnFocus?: boolean;
   /** Lets the host open the list and put focus in its text box ("+ New tag"). */
   handleRef?: Ref<ComboboxHandle>;
+  /**
+   * Backspace in an empty search removes the last chip (default). Off where losing a chip by a stray
+   * key costs more than the shortcut saves (key grants, Wave 34 review Q13): only the chip's × removes.
+   */
+  backspaceRemoves?: boolean;
 };
 
 export type ComboboxHandle = { open: () => void };
@@ -78,7 +83,7 @@ export function pickFocusTarget(sheet: boolean, focusInside: boolean): "field" |
  * values (D91). Desktop: a popup under the field. Phones: a bottom sheet with a sticky search box
  * that Back closes (D69).
  */
-export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", placeholderWithValues = "", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose, openOnFocus = false, handleRef }: ComboboxProps<V>) {
+export function Combobox<V extends string>({ multiple = false, value, onChange, options, loadOptions, selectedOptions, onCreate, maxSelected = multiple ? Infinity : 1, label, placeholder = "Search…", placeholderWithValues = "", emptyText = "No matches", disabled = false, id, presentation = "auto", defaultOpen = false, onSheetClose, openOnFocus = false, handleRef, backspaceRemoves = true }: ComboboxProps<V>) {
   const autoId = useId();
   const inputId = id ?? `${autoId}-input`;
   const listId = `${autoId}-listbox`;
@@ -206,7 +211,7 @@ export function Combobox<V extends string>({ multiple = false, value, onChange, 
 
   function onKey(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (disabled || creating) return;
-    const result = comboboxKey({ open, active }, event, shown, { query, multiple, hasValues: value.length > 0, settled: !loading });
+    const result = comboboxKey({ open, active }, event, shown, { query, multiple, hasValues: backspaceRemoves && value.length > 0, settled: !loading });
     if (result.handled) {
       event.preventDefault();
       event.stopPropagation();

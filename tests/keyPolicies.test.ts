@@ -76,9 +76,9 @@ describe("team key policies", () => {
     createApiKey(member.userId, { name: "Short", surfaces: "mcp", grants: [{ module: "tasks", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 10 });
     createApiKey(member.userId, { name: "Forever", surfaces: "mcp", grants: [{ module: "notes", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: null });
     const delta = (after: Record<string, number>, base: Record<string, number>) => Object.fromEntries(Object.entries(after).map(([name, value]) => [name, value - base[name]!]));
-    expect(delta(await impact(strict), before.strict)).toEqual({ liveKeys: 3, blocked: 2, newlyBlocked: 2, narrowed: 0 });
-    expect(delta(await impact(notesOnly), before.notesOnly)).toEqual({ liveKeys: 3, blocked: 0, newlyBlocked: 0, narrowed: 1 });
-    expect(delta((await api(admin, "GET", "/team/policies")).body.impact, before.current)).toEqual({ liveKeys: 3, blocked: 0, newlyBlocked: 0, narrowed: 0 });
+    expect(delta(await impact(strict), before.strict)).toEqual({ liveKeys: 3, blocked: 2, newlyBlocked: 2, narrowed: 0, lostSurface: 0, lostModule: 0 });
+    expect(delta(await impact(notesOnly), before.notesOnly)).toEqual({ liveKeys: 3, blocked: 0, newlyBlocked: 0, narrowed: 1, lostSurface: 0, lostModule: 1 });
+    expect(delta((await api(admin, "GET", "/team/policies")).body.impact, before.current)).toEqual({ liveKeys: 3, blocked: 0, newlyBlocked: 0, narrowed: 0, lostSurface: 0, lostModule: 0 });
     // The member sees the policy summary on their own keys page.
     const mine = await api(member, "GET", "/keys");
     expect(mine.body.policy).toMatchObject({ keyMaxDays: 365, modules: DEFAULT_POLICIES.keyModulesByRole.member, mcpAllowed: true, restAllowed: true });
@@ -104,11 +104,11 @@ describe("team key policies", () => {
     db.query("UPDATE mcp_api_keys SET revoke_after = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), graceEnded);
     const delta = (after: Record<string, number>, base: Record<string, number>) => Object.fromEntries(Object.entries(after).map(([name, value]) => [name, value - base[name]!]));
     // Only the three usable keys count. MCP off: the MCP key is blocked, the both key loses a surface.
-    expect(delta(await impact(noMcp), before.noMcp)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1 });
+    expect(delta(await impact(noMcp), before.noMcp)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1, lostSurface: 1, lostModule: 0 });
     // REST off: the REST key is blocked (it was checked against mcpRoles before), the both key narrowed.
-    expect(delta(await impact(noRest), before.noRest)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1 });
+    expect(delta(await impact(noRest), before.noRest)).toEqual({ liveKeys: 3, blocked: 1, newlyBlocked: 1, narrowed: 1, lostSurface: 1, lostModule: 0 });
     // Both off: all three blocked.
-    expect(delta(await impact(neither), before.neither)).toEqual({ liveKeys: 3, blocked: 3, newlyBlocked: 3, narrowed: 0 });
+    expect(delta(await impact(neither), before.neither)).toEqual({ liveKeys: 3, blocked: 3, newlyBlocked: 3, narrowed: 0, lostSurface: 0, lostModule: 0 });
   });
 
   test("a stored value that no longer validates falls back to its default, field by field", () => {

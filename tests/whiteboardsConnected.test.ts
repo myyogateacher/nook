@@ -327,3 +327,24 @@ describe("QA H1: a note never gives away the name of a board it embeds", () => {
     expect(await storage.readVersion(noteId, 2)).toBe(old);
   }, 30_000);
 });
+
+describe("QA L6: a binned board's card", () => {
+  test("the summary says binned to the owner only; anyone else gets the plain 404", async () => {
+    const owner = await createUser("WBB L6 owner");
+    const reader = await createUser("WBB L6 reader");
+    const board = await create(owner, "Binned plan");
+    await share(owner, board.id, [reader.userId]);
+    expect((await api(reader, "GET", `/whiteboards/${board.id}/summary`)).status).toBe(200);
+    expect((await api(owner, "DELETE", `/files/${board.id}`)).status).toBe(200);
+    const mine = await api(owner, "GET", `/whiteboards/${board.id}/summary`);
+    expect(mine.status).toBe(404);
+    expect(mine.body).toMatchObject({ code: "BINNED", binned: true });
+    expect(JSON.stringify(mine.body)).not.toContain("Binned plan");
+    const theirs = await api(reader, "GET", `/whiteboards/${board.id}/summary`);
+    expect(theirs.status).toBe(404);
+    expect(theirs.body.binned).toBeUndefined();
+    expect(theirs.body.code).toBe("NOT_FOUND");
+    const missing = await api(owner, "GET", `/whiteboards/${crypto.randomUUID()}/summary`);
+    expect(missing.body.code).toBe("NOT_FOUND");
+  }, 30_000);
+});

@@ -394,7 +394,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
     <BoardDialogs dialog={dialog} folders={folders} flash={flash}
       onClose={() => setDialog(null)}
       onOpen={openBoard}
-      extras={{ onDuplicate: canWrite ? (board) => { void duplicate(board); } : undefined, onCopyLink: (board) => { void copyLink(board); } }}
+      extras={{ onDuplicate: canWrite ? (board) => { void duplicate(board); } : undefined, onCopyLink: canWrite ? (board) => { void copyLink(board); } : undefined }}
       onChanged={(patch) => { patchBoard(patch); if (patch.folder_id !== undefined && route.folder !== "all") void loadList(); }}
       onDeleted={(board) => setBoards((current) => current?.filter((item) => item.id !== board.id) ?? current)}
       onAction={(action, board) => setDialog({ kind: action, board })} />

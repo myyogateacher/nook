@@ -74,3 +74,15 @@ export function placedSize(width: number, height: number, max = IMAGE_PLACE_MAX_
   const scale = Math.min(1, max / longest);
   return { width: Math.max(8, Math.round(width * scale)), height: Math.max(8, Math.round(height * scale)) };
 }
+
+/** How far each further picture placed in the same view moves from the previous one (QA L2), in screen pixels. */
+export const PLACE_STEP_PX = 24;
+/**
+ * Where the next picture placed at the view's centre goes (QA L2): while the view is unchanged,
+ * each one moves a step down and right from the previous, so they never fully cover each other;
+ * after 8 steps it starts over. A moved or zoomed view starts again at the centre.
+ */
+export function nextPlacement(previous: { view: string; step: number } | null, view: string) {
+  const step = previous && previous.view === view ? (previous.step + 1) % 8 : 0;
+  return { view, step, offsetPx: step * PLACE_STEP_PX };
+}

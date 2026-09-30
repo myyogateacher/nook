@@ -1,5 +1,6 @@
 // Pure Bin display helpers. No DOM or network access, so they are unit tested directly.
 import type { BinItem, BinRestoreResult, Visibility } from "../types";
+import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 
 export type BinFilter = "all" | "note" | "document" | "tasks" | "collections" | "calendar";
 
@@ -51,7 +52,9 @@ export function filterBinItems(items: BinItem[], filter: BinFilter) {
 
 const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event" };
 
-export function binItemLabel(item: Pick<BinItem, "title" | "type">) {
+export function binItemLabel(item: Pick<BinItem, "title" | "type"> & Partial<Pick<BinItem, "kind">>) {
+  // QA L6: a whiteboard reads by its name, without the ".excalidraw" of its file.
+  if (item.type === "document" && item.kind === "whiteboard") return whiteboardDisplayName(item.title).trim() || "Untitled whiteboard";
   return item.title.trim() || untitled[item.type];
 }
 
@@ -74,7 +77,7 @@ export function attachmentLabel(item: Pick<BinItem, "attachment_of"> & Partial<P
 }
 
 /** The kind shown to screen readers and in the row meta. */
-export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partial<Pick<BinItem, "attachment_kind">>) {
+export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partial<Pick<BinItem, "attachment_kind" | "kind">>) {
   if (item.type === "note") return "Note";
   if (item.type === "card") return "Card";
   if (item.type === "board") return "Board";
@@ -82,6 +85,7 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partia
   if (item.type === "collection_row") return "Row";
   if (item.type === "calendar") return "Calendar";
   if (item.type === "event") return "Event";
+  if (item.kind === "whiteboard") return "Whiteboard";
   return item.attachment ? attachmentKindLabel(item) : "File";
 }
 

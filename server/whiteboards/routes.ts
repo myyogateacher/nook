@@ -5,7 +5,7 @@ import { REVALIDATE_CACHE } from "../documents";
 import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
 import {
-  createWhiteboard, duplicateWhiteboard, listSnapshots, listWhiteboardsPage, previousVersion, putThumbnail, readableWhiteboard, readSnapshot, readThumbnail, readWhiteboard,
+  binnedOwnWhiteboard, createWhiteboard, duplicateWhiteboard, listSnapshots, listWhiteboardsPage, previousVersion, putThumbnail, readableWhiteboard, readSnapshot, readThumbnail, readWhiteboard,
   restorePreviousVersion, restoreSnapshot, saveScene, THUMBNAIL_MAX_BYTES, WHITEBOARD_SORTS, WhiteboardError, type WhiteboardSort
 } from "./service";
 import { importWhiteboard, WHITEBOARD_IMPORT_MAX_BYTES } from "./import";
@@ -187,8 +187,14 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
   // The embed card in notes (D208): only what the card shows, for readers; 404 for anyone else (D73).
   app.get("/api/whiteboards/:id/summary", (c) => {
     try {
-      const board = readableWhiteboard(idParam(c), c.get("user").id);
-      if (!board) throw new WhiteboardError(404, "NOT_FOUND", "Whiteboard not found");
+      const id = idParam(c);
+      const userId = c.get("user").id;
+      const board = readableWhiteboard(id, userId);
+      if (!board) {
+        // QA L6: the owner's own binned board says so, and only to the owner (anyone else: plain 404).
+        if (binnedOwnWhiteboard(id, userId)) throw new WhiteboardError(404, "BINNED", "This whiteboard is in the Bin", { binned: true });
+        throw new WhiteboardError(404, "NOT_FOUND", "Whiteboard not found");
+      }
       return c.json({ whiteboard: { id: board.id, name: board.name, updated_at: board.updated_at, hasThumbnail: board.hasThumbnail, thumbRevision: board.thumbRevision, elementCount: board.elementCount, owner_name: board.owner_name, is_owner: board.is_owner } });
     } catch (error) {
       return fail(c, error);

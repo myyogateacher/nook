@@ -5,7 +5,9 @@ import { cardSummary, clearCardSummaries, embedMarkdown, parseEmbedLine, pastedB
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { hasUnsupportedElements, isKeptElement, keptLink, refusedImagesMessage, refusedLinks, sceneForSave, withoutRefusedImages } from "../src/whiteboards/historyGuard";
 import { autosaveReducer, changedSince, hasPendingWork, initialAutosave, nextSaveDelay, shouldSave } from "../src/whiteboards/autosave";
-import { placedSize } from "../src/whiteboards/boardImages";
+import { nextPlacement, placedSize, PLACE_STEP_PX } from "../src/whiteboards/boardImages";
+import { isTouchLike, swallowNextClick } from "../src/whiteboards/touchClick";
+import { binItemLabel, binKindLabel } from "../src/bin/binFormat";
 
 /**
  * Connected whiteboards, client side (Wave 24): the save filter for pictures (D198, T164), links
@@ -179,5 +181,44 @@ describe("review fixes on the canvas", () => {
     clearCardSummaries();
     expect(cardSummary(doc)).not.toBe(first);
     await Promise.allSettled([first]);
+  });
+});
+
+describe("QA fixes b (L2, M1, L6)", () => {
+  test("L2: pictures placed in one view step down and right; a moved view starts at the centre again", () => {
+    const first = nextPlacement(null, "view-a");
+    expect(first.offsetPx).toBe(0);
+    const second = nextPlacement(first, "view-a");
+    expect(second.offsetPx).toBe(PLACE_STEP_PX);
+    expect(nextPlacement(second, "view-a").offsetPx).toBe(2 * PLACE_STEP_PX);
+    expect(nextPlacement(second, "view-b").offsetPx).toBe(0);
+    let step = first;
+    for (let index = 0; index < 8; index += 1) step = nextPlacement(step, "view-a");
+    expect(step.offsetPx).toBe(0);
+  });
+
+  test("M1: only a touch or pen press swallows the one click that follows it, and only briefly", () => {
+    expect(isTouchLike({ pointerType: "touch" })).toBe(true);
+    expect(isTouchLike({ pointerType: "pen" })).toBe(true);
+    expect(isTouchLike({ pointerType: "mouse" })).toBe(false);
+    expect(isTouchLike(undefined)).toBe(false);
+    const target = new EventTarget();
+    swallowNextClick(700, target as never);
+    const later = { swallowed: 0 };
+    target.addEventListener("click", () => { later.swallowed += 1; });
+    const first = new Event("click", { cancelable: true });
+    target.dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(true);
+    const second = new Event("click", { cancelable: true });
+    target.dispatchEvent(second);
+    expect(second.defaultPrevented).toBe(false);
+  });
+
+  test("L6: the Bin names a whiteboard as a whiteboard", () => {
+    const item = { type: "document" as const, attachment: false, kind: "whiteboard" as const, title: "Floor plan.excalidraw" };
+    expect(binKindLabel(item)).toBe("Whiteboard");
+    expect(binItemLabel(item)).toBe("Floor plan");
+    expect(binKindLabel({ type: "document", attachment: false, kind: "file" })).toBe("File");
+    expect(binItemLabel({ type: "document", title: "report.excalidraw" })).toBe("report.excalidraw");
   });
 });

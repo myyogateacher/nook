@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Extension, Node, type Editor } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import { Lock, PenTool } from "lucide-react";
+import { Lock, PenTool, Trash2 } from "lucide-react";
+import { ApiError } from "../api";
 import { getWhiteboardSummary, thumbnailUrl, type WhiteboardCardSummary } from "../whiteboards/whiteboardsApi";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { neutralEmbedMarkdown, WHITEBOARD_EMBED_TEXT, WHITEBOARD_EMBED_TITLE } from "../../shared/whiteboardEmbed";
@@ -51,15 +52,25 @@ export function pastedBoardId(text: string, origin: string): string | null {
   return match ? match[1]!.toLowerCase() : null;
 }
 
+/**
+ * What a card shows: the board, "binned" (QA L6: the reader's own board, now in their Bin; the
+ * server says so to the owner only), or null (missing, or not shared with the reader).
+ */
+export type CardBoard = WhiteboardCardSummary | "binned" | null;
+const isBinned = (reason: unknown) => reason instanceof ApiError && reason.status === 404 && (reason.payload as { binned?: unknown } | null)?.binned === true;
+
 /** Card summaries, shared by every card on screen and kept briefly (a note can show one board twice). */
-const summaries = new Map<string, { at: number; value: Promise<WhiteboardCardSummary | null> }>();
+const summaries = new Map<string, { at: number; value: Promise<CardBoard> }>();
 const SUMMARY_TTL_MS = 30_000;
-export function cardSummary(id: string) {
+export function cardSummary(id: string): Promise<CardBoard> {
   const cached = summaries.get(id);
   if (cached && Date.now() - cached.at < SUMMARY_TTL_MS) return cached.value;
-  const value = getWhiteboardSummary(id).then((result) => result.whiteboard, () => null);
+  const value = getWhiteboardSummary(id).then((result) => result.whiteboard, (reason: unknown) => isBinned(reason) ? "binned" as const : null);
   if (summaries.size > 200) summaries.clear();
-  summaries.set(id, { at: Date.now(), value });
+  const entry = { at: Date.now(), value };
+  summaries.set(id, entry);
+  // A binned board is asked again next time: it may be restored from the Bin meanwhile.
+  void value.then((board) => { if (board === "binned" && summaries.get(id) === entry) summaries.delete(id); });
   return value;
 }
 
@@ -73,14 +84,15 @@ export function clearCardSummaries() {
 
 function WhiteboardEmbedCard({ node, selected }: NodeViewProps) {
   const id = String(node.attrs.id ?? "");
-  const [state, setState] = useState<{ id: string; board: WhiteboardCardSummary | null } | null>(null);
+  const [state, setState] = useState<{ id: string; board: CardBoard } | null>(null);
   useEffect(() => {
     let live = true;
     void cardSummary(id).then((board) => { if (live) setState({ id, board }); });
     return () => { live = false; };
   }, [id]);
   const board = state?.id === id ? state.board : undefined;
-  const open = () => window.dispatchEvent(new CustomEvent(OPEN_PATH_EVENT, { detail: { path: `/whiteboards/${id}` } }));
+  const openPath = (path: string) => window.dispatchEvent(new CustomEvent(OPEN_PATH_EVENT, { detail: { path } }));
+  const open = () => openPath(`/whiteboards/${id}`);
   return <NodeViewWrapper className={`whiteboard-embed${selected ? " is-selected" : ""}`} data-whiteboard-embed="">
     <div className="whiteboard-embed-card" contentEditable={false}>
       {board === undefined && <span className="whiteboard-embed-thumb" aria-hidden="true"><PenTool /></span>}
@@ -89,7 +101,12 @@ function WhiteboardEmbedCard({ node, selected }: NodeViewProps) {
         <span className="whiteboard-embed-copy"><strong>Whiteboard unavailable</strong><small>It was deleted, or it is not shared with you.</small></span>
       </>}
       {board === undefined && <span className="whiteboard-embed-copy" role="status"><strong>Loading whiteboard…</strong></span>}
-      {board && <>
+      {board === "binned" && <>
+        <span className="whiteboard-embed-thumb unavailable" aria-hidden="true"><Trash2 /></span>
+        <span className="whiteboard-embed-copy"><strong>In the Bin</strong><small>You deleted this whiteboard. Restore it from the Bin to show it here.</small></span>
+        <button type="button" className="secondary-button whiteboard-embed-open" onClick={() => openPath("/bin")} onMouseDown={(event) => event.preventDefault()}>Open Bin</button>
+      </>}
+      {board && board !== "binned" && <>
         <span className="whiteboard-embed-thumb">{board.hasThumbnail ? <img src={thumbnailUrl(board)} alt="" loading="lazy" draggable={false} /> : <PenTool aria-hidden="true" />}</span>
         <span className="whiteboard-embed-copy">
           <strong title={whiteboardDisplayName(board.name)}>{whiteboardDisplayName(board.name)}</strong>
@@ -184,7 +201,7 @@ export const WhiteboardEmbedPicker = Extension.create<{ onOpenPicker: (editor: E
             if (!id) return false;
             event.preventDefault();
             void cardSummary(id).then((board) => {
-              if (!editor.isDestroyed && editor.isEditable) editor.chain().focus().insertWhiteboardEmbed({ id, name: board ? board.name : "Whiteboard" }).run();
+              if (!editor.isDestroyed && editor.isEditable) editor.chain().focus().insertWhiteboardEmbed({ id, name: board && board !== "binned" ? board.name : "Whiteboard" }).run();
             });
             return true;
           }

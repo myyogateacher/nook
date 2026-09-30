@@ -954,6 +954,8 @@ export function App() {
       if (selectedNoteIdRef.current !== noteId) return;
       flash(reason instanceof Error && reason.message !== "Not found" ? reason.message : "Could not open this note");
       setSelectedNoteId(null);
+      // QA L1 (Wave 24): on a phone, land on the list the entry names, not an empty editor.
+      setMobilePanel("notes");
       navigate(notesRoute(selectedFolder, null), { panel: "notes", replace: true });
     });
   }, [selectedNoteId, loadNote]);
@@ -1543,7 +1545,8 @@ export function App() {
   // entry, so Back returns to where it was. Leaving Notes saves the note first, as any app switch does.
   async function openContentPath(path: string) {
     const route = parseRoute(path);
-    if (route.app !== "whiteboards" || !route.boardId) return;
+    // A board, or the Bin (QA L6: the owner's card for a binned board offers "Open Bin").
+    if (!(route.app === "whiteboards" && route.boardId) && route.app !== "bin") return;
     if (activeApp === "notes" && !await leaveNotes()) return;
     openNotificationPath(path);
   }

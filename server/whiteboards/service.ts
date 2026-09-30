@@ -220,6 +220,12 @@ function ownedBoard(documentId: string, userId: string) {
     WHERE d.id = ? AND d.owner_id = ? AND d.deleted_at IS NULL AND d.purge_started_at IS NULL AND d.purpose = 'file'`).get(documentId, userId) as OwnedBoard | null;
 }
 
+/** QA L6: whether `documentId` is a board of `userId`'s now in their Bin (not being purged). */
+export function binnedOwnWhiteboard(documentId: string, userId: string) {
+  return db.query(`SELECT 1 FROM documents d JOIN whiteboards w ON w.document_id = d.id
+    WHERE d.id = ? AND d.owner_id = ? AND d.deleted_at IS NOT NULL AND d.purge_started_at IS NULL AND d.purpose = 'file'`).get(documentId, userId) !== null;
+}
+
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const encoder = new TextEncoder();
 const lockKey = (id: string) => `document:${id}`;

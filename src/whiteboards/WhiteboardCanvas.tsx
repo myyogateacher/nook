@@ -18,7 +18,8 @@ import {
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
 import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedImagesMessage, refusedLinks, restoreMessage, sceneForLoad, sceneForSave, withoutRefusedImages } from "./historyGuard";
-import { IMAGE_PLACE_MAX_SIDE, loadNookImage, placedSize } from "./boardImages";
+import { IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize } from "./boardImages";
+import { isTouchLike, swallowNextClick } from "./touchClick";
 import { HistorySheet } from "./HistorySheet";
 import { ImagePickerSheet, LinkPickerSheet } from "./NookPickers";
 import { markBoardOpen } from "./pendingSync";
@@ -63,7 +64,7 @@ type Props = {
 
 type Loaded = { board: WhiteboardSummary; scene: CanonicalScene };
 type Layer =
-  | { kind: "board"; dialog: BoardDialog } | { kind: "conflict" } | { kind: "discard" }
+  | { kind: "board"; dialog: BoardDialog } | { kind: "conflict"; restoreFailed?: boolean } | { kind: "discard" }
   /** Wave 24: Nook's image picker (D198), the link picker (D199), History (D207), a version's restore confirm, and the external-link confirm. */
   | { kind: "image" } | { kind: "link" } | { kind: "history" } | { kind: "restoreVersion"; snapshot: WhiteboardSnapshot } | { kind: "external"; url: string };
 type Captured = { elements: ReadonlyArray<Record<string, unknown>>; appState: Record<string, unknown>; live: number; origin: CaptureOrigin };
@@ -150,6 +151,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const mounted = useRef(true);
   const applyPendingRef = useRef<PendingEntry | null>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  /** QA L2: the last centre placement, so the next picture in the same view is offset from it. */
+  const placementRef = useRef<{ view: string; step: number } | null>(null);
   const accessLostRef = useRef(false);
   /** Asks the layer watcher to look again (QA E2); set once the canvas is on screen. */
   const checkLayersRef = useRef<() => void>(() => undefined);
@@ -683,7 +686,12 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const appState = live.getAppState();
     const visibleSide = Math.min(appState.width, appState.height) / appState.zoom.value;
     const size = placedSize(image.width, image.height, Math.max(64, Math.min(IMAGE_PLACE_MAX_SIDE, visibleSide * 0.6)));
-    const point = at ?? { x: appState.offsetLeft + appState.width / 2, y: appState.offsetTop + appState.height / 2 };
+    let point = at;
+    if (!point) {
+      const placement = nextPlacement(placementRef.current, `${appState.scrollX}:${appState.scrollY}:${appState.zoom.value}:${appState.width}x${appState.height}`);
+      placementRef.current = placement;
+      point = { x: appState.offsetLeft + appState.width / 2 + placement.offsetPx, y: appState.offsetTop + appState.height / 2 + placement.offsetPx };
+    }
     const center = viewportCoordsToSceneCoords({ clientX: point.x, clientY: point.y }, appState);
     const [element] = convertToExcalidrawElements([{ type: "image", fileId: fileId as never, x: center.x - size.width / 2, y: center.y - size.height / 2, width: size.width, height: size.height, status: "saved" }]);
     if (!element) return false;
@@ -804,6 +812,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       writeViewport(userId, boardId, viewportRef.current);
       onOpenPath(target.path);
     } else {
+      // QA M1: a tap's follow-up click would land on the confirm's scrim and close it at once.
+      if (isTouchLike(event.detail?.nativeEvent)) swallowNextClick();
       setLayer({ kind: "external", url: target.url });
     }
   }, [boardId, flash, onOpenPath, userId]);
@@ -938,7 +948,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         const payload = codeOf(reason);
         if (payload?.code === "REVISION_CONFLICT") {
           dispatch({ type: "conflict", revision: payload.revision ?? stateRef.current.baseRevision });
-          if (!tearingDownRef.current) setLayer({ kind: "conflict" });
+          if (!tearingDownRef.current) setLayer({ kind: "conflict", restoreFailed: true });
         } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
         else if (!tearingDownRef.current) {
           setLayer(null);
@@ -1024,6 +1034,21 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const result = currentScene();
     if (result?.ok) void saveAsCopy(result.scene);
   }, [currentScene, saveAsCopy]);
+
+  // QA L7: when a Nook sheet or dialog closes (Back, Escape, a pick) and focus fell to the page,
+  // give it back to the canvas, so its shortcuts (9 for a picture) work without a click first.
+  const previousLayerRef = useRef<Layer | null>(null);
+  useEffect(() => {
+    const was = previousLayerRef.current;
+    previousLayerRef.current = layer;
+    if (!was || layer) return;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      stageRef.current?.querySelector<HTMLElement>(".excalidraw-container")?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [layer]);
 
   useHistoryDialogGuard(layer?.kind === "conflict" || layer?.kind === "discard" || layer?.kind === "restoreVersion" || layer?.kind === "external",
     () => setLayer(layer?.kind === "discard" ? { kind: "conflict" } : layer?.kind === "restoreVersion" ? { kind: "history" } : null),
@@ -1124,7 +1149,8 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         onInsertImage: () => setLayer({ kind: "image" }),
         onLinkItem: selection.count > 0 ? () => setLayer({ kind: "link" }) : undefined,
         onDuplicate: canWrite ? () => { void duplicate(); } : undefined,
-        onCopyLink: () => { void copyLink(); }
+        // QA L5: only someone who writes notes can use a link for a note.
+        onCopyLink: canWrite ? () => { void copyLink(); } : undefined
       }}
       onChanged={(patch) => setLoaded((current) => current ? { ...current, board: { ...current.board, ...patch } } : current)}
       onDeleted={() => {
@@ -1160,9 +1186,10 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       </footer>
     </ModalDialog>}
     {layer?.kind === "conflict" && <ModalDialog title="This whiteboard changed on another device" onClose={() => setLayer(null)}>
-      <p className="file-dialog-copy">Someone saved a newer version of this whiteboard, from another tab or device. Your changes here are kept on this device until you choose.</p>
+      <p className="file-dialog-copy">{layer.restoreFailed ? "The version you chose was not restored: s" : "S"}omeone saved a newer version of this whiteboard, from another tab or device. {hasPendingWork(stateRef.current) ? "Your changes here are kept on this device until you choose." : "You have no unsaved changes here."}</p>
       <footer className="file-dialog-actions whiteboard-conflict-actions">
-        <button className="secondary-button" onClick={() => setLayer({ kind: "discard" })}>Reload latest</button>
+        {/* QA L4: "Discard your changes?" only when there are changes to discard. */}
+        <button className="secondary-button" onClick={() => { if (hasPendingWork(stateRef.current)) setLayer({ kind: "discard" }); else void reloadLatest(); }}>Reload latest</button>
         <button className="primary-button" onClick={copyLocal} autoFocus>Save mine as a copy</button>
       </footer>
     </ModalDialog>}

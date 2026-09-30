@@ -270,9 +270,11 @@ The **Vault** keeps a team's secrets (API keys, database URLs, service passwords
 
 Each section has its own URL (`/settings/security`, `/settings/keys`, `/settings/team/groups`, …), so Back and Forward move between the sections you opened and then back to where you opened Settings. Older links still work and are rewritten in place: `/team/…` opens the same Team screen under `/settings/team/…`, and `/settings/mcp` opens `/settings/keys`.
 
-**On a phone** Settings opens on the section list, with your name and role at the top. Tapping a section opens it as a screen of its own, with a back arrow in its header. The arrow and browser Back return to the list, a second Back returns to where you opened Settings, and Forward opens them again. Inside Team, a person, a group, or an integration is one more screen with its own back link.
+**On a phone** Settings opens on the section list, with your name and role at the top. Tapping a section opens it as a screen of its own, with a back arrow in its header. The arrow and browser Back return to the list, a second Back returns to where you opened Settings, and Forward opens them again. A section opened from elsewhere (the **Team** button, **Turn on in Settings**, a notification, or a link) opens with the list under it, so it goes back the same way. Inside Team, a person, a group, or an integration is one more screen with its own back link.
 
-While a new API key is on screen (it is shown only once, in **API keys** or on an integration's page), leaving it by another section, the back arrow, Home, Bin, **Sign out**, or browser Back or Forward asks first.
+Opening a Settings link directly (from an email or a bookmark) puts Home under it: Back from Settings goes to Home rather than off Nook. A guest who opens **My access** by its address sees **Security**; someone who is not an admin and opens an admin-only Team address sees **Members**, with a note saying that section is for admins.
+
+While a new API key is on screen (it is shown only once, in **API keys** or on an integration's page), leaving it by another section, the back arrow, Home, Bin, Inbox, the bell, **Sign out**, or browser Back or Forward asks first. Unsaved changes in **Team → Policies** ask the same way (Discard or Keep editing).
 
 ## Settings → Modules
 
@@ -339,7 +341,7 @@ Changing a role, blocking, unblocking, or signing someone out everywhere asks yo
 - **Activity** (admins) lists the latest role changes, blocks, unblocks, and sign-outs for the person, who made them, and when, including changes made from the host command line.
 - **Google sign-in** (admins, when Google sign-in is on). The person's page says whether they sign in with Google, which Google accounts can link their address (a Google Workspace account of the address's domain, or the Gmail account itself), and the last Google sign-in that could not link, with the time and why. **Allow Google sign-in…** lets their next Google sign-in link the account, once, within 24 hours. **Reset account for Google sign-in…** is for an account nobody knows the owner of: it signs it out, removes its password, two-factor, keys, feed links, and sharing, and keeps its content. It is not the same as **Reset access** under **Access**, which removes what others share with the person. For a linked account, **Allow re-linking…** is for someone who recreated their Google account: whoever next signs in with Google as that address gets the account and everything in it, so their old sessions, keys, and feed links end then, and by default the password and two-factor go too (you can keep them when you are sure the same person re-links). Each of these asks for your password (or a Google confirmation) and your two-factor code, and the person sees it in their bell.
 
-On a phone, the list and a person's page are separate screens: Back closes an open picker or confirmation first, then returns from the page to the list, then to the Settings section list, then to where you opened Settings.
+On a phone, the list and a person's page are separate screens: Back closes an open picker or confirmation first, then returns from the page to the list (the page's **‹ Members** link does the same), then to the Settings section list, then to where you opened Settings. The **Team** button opens Members with the section list under it, so Back and the back arrow both return to the list.
 
 ### Groups (admins)
 
@@ -366,7 +368,7 @@ On a phone, Back returns from a group to Groups, then to Team.
 - **Block** pauses its keys at once; **Unblock** resumes its live keys. **Delete** revokes its keys, then removes it only when it never had a key and never created anything. Otherwise (it had a key, even one that only read, or it created a card, a comment, a note version) it is kept as **Deleted (kept for attribution)**, so its name stays on that content and on its keys' history in Access activity. A deleted integration is final: it cannot be unblocked, renamed, given another role, or given a key; it is not offered in any picker; and it does not count toward the limit of 100 integrations. Deleting it again changes nothing.
 - It never receives email or notifications, does not count toward `ALLOWED_EMAILS`, and cannot be invited. It can be assigned a card on a board shared with it (nobody is emailed or notified).
 
-On a phone, Back closes a sheet or confirm first, then returns from an integration to Integrations, then to the Settings section list.
+On a phone, Back closes a sheet or confirm first, then returns from an integration to Integrations, then to the Settings section list, then to where you opened Settings. After confirming with Google from an integration's keys, the result shows on that integration's page.
 
 ### Inviting people
 

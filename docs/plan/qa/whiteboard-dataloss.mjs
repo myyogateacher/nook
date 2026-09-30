@@ -4,7 +4,7 @@
 // registration, Chrome (CHROME, default /usr/bin/google-chrome), and `puppeteer-core` installed next
 // to this file or on NODE_PATH (it is not a project dependency). Uses throwaway @nook.test accounts.
 //
-//   node docs/plan/qa/whiteboard-dataloss.mjs [desktop|phone|both] [runs=10] [suites=leave,empty,edits,text,d4]
+//   node docs/plan/qa/whiteboard-dataloss.mjs [desktop|phone|both] [runs=10] [suites=leave,empty,edits,text,d4,wave24]
 //
 // Every run starts from a board with 3 saved rectangles, makes one change with real mouse or touch
 // events, and leaves 100/300/600/900 ms later.
@@ -19,12 +19,17 @@
 //   the text is saved.
 // - d4: draw every 1.1 s for 30 s (at least 5 saves), then crash the tab mid-drawing and reopen:
 //   everything up to about 1 s before the crash is back (applied or offered).
+// - wave24 (Wave 24): insert a picture from Files then leave (it is on the board); start an upload
+//   (throttled) then leave (the picture never joins the board, nothing refers to a missing file);
+//   restore a version from History then leave (the board is the restored version or the one before);
+//   import a drawing with an embedded picture then leave (one board, one picture File, referenced).
+//   Every saved image must refer to an existing Nook file; no dataURL is ever stored.
 import puppeteer from 'puppeteer-core';
 
 const BASE = process.env.NOOK_BASE ?? 'http://localhost:22295';
 const widths = process.argv[2] === 'desktop' ? ['desktop'] : process.argv[2] === 'phone' ? ['phone'] : ['desktop', 'phone'];
 const RUNS = Number(process.argv[3] ?? 10);
-const SUITES = new Set((process.argv[4] ?? 'leave,empty,edits,text,d4').split(','));
+const SUITES = new Set((process.argv[4] ?? 'leave,empty,edits,text,d4,wave24').split(','));
 const DELAYS = [100, 300, 600, 900];
 const PASSWORD = 'qa data loss password 2026';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -293,6 +298,184 @@ async function continuous(vp) {
   return { savesIn30s, drawn, inEditor, reopened, offer, ok: savesIn30s >= 5 && (reopened >= inEditor || offer), extra };
 }
 
+// ---------------------------------------------------------------- Wave 24 (connected whiteboards)
+/** A PNG made in the page (canvas), base64; `side` sets its size (a big one uploads slowly when throttled). */
+const pagePng = (p, side = 160) => p.evaluate((side) => {
+  const c = document.createElement('canvas'); c.width = side; c.height = side;
+  const g = c.getContext('2d');
+  // Noise, so a big picture stays big as a PNG.
+  const data = g.createImageData(side, side);
+  for (let i = 0; i < data.data.length; i += 1) data.data[i] = (i * 2654435761) % 251;
+  g.putImageData(data, 0, 0);
+  return c.toDataURL('image/png').split(',')[1];
+}, side);
+const uploadFile = (p, base64, name, csrf) => p.evaluate(async (base64, name, csrf) => {
+  const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
+  const form = new FormData();
+  form.append('file', new Blob([bytes]), name);
+  const response = await fetch('/api/files', { method: 'POST', body: form, headers: { 'x-csrf-token': csrf } });
+  return (await response.json()).document;
+}, base64, name, csrf);
+const rects = (count) => ({ type: 'excalidraw', version: 2, source: 'qa', elements: Array.from({ length: count }, (_, i) => rect(`qa${i + 1}`, i * 100)), appState: {}, files: {} });
+const putScene = async (p, id, csrf, scene) => {
+  const current = (await serverScene(p, id)).whiteboard.revision;
+  return api(p, 'PUT', `/api/whiteboards/${id}/scene`, { baseRevision: current, scene }, csrf);
+};
+async function pressVisible(p, selector) {
+  const handle = await p.waitForSelector(selector, { visible: true, timeout: 8000 });
+  const box = await handle.boundingBox();
+  await tap(p, box.x + box.width / 2, box.y + box.height / 2);
+}
+async function pressWithText(p, selector, text) {
+  await p.waitForFunction((selector, text) => [...document.querySelectorAll(selector)].some((node) => node.textContent?.includes(text) && node.getClientRects().length), { timeout: 8000 }, selector, text);
+  const box = await p.evaluate((selector, text) => {
+    const node = [...document.querySelectorAll(selector)].find((element) => element.textContent?.includes(text) && element.getClientRects().length);
+    const r = node.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  }, selector, text);
+  await tap(p, box.x, box.y);
+}
+/** Every image on the saved board refers to a Nook file that exists and the owner can open. */
+async function imagesIntact(p, scene) {
+  const images = (scene?.elements ?? []).filter((element) => element.type === 'image');
+  for (const image of images) {
+    const file = scene.files?.[image.fileId];
+    if (!file?.nookDocumentId) return false;
+    if ((await api(p, 'GET', `/api/files/${file.nookDocumentId}`)).status !== 200) return false;
+  }
+  return !JSON.stringify(scene ?? {}).includes('dataURL');
+}
+
+/**
+ * One Wave 24 case, `runs` times: the board starts with 3 saved rectangles (`setup` may add more),
+ * `act` does the thing, and the person leaves `delay` ms later by the app's Back or browser Back.
+ * `check(saved, shownAtLeave)` says whether the saved board is right; it must also equal what the
+ * editor shows after reopening, and every image must be an existing Nook file.
+ */
+async function wave24Series(vp, label, { setup, act, check, after }) {
+  const context = await browser.createBrowserContext();
+  const p = await page(context, vp);
+  const { csrf } = await signUp(p, `${label}-${vp}`);
+  p._csrf = csrf;
+  const name = `QA ${label}`;
+  const id = (await api(p, 'POST', '/api/whiteboards', { name }, csrf)).body.whiteboard.id;
+  p._boardId = id;
+  const rows = [];
+  for (let run = 0; run < RUNS; run += 1) {
+    const delay = DELAYS[run % DELAYS.length];
+    const how = run % 2 === 0 ? 'app' : 'browser';
+    await putScene(p, id, csrf, rects(3));
+    if (setup) await setup(p, id, csrf);
+    await openFromList(p, name);
+    const errorsBefore = p._errors.length;
+    let note = null;
+    try { await act(p, id, csrf); } catch (error) { note = `action failed: ${error.message}`; }
+    const shown = await editor(p);
+    await sleep(delay);
+    await leave(p, how);
+    await sleep(2500);
+    if (after) await after(p);
+    const saved = (await serverScene(p, id)).scene;
+    await openFromList(p, name);
+    await sleep(3500);
+    const reopened = (await serverScene(p, id)).scene;
+    const reopenedEditor = await editor(p);
+    const errors = p._errors.slice(errorsBefore);
+    const ok = !note && check(reopened, shown) && reopenedEditor?.live === reopened.elements.length && await imagesIntact(p, reopened) && saved.elements.length === reopened.elements.length;
+    rows.push({ run, how, delay, shown: shown?.live, saved: saved.elements.length, reopened: reopened.elements.length, errors: errors.length, ok, ...(note ? { note } : {}), ...(errors.length ? { firstError: errors[0] } : {}) });
+    await p.goBack();
+    await sleep(800);
+  }
+  const result = { rows, lost: rows.filter((row) => !row.ok).length, errors: rows.reduce((sum, row) => sum + row.errors, 0), off: p._off.length, csp: p._csp.length };
+  await context.close();
+  return result;
+}
+
+const WAVE24 = {
+  // Insert a picture from Files, then leave at once: the picture is on the board after reopening.
+  image: {
+    async setup(p, id, csrf) { if (!p._imageId) p._imageId = (await uploadFile(p, await pagePng(p), 'qa-picture.png', csrf)).id; },
+    async act(p) {
+      await pressVisible(p, 'button[aria-label="Insert image"]');
+      await pressVisible(p, '.nook-picker-images button');
+      await p.waitForFunction(() => {
+        const host = document.querySelector('.excalidraw');
+        const key = host && Object.keys(host).find((name) => name.startsWith('__reactFiber$'));
+        for (let fiber = key ? host[key] : null; fiber; fiber = fiber.return) if (fiber.stateNode?.scene?.getNonDeletedElements) return fiber.stateNode.scene.getNonDeletedElements().some((element) => element.type === 'image');
+        return false;
+      }, { timeout: 8000 });
+    },
+    check: (scene, shown) => scene.elements.length === 4 && scene.elements.filter((element) => element.type === 'image').length === 1 && shown?.live === 4
+  },
+  // Start an upload (slowed to ~64 KB/s) and leave while it runs: the picture never joins the board.
+  upload: {
+    async act(p) {
+      await p._cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 64 * 1024 });
+      await pressVisible(p, 'button[aria-label="Insert image"]');
+      const input = await p.waitForSelector('.nook-picker input[type="file"]');
+      const base64 = await pagePng(p, 900);
+      const { writeFileSync } = await import('node:fs');
+      const path = `/tmp/nook-qa-upload-${process.pid}.png`;
+      writeFileSync(path, Buffer.from(base64, 'base64'));
+      await input.uploadFile(path);
+      await p.waitForSelector('.whiteboard-banner[role="status"]', { timeout: 5000 });
+    },
+    async after(p) { await p._cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }); },
+    check: (scene) => scene.elements.length === 3 && !scene.elements.some((element) => element.type === 'image')
+  },
+  // Restore a kept version (4 rectangles) from History, then leave at once: the board is either
+  // the restored version or, if the restore had not landed, the one before; never anything else.
+  restore: {
+    async setup(p, id, csrf) {
+      await putScene(p, id, csrf, rects(4));
+      await putScene(p, id, csrf, rects(0));
+      await putScene(p, id, csrf, rects(3));
+    },
+    async act(p) {
+      await pressVisible(p, 'button[aria-label^="Actions for"]');
+      await pressWithText(p, '.whiteboard-sheet button', 'History');
+      await pressWithText(p, '.whiteboard-history-list li:first-child button', 'Restore');
+      await pressWithText(p, '.file-dialog-actions button', 'Restore');
+    },
+    check: (scene) => scene.elements.length === 4 || scene.elements.length === 3
+  }
+};
+
+/** Import a drawing with an embedded picture from the list, then leave the new board at once. */
+async function importSeries(vp) {
+  const context = await browser.createBrowserContext();
+  const p = await page(context, vp);
+  const { csrf } = await signUp(p, `import-${vp}`);
+  const { writeFileSync } = await import('node:fs');
+  const png = await pagePng(p);
+  const rows = [];
+  for (let run = 0; run < RUNS; run += 1) {
+    const delay = DELAYS[run % DELAYS.length];
+    const how = run % 2 === 0 ? 'app' : 'browser';
+    const name = `QA import ${run}`;
+    const path = `/tmp/${name}.excalidraw`;
+    writeFileSync(path, JSON.stringify({ type: 'excalidraw', version: 2, source: 'https://excalidraw.com', elements: [rect('a', 0), rect('b', 100), { id: 'pic', type: 'image', x: 220, y: 40, width: 80, height: 80, fileId: 'embedded', status: 'saved', version: 1 }], appState: {}, files: { embedded: { id: 'embedded', mimeType: 'image/png', dataURL: `data:image/png;base64,${png}`, created: 1 } } }));
+    await p.goto(`${BASE}/whiteboards`, { waitUntil: 'networkidle2' });
+    await p.waitForSelector('.whiteboards-import', { visible: true });
+    const errorsBefore = p._errors.length;
+    const [chooser] = await Promise.all([p.waitForFileChooser(), pressVisible(p, '.whiteboards-import')]);
+    await chooser.accept([path]);
+    await p.waitForSelector('.excalidraw canvas', { timeout: 20000 });
+    await sleep(delay);
+    await leave(p, how);
+    await sleep(2000);
+    const boards = (await api(p, 'GET', '/api/whiteboards')).body.whiteboards.filter((board) => board.name === `${name}.excalidraw`);
+    const scene = boards.length === 1 ? (await serverScene(p, boards[0].id)).scene : null;
+    const pictures = (await api(p, 'GET', '/api/files')).body.documents.filter((document) => document.name.startsWith(`${name} image`));
+    const errors = p._errors.slice(errorsBefore);
+    const ok = boards.length === 1 && scene?.elements.length === 3 && pictures.length === 1 && await imagesIntact(p, scene) && Object.values(scene.files)[0]?.nookDocumentId === pictures[0]?.id;
+    rows.push({ run, how, delay, boards: boards.length, elements: scene?.elements.length, pictures: pictures.length, errors: errors.length, ok, ...(errors.length ? { firstError: errors[0] } : {}) });
+  }
+  const result = { rows, lost: rows.filter((row) => !row.ok).length, errors: rows.reduce((sum, row) => sum + row.errors, 0), off: p._off.length, csp: p._csp.length };
+  await context.close();
+  return result;
+}
+
 const table = [];
 const record = (vp, scenario, result, extra = {}) => {
   table.push({ width: vp, scenario, lost: `${result.lost}/${result.rows.length}`, pageErrors: result.errors, offOrigin: result.off, csp: result.csp, ...extra });
@@ -327,6 +510,12 @@ for (const vp of widths) {
     } };
     ACTIONS.textEditing = editing;
     record(vp, 'E4 browser Back while editing text', await series(vp, 'E4', 'textEditing', ['browser']));
+  }
+  if (SUITES.has('wave24')) {
+    record(vp, 'W24 insert image, then leave', await wave24Series(vp, 'W24-image', WAVE24.image));
+    record(vp, 'W24 upload started, then leave', await wave24Series(vp, 'W24-upload', WAVE24.upload));
+    record(vp, 'W24 restore a version, then leave', await wave24Series(vp, 'W24-restore', WAVE24.restore));
+    record(vp, 'W24 import, then leave', await importSeries(vp));
   }
   if (SUITES.has('d4')) {
     const d4 = await continuous(vp);

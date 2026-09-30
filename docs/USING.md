@@ -92,6 +92,7 @@ Notes are Markdown documents organised in folders. Edits begin as drafts that sa
 Type `/` for the command menu. Besides headings, lists, checklists, quotes, and code blocks:
 
 - **`/image`**, or paste or drop an image into the editor, uploads it to the note's folder in Files and embeds it. Only PNG, JPEG, GIF, and WebP are accepted, and the server's own type check must agree. Removing an image from a note leaves the file in Files.
+- **`/whiteboard`** shows a whiteboard as a card in the note (thumbnail, name, **Open**): pick one of your boards or name a new one. Pasting a board's link alone on a line (⋯ → **Copy link for a note** on the board) does the same. The card follows the board's own sharing: people who cannot open the board see "Whiteboard unavailable" and not its name. **Open** goes to the board; Back returns to the note.
 - **`/table`** inserts a 3×3 table with a header row. A floating toolbar adds or removes rows and columns and deletes the table; tables are saved as GitHub-flavoured Markdown pipe tables and scroll sideways on phones.
 - **Download as PDF** (editor toolbar, or the actions menu on phones) opens the browser's print dialog with a print layout of the note; choose "Save as PDF".
 
@@ -106,6 +107,7 @@ The search box at the top of the note list searches the text of your notes, not 
 - **Scope.** Search covers the section you are in: All notes, Shared with me, or one folder. Choose **Search all notes** to widen it. Opening a result from outside the current section switches to All notes.
 - **Keyboard and phone.** Use ↑ and ↓ to move through results and Enter to open one. On phones, Back from a note returns to the results with your query kept; Back again closes the search. The query is kept in the browser tab's history state, never in the URL.
 - **Limits.** 20 searches per 10 seconds per user; the list falls back to title matches and says so if you go faster. Queries are limited to 200 characters. Files are not searched yet.
+- **Whiteboards.** While a search is showing, the **Notes** and **Whiteboards** chips switch what is searched. Whiteboards finds boards you can open by their name and the text on them, shows the matched text, and opens the board; Back returns to the search. The chip is hidden when Whiteboards is turned off in Settings → Modules.
 
 ## Files
 
@@ -209,6 +211,16 @@ Things to know:
 - **Cloud calendars fetch the feed from their own servers.** Google, Outlook, and iCloud (on the web) cannot reach an address that only works on your tailnet or home network; use a calendar app on the device itself, or a public HTTPS address.
 - A link follows your access: if the calendar is moved to the Bin, or the owner stops sharing it with you, the link stops working (and works again if that is undone). Links you create are yours alone; other people's links are not shown to you.
 - Up to 5 links per calendar per person, each fetched at most 60 times an hour (calendar apps typically refresh every 15 minutes to a few hours). At most 5000 events are sent. Timed events carry their time zone; the app shows them in yours.
+
+## Whiteboards
+
+Boards drawn with the Excalidraw editor at `/whiteboards`, each saved as a `.excalidraw` file in one of your folders. Drawing saves on its own; only the owner edits, and people it is shared with view.
+
+- **Pictures.** The picture button in the bar (or the editor's image tool, or `9`) opens **Insert image**: pick one of your pictures or one shared with you, or **Upload a picture**, which saves it in Files in the board's folder. Dropping or pasting a picture file uploads it the same way. A picture joins the board once its file is saved; if you leave while it is still uploading, it is not added, and Nook says so. The board stores only a link to the file: people you share the board with see a picture only if they can open that file themselves (others see a placeholder), a deleted file leaves a placeholder, and pictures count toward your storage once, as files. Thumbnails show no pictures.
+- **Links.** Select a shape and use the link button in the bar (or ⋯ → **Link shape to a Nook item**) to link it to a note, file, whiteboard, task board, card, collection, or event. Opening the link goes there in Nook; Back returns to the board where you were. Web links (https) and email links typed into Excalidraw's own link box open in a new tab after Nook shows you the full address. Other kinds of links are not kept.
+- **History.** ⋯ → **History** (owner only) lists the versions Nook kept: one when you empty a board or remove most of it, and one every 30 minutes while you draw, up to 20 per board (they count toward your storage). Each shows its time, shape count, and a preview. **Restore** saves your latest changes first and then makes that version the current one, keeping what was there as a version too; **Save as copy** opens it as a new board.
+- **Duplicate and import.** ⋯ → **Duplicate** makes a private copy you own ("Name (copy)", then "(copy 2)"…); people a board is shared with can duplicate it too, and pictures they cannot open are left out. **Import** on the list opens a `.excalidraw` file (at most 32 MB): its pictures are saved in Files next to it, and a drawing Nook cannot keep (embedded web pages, unsafe links, other kinds of pictures) is refused with the reason.
+- **Export.** **Export PNG** includes the pictures you can see. ⋯ → **Export SVG** downloads an SVG file; it names Excalidraw's hand-drawn fonts instead of embedding them, so text looks different where those fonts are not installed.
 
 ## Bin
 

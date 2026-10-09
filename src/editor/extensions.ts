@@ -10,6 +10,7 @@ import TableRow from "@tiptap/extension-table-row";
 import TableHeader from "@tiptap/extension-table-header";
 import TableCell from "@tiptap/extension-table-cell";
 import { WhiteboardEmbed } from "./whiteboardEmbed";
+import { FileChip } from "./fileChip";
 
 // Options for the marked lexer used by @tiptap/markdown. GFM enables pipe tables and task lists.
 export const markdownOptions = { gfm: true, breaks: false };
@@ -39,6 +40,8 @@ export function noteContentExtensions(): AnyExtension[] {
     TableHeader,
     TableCell,
     // A whiteboard card (D208): `[Name](/whiteboards/<uuid> "whiteboard")` alone in its paragraph.
-    WhiteboardEmbed
+    WhiteboardEmbed,
+    // A file card (U4, D408): `[📎 name](/files/<uuid>)` alone in its paragraph.
+    FileChip
   ];
 }

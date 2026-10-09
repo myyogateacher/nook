@@ -1,4 +1,5 @@
 import { getCsrfToken } from "../api";
+import { uploadForHost } from "../ui/attachments/uploadForHost";
 
 // Image kinds the server previews inline (server/mimeSniff.ts). SVG and others download as attachments,
 // so an <img> pointing at them would render broken.
@@ -50,18 +51,31 @@ export async function uploadImageDocument(file: File, folderId: string | null, s
   if (!response.ok || !payload.document) {
     throw new ImageUploadError(typeof payload.error === "string" ? payload.error : `Image upload failed (${response.status})`);
   }
-  const document = payload.document;
-  // The server classifies by content, not by the browser's MIME guess; honour its verdict.
-  if (document.preview_kind !== "image" || !isInsertableImageType(document.mime_type)) {
-    await fetch(`/api/files/${encodeURIComponent(document.id)}`, {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
-      body: "{}",
-      credentials: "same-origin"
-    }).catch(() => undefined);
-    throw new ImageUploadError(IMAGE_REJECTED_MESSAGE);
-  }
-  return document;
+  return requireSniffedImage(payload.document);
+}
+
+/** The server classifies by content, not by the browser's MIME guess: a non-image upload is deleted again. */
+async function requireSniffedImage<T extends UploadedDocument>(document: T): Promise<T> {
+  if (document.preview_kind === "image" && isInsertableImageType(document.mime_type)) return document;
+  const csrf = getCsrfToken();
+  await fetch(`/api/files/${encodeURIComponent(document.id)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}) },
+    body: "{}",
+    credentials: "same-origin"
+  }).catch(() => undefined);
+  throw new ImageUploadError(IMAGE_REJECTED_MESSAGE);
+}
+
+/**
+ * A picture for a whiteboard (U4b, Q4): stored in the person's Attachments folder (`?attachTo=`,
+ * JPEG location removed first, Q9) and linked to the board on its next save, so everyone who can
+ * open the board sees it. Refused like uploadImageDocument when the server's sniff is not an image.
+ */
+export async function uploadPictureForHost(file: File, kind: "whiteboard", signal?: AbortSignal) {
+  if (!isInsertableImageType(file.type)) throw new ImageUploadError(IMAGE_REJECTED_MESSAGE);
+  const { document } = await uploadForHost(file, kind, signal ? { signal } : {});
+  return requireSniffedImage(document);
 }
 
 export async function uploadNoteImage(file: File, folderId: string | null): Promise<{ src: string; alt: string }> {

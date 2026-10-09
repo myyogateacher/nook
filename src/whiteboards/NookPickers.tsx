@@ -1,10 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { CalendarDays, FileText, KanbanSquare, Link2Off, NotebookText, PenTool, Search, SquareCheckBig, Table2, Upload } from "lucide-react";
+import { CalendarDays, Camera, FileText, KanbanSquare, Link2Off, NotebookText, PenTool, Search, SquareCheckBig, Table2, Upload } from "lucide-react";
 import { api } from "../api";
 import { ModalDialog } from "../files/Dialog";
 import { IMAGE_ACCEPT, imageContentUrl } from "../editor/imageUpload";
 import { isModuleEnabled, useDisabledModules, type ModuleId } from "../modules";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { CAMERA_ACCEPT, CAMERA_CAPTURE, coarsePointer } from "../ui/attachments";
 import type { DocumentSummary, NoteSummary } from "../types";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { listWhiteboards } from "./whiteboardsApi";
@@ -36,7 +37,11 @@ function PickerSheet({ title, eyebrow, onClose, query, onQuery, placeholder, chi
 
 const matches = (text: string, needle: string) => !needle || text.toLowerCase().includes(needle);
 
-/** Insert image: the viewer's own pictures and the ones shared with them, or a new upload. */
+/**
+ * Insert image: the viewer's own pictures and the ones shared with them, a new upload, or (on a touch
+ * phone) a photo from the camera, as the shared attach sheet offers (U4b, D398). Uploads go to the
+ * person's Attachments folder; pictures the board's owner owns follow the board's sharing (Q4).
+ */
 export function ImagePickerSheet({ onPick, onUpload, onClose }: {
   onPick: (document: Pick<DocumentSummary, "id" | "name" | "mime_type">) => void;
   onUpload: (files: File[]) => void;
@@ -46,6 +51,13 @@ export function ImagePickerSheet({ onPick, onUpload, onClose }: {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const showCamera = coarsePointer();
+  const take = (target: HTMLInputElement) => {
+    const files = Array.from(target.files ?? []);
+    target.value = "";
+    if (files.length) onUpload(files);
+  };
   useEffect(() => {
     let live = true;
     api<{ documents: DocumentSummary[] }>("/files")
@@ -57,13 +69,11 @@ export function ImagePickerSheet({ onPick, onUpload, onClose }: {
   const visible = (documents ?? []).filter((document) => matches(document.name, needle)).slice(0, 120);
   return <PickerSheet title="Insert image" eyebrow="Whiteboard" onClose={onClose} query={query} onQuery={setQuery} placeholder="Search your pictures"
     top={<div className="nook-picker-actions">
-      <button type="button" className="primary-button" onClick={() => input.current?.click()}><Upload />Upload a picture</button>
-      <input ref={input} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={(event) => {
-        const files = Array.from(event.target.files ?? []);
-        event.target.value = "";
-        if (files.length) onUpload(files);
-      }} />
-      <p className="nook-picker-hint">Uploaded pictures are saved in Files, in this whiteboard's folder. People you share the board with see a picture only if they can open its file.</p>
+      {showCamera && <button type="button" className="primary-button" onClick={() => camera.current?.click()}><Camera />Take photo</button>}
+      <button type="button" className={showCamera ? "secondary-button" : "primary-button"} onClick={() => input.current?.click()}><Upload />Upload a picture</button>
+      {showCamera && <input ref={camera} type="file" accept={CAMERA_ACCEPT} capture={CAMERA_CAPTURE} hidden onChange={(event) => take(event.currentTarget)} />}
+      <input ref={input} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={(event) => take(event.currentTarget)} />
+      <p className="nook-picker-hint">New pictures are saved in Files › Attachments, with photo locations removed. Everyone who can open this whiteboard sees the pictures you own on it; a picture someone else owns shows only to people who can open its file.</p>
     </div>}>
     {error && <p className="form-error" role="alert">{error}</p>}
     {!error && !documents && <p className="nook-picker-empty" role="status">Loading your pictures…</p>}

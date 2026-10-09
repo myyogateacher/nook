@@ -51,7 +51,8 @@ import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
 import { initVaultStatus, vaultFeature } from "./vault/status";
 import { scheduleRotationRun } from "./vault/rotation";
-import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
+import { backfillWhiteboardLinks, reconcileWhiteboardSearchIndex } from "./whiteboards/service";
+import { backfillNoteLinks, keepDraftAttachments, startDraftAttachmentKeeper } from "./noteAttachments";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -1064,6 +1065,16 @@ try {
   reconcileCardExcerpts();
 } catch (error) {
   console.error("Card excerpt reconcile failed", errorClass(error));
+}
+// Uploads everywhere U4/U4b: published notes and boards get their derived file links once, and the
+// uploads live drafts show are kept out of the orphan sweep (before its boot run).
+try {
+  await backfillNoteLinks();
+  await backfillWhiteboardLinks();
+  await keepDraftAttachments();
+  startDraftAttachmentKeeper();
+} catch (error) {
+  console.error("Note and whiteboard attachment backfill failed", errorClass(error));
 }
 startSweeper();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.

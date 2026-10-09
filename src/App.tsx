@@ -1464,8 +1464,10 @@ export function App() {
     if (!note) return false;
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
+    let skipped = 0;
     try {
-      await api(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+      const published = await api<{ skippedAttachments?: number }>(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+      skipped = published.skippedAttachments ?? 0;
     } catch (reason) {
       if (!(reason instanceof ApiError) || !isDraftChangedError(reason.status, reason.payload)) throw reason;
       // Someone else (an MCP key or another session) wrote the draft after this editor's last save.
@@ -1477,7 +1479,8 @@ export function App() {
     if (sessionEditedRef.current === note.id) sessionEditedRef.current = null;
     if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
     else await loadNavigation();
-    flash("New version published");
+    // U4 (D408): files in the note that are not the publisher's are not shared through it.
+    flash(skipped ? `New version published. ${skipped === 1 ? "One file in it is" : `${skipped} files in it are`} not shared through the note (someone else's, or in the Bin).` : "New version published");
     return true;
   }
 
@@ -2358,7 +2361,7 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} onNotice={flash} />
+            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={flash} />
           </article>
         </>}
       </section>

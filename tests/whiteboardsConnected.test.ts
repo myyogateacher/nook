@@ -106,22 +106,25 @@ describe("images are Nook file references (D198, T164, T165)", () => {
     expect((await save(owner, second.id, 2, sceneWith([], [{ documentId: sharedWithMe.id, mimeType: "image/gif" }]))).body.code).toBe("IMAGE_NOT_AVAILABLE");
   }, 30_000);
 
-  test("sharing a board never shares its images: a recipient reads the image only if the file is readable to them", async () => {
+  test("sharing a board shares the owner's pictures (U4b, Q4); someone else's picture stays per viewer", async () => {
     const owner = await createUser("WBB share owner");
     const reader = await createUser("WBB share reader");
+    const other = await createUser("WBB share other");
     const board = await create(owner, "Shared photos");
     const privateImage = await upload(owner, PNG, "private.png");
-    const sharedImage = await upload(owner, PNG, "shared.png");
-    await share(owner, sharedImage.id, [reader.userId]);
-    expect((await save(owner, board.id, 1, sceneWith([], [{ documentId: privateImage.id }, { documentId: sharedImage.id }]))).status).toBe(200);
+    const othersImage = await upload(other, PNG, "others.png");
+    await share(other, othersImage.id, [owner.userId]);
+    expect((await save(owner, board.id, 1, sceneWith([], [{ documentId: privateImage.id }, { documentId: othersImage.id }]))).status).toBe(200);
+    // Not shared yet: the owner's picture is still the owner's alone.
+    expect((await request(`/files/${privateImage.id}/content?disposition=inline`, {}, reader)).status).toBe(404);
     await share(owner, board.id, [reader.userId]);
     // The reader gets the references (so the canvas can show placeholders) …
-    expect(Object.keys((await api(reader, "GET", `/whiteboards/${board.id}`)).body.scene.files).sort()).toEqual([privateImage.id, sharedImage.id].sort());
-    // … and the bytes only of the file they can read, through the content route as themselves.
-    expect((await request(`/files/${privateImage.id}/content?disposition=inline`, {}, reader)).status).toBe(404);
-    const shared = await request(`/files/${sharedImage.id}/content?disposition=inline`, {}, reader);
+    expect(Object.keys((await api(reader, "GET", `/whiteboards/${board.id}`)).body.scene.files).sort()).toEqual([privateImage.id, othersImage.id].sort());
+    // … the bytes of the owner's picture through the board, and never someone else's.
+    const shared = await request(`/files/${privateImage.id}/content?disposition=inline`, {}, reader);
     expect(shared.status).toBe(200);
     expect(shared.headers.get("Content-Type")).toBe("image/png");
+    expect((await request(`/files/${othersImage.id}/content?disposition=inline`, {}, reader)).status).toBe(404);
   }, 30_000);
 });
 
@@ -177,13 +180,16 @@ describe("snapshots and History (D207)", () => {
 
 describe("duplicate", () => {
   test("a recipient's copy is theirs, private, numbered, and keeps only images they can open", async () => {
+    // U4b: the board's owner's pictures are readable to the recipient through the board; a picture
+    // someone else owns (shared with the board's owner only) is what the copy leaves out.
     const owner = await createUser("WBB dup owner");
     const reader = await createUser("WBB dup reader");
     const stranger = await createUser("WBB dup stranger");
     const board = await create(owner, "Plan");
-    const hidden = await upload(owner, PNG, "hidden.png");
+    const third = await createUser("WBB dup third");
+    const hidden = await upload(third, PNG, "hidden.png");
+    await share(third, hidden.id, [owner.userId]);
     const visible = await upload(owner, PNG, "visible.png");
-    await share(owner, visible.id, [reader.userId]);
     expect((await save(owner, board.id, 1, sceneWith([rect("r")], [{ documentId: hidden.id }, { documentId: visible.id }]))).status).toBe(200);
     await share(owner, board.id, [reader.userId]);
 

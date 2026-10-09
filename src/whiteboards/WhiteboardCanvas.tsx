@@ -9,7 +9,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { whenHistorySettled } from "../historyDialogs";
 import type { Folder } from "../types";
 import { canonicalSceneJson, sceneWithoutImages, whiteboardDisplayName, type CanonicalScene, type SceneFile } from "../../shared/whiteboardScene";
-import { isInsertableImageType, uploadImageDocument } from "../editor/imageUpload";
+import { isInsertableImageType, uploadPictureForHost } from "../editor/imageUpload";
 import { useRole } from "../team/roleAccess";
 import type { DocumentSummary } from "../types";
 import {
@@ -701,7 +701,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     return true;
   }, [flash]);
 
-  /** Uploads pictures into the board's folder as Files, then places each (D198). */
+  /** Uploads pictures into the Attachments folder (U4b), then places each (D198); the next save links them to the board. */
   const uploadImages = useCallback(async (files: File[], at?: { x: number; y: number }) => {
     const board = boardRef.current;
     if (!board?.canEdit) return;
@@ -715,7 +715,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       uploadsRef.current.add(controller);
       setUploading(file.name || "picture");
       try {
-        const document = await uploadImageDocument(file, board.folder_id, controller.signal);
+        const document = await uploadPictureForHost(file, "whiteboard", controller.signal);
         uploadsRef.current.delete(controller);
         if (!tearingDownRef.current) await placeImage(document, at);
       } catch (reason) {

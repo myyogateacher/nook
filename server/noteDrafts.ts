@@ -8,6 +8,7 @@ import { notePublishedHook, sourceAccessChangedHook } from "./knowledge/hooks";
 import { checksum, storage, withNoteLock } from "./storage";
 import { deriveNoteTitle } from "./validation";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
+import { keepDraftReferences, syncNoteLinks } from "./noteAttachments";
 
 /**
  * Draft writes shared by the HTTP routes and the MCP tools, so both keep the
@@ -59,6 +60,8 @@ export async function writeDraftLocked(note: NoteRow, userId: string, input: str
     return true;
   })();
   if (!saved) return null;
+  // Uploads the draft shows stay out of the orphan sweep while it is a draft (U4; grants nothing).
+  keepDraftReferences(note.id, note.owner_id, markdown);
   return { revision: nextRevision, title, hasDelta: hasDraftDelta(note, draftChecksum), savedAt, ...(proposalId ? { proposalId } : {}) };
 }
 
@@ -105,6 +108,7 @@ export async function createDraftNote(userId: string, folderId: string | null, i
       audit(userId, id, "note.create");
     }
   })();
+  keepDraftReferences(id, userId, markdown);
   return { id, title, folderId: targetFolderId, revision: 1, ...(proposalId ? { proposalId } : {}) };
 }
 
@@ -195,6 +199,7 @@ export async function publishDraft(userId: string, noteId: string, revision: num
     await storage.stageVersion(noteId, nextVersion, markdown, true);
     const timestamp = now();
     const versionId = crypto.randomUUID();
+    let links: ReturnType<typeof syncNoteLinks> = { linked: [], unlinked: [], skipped: [] };
     db.transaction(() => {
       db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(versionId, noteId, nextVersion, note.title, checksum(markdown), userId, timestamp);
@@ -204,12 +209,17 @@ export async function publishDraft(userId: string, noteId: string, revision: num
       indexNote(noteId, "published", note.title, markdown, note.draft_checksum!);
       unindexNote(noteId, "draft");
       resolveNoteDraftProposals(noteId, { kind: "published", revision: note.draft_revision!, userId });
+      // D408 (U4, G1): the published text's files are linked, so the note's readers can open them.
+      // Only the publisher's own documents are added; links already there stay (T350).
+      links = syncNoteLinks(noteId, userId, markdown);
     })();
     await storage.finalizePublished(noteId, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${noteId}`, errorClass(error)));
     audit(userId, noteId, "note.publish", { version: nextVersion, ...(note.owner_id !== userId ? { editor: true } : {}) });
     // Knowledge bases (Wave 44, AC-E) that use this note index it again after 60 s of quiet.
     notePublishedHook(noteId);
-    return { version: nextVersion, publishedAt: timestamp };
+    // `skippedAttachments`: referenced files that are not the publisher's, which readers open only
+    // if the file itself is shared with them (or the cap of 100 was reached).
+    return { version: nextVersion, publishedAt: timestamp, ...(links.skipped.length ? { skippedAttachments: links.skipped.length } : {}) };
   });
 }
 

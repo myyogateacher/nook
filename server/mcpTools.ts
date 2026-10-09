@@ -14,6 +14,7 @@ import { anchorsOf, keyFilter, keyReach, keyReachAny, reachCanCover, reachCovers
 import { MAX_QUERY_LENGTH } from "./search";
 import { searchPublishedNotes } from "./searchRoutes";
 import { createDraftNote, writeDraftLocked } from "./noteDrafts";
+import { noteAttachmentsFor } from "./noteAttachments";
 import { noteManageTools } from "./mcpNoteTools";
 import { fileWriteTools } from "./mcpFileTools";
 import { rememberSeenDraft } from "./mcpSeenDrafts";
@@ -232,7 +233,7 @@ const noteReadTools: McpToolSpec[] = [
   defineTool({
     name: "read_note",
     title: "Read a note",
-    description: "Read the latest published Markdown for a note visible to the authenticated Nook user.",
+    description: "Read the latest published Markdown for a note visible to the authenticated Nook user, with its attached files (id, name, MIME type, size; read a text file with read_attachment_text, hostKind \"note\"). Files in the Markdown that are not listed are not shared through the note.",
     scopes: ["notes:read"],
     access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: false,
@@ -241,7 +242,8 @@ const noteReadTools: McpToolSpec[] = [
       const note = readableNote(noteId, key.userId);
       if (!note || note.current_version < 1) throw new McpToolError("NOT_FOUND", "Note not found or not published");
       const { title, markdown } = await readPublishedMarkdown(noteId, note.current_version);
-      return { id: note.id, title, version: note.current_version, markdown };
+      // U4 (D408): the files the published text links, as this reader may open them through the note.
+      return { id: note.id, title, version: note.current_version, markdown, attachments: noteAttachmentsFor(note.id, key.userId) };
     }
   }),
   defineTool({

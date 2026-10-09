@@ -9,7 +9,8 @@ import { audit, db, ensureDefaultFolder, now } from "./db";
 import type { AppEnv } from "./auth";
 import { contentDisposition, parseRange } from "./contentHeaders";
 import { listReadableDocuments, ownedDocument, ownedDocumentSummary, ownedFileDocument, readableDocument, readableDocumentSummary, type DocumentSummary } from "./documentAccess";
-import { commitStaged, createStagingFile, discardStaged, DocumentIntegrityError, openObjectForRead, removeObject } from "./documentStorage";
+import { createDocumentWriter, DocumentIntegrityError, openObjectForRead, removeObject } from "./documentStorage";
+import { diskBytesNeeded, StorageUnavailableError, type ObjectWriter } from "./objectStore";
 import { SNIFF_BYTES, sniff } from "./mimeSniff";
 import { withResourceLock } from "./storage";
 import { purgeAfterFrom } from "./bin";
@@ -31,13 +32,15 @@ export function setUploadIdleTimeoutForTests(ms: number | null) {
 }
 
 class UploadError extends Error {
-  constructor(readonly status: 400 | 401 | 404 | 408 | 409 | 411 | 413 | 429 | 507, readonly body: Record<string, unknown>) {
+  constructor(readonly status: 400 | 401 | 404 | 408 | 409 | 411 | 413 | 429 | 503 | 507, readonly body: Record<string, unknown>) {
     super(String(body.error));
   }
 }
 
 const fileTooLarge = () => new UploadError(413, { error: "File is too large", code: "FILE_TOO_LARGE", limitBytes: config.maxUploadBytes });
 const badPart = (error = "Upload exactly one file part named file") => new UploadError(400, { error });
+/** The object store (S3) failed: the upload is not the client's fault, and nothing was kept. */
+const storageUnavailable = () => new UploadError(503, { error: "File storage is unavailable. Try again later.", code: "STORAGE_UNAVAILABLE" });
 
 /** In-flight upload slots and quota reservations per user. Single process only. */
 const inFlight = new Map<string, { count: number; reservedBytes: number }>();
@@ -93,8 +96,7 @@ function replayFor(userId: string, uploadKey: string) {
 
 type ReceivedFile = { filename: string; size: number; sha256: string; head: Uint8Array };
 
-async function writeFilePart(stream: Readable & { truncated?: boolean }, filename: string, id: string, onChunk?: (size: number) => void): Promise<ReceivedFile> {
-  const { handle } = await createStagingFile(id);
+async function writeFilePart(stream: Readable & { truncated?: boolean }, filename: string, writer: ObjectWriter, onChunk?: (size: number) => void): Promise<ReceivedFile> {
   try {
     const hash = createHash("sha256");
     const head = new Uint8Array(SNIFF_BYTES);
@@ -110,26 +112,21 @@ async function writeFilePart(stream: Readable & { truncated?: boolean }, filenam
         head.set(chunk.subarray(0, take), headLength);
         headLength += take;
       }
-      let offset = 0;
-      while (offset < chunk.byteLength) {
-        const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
-        offset += bytesWritten;
-      }
+      await writer.write(chunk);
     }
     if (stream.truncated || size > config.maxUploadBytes) throw fileTooLarge();
-    await handle.sync();
     return { filename, size, sha256: hash.digest("hex"), head: head.subarray(0, headLength) };
-  } finally {
-    await handle.close();
+  } catch (error) {
+    throw error instanceof StorageUnavailableError ? storageUnavailable() : error;
   }
 }
 
 /**
- * Streams exactly one multipart file part into staging. Nothing but the first
- * SNIFF_BYTES is kept in memory; file writes are awaited, so the request body
- * is only read as fast as the disk accepts it.
+ * Streams exactly one multipart file part into a staged object writer. Nothing but the first
+ * SNIFF_BYTES (and, on S3, about one upload part) is kept in memory; writes are awaited, so the
+ * request body is only read as fast as the store accepts it.
  */
-function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> {
+function receiveSingleFile(request: Request, writer: ObjectWriter): Promise<ReceivedFile> {
   let parser: busboy.Busboy;
   try {
     parser = busboy({
@@ -205,7 +202,7 @@ function receiveSingleFile(request: Request, id: string): Promise<ReceivedFile> 
       fileStream = stream;
       // Fail as soon as the part exceeds the limit instead of skipping the rest of the body.
       stream.on("limit", () => fail(fileTooLarge()));
-      filePromise = writeFilePart(stream, info.filename ?? "", id);
+      filePromise = writeFilePart(stream, info.filename ?? "", writer);
       filePromise.catch(fail);
     });
     parser.on("field", () => fail(badPart()));
@@ -243,11 +240,16 @@ type UploadMeta = { folderId: string | null; purpose: string; uploadKey: string 
  * paths (Wave 19, D176), so both keep exactly these rules. `markCommitted` runs once the staging
  * file has moved, after which the caller must not discard it.
  */
-async function commitReceived(userId: string, id: string, received: ReceivedFile, meta: UploadMeta, markCommitted: () => void) {
+async function commitReceived(userId: string, id: string, writer: ObjectWriter, received: ReceivedFile, meta: UploadMeta, markCommitted: () => void) {
   const { folderId, purpose, uploadKey, name } = meta;
   const quota = config.userStorageQuotaBytes;
   const { mimeType, previewKind } = sniff(received.head, name, received.size);
-  await commitStaged(id);
+  // The object first, then the row; a failed row removes the object again.
+  try {
+    await writer.commit();
+  } catch (error) {
+    throw error instanceof StorageUnavailableError ? storageUnavailable() : error;
+  }
   markCommitted();
 
   let outcome: { replayOf: string } | { created: true };
@@ -269,14 +271,14 @@ async function commitReceived(userId: string, id: string, received: ReceivedFile
       return { created: true as const };
     })();
   } catch (error) {
-    await removeObject(id);
+    await removeObject(id).catch(() => console.error("Could not remove an uncommitted upload; the sweeper will"));
     const uniqueRace = uploadKey && (error as { code?: string }).code?.includes("CONSTRAINT")
       && db.query("SELECT 1 FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey);
     if (!uniqueRace) throw error;
     outcome = { replayOf: (db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string }).id };
   }
   if ("replayOf" in outcome) {
-    await removeObject(id);
+    await removeObject(id).catch(() => console.error("Could not remove an uncommitted upload; the sweeper will"));
     const replay = replayFor(userId, uploadKey!);
     if (!replay || replay.deleted) throw new UploadError(409, { error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" });
     return { document: replay.document, replay: true };
@@ -288,7 +290,7 @@ async function commitReceived(userId: string, id: string, received: ReceivedFile
  * Streams a raw body (no multipart) into staging with the web upload's inactivity watchdog. The
  * body must be exactly `expectedBytes` long: longer stops at once, shorter fails after it ends.
  */
-async function receiveRaw(source: Readable, id: string, expectedBytes: number, signal?: AbortSignal): Promise<ReceivedFile> {
+async function receiveRaw(source: Readable, writer: ObjectWriter, expectedBytes: number, signal?: AbortSignal): Promise<ReceivedFile> {
   let failure: UploadError | null = null;
   let idle: ReturnType<typeof setTimeout> | null = null;
   const fail = (error: UploadError) => {
@@ -304,7 +306,7 @@ async function receiveRaw(source: Readable, id: string, expectedBytes: number, s
   signal?.addEventListener("abort", onAbort, { once: true });
   arm();
   try {
-    const received = await writeFilePart(source, "", id, (size) => {
+    const received = await writeFilePart(source, "", writer, (size) => {
       arm();
       if (size > expectedBytes) throw sizeMismatch();
     });
@@ -352,6 +354,7 @@ export async function storeRawUpload(source: Readable, options: StoreRawOptions,
   const slot = acquireSlot(userId);
   if (!slot) return { status: 429, body: { error: "Too many uploads in progress. Wait for one to finish.", code: "TOO_MANY_UPLOADS" } };
   const id = crypto.randomUUID();
+  const writer = createDocumentWriter(id);
   let committed = false;
   try {
     const quota = config.userStorageQuotaBytes;
@@ -359,20 +362,21 @@ export async function storeRawUpload(source: Readable, options: StoreRawOptions,
       return { status: 507, body: { error: "Storage quota exceeded", code: "QUOTA_EXCEEDED" } };
     }
     slot.reserve(expectedBytes);
+    // MIN_FREE_DISK_BYTES protects the data volume (SQLite always; the bytes too when they land there).
     const disk = await statfs(config.dataDir);
-    if (disk.bavail * disk.bsize < config.minFreeDiskBytes + expectedBytes) return { status: 507, body: { error: "Storage is full", code: "DISK_FULL" } };
-    const received = await receiveRaw(source, id, expectedBytes, signal);
+    if (disk.bavail * disk.bsize < diskBytesNeeded(expectedBytes)) return { status: 507, body: { error: "Storage is full", code: "DISK_FULL" } };
+    const received = await receiveRaw(source, writer, expectedBytes, signal);
     if (options.sha256 && received.sha256 !== options.sha256.toLowerCase()) {
       return { status: 400, body: { error: "The received bytes do not match the declared SHA-256", code: "HASH_MISMATCH" } };
     }
-    const result = await commitReceived(userId, id, received, { folderId: options.folderId, purpose: options.purpose, uploadKey, name: options.name }, () => { committed = true; });
+    const result = await commitReceived(userId, id, writer, received, { folderId: options.folderId, purpose: options.purpose, uploadKey, name: options.name }, () => { committed = true; });
     return result.replay ? { status: 200, body: { document: result.document, idempotentReplay: true } } : { status: 201, body: { document: result.document } };
   } catch (error) {
     if (error instanceof UploadError) return { status: error.status, body: error.body };
     throw error;
   } finally {
     slot.release();
-    if (!committed) await discardStaged(id).catch(() => console.error("Could not discard staged upload"));
+    if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
   }
 }
 
@@ -417,6 +421,7 @@ async function handleUpload(c: Context<AppEnv>) {
   const slot = acquireSlot(userId);
   if (!slot) return c.json({ error: "Too many uploads in progress. Wait for one to finish.", code: "TOO_MANY_UPLOADS" }, 429);
   const id = crypto.randomUUID();
+  const writer = createDocumentWriter(id);
   let committed = false;
   try {
     const expectedBytes = Math.min(declaredLength, config.maxUploadBytes);
@@ -426,20 +431,20 @@ async function handleUpload(c: Context<AppEnv>) {
     }
     slot.reserve(expectedBytes);
     const disk = await statfs(config.dataDir);
-    if (disk.bavail * disk.bsize < config.minFreeDiskBytes + expectedBytes) {
+    if (disk.bavail * disk.bsize < diskBytesNeeded(expectedBytes)) {
       return c.json({ error: "Storage is full", code: "DISK_FULL" }, 507);
     }
 
-    const received = await receiveSingleFile(c.req.raw, id);
+    const received = await receiveSingleFile(c.req.raw, writer);
     const name = sanitizeDisplayName(received.filename, "upload")!;
-    const result = await commitReceived(userId, id, received, { folderId, purpose, uploadKey, name }, () => { committed = true; });
+    const result = await commitReceived(userId, id, writer, received, { folderId, purpose, uploadKey, name }, () => { committed = true; });
     return uploadResponse(c, result.document, result.replay);
   } catch (error) {
     if (error instanceof UploadError) return c.json(error.body, error.status);
     throw error;
   } finally {
     slot.release();
-    if (!committed) await discardStaged(id).catch(() => console.error("Could not discard staged upload"));
+    if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
   }
 }
 
@@ -514,12 +519,11 @@ async function handleContent(c: Context<AppEnv>) {
       opened = await openObjectForRead(id, document.size_bytes);
     }
   } catch (error) {
-    const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof Error ? error.name : "unknown";
-    console.error(`Document content integrity error (${reason}) for document ${id}`);
+    const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof StorageUnavailableError ? error.code : error instanceof Error ? error.name : "unknown";
+    console.error(`Document content ${error instanceof StorageUnavailableError ? "storage" : "integrity"} error (${reason}) for document ${id}`);
     return contentError(500, "Something went wrong");
   }
 
-  let keepHandle = false;
   try {
     const inline = c.req.query("disposition") === "inline" && document.preview_kind !== "none";
     const etag = `"${document.sha256}"`;
@@ -548,13 +552,10 @@ async function handleContent(c: Context<AppEnv>) {
     headers.set("Content-Length", String(length));
     if (c.req.raw.method === "HEAD" || length === 0) return new Response(null, { status, headers });
 
-    // The read stream owns the handle from here: it closes on end, error, or cancel (client abort).
-    const stream = opened.handle.createReadStream({ start, end, highWaterMark: 65_536 });
-    keepHandle = true;
-    const body = Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
-    return new Response(body, { status, headers });
+    // The stream owns the object from here: it closes on end, error, or cancel (client abort).
+    return new Response(opened.stream(start, end), { status, headers });
   } finally {
-    if (!keepHandle) await opened.handle.close();
+    await opened.close();
   }
 }
 

@@ -61,6 +61,14 @@ process.env.MAX_UPLOAD_BYTES = "4194304";
 process.env.USER_STORAGE_QUOTA_BYTES = "12582912";
 process.env.MIN_FREE_DISK_BYTES = "0";
 
+// S3 storage slice: `STORAGE_BACKEND=s3 bun test <files>` runs the shared server against an in-process
+// fake S3 (tests/support/fakeS3.ts) instead of DATA_DIR; the default run stays on the local backend.
+export const s3Backend = process.env.STORAGE_BACKEND?.trim() === "s3";
+export const fakeS3 = s3Backend && !process.env.S3_ENDPOINT ? (await import("./fakeS3")).startFakeS3() : null;
+if (fakeS3) {
+  Object.assign(process.env, { S3_ENDPOINT: fakeS3.url, S3_BUCKET: fakeS3.bucket, S3_REGION: "us-east-1", S3_ACCESS_KEY_ID: fakeS3.accessKeyId, S3_SECRET_ACCESS_KEY: fakeS3.secretAccessKey, S3_PREFIX: "nook-test" });
+}
+
 const serverModule = await import("../../server/index");
 export const serverOptions = serverModule.default;
 // Every test request comes from one address: the per-client sign-in, registration, and invite
@@ -71,8 +79,15 @@ export const server = Bun.serve(serverOptions);
 
 (globalThis as { __mynotesHarnessCleanup?: () => void }).__mynotesHarnessCleanup = () => {
   server.stop(true);
+  fakeS3?.stop();
   rmSync(dataDir, { recursive: true, force: true });
 };
+
+/** Whether a document object exists in the configured store (local disk or the fake S3). */
+export async function storedObjectExists(id: string, namespace: "documents" | "avatars" = "documents") {
+  const { objectStore } = await import("../../server/objectStore");
+  return (await objectStore().stat(namespace, id)) !== null;
+}
 
 export type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
 /** createUser() takes allowlisted emails from the start; spareEmail() hands them out from the end. */

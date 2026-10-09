@@ -210,8 +210,7 @@ async function readContent(kb: KbRow, source: SourceRow): Promise<Content | null
   if (document.size_bytes > KNOWLEDGE_BOUNDS.documentBytes) throw new SourceError("TOO_LARGE", "The file is larger than 1 MiB");
   let bytes: Uint8Array;
   try {
-    const { handle } = await openObjectForRead(document.id, document.size_bytes);
-    try { bytes = await handle.readFile(); } finally { await handle.close(); }
+    bytes = await (await openObjectForRead(document.id, document.size_bytes)).bytes();
   } catch (error) {
     if (error instanceof DocumentIntegrityError) throw new SourceError("INTEGRITY", "The file's stored content failed its integrity check");
     throw error;

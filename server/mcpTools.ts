@@ -6,6 +6,7 @@ import { config } from "./config";
 import { audit, db, withSurfaceAuditContext, type DocumentRow, type NoteRow } from "./db";
 import { listableDocument, listableDocumentSummary, listReadableDocuments } from "./documentAccess";
 import { DocumentIntegrityError, openObjectForRead } from "./documentStorage";
+import { StorageUnavailableError } from "./objectStore";
 import { consumeMcpLimits, type McpLimitBucket } from "./mcpRateLimit";
 import { hasAllScopes, hasAnyScope, hasScope, type McpScope } from "./mcpScopes";
 import { countKeyUsage, isKeyDenial, resolveKeyActor } from "./apiKeys";
@@ -386,14 +387,10 @@ async function readDocumentText(document: DocumentRow) {
   if (document.size_bytes > MCP_MAX_TEXT_BYTES) throw new McpToolError("TOO_LARGE", `Text files larger than ${MCP_MAX_TEXT_BYTES} bytes cannot be read over MCP`);
   let bytes: Uint8Array;
   try {
-    const { handle } = await openObjectForRead(document.id, document.size_bytes);
-    try {
-      bytes = await handle.readFile();
-    } finally {
-      await handle.close();
-    }
+    bytes = await (await openObjectForRead(document.id, document.size_bytes)).bytes();
   } catch (error) {
     if (error instanceof DocumentIntegrityError) throw new McpToolError("INTERNAL", "File content failed integrity verification");
+    if (error instanceof StorageUnavailableError) throw new McpToolError("INTERNAL", "File storage is unavailable. Try again later.");
     throw error;
   }
   if (bytes.byteLength !== document.size_bytes || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {

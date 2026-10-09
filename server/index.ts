@@ -18,6 +18,7 @@ import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, 
 import { checksum, storage, withNoteLock } from "./storage";
 import { startSweeper } from "./sweeper";
 import { startServerHeartbeat } from "./serverHeartbeat";
+import { claimS3Prefix, objectStore, StorageUnavailableError } from "./objectStore";
 import { startDispatcher } from "./calendar/reminders";
 import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
@@ -1016,6 +1017,22 @@ try {
 warnIfNoActiveAdmin();
 // Wave 39: the effective APP_NAME, so an operator can see the override took.
 console.info(`App name: ${config.appName}${config.appName === DEFAULT_APP_NAME ? " (default)" : " (APP_NAME)"}`);
+// S3 storage slice: where file bytes live. An s3 backend must answer a write, read, and delete under
+// its prefix, and the prefix must belong to this data directory, or the server refuses to start.
+if (config.storage.backend === "s3") {
+  const { endpoint, bucket, prefix } = config.storage;
+  try {
+    const store = objectStore();
+    await store.probe();
+    if (await claimS3Prefix(store, config.dataDir) === "created") console.info("File storage: marked the S3 prefix as this Nook's (.nook-instance)");
+  } catch (error) {
+    console.error(`File storage check failed: ${error instanceof StorageUnavailableError ? `${error.message}. Check S3_BUCKET, S3_ENDPOINT, S3_REGION, the access key, and that the key may put, get, list, and delete under S3_PREFIX` : error instanceof Error ? error.message : "Unknown error"}. Nook did not start.`);
+    process.exit(1);
+  }
+  console.info(`File storage: s3 bucket ${bucket}${prefix ? ` prefix ${prefix}` : ""}${endpoint ? ` at ${new URL(endpoint).host}` : ""}`);
+} else {
+  console.info("File storage: local (DATA_DIR)");
+}
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
 // choose their own X-Forwarded-For. One line, no addresses.
 if (config.trustedProxyHops >= 1 && config.trustedProxyAddresses.length === 0) {

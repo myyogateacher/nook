@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createUser, dataDir, db, origin, port, request, type Session } from "./support/harness";
+import { createUser, dataDir, db, origin, port, request, s3Backend, type Session } from "./support/harness";
 
 const documentStorage = await import("../server/documentStorage");
 const { runSweep } = await import("../server/sweeper");
@@ -76,23 +76,25 @@ async function folderFor(session: Session, name: string) {
 
 const defaultFolderOf = (userId: string) => (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(userId) as { id: string }).id;
 
-async function writeObject(id: string, content: Uint8Array) {
-  const { handle } = await documentStorage.createStagingFile(id);
-  await handle.write(content);
-  await handle.close();
-  await documentStorage.commitStaged(id);
+const writeObject = (id: string, content: Uint8Array) => documentStorage.writeObject(id, content);
+
+/** Starts a staged write and leaves it open (an upload in flight); returns its discard. */
+async function stageOnly(id: string) {
+  const writer = documentStorage.createDocumentWriter(id);
+  await writer.write(new Uint8Array());
+  return writer;
 }
 
-describe("document storage", () => {
+// These suites check the local backend's disk layout; tests/objectStore.test.ts covers both backends.
+describe.skipIf(s3Backend)("document storage", () => {
   test("stages and commits objects under their UUID with private modes", async () => {
     const id = crypto.randomUUID();
-    const { handle, path } = await documentStorage.createStagingFile(id);
-    expect(path).toBe(join(stagingDir, `${id}.part`));
+    const writer = documentStorage.createDocumentWriter(id);
+    await writer.write(new TextEncoder().encode("hello"));
+    const path = join(stagingDir, `${id}.part`);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    await handle.write(new TextEncoder().encode("hello"));
-    await handle.close();
-    await expect(documentStorage.createStagingFile(id)).rejects.toThrow();
-    await documentStorage.commitStaged(id);
+    await expect(stageOnly(id)).rejects.toThrow();
+    await writer.commit();
     expect(existsSync(path)).toBe(false);
     expect(statSync(objectPath(id)).mode & 0o777).toBe(0o600);
     expect(statSync(objectsDir).mode & 0o777).toBe(0o700);
@@ -101,24 +103,24 @@ describe("document storage", () => {
 
     const opened = await documentStorage.openObjectForRead(id, 5);
     expect(opened.size).toBe(5);
-    await opened.handle.close();
+    await opened.close();
     await expect(documentStorage.openObjectForRead(id, 6)).rejects.toBeInstanceOf(documentStorage.DocumentIntegrityError);
     await documentStorage.removeObject(id);
     await documentStorage.removeObject(id);
     await expect(documentStorage.openObjectForRead(id, 5)).rejects.toBeInstanceOf(documentStorage.DocumentIntegrityError);
-    await documentStorage.discardStaged(id);
+    await writer.discard();
   });
 
   test("rejects ids that are not UUIDs before building a path", async () => {
     for (const id of ["../mynotes.sqlite", "not-a-uuid", `${crypto.randomUUID()}/x`]) {
-      await expect(documentStorage.createStagingFile(id)).rejects.toThrow("Invalid document id");
+      expect(() => documentStorage.createDocumentWriter(id)).toThrow("Invalid document id");
       await expect(documentStorage.openObjectForRead(id, 0)).rejects.toThrow("Invalid document id");
       await expect(documentStorage.removeObject(id)).rejects.toThrow("Invalid document id");
     }
   });
 });
 
-describe("document sweeper", () => {
+describe.skipIf(s3Backend)("document sweeper", () => {
   test("removes stale staging files and orphaned objects only", async () => {
     await runSweep();
     const owner = await createUser("Sweeper owner");
@@ -126,10 +128,8 @@ describe("document sweeper", () => {
 
     const stale = crypto.randomUUID();
     const fresh = crypto.randomUUID();
-    for (const id of [stale, fresh]) {
-      const { handle } = await documentStorage.createStagingFile(id);
-      await handle.close();
-    }
+    mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+    for (const id of [stale, fresh]) writeFileSync(join(stagingDir, `${id}.part`), "", { mode: 0o600 });
     utimesSync(join(stagingDir, `${stale}.part`), hourAgo, hourAgo);
 
     const orphan = crypto.randomUUID();
@@ -157,7 +157,7 @@ describe("document sweeper", () => {
     expect(existsSync(objectPath(live))).toBe(true);
     expect(existsSync(stray)).toBe(true);
 
-    await documentStorage.discardStaged(fresh);
+    rmSync(join(stagingDir, `${fresh}.part`));
     await documentStorage.removeObject(freshOrphan);
     rmSync(stray);
   });

@@ -1,7 +1,7 @@
 import { sweepBin, type BinSweepCounts } from "./bin";
 import { sweepNotifications } from "./calendar/reminders";
 import { db } from "./db";
-import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
+import { documentObjectSizes, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { sweepInvites } from "./team/invites";
@@ -37,8 +37,10 @@ async function countIntegrityErrors() {
   // A whiteboard's bytes live in its current scene object, never under the document id.
   const rows = db.query(`SELECT COALESCE(w.object_id, d.id) AS object_id, d.size_bytes FROM documents d LEFT JOIN whiteboards w ON w.document_id = d.id
     WHERE d.purge_started_at IS NULL`).all() as Array<{ object_id: string; size_bytes: number }>;
+  // One listing instead of a stat per row: on S3 that is one request per 1,000 objects, not one per file.
+  const sizes = await documentObjectSizes();
   let broken = 0;
-  for (const row of rows) if (!await objectIsIntact(row.object_id, row.size_bytes)) broken += 1;
+  for (const row of rows) if (sizes.get(row.object_id) !== row.size_bytes) broken += 1;
   return broken;
 }
 

@@ -24,6 +24,25 @@ if [[ -z "${configured_data_dir}" && -f "${PROJECT_DIR}/.env" ]]; then
   configured_data_dir="${configured_data_dir%\'}"
 fi
 
+# S3 storage: with STORAGE_BACKEND=s3 the file bytes live in the bucket, not in DATA_DIR.
+storage_backend="${STORAGE_BACKEND:-}"
+if [[ -z "${storage_backend}" && -f "${PROJECT_DIR}/.env" ]]; then
+  storage_backend="$(sed -n 's/^STORAGE_BACKEND=//p' "${PROJECT_DIR}/.env" | tail -n 1)"
+  storage_backend="${storage_backend%$'\r'}"
+  storage_backend="${storage_backend#\"}"
+  storage_backend="${storage_backend%\"}"
+  storage_backend="${storage_backend#\'}"
+  storage_backend="${storage_backend%\'}"
+fi
+storage_backend="$(printf '%s' "${storage_backend}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+s3_warning() {
+  if [[ "${storage_backend}" == "s3" ]]; then
+    echo "WARNING: STORAGE_BACKEND=s3. File bytes (Files, attachments, note and whiteboard pictures, whiteboard scenes," >&2
+    echo "WARNING: profile pictures) live in the S3 bucket and are NOT in this archive; it holds the database and settings only." >&2
+    echo "WARNING: Back up the bucket separately: bucket versioning, aws s3 sync, or rclone (docs/OPERATIONS.md, Backups)." >&2
+  fi
+}
+
 data_dir_candidate="${mounted_data_dir:-${configured_data_dir:-/srv/mynotes}}"
 readonly DATA_DIR="$(realpath -e -- "${data_dir_candidate}")"
 readonly BACKUP_DIR="${DATA_DIR}/backup"
@@ -37,6 +56,8 @@ elif [[ $# -gt 0 ]]; then
   echo "Usage: $0 [--force]" >&2
   exit 2
 fi
+
+s3_warning
 
 if [[ "${DATA_DIR}" != /* || "${DATA_DIR}" == "/" ]]; then
   echo "MYNOTES_DATA_DIR must be a safe absolute path, not /." >&2
@@ -108,3 +129,4 @@ fi
 
 echo "Backup created: ${archive}"
 echo "Restore into an empty directory with: tar -xzf '${archive}' -C /path/to/restored-data"
+s3_warning

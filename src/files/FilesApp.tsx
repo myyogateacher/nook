@@ -334,11 +334,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (!canManage(document)) return;
     returnFocusRef.current = document.id;
     setDialog({ kind, documentId: document.id });
-    // D409, T351: deleting a file that is attached somewhere says where, before it goes to the Bin.
-    if (kind === "delete") {
-      setDeleteUsage(null);
-      fileUsage(document.id).then((usage) => setDeleteUsage({ documentId: document.id, summary: usageSummary(usage) })).catch(() => undefined);
-    }
   }
 
   // The ⋯ sheet is open to everyone (Download, Open preview); it hands off to the owner dialogs.
@@ -351,6 +346,17 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (!canManage(document)) return;
     setDialog({ kind: action, documentId: document.id });
   }
+
+  // D409, T351: deleting a file that is attached somewhere says where first, whichever control opened
+  // the confirm (the row's Delete key, the preview, or the ⋯ sheet).
+  const deleteDocumentId = dialog?.kind === "delete" ? dialog.documentId : null;
+  useEffect(() => {
+    setDeleteUsage(null);
+    if (!deleteDocumentId) return undefined;
+    let live = true;
+    fileUsage(deleteDocumentId).then((usage) => { if (live) setDeleteUsage({ documentId: deleteDocumentId, summary: usageSummary(usage) }); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [deleteDocumentId]);
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -695,7 +701,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
           onDrop={(event) => folderDrop(event, item)}
         >
-          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy">{item.name}{isSystemFolder(item) && <Lock className="folder-system-badge" aria-label="Managed by Nook: files you attach live here" />}</span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
+          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy">{item.name}</span>{isSystemFolder(item) && <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" />}<b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
         {shared.length > 0 && <div className="nav-label"><span>Shared folders</span></div>}
         {shared.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>

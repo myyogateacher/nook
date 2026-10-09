@@ -450,4 +450,6 @@ Per slice: **U1** wires events through the generic routes (declared host; editor
 | `listHostAttachments`, `linkToHost(kind, hostId, documentId, { partId, confirmed })`, `unlinkFromHost`, `fileUsage`, `usageSummary` | The generic routes. |
 | `stripImageLocation(file)`, `stripJpegMetadata(bytes)` | The EXIF rewrite, if a slice uploads some other way. |
 
+History: the sheet, the From Files picker, its confirm, and the preview are history layers (`useHistoryDialogGuard`), so Back closes the innermost first and Forward reopens nothing. They rely on the host app's `popstate` listener calling `popStateClosedDialog(event)` first, as every Nook app already does. U0's live QA drove the kit from a QA-only harness page (not shipped) at 1280 and 390 px.
+
 Files (`src/files/`): the Attachments folder shows with a lock, is never a move or drop target, takes no direct uploads, and the delete confirm names the uses (D409).

@@ -179,6 +179,7 @@ describe("paste, drop, list, and usage", () => {
     const app = source("files/FilesApp.tsx");
     expect(app).toContain('"/folders?include=system"');
     expect(app).toContain("folder-system-badge");
-    expect(app).toContain("fileUsage(document.id)");
+    expect(source("files/files.css")).toContain(".folder-link:has(> .folder-system-badge)");
+    expect(app).toContain("fileUsage(deleteDocumentId)");
   });
 });

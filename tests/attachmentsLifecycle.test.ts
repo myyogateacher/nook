@@ -89,7 +89,7 @@ describe("sweepers", () => {
     const elsewhere = (await upload(owner, "elsewhere.txt", "e")).id;
     await link(owner, "event", eventId, { documentId: linked });
     for (const id of [orphan, linked, elsewhere]) backdate(id);
-    expect(sweepOrphanedAttachments()).toBeGreaterThanOrEqual(1);
+    expect(await sweepOrphanedAttachments()).toBeGreaterThanOrEqual(1);
     expect(documentRow(orphan)!.deleted_at).not.toBeNull();
     for (const id of [linked, fresh, elsewhere]) expect(documentRow(id)!.deleted_at).toBeNull();
     expect(db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.delete' AND metadata_json LIKE ?").get(`%${orphan}%`)).toMatchObject({ metadata_json: expect.stringContaining("attachment_unlinked") });
@@ -104,7 +104,7 @@ describe("sweepers", () => {
     // An FK cascade (calendar purge) fires the events trigger too.
     db.query("DELETE FROM calendars WHERE id = ?").run(calendarId);
     expect(db.query("SELECT COUNT(*) AS count FROM attachment_links WHERE host_id = ?").get(eventId)).toEqual({ count: 0 });
-    sweepAttachments();
+    await sweepAttachments();
     expect(documentRow(attachment)!.deleted_at).not.toBeNull();
   });
 

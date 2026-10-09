@@ -36,6 +36,28 @@ import { DiscardEventPrompt, EventSheet, RepeatSheet } from "./EventSheet";
 import { EventLinks, linkLabel, NoteLinkPicker } from "./EventLinks";
 import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, removeReminder, type ReminderChannels, type ReminderSummary } from "./EventReminders";
 import { EventView } from "./EventView";
+import {
+  applySheetAttachments,
+  attachmentRights,
+  attachmentRoom,
+  canRemoveAttachment,
+  DEFAULT_EVENT_ATTACHMENT_LIMIT,
+  discardSheetUploads,
+  emptySheetAttachments,
+  EventAttachmentsSection,
+  limitMessage,
+  SheetAttachmentsField,
+  sheetAttachmentsDirty,
+  sheetUploading,
+  stagedFromDocument,
+  stagedFromFile,
+  uploadStaged,
+  type SheetAttachmentState,
+  type StagedAttachment
+} from "./EventAttachments";
+import { AttachmentPreview, AttachSheet } from "../ui/attachments";
+import type { DocumentSummary } from "../types";
+import { deleteFile } from "../files/filesApi";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery, useReturnFocus } from "./hooks";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
@@ -66,7 +88,15 @@ type Sheet = {
   busy: boolean;
   error: string | null;
   conflict: EventDetail | null;
+  /** U1: the event's files and the sheet's staged changes to them, applied on Save. */
+  attachments: SheetAttachmentState;
+  attachmentLimit: number;
+  /** The calendar's owner or a manager: may remove anyone's file from the event. */
+  canManage: boolean;
 };
+
+/** A layer shown in place of the event sheet (U1): the Attach sheet, or one file's preview. */
+type SheetLayer = { kind: "attach" } | { kind: "preview"; documentId: string; name: string };
 
 type Confirm =
   | { kind: "discard" }
@@ -121,6 +151,9 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   const [reloadKey, setReloadKey] = useState(0);
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [repeatOpen, setRepeatOpen] = useState(false);
+  const [sheetLayer, setSheetLayer] = useState<SheetLayer | null>(null);
+  const sheetUploads = useRef(new Map<string, AbortController>());
+  const droppedUploads = useRef(new Set<string>());
   const [pendingConfirm, setConfirm] = useState<Confirm | null>(null);
   const [calendarsOpen, setCalendarsOpen] = useState(false);
   const [sharing, setSharing] = useState<CalendarSummary | null>(null);
@@ -193,7 +226,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
 
   // The event sheet, its Repeat sheet, and the Discard prompt guard themselves, one layer at a time (EventSheet.tsx).
   const dialogOpen = (pendingConfirm !== null && pendingConfirm.kind !== "discard") || calendarsOpen || sharing !== null || feeds !== null || picker !== null || reminderPicker !== null;
-  const sheetDirty = sheet !== null && !sameForm(sheet.initial, sheet.form);
+  const sheetDirty = sheet !== null && (!sameForm(sheet.initial, sheet.form) || sheetAttachmentsDirty(sheet.attachments));
   // Each layer hands focus back to what opened it: the Calendars button, the Add reminder button,
   // and, for the Share, Subscribe, and Move-to-Bin layers that replace the Calendars sheet, that
   // calendar's button in the sheet once it is back (QA 0.12 item 3).
@@ -206,6 +239,23 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   function closeSheet() {
     setSheet(null);
     setRepeatOpen(false);
+    setSheetLayer(null);
+  }
+  /** Closes the sheet without saving: uploads in flight stop, and the ones it made go to the Bin (U1). */
+  function discardSheet() {
+    for (const item of sheet?.attachments.added ?? []) if (item.status === "uploading") dropSheetUpload(item);
+    if (sheet) discardSheetUploads(sheet.attachments);
+    closeSheet();
+  }
+  /**
+   * Stops a staged upload the person no longer wants. Bytes still going up are aborted; an upload
+   * whose bytes are all sent may already be stored, so it is left to finish and then moved to the
+   * Bin (otherwise only the next-day sweep would find it).
+   */
+  function dropSheetUpload(item: StagedAttachment) {
+    if (item.progress >= 1) droppedUploads.current.add(item.key);
+    else sheetUploads.current.get(item.key)?.abort();
+    sheetUploads.current.delete(item.key);
   }
   function requestCloseSheet() {
     if (sheetDirty) setConfirm({ kind: "discard" });
@@ -236,7 +286,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
         setReminderPicker(shown.reminderPicker);
       });
       setConfirm(null);
-      closeSheet();
+      discardSheet();
       setSharing(null);
       setFeeds(null);
       setPicker(null);
@@ -259,12 +309,79 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       return;
     }
     const form = newEventForm(day, today, new Date(), zone);
-    setSheet({ mode: "create", initial: form, form, calendarId: target.id, event: null, busy: false, error: null, conflict: null });
+    setSheet({ mode: "create", initial: form, form, calendarId: target.id, event: null, busy: false, error: null, conflict: null,
+      attachments: emptySheetAttachments(), attachmentLimit: DEFAULT_EVENT_ATTACHMENT_LIMIT, canManage: true });
   }
 
   function startEdit(data: EventResponse) {
     const form = formFromEvent(data.event, zone);
-    setSheet({ mode: "edit", initial: form, form, calendarId: data.event.calendar_id, event: data.event, busy: false, error: null, conflict: null });
+    setSheet({ mode: "edit", initial: form, form, calendarId: data.event.calendar_id, event: data.event, busy: false, error: null, conflict: null,
+      attachments: emptySheetAttachments(data.attachments), attachmentLimit: data.attachmentLimit ?? DEFAULT_EVENT_ATTACHMENT_LIMIT, canManage: attachmentRights(data, canWrite).canManage });
+  }
+
+  // ---- the event sheet's attachments (U1): staged until Save --------------------------------------
+
+  const updateSheetAttachments = useCallback((change: (state: SheetAttachmentState) => SheetAttachmentState) => {
+    setSheet((current) => current && { ...current, attachments: change(current.attachments) });
+  }, []);
+
+  const updateStaged = useCallback((key: string, patch: Partial<StagedAttachment>) => {
+    updateSheetAttachments((state) => ({ ...state, added: state.added.map((item) => item.key === key ? { ...item, ...patch } : item) }));
+  }, [updateSheetAttachments]);
+
+  function startSheetUpload(item: StagedAttachment) {
+    const controller = new AbortController();
+    sheetUploads.current.set(item.key, controller);
+    void uploadStaged(item, controller.signal, (key, patch) => {
+      if (!droppedUploads.current.has(key)) return updateStaged(key, patch);
+      if (!patch.documentId) return;
+      droppedUploads.current.delete(key);
+      void deleteFile(patch.documentId).catch(() => undefined);
+    }).finally(() => { sheetUploads.current.delete(item.key); droppedUploads.current.delete(item.key); });
+  }
+
+  function addSheetFiles(files: File[]) {
+    if (!sheet || !files.length) return;
+    const room = attachmentRoom(sheet.attachments, sheet.attachmentLimit);
+    if (files.length > room) flash(room === 0 ? limitMessage(sheet.attachmentLimit) : `${limitMessage(sheet.attachmentLimit)} Only the first ${room} ${room === 1 ? "was" : "were"} added.`);
+    const staged = files.slice(0, room).map(stagedFromFile);
+    if (!staged.length) return;
+    updateSheetAttachments((state) => ({ ...state, added: [...state.added, ...staged] }));
+    for (const item of staged) startSheetUpload(item);
+  }
+
+  function pickSheetDocument(document: DocumentSummary, options: { confirmed: boolean }) {
+    if (!sheet) return;
+    const already = sheet.attachments.existing.some((item) => item.documentId === document.id && !sheet.attachments.removed.includes(document.id))
+      || sheet.attachments.added.some((item) => item.documentId === document.id);
+    if (already) {
+      flash(`“${document.name}” is already on this event`);
+      return;
+    }
+    if (sheet.attachments.removed.includes(document.id)) {
+      // Picked again after removing it: keep the link instead.
+      updateSheetAttachments((state) => ({ ...state, removed: state.removed.filter((id) => id !== document.id) }));
+      return;
+    }
+    if (attachmentRoom(sheet.attachments, sheet.attachmentLimit) === 0) {
+      flash(limitMessage(sheet.attachmentLimit));
+      return;
+    }
+    updateSheetAttachments((state) => ({ ...state, added: [...state.added, stagedFromDocument(document, options.confirmed)] }));
+  }
+
+  function removeSheetStaged(key: string) {
+    const item = sheet?.attachments.added.find((added) => added.key === key);
+    if (item?.status === "uploading") dropSheetUpload(item);
+    if (item) discardSheetUploads({ existing: [], removed: [], added: [item] });
+    updateSheetAttachments((state) => ({ ...state, added: state.added.filter((added) => added.key !== key) }));
+  }
+
+  function retrySheetUpload(key: string) {
+    const item = sheet?.attachments.added.find((added) => added.key === key);
+    if (!item?.file) return;
+    updateStaged(key, { status: "uploading", progress: 0, error: null });
+    startSheetUpload({ ...item, status: "uploading" });
   }
 
   async function saveSheet() {
@@ -278,14 +395,16 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     try {
       if (sheet.mode === "create") {
         const created = await createEvent(sheet.calendarId, result.input);
+        const failures = await applySheetAttachments(created.event.id, sheet.attachments);
         closeSheet();
         setReloadKey((value) => value + 1);
-        flash(`Added “${created.event.title}”`);
+        flash(failures.length ? `Added “${created.event.title}”, but ${failures.join("; ")}` : `Added “${created.event.title}”`);
       } else if (sheet.event) {
         await updateEvent(sheet.event.id, { ...result.input, revision: sheet.event.revision });
+        const failures = await applySheetAttachments(sheet.event.id, sheet.attachments);
         closeSheet();
         setReloadKey((value) => value + 1);
-        flash("Event saved");
+        flash(failures.length ? `Event saved, but ${failures.join("; ")}` : "Event saved");
       }
     } catch (reason) {
       if (errorCode(reason) === "EVENT_CHANGED") {
@@ -329,7 +448,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     if (!pendingConfirm) return;
     if (pendingConfirm.kind === "discard") {
       setConfirm(null);
-      closeSheet();
+      discardSheet();
       return;
     }
     setBusy(true);
@@ -460,6 +579,10 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       renderReminders={(data) => <EventReminders eventId={data.event.id} allDay={data.event.all_day} reloadKey={reloadKey}
         onAdd={(existing) => setReminderPicker({ eventId: data.event.id, allDay: data.event.all_day, existing, event: data.event })}
         onRemove={(reminder) => { void dropReminder(reminder, data.event.all_day); }} />}
+      renderAttachments={(data) => {
+        const rights = attachmentRights(data, canWrite);
+        return <EventAttachmentsSection data={data} canEdit={rights.canEdit} canManage={rights.canManage} flash={flash} onChanged={() => setReloadKey((value) => value + 1)} />;
+      }}
       renderLinks={(data) => <EventLinks data={data} canEdit={canWrite && data.role !== "viewer"} onOpenNote={onOpenNote} onAddNote={() => setPicker(data)} onRemove={(link) => { void removeLink(data, link); }} />}
     />;
   } else if (route.view === "month") {
@@ -502,7 +625,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       {calendars === null ? <p className="calendar-loading" role="status"><CalendarDays />Loading your calendars…</p> : content}
     </div>
 
-    {sheet && !repeatOpen && pendingConfirm?.kind !== "discard" && <EventSheet
+    {sheet && !repeatOpen && !sheetLayer && pendingConfirm?.kind !== "discard" && <EventSheet
       mode={sheet.mode}
       form={sheet.form}
       calendars={writableAll}
@@ -516,7 +639,24 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       onSave={() => { void saveSheet(); }}
       onReload={reloadConflict}
       onClose={requestCloseSheet}
+      onFiles={canWrite ? addSheetFiles : undefined}
+      uploading={sheetUploading(sheet.attachments)}
+      attachments={<SheetAttachmentsField
+        state={sheet.attachments}
+        limit={sheet.attachmentLimit}
+        canAttach={canWrite}
+        canRemoveExisting={(item) => canRemoveAttachment(item, { canEdit: canWrite, canManage: sheet.canManage })}
+        onAttach={() => setSheetLayer({ kind: "attach" })}
+        onOpen={(item) => setSheetLayer({ kind: "preview", documentId: item.documentId, name: item.name })}
+        onRemove={(item) => updateSheetAttachments((state) => ({ ...state, removed: [...state.removed, item.documentId] }))}
+        onRetry={retrySheetUpload}
+        onRemoveStaged={removeSheetStaged}
+      />}
     />}
+    {/* U1: the Attach sheet and a file's preview replace the event sheet while open (one dialog at a time); Back closes them first. */}
+    {sheet && sheetLayer?.kind === "attach" && <AttachSheet hostNoun="event" closeOnPick onClose={() => setSheetLayer(null)} onFiles={addSheetFiles} onPickDocument={pickSheetDocument}
+      disabledReason={attachmentRoom(sheet.attachments, sheet.attachmentLimit) === 0 ? limitMessage(sheet.attachmentLimit) : null} />}
+    {sheet && sheetLayer?.kind === "preview" && <AttachmentPreview documentId={sheetLayer.documentId} name={sheetLayer.name} onClose={() => setSheetLayer(null)} />}
     {sheet && repeatOpen && <RepeatSheet
       rule={sheet.form.repeat}
       startDate={sheet.form.startDate}

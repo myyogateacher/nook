@@ -4,6 +4,8 @@ import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
 // Registers calendars and events as Bin providers (server/bin.ts).
 import "./calendarBin";
+// Lends event responses their attachments (uploads everywhere U1).
+import "./attachments";
 import { LINK_TARGET_TYPES } from "./links";
 import { MAX_COUNT, MAX_DURATION_MINUTES, MAX_EXDATES, MAX_INTERVAL, rangeFor, RecurrenceError, WEEKDAYS } from "./recurrence";
 import {

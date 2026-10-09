@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CHAT_IMAGE_ACCEPT, downscaleTarget, IMAGES_FULL_MESSAGE, isChatImageFile, NOT_AN_IMAGE_MESSAGE, renamed, triageImageFiles, visionMissingMessage } from "../src/chat/chatImageFiles";
+import { CHAT_IMAGE_ACCEPT, downscaleTarget, IMAGES_FULL_MESSAGE, isChatImageFile, locationStripMessage, NOT_AN_IMAGE_MESSAGE, renamed, triageImageFiles, visionMissingMessage } from "../src/chat/chatImageFiles";
 import { ComposerImageStrip, MessageImages, type PendingImage } from "../src/chat/ComposerImages";
 import { ProviderVisionFields, visionDraft, visionFromDraft, visionSuggestions, visionSummary } from "../src/chat/ProviderVisionPolicy";
 import { CHAT_IMAGE_BOUNDS, visionAllowsModel } from "../shared/agents";
@@ -47,6 +47,9 @@ describe("the composer's image rules", () => {
     expect(renamed("holiday.PNG", "image/webp")).toBe("holiday.webp");
     expect(renamed("IMG_0001.heic.jpeg", "image/jpeg")).toBe("IMG_0001.heic.jpg");
     expect(renamed("", "image/jpeg")).toBe("image.jpg");
+    // U0's LocationStripError becomes a plain reason on the thumbnail.
+    expect(locationStripMessage("IMG_1.jpg")).toContain("could not be removed, so it was not uploaded");
+    expect(source("chat/ComposerImages.tsx")).toContain("reason instanceof LocationStripError");
   });
 });
 

@@ -10,7 +10,9 @@ export const CHAT_IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
 export const NOT_AN_IMAGE_MESSAGE = "Only images (PNG, JPEG, GIF, or WebP) can be sent in a chat for now; PDFs and other files are not.";
 export const visionMissingMessage = (agentName: string | null) => `${agentName ? `${agentName}'s model` : "This agent's model"} can't see images. An admin can mark the model vision-capable in Settings → AI → Model providers.`;
 export const IMAGES_FULL_MESSAGE = `A message can carry at most ${CHAT_IMAGE_BOUNDS.perMessage} images.`;
-export const imageTooLargeMessage = (name: string) => `${name} is larger than ${Math.round(CHAT_IMAGE_BOUNDS.bytes / 1024 / 1024)} MiB, even after resizing.`;
+/** U0 refuses to upload a photo whose location it could not remove (Q9). */
+export const locationStripMessage = (name: string) => `${name} still holds its photo location, which could not be removed, so it was not uploaded. Take a screenshot of it, or export it without location, and attach that.`;
+export const imageTooLargeMessage =(name: string) => `${name} is larger than ${Math.round(CHAT_IMAGE_BOUNDS.bytes / 1024 / 1024)} MiB, even after resizing.`;
 
 /** Whether the composer takes this file (its declared type; the server sniffs the bytes again). */
 export const isChatImageFile = (file: Pick<File, "type">) => isChatImageType(file.type);

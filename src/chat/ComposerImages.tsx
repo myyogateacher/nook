@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Image as ImageIcon, ImageOff, X } from "lucide-react";
 import { contentUrl } from "../files/filesApi";
 import type { DocumentSummary } from "../types";
-import { uploadForHost } from "../ui/attachments";
+import { LocationStripError, uploadForHost } from "../ui/attachments";
 import { CHAT_IMAGE_BOUNDS, isChatImageType, type ChatAttachment, type ChatAttachmentInput } from "../../shared/agents";
-import { downscaleImage, imageTooLargeMessage, NOT_AN_IMAGE_MESSAGE, thumbnailDataUrl, triageImageFiles, visionMissingMessage, IMAGES_FULL_MESSAGE } from "./chatImageFiles";
+import { downscaleImage, imageTooLargeMessage, locationStripMessage, NOT_AN_IMAGE_MESSAGE, thumbnailDataUrl, triageImageFiles, visionMissingMessage, IMAGES_FULL_MESSAGE } from "./chatImageFiles";
 
 /**
  * The chat composer's images (uploads everywhere U5): files from the attach sheet (Take photo, Choose
@@ -54,6 +54,8 @@ export function useComposerImages({ vision, agentName, flash }: Options) {
       patch(key, { status: "ready", progress: 1, documentId: result.document.id, previewUrl: contentUrl(result.document.id, "inline") });
     } catch (reason) {
       if (controller.signal.aborted || (reason instanceof DOMException && reason.name === "AbortError")) return;
+      // U0 (Q9): a photo whose location could not be removed is never uploaded; say so plainly.
+      if (reason instanceof LocationStripError) { patch(key, { status: "failed", error: locationStripMessage(file.name) }); return; }
       patch(key, { status: "failed", error: reason instanceof Error && reason.message ? reason.message : "The upload failed" });
     } finally {
       controllers.current.delete(key);

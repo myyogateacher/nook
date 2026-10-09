@@ -1,6 +1,8 @@
 import { sweepBin, type BinSweepCounts } from "./bin";
 import { sweepNotifications } from "./calendar/reminders";
+import { config } from "./config";
 import { db } from "./db";
+import { claimS3Prefix, objectStore, PrefixClaimError, s3Internals } from "./objectStore";
 import { documentObjectSizes, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
@@ -45,6 +47,25 @@ async function countIntegrityErrors() {
 }
 
 /**
+ * S3 (review M2): before deleting anything, claim the prefix again. A process that is no longer the
+ * prefix's newest claimant (a restored copy, a second server) is fenced: it skips the file sweeps, and
+ * every delete it tries fails (Bin purges stay pending). A store that does not answer skips this round.
+ */
+async function fileSweepsAllowed() {
+  const store = objectStore();
+  if (store.backend !== "s3") return true;
+  if (s3Internals(store).isFenced?.()) return false;
+  try {
+    await claimS3Prefix(store, config.dataDir);
+    return true;
+  } catch (error) {
+    if (error instanceof PrefixClaimError) console.error(`File storage: ${error.message.replace(/\.$/, "")}. This server no longer sweeps or deletes files; restart it once the prefix is sorted out.`);
+    else console.error("File storage: the prefix claim could not be checked; file sweeps skipped this hour", error instanceof Error ? error.message : "Unknown error");
+    return false;
+  }
+}
+
+/**
  * Runs one sweep: staging and orphan cleanup, then Bin purges (resume
  * interrupted ones, then retention). Overlapping calls share the run already
  * in flight. Logs counts only.
@@ -53,7 +74,9 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
   running ??= (async () => {
     try {
       let counts: SweepCounts | null = null;
+      const filesAllowed = await fileSweepsAllowed();
       try {
+        if (!filesAllowed) throw new Error("File sweeps are off for this run");
         counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow });
         if (counts.stagingRemoved || counts.orphansRemoved || counts.ignored) {
           console.info(`Document sweep: ${counts.stagingRemoved} staging removed, ${counts.orphansRemoved} orphans removed, ${counts.ignored} unexpected entries ignored`);
@@ -175,7 +198,7 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       try {
         // Google sign-in (Wave 35): flows past their 10 minutes, and avatar files no account points at.
         const flows = sweepGoogleFlows(options.nowMs);
-        const avatars = await sweepAvatarFiles(options.nowMs);
+        const avatars = filesAllowed ? await sweepAvatarFiles(options.nowMs) : 0;
         if (flows || avatars) console.info(`Google sweep: ${flows} sign-in flows and ${avatars} avatar files removed`);
       } catch (error) {
         console.error("Google sweep failed", error instanceof Error ? error.name : "Unknown error");

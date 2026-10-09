@@ -32,8 +32,23 @@ export type FakeS3 = {
   delayWritesMs: number;
   /** Sets an object's Last-Modified (for orphan-age tests). */
   age(key: string, ms: number): void;
+  /** Hang mode: the next N matching requests are accepted and never answered (review H2). */
+  stallNext(pattern: RegExp, times?: number): void;
+  /** The next N matching GETs answer their headers and first bytes, then never send the rest. */
+  stallBodyNext(pattern: RegExp, times?: number): void;
+  /** Added to "now" for every Last-Modified this service stamps (a store whose clock differs). */
+  clockOffsetMs: number;
   stop(): void;
 };
+
+/**
+ * An endpoint that accepts TCP connections and never answers a byte (review H2): the worst case for a
+ * client without deadlines. Returns its URL and a stop.
+ */
+export function startBlackHole() {
+  const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {}, close() {} } });
+  return { url: `http://127.0.0.1:${listener.port}`, stop: () => listener.stop(true) };
+}
 
 const MIN_PART_BYTES = 5 * 1024 * 1024;
 const xml = (body: string, status = 200) => new Response(`<?xml version="1.0" encoding="UTF-8"?>\n${body}`, { status, headers: { "Content-Type": "application/xml" } });
@@ -59,11 +74,15 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
   const uploads = new Map<string, Upload>();
   const log: string[] = [];
   const failures: Array<{ pattern: RegExp; times: number }> = [];
+  const stalls: Array<{ pattern: RegExp; times: number; body: boolean }> = [];
+  const now = () => new Date(Date.now() + fake.clockOffsetMs);
 
   const server = Bun.serve({
     port: options.port ?? 0,
     hostname: "127.0.0.1",
     maxRequestBodySize: 1024 * 1024 * 1024,
+    // Never close a quiet connection: the hang modes must look like a dead endpoint, not a reset.
+    idleTimeout: 0,
     async fetch(request) {
       const url = new URL(request.url);
       const segments = url.pathname.split("/").slice(1);
@@ -74,6 +93,17 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
       const credential = /Credential=([^/]+)\//.exec(request.headers.get("authorization") ?? "")?.[1];
       if (credential !== accessKeyId) return s3Error(403, "InvalidAccessKeyId", "The AWS Access Key Id you provided does not exist in our records.");
       if (requestBucket !== bucket) return s3Error(404, "NoSuchBucket");
+      const stall = stalls.find((entry) => entry.times > 0 && entry.pattern.test(line));
+      if (stall && !stall.body) {
+        stall.times -= 1;
+        return new Promise<Response>(() => undefined);
+      }
+      if (stall?.body && request.method === "GET" && objects.has(key)) {
+        stall.times -= 1;
+        const object = objects.get(key)!;
+        const first = object.bytes.slice(0, Math.min(16, object.bytes.byteLength));
+        return new Response(new ReadableStream({ start(controller) { controller.enqueue(first); }, pull: () => new Promise<void>(() => undefined) }), { status: 200, headers: { "Content-Length": String(object.bytes.byteLength), "Content-Type": object.contentType } });
+      }
       const failure = failures.find((entry) => entry.times > 0 && entry.pattern.test(line));
       if (failure) {
         failure.times -= 1;
@@ -124,7 +154,7 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
           const bytes = concat(ordered);
           uploads.delete(uploadId);
           const etag = `"${crypto.randomUUID().replaceAll("-", "")}-${upload.parts.size}"`;
-          objects.set(key, { bytes, lastModified: new Date(), etag, contentType: request.headers.get("content-type") ?? "application/octet-stream" });
+          objects.set(key, { bytes, lastModified: now(), etag, contentType: request.headers.get("content-type") ?? "application/octet-stream" });
           return xml(`<CompleteMultipartUploadResult><Bucket>${bucket}</Bucket><Key>${escapeXml(key)}</Key><ETag>${escapeXml(etag)}</ETag></CompleteMultipartUploadResult>`);
         }
         if (request.method === "DELETE") {
@@ -137,7 +167,7 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
         if (fake.delayWritesMs) await Bun.sleep(fake.delayWritesMs);
         const bytes = new Uint8Array(await request.arrayBuffer());
         const etag = etagOf(bytes);
-        objects.set(key, { bytes, lastModified: new Date(), etag, contentType: request.headers.get("content-type") ?? "application/octet-stream" });
+        objects.set(key, { bytes, lastModified: now(), etag, contentType: request.headers.get("content-type") ?? "application/octet-stream" });
         return new Response(null, { status: 200, headers: { ETag: etag } });
       }
       if (request.method === "DELETE") {
@@ -182,7 +212,15 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
     delayWritesMs: 0,
     clearFailures() {
       failures.length = 0;
+      stalls.length = 0;
     },
+    stallNext(pattern, times = 1) {
+      stalls.push({ pattern, times, body: false });
+    },
+    stallBodyNext(pattern, times = 1) {
+      stalls.push({ pattern, times, body: true });
+    },
+    clockOffsetMs: 0,
     failNext(pattern, times = 1) {
       failures.push({ pattern, times });
     },

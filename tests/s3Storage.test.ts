@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startFakeS3 } from "./support/fakeS3";
+import { startBlackHole, startFakeS3 } from "./support/fakeS3";
 
 /**
  * The S3 storage slice end to end, each configuration in its own process (docs/plan/research/
@@ -74,7 +74,7 @@ describe("startup with STORAGE_BACKEND=s3", () => {
     expect(result.probe).toEqual({ backend: "s3" });
     expect(result.stdout).toContain("File storage: s3 bucket nook-cli prefix startup/ at 127.0.0.1");
     const probeLines = fake.log.slice(before).filter((line) => line.includes("startup/.probe/")).map((line) => line.split(" ")[0]);
-    expect(probeLines).toEqual(["PUT", "GET", "DELETE"]);
+    expect(probeLines).toEqual(["PUT", "GET", "HEAD", "DELETE"]);
     expect(fake.objects.has("startup/.nook-instance")).toBe(true);
   }, 30_000);
 
@@ -85,6 +85,33 @@ describe("startup with STORAGE_BACKEND=s3", () => {
     expect(result.stderr).toContain("File storage check failed");
     expect(result.stderr).toContain("InvalidAccessKeyId");
     expect(result.stdout + result.stderr).not.toContain("do-not-print-me");
+  }, 30_000);
+
+  test("an endpoint that accepts and never answers fails the startup probe with Timeout and exits 1 (review H2)", async () => {
+    const hole = startBlackHole();
+    try {
+      const started = Date.now();
+      const result = await probe("start", { DATA_DIR: scratch(), STORAGE_BACKEND: "s3", ...s3Env("hole/", { S3_ENDPOINT: hole.url, S3_TIMEOUT_MS: "1000" }) });
+      expect(result.code).toBe(1);
+      expect(result.probe).toBeNull();
+      expect(result.stderr).toContain("File storage check failed: Object storage probe failed (Timeout)");
+      expect(Date.now() - started).toBeLessThan(20_000);
+    } finally {
+      hole.stop();
+    }
+  }, 30_000);
+
+  test("a restored copy of the data directory refuses to start while the live one holds the prefix (review M2)", async () => {
+    const live = scratch();
+    expect((await probe("start", { DATA_DIR: live, STORAGE_BACKEND: "s3", ...s3Env("restored/") })).code).toBe(0);
+    const restored = scratch();
+    copyFileSync(join(live, "storage-instance"), join(restored, "storage-instance"));
+    // The live server starts again (backup.sh restarts it; every hourly sweep claims too).
+    expect((await probe("start", { DATA_DIR: live, STORAGE_BACKEND: "s3", ...s3Env("restored/") })).code).toBe(0);
+    const copy = await probe("start", { DATA_DIR: restored, STORAGE_BACKEND: "s3", ...s3Env("restored/") });
+    expect(copy.code).toBe(1);
+    expect(copy.stderr).toContain("older than the S3 prefix's last claim");
+    expect(copy.stderr).not.toContain("..");
   }, 30_000);
 
   test("another data directory's prefix refuses to start", async () => {
@@ -116,7 +143,7 @@ describe("storage-admin migrate", () => {
     const first = await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) });
     fake.clearFailures();
     expect(first.code).toBe(1);
-    expect(first.stdout).toMatch(/Copied and verified 3 files \(0 already done by an earlier run\); 1 failed/);
+    expect(first.stdout).toContain("Copied and verified 3 files (0 already done by an earlier run, 0 already in place); 1 failed.");
     expect(first.stderr).toContain(`documents/${seed.files[1]}`);
     expect(existsSync(join(dataDir, "storage-migrate-to-s3.journal"))).toBe(true);
     expect(fake.objects.has(`${prefix}documents/${seed.files[1]}`)).toBe(false);
@@ -126,7 +153,7 @@ describe("storage-admin migrate", () => {
     const second = await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) });
     expect(second.code).toBe(0);
     expect(second.stdout).toContain("Resuming: 3 files were copied and verified by an earlier run.");
-    expect(second.stdout).toContain("Copied and verified 1 files (3 already done by an earlier run); 0 failed.");
+    expect(second.stdout).toContain("Copied and verified 1 files (3 already done by an earlier run, 0 already in place); 0 failed.");
     expect(second.stdout).toContain("Set STORAGE_BACKEND=s3");
     expect(existsSync(join(dataDir, "storage-migrate-to-s3.journal"))).toBe(false);
     for (const id of seed.files) expect(fake.objects.has(`${prefix}documents/${id}`)).toBe(true);
@@ -155,7 +182,7 @@ describe("storage-admin migrate", () => {
     rmSync(join(dataDir, "avatars"), { recursive: true, force: true });
     const back = await admin(["migrate", "--to", "local"], { ...local, ...s3Env(prefix) });
     expect(back.code).toBe(0);
-    expect(back.stdout).toContain("Copied and verified 4 files (0 already done by an earlier run); 0 failed.");
+    expect(back.stdout).toContain("Copied and verified 4 files (0 already done by an earlier run, 0 already in place); 0 failed.");
     const restored = await probe("check", { ...local, PROBE_SEED: JSON.stringify(seed) });
     expect(restored.probe).toMatchObject({ backend: "local", board: 200, avatar: 200 });
     expect(restored.probe!.files.map((file: { sha256: string }) => file.sha256)).toEqual(seed.hashes);
@@ -166,6 +193,69 @@ describe("storage-admin migrate", () => {
     const refused = await admin(["migrate", "--to", "s3"], { DATA_DIR: stranger, ...s3Env(prefix) });
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain("another Nook data directory");
+  }, 120_000);
+
+  test("misuse never deletes: a wrong prefix, the direction swapped, the source already removed, and re-runs (review H1)", async () => {
+    const dataDir = scratch("nook-misuse-");
+    const local = { DATA_DIR: dataDir };
+    const seeded = await probe("seed", local);
+    expect(seeded.code).toBe(0);
+    const seed = seeded.probe!;
+    const objectsDir = join(dataDir, "documents", "objects");
+    const localFiles = () => readdirSync(objectsDir).sort();
+    const before = localFiles();
+    expect(before.length).toBe(3);
+    const prefix = "misuse/";
+    const bucketFiles = () => [...fake.objects.keys()].filter((name) => name.startsWith(`${prefix}documents/`) || name.startsWith(`${prefix}avatars/`)).sort();
+
+    // 1. --to local with a wrong (empty) prefix: refused before any write; every local file is still there.
+    const wrongPrefix = await admin(["migrate", "--to", "local"], { ...local, ...s3Env("no-such-prefix/") });
+    expect(wrongPrefix.code).toBe(1);
+    expect(wrongPrefix.stderr).toContain("Refusing to migrate: the source holds none of the 4 files. Nothing was copied or changed.");
+    expect(wrongPrefix.stderr).toContain("Check S3_PREFIX");
+    expect(localFiles()).toEqual(before);
+    expect(fake.objects.has("no-such-prefix/.nook-instance")).toBe(false);
+
+    // 2. The direction swapped (--to local while the bucket is still empty): the same refusal, nothing changed.
+    expect((await admin(["migrate", "--to", "local"], { ...local, ...s3Env(prefix) })).code).toBe(1);
+    expect(localFiles()).toEqual(before);
+    expect(bucketFiles()).toEqual([]);
+
+    // 3. The real migration, then a re-run: everything is already in place, nothing is written again.
+    expect((await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) })).code).toBe(0);
+    expect(bucketFiles().length).toBe(4);
+    const logBefore = fake.log.length;
+    const rerun = await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) });
+    expect(rerun.code).toBe(0);
+    expect(rerun.stdout).toContain("Copied and verified 0 files (0 already done by an earlier run, 4 already in place); 0 failed.");
+    expect(fake.log.slice(logBefore).filter((line) => /^(PUT|DELETE|POST) misuse\/(documents|avatars)\//.test(line))).toEqual([]);
+    expect(rerun.stdout).toContain("verify --hash");
+    expect(rerun.stdout).toContain("Only then");
+
+    // 4. A wrong copy at the destination is replaced from the readable source; the others are kept.
+    const damaged = fake.objects.get(`${prefix}documents/${seed.files[0]}`)!;
+    damaged.bytes = new Uint8Array(damaged.bytes).fill(0x42, 0, 4);
+    const repaired = await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) });
+    expect(repaired.code).toBe(0);
+    expect(repaired.stdout).toContain("Copied and verified 1 files (0 already done by an earlier run, 3 already in place); 0 failed.");
+
+    // 5. The local files removed (step 4 of the advice), then --to s3 again: refused, the bucket untouched.
+    rmSync(objectsDir, { recursive: true, force: true });
+    rmSync(join(dataDir, "avatars"), { recursive: true, force: true });
+    const bucketBefore = bucketFiles();
+    const removed = await admin(["migrate", "--to", "s3"], { ...local, ...s3Env(prefix) });
+    expect(removed.code).toBe(1);
+    expect(removed.stderr).toContain("Refusing to migrate: the source holds none of the 4 files");
+    expect(removed.stderr).toContain("already removed after an earlier migration");
+    expect(bucketFiles()).toEqual(bucketBefore);
+    expect((await admin(["verify", "--hash"], { ...local, STORAGE_BACKEND: "s3", ...s3Env(prefix) })).code).toBe(0);
+
+    // 6. Back to local works from the bucket, and only then a re-run --to local finds everything in place.
+    expect((await admin(["migrate", "--to", "local"], { ...local, ...s3Env(prefix) })).code).toBe(0);
+    expect(localFiles()).toEqual(before);
+    const again = await admin(["migrate", "--to", "local"], { ...local, ...s3Env(prefix) });
+    expect(again.stdout).toContain("(0 already done by an earlier run, 4 already in place)");
+    expect(bucketFiles()).toEqual(bucketBefore);
   }, 120_000);
 
   test("is refused while a server heartbeat in DATA_DIR stays fresh", async () => {

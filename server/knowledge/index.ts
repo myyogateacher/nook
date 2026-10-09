@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { checksum, storage } from "../storage";
 import { DocumentIntegrityError, openObjectForRead } from "../documentStorage";
+import { StorageUnavailableError } from "../objectStore";
 import { CHUNKING, KNOWLEDGE_BOUNDS } from "../../shared/knowledge";
 import { assertBudget, chargeUsage, secondsToMidnight } from "../agents/runs";
 import { connectionFor, embeddingDefaults, knowledgePolicyOf, parseKnowledgePolicy } from "../agents/providers";
@@ -213,6 +214,7 @@ async function readContent(kb: KbRow, source: SourceRow): Promise<Content | null
     bytes = await (await openObjectForRead(document.id, document.size_bytes)).bytes();
   } catch (error) {
     if (error instanceof DocumentIntegrityError) throw new SourceError("INTEGRITY", "The file's stored content failed its integrity check");
+    if (error instanceof StorageUnavailableError) throw new SourceError("STORAGE_UNAVAILABLE", "File storage was unavailable; re-index this source later");
     throw error;
   }
   if (createHash("sha256").update(bytes).digest("hex") !== document.sha256) throw new SourceError("INTEGRITY", "The file's stored content failed its integrity check");

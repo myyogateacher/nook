@@ -117,13 +117,18 @@ const agentSecretsKey = parseAgentSecretsKey(process.env, totpEncryptionKey, vau
 export type S3StorageConfig = {
   backend: "s3";
   bucket: string;
-  /** Unset for AWS (Bun builds the regional endpoint); set for MinIO, R2, B2, and other S3-compatible services. */
-  endpoint: string | null;
+  /**
+   * Always an explicit origin, so Bun's client never falls back to AWS_ENDPOINT or S3_ENDPOINT from the
+   * environment (review L3): AWS S3 is https://s3.<region>.amazonaws.com; MinIO, R2, B2 give S3_ENDPOINT.
+   */
+  endpoint: string;
   region: string | null;
   accessKeyId: string;
   secretAccessKey: string;
   /** "" or a key prefix ending in "/". */
   prefix: string;
+  /** Deadline for one S3 request (S3_TIMEOUT_MS); a part upload gets four times this. */
+  timeoutMs: number;
 };
 export type StorageConfig = { backend: "local" } | S3StorageConfig;
 
@@ -144,6 +149,19 @@ function secretSetting(env: Record<string, string | undefined>, name: string, da
 }
 
 /**
+ * A literal loopback host for S3_ENDPOINT over plain http (review L4): `localhost`, 127.0.0.0/8, or
+ * [::1]. Unlike isLocalHost, `*.localhost` names do not count: they are only a browser convention, and a
+ * resolver may send them anywhere.
+ */
+export function isLoopbackLiteral(hostname: string) {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return host === "localhost" || /^127(?:\.\d{1,3}){3}$/.test(host) || host === "[::1]" || host === "::1";
+}
+
+/** Settings Bun's S3 client would read from the environment on its own; Nook never wants them (review L3). */
+const S3_AMBIENT_SETTINGS = ["S3_SESSION_TOKEN", "AWS_SESSION_TOKEN"];
+
+/**
  * File storage (S3 storage slice, docs/plan/research/2026-10-09-s3-storage.md): where file bytes live.
  * `STORAGE_BACKEND=local` (the default) keeps them under DATA_DIR as before; `s3` puts them in a bucket
  * through Bun's built-in S3 client. An incomplete or malformed S3 configuration refuses to start; the
@@ -153,6 +171,10 @@ export function parseStorageConfig(env: Record<string, string | undefined>, data
   const backend = env.STORAGE_BACKEND?.trim().toLowerCase() || "local";
   if (backend !== "local" && backend !== "s3") throw new Error("STORAGE_BACKEND must be local or s3");
   if (backend === "local") return { backend: "local" };
+  const allowHttp = env.S3_ALLOW_HTTP?.trim() || "false";
+  if (allowHttp !== "true" && allowHttp !== "false") throw new Error("S3_ALLOW_HTTP must be true or false");
+  const ambient = S3_AMBIENT_SETTINGS.filter((name) => env[name]?.trim());
+  if (ambient.length) throw new Error(`Unset ${ambient.join(" and ")}: Bun's S3 client would send it with every request, and Nook uses only S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY`);
   const bucket = env.S3_BUCKET?.trim() ?? "";
   const endpointRaw = env.S3_ENDPOINT?.trim() ?? "";
   const region = env.S3_REGION?.trim() || null;
@@ -169,7 +191,7 @@ export function parseStorageConfig(env: Record<string, string | undefined>, data
   if (region && !/^[a-z0-9-]{1,40}$/.test(region)) throw new Error("S3_REGION must be a region name such as us-east-1 (or auto for R2)");
   if (/\s/.test(accessKeyId) || accessKeyId.length > 256) throw new Error("S3_ACCESS_KEY_ID must be a single token without spaces");
   if (/\s/.test(secretAccessKey) || secretAccessKey.length > 256) throw new Error("S3_SECRET_ACCESS_KEY must be a single token without spaces");
-  let endpoint: string | null = null;
+  let endpoint = `https://s3.${region}.amazonaws.com`;
   if (endpointRaw) {
     let url: URL;
     try {
@@ -181,19 +203,20 @@ export function parseStorageConfig(env: Record<string, string | undefined>, data
       throw new Error("S3_ENDPOINT must be an http(s) origin without credentials, a path, a query, or a fragment");
     }
     // Plain http sends every file over the wire unencrypted: only to this machine, or when the operator says so.
-    if (url.protocol === "http:" && !isLocalHost(url.hostname) && env.S3_ALLOW_HTTP?.trim() !== "true") {
+    if (url.protocol === "http:" && !isLoopbackLiteral(url.hostname) && allowHttp !== "true") {
       throw new Error("S3_ENDPOINT must use https; set S3_ALLOW_HTTP=true only for a service on a private network you trust");
     }
     endpoint = url.origin;
   }
-  const allowHttp = env.S3_ALLOW_HTTP?.trim() || "false";
-  if (allowHttp !== "true" && allowHttp !== "false") throw new Error("S3_ALLOW_HTTP must be true or false");
   const prefixRaw = env.S3_PREFIX?.trim() ?? "";
   if (prefixRaw && (!/^[A-Za-z0-9._/-]{1,200}$/.test(prefixRaw) || prefixRaw.startsWith("/") || prefixRaw.split("/").some((part) => part === "." || part === ".."))) {
     throw new Error("S3_PREFIX may hold letters, digits, dots, hyphens, underscores, and slashes (up to 200), must not start with / or contain . or .. segments");
   }
   const prefix = prefixRaw && !prefixRaw.endsWith("/") ? `${prefixRaw}/` : prefixRaw;
-  return { backend: "s3", bucket, endpoint, region, accessKeyId, secretAccessKey, prefix };
+  const timeoutRaw = env.S3_TIMEOUT_MS?.trim() || "30000";
+  const timeoutMs = /^\d{1,7}$/.test(timeoutRaw) ? Number(timeoutRaw) : Number.NaN;
+  if (!(timeoutMs >= 1000 && timeoutMs <= 600_000)) throw new Error("S3_TIMEOUT_MS must be an integer from 1000 to 600000");
+  return { backend: "s3", bucket, endpoint, region, accessKeyId, secretAccessKey, prefix, timeoutMs };
 }
 const storageConfig = parseStorageConfig(process.env, dataDir);
 

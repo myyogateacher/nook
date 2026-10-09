@@ -448,7 +448,7 @@ describe("whiteboards API", () => {
       .run(crypto.randomUUID(), board.id, snapshotObject, "0".repeat(64), new Date().toISOString());
     const orphan = crypto.randomUUID();
     await putStoredObject(orphan, "{}");
-    for (const id of [live, snapshotObject, orphan]) ageStoredObject(id, 2 * 3_600_000);
+    for (const id of [live, snapshotObject, orphan]) ageStoredObject(id, 86_400_000);
     expect(hasDocumentRow(live)).toBe(true);
     expect(hasDocumentRow(snapshotObject)).toBe(true);
     expect(hasDocumentRow(orphan)).toBe(false);

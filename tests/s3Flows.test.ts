@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { createUser, db, fakeS3, request, s3Backend, type Session } from "./support/harness";
 import { makePng } from "./support/images";
+import { startBlackHole } from "./support/fakeS3";
 
 /**
  * File flows through the S3 backend (S3 storage slice, docs/plan/research/2026-10-09-s3-storage.md):
@@ -13,7 +14,8 @@ import { makePng } from "./support/images";
  */
 
 const { runSweep } = await import("../server/sweeper");
-const { objectStore } = await import("../server/objectStore");
+const objectStoreModule = await import("../server/objectStore");
+const { objectStore } = objectStoreModule;
 const { purgeAfterFrom } = await import("../server/bin");
 
 type Json = Record<string, any>;
@@ -306,9 +308,9 @@ describe.skipIf(!s3Backend)("S3 backend: file flows", () => {
     await objectStore().put("documents", orphan, new TextEncoder().encode("orphan"));
     await objectStore().put("documents", young, new TextEncoder().encode("young"));
     await objectStore().put("avatars", avatarOrphan, new TextEncoder().encode("avatar"));
-    fakeS3!.age(key(live.id), 7_200_000);
-    fakeS3!.age(key(orphan), 7_200_000);
-    fakeS3!.age(key(avatarOrphan, "avatars"), 7_200_000);
+    fakeS3!.age(key(live.id), 86_400_000);
+    fakeS3!.age(key(orphan), 86_400_000);
+    fakeS3!.age(key(avatarOrphan, "avatars"), 86_400_000);
     fakeS3!.objects.set(`${PREFIX}documents/not-a-uuid`, { bytes: new Uint8Array(1), lastModified: new Date(0), etag: '"x"', contentType: "text/plain" });
     fakeS3!.objects.set("outside-prefix/documents/" + crypto.randomUUID(), { bytes: new Uint8Array(1), lastModified: new Date(0), etag: '"x"', contentType: "text/plain" });
     const counts = await runSweep();
@@ -321,5 +323,73 @@ describe.skipIf(!s3Backend)("S3 backend: file flows", () => {
     expect(fakeS3!.objects.has(`${PREFIX}documents/not-a-uuid`)).toBe(true);
     expect([...fakeS3!.objects.keys()].some((name) => name.startsWith("outside-prefix/"))).toBe(true);
     expect(fakeS3!.objects.has(`${PREFIX}.nook-instance`)).toBe(true);
+  });
+});
+
+describe.skipIf(!s3Backend)("S3 backend: outages and limits (review H2, L1, M3)", () => {
+  const { createS3ObjectStore, setObjectStoreForTests, setS3UploadLimitForTests } = objectStoreModule;
+  const settings = (endpoint: string) => ({ bucket: fakeS3!.bucket, endpoint, region: "us-east-1", accessKeyId: fakeS3!.accessKeyId, secretAccessKey: fakeS3!.secretAccessKey, prefix: PREFIX, timeoutMs: 300 });
+
+  test("a store that accepts and never answers: uploads, downloads, and whiteboard reads answer 503 in time; the sweep still finishes", async () => {
+    const owner = await createUser("S3 outage owner");
+    const document = await uploadOk(owner, "before the outage", "before.txt");
+    const board = (await api(owner, "POST", "/whiteboards", { name: "Outage board" })).body.whiteboard as Json;
+    const original = objectStore();
+    const hole = startBlackHole();
+    setObjectStoreForTests(createS3ObjectStore(settings(hole.url)));
+    try {
+      const started = Date.now();
+      const download = await request(`/files/${document.id}/content`, {}, owner);
+      expect(download.status).toBe(503);
+      expect(download.headers.get("retry-after")).toBe("5");
+      expect(await download.json()).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+      const uploaded = await upload(owner, "during the outage", "during.txt");
+      expect(uploaded.status).toBe(503);
+      expect(uploaded.headers.get("retry-after")).toBe("5");
+      expect(await uploaded.json()).toMatchObject({ code: "STORAGE_UNAVAILABLE" });
+      const read = await api(owner, "GET", `/whiteboards/${board.id}`);
+      expect(read.status).toBe(503);
+      expect(read.body.code).toBe("STORAGE_UNAVAILABLE");
+      // The hourly sweep finishes (its file part is skipped) instead of holding its in-flight run forever.
+      expect(await runSweep()).toBeNull();
+      expect(Date.now() - started).toBeLessThan(15_000);
+    } finally {
+      setObjectStoreForTests(original);
+      hole.stop();
+    }
+    expect((await request(`/files/${document.id}/content`, {}, owner)).status).toBe(200);
+  }, 30_000);
+
+  test("a download that stalls mid-body is cut after the idle deadline instead of staying pending", async () => {
+    const owner = await createUser("S3 stalled download");
+    const document = await uploadOk(owner, "x".repeat(5000), "stalled.txt");
+    const original = objectStore();
+    setObjectStoreForTests(createS3ObjectStore(settings(fakeS3!.url)));
+    fakeS3!.stallBodyNext(new RegExp(`^GET ${PREFIX}documents/${document.id}`));
+    try {
+      const response = await request(`/files/${document.id}/content`, {}, owner);
+      expect(response.status).toBe(200);
+      const outcome = await response.arrayBuffer().then((body) => body.byteLength, () => "cut");
+      expect(outcome === "cut" || (typeof outcome === "number" && outcome < 5000)).toBe(true);
+    } finally {
+      fakeS3!.clearFailures();
+      setObjectStoreForTests(original);
+    }
+  }, 30_000);
+
+  test("past the concurrent S3 upload cap an upload answers 503 STORAGE_BUSY with Retry-After and stores nothing", async () => {
+    const owner = await createUser("S3 busy owner");
+    const before = documentKeys().length;
+    setS3UploadLimitForTests(0);
+    try {
+      const response = await upload(owner, "no slot", "busy.txt");
+      expect(response.status).toBe(503);
+      expect(response.headers.get("retry-after")).toBe("5");
+      expect(await response.json()).toMatchObject({ code: "STORAGE_BUSY" });
+    } finally {
+      setS3UploadLimitForTests(null);
+    }
+    expect(documentKeys().length).toBe(before);
+    expect((await upload(owner, "a slot again", "after.txt")).status).toBe(201);
   });
 });

@@ -175,6 +175,8 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, s
     return textResult(result);
   } catch (error) {
     if (error instanceof McpToolError) return errorResult(error.code, error.message, error.details);
+    // S3 storage (review L1): any tool that reads file bytes (files, whiteboards) reports an outage as retryable.
+    if (error instanceof StorageUnavailableError) return errorResult("STORAGE_UNAVAILABLE", "File storage is unavailable. Try again later.");
     console.error(`MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
     return errorResult("INTERNAL", "Something went wrong");
   }
@@ -390,7 +392,7 @@ async function readDocumentText(document: DocumentRow) {
     bytes = await (await openObjectForRead(document.id, document.size_bytes)).bytes();
   } catch (error) {
     if (error instanceof DocumentIntegrityError) throw new McpToolError("INTERNAL", "File content failed integrity verification");
-    if (error instanceof StorageUnavailableError) throw new McpToolError("INTERNAL", "File storage is unavailable. Try again later.");
+    if (error instanceof StorageUnavailableError) throw new McpToolError("STORAGE_UNAVAILABLE", "File storage is unavailable. Try again later.");
     throw error;
   }
   if (bytes.byteLength !== document.size_bytes || createHash("sha256").update(bytes).digest("hex") !== document.sha256) {

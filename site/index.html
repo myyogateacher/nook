@@ -642,6 +642,7 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>S3_SECRET_ACCESS_KEY_FILE</code></td><td>empty</td><td>A file holding the secret key, outside <code>DATA_DIR</code>.</td></tr>
           <tr><td><code>S3_PREFIX</code></td><td>empty</td><td>A key prefix; one Nook per prefix (claimed at first start).</td></tr>
           <tr><td><code>S3_ALLOW_HTTP</code></td><td><code>false</code></td><td><code>true</code> allows a plain <code>http://</code> endpoint on another host (a trusted private network).</td></tr>
+          <tr><td><code>S3_TIMEOUT_MS</code></td><td><code>30000</code></td><td>Deadline for one S3 request (a part upload gets four times this); a silent store answers 503 instead of hanging.</td></tr>
           <tr><td><code>PUSH_ENABLED</code></td><td><code>auto</code></td><td>Web Push for reminders: <code>auto</code> (on only when <code>APP_ORIGIN</code> is <code>https:</code>), <code>true</code>, or <code>false</code>. Browsers allow push only on a secure origin.</td></tr>
           <tr><td><code>PUSH_SUBJECT</code></td><td><code>APP_ORIGIN</code></td><td>The VAPID contact push services may use: an <code>http(s)</code> URL or a <code>mailto:</code> address.</td></tr>
           <tr><td><code>PUSH_ENDPOINT_HOSTS</code></td><td>empty</td><td>Extra push-service hosts, comma-separated (<code>push.example.com</code> or <code>*.push.example.com</code>), besides the built-in Google, Mozilla, Apple, and Microsoft ones.</td></tr>

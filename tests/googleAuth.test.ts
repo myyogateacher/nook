@@ -1269,7 +1269,7 @@ describe("avatars (D299, T257, T262)", () => {
     const { sweepAvatarFiles } = await import("../server/avatars");
     const orphan = crypto.randomUUID();
     await putStoredObject(orphan, "x", "avatars");
-    ageStoredObject(orphan, 3_600_000, "avatars");
+    ageStoredObject(orphan, 86_400_000, "avatars");
     const fresh = crypto.randomUUID();
     await putStoredObject(fresh, "x", "avatars");
     await sweepAvatarFiles();

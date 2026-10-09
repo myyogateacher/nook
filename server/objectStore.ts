@@ -22,6 +22,10 @@ import { config, type S3StorageConfig, type StorageConfig } from "./config";
  * abort an upload it has started (Bun 1.4.2: `end(error)` still completes it), so a discarded S3 writer
  * completes and then deletes its object; the key is a fresh UUID no row names, so nothing reads it in
  * between, and the orphan sweep removes it if the delete fails.
+ *
+ * Every S3 request has a deadline (S3_TIMEOUT_MS; a part upload four times that), and a download
+ * stream fails when no bytes arrive for S3_TIMEOUT_MS (review H2): an endpoint that accepts and never
+ * answers turns into StorageUnavailableError("…", "Timeout"), never a request that hangs.
  */
 
 export type ObjectNamespace = "documents" | "avatars";
@@ -38,7 +42,11 @@ export class ObjectIntegrityError extends Error {
   }
 }
 
-/** The storage service could not be reached or refused a request (S3 only). Never carries credentials. */
+/**
+ * The storage service could not be reached, refused a request, timed out (`Timeout`), has every upload
+ * slot in use (`Busy`), or this process lost its claim on the prefix (`Fenced`). S3 only; never carries
+ * credentials.
+ */
 export class StorageUnavailableError extends Error {
   constructor(readonly operation: string, readonly code: string) {
     super(`Object storage ${operation} failed (${code})`);
@@ -53,10 +61,15 @@ export type ListedObject = { id: string | null; size: number; modifiedMs: number
 export interface ObjectWriter {
   /** Appends bytes. Awaiting each call keeps memory bounded (backpressure). */
   write(chunk: Uint8Array): Promise<void>;
-  /** Makes the object visible under its key. Fails when the key already holds an object (local). */
+  /** Makes the object visible under its key. Locally fails when the key holds an object, unless created with `replace`. */
   commit(): Promise<void>;
-  /** Drops what was written. Safe before any write, after a failed write or commit, and twice. */
+  /** Drops what was written. Safe before any write, after a failed write or commit, and twice. Releases too. */
   discard(): Promise<void>;
+  /**
+   * The caller's row is committed (or the object abandoned): the orphan sweep may judge this object again.
+   * Until then (from createWriter on) both sweeps skip it (review M1). Idempotent.
+   */
+  release(): void;
 }
 
 export interface StoredObject {
@@ -69,12 +82,23 @@ export interface StoredObject {
   close(): Promise<void>;
 }
 
+export type WriterOptions = {
+  /** Replace an existing object atomically (locally: stage, then rename over it). The migrate CLI only. */
+  replace?: boolean;
+};
+
 export interface ObjectStore {
   readonly backend: "local" | "s3";
+  /** How old an unreferenced object must be before the sweep removes it (S3 allows for clock skew and slow uploads). */
+  readonly orphanGraceMs: number;
   /** A staged writer for a new object; nothing is created until the first write or commit. */
-  createWriter(namespace: ObjectNamespace, id: string): ObjectWriter;
-  /** Writes a whole object (staged, then committed); nothing is left behind on failure. */
-  put(namespace: ObjectNamespace, id: string, bytes: Uint8Array): Promise<void>;
+  createWriter(namespace: ObjectNamespace, id: string, options?: WriterOptions): ObjectWriter;
+  /**
+   * Writes a whole object (staged, then committed); nothing is left behind on failure. The sweep keeps
+   * skipping it until the caller's current synchronous step is over, so a row inserted right after the
+   * await is always in place before the object can be judged an orphan.
+   */
+  put(namespace: ObjectNamespace, id: string, bytes: Uint8Array, options?: WriterOptions): Promise<void>;
   /** Opens an object for reading; with `expectedSize`, a different size is an ObjectIntegrityError. */
   open(namespace: ObjectNamespace, id: string, expectedSize?: number): Promise<StoredObject>;
   /** The object's size and time, or null when there is none. */
@@ -85,8 +109,8 @@ export interface ObjectStore {
   list(namespace: ObjectNamespace): AsyncIterable<ListedObject>;
   /** Removes staged writes last touched before `cutoffMs`. S3 has none to remove (see the plan, §5). */
   sweepStaging(namespace: ObjectNamespace, cutoffMs: number): Promise<{ removed: number; ignored: number }>;
-  /** Writes, reads back, and deletes a small object; throws when any step fails. */
-  probe(): Promise<void>;
+  /** Writes, reads back, and deletes a small object; throws when any step fails. Reports the store's clock skew when it can. */
+  probe(): Promise<{ clockSkewMs: number | null }>;
 }
 
 function safeId(id: string) {
@@ -97,6 +121,45 @@ function safeId(id: string) {
 /** Bytes an upload of `objectBytes` needs free on the data volume: the floor for SQLite, plus the bytes when they land there. */
 export function diskBytesNeeded(objectBytes: number, store: Pick<ObjectStore, "backend"> = objectStore()) {
   return config.minFreeDiskBytes + (store.backend === "local" ? objectBytes : 0);
+}
+
+// ------------------------------------------------------------------------------ in-flight objects
+
+/** Objects being written in this process whose row is not committed yet (review M1). Both sweeps skip them. */
+const inFlight = new Map<string, number>();
+const flightKey = (namespace: ObjectNamespace, id: string) => `${namespace}/${id}`;
+
+export const isObjectInFlight = (namespace: ObjectNamespace, id: string) => inFlight.has(flightKey(namespace, id));
+
+/**
+ * Marks an object in flight and returns its release. The release waits for setImmediate, so a
+ * caller that awaits the write and then commits its row in the same synchronous step is never seen by a
+ * sweep in between.
+ */
+function holdObject(namespace: ObjectNamespace, id: string) {
+  const key = flightKey(namespace, id);
+  inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    setImmediate(() => {
+      const left = (inFlight.get(key) ?? 1) - 1;
+      if (left <= 0) inFlight.delete(key);
+      else inFlight.set(key, left);
+    });
+  };
+}
+
+async function putThrough(writer: ObjectWriter, bytes: Uint8Array) {
+  try {
+    await writer.write(bytes);
+    await writer.commit();
+  } catch (error) {
+    await writer.discard().catch(() => undefined);
+    throw error;
+  }
+  writer.release();
 }
 
 // ------------------------------------------------------------------------------------------ local
@@ -157,9 +220,10 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
   const objectsDir = (namespace: ObjectNamespace) => directory(LOCAL_LAYOUT[namespace].objects);
   const stagingDir = (namespace: ObjectNamespace) => directory(LOCAL_LAYOUT[namespace].staging);
 
-  function createWriter(namespace: ObjectNamespace, id: string): ObjectWriter {
+  function createWriter(namespace: ObjectNamespace, id: string, options: WriterOptions = {}): ObjectWriter {
     safeId(id);
     const layout = LOCAL_LAYOUT[namespace];
+    const release = holdObject(namespace, id);
     let handle: FileHandle | null = null;
     let path: string | null = null;
     let done = false;
@@ -192,28 +256,36 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
         const target = join(objects, id);
         const info = await lstat(source);
         if (!info.isFile() || info.isSymbolicLink()) throw new Error("Unsafe staged document");
-        try {
-          await lstat(target);
-          throw new Error("Document object already exists");
-        } catch (error) {
-          if (!isMissing(error)) throw error;
+        if (!options.replace) {
+          try {
+            await lstat(target);
+            throw new Error("Document object already exists");
+          } catch (error) {
+            if (!isMissing(error)) throw error;
+          }
         }
+        // rename() replaces an existing target atomically: the old bytes stay readable until the new ones are in place.
         await rename(source, target);
         await syncDirectory(staging);
         if (objects !== staging) await syncDirectory(objects);
       },
       async discard() {
         done = true;
-        if (handle) {
-          await handle.close().catch(() => undefined);
-          handle = null;
-        }
         try {
-          await unlink(path ?? join(await stagingDir(namespace), layout.part(id)));
-        } catch (error) {
-          if (!isMissing(error)) throw error;
+          if (handle) {
+            await handle.close().catch(() => undefined);
+            handle = null;
+          }
+          try {
+            await unlink(path ?? join(await stagingDir(namespace), layout.part(id)));
+          } catch (error) {
+            if (!isMissing(error)) throw error;
+          }
+        } finally {
+          release();
         }
-      }
+      },
+      release
     };
   }
 
@@ -272,17 +344,9 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
 
   const store: ObjectStore = {
     backend: "local",
+    orphanGraceMs: 3_600_000,
     createWriter,
-    async put(namespace, id, bytes) {
-      const writer = createWriter(namespace, id);
-      try {
-        await writer.write(bytes);
-        await writer.commit();
-      } catch (error) {
-        await writer.discard().catch(() => undefined);
-        throw error;
-      }
-    },
+    put: (namespace, id, bytes, options) => putThrough(createWriter(namespace, id, options), bytes),
     open: open_,
     async stat(namespace, id) {
       try {
@@ -331,7 +395,7 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
             counts.ignored += 1;
             continue;
           }
-          if (info.mtimeMs >= cutoffMs) continue;
+          if (info.mtimeMs >= cutoffMs || isObjectInFlight(namespace, id)) continue;
           await unlink(path);
           counts.removed += 1;
         } catch (error) {
@@ -342,6 +406,7 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
     },
     async probe() {
       await objectsDir("documents");
+      return { clockSkewMs: null };
     }
   };
   return store;
@@ -351,8 +416,21 @@ export function createLocalObjectStore(dataRoot: string): ObjectStore {
 
 /** Multipart part size: S3's minimum part is 5 MiB; the writer flushes after each one to bound memory. */
 export const S3_PART_BYTES = 5 * 1024 * 1024;
-const S3_QUEUE_SIZE = 2;
+/** One part in flight per upload (review M3): with the flush after every part, the queue never holds more. */
+const S3_QUEUE_SIZE = 1;
 const S3_RETRIES = 3;
+/** Concurrent S3 uploads in this process (review M3); past it an upload answers 503 STORAGE_BUSY with Retry-After. */
+export const S3_MAX_UPLOADS = 8;
+let s3UploadLimit = S3_MAX_UPLOADS;
+let s3UploadsActive = 0;
+/** Test hook: the concurrent S3 upload cap (null restores the default). */
+export function setS3UploadLimitForTests(limit: number | null) {
+  s3UploadLimit = limit ?? S3_MAX_UPLOADS;
+}
+export const s3UploadsInProgress = () => s3UploadsActive;
+
+/** Clock skew between this host and the store above which startup warns (S3 signatures fail past 15 minutes). */
+export const CLOCK_SKEW_WARN_MS = 5 * 60_000;
 
 const s3Code = (error: unknown) => {
   const code = (error as { code?: unknown }).code;
@@ -360,41 +438,100 @@ const s3Code = (error: unknown) => {
 };
 const isNoSuchKey = (error: unknown) => ["NoSuchKey", "NotFound", "ENOENT"].includes(s3Code(error));
 
+/** Races `work` against a deadline; on expiry throws StorageUnavailableError(operation, "Timeout"). The request itself is abandoned. */
+export function withDeadline<T>(work: Promise<T> | T, ms: number, operation: string): Promise<T> {
+  if (!(work instanceof Promise)) return Promise.resolve(work);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new StorageUnavailableError(operation, "Timeout")), ms);
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Wraps a download stream with an idle watchdog: no bytes for `idleMs` errors the stream (the client sees
+ * a cut response, the handler never stays pending). Content-Length (review L2): Bun 1.4.2 sends a
+ * streamed body with chunked transfer encoding and leaves the route's Content-Length out, on either
+ * backend (the local file stream too); only a body that is complete before the headers go out keeps it.
+ * HEAD and 416 answers carry it, and Content-Range still states every range's size.
+ */
+function watchdogStream(source: ReadableStream<Uint8Array>, idleMs: number): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await withDeadline(reader.read(), idleMs, "read");
+        if (done) controller.close();
+        else controller.enqueue(value);
+      } catch (error) {
+        controller.error(error instanceof StorageUnavailableError ? error : new StorageUnavailableError("read", s3Code(error)));
+        reader.cancel().catch(() => undefined);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason).catch(() => undefined);
+    }
+  }, { highWaterMark: 0 });
+}
+
+export type S3StoreSettings = Omit<S3StorageConfig, "backend" | "timeoutMs"> & { timeoutMs?: number };
+
 /** The S3 backend over Bun's built-in client. Errors are StorageUnavailableError with the service's code only. */
-export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">): ObjectStore {
+export function createS3ObjectStore(settings: S3StoreSettings): ObjectStore {
   const client = new Bun.S3Client({
     bucket: settings.bucket,
     accessKeyId: settings.accessKeyId,
     secretAccessKey: settings.secretAccessKey,
-    ...(settings.endpoint ? { endpoint: settings.endpoint } : {}),
+    // Always explicit (review L3): never AWS_ENDPOINT or S3_ENDPOINT from the environment.
+    endpoint: settings.endpoint,
     ...(settings.region ? { region: settings.region } : {})
   });
   const prefix = settings.prefix;
+  const timeoutMs = settings.timeoutMs ?? 30_000;
+  const partTimeoutMs = timeoutMs * 4;
   const keyOf = (namespace: ObjectNamespace, id: string) => `${prefix}${namespace}/${safeId(id)}`;
   const unavailable = (operation: string) => (error: unknown): never => {
     throw error instanceof StorageUnavailableError || error instanceof ObjectIntegrityError ? error : new StorageUnavailableError(operation, s3Code(error));
   };
+  /** One metadata request (HEAD, DELETE, LIST, small PUT/GET) within the deadline. */
+  const request = <T>(work: Promise<T>, operation: string) => withDeadline(work, timeoutMs, operation).catch(unavailable(operation));
+  let fenced = false;
+  const notFenced = (operation: string) => {
+    if (fenced) throw new StorageUnavailableError(operation, "Fenced");
+  };
 
   function createWriter(namespace: ObjectNamespace, id: string): ObjectWriter {
     const key = keyOf(namespace, id);
+    const release = holdObject(namespace, id);
     let sink: ReturnType<ReturnType<typeof client.file>["writer"]> | null = null;
     let sinceFlush = 0;
+    let slot = false;
     let state: "open" | "committed" | "discarded" = "open";
-    const ensureSink = () => sink ??= client.file(key).writer({ partSize: S3_PART_BYTES, queueSize: S3_QUEUE_SIZE, retry: S3_RETRIES, type: "application/octet-stream" });
+    const freeSlot = () => {
+      if (slot) s3UploadsActive -= 1;
+      slot = false;
+    };
+    const ensureSink = () => {
+      if (!sink) {
+        if (s3UploadsActive >= s3UploadLimit) throw new StorageUnavailableError("write", "Busy");
+        s3UploadsActive += 1;
+        slot = true;
+        sink = client.file(key).writer({ partSize: S3_PART_BYTES, queueSize: S3_QUEUE_SIZE, retry: S3_RETRIES, type: "application/octet-stream" });
+      }
+      return sink;
+    };
     return {
       async write(chunk) {
         if (state !== "open") throw new Error("Object writer is closed");
         try {
           const opened = ensureSink();
-          const written = opened.write(chunk);
-          if (written instanceof Promise) await written;
+          await withDeadline(opened.write(chunk), partTimeoutMs, "write");
           sinceFlush += chunk.byteLength;
           // Bun's writer never pushes back on write(); a flush after every part waits for the upload, so at
           // most about one part per upload is held in memory. Parts stay at least S3_PART_BYTES (S3's minimum).
           if (sinceFlush >= S3_PART_BYTES) {
             sinceFlush = 0;
-            const flushed = opened.flush();
-            if (flushed instanceof Promise) await flushed;
+            await withDeadline(opened.flush(), partTimeoutMs, "write");
           }
         } catch (error) {
           unavailable("write")(error);
@@ -404,50 +541,49 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
         if (state !== "open") throw new Error("Object writer is closed");
         state = "committed";
         try {
-          const ended = ensureSink().end();
-          if (ended instanceof Promise) await ended;
+          await withDeadline(ensureSink().end(), partTimeoutMs, "write");
         } catch (error) {
           // A failed completion may still have left an object; remove it so the caller sees nothing.
-          await client.delete(key).catch(() => undefined);
+          await withDeadline(client.delete(key), timeoutMs, "delete").catch(() => undefined);
           unavailable("write")(error);
+        } finally {
+          freeSlot();
         }
       },
       async discard() {
         if (state === "discarded") return;
         const wasOpen = state === "open";
         state = "discarded";
-        if (!sink) return;
-        if (wasOpen) {
-          try {
-            const ended = sink.end();
-            if (ended instanceof Promise) await ended;
-          } catch {
-            // The upload failed; Bun aborted it.
+        try {
+          if (!sink) return;
+          if (wasOpen) {
+            try {
+              await withDeadline(sink.end(), partTimeoutMs, "write");
+            } catch {
+              // The upload failed or hung; Bun aborts a failed one.
+            }
           }
+          await request(client.delete(key), "delete");
+        } finally {
+          freeSlot();
+          release();
         }
-        await client.delete(key).catch(unavailable("delete"));
-      }
+      },
+      release
     };
   }
 
   const store: ObjectStore = {
     backend: "s3",
+    // Six hours: S3 dates a multipart object from its first part, and this host's clock may differ from the store's.
+    orphanGraceMs: 6 * 3_600_000,
     createWriter,
-    async put(namespace, id, bytes) {
-      const writer = createWriter(namespace, id);
-      try {
-        await writer.write(bytes);
-        await writer.commit();
-      } catch (error) {
-        await writer.discard().catch(() => undefined);
-        throw error;
-      }
-    },
+    put: (namespace, id, bytes) => putThrough(createWriter(namespace, id), bytes),
     async open(namespace, id, expectedSize) {
       const key = keyOf(namespace, id);
       let size: number;
       try {
-        size = (await client.stat(key)).size;
+        size = (await withDeadline(client.stat(key), timeoutMs, "read")).size;
       } catch (error) {
         if (isNoSuchKey(error)) throw new ObjectIntegrityError("missing");
         return unavailable("read")(error);
@@ -457,14 +593,13 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
       return {
         size,
         stream(start = 0, end = size - 1) {
-          // A ranged GET for part of the object; Bun streams the response body. Piped through a plain
-          // TransformStream: Bun 1.4.2 sends its native S3 stream chunked, dropping the route's Content-Length.
+          // A ranged GET for part of the object; Bun streams the response body.
           const source = (start === 0 && end === size - 1 ? file : file.slice(start, end + 1)).stream() as ReadableStream<Uint8Array>;
-          return source.pipeThrough(new TransformStream<Uint8Array, Uint8Array>());
+          return watchdogStream(source, timeoutMs);
         },
         async bytes() {
           try {
-            const bytes = new Uint8Array(await file.arrayBuffer());
+            const bytes = new Uint8Array(await withDeadline(file.arrayBuffer(), partTimeoutMs, "read"));
             if (bytes.byteLength !== size) throw new ObjectIntegrityError("size_mismatch");
             return bytes;
           } catch (error) {
@@ -479,7 +614,7 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
     },
     async stat(namespace, id) {
       try {
-        const info = await client.stat(keyOf(namespace, id));
+        const info = await withDeadline(client.stat(keyOf(namespace, id)), timeoutMs, "stat");
         return { id, size: info.size, modifiedMs: info.lastModified.getTime() };
       } catch (error) {
         if (isNoSuchKey(error)) return null;
@@ -487,19 +622,15 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
       }
     },
     async remove(namespace, id) {
+      notFenced("delete");
       // S3 answers a DELETE of a missing key with success.
-      await client.delete(keyOf(namespace, id)).catch(unavailable("delete"));
+      await request(client.delete(keyOf(namespace, id)), "delete");
     },
     async *list(namespace) {
       const listPrefix = `${prefix}${namespace}/`;
       let continuationToken: string | undefined;
       do {
-        let page;
-        try {
-          page = await client.list({ prefix: listPrefix, ...(continuationToken ? { continuationToken } : {}) });
-        } catch (error) {
-          return unavailable("list")(error);
-        }
+        const page = await request(client.list({ prefix: listPrefix, ...(continuationToken ? { continuationToken } : {}) }), "list");
         for (const entry of page.contents ?? []) {
           const name = entry.key.slice(listPrefix.length);
           yield { id: isObjectId(name) ? name : null, size: entry.size ?? 0, modifiedMs: entry.lastModified ? Date.parse(entry.lastModified) : 0 };
@@ -515,22 +646,36 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
     async probe() {
       const key = `${prefix}.probe/${crypto.randomUUID()}`;
       const payload = `nook storage probe ${new Date().toISOString()}`;
+      let clockSkewMs: number | null = null;
       try {
-        await client.write(key, payload, { type: "text/plain" });
-        const back = await client.file(key).text();
+        const before = Date.now();
+        await request(client.write(key, payload, { type: "text/plain" }), "probe");
+        const after = Date.now();
+        const back = await request(client.file(key).text(), "probe");
         if (back !== payload) throw new StorageUnavailableError("probe", "ReadBackMismatch");
+        // Last-Modified has one-second resolution; anything outside the request's window, past a second, is skew.
+        const stamped = (await request(client.stat(key), "probe")).lastModified.getTime();
+        clockSkewMs = stamped < before - 1000 ? stamped - before : stamped > after + 1000 ? stamped - after : 0;
       } catch (error) {
-        await client.delete(key).catch(() => undefined);
+        await withDeadline(client.delete(key), timeoutMs, "probe").catch(() => undefined);
         return unavailable("probe")(error);
       }
-      await client.delete(key).catch(unavailable("probe"));
+      await request(client.delete(key), "probe");
+      return { clockSkewMs };
     }
   };
-  return Object.assign(store, { client, prefix });
+  return Object.assign(store, {
+    client,
+    prefix,
+    timeoutMs,
+    /** Stops every delete from this process: it no longer holds the prefix's newest claim (review M2). */
+    fence: () => { fenced = true; },
+    isFenced: () => fenced
+  });
 }
 
 /** The Bun client and key prefix behind an S3 store (the instance marker and the migrate CLI use them). */
-export const s3Internals = (store: ObjectStore) => store as ObjectStore & { client?: Bun.S3Client; prefix?: string };
+export const s3Internals = (store: ObjectStore) => store as ObjectStore & { client?: Bun.S3Client; prefix?: string; timeoutMs?: number; fence?: () => void; isFenced?: () => boolean };
 
 export function createObjectStore(storage: StorageConfig, dataRoot: string): ObjectStore {
   return storage.backend === "s3" ? createS3ObjectStore(storage) : createLocalObjectStore(dataRoot);
@@ -553,49 +698,120 @@ export function setObjectStoreForTests(store: ObjectStore | null) {
 const INSTANCE_FILE = "storage-instance";
 const INSTANCE_KEY = ".nook-instance";
 
+type LocalInstance = { id: string; seq: number };
+type Marker = { id: string; seq: number; nonce: string };
+
 /**
- * Ties a bucket prefix to one data directory, so two Nooks pointed at the same S3_PREFIX cannot delete
- * each other's objects as orphans. DATA_DIR/storage-instance holds a random id (created once; it travels
- * with backups); `<S3_PREFIX>.nook-instance` holds the same id. A prefix that names another id refuses
- * to start. Returns "created" when the marker was written now.
+ * The prefix claim (review M2). `DATA_DIR/storage-instance` holds this data directory's id and claim
+ * number (`<uuid> <n>`); `<S3_PREFIX>.nook-instance` holds the newest claim (`<uuid> <n> <nonce>`).
+ *
+ * - Another id in the marker: another Nook's prefix. Refused (two Nooks would sweep each other's files).
+ * - A marker number above this directory's: this directory is older than the bucket's last claim, which
+ *   is what a restored backup looks like (the live server claimed again since). Refused at startup, and a
+ *   running server that finds itself behind at its hourly check is fenced: no sweeps and no deletes.
+ *   `storage-admin.ts reclaim` accepts the directory after a real disaster restore.
+ * - Otherwise the claim moves on: the local number first, then the marker, then the marker is read back
+ *   (Bun 1.4.2 has no conditional PUT); a different nonce means another process claimed at the same time.
+ *
+ * Every start and every hourly sweep claims again, and backup.sh restarts the server, so an archive's
+ * number is always behind the live bucket's.
  */
-export async function claimS3Prefix(store: ObjectStore, dataRoot: string): Promise<"matched" | "created"> {
-  const internals = s3Internals(store);
-  if (store.backend !== "s3" || !internals.client) return "matched";
-  const ownId = await localInstanceId(dataRoot);
-  const marker = internals.client.file(`${internals.prefix ?? ""}${INSTANCE_KEY}`);
-  let existing: string | null = null;
-  try {
-    existing = (await marker.text()).trim();
-  } catch (error) {
-    if (!isNoSuchKey(error)) throw new StorageUnavailableError("marker", s3Code(error));
+export class PrefixClaimError extends Error {
+  constructor(readonly reason: "foreign" | "stale" | "race", message: string) {
+    super(message);
+    this.name = "PrefixClaimError";
   }
-  if (existing === ownId) return "matched";
-  if (existing) throw new Error("S3_PREFIX already holds files of another Nook data directory (its .nook-instance marker differs). Use another S3_PREFIX or bucket; two Nooks must never share one, or each would delete the other's files as orphans.");
-  try {
-    await marker.write(`${ownId}\n`, { type: "text/plain" });
-  } catch (error) {
-    throw new StorageUnavailableError("marker", s3Code(error));
-  }
-  return "created";
 }
 
-/** DATA_DIR/storage-instance, created on first use. */
-export async function localInstanceId(dataRoot: string) {
+const foreignMessage = "S3_PREFIX already holds files of another Nook data directory (its .nook-instance marker differs). Use another S3_PREFIX or bucket; two Nooks must never share one, or each would delete the other's files as orphans";
+const staleMessage = "This data directory is older than the S3 prefix's last claim: it looks like a restored backup while the live Nook still uses this bucket. A restore test must use another S3_PREFIX (copy the objects there) or a read-only key. After a real disaster restore, run bun server/storage-admin.ts reclaim";
+
+function parseMarker(text: string): Marker | null {
+  const [id, seq, nonce] = text.trim().split(/\s+/);
+  if (!id || !isObjectId(id)) return null;
+  return { id, seq: Number.isSafeInteger(Number(seq)) ? Number(seq) : 0, nonce: nonce ?? "" };
+}
+
+async function readMarker(store: ObjectStore): Promise<Marker | "absent"> {
+  const internals = s3Internals(store);
+  const file = internals.client!.file(`${internals.prefix ?? ""}${INSTANCE_KEY}`);
+  try {
+    const text = await withDeadline(file.text(), internals.timeoutMs ?? 30_000, "marker");
+    return parseMarker(text) ?? { id: "unreadable", seq: Number.MAX_SAFE_INTEGER, nonce: "" };
+  } catch (error) {
+    if (isNoSuchKey(error)) return "absent";
+    throw error instanceof StorageUnavailableError ? error : new StorageUnavailableError("marker", s3Code(error));
+  }
+}
+
+async function writeMarker(store: ObjectStore, marker: Marker) {
+  const internals = s3Internals(store);
+  const file = internals.client!.file(`${internals.prefix ?? ""}${INSTANCE_KEY}`);
+  try {
+    await withDeadline(file.write(`${marker.id} ${marker.seq} ${marker.nonce}\n`, { type: "text/plain" }), internals.timeoutMs ?? 30_000, "marker");
+  } catch (error) {
+    throw error instanceof StorageUnavailableError ? error : new StorageUnavailableError("marker", s3Code(error));
+  }
+}
+
+/** Read only: whether the prefix is free, this directory's, or refused (foreign or stale). */
+export async function checkS3Prefix(store: ObjectStore, dataRoot: string): Promise<"absent" | "matched"> {
+  if (store.backend !== "s3") return "matched";
+  const own = await readLocalInstance(dataRoot);
+  const marker = await readMarker(store);
+  if (marker === "absent") return "absent";
+  if (marker.id !== own.id) throw new PrefixClaimError("foreign", foreignMessage);
+  if (marker.seq > own.seq) throw new PrefixClaimError("stale", staleMessage);
+  return "matched";
+}
+
+/** Claims the prefix for this data directory (see PrefixClaimError). Returns "created" when no marker existed. */
+export async function claimS3Prefix(store: ObjectStore, dataRoot: string, options: { reclaim?: boolean } = {}): Promise<"matched" | "created"> {
+  if (store.backend !== "s3") return "matched";
+  const own = await readLocalInstance(dataRoot);
+  const marker = await readMarker(store);
+  if (marker !== "absent" && marker.id !== own.id) throw new PrefixClaimError("foreign", foreignMessage);
+  if (marker !== "absent" && marker.seq > own.seq && !options.reclaim) {
+    s3Internals(store).fence?.();
+    throw new PrefixClaimError("stale", staleMessage);
+  }
+  const next: Marker = { id: own.id, seq: Math.max(own.seq, marker === "absent" ? 0 : marker.seq) + 1, nonce: crypto.randomUUID() };
+  await writeLocalInstance(dataRoot, { id: own.id, seq: next.seq });
+  await writeMarker(store, next);
+  const back = await readMarker(store);
+  if (back === "absent" || back.nonce !== next.nonce) {
+    s3Internals(store).fence?.();
+    throw new PrefixClaimError("race", "Another process claimed this S3_PREFIX at the same moment; only one Nook may use a prefix");
+  }
+  return marker === "absent" ? "created" : "matched";
+}
+
+/** DATA_DIR/storage-instance (`<uuid> <n>`; an older file holds the id alone), created on first use. */
+export async function readLocalInstance(dataRoot: string): Promise<LocalInstance> {
   const path = join(resolve(dataRoot), INSTANCE_FILE);
   const file = Bun.file(path);
   if (await file.exists()) {
-    const value = (await file.text()).trim();
-    if (isObjectId(value)) return value;
+    const [id, seq] = (await file.text()).trim().split(/\s+/);
+    if (id && isObjectId(id)) return { id, seq: Number.isSafeInteger(Number(seq)) ? Number(seq) : 0 };
     throw new Error(`${INSTANCE_FILE} in DATA_DIR is not a valid id; restore it from a backup or remove it only if no bucket holds this Nook's files`);
   }
-  const id = crypto.randomUUID();
-  const handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+  const created = { id: crypto.randomUUID(), seq: 0 };
+  await writeLocalInstance(dataRoot, created);
+  return created;
+}
+
+export const localInstanceId = async (dataRoot: string) => (await readLocalInstance(dataRoot)).id;
+
+async function writeLocalInstance(dataRoot: string, instance: LocalInstance) {
+  const path = join(resolve(dataRoot), INSTANCE_FILE);
+  const temp = `${path}.${crypto.randomUUID()}.tmp`;
+  const handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
   try {
-    await handle.writeFile(`${id}\n`, "utf8");
+    await handle.writeFile(`${instance.id} ${instance.seq}\n`, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
-  return id;
+  await rename(temp, path);
+  await syncDirectory(resolve(dataRoot));
 }

@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
-import { objectStore } from "./objectStore";
+import { isObjectInFlight, objectStore } from "./objectStore";
 
 /**
  * Profile pictures (Wave 35, D299, T257, T262). The server downloads a Google picture once, stores it
@@ -158,9 +158,10 @@ export async function sweepAvatarFiles(nowMs = Date.now()) {
   let removed = (await store.sweepStaging("avatars", nowMs - 3_600_000)).removed;
   const referenced = new Set((db.query("SELECT avatar_id FROM users WHERE avatar_id IS NOT NULL").all() as Array<{ avatar_id: string }>).map((row) => row.avatar_id));
   for await (const entry of store.list("avatars")) {
-    if (!entry.id || !UUID.test(entry.id) || referenced.has(entry.id)) continue;
-    // A file younger than a minute may belong to a sign-in that has not written its pointer yet.
-    if (nowMs - entry.modifiedMs < 60_000) continue;
+    if (!entry.id || !UUID.test(entry.id) || referenced.has(entry.id) || isObjectInFlight("avatars", entry.id)) continue;
+    // A file younger than a minute may belong to a sign-in that has not written its pointer yet (on S3,
+    // the store's grace: its clock may differ from this host's).
+    if (nowMs - entry.modifiedMs < (store.backend === "s3" ? store.orphanGraceMs : 60_000)) continue;
     try {
       await store.remove("avatars", entry.id);
       removed += 1;

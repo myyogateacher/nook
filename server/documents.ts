@@ -40,7 +40,9 @@ class UploadError extends Error {
 const fileTooLarge = () => new UploadError(413, { error: "File is too large", code: "FILE_TOO_LARGE", limitBytes: config.maxUploadBytes });
 const badPart = (error = "Upload exactly one file part named file") => new UploadError(400, { error });
 /** The object store (S3) failed: the upload is not the client's fault, and nothing was kept. */
-const storageUnavailable = () => new UploadError(503, { error: "File storage is unavailable. Try again later.", code: "STORAGE_UNAVAILABLE" });
+const storageUnavailable = (error: StorageUnavailableError) => error.code === "Busy"
+  ? new UploadError(503, { error: "Too many uploads are going to file storage. Retry in a moment.", code: "STORAGE_BUSY", retryAfter: 5 })
+  : new UploadError(503, { error: "File storage is unavailable. Try again later.", code: "STORAGE_UNAVAILABLE", retryAfter: 5 });
 
 /** In-flight upload slots and quota reservations per user. Single process only. */
 const inFlight = new Map<string, { count: number; reservedBytes: number }>();
@@ -117,7 +119,7 @@ async function writeFilePart(stream: Readable & { truncated?: boolean }, filenam
     if (stream.truncated || size > config.maxUploadBytes) throw fileTooLarge();
     return { filename, size, sha256: hash.digest("hex"), head: head.subarray(0, headLength) };
   } catch (error) {
-    throw error instanceof StorageUnavailableError ? storageUnavailable() : error;
+    throw error instanceof StorageUnavailableError ? storageUnavailable(error) : error;
   }
 }
 
@@ -248,7 +250,7 @@ async function commitReceived(userId: string, id: string, writer: ObjectWriter, 
   try {
     await writer.commit();
   } catch (error) {
-    throw error instanceof StorageUnavailableError ? storageUnavailable() : error;
+    throw error instanceof StorageUnavailableError ? storageUnavailable(error) : error;
   }
   markCommitted();
 
@@ -377,6 +379,8 @@ export async function storeRawUpload(source: Readable, options: StoreRawOptions,
   } finally {
     slot.release();
     if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
+    // The row is committed (or there is none): the orphan sweep may judge the object again (review M1).
+    writer.release();
   }
 }
 
@@ -440,11 +444,16 @@ async function handleUpload(c: Context<AppEnv>) {
     const result = await commitReceived(userId, id, writer, received, { folderId, purpose, uploadKey, name }, () => { committed = true; });
     return uploadResponse(c, result.document, result.replay);
   } catch (error) {
-    if (error instanceof UploadError) return c.json(error.body, error.status);
+    if (error instanceof UploadError) {
+      if (error.status === 503) c.header("Retry-After", "5");
+      return c.json(error.body, error.status);
+    }
     throw error;
   } finally {
     slot.release();
     if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
+    // The row is committed (or there is none): the orphan sweep may judge the object again (review M1).
+    writer.release();
   }
 }
 
@@ -487,10 +496,11 @@ function whiteboardObject(documentId: string) {
   return row ? { objectId: row.object_id, row: { size_bytes: row.size_bytes, sha256: row.sha256, updated_at: row.updated_at } } : null;
 }
 
-function contentError(status: 400 | 404 | 500, error: string) {
+function contentError(status: 400 | 404 | 500 | 503, error: string, code?: string) {
   const headers = new Headers({ "Content-Type": "application/json" });
+  if (status === 503) headers.set("Retry-After", "5");
   applyContentSecurityHeaders(headers);
-  return new Response(JSON.stringify({ error }), { status, headers });
+  return new Response(JSON.stringify(code ? { error, code } : { error }), { status, headers });
 }
 
 async function handleContent(c: Context<AppEnv>) {
@@ -521,6 +531,8 @@ async function handleContent(c: Context<AppEnv>) {
   } catch (error) {
     const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof StorageUnavailableError ? error.code : error instanceof Error ? error.name : "unknown";
     console.error(`Document content ${error instanceof StorageUnavailableError ? "storage" : "integrity"} error (${reason}) for document ${id}`);
+    // S3 storage (review L1): an unreachable store is retryable; a missing or wrong-sized object fails closed.
+    if (error instanceof StorageUnavailableError) return contentError(503, "File storage is unavailable. Try again later.", "STORAGE_UNAVAILABLE");
     return contentError(500, "Something went wrong");
   }
 

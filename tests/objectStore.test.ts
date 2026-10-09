@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startFakeS3 } from "./support/fakeS3";
+import { startBlackHole, startFakeS3 } from "./support/fakeS3";
 import { parseStorageConfig } from "../server/config";
-import { claimS3Prefix, createLocalObjectStore, createS3ObjectStore, diskBytesNeeded, ObjectIntegrityError, S3_PART_BYTES, StorageUnavailableError, type ObjectStore } from "../server/objectStore";
+import { claimS3Prefix, createLocalObjectStore, createS3ObjectStore, diskBytesNeeded, isObjectInFlight, ObjectIntegrityError, PrefixClaimError, S3_PART_BYTES, setS3UploadLimitForTests, StorageUnavailableError, type ObjectStore } from "../server/objectStore";
 import { sweepDocumentFiles } from "../server/documentStorage";
 
 /**
@@ -43,7 +43,7 @@ const backends: Backend[] = [
         age: (namespace, id, ms) => utimesSync(join(dirFor(namespace), id), (Date.now() - ms) / 1000, (Date.now() - ms) / 1000),
         addStray: (namespace, name) => {
           writeFileSync(join(dirFor(namespace), name), "stray");
-          utimesSync(join(dirFor(namespace), name), (Date.now() - 7_200_000) / 1000, (Date.now() - 7_200_000) / 1000);
+          utimesSync(join(dirFor(namespace), name), (Date.now() - 86_400_000) / 1000, (Date.now() - 86_400_000) / 1000);
         }
       };
     }
@@ -56,7 +56,7 @@ const backends: Backend[] = [
         store: createS3ObjectStore(s3Settings(prefix)),
         age: (namespace, id, ms) => fake.age(`${prefix}${namespace}/${id}`, ms),
         addStray: (namespace, name) => {
-          fake.objects.set(`${prefix}${namespace}/${name}`, { bytes: bytesOf("stray"), lastModified: new Date(Date.now() - 7_200_000), etag: '"x"', contentType: "text/plain" });
+          fake.objects.set(`${prefix}${namespace}/${name}`, { bytes: bytesOf("stray"), lastModified: new Date(Date.now() - 86_400_000), etag: '"x"', contentType: "text/plain" });
         }
       };
     }
@@ -172,8 +172,8 @@ for (const backend of backends) {
       const orphan = crypto.randomUUID();
       const young = crypto.randomUUID();
       for (const id of [live, orphan, young]) await store.put("documents", id, bytesOf(id));
-      made.age("documents", live, 7_200_000);
-      made.age("documents", orphan, 7_200_000);
+      made.age("documents", live, 86_400_000);
+      made.age("documents", orphan, 86_400_000);
       made.addStray("documents", "notes.txt");
       const counts = await sweepDocumentFiles({ boot: false, hasDocumentRow: (id) => id === live, store });
       expect(counts).toMatchObject({ orphansRemoved: 1, ignored: 1 });
@@ -213,12 +213,15 @@ describe("object store: local specifics", () => {
     const avatarWriter = store.createWriter("avatars", avatar);
     await avatarWriter.write(bytesOf("p"));
     expect(readdirSync(join(root, "avatars"))).toEqual([`.${avatar}.part`]);
-    // A staged avatar is not an object, and a stale one is swept.
+    // A staged avatar is not an object; one this process is still writing is never swept (review M1).
     const listed = [];
     for await (const entry of store.list("avatars")) listed.push(entry);
     expect(listed).toEqual([]);
-    expect(await store.sweepStaging("avatars", Date.now() + 1000)).toEqual({ removed: 1, ignored: 0 });
+    expect(await store.sweepStaging("avatars", Date.now() + 1000)).toEqual({ removed: 0, ignored: 0 });
     await avatarWriter.discard();
+    // A leftover from an earlier process is.
+    writeFileSync(join(root, "avatars", `.${crypto.randomUUID()}.part`), "partial");
+    expect(await store.sweepStaging("avatars", Date.now() + 1000)).toEqual({ removed: 1, ignored: 0 });
   });
 
   test("disk headroom counts the bytes only when they land on the data volume", () => {
@@ -254,7 +257,7 @@ describe("object store: s3 specifics", () => {
     await store.put("documents", id, bytesOf("abcdefghij"));
     const before = fake.log.length;
     expect(new TextDecoder().decode(await readAll((await store.open("documents", id, 10)).stream(3, 4)))).toBe("de");
-    expect(fake.log.slice(before).map((line) => line.split(" ")[0])).toEqual(["HEAD", "GET"]);
+    expect(fake.log.slice(before).filter((line) => line.includes(id)).map((line) => line.split(" ")[0])).toEqual(["HEAD", "GET"]);
   });
 
   test("a failed write surfaces as StorageUnavailableError and leaves no object", async () => {
@@ -270,7 +273,7 @@ describe("object store: s3 specifics", () => {
   test("the probe writes, reads, and deletes under the prefix, and fails with wrong credentials", async () => {
     const before = fake.objects.size;
     await createS3ObjectStore(s3Settings("probe/")).probe();
-    expect(fake.log.filter((line) => line.includes("probe/.probe/")).map((line) => line.split(" ")[0])).toEqual(["PUT", "GET", "DELETE"]);
+    expect(fake.log.filter((line) => line.includes("probe/.probe/")).map((line) => line.split(" ")[0])).toEqual(["PUT", "GET", "HEAD", "DELETE"]);
     expect(fake.objects.size).toBe(before);
     const wrong = createS3ObjectStore({ ...s3Settings("probe/"), accessKeyId: "WRONG" });
     const error = await wrong.probe().catch((caught: unknown) => caught);
@@ -304,7 +307,8 @@ describe("storage configuration", () => {
     for (const name of ["S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_REGION"]) {
       expect(() => parseStorageConfig({ ...complete, [name]: "" })).toThrow(name);
     }
-    expect(parseStorageConfig(complete)).toEqual({ backend: "s3", bucket: "nook-files", endpoint: null, region: "eu-west-1", accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret-example", prefix: "" });
+    // AWS gets an explicit regional endpoint (review L3), so AWS_ENDPOINT or S3_ENDPOINT from Bun's own environment never applies.
+    expect(parseStorageConfig(complete)).toEqual({ backend: "s3", bucket: "nook-files", endpoint: "https://s3.eu-west-1.amazonaws.com", region: "eu-west-1", accessKeyId: "AKIAEXAMPLE", secretAccessKey: "secret-example", prefix: "", timeoutMs: 30_000 });
   });
 
   test("an S3-compatible endpoint may stand in for the region; http only to this machine or with S3_ALLOW_HTTP", () => {
@@ -338,5 +342,173 @@ describe("storage configuration", () => {
     expect(() => parseStorageConfig({ ...rest, S3_ACCESS_KEY_ID: "AKIA", S3_SECRET_ACCESS_KEY_FILE: join(dataRoot, "secret") }, dataRoot)).toThrow("outside DATA_DIR");
     expect(() => parseStorageConfig({ ...rest, S3_ACCESS_KEY_ID: "AKIA", S3_SECRET_ACCESS_KEY_FILE: "relative/secret" }, dataRoot)).toThrow("absolute path");
     expect(() => parseStorageConfig({ ...rest, S3_ACCESS_KEY_ID: "AKIA", S3_SECRET_ACCESS_KEY_FILE: join(outside, "missing") }, dataRoot)).toThrow("could not be read");
+  });
+});
+
+describe("object store: S3 deadlines (review H2)", () => {
+  const timeoutMs = 300;
+  const timedOut = (error: unknown) => error instanceof StorageUnavailableError && error.code === "Timeout";
+
+  test("against an endpoint that accepts and never answers, every call fails with Timeout instead of hanging", async () => {
+    const hole = startBlackHole();
+    try {
+      const store = createS3ObjectStore({ ...s3Settings("hole/"), endpoint: hole.url, timeoutMs });
+      const id = crypto.randomUUID();
+      const started = Date.now();
+      expect(timedOut(await store.stat("documents", id).catch((error: unknown) => error))).toBe(true);
+      expect(timedOut(await store.open("documents", id).catch((error: unknown) => error))).toBe(true);
+      expect(timedOut(await store.remove("documents", id).catch((error: unknown) => error))).toBe(true);
+      expect(timedOut(await store.probe().catch((error: unknown) => error))).toBe(true);
+      expect(timedOut(await store.put("documents", id, bytesOf("x")).catch((error: unknown) => error))).toBe(true);
+      const listing = (async () => { for await (const _ of store.list("documents")) { /* never */ } })();
+      expect(timedOut(await listing.catch((error: unknown) => error))).toBe(true);
+      // The sweep fails instead of hanging, so the sweeper's in-flight run is released.
+      expect(timedOut(await sweepDocumentFiles({ boot: false, hasDocumentRow: () => false, store }).catch((error: unknown) => error))).toBe(true);
+      // Metadata calls take one deadline, writes (part uploads) four.
+      expect(Date.now() - started).toBeLessThan(20 * timeoutMs);
+    } finally {
+      hole.stop();
+    }
+  }, 20_000);
+
+  test("a download that stops sending bytes errors its stream after the idle deadline", async () => {
+    const store = createS3ObjectStore({ ...s3Settings("idle/"), timeoutMs });
+    const id = crypto.randomUUID();
+    await store.put("documents", id, new Uint8Array(4096).fill(7));
+    fake.stallBodyNext(new RegExp(`^GET idle/documents/${id}`));
+    const opened = await store.open("documents", id, 4096);
+    const error = await readAll(opened.stream()).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(StorageUnavailableError);
+    expect((error as StorageUnavailableError).code).toBe("Timeout");
+    fake.clearFailures();
+  });
+
+  test("a hung request on a working endpoint times out too (stalled HEAD)", async () => {
+    const store = createS3ObjectStore({ ...s3Settings("stall/"), timeoutMs });
+    const id = crypto.randomUUID();
+    fake.stallNext(new RegExp(`^HEAD stall/documents/${id}`));
+    expect(timedOut(await store.open("documents", id).catch((error: unknown) => error))).toBe(true);
+    fake.clearFailures();
+  });
+});
+
+describe("object store: in-flight objects and the sweep (review M1)", () => {
+  test("a completed upload whose row is not committed yet survives the sweep whatever its Last-Modified", async () => {
+    const store = createS3ObjectStore(s3Settings("inflight/"));
+    const id = crypto.randomUUID();
+    const writer = store.createWriter("documents", id);
+    await writer.write(new Uint8Array(S3_PART_BYTES + 10).fill(3));
+    await writer.commit();
+    // S3 dates a multipart object from its start; make it look two days old.
+    fake.age(`inflight/documents/${id}`, 2 * 86_400_000);
+    expect(isObjectInFlight("documents", id)).toBe(true);
+    expect((await sweepDocumentFiles({ boot: false, hasDocumentRow: () => false, store })).orphansRemoved).toBe(0);
+    expect(await store.stat("documents", id)).not.toBeNull();
+    writer.release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(isObjectInFlight("documents", id)).toBe(false);
+    expect((await sweepDocumentFiles({ boot: false, hasDocumentRow: () => false, store })).orphansRemoved).toBe(1);
+  });
+
+  test("the local staging sweep skips a write still in progress, even at boot", async () => {
+    const store = createLocalObjectStore(scratch());
+    const writer = store.createWriter("documents", crypto.randomUUID());
+    await writer.write(bytesOf("in progress"));
+    expect((await store.sweepStaging("documents", Date.now() + 60_000)).removed).toBe(0);
+    await writer.discard();
+  });
+});
+
+describe("object store: upload slots and clock skew (review M3, M1)", () => {
+  test("past the S3 upload cap a new upload is refused Busy; a finished one frees its slot", async () => {
+    setS3UploadLimitForTests(1);
+    try {
+      const store = createS3ObjectStore(s3Settings("slots/"));
+      const first = store.createWriter("documents", crypto.randomUUID());
+      await first.write(bytesOf("one"));
+      const second = store.createWriter("documents", crypto.randomUUID());
+      const busy = await second.write(bytesOf("two")).catch((error: unknown) => error);
+      expect(busy).toBeInstanceOf(StorageUnavailableError);
+      expect((busy as StorageUnavailableError).code).toBe("Busy");
+      await second.discard();
+      await first.commit();
+      first.release();
+      const third = store.createWriter("documents", crypto.randomUUID());
+      await third.write(bytesOf("three"));
+      await third.commit();
+      third.release();
+    } finally {
+      setS3UploadLimitForTests(null);
+    }
+  });
+
+  test("the probe reports the store's clock skew", async () => {
+    fake.clockOffsetMs = 10 * 60_000;
+    try {
+      const { clockSkewMs } = await createS3ObjectStore(s3Settings("skew/")).probe();
+      expect(clockSkewMs!).toBeGreaterThan(9 * 60_000);
+    } finally {
+      fake.clockOffsetMs = 0;
+    }
+    expect((await createS3ObjectStore(s3Settings("skew/")).probe()).clockSkewMs).toBe(0);
+  });
+});
+
+describe("object store: the prefix claim (review M2)", () => {
+  test("a restored copy of a data directory is refused and fenced; reclaim takes the prefix back", async () => {
+    const live = scratch();
+    const store = createS3ObjectStore(s3Settings("restore/"));
+    expect(await claimS3Prefix(store, live)).toBe("created");
+    // A backup of the live directory, restored elsewhere...
+    const restored = scratch();
+    copyFileSync(join(live, "storage-instance"), join(restored, "storage-instance"));
+    // ...while the live server claims again (it restarts after backup.sh, and every hourly sweep claims).
+    expect(await claimS3Prefix(store, live)).toBe("matched");
+    const copyStore = createS3ObjectStore(s3Settings("restore/"));
+    const refused = await claimS3Prefix(copyStore, restored).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(PrefixClaimError);
+    expect((refused as PrefixClaimError).reason).toBe("stale");
+    // Fenced: the restored copy can no longer delete anything in the live bucket.
+    const id = crypto.randomUUID();
+    await store.put("documents", id, bytesOf("live file"));
+    expect(((await copyStore.remove("documents", id).catch((error: unknown) => error)) as StorageUnavailableError).code).toBe("Fenced");
+    expect(await store.stat("documents", id)).not.toBeNull();
+    // After a real disaster restore the operator reclaims; then the old live directory is the stale one.
+    expect(await claimS3Prefix(createS3ObjectStore(s3Settings("restore/")), restored, { reclaim: true })).toBe("matched");
+    expect(((await claimS3Prefix(createS3ObjectStore(s3Settings("restore/")), live).catch((error: unknown) => error)) as PrefixClaimError).reason).toBe("stale");
+  });
+
+  test("the marker carries id, claim number, and a nonce read back after writing", async () => {
+    const dir = scratch();
+    const store = createS3ObjectStore(s3Settings("race/"));
+    await claimS3Prefix(store, dir);
+    const marker = new TextDecoder().decode(fake.objects.get("race/.nook-instance")!.bytes).trim().split(" ");
+    expect(marker.length).toBe(3);
+    expect(marker[1]).toBe("1");
+    expect(readdirSync(dir)).toEqual(["storage-instance"]);
+  });
+});
+
+describe("storage configuration (review L3, L4, L5)", () => {
+  const complete = { STORAGE_BACKEND: "s3", S3_BUCKET: "nook-files", S3_REGION: "eu-west-1", S3_ACCESS_KEY_ID: "AKIAEXAMPLE", S3_SECRET_ACCESS_KEY: "secret-example" };
+
+  test("plain http only to literal loopback hosts, never *.localhost names", () => {
+    expect(parseStorageConfig({ ...complete, S3_ENDPOINT: "http://localhost:9000" })).toMatchObject({ endpoint: "http://localhost:9000" });
+    expect(parseStorageConfig({ ...complete, S3_ENDPOINT: "http://127.0.0.2:9000" })).toMatchObject({ endpoint: "http://127.0.0.2:9000" });
+    expect(parseStorageConfig({ ...complete, S3_ENDPOINT: "http://[::1]:9000" })).toMatchObject({ endpoint: "http://[::1]:9000" });
+    expect(() => parseStorageConfig({ ...complete, S3_ENDPOINT: "http://minio.localhost:9000" })).toThrow("S3_ENDPOINT must use https");
+  });
+
+  test("S3_ALLOW_HTTP takes exactly true or false; S3_TIMEOUT_MS is bounded", () => {
+    expect(() => parseStorageConfig({ ...complete, S3_ENDPOINT: "http://minio:9000", S3_ALLOW_HTTP: "TRUE" })).toThrow("S3_ALLOW_HTTP must be true or false");
+    expect(() => parseStorageConfig({ ...complete, S3_ALLOW_HTTP: "yes" })).toThrow("S3_ALLOW_HTTP must be true or false");
+    expect(parseStorageConfig({ ...complete, S3_TIMEOUT_MS: "5000" })).toMatchObject({ timeoutMs: 5000 });
+    for (const value of ["999", "600001", "1e4", "-1"]) expect(() => parseStorageConfig({ ...complete, S3_TIMEOUT_MS: value })).toThrow("S3_TIMEOUT_MS");
+  });
+
+  test("session tokens Bun's client would pick up from the environment refuse to start", () => {
+    expect(() => parseStorageConfig({ ...complete, AWS_SESSION_TOKEN: "x" })).toThrow("Unset AWS_SESSION_TOKEN");
+    expect(() => parseStorageConfig({ ...complete, S3_SESSION_TOKEN: "x" })).toThrow("Unset S3_SESSION_TOKEN");
+    expect(parseStorageConfig({ AWS_SESSION_TOKEN: "x" })).toEqual({ backend: "local" });
   });
 });

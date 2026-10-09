@@ -632,6 +632,16 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>MAX_UPLOAD_BYTES</code></td><td><code>104857600</code> (100 MiB)</td><td>Largest single file; integer from 1 MiB to 2 GiB. JSON bodies stay limited to 2.1 MB.</td></tr>
           <tr><td><code>USER_STORAGE_QUOTA_BYTES</code></td><td><code>10737418240</code> (10 GiB)</td><td>File bytes per user, including the Bin; integer ≥ 0, <code>0</code> is unlimited.</td></tr>
           <tr><td><code>MIN_FREE_DISK_BYTES</code></td><td><code>1073741824</code> (1 GiB)</td><td>Refuse uploads that would leave less free space on the data volume; integer ≥ 0.</td></tr>
+          <tr><td><code>STORAGE_BACKEND</code></td><td><code>local</code></td><td>Where file bytes live: <code>local</code> (under <code>DATA_DIR</code>) or <code>s3</code> (a bucket, through Bun's S3 client). SQLite stays local. With <code>s3</code> the settings below are required and a startup probe must pass.</td></tr>
+          <tr><td><code>S3_BUCKET</code></td><td>empty</td><td>The bucket name. Never public; Nook sends no ACL.</td></tr>
+          <tr><td><code>S3_ENDPOINT</code></td><td>empty</td><td>An S3-compatible service's origin (MinIO, R2, B2); empty means AWS in <code>S3_REGION</code>. <code>https</code> only, except to this machine or with <code>S3_ALLOW_HTTP=true</code>.</td></tr>
+          <tr><td><code>S3_REGION</code></td><td>empty</td><td>The bucket's region (<code>auto</code> for R2); required unless <code>S3_ENDPOINT</code> is set.</td></tr>
+          <tr><td><code>S3_ACCESS_KEY_ID</code></td><td>empty</td><td>The access key id, or <code>S3_ACCESS_KEY_ID_FILE</code> (outside <code>DATA_DIR</code>). Never logged.</td></tr>
+          <tr><td><code>S3_ACCESS_KEY_ID_FILE</code></td><td>empty</td><td>A file holding the access key id, outside <code>DATA_DIR</code>.</td></tr>
+          <tr><td><code>S3_SECRET_ACCESS_KEY</code></td><td>empty</td><td>The secret key, or <code>S3_SECRET_ACCESS_KEY_FILE</code>. Never logged; give it only put, get, delete, and list on the bucket.</td></tr>
+          <tr><td><code>S3_SECRET_ACCESS_KEY_FILE</code></td><td>empty</td><td>A file holding the secret key, outside <code>DATA_DIR</code>.</td></tr>
+          <tr><td><code>S3_PREFIX</code></td><td>empty</td><td>A key prefix; one Nook per prefix (claimed at first start).</td></tr>
+          <tr><td><code>S3_ALLOW_HTTP</code></td><td><code>false</code></td><td><code>true</code> allows a plain <code>http://</code> endpoint on another host (a trusted private network).</td></tr>
           <tr><td><code>PUSH_ENABLED</code></td><td><code>auto</code></td><td>Web Push for reminders: <code>auto</code> (on only when <code>APP_ORIGIN</code> is <code>https:</code>), <code>true</code>, or <code>false</code>. Browsers allow push only on a secure origin.</td></tr>
           <tr><td><code>PUSH_SUBJECT</code></td><td><code>APP_ORIGIN</code></td><td>The VAPID contact push services may use: an <code>http(s)</code> URL or a <code>mailto:</code> address.</td></tr>
           <tr><td><code>PUSH_ENDPOINT_HOSTS</code></td><td>empty</td><td>Extra push-service hosts, comma-separated (<code>push.example.com</code> or <code>*.push.example.com</code>), besides the built-in Google, Mozilla, Apple, and Microsoft ones.</td></tr>

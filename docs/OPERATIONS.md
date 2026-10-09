@@ -394,7 +394,17 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAX_MARKDOWN_BYTES` | `2000000` | Largest note body, at least 1024 bytes. |
 | `MAX_UPLOAD_BYTES` | `104857600` (100 MiB) | Largest single file. Integer from `1048576` (1 MiB) to `2147483648` (2 GiB). Bun's request body cap is this (or 2.1 MB, whichever is larger) plus 1 MiB; JSON bodies stay limited to 2.1 MB. |
 | `USER_STORAGE_QUOTA_BYTES` | `10737418240` (10 GiB) | Document bytes per user, including documents in the Bin. Integer ≥ 0; `0` means unlimited. |
-| `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | Uploads are refused when they would leave less free space than this on the data volume. Integer ≥ 0. |
+| `MIN_FREE_DISK_BYTES` | `1073741824` (1 GiB) | Uploads are refused when they would leave less free space than this on the data volume. Integer ≥ 0. With `STORAGE_BACKEND=s3` the file bytes do not land there, so only this floor is kept free (for SQLite and its WAL). |
+| `STORAGE_BACKEND` | `local` | Where file bytes live: `local` (under `DATA_DIR`, as before) or `s3` (a bucket, through Bun's built-in S3 client). SQLite always stays in `DATA_DIR`. With `s3` the settings below are required, and the server refuses to start when they are incomplete or the startup probe fails (see *Storage*, S3). |
+| `S3_BUCKET` | empty | With `STORAGE_BACKEND=s3`: the bucket name (3–63 lower-case letters, digits, dots, hyphens). Never public; Nook sends no ACL. |
+| `S3_ENDPOINT` | empty | An S3-compatible service's origin (MinIO, Cloudflare R2, Backblaze B2, Wasabi…), such as `https://<account>.r2.cloudflarestorage.com`. Empty means AWS S3 in `S3_REGION`. Must be `https`, except to this machine or with `S3_ALLOW_HTTP=true`. |
+| `S3_REGION` | empty | The bucket's region, such as `eu-west-1` (`auto` for R2). Required unless `S3_ENDPOINT` is set. |
+| `S3_ACCESS_KEY_ID` | empty | The access key id. Or `S3_ACCESS_KEY_ID_FILE`: an absolute path outside `DATA_DIR` (Docker secrets); never both. Never logged. |
+| `S3_ACCESS_KEY_ID_FILE` | empty | A file holding `S3_ACCESS_KEY_ID`, outside `DATA_DIR`. |
+| `S3_SECRET_ACCESS_KEY` | empty | The secret key. Or `S3_SECRET_ACCESS_KEY_FILE`, under the same rules. Never logged. Give the key only `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject`, and `s3:ListBucket` on the bucket (and prefix). |
+| `S3_SECRET_ACCESS_KEY_FILE` | empty | A file holding `S3_SECRET_ACCESS_KEY`, outside `DATA_DIR`. |
+| `S3_PREFIX` | empty | A key prefix (letters, digits, `.`, `_`, `-`, `/`), so one bucket can hold several things; a trailing `/` is added. One Nook per prefix: the prefix is claimed by this data directory at first start (`<prefix>.nook-instance`). |
+| `S3_ALLOW_HTTP` | `false` | `true` allows a plain `http://` `S3_ENDPOINT` on another host (a MinIO on a private network you trust). Every file then crosses that network unencrypted. |
 | `PUSH_ENABLED` | `auto` | Web Push for calendar reminders: `auto` (on only when `APP_ORIGIN` is `https:`), `true`, or `false`. Browsers allow push only on a secure origin, so on `http://localhost` or a LAN address reminders appear in the bell and the notifications list only. |
 | `PUSH_SUBJECT` | `APP_ORIGIN` | The VAPID contact push services may use: an `http(s)` URL or a `mailto:` address. |
 | `PUSH_ENDPOINT_HOSTS` | empty | Extra push-service hosts, comma-separated (`push.example.com` or `*.push.example.com`), besides the built-in `*.googleapis.com`, `*.push.services.mozilla.com`, `*.push.apple.com`, and `*.notify.windows.com`. |
@@ -428,6 +438,8 @@ The container reads and writes `/data`, mapped by Compose to:
 │   ├── objects/<document-id>       uploaded file bytes, no extension
 │   ├── objects/<object-id>         a whiteboard's current scene (a new object per save)
 │   └── .staging/<document-id>.part uploads in progress (not backed up)
+├── avatars/<uuid>                  profile pictures
+├── storage-instance                this data directory's id (claims an S3 prefix, see S3 storage)
 ├── push/vapid.json                 Web Push signing keys (0600), created at first boot when push is on
 ├── server.heartbeat                rewritten every 5 s while the server runs (stale after 15 s)
 └── backup/                         weekly archives (host backup script only)
@@ -446,6 +458,29 @@ The data directory is forced to mode `0700`; SQLite, WAL/SHM, and Markdown files
 **Whiteboard safety snapshots.** The `whiteboard_snapshots` table (created by migration 030) is in use since whiteboards shipped: a save that empties a board, or takes a board of 10 or more elements to fewer than half of them, keeps the scene it replaces as a snapshot, and **Restore previous version** keeps the scene it replaces too; at most 5 are kept per board, only the owner sees and restores them, and they count toward the owner's quota.
 
 **Whiteboard pictures, versions, and imports (Wave 24, no migration).** A picture on a board is an ordinary File (uploaded into the board's folder, or picked from Files); the scene holds only its document id, so pictures count toward the quota once and are backed up, binned, and purged as files. Browsers load pictures through the normal content route with the viewer's own session; the server never reads a picture for a board. Each board keeps up to 20 earlier versions (`whiteboard_snapshots`: one every 30 minutes of drawing, plus one whenever a board is emptied or mostly cleared); each is a full scene object counted toward the owner's quota and purged with the board. Imports of `.excalidraw` files take a request of at most 32 MiB; every embedded picture goes through the upload pipeline (`MAX_UPLOAD_BYTES`, the content sniff, the quota), and a failed import removes the pictures it stored. The CSP is unchanged: pictures are scaled for display with canvas APIs, and Excalidraw's WebAssembly-based resizer is never used (its image tool opens Nook's own picker; the build fails if that patch stops applying).
+
+### S3 storage
+
+`STORAGE_BACKEND=s3` keeps file bytes in an S3 bucket instead of `DATA_DIR/documents/objects` and `DATA_DIR/avatars`: Files and attachments, note and whiteboard pictures, whiteboard scenes and their kept versions, and profile pictures. SQLite (with the WAL), note Markdown, `push/vapid.json`, and the heartbeat stay in `DATA_DIR`; chat tool images and whiteboard thumbnails are inside SQLite. Nook uses Bun's built-in S3 client, so AWS S3 and S3-compatible services (MinIO, R2, B2) work alike.
+
+- **Keys** are `<S3_PREFIX>documents/<uuid>` and `<S3_PREFIX>avatars/<uuid>`: ids the server generates, never a file name, title, or folder. Objects are private; Nook never sends an ACL and never hands out a bucket URL. Every download still goes through Nook's own routes, with the same access checks, sniffed `Content-Type`, `Content-Disposition`, CSP, and `Range` support as on disk.
+- **Startup.** With `s3` the server writes, reads, and deletes a small probe under `<S3_PREFIX>.probe/` and refuses to start if any step fails (the log names the service's error code, never the key). It then claims the prefix: `<S3_PREFIX>.nook-instance` holds the id in `DATA_DIR/storage-instance`. A prefix claimed by another data directory refuses to start, because two Nooks sharing a prefix would delete each other's files as orphans. `storage-instance` travels with backups; keep it.
+- **Uploads** stream to the bucket as they arrive (multipart above 5 MiB, at most about one 5 MiB part in memory per upload) and become a row only after the object is complete. An upload that fails or is refused afterwards deletes its object; if that delete fails, the hourly sweep removes the object once it is an hour old and no row names it. A storage failure answers `503 STORAGE_UNAVAILABLE` and keeps nothing. `MAX_UPLOAD_BYTES`, `USER_STORAGE_QUOTA_BYTES`, and the upload slots apply unchanged; `MIN_FREE_DISK_BYTES` keeps only its floor free on the data volume.
+- **Bucket settings.** Block public access. Add a lifecycle rule that aborts incomplete multipart uploads after a day (`AbortIncompleteMultipartUpload`): a server killed mid-upload leaves invisible parts that the bucket would otherwise keep billing. Turning on versioning is the simplest backup (see *Backup and restore*); if you do, also expire noncurrent versions after your retention, since Nook deletes purged files.
+- **The sweep** lists only `<S3_PREFIX>documents/` and `<S3_PREFIX>avatars/`, removes only UUID-named objects older than an hour that no row names, and never touches anything else in the bucket.
+
+**Switching backends.** `server/storage-admin.ts` copies every file the database names between `DATA_DIR` and the bucket, checks each copy by size and SHA-256 (read back from the target, and against the database's hash where it keeps one), and journals its progress in `DATA_DIR/storage-migrate-to-<target>.journal`, so a run that stops (network, a full bucket) resumes where it left off when you run it again. It refuses to start while a server heartbeat in `DATA_DIR` is fresh, and it never deletes the source.
+
+```sh
+docker compose stop app
+./scripts/backup.sh --force                                   # a last local archive with the files in it
+# Set STORAGE_BACKEND=s3 and the S3_* settings in .env, then copy:
+docker compose run --rm app bun server/storage-admin.ts migrate --to s3
+docker compose up -d app                                      # starts on S3 (probe + prefix claim)
+docker compose exec app bun server/storage-admin.ts verify --hash
+```
+
+When files open in Nook, remove `DATA_DIR/documents/objects` and `DATA_DIR/avatars` (Nook no longer reads them). Going back is the same with `migrate --to local` (with the S3_* settings still set) and `STORAGE_BACKEND=local`. `verify` (without `--hash`, sizes only) is safe while the server runs. Exit codes: 0 done, 1 something failed (rerun to resume), 2 usage or settings.
 
 **EXIF and embedded metadata.** Nook stores uploaded files byte for byte and does not strip EXIF or other embedded metadata (for example GPS location or author) from images or PDFs. Tell users to remove it before uploading files they plan to share.
 
@@ -476,6 +511,7 @@ MYNOTES_DATA_DIR=/srv/mynotes-restored docker compose up -d --build
 
 The archive contains the data directory contents at its root, so no path rearrangement is required. Keep the same `.env` (in particular `TOTP_ENCRYPTION_KEY`) when starting the restored copy, and start only one instance per data directory.
 
+- **With `STORAGE_BACKEND=s3` the archive does not contain the file bytes**: Files, attachments, pictures, whiteboard scenes, and profile pictures are in the bucket, and `backup.sh` says so on every run. Back the bucket up on its own schedule, at least as often as the archive: turn on **bucket versioning** (with a noncurrent-version expiry longer than your archive retention), or copy it with `aws s3 sync s3://<bucket>/<prefix> /backups/nook-files` or `rclone sync <remote>:<bucket>/<prefix> /backups/nook-files`. A restore needs both: the archive (database, `storage-instance`) and the bucket contents from the same time or later. A file whose bytes are missing answers 500 and is counted by the boot integrity check; `storage-admin.ts verify` lists them.
 - Archives include `documents/objects` but not `documents/.staging`. Archive size and the time the app is stopped grow with the stored files (gzip gains little on already-compressed media), and five archives multiply that disk use.
 - Items in the Bin are included like live ones. A note or file deleted forever (or expired from the Bin) can survive in older archives for up to about five weeks, until those archives rotate out.
 - The backup intentionally does not include `.env`. Store it securely alongside your backups, especially `TOTP_ENCRYPTION_KEY`, which is required to use restored TOTP enrollments. **The exception is `VAULT_ENCRYPTION_KEY`:** keep it somewhere other than the backups, because an archive together with that key reveals every vault secret, and a restore needs the same key (see *Vault*). Vault values are in the archive only as ciphertext.

@@ -1,4 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
+// server/config.ts reads the environment once per test process: load the harness first, whatever the file order.
+import "./support/harness";
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

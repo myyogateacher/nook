@@ -35,12 +35,16 @@ export const hasDocumentRow = (id: string) => Boolean(db.query(`SELECT 1 FROM do
   UNION ALL SELECT 1 FROM whiteboards WHERE object_id = $id
   UNION ALL SELECT 1 FROM whiteboard_snapshots WHERE object_id = $id LIMIT 1`).get({ id }));
 
-async function countIntegrityErrors() {
+/**
+ * Review L6 (accepted): the check holds every live object's id and size in memory, about 150 MB at a
+ * million objects. At boot it reuses the orphan sweep's listing, so the bucket is listed once.
+ */
+async function countIntegrityErrors(listed?: Map<string, number>) {
   // A whiteboard's bytes live in its current scene object, never under the document id.
   const rows = db.query(`SELECT COALESCE(w.object_id, d.id) AS object_id, d.size_bytes FROM documents d LEFT JOIN whiteboards w ON w.document_id = d.id
     WHERE d.purge_started_at IS NULL`).all() as Array<{ object_id: string; size_bytes: number }>;
   // One listing instead of a stat per row: on S3 that is one request per 1,000 objects, not one per file.
-  const sizes = await documentObjectSizes();
+  const sizes = listed ?? await documentObjectSizes();
   let broken = 0;
   for (const row of rows) if (sizes.get(row.object_id) !== row.size_bytes) broken += 1;
   return broken;
@@ -77,12 +81,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       const filesAllowed = await fileSweepsAllowed();
       try {
         if (!filesAllowed) throw new Error("File sweeps are off for this run");
-        counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow });
+        const sizes = options.boot ? new Map<string, number>() : undefined;
+        counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow, sizes });
         if (counts.stagingRemoved || counts.orphansRemoved || counts.ignored) {
           console.info(`Document sweep: ${counts.stagingRemoved} staging removed, ${counts.orphansRemoved} orphans removed, ${counts.ignored} unexpected entries ignored`);
         }
         if (options.boot) {
-          const broken = await countIntegrityErrors();
+          const broken = await countIntegrityErrors(sizes);
           if (broken) console.error(`Document integrity check: ${broken} stored documents are missing or have the wrong size`);
         }
       } catch (error) {

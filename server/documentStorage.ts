@@ -63,7 +63,7 @@ export type SweepCounts = { stagingRemoved: number; orphansRemoved: number; igno
  *   are skipped whatever their age (review M1).
  * - Anything else (a name that is not a UUID, a symlink, a directory) is left in place and counted as ignored.
  */
-export async function sweepDocumentFiles(options: { boot: boolean; nowMs?: number; hasDocumentRow: (id: string) => boolean; store?: ObjectStore }): Promise<SweepCounts> {
+export async function sweepDocumentFiles(options: { boot: boolean; nowMs?: number; hasDocumentRow: (id: string) => boolean; store?: ObjectStore; sizes?: Map<string, number> }): Promise<SweepCounts> {
   const store = options.store ?? objectStore();
   const nowMs = options.nowMs ?? Date.now();
   const stagingCutoff = options.boot ? Math.max(processStartedAt, nowMs - STAGING_MAX_AGE_MS) : nowMs - STAGING_MAX_AGE_MS;
@@ -74,7 +74,11 @@ export async function sweepDocumentFiles(options: { boot: boolean; nowMs?: numbe
       counts.ignored += 1;
       continue;
     }
-    if (entry.modifiedMs >= nowMs - store.orphanGraceMs || isObjectInFlight("documents", entry.id) || options.hasDocumentRow(entry.id)) continue;
+    if (entry.modifiedMs >= nowMs - store.orphanGraceMs || isObjectInFlight("documents", entry.id) || options.hasDocumentRow(entry.id)) {
+      // The boot integrity check reuses this listing (review L6): one pass over the bucket, not two.
+      options.sizes?.set(entry.id, entry.size);
+      continue;
+    }
     await store.remove("documents", entry.id);
     counts.orphansRemoved += 1;
   }

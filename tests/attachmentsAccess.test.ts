@@ -203,7 +203,7 @@ describe("notes (D408, the G1 regression), chat messages, whiteboards, cards, an
     expect(await contentStatus(recipient, image)).toBe(404);
 
     const synced = syncDerivedLinks("note", noteId, owner.userId, [image, othersImage]);
-    expect(synced).toEqual({ linked: [image], unlinked: [], skipped: [othersImage] });
+    expect(synced).toEqual({ linked: [image], unlinked: [], skipped: [othersImage], binned: [] });
     expect(await contentStatus(recipient, image)).toBe(200);
     expect(await contentStatus(recipient, othersImage)).toBe(404);
     // Declared links are refused for a derived host.
@@ -290,9 +290,9 @@ describe("usage (D409)", () => {
     const other = await createUser("Usage other");
     const { eventId } = await calendarWithEvent(owner, "Usage calendar");
     const documentId = await uploadAttachment(owner);
-    expect((await api(owner, "GET", `/files/${documentId}/usage`)).body).toEqual({ uses: [], hiddenCount: 0, total: 0 });
+    expect((await api(owner, "GET", `/files/${documentId}/usage`)).body).toEqual({ uses: [], hidden: [], hiddenCount: 0, total: 0 });
     await link(owner, "event", eventId, { documentId });
-    expect((await api(owner, "GET", `/files/${documentId}/usage`)).body).toEqual({ uses: [{ hostKind: "event", hostId: eventId, title: "Planning" }], hiddenCount: 0, total: 1 });
+    expect((await api(owner, "GET", `/files/${documentId}/usage`)).body).toEqual({ uses: [{ hostKind: "event", hostId: eventId, title: "Planning" }], hidden: [], hiddenCount: 0, total: 1 });
     expect((await api(other, "GET", `/files/${documentId}/usage`)).status).toBe(404);
     // Deleting a linked Attachments file from Files is allowed (D409); the host lists it as removed.
     expect((await api(owner, "DELETE", `/files/${documentId}`)).status).toBe(200);

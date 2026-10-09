@@ -1,26 +1,67 @@
 /**
- * Photo location stripping before upload (uploads everywhere plan D401, operator decision Q9, T349).
+ * Photo location stripping before upload (uploads everywhere plan D401, operator decision Q9, T349,
+ * review M2). Pure byte operations, no dependency, done in the browser before the bytes leave it.
  *
- * Every JPEG the attach kit uploads is rewritten as a pure byte operation, with no re-encode and no
- * dependency: the EXIF APP1 segment (GPS position, camera serial, and the rest) is replaced by a
- * minimal EXIF block that keeps only the Orientation tag, so phone photos still display upright; XMP
- * APP1 segments and Photoshop/IPTC APP13 segments (which can also carry places) are removed. The
- * compressed image data from the first SOS marker on is copied unchanged. Anything that is not a
- * well-formed JPEG comes back untouched. The server never rewrites bytes (an upload's SHA-256 must
- * match what the client sent), so files uploaded by other means (MCP, the Files app) keep their EXIF.
+ * - **JPEG**: the EXIF APP1 segment (GPS position, camera serial, and the rest) is replaced by a
+ *   minimal EXIF block that keeps only the Orientation tag, so phone photos still display upright;
+ *   XMP APP1, Photoshop/IPTC APP13, and MPF APP2 segments are removed. Stray bytes between segments
+ *   are skipped. The entropy-coded data is copied unchanged up to the primary image's EOI, and
+ *   everything after it is dropped: MPF secondary images (which carry their own EXIF and GPS) and
+ *   motion-photo MP4 trailers.
+ * - **PNG**: the `eXIf` chunk and XMP (`iTXt` with the `XML:com.adobe.xmp` keyword) are removed.
+ * - **WebP**: the `EXIF` and `XMP ` chunks are removed and the VP8X flags and RIFF size fixed.
+ * - **When a JPEG cannot be walked** (truncated or malformed) and it still carries EXIF or XMP, it is
+ *   re-encoded through a canvas (`createImageBitmap` applies the orientation; the result has no
+ *   metadata at all). When that is impossible too, the upload is refused with a clear message
+ *   (`LocationStripError`); the caller may retry with `keepLocation`.
+ * - **Not stripped:** HEIC/HEIF (and any other format), and files larger than 64 MiB
+ *   (`STRIP_MAX_BYTES`), which are uploaded as they are. The server never rewrites bytes (an upload's
+ *   SHA-256 must match what the client sent), so files uploaded by other means (MCP, REST, the Files
+ *   app) keep their metadata.
  */
 
 const SOI = 0xd8;
 const SOS = 0xda;
 const EOI = 0xd9;
 const APP1 = 0xe1;
+const APP2 = 0xe2;
 const APP13 = 0xed;
 const EXIF_HEADER = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00]; // "Exif\0\0"
+const XMP_HEADER = Array.from(new TextEncoder().encode("http://ns.adobe.com/"));
+const MPF_HEADER = [0x4d, 0x50, 0x46, 0x00]; // "MPF\0"
 const ORIENTATION_TAG = 0x0112;
 
-export const isJpeg = (bytes: Uint8Array) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === SOI && bytes[2] === 0xff;
+/** Above this the kit uploads the file as it is (review L5): stripping reads the whole file into memory. */
+export const STRIP_MAX_BYTES = 64 * 1024 * 1024;
 
+export const isJpeg = (bytes: Uint8Array) => bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === SOI && bytes[2] === 0xff;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+export const isPng = (bytes: Uint8Array) => bytes.length >= 8 && PNG_SIGNATURE.every((value, index) => bytes[index] === value);
+export const isWebp = (bytes: Uint8Array) => bytes.length >= 12 && ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP";
+
+function ascii(bytes: Uint8Array, offset: number, length: number) {
+  let out = "";
+  for (let index = 0; index < length && offset + index < bytes.length; index += 1) out += String.fromCharCode(bytes[offset + index]!);
+  return out;
+}
 const startsWith = (bytes: Uint8Array, offset: number, prefix: readonly number[]) => prefix.every((value, index) => bytes[offset + index] === value);
+function concat(parts: readonly Uint8Array[]) {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let at = 0;
+  for (const part of parts) { out.set(part, at); at += part.length; }
+  return out;
+}
+function indexOfBytes(haystack: Uint8Array, needle: readonly number[], from = 0) {
+  outer: for (let index = from; index <= haystack.length - needle.length; index += 1) {
+    for (let inner = 0; inner < needle.length; inner += 1) if (haystack[index + inner] !== needle[inner]) continue outer;
+    return index;
+  }
+  return -1;
+}
+
+const MARKERS = [EXIF_HEADER, XMP_HEADER, Array.from(new TextEncoder().encode("eXIf")), Array.from(new TextEncoder().encode("EXIF"))];
+/** Whether the bytes still hold an EXIF or XMP block anywhere (JPEG APP1, PNG eXIf, WebP EXIF): the refusal trigger. */
+export const hasLocationMetadata = (bytes: Uint8Array) => MARKERS.some((marker) => indexOfBytes(bytes, marker) >= 0);
 
 /** The Orientation (1–8) in an EXIF APP1 payload (starting at "Exif\0\0"), or null. */
 export function readOrientation(payload: Uint8Array): number | null {
@@ -50,7 +91,6 @@ export function readOrientation(payload: Uint8Array): number | null {
 
 /** A minimal EXIF APP1 segment (marker and length included) holding only `orientation`. */
 export function orientationSegment(orientation: number): Uint8Array {
-  // "Exif\0\0" + TIFF header (II*\0, IFD0 at 8) + IFD0 with one SHORT entry + next-IFD 0.
   const payload = new Uint8Array(6 + 8 + 2 + 12 + 4);
   payload.set(EXIF_HEADER, 0);
   const view = new DataView(payload.buffer);
@@ -69,28 +109,53 @@ export function orientationSegment(orientation: number): Uint8Array {
   return segment;
 }
 
+export type StripResult = { bytes: Uint8Array; changed: boolean; failed?: boolean };
+
+/** Where the entropy-coded data that starts at `from` ends: the index of the next real marker's 0xFF. */
+function entropyEnd(bytes: Uint8Array, from: number) {
+  for (let index = from; index < bytes.length - 1; index += 1) {
+    if (bytes[index] !== 0xff) continue;
+    const next = bytes[index + 1]!;
+    // Stuffed 0xFF00, restart markers, and fill bytes stay inside the scan.
+    if (next === 0x00 || (next >= 0xd0 && next <= 0xd7) || next === 0xff) continue;
+    return index;
+  }
+  return -1;
+}
+
 /**
- * Removes location-bearing metadata from a JPEG (see the file comment). Returns the same array when
- * nothing needed removing or the bytes are not a JPEG it can walk safely.
+ * Removes location-bearing metadata from a JPEG and everything after its primary image (see the file
+ * comment). `failed` is set when the bytes could not be walked to the primary image's EOI; the bytes
+ * then come back unchanged and the caller decides (stripImageLocation re-encodes).
  */
-export function stripJpegMetadata(bytes: Uint8Array): { bytes: Uint8Array; changed: boolean } {
+export function stripJpegMetadata(bytes: Uint8Array): StripResult {
   if (!isJpeg(bytes)) return { bytes, changed: false };
+  const unchanged = (failed: boolean): StripResult => ({ bytes, changed: false, ...(failed ? { failed: true } : {}) });
   const parts: Uint8Array[] = [bytes.subarray(0, 2)];
   let offset = 2;
   let changed = false;
   let orientation: number | null = null;
   let insertAt = -1;
+  let ended = false;
   while (offset < bytes.length) {
-    if (bytes[offset] !== 0xff) return { bytes, changed: false };
-    // Fill bytes before a marker.
+    if (bytes[offset] !== 0xff) {
+      // Stray bytes between segments (some encoders pad or leave junk): skip to the next marker.
+      const next = bytes.indexOf(0xff, offset);
+      if (next < 0) return unchanged(true);
+      changed = true;
+      offset = next;
+      continue;
+    }
     let markerAt = offset;
     while (markerAt + 1 < bytes.length && bytes[markerAt + 1] === 0xff) markerAt += 1;
     const marker = bytes[markerAt + 1];
-    if (marker === undefined) return { bytes, changed: false };
-    if (marker === SOS || marker === EOI) {
+    if (marker === undefined) return unchanged(true);
+    if (marker === EOI) {
       if (insertAt < 0) insertAt = parts.length;
-      parts.push(bytes.subarray(markerAt));
-      offset = bytes.length;
+      parts.push(bytes.subarray(markerAt, markerAt + 2));
+      // Anything after the primary image (MPF secondary images, a motion-photo MP4) is dropped.
+      if (markerAt + 2 < bytes.length) changed = true;
+      ended = true;
       break;
     }
     // Stand-alone markers (TEM, RSTn) carry no length.
@@ -99,13 +164,23 @@ export function stripJpegMetadata(bytes: Uint8Array): { bytes: Uint8Array; chang
       offset = markerAt + 2;
       continue;
     }
-    if (markerAt + 4 > bytes.length) return { bytes, changed: false };
+    if (markerAt + 4 > bytes.length) return unchanged(true);
     const length = (bytes[markerAt + 2]! << 8) | bytes[markerAt + 3]!;
     const end = markerAt + 2 + length;
-    if (length < 2 || end > bytes.length) return { bytes, changed: false };
+    if (length < 2 || end > bytes.length) return unchanged(true);
     const payload = bytes.subarray(markerAt + 4, end);
-    if (marker === APP1 || marker === APP13) {
-      if (marker === APP1 && startsWith(payload, 0, EXIF_HEADER)) {
+    if (marker === SOS) {
+      if (insertAt < 0) insertAt = parts.length;
+      // The scan header, then its entropy-coded data up to the next real marker (more scans, EOI).
+      const dataEnd = entropyEnd(bytes, end);
+      if (dataEnd < 0) return unchanged(true);
+      parts.push(bytes.subarray(markerAt, dataEnd));
+      offset = dataEnd;
+      continue;
+    }
+    const isExif = marker === APP1 && startsWith(payload, 0, EXIF_HEADER);
+    if (marker === APP1 || marker === APP13 || (marker === APP2 && startsWith(payload, 0, MPF_HEADER))) {
+      if (isExif) {
         orientation ??= readOrientation(payload);
         if (insertAt < 0) insertAt = parts.length;
       }
@@ -117,30 +192,106 @@ export function stripJpegMetadata(bytes: Uint8Array): { bytes: Uint8Array; chang
     }
     offset = end;
   }
+  if (!ended) return unchanged(true);
   if (!changed) return { bytes, changed: false };
   if (orientation !== null && orientation !== 1) parts.splice(insertAt < 0 ? 1 : insertAt, 0, orientationSegment(orientation));
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
+  return { bytes: concat(parts), changed: true };
+}
+
+/** Removes the PNG `eXIf` chunk and XMP `iTXt` chunks. CRCs of the kept chunks are untouched. */
+export function stripPngMetadata(bytes: Uint8Array): StripResult {
+  if (!isPng(bytes)) return { bytes, changed: false };
+  const parts: Uint8Array[] = [bytes.subarray(0, 8)];
+  let offset = 8;
+  let changed = false;
+  while (offset + 12 <= bytes.length) {
+    const length = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0);
+    const end = offset + 12 + length;
+    if (end > bytes.length) return { bytes, changed: false, failed: true };
+    const type = ascii(bytes, offset + 4, 4);
+    const xmp = type === "iTXt" && ascii(bytes, offset + 8, 17) === "XML:com.adobe.xmp";
+    if (type === "eXIf" || xmp) changed = true;
+    else parts.push(bytes.subarray(offset, end));
+    offset = end;
+    if (type === "IEND") break;
   }
+  return changed ? { bytes: concat(parts), changed: true } : { bytes, changed: false };
+}
+
+/** Removes the WebP `EXIF` and `XMP ` chunks, clears their VP8X flags, and fixes the RIFF size. */
+export function stripWebpMetadata(bytes: Uint8Array): StripResult {
+  if (!isWebp(bytes)) return { bytes, changed: false };
+  const parts: Uint8Array[] = [];
+  let offset = 12;
+  let changed = false;
+  while (offset + 8 <= bytes.length) {
+    const size = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
+    const end = offset + 8 + size + (size % 2);
+    if (offset + 8 + size > bytes.length) return { bytes, changed: false, failed: true };
+    const fourcc = ascii(bytes, offset, 4);
+    if (fourcc === "EXIF" || fourcc === "XMP ") changed = true;
+    else if (fourcc === "VP8X") {
+      const chunk = bytes.slice(offset, Math.min(end, bytes.length));
+      chunk[8] = chunk[8]! & ~0x0c; // clear the EXIF (0x08) and XMP (0x04) flags
+      parts.push(chunk);
+    } else parts.push(bytes.subarray(offset, Math.min(end, bytes.length)));
+    offset = end;
+  }
+  if (!changed) return { bytes, changed: false };
+  const body = concat(parts);
+  const out = new Uint8Array(12 + body.length);
+  out.set(bytes.subarray(0, 12), 0);
+  new DataView(out.buffer).setUint32(4, 4 + body.length, true);
+  out.set(body, 12);
   return { bytes: out, changed: true };
 }
 
+/** Thrown when a photo still carries location data and could not be cleaned; the upload is refused. */
+export class LocationStripError extends Error {
+  constructor(readonly fileName: string) {
+    super(`The location in “${fileName}” could not be removed, so it was not uploaded`);
+    this.name = "LocationStripError";
+  }
+}
+
+/** Re-encodes an image through a canvas (no metadata survives; the orientation is applied). */
+async function reencodeJpeg(file: File): Promise<Uint8Array | null> {
+  if (typeof createImageBitmap !== "function" || typeof OffscreenCanvas !== "function") return null;
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return new Uint8Array(await (await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 })).arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
 /**
- * The file to upload: a JPEG without its location (same name, type, and modified time), or the same
- * file when there is nothing to strip. Never throws; an unreadable file is uploaded as it is.
+ * The file to upload: a JPEG, PNG, or WebP without its location (same name, type, and modified
+ * time), or the same file when there is nothing to strip, the type is not one of those (HEIC is not
+ * stripped), or it is larger than STRIP_MAX_BYTES. A JPEG that cannot be walked but still holds EXIF
+ * or XMP is re-encoded; when even that fails it throws LocationStripError.
  */
 export async function stripImageLocation(file: File): Promise<File> {
+  if (file.size > STRIP_MAX_BYTES) return file;
+  let head: Uint8Array;
   try {
-    const head = new Uint8Array(await file.slice(0, 3).arrayBuffer());
-    if (!isJpeg(head)) return file;
-    const result = stripJpegMetadata(new Uint8Array(await file.arrayBuffer()));
-    if (!result.changed) return file;
-    return new File([result.bytes as BlobPart], file.name, { type: file.type || "image/jpeg", lastModified: file.lastModified });
+    head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
   } catch {
     return file;
   }
+  const strip = isJpeg(head) ? stripJpegMetadata : isPng(head) ? stripPngMetadata : isWebp(head) ? stripWebpMetadata : null;
+  if (!strip) return file;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const result = strip(bytes);
+  const rebuilt = (out: Uint8Array, type = file.type) => new File([out as BlobPart], file.name, { type: type || "application/octet-stream", lastModified: file.lastModified });
+  if (result.changed) return rebuilt(result.bytes);
+  if (result.failed && hasLocationMetadata(bytes)) {
+    const reencoded = strip === stripJpegMetadata ? await reencodeJpeg(file) : null;
+    if (reencoded) return rebuilt(reencoded, "image/jpeg");
+    throw new LocationStripError(file.name);
+  }
+  return file;
 }

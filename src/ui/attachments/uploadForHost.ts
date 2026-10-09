@@ -79,11 +79,16 @@ export const listHostAttachments = (kind: HostKind, hostId: string) =>
 export const linkToHost = (kind: HostKind, hostId: string, documentId: string, options: { partId?: string | null; confirmed?: boolean } = {}) =>
   api<{ documentId: string; created: boolean }>(path(kind, hostId), { method: "POST", body: JSON.stringify({ documentId, ...(options.partId ? { partId: options.partId } : {}), ...(options.confirmed ? { confirmed: true } : {}) }) });
 
-/** Removes a link; `documentBinned` says the upload went to the Bin with it (D395). */
+/**
+ * Removes a link; `documentBinned` says the upload went to the Bin with it (D395). The file's owner may
+ * always remove their own file from any host, even one they can no longer open (review M1).
+ */
 export const unlinkFromHost = (kind: HostKind, hostId: string, documentId: string) =>
-  api<{ ok: true; documentBinned: boolean }>(`${path(kind, hostId)}/${encodeURIComponent(documentId)}`, { method: "DELETE", body: "{}" });
+  // `documentBinned` is absent when the file's owner withdrew it from a host they can no longer open (review M1).
+  api<{ ok: true; documentBinned?: boolean }>(`${path(kind, hostId)}/${encodeURIComponent(documentId)}`, { method: "DELETE", body: "{}" });
 
-export type FileUsage = { uses: Array<{ hostKind: HostKind; hostId: string; title: string | null }>; hiddenCount: number; total: number };
+/** `hidden`: places the owner can no longer open, by id only, for "Remove from places you can't open" (review M1). */
+export type FileUsage = { uses: Array<{ hostKind: HostKind; hostId: string; title: string | null }>; hidden: Array<{ hostKind: HostKind; hostId: string }>; hiddenCount: number; total: number };
 
 /** Where the caller's file is attached (D409), for the delete confirm in Files. */
 export const fileUsage = (documentId: string) => api<FileUsage>(`/files/${encodeURIComponent(documentId)}/usage`);

@@ -1,3 +1,4 @@
+import { isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
 import { Readable } from "node:stream";
 import { config } from "../config";
 import { db, ensureDefaultFolder, now } from "../db";
@@ -94,6 +95,7 @@ export async function importWhiteboard(userId: string, input: { name: string; fo
   const boardName = whiteboardStoredName(input.name);
   const folderId = input.folderId ?? ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
+  if (isSystemFolder(folderId)) throw new WhiteboardError(400, "SYSTEM_FOLDER", SYSTEM_FOLDER_MESSAGE);
   const plan = planImport(input.file);
   // References to Nook files the importer cannot open are left out, as for a duplicate (T165).
   const foreign = unavailableImages(userId, { files: Object.fromEntries(Object.entries(plan.scene.files).filter(([key]) => !plan.embedded.some((item) => item.fileId === key))) });

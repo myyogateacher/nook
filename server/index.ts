@@ -25,6 +25,8 @@ import { reconcileEventNextOccurrences } from "./calendar/service";
 import { reconcileCardExcerpts } from "./tasks/excerpt";
 import { registerBinRoutes } from "./binRoutes";
 import { createFolder, FolderError } from "./folders";
+import { registerAttachmentRoutes } from "./attachments/routes";
+import { isSystemFolder, isSystemFolderError, SYSTEM_FOLDER_BODY } from "./attachments/service";
 import { indexNote, reconcileSearchIndex, unindexNote } from "./searchIndex";
 import { createDraftNote, discardDraft, DraftActionError, hasDraftDelta, isBlankNote, moveNoteToBin, publishDraft, purgeBlankNote, writeDraftLocked } from "./noteDrafts";
 import { resolveNoteDraftProposals } from "./inbox/noteDraftProposals";
@@ -585,14 +587,19 @@ app.get("/api/users", (c) => {
   return c.json({ users: users.map((user) => ({ id: user.id, displayName: user.display_name, role: user.role, kind: user.kind, avatarUrl: user.kind === "service" ? null : avatarUrlFor(user.id, user.avatar_id) })) });
 });
 
-app.get("/api/folders", (c) => c.json({ folders: listReadableFolders(c.get("user").id) }));
+// System folders (the Attachments folder, 046) hold files only: Files asks for them with
+// `?include=system`; Notes, Whiteboards, and the other folder pickers never see them.
+app.get("/api/folders", (c) => {
+  const folders = listReadableFolders(c.get("user").id);
+  return c.json({ folders: c.req.query("include") === "system" ? folders : folders.filter((folder) => folder.system_kind === null) });
+});
 
 app.post("/api/folders", async (c) => {
   const body = await parseJson(c.req.raw, folderSchema);
   try {
     return c.json({ folder: createFolder(c.get("user").id, body.name, body.parentId ?? null) }, 201);
   } catch (error) {
-    if (error instanceof FolderError) return c.json({ error: error.message }, error.status);
+    if (error instanceof FolderError) return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
     throw error;
   }
 });
@@ -604,6 +611,8 @@ app.patch("/api/folders/:id", async (c) => {
   const folder = db.query("SELECT id, is_default FROM folders WHERE id = ? AND owner_id = ?").get(id, userId) as { id: string; is_default: number } | null;
   if (!folder) return c.json({ error: "Folder not found" }, 404);
   if (folder.is_default) return c.json({ error: "The Default folder cannot be changed" }, 409);
+  // T342, D392: a system folder is never renamed or moved, and never takes a subfolder.
+  if (isSystemFolder(id) || isSystemFolder(body.parentId)) return c.json(SYSTEM_FOLDER_BODY, 400);
   if (body.parentId === id) return c.json({ error: "A folder cannot contain itself" }, 400);
   if (body.parentId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.parentId, userId)) {
     return c.json({ error: "Parent folder not found" }, 404);
@@ -616,6 +625,8 @@ app.patch("/api/folders/:id", async (c) => {
 app.delete("/api/folders/:id", (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
+  // T342, D392: the Attachments folder is never deleted (its files leave by Delete or Move in Files).
+  if (isSystemFolder(id) && db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(id, userId)) return c.json(SYSTEM_FOLDER_BODY, 400);
   const notesIn = (db.query("SELECT id FROM notes WHERE folder_id = ?").all(id) as Array<{ id: string }>).map((row) => row.id);
   const filesIn = (db.query("SELECT id FROM documents WHERE folder_id = ?").all(id) as Array<{ id: string }>).map((row) => row.id);
   const result = db.query("DELETE FROM folders WHERE id = ? AND owner_id = ? AND is_default = 0").run(id, userId);
@@ -639,9 +650,11 @@ app.get("/api/folders/:id/sharing", (c) => {
 app.put("/api/folders/:id/sharing", async (c) => {
   const id = uuid.parse(c.req.param("id"));
   const userId = c.get("user").id;
-  const folder = db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(id, userId);
+  const folder = db.query("SELECT id, system_kind FROM folders WHERE id = ? AND owner_id = ?").get(id, userId) as { id: string; system_kind: string | null } | null;
   if (!folder) return c.json({ error: "Folder not found" }, 404);
   const body = await parseJson(c.req.raw, folderSharingSchema);
+  // T342: a system folder stays private (sharing it would share every attachment at once).
+  if (folder.system_kind !== null && body.visibility !== "private") return c.json(SYSTEM_FOLDER_BODY, 400);
   if (body.userIds.includes(userId)) return c.json({ error: "The owner cannot be added as a recipient" }, 400);
   const uniqueIds = [...new Set(body.userIds)];
   if (body.visibility === "selected" && uniqueIds.length === 0) return c.json({ error: "Select at least one user" }, 400);
@@ -693,6 +706,7 @@ app.post("/api/notes", async (c) => {
   if (body.folderId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
     return c.json({ error: "Folder not found" }, 404);
   }
+  if (isSystemFolder(body.folderId)) return c.json(SYSTEM_FOLDER_BODY, 400);
   const created = await createDraftNote(userId, body.folderId ?? null, "");
   return c.json({ note: { id: created.id, title: created.title, folder_id: created.folderId, current_version: 0, draft_revision: created.revision } }, 201);
 });
@@ -752,6 +766,7 @@ app.patch("/api/notes/:id", async (c) => {
     if (body.folderId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(body.folderId, userId)) {
       return c.json({ error: "Folder not found" }, 404);
     }
+    if (isSystemFolder(body.folderId)) return c.json(SYSTEM_FOLDER_BODY, 400);
     db.query("UPDATE notes SET folder_id = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND draft_revision IS ?")
       .run(body.folderId ?? null, now(), id, userId, note.draft_revision);
     // A note that uses its folder's access may change audience with the move (Wave 44 fixes, M1).
@@ -916,6 +931,8 @@ app.delete("/api/notes/:id", async (c) => {
 });
 
 registerDocumentRoutes(app);
+// Uploads everywhere (U0): the generic attachment routes and GET /api/files/:id/usage.
+registerAttachmentRoutes(app);
 registerBinRoutes(app);
 registerSearchRoutes(app);
 registerTaskRoutes(app);
@@ -944,6 +961,8 @@ app.onError((error, c) => {
   if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
   if (error instanceof ZodError) return c.json({ error: "Invalid request", details: error.issues.map((issue) => issue.message) }, 400);
   if (error instanceof SyntaxError) return c.json({ error: "Invalid JSON" }, 400);
+  // The 046 triggers' backstop for a path that missed its own system-folder check (T342).
+  if (isSystemFolderError(error)) return c.json(SYSTEM_FOLDER_BODY, 400);
   console.error("Request failed", errorClass(error));
   return c.json({ error: "Something went wrong" }, 500);
 });

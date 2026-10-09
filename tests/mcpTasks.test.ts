@@ -69,15 +69,17 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
 const TASK_READ_TOOLS = ["get_card", "list_boards", "list_cards", "list_children", "list_sprints", "list_views", "query_cards", "search_cards"];
 const TASK_WRITE_TOOLS = ["comment_on_card", "create_card", "create_sprint", "link_attachment", "link_cards", "manage_tags", "move_card", "set_wip_limit", "start_sprint", "update_card"];
 
 describe("MCP task tools", () => {
   test("task tools appear only for task scopes, write implies read, and there is nothing that deletes", async () => {
     const user = await createUser("Task scopes");
-    expect(await toolNames(makeKey(user, ["tasks:read"]))).toEqual(TASK_READ_TOOLS);
+    expect(await toolNames(makeKey(user, ["tasks:read"]))).toEqual([...TASK_READ_TOOLS, ...ATTACHMENT_READS].sort());
     const writer = await toolNames(makeKey(user, ["tasks:write"]));
-    expect(writer).toEqual([...TASK_READ_TOOLS, ...TASK_WRITE_TOOLS].sort());
+    expect(writer).toEqual([...TASK_READ_TOOLS, ...ATTACHMENT_READS, ...TASK_WRITE_TOOLS].sort());
     expect(writer.some((name) => /delete|remove|purge|share|column|rename|unlink/.test(name))).toBe(false);
     const notesOnly = makeKey(user, ["notes:read", "notes:write-draft", "files:read"]);
     const notesTools = await toolNames(notesOnly);

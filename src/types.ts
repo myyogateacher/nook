@@ -11,6 +11,8 @@ export type Folder = {
   visibility: "private" | "selected" | "all_users";
   created_at: string;
   updated_at: string;
+  /** "attachments" for the person's Attachments folder (uploads everywhere D391); only Files asks for it. */
+  system_kind?: string | null;
 };
 export type NoteSummary = {
   id: string;

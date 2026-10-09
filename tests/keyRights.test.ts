@@ -58,7 +58,8 @@ function setPolicies(actorId: string, patch: Partial<Policies>) {
   writePolicies(actorId, { ...DEFAULT_POLICIES, ...patch }, policiesRevision());
 }
 
-const NOTES_READ = ["list_folders", "list_notes", "read_note", "search_notes"];
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const NOTES_READ = ["list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
 
 describe("Nook key rights", () => {
   test("tools/list follows grants: notes:read plus tasks:write over all boards shows exactly those tools", async () => {

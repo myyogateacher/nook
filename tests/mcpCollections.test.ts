@@ -80,6 +80,8 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
 const READ_TOOLS = ["get_row", "list_collections", "query_rows"];
 const WRITE_TOOLS = ["create_collection", "create_row", "update_row"];
 
@@ -87,12 +89,12 @@ describe("MCP collection tools", () => {
   test("appear only for collection scopes, write implies read, the handler re-checks, and nothing deletes or edits schema", async () => {
     const user = await createUser("Collections scopes");
     const reader = makeKey(user, ["collections:read"]);
-    expect(await toolNames(reader)).toEqual(READ_TOOLS);
+    expect(await toolNames(reader)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS].sort());
     const writer = makeKey(user, ["collections:write"]);
-    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
+    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS, ...WRITE_TOOLS].sort());
     const other = makeKey(user, ["notes:read", "calendar:write", "tasks:write", "today:read"]);
     for (const name of [...READ_TOOLS, ...WRITE_TOOLS]) expect(await toolNames(other)).not.toContain(name);
-    for (const name of await toolNames(writer)) expect(name).not.toMatch(/delete|schema|share|import|view|attach/);
+    for (const name of (await toolNames(writer)).filter((tool) => !ATTACHMENT_READS.includes(tool))) expect(name).not.toMatch(/delete|schema|share|import|view|attach/);
     expect((await direct(other, "list_collections", {})).value.code).toBe("SCOPE_REQUIRED");
     expect((await direct(reader, "create_row", { collectionId: crypto.randomUUID(), values: {} })).value.code).toBe("SCOPE_REQUIRED");
     const created = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "all", password: user.password, scopes: ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read", "calendar:read", "calendar:write", "collections:read", "collections:write"] }) }, user);

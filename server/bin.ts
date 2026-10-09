@@ -198,8 +198,15 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
         return { status: "restored", folderId: null, folderName: null, visibility: "private" };
       })();
     }
+    // Uploads everywhere (D395, §4.4): a file from the Attachments folder that something still links
+    // returns there; one that nothing links any more returns to Default as an ordinary file, so the
+    // orphan sweep never bins it again (server/attachments/sweep.ts).
+    const fromAttachments = type === "document" && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ? AND system_kind IS NOT NULL").get(row.folder_id, ownerId));
+    const stillLinked = fromAttachments && Boolean(db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
+      OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id) OR EXISTS (SELECT 1 FROM collection_row_attachments WHERE document_id = $id)`).get({ id }));
     return db.transaction((): RestoreOutcome => {
-      const folder = ownedFolder(row.folder_id, ownerId) ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
+      const kept = fromAttachments && !stillLinked ? null : ownedFolder(row.folder_id, ownerId);
+      const folder = kept ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
       const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
         WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
         .run(folder.id, now(), id, ownerId);

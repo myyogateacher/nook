@@ -156,8 +156,15 @@ describe("foreign items a key may not read (T203)", () => {
       on("collections", "write", "collection", w.collectionX.id)
     ]);
     const context = loadLiveKey(keyId)!;
+    // Uploads everywhere U0: a text file attached to the granted calendar's event, for the attachment reads.
+    const form = new FormData();
+    form.append("file", new Blob(["agenda"]), "agenda.txt");
+    const uploaded = await request("/files?attachTo=event", { method: "POST", body: form }, w.owner);
+    const attachmentId = ((await uploaded.json()) as { document: { id: string } }).document.id;
+    expect((await api(w.owner, "POST", `/attachments/event/${w.eventC}`, { documentId: attachmentId })).status).toBe(201);
     // Sample arguments for each resource argument, all inside the grants.
     const samples: Record<string, unknown> = {
+      hostKind: "event", hostId: w.eventC, documentId: attachmentId,
       boardId: w.a.boardId, cardId: w.cardA, columnId: w.a.columnId, collectionId: w.collectionX.id, rowId: w.rowX.id, calendarId: w.calendarC, eventId: w.eventC,
       // Wave 34: the cross-board and cross-calendar reads are offered to chosen-item keys too.
       query: "a", filter: "", from: new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10), to: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)

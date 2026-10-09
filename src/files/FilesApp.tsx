@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
+import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, Lock, LogOut, Paperclip, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
 import { restoredMessage } from "../bin/binFormat";
@@ -27,6 +27,7 @@ import {
   filesEmptyState,
   filterDocuments,
   isDocumentDrag,
+  isSystemFolder,
   isOsFileDrag,
   movedMessage,
   readDocumentDragPayload,
@@ -48,6 +49,7 @@ import { FilePreview } from "./FilePreview";
 import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type FileView } from "./fileView";
 import { AccessSheet } from "../access/AccessSheet";
 import { MoveSheet } from "./MoveSheet";
+import { fileUsage, usageSummary } from "../ui/attachments/uploadForHost";
 import { NameDialog, RenameDialog } from "./RenameDialog";
 import { documentIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
@@ -135,6 +137,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const routeGenerationRef = useRef(0);
   const [dialog, setDialog] = useState<FilesDialog | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // D409: where the file being deleted is attached ("Used on 2 cards and 1 event"), for the confirm.
+  const [deleteUsage, setDeleteUsage] = useState<{ documentId: string; summary: string | null } | null>(null);
   const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
   // The row (document id) or control that opened the current dialog, so focus can go back to it.
   const returnFocusRef = useRef<string | HTMLElement | null>(null);
@@ -210,7 +214,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   useEffect(() => {
     let active = true;
     setLoadError(null);
-    Promise.all([api<{ folders: Folder[] }>("/folders"), listFiles()]).then(([{ folders }, { documents }]) => {
+    // `include=system`: Files is the one place the Attachments folder shows (D391).
+    Promise.all([api<{ folders: Folder[] }>("/folders?include=system"), listFiles()]).then(([{ folders }, { documents }]) => {
       if (!active) return;
       const loaded = { folders, documents };
       setData(loaded);
@@ -267,7 +272,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const { owned, shared } = useMemo(() => orderFolders(folders), [folders]);
   const defaultFolder = owned.find((item) => item.is_default === 1 || item.name === "Default") ?? owned[0] ?? null;
   const currentFolder = folders.find((item) => item.id === folder) ?? null;
-  const uploadFolderId = folder === "all" ? defaultFolder?.id ?? null : currentFolder?.is_owner === 1 ? currentFolder.id : undefined;
+  // Nothing is uploaded into the Attachments folder directly (T342): uploads there come from attaching.
+  const uploadFolderId = folder === "all" ? defaultFolder?.id ?? null : currentFolder?.is_owner === 1 && !isSystemFolder(currentFolder) ? currentFolder.id : undefined;
   const canUpload = canWrite && uploadFolderId !== undefined && data !== null;
   const inFolder = useMemo(() => documents.filter((item) => documentInFolder(item, folder)), [documents, folder]);
   const visible = useMemo(() => sortDocuments(filterDocuments(inFolder, query), sort), [inFolder, query, sort]);
@@ -328,6 +334,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (!canManage(document)) return;
     returnFocusRef.current = document.id;
     setDialog({ kind, documentId: document.id });
+    // D409, T351: deleting a file that is attached somewhere says where, before it goes to the Bin.
+    if (kind === "delete") {
+      setDeleteUsage(null);
+      fileUsage(document.id).then((usage) => setDeleteUsage({ documentId: document.id, summary: usageSummary(usage) })).catch(() => undefined);
+    }
   }
 
   // The ⋯ sheet is open to everyone (Download, Open preview); it hands off to the owner dialogs.
@@ -365,7 +376,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
 
   async function createFolder(name: string) {
     const { folder: created } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
-    const { folders: reloaded } = await api<{ folders: Folder[] }>("/folders");
+    const { folders: reloaded } = await api<{ folders: Folder[] }>("/folders?include=system");
     setData((current) => current ? { ...current, folders: reloaded } : current);
     setDialog(null);
     returnFocusRef.current = null;
@@ -684,7 +695,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
           onDrop={(event) => folderDrop(event, item)}
         >
-          <FolderIcon /><span className="folder-copy">{item.name}</span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
+          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy">{item.name}{isSystemFolder(item) && <Lock className="folder-system-badge" aria-label="Managed by Nook: files you attach live here" />}</span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
         {shared.length > 0 && <div className="nav-label"><span>Shared folders</span></div>}
         {shared.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>
@@ -824,7 +835,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     }} />}
     {dialog?.kind === "delete" && dialogDocument && <ConfirmDialog
       title="Move to the Bin?"
-      message={deleteConfirmMessage(dialogDocument.name)}
+      message={deleteUsage?.documentId === dialogDocument.id && deleteUsage.summary ? `${deleteConfirmMessage(dialogDocument.name)} ${deleteUsage.summary}; those places show “File removed” until you restore it.` : deleteConfirmMessage(dialogDocument.name)}
       confirmLabel="Move to Bin"
       danger
       busy={deleting}

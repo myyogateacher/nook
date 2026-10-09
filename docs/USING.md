@@ -136,9 +136,19 @@ Files lists documents in the same folders as your notes. Each app shows only its
 - **Actions.** **Download**, **Rename**, **Move**, **Share**, and **Delete** are in each item's ⋯ menu (an action sheet on phones). Drag a file onto a folder to move it; the toast states the new effective sharing.
 - **Keyboard.** ↑/↓ move the selection (←/→ too in the grid), Enter opens the preview, F2 renames, and Delete or Backspace deletes your own files.
 - **Sharing** works like notes ([Access sheet](#sharing-and-access)): a file inherits its folder's sharing unless you give it its own. People you share with can preview and download but not change anything.
-- **Delete** moves the file to the Bin; the toast offers **Undo** for a few seconds.
+- **Delete** moves the file to the Bin; the toast offers **Undo** for a few seconds. When the file is attached somewhere, the confirm says where first ("Used on 2 cards and 1 event"); those places show "File removed" until you restore it.
 
-Nook does **not** strip EXIF or other embedded metadata (for example GPS location or author) from uploaded images or PDFs. Remove it before uploading if you plan to share the file.
+### Attachments
+
+Files you attach to something (an event, a card, a note, a chat message, a row; modules gain this one by one) are ordinary files kept in your own **Attachments** folder, marked with a lock in the Files sidebar. Nook creates it the first time you attach something.
+
+- **Who can open an attachment:** you, plus anyone who can open the item it is attached to, for as long as they can. Unsharing the item, moving it to the Bin, or removing the attachment ends their access at once. Attachments never show up in other people's Files lists or search.
+- **The folder is managed by Nook:** it cannot be shared, renamed, moved, or deleted, and nothing can be uploaded, created, or moved into it. You can rename its files, give one file its own sharing, download them, delete them, or **move them out** to keep them as ordinary files (they then stay when you remove them from the item).
+- **Storage:** attachments count toward your quota once, however many items show them. When you remove an attachment from the last item that uses it, it moves to your Bin (restorable for 30 days). Uploads you never attached go to the Bin after a day.
+- **The attach sheet** offers **Take photo** (phones and tablets: the camera opens directly), **Choose files**, and **From Files**, which lists only your own files. Picking a file from Files asks first, because everyone who can open the item will be able to open that file; it stays where it is in Files. On a phone the sheet slides up from the bottom, and Back closes it.
+- **Photo location:** when you attach a JPEG through the attach sheet (or by pasting or dropping it), Nook removes the GPS position and other camera metadata in your browser before uploading, keeping only the picture's orientation.
+
+Uploads through the Files app, MCP, or the REST API are stored exactly as sent: Nook does **not** strip EXIF or other embedded metadata (for example GPS location or author) from those images or from PDFs. Remove it before uploading if you plan to share the file.
 
 ## Tasks
 
@@ -634,6 +644,10 @@ There are twenty-one permissions in all. A key with read permissions plus **Sugg
 **Reviewing an agent's events and rows.** An event or row last changed through a key says **Changed by the MCP key <name>**. The event view's **Undo last change**, and the **Undo** button next to that note in a row, put the previous values back; your own next edit clears the note.
 
 **Reviewing an agent's drafts.** A note whose draft was written through a key shows a **Draft by <key name>** badge in the note list and the editor header, and waits in the **Inbox** as a note draft proposal. Nothing reaches readers until you press **Publish version** (or **Discard** the draft). Leaving such a note never publishes it, even after you edit it; only the Publish button does. (Your own drafts are published automatically when you leave a note only if you edited them in the current session.) If the draft changed after you last saw it, Publish reloads it and asks you to review it first. If you and an agent edit the same draft at once, whoever saves second is told the draft changed instead of overwriting it.
+
+### Attachments over MCP and REST
+
+`list_attachments` and `read_attachment_text` let an agent see the files attached to an item and read the text ones (up to 1 MiB), for example "summarise the agenda attached to this event". They work only with the **read permission of the item's module** (Read calendar for an event, Read notes for a note, Read tasks for a card, Read collections for a row, Read whiteboards, or Read agents on all agents for a chat message) and only for items the key may reach; Read files alone does not open them. `create_text_file` and `begin_upload` accept `purpose: "attachment"` to store the file in your Attachments folder, ready to attach. Files uploaded this way keep their bytes exactly as sent (no photo-location stripping).
 
 ### What agents can change (Wave 19)
 

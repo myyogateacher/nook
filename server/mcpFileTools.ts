@@ -6,6 +6,7 @@ import { ownedDocumentSummary } from "./documentAccess";
 import { DocumentPatchError, patchDocument, storedBytes, storeRawUpload, type StoreRawOptions } from "./documents";
 import { defineTool, McpToolError, notFound, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "./mcpToolKit";
 import { sanitizeDisplayName } from "./validation";
+import { ensureSystemFolder, isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
 
 /**
  * Wave 19 file writes over MCP (docs/plan/WAVES_18-20_SMALL.md D176, D177, T146, T147), all
@@ -89,16 +90,27 @@ export function ticketBudgetError(ticket: UploadTicket) {
   return ticket.sizeBytes > budgetLeft(ticket.userId, ticket.id) ? budgetError() : null;
 }
 
-/** Folder for a new upload: an owned folder, or Default for Files; none for an attachment. */
-function uploadFolder(userId: string, purpose: Purpose, folderId: string | undefined) {
-  if (purpose === "task_attachment") {
+/** What a caller asks for: the stored purposes, plus `attachment` (D402), a Files document in the Attachments folder. */
+type PurposeInput = Purpose | "attachment";
+
+/**
+ * Folder for a new upload: an owned folder, or Default for Files; none for a task attachment; the
+ * caller's Attachments folder (created on first use) for `attachment`, ready to attach to an event,
+ * card, or row. Never a system folder by id (T342).
+ */
+function uploadFolder(userId: string, purpose: PurposeInput, folderId: string | undefined) {
+  if (purpose === "task_attachment" || purpose === "attachment") {
     if (folderId) throw new McpToolError("INVALID", "Attachments have no folder");
-    return null;
+    return purpose === "attachment" ? ensureSystemFolder(userId) : null;
   }
   if (!folderId) return ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw notFound("Folder");
+  if (isSystemFolder(folderId)) throw new McpToolError("INVALID", SYSTEM_FOLDER_MESSAGE, { reason: "SYSTEM_FOLDER" });
   return folderId;
 }
+
+/** The purpose stored for a request: `attachment` is an ordinary Files document (D390). */
+const storedPurpose = (purpose: PurposeInput): Purpose => purpose === "attachment" ? "file" : purpose;
 
 function uploadName(name: string) {
   const cleaned = sanitizeDisplayName(name, "upload");
@@ -139,7 +151,7 @@ export async function storeForKey(key: Pick<McpKeyContext, "keyId" | "userId">, 
 
 const uuid = z.string().uuid();
 const sha256Hex = z.string().regex(/^[0-9a-fA-F]{64}$/, "sha256 is 64 hex characters");
-const purposeInput = z.enum(["file", "task_attachment"]).optional().describe("file (default): a Files document in folderId or Default. task_attachment: no folder, for link_attachment");
+const purposeInput = z.enum(["file", "task_attachment", "attachment"]).optional().describe("file (default): a Files document in folderId or Default. task_attachment: no folder, for link_attachment. attachment: a Files document in your Attachments folder, to attach to an event, card, or row");
 
 function patchErrorToMcp(error: DocumentPatchError) {
   if (error.code === "AUDIENCE_CHANGE") return new McpToolError("AUDIENCE_CHANGE", error.message);
@@ -170,7 +182,7 @@ export const fileWriteTools: McpToolSpec[] = [
       const kind = purpose ?? "file";
       const folder = uploadFolder(key.userId, kind, folderId);
       quotaCheck(key.userId, bytes.byteLength);
-      const result = await storeForKey(key, Readable.from([bytes]), { userId: key.userId, name: cleanName, folderId: folder, purpose: kind, uploadKey: null, expectedBytes: bytes.byteLength });
+      const result = await storeForKey(key, Readable.from([bytes]), { userId: key.userId, name: cleanName, folderId: folder, purpose: storedPurpose(kind), uploadKey: null, expectedBytes: bytes.byteLength });
       if (result.status !== 201) throw uploadErrorToMcp(result.status, result.body);
       return { document: result.body.document };
     }
@@ -203,7 +215,7 @@ export const fileWriteTools: McpToolSpec[] = [
       quotaCheck(key.userId, sizeBytes);
       const id = crypto.randomUUID();
       const expiresAt = Date.now() + UPLOAD_TICKET_TTL_MS;
-      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: kind, expiresAt, state: "pending", surface: key.surface ?? "mcp" });
+      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: storedPurpose(kind), expiresAt, state: "pending", surface: key.surface ?? "mcp" });
       return {
         uploadId: id,
         uploadUrl: `${config.appOrigin}/mcp/uploads/${id}`,

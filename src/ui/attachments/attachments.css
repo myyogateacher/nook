@@ -1,0 +1,37 @@
+/*
+ * The attach kit (uploads everywhere plan D398): the attach sheet (a dialog on desktop, a bottom sheet
+ * at ≤ 760 px through .file-dialog), the attachment list, and the preview sheet. Buttons are the shared
+ * .action-button and .icon-button; touch targets are at least 44 px.
+ */
+.file-dialog.attach-sheet { width: min(420px, calc(100vw - 32px)); }
+.attach-sheet-actions { display: grid; gap: 8px; padding: 4px 20px 6px; }
+.attach-sheet-actions .attach-sheet-action { width: 100%; justify-content: flex-start; min-height: 48px; }
+.attach-sheet-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
+.attach-sheet-note { margin: 0; padding: 6px 20px 16px; color: #8d8d94; font-size: .78rem; line-height: 1.45; }
+.attach-sheet-progress { position: sticky; bottom: 0; border-top: 1px solid #26262b; padding: 10px 20px calc(12px + env(safe-area-inset-bottom)); background: #141416; }
+
+.attachment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.attachment-item { display: flex; align-items: center; gap: 6px; min-height: 56px; border: 1px solid #26262b; border-radius: 12px; padding: 4px 6px; background: #131316; }
+.attachment-item .icon-button { width: 44px; height: 44px; flex: none; }
+.attachment-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; border: 0; padding: 2px; background: transparent; color: #d6d6d9; text-align: left; font: inherit; cursor: pointer; text-decoration: none; }
+span.attachment-open { cursor: default; }
+.attachment-open:focus-visible { outline: 2px solid #6d5a2c; outline-offset: 2px; border-radius: 8px; }
+.attachment-thumb { width: 48px; height: 48px; flex: none; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: #1d1d21; color: #b99b59; }
+.attachment-thumb img { width: 100%; height: 100%; object-fit: cover; image-orientation: from-image; }
+.attachment-thumb svg { width: 20px; height: 20px; }
+.attachment-copy { min-width: 0; display: grid; gap: 2px; }
+.attachment-copy strong { overflow: hidden; font-size: .88rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-copy small { color: #85858c; font-size: .74rem; }
+.attachment-item.removed { opacity: .75; }
+.attachment-item.removed .attachment-thumb { color: #8d8d94; }
+.attachment-item.removed .attachment-copy { flex: 1; }
+
+.file-dialog.attachment-preview { width: min(860px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); max-height: none; }
+.attachment-preview-actions { display: flex; gap: 8px; padding: 0 20px 10px; }
+.attachment-preview-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 20px calc(16px + env(safe-area-inset-bottom)); }
+.attachment-preview-body .file-media img { image-orientation: from-image; max-width: 100%; }
+
+@media (max-width: 760px) {
+  .file-dialog.attach-sheet { width: 100%; }
+  .file-dialog.attachment-preview { width: 100%; height: auto; }
+}

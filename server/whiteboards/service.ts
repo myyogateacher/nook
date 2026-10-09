@@ -1,3 +1,4 @@
+import { isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
 import { createHash } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import { config } from "../config";
@@ -316,6 +317,7 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
   if (!input.charged) charge("create", userId);
   const folderId = input.folderId ?? ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
+  if (isSystemFolder(folderId)) throw new WhiteboardError(400, "SYSTEM_FOLDER", SYSTEM_FOLDER_MESSAGE);
   const prepared = prepareScene(input.scene ?? emptyScene());
   // A copy or an import starts with a scene; every image in it must be one the new owner can open.
   const unavailable = unavailableImages(userId, prepared.scene);
@@ -663,6 +665,7 @@ export async function duplicateWhiteboard(documentId: string, userId: string, in
   const ownsSourceFolder = source.is_owner === 1 && source.folder_id !== null && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(source.folder_id, userId));
   const folderId = input.folderId ?? (ownsSourceFolder ? source.folder_id! : ensureDefaultFolder(userId));
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
+  if (isSystemFolder(folderId)) throw new WhiteboardError(400, "SYSTEM_FOLDER", SYSTEM_FOLDER_MESSAGE);
   const thumb = !input.snapshotId && unavailable.size === 0
     ? db.query("SELECT thumb_png, thumb_sha256 FROM whiteboards WHERE document_id = ? AND thumb_png IS NOT NULL").get(documentId) as { thumb_png: Uint8Array; thumb_sha256: string } | null
     : null;

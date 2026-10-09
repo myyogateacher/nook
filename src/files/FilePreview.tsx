@@ -29,7 +29,8 @@ function TextPreview({ document }: { document: DocumentSummary }) {
   </>;
 }
 
-function PreviewBody({ document }: { document: DocumentSummary }) {
+/** The preview stage of one document (image, PDF link, text, audio, video, or a placeholder); shared with the attach kit's AttachmentPreview. */
+export function PreviewBody({ document }: { document: DocumentSummary }) {
   const inline = contentUrl(document.id, "inline");
   const Icon = kindIcon(document.preview_kind);
   switch (document.preview_kind) {

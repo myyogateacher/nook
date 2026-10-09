@@ -68,6 +68,8 @@ type BinItem = {
 
 `POST /api/files?folderId=<uuid>`. If `folderId` is omitted, the file goes to the caller's Default folder.
 
+`attachTo` (uploads everywhere U0, migration 046): `?attachTo=<hostKind>` stores the file in the caller's Attachments folder instead; see [Attachments everywhere](#attachments-everywhere).
+
 `purpose` (Wave 9, migration 009): every document has `documents.purpose` = `file` (default), `task_attachment`, or `collection_attachment` (reserved for Wave 11). The optional `?purpose=` parameter accepts `file` or `task_attachment`; anything else returns 400. A `task_attachment` upload takes no `folderId` (400 otherwise), is stored with `folder_id = NULL`, never appears in Files, counts toward the quota, and becomes readable to a board's readers only once linked to one of its cards (§ Tasks, Attachments).
 
 The request body is `multipart/form-data` with **exactly one** part, named `file`. The part's `filename` parameter becomes the display name after sanitization (DEVELOPMENT_PLAN §6.4). The part's `Content-Type` is ignored for classification.
@@ -181,6 +183,52 @@ Downloads and previews are **not** audited individually, by design, to avoid noi
 Streaming: open the object with `O_NOFOLLOW` and verify it with `fstat`, then stream `start..end` from the fd, using a Node read stream converted with `Readable.toWeb`. The fd must close when the client aborts.
 
 > **Implementation notes (shipped in v0.3.0):** Bun sends streamed 200/206 bodies with `Transfer-Encoding: chunked` rather than the `Content-Length` the route sets; HEAD, 416, and empty responses carry `Content-Length`. Content responses do not carry the global HSTS or Permissions-Policy headers, since the route replaces `secureHeaders`. Both were accepted in the Wave 3 review.
+
+<a id="attachments-everywhere"></a>
+## Attachments everywhere (uploads everywhere U0, migration 046)
+
+Plan: `docs/plan/research/2026-10-09-uploads-everywhere.md` (D390–D409, T340–T352). Every attachment is an ordinary Files document (`purpose = 'file'`) uploaded through `POST /api/files` and served by `/api/files/:id/content`; nothing new stores or serves bytes.
+
+### The Attachments folder
+
+- `POST /api/files?attachTo=<hostKind>` stores the file in the caller's **Attachments** folder (`folders.system_kind = 'attachments'`), created on first use, private, at the root. `hostKind` is one of `event`, `note`, `chat_message`, `whiteboard`, `card`, `row` (400 otherwise); it takes no `purpose` or `folderId` (400). Everything else is the normal upload (idempotency, sniffing, quota, statuses).
+- `GET /api/folders` leaves system folders out (Notes, Whiteboards, and the pickers never see them). `GET /api/folders?include=system` (Files) includes them; each folder row carries `system_kind` (`null` for ordinary folders).
+- **Refusals (T342, D392), all 400 `{ error, code: "SYSTEM_FOLDER" }`:** `PUT /api/folders/:id/sharing` with any visibility but `private`; `PUT /api/folders/:id/access` with any audience but `private`; `PATCH /api/folders/:id` (rename or move) and making it another folder's parent; `DELETE /api/folders/:id`; `POST /api/folders` with it as `parentId`; `POST /api/notes` and `PATCH /api/notes/:id` with it as `folderId`; `POST /api/files?folderId=<it>` (upload without `attachTo`); `PATCH /api/files/:id` moving a file **into** it; creating or importing a whiteboard into it. Moving a file **out** of it, renaming a file in it, and a file's own sharing are allowed. Someone else's folder id stays the usual 404. MCP answers the same refusals as `INVALID` with `reason: "SYSTEM_FOLDER"`. Database triggers (046) enforce the same rules for any path.
+
+### Generic attachment routes
+
+`hostKind` as above; `hostId` a UUID. Unknown kinds, malformed ids, missing hosts, and hosts the caller cannot read are the same 404 `{ error, code: "NOT_FOUND" }`.
+
+```ts
+type HostAttachment =
+  | { documentId: string; removed: false; name: string; mimeType: string; previewKind: PreviewKind; sizeBytes: number;
+      partId: string | null; position: number; linkedAt: string; isOwner: boolean; inAttachmentsFolder: boolean }
+  // D409, T351: the file is in its owner's Bin; no name is shown until it is restored.
+  | { documentId: string; removed: true; partId: string | null; position: number; linkedAt: string };
+```
+
+| Endpoint | Who | Success | Errors |
+| --- | --- | --- | --- |
+| `GET /api/attachments/:hostKind/:hostId` | anyone who can read the host now | 200 `{ attachments: HostAttachment[], caps: { perHost, perPart? }, linking: "declared" \| "derived" \| "module" }`, `Cache-Control: no-store` | 404 |
+| `POST /api/attachments/:hostKind/:hostId { documentId, partId?, confirmed? }` | a writer of a **declared** host (events: calendar `edit`; chat messages: the chat's owner on their own user message), linking a document **they own** | 201 `{ documentId, created: true }`; 200 `{ created: false }` when already linked | 400 `INVALID` (a part on a host without parts, a non-user chat message); 403 `READ_ONLY` (can read, cannot write); 403 `ROLE_READ_ONLY` (viewer or guest, the write gate); 404 (host, or a document that is not the caller's own live Files document, or is a whiteboard: the same as missing, T341); 409 `CONFIRM_REQUIRED { documentName }` for a Files item outside the Attachments folder sent without `confirmed: true` (D396); 409 `LIMIT_REACHED { limit }` (events 20, chat messages 5); 409 `LINKS_DERIVED` (notes, whiteboards) or `HOST_MANAGED` (cards, rows: use their own routes) |
+| `DELETE /api/attachments/:hostKind/:hostId/:documentId` | events: the linker, the file's owner, or a calendar owner or manager, while they can edit; chat messages: the chat's owner | 200 `{ ok: true, documentBinned }` | 403 `READ_ONLY`, 404, 409 as above |
+| `GET /api/files/:id/usage` | the file's owner | 200 `{ uses: Array<{ hostKind, hostId, title }>, hiddenCount, total }` (hosts the owner can read, and a count of the rest) | 404 for anyone else |
+
+- **Reading (T340, D394).** `GET /api/files/:id` and `/content` also admit a caller when the live document has a live link (`attachment_links`) from a live host of a registered kind that the caller can read now: an event on a readable calendar; a **published** note they can read; a chat message of a chat they own, or that is shared with them (by name, group, or everyone signed in; never guests, never through a public link) and that is on the branch on screen; a whiteboard they can read through its Files sharing. Card and row links keep D43 and D58. Never applied to lists, search, or Today; responses stay `private, no-store`.
+- **Lifecycle (D395).** The last unlink of a document in the Attachments folder moves it to its owner's Bin (`document.delete { documentId, reason: "attachment_unlinked" }`); documents elsewhere (a Files item someone linked, or one moved out) are never binned by link changes. Binning a host keeps its links. A purged host's links go with it (046 triggers). Hourly: links whose host row is gone are removed, and Attachments-folder documents more than a day old that nothing links (never linked, or every host purged) move to the Bin, 100 per run. Restoring a binned Attachments file returns it there while something links it, otherwise to Default as an ordinary file.
+- **Deleting from Files (D409).** `DELETE /api/files/:id` of a linked Attachments file is allowed (Files shows the uses first); hosts list it as `removed` until it is restored.
+- **Derived links (D408, U4/U4b).** Notes and whiteboards never take declared links: the service's `syncDerivedLinks(kind, hostId, actorId, documentIds)` keeps only documents the actor owns (or already linked), capped at 100.
+
+**Audit** (ids only): `attachment.link { hostKind, hostId, documentId, fromFiles? }`, `attachment.unlink { hostKind, hostId, documentId }`, `attachment.sync { hostKind, hostId, linked, unlinked }` (counts), `folder.create { folderId, systemKind }`.
+
+### MCP and REST (D402, D403)
+
+| Tool | Scopes | Arguments | Returns |
+| --- | --- | --- | --- |
+| `list_attachments` | the host module's read scope: `calendar:read` (event), `notes:read` (note), `agents:read` over the whole module (chat_message), `whiteboards:read`, `tasks:read` (card), `collections:read` (row) | `{ hostKind, hostId }` | `{ hostKind, hostId, attachments: [{ id, name, mimeType, previewKind, sizeBytes, partId, linkedAt } \| { id, removed: true, partId }], limit }` |
+| `read_attachment_text` | as above | `{ hostKind, hostId, documentId }` | `{ id, name, mimeType, sizeBytes, hostKind, hostId, text }` (UTF-8, ≤ 1 MiB; `NOT_TEXT`, `TOO_LARGE`) |
+
+Both also need the key's grant on the host (a key over chosen calendars reaches events on those calendars only) and answer `NOT_FOUND` for anything else; `files:read` alone reaches neither. A key whose chosen items hold no host container (only knowledge bases) is not offered them. Both run on `/api/v1/tools/:name`. `create_text_file` and `begin_upload` take `purpose: "attachment"`: a Files document in the caller's Attachments folder (no `folderId`).
 
 <a id="bin"></a>
 ## Bin

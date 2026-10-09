@@ -46,10 +46,13 @@ export function baseNameRange(name: string): [number, number] {
 
 export type MoveTarget = { id: string; name: string; isDefault: boolean; current: boolean };
 
-/** Folders a document can be moved into: owned folders only, Default first, the current one disabled. */
+/** Whether a folder is managed by Nook (the Attachments folder, D391): no share, rename, delete, or moving in. */
+export const isSystemFolder = (folder: Pick<Folder, "system_kind"> | null | undefined) => Boolean(folder?.system_kind);
+
+/** Folders a document can be moved into: owned folders only (never a system folder), Default first, the current one disabled. */
 export function moveTargets(folders: Folder[], currentFolderId: string | null): MoveTarget[] {
   return folders
-    .filter((folder) => folder.is_owner === 1)
+    .filter((folder) => folder.is_owner === 1 && !isSystemFolder(folder))
     .sort((left, right) => right.is_default - left.is_default || left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
     .map((folder) => ({ id: folder.id, name: folder.name, isDefault: folder.is_default === 1, current: folder.id === currentFolderId }));
 }
@@ -203,8 +206,9 @@ export function readDocumentDragPayload(value: string | null | undefined) {
 }
 
 /** A row can be dropped on a folder the caller owns, other than the one it is already in. */
-export function canDropOnFolder(folder: Pick<Folder, "id" | "is_owner">, document: Pick<DocumentSummary, "is_owner" | "folder_id"> | null) {
-  if (folder.is_owner !== 1) return false;
+export function canDropOnFolder(folder: Pick<Folder, "id" | "is_owner" | "system_kind">, document: Pick<DocumentSummary, "is_owner" | "folder_id"> | null) {
+  // T342, D392: nothing is moved or uploaded into a system folder (Attachments); files only leave it.
+  if (folder.is_owner !== 1 || isSystemFolder(folder)) return false;
   return !document || (document.is_owner === 1 && document.folder_id !== folder.id);
 }
 

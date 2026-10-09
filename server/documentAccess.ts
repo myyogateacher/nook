@@ -5,6 +5,7 @@ import type { PreviewKind } from "./mimeSniff";
 import { readableCollectionPredicate } from "./collections/access";
 import { AUDIENCE_ALL_USERS } from "./team/roles";
 import { groupGrantExists } from "./access/groups";
+import { attachmentLinkReadBranch } from "./attachments/hosts";
 
 export type Visibility = "private" | "selected" | "all_users";
 
@@ -104,8 +105,19 @@ const collectionAttachmentPredicate = `EXISTS (
   WHERE a.document_id = d.id AND ${readableCollectionPredicate}
 )`;
 const readablePredicate = readableDocumentPredicate;
-/** Readable by `$userId`: its own sharing, a readable card it is attached to, or a readable collection row (exported for batch checks, C10b). */
-export const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}))`;
+
+/**
+ * Uploads everywhere (D394, T340): a live document linked in `attachment_links` from a live host of a
+ * registered kind (events, published notes, chat messages, whiteboards) that `$userId` can read. One
+ * branch generated from server/attachments/hosts.ts; single reads only, never lists.
+ */
+const attachmentLinkPredicate = attachmentLinkReadBranch({ documentReadable: (alias) => readableDocumentPredicate.replace(/\bd\./g, `${alias}.`) });
+
+/**
+ * Readable by `$userId`: its own sharing, a readable card it is attached to, a readable collection row,
+ * or a readable host in the attachment registry (exported for batch checks, C10b).
+ */
+export const readableSinglePredicate = `(${readablePredicate} OR ${attachedToReadableCard} OR (d.deleted_at IS NULL AND ${collectionAttachmentPredicate}) OR ${attachmentLinkPredicate})`;
 
 export function readableDocument(documentId: string, userId: string) {
   return db.query(`SELECT d.* FROM documents d WHERE d.id = $documentId AND ${readableSinglePredicate}`).get({ documentId, userId }) as DocumentRow | null;

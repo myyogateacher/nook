@@ -4,6 +4,7 @@ import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { sweepUnlinkedAttachments } from "./tasks/attachments";
 import { sweepUnlinkedRowAttachments } from "./collections/sweep";
+import { sweepAttachments } from "./attachments/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
 import { sweepRuns } from "./inbox/routines";
@@ -76,6 +77,14 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (unlinked) console.info(`Row attachment sweep: ${unlinked} never-linked attachments moved to the Bin`);
       } catch (error) {
         console.error("Row attachment sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      // Uploads everywhere (D395, T348): links whose host is gone, then Attachments-folder files nothing
+      // has linked for a day (never linked, or every host purged) move to the Bin.
+      try {
+        const swept = sweepAttachments({ nowMs: options.nowMs });
+        if (swept.staleLinks || swept.orphansBinned) console.info(`Attachments sweep: ${swept.staleLinks} stale links removed, ${swept.orphansBinned} unlinked files moved to the Bin`);
+      } catch (error) {
+        console.error("Attachments sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       // Bin purges run even when the file sweep failed, so retention never stalls on it.
       let bin: BinSweepCounts | null = null;

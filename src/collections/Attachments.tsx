@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Paperclip, Upload } from "lucide-react";
 import { contentUrl } from "../files/filesApi";
-import { AttachmentList, AttachmentPreview, AttachSheet, listHostAttachments, showsThumbnail, uploadForHost, useFileDrop, usePasteFiles, type HostAttachment } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, listHostAttachments, LocationStripError, showsThumbnail, unlinkFromHost, uploadForHost, useFileDrop, usePasteFiles, type HostAttachment } from "../ui/attachments";
 import type { DocumentSummary } from "../types";
-import { attachDocument, detachDocument, errorCode, errorMessage, ROW_FILE_LIMIT, type Attachment, type CollectionRow, type FieldDefinition } from "./collectionsApi";
+import { attachDocument, detachDocument, errorCode, errorMessage, getRow, ROW_FILE_LIMIT, type Attachment, type CollectionRow, type FieldDefinition } from "./collectionsApi";
 import { useEscapeHold } from "./dialogLayers";
 
 type AttachmentsProps = {
@@ -44,6 +44,9 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
   const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [removed, setRemoved] = useState<HostAttachment[]>([]);
+  // The caller's own files on this row: their owner may always take them off (U0 review M1), even
+  // without edit access to the collection.
+  const [owned, setOwned] = useState<ReadonlySet<string>>(new Set());
   const rootRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef(row);
   rowRef.current = row;
@@ -59,8 +62,12 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
   useEffect(() => {
     let live = true;
     listHostAttachments("row", row.id)
-      .then((result) => { if (live) setRemoved(result.attachments.filter((item) => item.removed && item.partId === field.id)); })
-      .catch(() => { if (live) setRemoved([]); });
+      .then((result) => {
+        if (!live) return;
+        setRemoved(result.attachments.filter((item) => item.removed && item.partId === field.id));
+        setOwned(new Set(result.attachments.filter((item) => !item.removed && item.isOwner).map((item) => item.documentId)));
+      })
+      .catch(() => { if (live) { setRemoved([]); setOwned(new Set()); } });
     return () => { live = false; };
   }, [row.id, row.revision, field.id]);
 
@@ -86,7 +93,9 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
         onChanged(saved);
       } catch (reason) {
         failed = true;
-        notify(errorMessage(reason, `Could not attach ${file.name}`));
+        notify(reason instanceof LocationStripError
+          ? `${file.name} was not uploaded: Nook could not remove the photo's location. Try a screenshot or an exported copy of it.`
+          : errorMessage(reason, `Could not attach ${file.name}`));
       } finally {
         inFlight.current -= 1;
         setUploads((items) => items.filter((item) => item.key !== key));
@@ -110,6 +119,14 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
   async function remove(item: HostAttachment) {
     const name = item.removed ? "the removed file" : item.name;
     try {
+      if (!editable) {
+        // A viewer taking their own file off: the generic route (no row revision, nothing to undo).
+        const result = await unlinkFromHost("row", rowRef.current.id, item.documentId);
+        const { row: fresh } = await getRow(rowRef.current.id);
+        onChanged(fresh);
+        notify(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
+        return;
+      }
       const result = await detachDocument(rowRef.current.id, item.documentId);
       onChanged(result.row);
       notify(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
@@ -132,7 +149,7 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
 
   return <div ref={rootRef} className={`row-attachments${dragging ? " dragging" : ""}`} role="group" aria-label={`${field.name} files`} {...(editable ? bind : {})}>
     <AttachmentList items={items} label={`${field.name} files`} onOpen={(item) => setPreview({ id: item.documentId, name: item.name })}
-      onRemove={editable ? (item) => { void remove(item); } : undefined} canRemove={() => editable} />
+      onRemove={(item) => { void remove(item); }} canRemove={(item) => editable || owned.has(item.documentId)} />
     {!items.length && !editable && <span className="cell-empty">No files</span>}
     {!sheetOpen && progress}
     {editable && <>

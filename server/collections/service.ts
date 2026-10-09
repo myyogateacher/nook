@@ -982,14 +982,19 @@ function linkedOutsideCollection(documentId: string, collectionId: string) {
     .get({ id: documentId, collectionId }));
 }
 
-/** Unlinks a document (an editor who linked it, or the collection owner). The last unlink bins an upload made to attach (D395). */
+/**
+ * Unlinks a document (an editor who linked it, the file's owner, or the collection owner). The last
+ * unlink bins an upload made to attach (D395). A file's owner who can no longer edit the row removes
+ * their file through DELETE /api/attachments/row/… instead (U0 review M1).
+ */
 export async function detachDocument(userId: string, rowId: string, documentId: string) {
   const { collection: initial } = requireEditableRow(rowId, userId);
   return withCollectionLock(initial.id, () => {
     const { collection } = requireEditableRow(rowId, userId);
     const link = db.query("SELECT linked_by FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, documentId) as { linked_by: string | null } | null;
     if (!link) throw new CollectionError(404, "Attachment not found");
-    if (link.linked_by !== userId && collection.owner_id !== userId) throw new CollectionError(403, "Only the person who attached this file or the collection owner can remove it", "NOT_LINKER");
+    const fileOwner = (db.query("SELECT owner_id FROM documents WHERE id = ?").get(documentId) as { owner_id: string } | null)?.owner_id;
+    if (link.linked_by !== userId && fileOwner !== userId && collection.owner_id !== userId) throw new CollectionError(403, "Only the person who attached this file, its owner, or the collection owner can remove it", "NOT_LINKER");
     let binned = 0;
     const changed: string[] = [];
     db.transaction(() => {

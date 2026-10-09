@@ -114,6 +114,11 @@ test("uploads go to the Attachments folder through the kit; the sheet and previe
   expect(attachments).toContain("useEscapeHold(sheetOpen || preview !== null)");
   expect(source("collections/dialogLayers.ts")).toContain("export const openLayerCount = () => layers.length + held;");
   expect(source("collections/RowPanel.tsx")).toContain("openLayerCount() > 0");
+  // A photo whose location cannot be removed is refused by the kit with a friendly message (U0 review M2);
+  // a viewer may still take their own file off through the generic route (U0 review M1).
+  expect(attachments).toContain("reason instanceof LocationStripError");
+  expect(attachments).toContain('unlinkFromHost("row"');
+  expect(attachments).toContain("canRemove={(item) => editable || owned.has(item.documentId)}");
   // The From Files confirm is sent as `confirmed` (D396).
   expect(source("collections/collectionsApi.ts")).toContain("...(options.confirmed ? { confirmed: true } : {})");
 });

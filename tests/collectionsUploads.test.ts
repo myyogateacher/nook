@@ -146,6 +146,24 @@ describe("row uploads in the Attachments folder", () => {
     expect(await contentStatus(member, fileItem.id)).toBe(404);
   });
 
+  test("a file's owner can take it off a row after losing edit access (U0 review M1)", async () => {
+    const { owner, member, collection, row, receipt } = await setup("U3 owner withdraw");
+    await shareCollection(owner, collection.id, "selected", [member.userId], "editor");
+    const documentId = await uploadAttachment(member, "mine.txt", "mine", "row");
+    expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
+    await shareCollection(owner, collection.id, "selected", [member.userId], "viewer");
+    // The row route needs edit access; the generic route lets the file's owner withdraw it.
+    expect((await call(member, "DELETE", `/rows/${row.id}/attachments/${documentId}`)).status).toBe(403);
+    const withdrawn = await request(`/attachments/row/${row.id}/${documentId}`, { method: "DELETE", body: "{}" }, member);
+    expect(withdrawn.status).toBe(200);
+    expect((await call(owner, "GET", `/rows/${row.id}`)).body.row.files[receipt.id] ?? []).toEqual([]);
+    expect(docState(documentId).binned).toBe(1);
+    // Nobody else's file: the collection owner cannot use the generic route for rows.
+    const ownerUpload = await uploadAttachment(owner, "theirs.txt", "t", "row");
+    await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: ownerUpload, fieldId: receipt.id });
+    expect((await request(`/attachments/row/${row.id}/${ownerUpload}`, { method: "DELETE", body: "{}" }, member)).status).not.toBe(200);
+  });
+
   test("an upload also attached to an event is not binned when the row lets go of it", async () => {
     const { owner, row, receipt } = await setup("U3 shared upload");
     const { eventId } = await calendarWithEvent(owner, "U3 calendar");

@@ -78,6 +78,9 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "PUT", path: "/api/inbox/settings", roles: ["viewer"], why: "own proposal push setting" },
   // Agent chat (Wave 40, plan §12): viewers chat with agents under the `chat_roles` policy; the handlers check it.
   { method: "POST", path: "/api/chats", roles: ["viewer"], why: "own chat (the chat_roles policy decides)" },
+  // Uploads everywhere (review M1): a file's owner may always withdraw it from a host. For read-only roles
+  // the service allows only that (their own document; every other unlink needs a writer).
+  { method: "DELETE", path: "/api/attachments/:hostKind/:hostId/:documentId", why: "withdraw own file from a host (owner path only for read-only roles, in the service)" },
   { method: "PATCH", path: "/api/chats/:chatId", roles: ["viewer"], why: "own chat title, pin, and branch" },
   { method: "DELETE", path: "/api/chats/:chatId", roles: ["viewer"], why: "own chat to the Bin" },
   { method: "POST", path: "/api/chats/:chatId/messages", roles: ["viewer"], why: "a message in an own chat" },

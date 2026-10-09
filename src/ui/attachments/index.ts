@@ -7,5 +7,5 @@ export { AttachmentList, showsThumbnail, THUMBNAIL_MAX_BYTES } from "./Attachmen
 export { AttachmentPreview } from "./AttachmentPreview";
 export { useFileDrop, dragHasFiles } from "./useFileDrop";
 export { usePasteFiles, pastedFiles } from "./usePasteFiles";
-export { stripImageLocation, stripJpegMetadata } from "./exif";
+export { stripImageLocation, stripJpegMetadata, stripPngMetadata, stripWebpMetadata, LocationStripError, STRIP_MAX_BYTES } from "./exif";
 export { uploadForHost, listHostAttachments, linkToHost, unlinkFromHost, fileUsage, usageSummary, type HostKind, type HostAttachment, type FileUsage, type UploadForHostOptions } from "./uploadForHost";

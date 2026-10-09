@@ -457,8 +457,10 @@ export function createS3ObjectStore(settings: Omit<S3StorageConfig, "backend">):
       return {
         size,
         stream(start = 0, end = size - 1) {
-          // A ranged GET for part of the object; Bun streams the response body.
-          return (start === 0 && end === size - 1 ? file : file.slice(start, end + 1)).stream() as ReadableStream<Uint8Array>;
+          // A ranged GET for part of the object; Bun streams the response body. Piped through a plain
+          // TransformStream: Bun 1.4.2 sends its native S3 stream chunked, dropping the route's Content-Length.
+          const source = (start === 0 && end === size - 1 ? file : file.slice(start, end + 1)).stream() as ReadableStream<Uint8Array>;
+          return source.pipeThrough(new TransformStream<Uint8Array, Uint8Array>());
         },
         async bytes() {
           try {

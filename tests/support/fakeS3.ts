@@ -26,6 +26,8 @@ export type FakeS3 = {
   log: string[];
   /** Fails the next N requests whose `METHOD key?query` line matches with a 500. */
   failNext(pattern: RegExp, times?: number): void;
+  /** Drops every pending injected failure. */
+  clearFailures(): void;
   /** Delays every part upload and single PUT by this many milliseconds (backpressure tests). */
   delayWritesMs: number;
   /** Sets an object's Last-Modified (for orphan-age tests). */
@@ -178,6 +180,9 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
     uploads,
     log,
     delayWritesMs: 0,
+    clearFailures() {
+      failures.length = 0;
+    },
     failNext(pattern, times = 1) {
       failures.push({ pattern, times });
     },

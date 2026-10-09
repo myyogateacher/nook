@@ -4,9 +4,8 @@
  * test and restored, since every test file shares one server (tests/support/harness.ts).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { createUser, dataDir, db, origin, request, spareEmail, type Session } from "./support/harness";
+import { ageStoredObject, createUser, db, origin, putStoredObject, request, spareEmail, storedObjectExists, type Session } from "./support/harness";
 import { startFakeGoogle, type FakeGoogle, type FakeIdentity, type TokenTweaks } from "./support/fakeGoogle";
 import { retireUsersAfterFile } from "./support/retireUsers";
 const { config, googleEndpoints } = await import("../server/config");
@@ -1139,7 +1138,7 @@ describe("review LOW fixes", () => {
     const again = await googleSignIn({ ...identity, picture: null });
     await avatarWorkSettled();
     expect(userRow(email)!.avatar_id).toBeNull();
-    expect(existsSync(join(dataDir, "avatars", avatarId))).toBe(false);
+    expect(await storedObjectExists(avatarId, "avatars")).toBe(false);
     expect((await me(again.session)).body.user.avatarUrl).toBeNull();
   });
 
@@ -1217,8 +1216,8 @@ describe("avatars (D299, T257, T262)", () => {
     await avatarWorkSettled();
     const newId = userRow(email)!.avatar_id as string;
     expect(newId).not.toBe(oldId);
-    expect(existsSync(join(dataDir, "avatars", oldId))).toBe(false);
-    expect(existsSync(join(dataDir, "avatars", newId))).toBe(true);
+    expect(await storedObjectExists(oldId, "avatars")).toBe(false);
+    expect(await storedObjectExists(newId, "avatars")).toBe(true);
     expect((await fetch(`${origin}${url}`, { headers: { Cookie: viewer.cookie } })).status).toBe(404);
     // The team list, the share picker, and the Access sheet carry the URL beside the name.
     const member = await (await request(`/team/${userRow(email)!.id}`, {}, viewer)).json() as { member: { avatarUrl: string | null } };
@@ -1267,17 +1266,14 @@ describe("avatars (D299, T257, T262)", () => {
   });
 
   test("the sweep removes avatar files no account points at", async () => {
-    const { sweepAvatarFiles, avatarDir } = await import("../server/avatars");
-    const { mkdirSync, writeFileSync, utimesSync } = await import("node:fs");
-    mkdirSync(avatarDir(), { recursive: true });
+    const { sweepAvatarFiles } = await import("../server/avatars");
     const orphan = crypto.randomUUID();
-    writeFileSync(join(avatarDir(), orphan), "x");
-    const old = new Date(Date.now() - 3_600_000);
-    utimesSync(join(avatarDir(), orphan), old, old);
+    await putStoredObject(orphan, "x", "avatars");
+    ageStoredObject(orphan, 3_600_000, "avatars");
     const fresh = crypto.randomUUID();
-    writeFileSync(join(avatarDir(), fresh), "x");
+    await putStoredObject(fresh, "x", "avatars");
     await sweepAvatarFiles();
-    expect(existsSync(join(avatarDir(), orphan))).toBe(false);
-    expect(existsSync(join(avatarDir(), fresh))).toBe(true);
+    expect(await storedObjectExists(orphan, "avatars")).toBe(false);
+    expect(await storedObjectExists(fresh, "avatars")).toBe(true);
   });
 });

@@ -545,13 +545,18 @@ export function createS3ObjectStore(settings: S3StoreSettings): ObjectStore {
         } catch (error) {
           // A failed completion may still have left an object; remove it so the caller sees nothing.
           await withDeadline(client.delete(key), timeoutMs, "delete").catch(() => undefined);
+          // Nothing left for discard() to do (one delete attempt, not two, against a failing store).
+          state = "discarded";
           unavailable("write")(error);
         } finally {
           freeSlot();
         }
       },
       async discard() {
-        if (state === "discarded") return;
+        if (state === "discarded") {
+          release();
+          return;
+        }
         const wasOpen = state === "open";
         state = "discarded";
         try {

@@ -109,6 +109,8 @@ export function createBody(draft: ComposerDraft, title: string): CardCreate {
   if (draft.flags.length) body.flags = draft.flags;
   if (draft.relations.length) body.relations = draft.relations.map((relation) => ({ targetCardId: relation.card.id, type: relation.type }));
   if (draft.attachments.length) body.attachmentIds = draft.attachments.map((file) => file.id);
+  // A file picked From Files was confirmed in the picker (D396); the server asks for it once per create.
+  if (draft.attachments.some((file) => file.confirmed)) body.attachmentsConfirmed = true;
   if (draft.parentId) body.parentId = draft.parentId;
   if (draft.level !== null) body.level = draft.level;
   if (draft.sprintId) body.sprintId = draft.sprintId;

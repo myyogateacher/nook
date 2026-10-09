@@ -1,11 +1,11 @@
 import * as z from "zod/v4";
 import type { ZodType } from "zod";
-import { keyFilter } from "../keyResources";
+import { anchorsOf, keyFilter, keyReach, reachCovers } from "../keyResources";
 import { db, withAuditContext } from "../db";
 import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, type McpErrorCode, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { keyMayRead } from "../keyReach";
 import { searchText } from "../search";
-import { attachToCard, listAttachments } from "./attachments";
+import { attachToCard, linkableCardDocument, listAttachments, needsLinkConfirm, type CardAttachment } from "./attachments";
 import { restoreTaskItem } from "./bin";
 import { createRelation, getBoardWithRelationCounts, listRelations, type CardRelation, type RelationCounts } from "./cardRelations";
 import { searchCards } from "./cardSearch";
@@ -71,7 +71,11 @@ export function taskErrorToMcp(error: TaskError, key?: McpKeyContext) {
     // A level change on a card with children (17A): reported as INVALID with the reason and childCount.
     HAS_CHILDREN: "INVALID",
     // Planning a card into a completed sprint (17B): INVALID with the reason and sprintId.
-    SPRINT_COMPLETED: "INVALID"
+    SPRINT_COMPLETED: "INVALID",
+    // Uploads everywhere U2 (D396): a Files item outside the Attachments folder needs confirmed: true;
+    // a files-only comment whose files were already on the card.
+    CONFIRM_REQUIRED: "INVALID",
+    ATTACHMENT_LINKED: "INVALID"
   };
   const code = (error.code ? known[error.code] : undefined) ?? (error.status === 404 ? "NOT_FOUND" : error.status === 400 ? "INVALID" : "INTERNAL");
   if (code === "CARD_CHANGED") {
@@ -135,7 +139,29 @@ export function mcpRelation(relation: CardRelation, key?: McpKeyContext) {
   return { type: relation.type, cardId: relation.card.id, title: relation.card.title, boardName: relation.card.board_name, columnName: relation.card.column_name, isDone: relation.card.is_done === 1 };
 }
 
-const attachmentNames = (cardId: string) => listAttachments(cardId).map((attachment) => attachment.name);
+/** Names of a card's live attachments (list_cards, get_card); files in their owner's Bin are left out. */
+const attachmentNames = (cardId: string) => listAttachments(cardId).filter((attachment) => !attachment.removed).map((attachment) => attachment.name);
+
+/**
+ * A card's attachments with ids (U2, D402), for list_attachments and read_attachment_text: id, name,
+ * type, size, and the comment it came with. A file in its owner's Bin shows as removed, with no name.
+ */
+const attachmentFile = (attachment: CardAttachment) => attachment.removed
+  ? { id: attachment.document_id, removed: true as const, commentId: attachment.comment_id }
+  : { id: attachment.document_id, name: attachment.name, mimeType: attachment.mime_type, sizeBytes: attachment.size_bytes, commentId: attachment.comment_id };
+
+/**
+ * A Files item outside the Attachments folder joins a card only with `confirmed` (D396) and only when
+ * the key could read it through Files itself (`files:read` over it): a tasks key never shares a file
+ * it cannot see (T341, T345). The caller's own uploads (`purpose: "attachment"` or `task_attachment`)
+ * need neither. Anything else is NOT_FOUND, like a missing id. Call inside service().
+ */
+function requireKeyMayLink(key: McpKeyContext, documentId: string) {
+  const document = linkableCardDocument(documentId, key.userId);
+  if (document && needsLinkConfirm(document) && !reachCovers(keyReach(key, "files:read"), anchorsOf("document", documentId))) {
+    throw new TaskError(404, "File not found");
+  }
+}
 
 type CardWithDescription = CardSummary & { description?: string };
 
@@ -298,7 +324,7 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "get_card",
     title: "Get a card",
-    description: "Read one card: title, plain-text description, column, the latest comments, attachment names, and its relations to other cards (a card the user cannot open shows only as restricted).",
+    description: "Read one card: title, plain-text description, column, the latest comments, attachment names, its files (id, name, type, size, and the comment each came with; read a text one with read_attachment_text, hostKind card), and its relations to other cards (a card the user cannot open shows only as restricted). A file its owner moved to the Bin is listed as removed. A comment posted with files and no text has a generated body such as \"📎 photo.png\" or \"📎 3 files\".",
     scopes: ["tasks:read"],
     access: { mode: "items", items: [{ arg: "cardId", kind: "card" }] },
     write: false,
@@ -330,6 +356,7 @@ export const taskTools: McpToolSpec[] = [
           reactions: comment.reactions.map((reaction) => ({ emoji: reaction.emoji, glyph: reactionGlyph(reaction.emoji), count: reaction.count, reacted: reaction.reacted })) })),
         hasMoreComments: page.hasMore,
         attachments: attachmentNames(cardId),
+        files: listAttachments(cardId).map(attachmentFile),
         relations: listRelations(key.userId, cardId).map((relation) => mcpRelation(relation, key))
       };
     })
@@ -497,17 +524,20 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "comment_on_card",
     title: "Comment on a card",
-    description: "Add a comment, as the user, to a card on a board where they can comment (READ_ONLY otherwise). Plain text or Markdown, up to 16 KiB.",
+    description: "Add a comment, as the user, to a card on a board where they can comment (READ_ONLY otherwise). Plain text or Markdown, up to 16 KiB. attachmentIds (up to 10) attaches the user's own uploads with the comment: create_text_file or begin_upload with purpose \"attachment\" first. With files, body may be empty; the comment then reads \"📎 <name>\" or \"📎 N files\". Files from the user's other Files folders are refused (INVALID, reason CONFIRM_REQUIRED): attach those with link_attachment.",
     scopes: ["tasks:write"],
-    access: { mode: "items", items: [{ arg: "cardId", kind: "card" }] },
+    access: { mode: "items", items: [{ arg: "cardId", kind: "card" }], related: ["attachmentIds"] },
     write: true,
     dailyBucket: "task_write",
-    inputSchema: z.object({ cardId: uuid, body: z.string().min(1) }),
-    handler: async ({ cardId, body }, key) => {
-      const input = routeInput(commentCreateSchema, { body });
+    inputSchema: z.object({ cardId: uuid, body: z.string().optional(), attachmentIds: z.array(uuid).max(10).optional() }),
+    handler: async ({ cardId, body, attachmentIds }, key) => {
+      // Inbox proposals carry no files (plan G12): an approval never attaches the approver's files.
+      if (key.person && attachmentIds?.length) throw new McpToolError("INVALID", "Suggested comments cannot attach files", { reason: "PROPOSAL_FILES" });
+      const input = routeInput(commentCreateSchema, { body: body ?? "", ...(attachmentIds?.length ? { attachmentIds } : {}) });
       return service(key, async () => {
         const { comment } = await createComment(key.userId, cardId, input);
-        return { comment: { id: comment.id, card_id: comment.card_id, created_at: comment.created_at } };
+        const files = attachmentIds?.length ? listAttachments(comment.card_id).filter((attachment) => attachment.comment_id === comment.id).map((attachment) => attachment.document_id) : [];
+        return { comment: { id: comment.id, card_id: comment.card_id, created_at: comment.created_at, ...(files.length ? { body: comment.body, attachmentIds: files } : {}) } };
       });
     }
   }),
@@ -642,15 +672,16 @@ export const taskTools: McpToolSpec[] = [
   defineTool({
     name: "link_attachment",
     title: "Attach a file to a card",
-    description: "Link a file to a card, optionally through one of the user's own comments on it. The file must be a card attachment the user uploaded (create_text_file or begin_upload with purpose task_attachment); Files documents cannot be linked (NOT_FOUND). Linking again is harmless.",
+    description: "Link a file to a card, optionally through one of the user's own comments on it (up to 50 per card, 10 per comment). The file must be the user's own: an upload made for it (create_text_file or begin_upload with purpose \"attachment\", or the older task_attachment), or a file from their Files folders. A Files item outside the Attachments folder needs confirmed: true, because everyone who can open the board will be able to open it (INVALID with reason CONFIRM_REQUIRED otherwise), and needs Read files over that file (NOT_FOUND otherwise). Linking again is harmless.",
     scopes: ["tasks:write"],
     access: { mode: "items", items: [{ arg: "cardId", kind: "card" }], related: ["documentId", "commentId"] },
     write: true,
     dailyBucket: "task_write",
-    inputSchema: z.object({ cardId: uuid, documentId: uuid, commentId: uuid.nullable().optional() }).strict(),
+    inputSchema: z.object({ cardId: uuid, documentId: uuid, commentId: uuid.nullable().optional(), confirmed: z.boolean().optional() }).strict(),
     handler: async ({ cardId, ...fields }, key) => {
       const input = routeInput(attachmentSchema, fields);
       return service(key, async () => {
+        requireKeyMayLink(key, input.documentId);
         const { status, attachment } = await attachToCard(key.userId, cardId, input);
         return { attachment: { cardId, documentId: attachment.document_id, name: attachment.name, commentId: attachment.comment_id }, alreadyLinked: status === 200 };
       });

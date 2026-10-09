@@ -173,8 +173,6 @@
   .task-card-dialog { inset: 0; margin: 0; width: 100vw; max-height: none; height: 100dvh; border: 0; border-radius: 0; }
   .task-card-dialog-header { padding: calc(8px + env(safe-area-inset-top)) calc(6px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left)); }
   .task-card-title-input { min-height: 44px; }
-  .task-attachment { min-height: 56px; }
-  .task-attachment-thumb, .task-attachment-icon, .task-attachment > a.icon-button { min-width: 44px; min-height: 44px; }
   .task-card-dialog-header .icon-button, .task-comment-actions .icon-button { width: 44px; height: 44px; }
   .task-card-dialog-body { padding: 12px calc(16px + env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
   .task-small-button, .task-load-earlier, .task-description-actions button, .task-comment-composer button { min-height: 44px; }
@@ -183,16 +181,21 @@
 
 /* Attachments */
 .task-card-section > header .task-small-button { margin-left: auto; }
-.task-attachments { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
-.task-attachment { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; border: 1px solid #242428; border-radius: 10px; padding: 6px 6px 6px 8px; background: #121214; }
-.task-attachment-thumb, .task-attachment-icon { width: 44px; height: 44px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: #1d1d21; color: #c9a85c; }
-.task-attachment-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.task-attachment-icon svg { width: 18px; }
-.task-attachment-copy { min-width: 0; display: grid; gap: 2px; }
-.task-attachment-copy span { overflow: hidden; color: #e4e4e6; font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
-.task-attachment-copy small { color: #85858c; font-size: .72rem; }
-.task-attachment .icon-button svg { width: 16px; }
-.task-comment .task-attachments { margin-top: 2px; }
+/* The kit's AttachmentList (src/ui/attachments) draws the files; comments keep it compact. */
+.task-comment .attachment-list { margin-top: 2px; }
+/* Upload progress (uploads everywhere U2): name, percent, a bar, and Cancel. */
+.task-upload-rows { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.task-upload-rows li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 120px) auto; align-items: center; gap: 10px; min-height: 48px; border: 1px dashed #36363b; border-radius: 12px; padding: 4px 6px 4px 12px; background: #121214; }
+.task-upload-copy { min-width: 0; display: grid; gap: 2px; }
+.task-upload-copy span { overflow: hidden; color: #e4e4e6; font-size: .84rem; text-overflow: ellipsis; white-space: nowrap; }
+.task-upload-copy small { color: #85858c; font-size: .72rem; }
+.task-upload-rows progress { width: 100%; height: 6px; accent-color: #c9a85c; }
+.task-upload-rows .icon-button { width: 44px; height: 44px; }
+/* Drag-drop onto a card or the new-card form (desktop). The dialog is fixed, the page relative. */
+.task-card-drop { position: absolute; z-index: 5; inset: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 2px dashed #b99b59; border-radius: 14px; background: rgb(20 20 22 / 88%); color: #e9d8ad; font-size: .95rem; font-weight: 600; pointer-events: none; }
+.task-card-drop svg { width: 20px; height: 20px; }
+.task-card-page.task-card-dragging { position: relative; }
+.task-comment-edit span { flex-wrap: wrap; }
 .task-pending-files { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
 .task-pending-files li { max-width: 100%; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #303035; border-radius: 999px; padding: 0 2px 0 10px; color: #c9c9ce; font-size: .78rem; }
 .task-pending-files li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -201,7 +204,7 @@
 .task-composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .task-composer-actions button { min-height: 40px; margin: 0; }
 @media (max-width: 760px) {
-  .task-attachment .icon-button, .task-pending-files .icon-button { width: 44px; height: 44px; }
+  .task-pending-files .icon-button { width: 44px; height: 44px; }
   .task-composer-actions button { min-height: 44px; }
 }
 .tasks-app ~ .toast, .tasks-app .toast { z-index: 60; }

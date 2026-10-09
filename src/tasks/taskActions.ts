@@ -1,5 +1,7 @@
 // Pure helpers for the Tasks UI: name validation that mirrors the server rules.
 import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
+import { isGeneratedCommentBody } from "../../shared/commentFiles";
+import type { HostAttachment } from "../ui/attachments";
 
 /**
  * Whether cards on a board are read-only for the caller (Wave 32, §D.3): a read-only Team role, or a
@@ -45,12 +47,53 @@ export function pickerDetail(user: { id: string; email?: string; displayName: st
 
 export const COMMENT_MAX_BYTES = 16_384;
 
-/** Why a comment body would be refused, or null. */
-export function commentBodyError(body: string) {
-  if (!body.trim()) return "Write a comment first.";
+/**
+ * Why a comment body would be refused, or null. A comment with files may have no text (uploads
+ * everywhere D397): the server stores a generated body such as "📎 photo.png".
+ */
+export function commentBodyError(body: string, fileCount = 0) {
+  if (!body.trim() && fileCount === 0) return "Write a comment or attach a file first.";
   if (new TextEncoder().encode(body).length > COMMENT_MAX_BYTES) return "Comments can be at most 16 KB.";
   return null;
 }
+
+/** Card and comment attachment caps (LIMITS in server/tasks/service.ts). */
+export const CARD_ATTACHMENT_CAP = 50;
+export const COMMENT_ATTACHMENT_CAP = 10;
+
+/** Why the attach sheet cannot add more now (shown in the sheet), or null. */
+export function attachCapReason(count: number, cap: number, noun: "card" | "comment") {
+  return count >= cap ? `This ${noun} has ${cap} files, the most it can hold. Remove one to add another.` : null;
+}
+
+/** How many of `files` fit under the cap, and a notice for the rest (null when all fit). */
+export function fitToCap<T>(files: readonly T[], count: number, cap: number, noun: "card" | "comment") {
+  const room = Math.max(0, cap - count);
+  const kept = files.slice(0, room);
+  const left = files.length - kept.length;
+  return { kept, notice: left ? `${left === 1 ? "1 file was" : `${left} files were`} not added: a ${noun} holds up to ${cap} files.` : null };
+}
+
+/**
+ * Whether a comment is shown as its files only: its body is the generated one (D397, Q12) and it
+ * still has files. Removed files count, so a comment whose file went to the Bin still reads as files.
+ */
+export function commentFilesOnly(body: string, files: readonly Pick<CardAttachmentLike, "name" | "removed">[]) {
+  return isGeneratedCommentBody(body, { count: files.length, names: files.filter((file) => !file.removed).map((file) => file.name) });
+}
+
+/** A card attachment in the attach kit's shape (AttachmentList, AttachmentPreview). */
+export function hostAttachment(attachment: CardAttachmentLike & { created_at: string; size_bytes: number; linked_by: string | null }, userId: string): HostAttachment {
+  if (attachment.removed) return { documentId: attachment.document_id, removed: true, partId: attachment.comment_id, position: 0, linkedAt: attachment.created_at };
+  return {
+    documentId: attachment.document_id, removed: false, name: attachment.name, mimeType: attachment.mime_type, previewKind: attachment.preview_kind,
+    sizeBytes: attachment.size_bytes, partId: attachment.comment_id, position: 0, linkedAt: attachment.created_at,
+    // Linked by someone means uploaded by them (only owners link, T41).
+    isOwner: attachment.linked_by === userId, inAttachmentsFolder: false
+  };
+}
+
+type CardAttachmentLike = { document_id: string; comment_id: string | null; name: string; preview_kind: string; mime_type: string; removed?: 0 | 1 };
 
 type AttachmentLike = { document_id: string; comment_id: string | null; linked_by: string | null; preview_kind: string; mime_type: string };
 
@@ -66,9 +109,16 @@ export const canUnlink = (attachment: AttachmentLike, userId: string, boardOwner
 export const isInlineImage = (attachment: Pick<AttachmentLike, "preview_kind" | "mime_type">) =>
   attachment.preview_kind === "image" && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(attachment.mime_type.split(";")[0]!.trim().toLowerCase());
 
-export const unlinkConfirmMessage = (name: string, ownFile: boolean) => ownFile
-  ? `Remove “${name}” from this card? If no other card uses it, it moves to your Bin for 30 days.`
-  : `Remove “${name}” from this card? If no other card uses it, it moves to its uploader's Bin for 30 days.`;
+/**
+ * The Remove confirm. `name` null is a file in its owner's Bin ("File removed"). A file uploaded to
+ * attach moves to the Bin with its last link; one attached from someone's Files folders stays (D395).
+ */
+export const unlinkConfirmMessage = (name: string | null, ownFile: boolean) => {
+  const label = name === null ? "this removed file" : `“${name}”`;
+  return ownFile
+    ? `Remove ${label} from this card? If you uploaded it here and no other card uses it, it moves to your Bin for 30 days; a file from your Files folders stays where it is.`
+    : `Remove ${label} from this card? If it was uploaded here and no other card uses it, it moves to its uploader's Bin for 30 days.`;
+};
 
 /** The Files-style confirm copy for moving a card or board to the Bin. */
 export const binConfirmMessage = (kind: "card" | "board", name: string, descendants = 0) => kind === "card"

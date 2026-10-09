@@ -80,7 +80,7 @@ export function AttachSheet({ hostNoun, onClose, onFiles, onPickDocument, accept
       {/* The system camera and file chooser; the visible controls above are the app's own (D91). */}
       {showCamera && <input ref={cameraInput} className="attach-sheet-input" type="file" accept={CAMERA_ACCEPT} capture={CAMERA_CAPTURE} tabIndex={-1} aria-hidden="true" data-attach-input="camera" onChange={(event) => take(event.currentTarget)} />}
       <input ref={filesInput} className="attach-sheet-input" type="file" accept={accept} multiple={multiple} tabIndex={-1} aria-hidden="true" data-attach-input="files" onChange={(event) => take(event.currentTarget)} />
-      {disabledReason ? <p className="attach-sheet-note" role="status">{disabledReason}</p> : <p className="attach-sheet-note">Photo locations are removed before upload. Files are kept in Files › Attachments and count toward your storage.</p>}
+      {disabledReason ? <p className="attach-sheet-note" role="status">{disabledReason}</p> : <p className="attach-sheet-note">Photo locations are removed from JPEG, PNG, and WebP pictures before upload (not from HEIC). Files are kept in Files › Attachments and count toward your storage.</p>}
       {children && <div className="attach-sheet-progress">{children}</div>}
     </ModalDialog>}
     {picking && onPickDocument && <FromFilesSheet hostNoun={hostNoun} onClose={() => setPicking(false)} onPick={(document, options) => {

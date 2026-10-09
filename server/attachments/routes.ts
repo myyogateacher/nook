@@ -11,11 +11,13 @@ import { AttachmentError, documentUsage, linkAttachment, listAttachments, unlink
  *
  * - GET    /api/attachments/:hostKind/:hostId               → { attachments, caps, linking }
  * - POST   /api/attachments/:hostKind/:hostId               { documentId, partId?, confirmed? } → 201 { documentId, created }
- * - DELETE /api/attachments/:hostKind/:hostId/:documentId   → { ok, documentBinned }
- * - GET    /api/files/:id/usage                             → { uses, hiddenCount, total } (owner only)
+ * - DELETE /api/attachments/:hostKind/:hostId/:documentId   → { ok, documentBinned? }: the file's owner always (any host
+ *   kind, whatever their access to the host now; `{ ok }` only when they cannot read it), others by the host's rule
+ * - GET    /api/files/:id/usage                             → { uses, hidden, hiddenCount, total } (owner only)
  *
  * Unknown kinds and malformed ids are the same 404 as a missing host (T340). The write routes are
- * default-denied for viewers and guests by the role write gate (D75, D406).
+ * default-denied for viewers and guests by the role write gate (D75, D406), except DELETE, which a
+ * read-only role may use for its own file only (review M1).
  */
 
 const linkSchema = z.object({

@@ -14,7 +14,6 @@ import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, r
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
-import { ConfirmDialog } from "./Dialog";
 import {
   canDropOnFolder,
   canManage as ownsDocument,
@@ -49,7 +48,8 @@ import { FilePreview } from "./FilePreview";
 import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type FileView } from "./fileView";
 import { AccessSheet } from "../access/AccessSheet";
 import { MoveSheet } from "./MoveSheet";
-import { fileUsage, usageSummary } from "../ui/attachments/uploadForHost";
+import { fileUsage, unlinkFromHost, usageSummary, type FileUsage } from "../ui/attachments/uploadForHost";
+import { DeleteFileDialog } from "./DeleteFileDialog";
 import { NameDialog, RenameDialog } from "./RenameDialog";
 import { documentIcon, relativeTime } from "./format";
 import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
@@ -138,7 +138,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [dialog, setDialog] = useState<FilesDialog | null>(null);
   const [deleting, setDeleting] = useState(false);
   // D409: where the file being deleted is attached ("Used on 2 cards and 1 event"), for the confirm.
-  const [deleteUsage, setDeleteUsage] = useState<{ documentId: string; summary: string | null } | null>(null);
+  const [deleteUsage, setDeleteUsage] = useState<{ documentId: string; summary: string | null; hidden: FileUsage["hidden"] } | null>(null);
+  // Review M1: withdrawing the file from places its owner can no longer open, from the same confirm.
+  const [removingHidden, setRemovingHidden] = useState(false);
+  const [hiddenStatus, setHiddenStatus] = useState<string | null>(null);
   const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
   // The row (document id) or control that opened the current dialog, so focus can go back to it.
   const returnFocusRef = useRef<string | HTMLElement | null>(null);
@@ -352,11 +355,31 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const deleteDocumentId = dialog?.kind === "delete" ? dialog.documentId : null;
   useEffect(() => {
     setDeleteUsage(null);
+    setHiddenStatus(null);
     if (!deleteDocumentId) return undefined;
     let live = true;
-    fileUsage(deleteDocumentId).then((usage) => { if (live) setDeleteUsage({ documentId: deleteDocumentId, summary: usageSummary(usage) }); }).catch(() => undefined);
+    fileUsage(deleteDocumentId).then((usage) => { if (live) setDeleteUsage({ documentId: deleteDocumentId, summary: usageSummary(usage), hidden: usage.hidden ?? [] }); }).catch(() => undefined);
     return () => { live = false; };
   }, [deleteDocumentId]);
+
+  async function removeFromHiddenPlaces(id: string, places: FileUsage["hidden"]) {
+    setRemovingHidden(true);
+    let removed = 0;
+    for (const place of places) {
+      try {
+        await unlinkFromHost(place.hostKind, place.hostId, id);
+        removed += 1;
+      } catch { /* already gone; the refreshed usage says what is left */ }
+    }
+    try {
+      const usage = await fileUsage(id);
+      setDeleteUsage({ documentId: id, summary: usageSummary(usage), hidden: usage.hidden ?? [] });
+    } catch {
+      setDeleteUsage({ documentId: id, summary: null, hidden: [] });
+    }
+    setHiddenStatus(`Removed from ${removed === 1 ? "1 place" : `${removed} places`} you can't open.`);
+    setRemovingHidden(false);
+  }
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -839,12 +862,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       notify("Access updated");
       refreshDocument(dialogDocument.id).catch(() => undefined);
     }} />}
-    {dialog?.kind === "delete" && dialogDocument && <ConfirmDialog
-      title="Move to the Bin?"
+    {dialog?.kind === "delete" && dialogDocument && <DeleteFileDialog
       message={deleteUsage?.documentId === dialogDocument.id && deleteUsage.summary ? `${deleteConfirmMessage(dialogDocument.name)} ${deleteUsage.summary}; those places show “File removed” until you restore it.` : deleteConfirmMessage(dialogDocument.name)}
-      confirmLabel="Move to Bin"
-      danger
+      hiddenCount={deleteUsage?.documentId === dialogDocument.id ? deleteUsage.hidden.length : 0}
       busy={deleting}
+      removing={removingHidden}
+      status={hiddenStatus}
+      onRemoveHidden={() => { if (deleteUsage) void removeFromHiddenPlaces(dialogDocument.id, deleteUsage.hidden); }}
       onConfirm={() => { void deleteDocument(dialogDocument); }}
       onCancel={closeDialog}
     />}

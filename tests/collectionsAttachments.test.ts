@@ -153,7 +153,7 @@ describe("row attachments", () => {
 
     // Editor A links, then unlinks, a private Files item; editor B cannot undo the unlink.
     const privateFile = await upload(member, "file", "private.txt");
-    await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: privateFile, fieldId: receipt.id });
+    await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: privateFile, fieldId: receipt.id, confirmed: true });
     const unlinked = await call(member, "DELETE", `/rows/${row.id}/attachments/${privateFile}`);
     expect(unlinked.status).toBe(200);
     const refused = await call(stranger, "POST", `/rows/${row.id}/undo`, { revision: unlinked.body.row.revision });
@@ -190,7 +190,11 @@ describe("row attachments", () => {
     const fileId = await upload(owner, "file", "manual.txt");
     await shareCollection(owner, collection.id, "all_users");
     expect(await content(member, fileId)).toBe(404);
-    expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: fileId, fieldId: receipt.id })).status).toBe(201);
+    // A Files item needs the From Files confirm (D396, Q2): without it nothing is linked.
+    const unconfirmed = await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: fileId, fieldId: receipt.id });
+    expect([unconfirmed.status, unconfirmed.body.code, unconfirmed.body.documentName]).toEqual([409, "CONFIRM_REQUIRED", "manual.txt"]);
+    expect(await content(member, fileId)).toBe(404);
+    expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: fileId, fieldId: receipt.id, confirmed: true })).status).toBe(201);
     expect(await content(member, fileId)).toBe(200);
     // Still listed in the owner's Files, never in the member's.
     expect(await filesList(owner)).toContain(fileId);

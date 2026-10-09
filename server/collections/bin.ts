@@ -1,6 +1,7 @@
 import { registerBinProvider, SWEEP_BATCH_SIZE, type BinItem, type BinSweepCounts, type PurgeOutcome, type PurgeReason, type RestoreOutcome } from "../bin";
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
+import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { editableCollectionPredicate, type CollectionVisibility } from "./access";
 import { binUnlinkedAttachments, LIMITS } from "./service";
 
@@ -24,7 +25,8 @@ const providedDefaults = { board_id: null, board_name: null, attachment: false, 
 type BinnedCollection = { id: string; owner_id: string; name: string; visibility: CollectionVisibility; deleted_at: string | null; purge_started_at: string | null };
 
 function purgeCollectionNow(collectionId: string, options: { reason: PurgeReason; actorId: string | null; dueBy?: string }): PurgeOutcome {
-  return db.transaction((): PurgeOutcome => {
+  const binned: string[] = [];
+  const outcome = db.transaction((): PurgeOutcome => {
     const retention = options.dueBy === undefined ? "" : " AND (purge_started_at IS NOT NULL OR purge_after <= $dueBy)";
     const marked = db.query(`UPDATE collections SET purge_started_at = COALESCE(purge_started_at, $startedAt) WHERE id = $id AND deleted_at IS NOT NULL${retention}`)
       .run({ startedAt: now(), id: collectionId, ...(options.dueBy === undefined ? {} : { dueBy: options.dueBy }) });
@@ -34,14 +36,17 @@ function purgeCollectionNow(collectionId: string, options: { reason: PurgeReason
     const rowCount = (db.query("SELECT COUNT(*) AS count FROM collection_rows WHERE collection_id = ?").get(collectionId) as { count: number }).count;
     // Cascades remove rows, members, views, links, and search rows (and, through the trigger, FTS rows).
     db.query("DELETE FROM collections WHERE id = ?").run(collectionId);
-    const binnedDocuments = binUnlinkedAttachments(documents, options.actorId);
+    const binnedDocuments = binUnlinkedAttachments(documents, options.actorId, binned);
     audit(options.actorId, null, "collection.purge", { collectionId, reason: options.reason, rowCount, binnedDocuments });
     return "purged";
   })();
+  sourceAccessChangedHook({ kind: "document", ids: binned });
+  return outcome;
 }
 
 function purgeRowNow(rowId: string, options: { reason: PurgeReason; actorId: string | null; dueBy?: string }): PurgeOutcome {
-  return db.transaction((): PurgeOutcome => {
+  const binned: string[] = [];
+  const outcome = db.transaction((): PurgeOutcome => {
     const retention = options.dueBy === undefined ? "" : " AND (purge_started_at IS NOT NULL OR purge_after <= $dueBy)";
     const row = db.query("SELECT collection_id FROM collection_rows WHERE id = ?").get(rowId) as { collection_id: string } | null;
     if (!row) return "not_found";
@@ -50,10 +55,12 @@ function purgeRowNow(rowId: string, options: { reason: PurgeReason; actorId: str
     if (marked.changes === 0) return "not_found";
     const documents = (db.query("SELECT document_id FROM collection_row_attachments WHERE row_id = ?").all(rowId) as Array<{ document_id: string }>).map((item) => item.document_id);
     db.query("DELETE FROM collection_rows WHERE id = ?").run(rowId);
-    const binnedDocuments = binUnlinkedAttachments(documents, options.actorId);
+    const binnedDocuments = binUnlinkedAttachments(documents, options.actorId, binned);
     audit(options.actorId, null, "collection.row_purge", { collectionId: row.collection_id, rowId, reason: options.reason, binnedDocuments });
     return "purged";
   })();
+  sourceAccessChangedHook({ kind: "document", ids: binned });
+  return outcome;
 }
 
 type Sweepable = { id: string; lock: string };

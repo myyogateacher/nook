@@ -698,7 +698,10 @@ export async function duplicateWhiteboard(documentId: string, userId: string, in
   const folderId = input.folderId ?? (ownsSourceFolder ? source.folder_id! : ensureDefaultFolder(userId));
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw new WhiteboardError(404, "NOT_FOUND", "Folder not found");
   if (isSystemFolder(folderId)) throw new WhiteboardError(400, "SYSTEM_FOLDER", SYSTEM_FOLDER_MESSAGE);
-  const thumb = !input.snapshotId && unavailable.size === 0
+  // The thumbnail may show the source owner's pictures (thumbnailPictureIds). They follow the copy's
+  // sharing only when the copy has the same owner, so anyone else's copy of a board with pictures
+  // starts without one (a placeholder until it is opened).
+  const thumb = !input.snapshotId && unavailable.size === 0 && (source.owner_id === userId || Object.keys(copy.files).length === 0)
     ? db.query("SELECT thumb_png, thumb_sha256 FROM whiteboards WHERE document_id = ? AND thumb_png IS NOT NULL").get(documentId) as { thumb_png: Uint8Array; thumb_sha256: string } | null
     : null;
   const { whiteboard } = await createWhiteboard(userId, {
@@ -736,6 +739,30 @@ export async function putThumbnail(documentId: string, userId: string, revision:
     db.query("UPDATE whiteboards SET thumb_png = ?, thumb_revision = ?, thumb_sha256 = ? WHERE document_id = ?").run(bytes, revision, sha256(bytes), documentId);
     return { stored: true };
   });
+}
+
+/**
+ * GET …/thumbnail-pictures (v0.35.0): the pictures the owner's client may draw into the board's
+ * thumbnail. A thumbnail is shown to everyone who can read the board, so it may only show pictures
+ * every reader can open through the board: the board OWNER's own live picture files (U4b, they
+ * follow the board's sharing). A picture someone else owns (shared with the owner, but not with the
+ * board's readers), a binned or purging one, or one whose type no longer matches is left out and
+ * draws as Excalidraw's placeholder. Read from the saved scene (through the storage interface), so
+ * a picture taken off the board or binned since is gone from the next thumbnail.
+ */
+export async function thumbnailPictureIds(documentId: string, userId: string) {
+  const board = ownedBoard(documentId, userId);
+  if (!board) throw notFound();
+  const { bytes, revision } = await readSceneBytes(documentId);
+  const result = validateScene(JSON.parse(new TextDecoder().decode(bytes)));
+  if (!result.ok) return { revision, documentIds: [] as string[] };
+  const check = db.query(`SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND deleted_at IS NULL AND purge_started_at IS NULL
+    AND preview_kind = 'image' AND mime_type = ?`);
+  const documentIds = new Set<string>();
+  for (const file of Object.values(result.scene.files)) {
+    if (check.get(file.nookDocumentId, board.owner_id, file.mimeType)) documentIds.add(file.nookDocumentId);
+  }
+  return { revision, documentIds: [...documentIds] };
 }
 
 /** GET …/thumbnail: the PNG and its hash for a reader, or null (no board, no access, or no thumbnail). */

@@ -5,6 +5,7 @@ import { Avatar } from "../ui/Avatar";
 import { CAMERA_ACCEPT, CAMERA_CAPTURE, coarsePointer, useFileDrop } from "../ui/attachments";
 import { setSelfAvatar, useSelfAvatar } from "../ui/selfAvatar";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { errorText, notify } from "../ui/notify";
 import { GoogleMark } from "../auth/googleSignIn";
 import {
   AVATAR_MAX_ZOOM, AVATAR_OUTPUT_SIZE, avatarSourceLine, blobToBase64, changeAvatar, cropRect, decodePicture, initialCrop, loadAvatarState, panCrop, renderAvatar, zoomCrop,
@@ -31,7 +32,6 @@ export function ProfilePictureCard({ name }: { name: string }) {
   const [picture, setPicture] = useState<DecodedPicture | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const selfUrl = useSelfAvatar();
 
   useEffect(() => {
@@ -43,7 +43,7 @@ export function ProfilePictureCard({ name }: { name: string }) {
   const applied = (result: AvatarState, done: string) => {
     setState(result);
     setSelfAvatar(result.avatarUrl);
-    setMessage(done);
+    notify.success(done);
   };
 
   const openFile = useCallback(async (files: File[]) => {
@@ -51,11 +51,10 @@ export function ProfilePictureCard({ name }: { name: string }) {
     setSheet(false);
     if (!file) return;
     setError("");
-    setMessage("");
     try {
       setPicture(await decodePicture(file));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "This picture could not be opened.");
+      notify.warning(errorText(reason, "This picture could not be opened."));
     }
   }, []);
 
@@ -67,12 +66,13 @@ export function ProfilePictureCard({ name }: { name: string }) {
   async function run(action: () => Promise<AvatarState>, done: string, failed: string) {
     setBusy(true);
     setError("");
-    setMessage("");
     try {
       applied(await action(), done);
       return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : failed);
+      // The crop dialog shows its own error; otherwise (Google picture, Remove) it is a toast.
+      if (picture) setError(errorText(reason, failed));
+      else notify.error(errorText(reason, failed));
       return false;
     } finally {
       setBusy(false);
@@ -98,11 +98,10 @@ export function ProfilePictureCard({ name }: { name: string }) {
         <strong id="profile-picture-heading" role="heading" aria-level={4}>Profile picture</strong>
         <small>{avatarSourceLine(state)} Everyone who can see your name sees it.</small>
       </div>
-      <button type="button" className="secondary-button" onClick={() => { setMessage(""); setSheet(true); }} disabled={busy || !state} aria-haspopup="dialog"><ImagePlus aria-hidden="true" />Change picture</button>
+      <button type="button" className="secondary-button" onClick={() => setSheet(true)} disabled={busy || !state} aria-haspopup="dialog"><ImagePlus aria-hidden="true" />Change picture</button>
     </div>
     {drop.dragging && <p className="profile-picture-drop" aria-hidden="true">Drop a picture to crop it</p>}
     {busy && !picture && <p className="recognised-devices-empty" role="status">Saving…</p>}
-    {message && <p className="password-change-done" role="status">{message}</p>}
     {error && !picture && <p className="form-error" role="alert">{error}</p>}
     {sheet && state && <ProfilePictureSheet state={state} onClose={() => setSheet(false)} onFiles={(files) => void openFile(files)} onUseGoogle={useGoogle} onRemove={remove} />}
     {picture && <AvatarCropDialog picture={picture} busy={busy} error={error} onCancel={closeCrop} onSave={(crop) => void save(crop)} />}

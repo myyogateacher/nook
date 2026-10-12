@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { Check, ShieldCheck } from "lucide-react";
 import { api, ApiError } from "../api";
+import { notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
 import { GoogleButton, googleStartUrl } from "./googleSignIn";
 
@@ -82,7 +83,14 @@ export const asksForCode = (twoFactor: boolean, viaPassword: boolean, secondFact
 
 /** The server's answer when this session's Google confirmation ran out (or was never done here). */
 export const GOOGLE_REAUTH_REQUIRED = "GOOGLE_REAUTH_REQUIRED";
-export const isGoogleReauthRequired = (reason: unknown) => reason instanceof ApiError && Boolean(reason.payload) && typeof reason.payload === "object" && (reason.payload as { code?: unknown }).code === GOOGLE_REAUTH_REQUIRED;
+const googleReauthRequired = (reason: unknown) => reason instanceof ApiError && Boolean(reason.payload) && typeof reason.payload === "object" && (reason.payload as { code?: unknown }).code === GOOGLE_REAUTH_REQUIRED;
+
+/** The confirmation ran out: says so in a toast (ui/notify.ts) and tells the dialog to offer it again. */
+export function isGoogleReauthRequired(reason: unknown) {
+  if (!googleReauthRequired(reason)) return false;
+  notify.warning("Your Google confirmation ran out. Confirm with Google again, then try once more.", { id: GOOGLE_REAUTH_REQUIRED });
+  return true;
+}
 
 /** Re-renders when this session's Google confirmation runs out, so the form offers it again on time. */
 function useConfirmationClock(until: string | null) {

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ShieldCheck } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
-import { useAccountAuthLoader } from "../auth/accountAuth";
+import { isGoogleReauthRequired, useAccountAuthLoader } from "../auth/accountAuth";
 import { reauthBody, ReauthFields, reauthProblems, reauthReady } from "../auth/GoogleAccountCard";
 import { useFieldErrors } from "../auth/fieldChecks";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -85,7 +85,7 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
     } catch (reason) {
       setBusy(false);
       const code = errorCode(reason);
-      if (code === "GOOGLE_REAUTH_REQUIRED") setExpired(true);
+      if (isGoogleReauthRequired(reason)) setExpired(true);
       setError(code === "REAUTH_FAILED" ? "That password or code is not right. Try again." : code === "RATE_LIMITED" ? "Too many tries. Wait a few minutes, then try again." : messageOf(reason, "Could not confirm it's you"));
     }
   }

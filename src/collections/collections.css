@@ -187,16 +187,25 @@ label.row-field-label { cursor: pointer; }
 .row-field .cell-picker { white-space: normal; }
 .row-panel-meta { margin: 6px 0 0; color: #6f6f76; font-size: .74rem; }
 
-.row-attachments { display: grid; gap: 6px; }
-.row-attachments ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
-.row-attachments li { display: flex; align-items: center; gap: 4px; border: 1px solid #28282d; border-radius: 10px; background: #0f0f11; }
-.row-attachment-open { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 10px; color: #e8e8ea; text-decoration: none; }
-.row-attachment-open svg { width: 16px; flex: none; color: #b99b59; }
-.row-attachment-open span { min-width: 0; display: grid; overflow: hidden; font-size: .86rem; text-overflow: ellipsis; white-space: nowrap; }
-.row-attachment-open small { color: #77777e; font-size: .72rem; }
-.row-attachments li .icon-button { width: 44px; height: 44px; }
-.row-attachment-add { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; font-size: .84rem; }
+/* File fields (uploads everywhere U3): the kit's list and sheet (src/ui/attachments) plus the drop zone,
+   the progress rows, and the thumbnails in table cells and phone cards (originals up to 8 MiB, D399). */
+.row-attachments { display: grid; gap: 6px; min-width: 0; border: 1px dashed transparent; border-radius: 12px; transition: border-color .12s, background .12s; }
+.row-attachments.dragging { border-color: #6b582f; background: rgba(185, 155, 89, .07); }
+.row-attachment-add { justify-self: start; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px; font-size: .84rem; }
 .row-attachment-add svg { width: 16px; }
+.row-attachment-hint { color: #6f6f76; font-size: .74rem; }
+@media (pointer: coarse) { .row-attachment-hint { display: none; } }
+.row-attachment-progress { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.row-attachment-progress li { display: flex; align-items: center; gap: 8px; min-height: 36px; min-width: 0; color: #b9b9bf; font-size: .82rem; }
+.row-attachment-progress svg { width: 16px; flex: none; color: #b99b59; }
+.row-attachment-progress-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-attachment-progress-value { flex: none; color: #85858c; font-variant-numeric: tabular-nums; }
+.file-thumb { display: inline-grid; flex: none; place-items: center; overflow: hidden; border-radius: 6px; background: #1d1d21; }
+.file-thumb img { width: 100%; height: 100%; object-fit: cover; image-orientation: from-image; }
+.cell-file-content { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.cell-file-thumb { width: 26px; height: 26px; }
+.cell-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-field .cell-file-name { white-space: normal; }
 
 /* CSV import */
 .import-dialog { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 10px; padding: 0 20px 8px; }
@@ -228,6 +237,8 @@ label.row-field-label { cursor: pointer; }
 .collection-card-field + .collection-card-field::before { content: "·"; margin-right: 10px; color: #4a4a50; }
 .collection-card .icon-button { width: 44px; height: 44px; }
 .collection-card-add { max-width: none; margin: 0 0 10px; }
+.collection-card-cover { width: 44px; height: 44px; margin-left: 8px; border-radius: 8px; }
+.collection-card.has-cover .collection-card-open { padding-left: 10px; }
 
 /* Sort and filter */
 .sort-filter { min-height: 0; overflow-y: auto; display: grid; gap: 8px; padding: 0 20px 8px; }

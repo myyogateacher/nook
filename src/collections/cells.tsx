@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { CollectionRow, FieldDefinition, FieldValue } from "./collectionsApi";
 import { displayValue, inputText, optionById, parseInput } from "./values";
 import { Select } from "../ui/Select";
+import { FileThumb, firstImage } from "./Attachments";
 
 export type SaveValues = (values: Record<string, FieldValue | null>) => Promise<boolean>;
 
@@ -25,6 +26,7 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
   const value = row.values[field.id];
   const shown = displayValue(field, row);
   if (!editable) {
+    if (field.type === "file") return <span className="cell-readonly cell-file" title={shown || undefined}><FileCellContent field={field} row={row} shown={shown} empty={<span className="cell-empty" aria-label="Empty">—</span>} /></span>;
     return <span className={`cell-readonly cell-${field.type}`} title={shown || undefined}>{field.type === "select" && typeof value === "string" ? <OptionChip field={field} id={value} /> : field.type === "multi_select" && Array.isArray(value) ? <OptionChips field={field} ids={value} /> : shown || <span className="cell-empty" aria-label="Empty">—</span>}</span>;
   }
   switch (field.type) {
@@ -44,7 +46,9 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
     case "note":
     case "file":
       return <button type="button" className={`cell-picker cell-${field.type}`} aria-labelledby={labelId} aria-haspopup="dialog" onClick={() => onOpenPicker(field)} title={shown || undefined}>
-        {field.type === "multi_select" && Array.isArray(value) && value.length ? <OptionChips field={field} ids={value} /> : shown || <span className="cell-empty">{variant === "panel" ? pickerPrompt(field) : "—"}</span>}
+        {field.type === "multi_select" && Array.isArray(value) && value.length ? <OptionChips field={field} ids={value} />
+          : field.type === "file" ? <FileCellContent field={field} row={row} shown={shown} empty={<span className="cell-empty">{variant === "panel" ? pickerPrompt(field) : "—"}</span>} />
+          : shown || <span className="cell-empty">{variant === "panel" ? pickerPrompt(field) : "—"}</span>}
       </button>;
     case "text":
       // A single-line input would drop line breaks, so multi-line text is edited in the row panel.
@@ -55,6 +59,13 @@ export function CellEditor({ field, row, editable, onSave, onOpenPicker, variant
     default:
       return <TextCell field={field} value={value} onSave={onSave} variant={variant} labelId={labelId} />;
   }
+}
+
+/** A file cell: the first image's thumbnail (U3, D399), then the name or "N files". */
+function FileCellContent({ field, row, shown, empty }: { field: FieldDefinition; row: CollectionRow; shown: string; empty: ReactNode }) {
+  if (!shown) return <>{empty}</>;
+  const image = firstImage(row, field);
+  return <span className="cell-file-content">{image && <FileThumb file={image} className="file-thumb cell-file-thumb" />}<span className="cell-file-name">{shown}</span></span>;
 }
 
 /** The row panel's checkbox id, so the field's own label can toggle it too. */

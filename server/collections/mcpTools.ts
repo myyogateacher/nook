@@ -9,7 +9,7 @@ import { collectionCreateSchema } from "./routes";
 import { COLLECTION_TEMPLATES } from "./templates";
 import { filterSpec, QUERY_LIMITS, type FilterSpec, type SortSpec } from "./query";
 import type { CollectionSchema, FieldDefinition, FieldValue } from "./schema";
-import { CollectionError, collectionDetail, createCollection, createRow, deleteRow, getRow, listCollections, patchRow, queryRows, requireReadableCollection, schemaOf, type RowSummary } from "./service";
+import { attachDocument, CollectionError, collectionDetail, createCollection, createRow, deleteRow, getRow, LIMITS, listCollections, patchRow, queryRows, requireReadableCollection, schemaOf, type RowSummary } from "./service";
 
 /**
  * MCP tools for Collections (docs/plan/WAVES_10-12.md §3.5, D70, T72–T75).
@@ -20,11 +20,12 @@ import { CollectionError, collectionDetail, createCollection, createRow, deleteR
  * cannot read is NOT_FOUND whether it is missing, private, or binned.
  *
  * Agents work with field NAMES: rows come back keyed by name, select values as option labels,
- * note links as titles (or `restricted`), and file fields as attachment names only. Inputs accept
+ * note links as titles (or `restricted`), and file fields as `{ id, name }` (uploads everywhere U3: the id
+ * is what list_attachments and read_attachment_text take with hostKind "row"). Inputs accept
  * a field's name or id, and an option's label or id. Writes are create and merge-update, with
  * a revision compare-and-swap (ROW_CHANGED), plus (Wave 19) create_collection (private, from a
- * template or bounded fields) and bin_row/restore_row with bin:write; there are no delete-forever,
- * schema-change, share, view, attachment, or import tools. Every write is audited with `{via: "mcp", keyId}`, sets `updated_via_key_id`
+ * template or bounded fields) and bin_row/restore_row with bin:write, and (U3) attach_file_to_row for
+ * an upload made to attach; there are no delete-forever, schema-change, share, view, detach, or import tools. Every write is audited with `{via: "mcp", keyId}`, sets `updated_via_key_id`
  * (the row panel's "Changed by <key> · Undo"), and counts against the `row_write` daily buckets.
  */
 
@@ -43,7 +44,9 @@ function errorToMcp(error: CollectionError, schema?: CollectionSchema) {
     SCHEMA_CHANGED: "SCHEMA_CHANGED",
     INVALID_VALUES: "INVALID",
     INVALID_QUERY: "INVALID",
-    INVALID_CURSOR: "INVALID"
+    INVALID_CURSOR: "INVALID",
+    NOT_AN_UPLOAD: "INVALID",
+    ALREADY_ATTACHED: "INVALID"
   };
   const code = (error.code ? known[error.code] : undefined) ?? (error.status === 404 ? "NOT_FOUND" : error.status === 400 ? "INVALID" : "INTERNAL");
   const details: Record<string, unknown> = {};
@@ -106,7 +109,7 @@ function translateValues(schema: CollectionSchema, values: Record<string, unknow
   for (const [reference, value] of Object.entries(values)) {
     const field = findField(schema, reference);
     if (!field) fieldErrors[reference.slice(0, 64)] = "Unknown field";
-    else if (field.type === "file") fieldErrors[field.name] = "Files cannot be attached over MCP";
+    else if (field.type === "file") fieldErrors[field.name] = "Attach files with attach_file_to_row";
     else {
       if (field.type === "note" && typeof value === "string" && !keyMayRead(key, { type: "note", id: value.toLowerCase() })) throw new McpToolError("NOT_FOUND", "Note not found");
       translated[field.id] = translateValue(field, value);
@@ -136,11 +139,11 @@ const translateSort = (schema: CollectionSchema, sort: SortInput[] | undefined):
 // ---------------------------------------------------------------------------
 // Output
 
-type McpValue = FieldValue | { noteId: string; title: string } | { restricted: true } | string[];
+type McpValue = FieldValue | { noteId: string; title: string } | { restricted: true } | string[] | Array<{ id: string; name: string }>;
 
 /**
- * A row as an agent sees it: values keyed by field name, labels for options, titles for notes, names
- * for files. A note is `{ restricted: true }` when the user cannot read it (T59) or, given `key`, the
+ * A row as an agent sees it: values keyed by field name, labels for options, titles for notes, and
+ * `{ id, name }` for files (never a content URL, D407). A note is `{ restricted: true }` when the user cannot read it (T59) or, given `key`, the
  * key may not (T203: no notes:read). Without `key` (a person's own proposal preview) only T59 applies.
  */
 export function presentRow(schema: CollectionSchema, row: RowSummary, key?: McpKeyContext) {
@@ -148,8 +151,8 @@ export function presentRow(schema: CollectionSchema, row: RowSummary, key?: McpK
   const values: Record<string, McpValue> = Object.create(null);
   for (const field of schema.fields) {
     if (field.type === "file") {
-      const names = (row.files[field.id] ?? []).map((file) => file.name);
-      if (names.length) values[field.name] = names;
+      const files = (row.files[field.id] ?? []).map((file) => ({ id: file.id, name: file.name }));
+      if (files.length) values[field.name] = files;
       continue;
     }
     const value = row.values[field.id];
@@ -292,6 +295,32 @@ export const collectionTools: McpToolSpec[] = [
         schema = schemaOf(requireReadableCollection(current.collection_id, key.userId));
         const { row } = await patchRow(key.userId, current.id, { values: translateValues(schema, values, key), revision: baseRevision }, { keyId: key.keyId });
         return { rowId: row.id, revision: row.revision, url: collectionUrl(row.collection_id, row.id) };
+      }, () => schema);
+    }
+  }),
+  // Uploads everywhere U3 (D402): the refusal in translateValues points here.
+  defineTool({
+    name: "attach_file_to_row",
+    title: "Attach a file to a row",
+    description: `Attach a file to a file field of a row in a collection the user may edit. The file must be one the user uploaded to attach: create_text_file or begin_upload with purpose "attachment" (it lands in their Attachments folder). Other Files items, and files attached anywhere outside this collection, are refused (INVALID), so nothing is shared by side effect. Everyone who can open the row can open the file. Up to ${LIMITS.attachmentsPerRow} files per row (LIMIT_REACHED). Attaching the same file again is harmless. Read the files back with get_row, list_attachments, or read_attachment_text (hostKind "row"). The change can be undone in Nook.`,
+    scopes: ["collections:write"],
+    access: { mode: "items", items: [{ arg: "rowId", kind: "row" }], related: ["documentId"] },
+    write: true,
+    dailyBucket: "row_write",
+    inputSchema: z.object({ rowId: uuid, field: fieldRef.describe("A file field's name (or id) from list_collections"), documentId: uuid.describe("The file's id from create_text_file or finish_upload (purpose attachment); the service checks the user owns it") }).strict(),
+    handler: async ({ rowId, field, documentId }, key) => {
+      let schema: CollectionSchema | undefined;
+      return service(key, async () => {
+        const { row: current } = getRow(key.userId, rowId.toLowerCase());
+        schema = schemaOf(requireReadableCollection(current.collection_id, key.userId));
+        const target = requireField(schema, field);
+        if (target.type !== "file") throw new McpToolError("INVALID", `“${target.name}” is not a file field`);
+        const id = documentId.toLowerCase();
+        const existing = Object.values(current.files).flat().find((file) => file.id === id);
+        if (existing) return { rowId: current.id, field: target.name, file: { id, name: existing.name }, alreadyAttached: true, revision: current.revision, url: collectionUrl(current.collection_id, current.id) };
+        const { row } = await attachDocument(key.userId, current.id, { documentId: id, fieldId: target.id }, { keyId: key.keyId, uploadsOnly: true });
+        const attached = (row.files[target.id] ?? []).find((file) => file.id === id);
+        return { rowId: row.id, field: target.name, file: { id, name: attached?.name ?? null }, alreadyAttached: false, revision: row.revision, url: collectionUrl(row.collection_id, row.id) };
       }, () => schema);
     }
   }),

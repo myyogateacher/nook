@@ -5,6 +5,7 @@ import type { DocumentSummary } from "../types";
 import { LocationStripError, uploadForHost } from "../ui/attachments";
 import { CHAT_IMAGE_BOUNDS, isChatImageType, type ChatAttachment, type ChatAttachmentInput } from "../../shared/agents";
 import { downscaleImage, imageTooLargeMessage, locationStripMessage, NOT_AN_IMAGE_MESSAGE, thumbnailDataUrl, triageImageFiles, visionMissingMessage, IMAGES_FULL_MESSAGE } from "./chatImageFiles";
+import { notify } from "../ui/notify";
 
 /**
  * The chat composer's images (uploads everywhere U5): files from the attach sheet (Take photo, Choose
@@ -65,7 +66,7 @@ export function useComposerImages({ vision, agentName, flash }: Options) {
   /** Files from the sheet, a paste, or a drop: the refused ones are explained once. */
   const addFiles = useCallback((files: File[]) => {
     const { accepted, refusal } = triageImageFiles(files, itemsRef.current.length, vision, agentName);
-    if (refusal) flash(refusal);
+    if (refusal) notify.warning(refusal);
     if (!accepted.length) return;
     const added = accepted.map((file): [PendingImage, File] => {
       const key = crypto.randomUUID();
@@ -77,11 +78,11 @@ export function useComposerImages({ vision, agentName, flash }: Options) {
 
   /** A Files document from From Files (the kit asked the confirm when it is outside Attachments). */
   const addDocument = useCallback((document: DocumentSummary, options: { confirmed: boolean }) => {
-    if (!vision) { flash(visionMissingMessage(agentName)); return; }
-    if (!isChatImageType(document.mime_type) || document.preview_kind !== "image") { flash(NOT_AN_IMAGE_MESSAGE); return; }
-    if (document.size_bytes > CHAT_IMAGE_BOUNDS.bytes) { flash(imageTooLargeMessage(document.name)); return; }
+    if (!vision) { notify.warning(visionMissingMessage(agentName)); return; }
+    if (!isChatImageType(document.mime_type) || document.preview_kind !== "image") { notify.warning(NOT_AN_IMAGE_MESSAGE); return; }
+    if (document.size_bytes > CHAT_IMAGE_BOUNDS.bytes) { notify.warning(imageTooLargeMessage(document.name)); return; }
     if (itemsRef.current.some((item) => item.documentId === document.id)) return;
-    if (itemsRef.current.length >= CHAT_IMAGE_BOUNDS.perMessage) { flash(IMAGES_FULL_MESSAGE); return; }
+    if (itemsRef.current.length >= CHAT_IMAGE_BOUNDS.perMessage) { notify.warning(IMAGES_FULL_MESSAGE); return; }
     setItems((list) => [...list, { key: crypto.randomUUID(), name: document.name, status: "ready", progress: 1, documentId: document.id, previewUrl: contentUrl(document.id, "inline"), confirmed: options.confirmed, error: null }]);
   }, [agentName, flash, vision]);
 

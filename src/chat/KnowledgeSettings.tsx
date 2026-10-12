@@ -13,6 +13,7 @@ import { HUB_TITLE_ID } from "../settings/hubModel";
 import { ModelSheet, SourceChunks } from "./KnowledgeModel";
 import "./chat.css";
 import "./knowledge.css";
+import { notify } from "../ui/notify";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -63,7 +64,7 @@ export function KnowledgeSettings({ kbId, navigate, flash }: { kbId: string | nu
     {bases && bases.length === 0 && status?.enabled && status.canChat && <p className="chat-muted">No knowledge bases yet.</p>}
     {shared.length > 0 && <><h4 className="agents-shared-heading"><UsersRound aria-hidden="true" />Shared with you</h4><ul className="agents-list" aria-label="Knowledge bases shared with you">{shared.map(row)}</ul></>}
     {status?.enabled && status.canCreate && <button type="button" className="action-button secondary agents-add" onClick={() => setCreating(true)}><Plus />New knowledge base</button>}
-    {creating && <CreateSheet onClose={() => setCreating(false)} onCreated={(created) => { setCreating(false); flash("Knowledge base created"); navigate({ ...toList, kbId: created.id }); }} />}
+    {creating && <CreateSheet onClose={() => setCreating(false)} onCreated={(created) => { setCreating(false); notify.success("Knowledge base created"); navigate({ ...toList, kbId: created.id }); }} />}
   </section>;
 }
 
@@ -152,10 +153,10 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
     setBusy(true);
     try {
       const result = await reindexKnowledge(kb.id);
-      flash(`Re-indexing ${result.sources} ${result.sources === 1 ? "source" : "sources"}`);
+      notify.success(`Re-indexing ${result.sources} ${result.sources === 1 ? "source" : "sources"}`);
       await load();
     } catch (reason) {
-      flash(messageOf(reason, "Could not re-index"));
+      notify.error(messageOf(reason, "Could not re-index"));
     } finally {
       setBusy(false);
     }
@@ -166,10 +167,10 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
     if (!await confirm.ask({ title: `Remove ${label.title}?`, message: "Its passages leave the knowledge base at once. The note or file itself is not changed.", confirmLabel: "Remove", danger: true })) return;
     try {
       await removeSource(kb.id, source.id);
-      flash("Source removed");
+      notify.success("Source removed");
       await load();
     } catch (reason) {
-      flash(messageOf(reason, "Could not remove the source"));
+      notify.error(messageOf(reason, "Could not remove the source"));
     }
   }
   async function moveToBin() {
@@ -177,10 +178,10 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
     if (!await confirm.ask({ title: `Move ${kb.name} to the Bin?`, message: "Agents that use it stop finding it at once. Deleted forever after 30 days.", confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteKnowledge(kb.id);
-      flash("Moved to the Bin");
+      notify.success("Moved to the Bin");
       navigate(toList, { replace: true });
     } catch (reason) {
-      flash(messageOf(reason, "Could not delete the knowledge base"));
+      notify.error(messageOf(reason, "Could not delete the knowledge base"));
     }
   }
 
@@ -224,10 +225,10 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
         </ul>}
       <TryIt kb={kb} />
     </>}
-    {sheet === "add" && kb && <AddSourceSheet kb={kb} onClose={() => setSheet(null)} onAdded={() => { flash("Source added; indexing"); void load(); }} />}
-    {sheet === "model" && kb && <ModelSheet kb={kb} onClose={() => setSheet(null)} onChanged={(next, sources) => { setSheet(null); setKb(next); setExpanded(new Set()); flash(`Embedding ${sources} ${sources === 1 ? "source" : "sources"} again with ${next.embeddingModel}`); }} />}
-    {sheet === "rename" && kb && <RenameSheet kb={kb} onClose={() => setSheet(null)} onSaved={(next) => { setSheet(null); setKb(next); flash("Saved"); }} />}
-    {sheet === "share" && kb && <AccessSheet kind="knowledge_base" id={kb.id} title={kb.name} guardHistory note={KNOWLEDGE_SHARE_NOTE} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); flash("Access updated"); void load(); }} />}
+    {sheet === "add" && kb && <AddSourceSheet kb={kb} onClose={() => setSheet(null)} onAdded={() => { notify.success("Source added; indexing"); void load(); }} />}
+    {sheet === "model" && kb && <ModelSheet kb={kb} onClose={() => setSheet(null)} onChanged={(next, sources) => { setSheet(null); setKb(next); setExpanded(new Set()); notify.success(`Embedding ${sources} ${sources === 1 ? "source" : "sources"} again with ${next.embeddingModel}`); }} />}
+    {sheet === "rename" && kb && <RenameSheet kb={kb} onClose={() => setSheet(null)} onSaved={(next) => { setSheet(null); setKb(next); notify.success("Saved"); }} />}
+    {sheet === "share" && kb && <AccessSheet kind="knowledge_base" id={kb.id} title={kb.name} guardHistory note={KNOWLEDGE_SHARE_NOTE} onClose={() => setSheet(null)} onSaved={() => { setSheet(null); notify.success("Access updated"); void load(); }} />}
     {confirm.confirmElement}
   </div>;
 }

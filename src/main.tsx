@@ -4,6 +4,7 @@ import "./styles.css";
 import "./ui/ui.css";
 import { App } from "./App";
 import { ErrorBoundary } from "./ui/ErrorBoundary";
+import { AppToaster } from "./ui/AppToaster";
 import { clearReloadMarker, installChunkReload } from "./chunkReload";
 
 // A tab from before a release reloads once when an old lazy chunk is gone (C14).
@@ -36,6 +37,8 @@ if (window.location.pathname.startsWith("/share/c/")) {
       <ErrorBoundary>
         <App />
       </ErrorBoundary>
+      {/* The one toast stack (ui/notify.ts). */}
+      <AppToaster />
     </StrictMode>
   );
   mounted();

@@ -57,7 +57,7 @@ export function MyWork({ userId, query, onQuery, directory, notify, onOpenCard, 
   async function saveAsView(name: string) {
     const { view } = await createView({ name, query: q, display: { layout: effective.layout, group: effective.group, sort: effective.sort } });
     setSaving(false);
-    notify(`Saved “${view.name}” to your views`);
+    notify.success(`Saved “${view.name}” to your views`);
     onOpenView(view);
   }
 

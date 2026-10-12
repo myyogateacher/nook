@@ -21,6 +21,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { isModuleEnabled, useDisabledModules } from "../modules";
 import { WhiteboardEmbedPicker } from "./whiteboardEmbed";
 import "./editor.css";
+import { notify, type NoticeSink, type NotifyKind } from "../ui/notify";
 
 // The "Embed a whiteboard" picker loads only when opened (Wave 24, D208), so notes stay light.
 const WhiteboardPicker = lazy(() => import("./WhiteboardPicker"));
@@ -52,8 +53,8 @@ type Props = {
   onChange: (markdown: string) => void;
   /** Folder that uploaded images are stored in; null uploads to the Default folder. */
   folderId?: string | null;
-  /** Shows a short status message (the app toast). */
-  onNotice?: (message: string) => void;
+  /** Shows a short status message: the app toasts (ui/notify.ts), or a module's Notifier. */
+  onNotice?: NoticeSink;
   /** Stores a picked, pasted, or dropped image and returns its node; defaults to a Files upload into `folderId`. */
   uploadImage?: (file: File) => Promise<{ src: string; alt: string }>;
   /**
@@ -87,23 +88,25 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
   const [boardPicker, setBoardPicker] = useState<Editor | null>(null);
 
   const insertImages = async (activeEditor: Editor, files: File[]) => {
-    const notice = (message: string) => latest.current.onNotice?.(message);
+    const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
     for (const file of files) {
       if (!isInsertableImageType(file.type)) {
-        notice(IMAGE_REJECTED_MESSAGE);
+        notice("warning", IMAGE_REJECTED_MESSAGE);
         continue;
       }
-      notice(`Uploading ${file.name || "image"}…`);
+      // One toast per upload: "Uploading…" turns into the outcome.
+      const id = `upload:${crypto.randomUUID()}`;
+      notice("info", `Uploading ${file.name || "image"}…`, id);
       try {
         const image = latest.current.uploadImage ? await latest.current.uploadImage(file) : await uploadNoteImage(file, latest.current.folderId);
         if (activeEditor.isDestroyed || !activeEditor.isEditable) {
-          notice("Image saved to Files, but the note is no longer open for editing");
+          notice("warning", "Image saved to Files, but the note is no longer open for editing", id);
           continue;
         }
         activeEditor.chain().focus().setImage(image).run();
-        notice("Image added");
+        notice("success", "Image added", id);
       } catch (reason) {
-        notice(reason instanceof Error ? reason.message : "Image upload failed");
+        notice("error", reason instanceof Error ? reason.message : "Image upload failed", id);
       }
     }
   };
@@ -121,26 +124,28 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
 
   /** U4: uploads any files to the Attachments folder (`?attachTo=note`) and inserts each once stored. */
   const attachFiles = async (activeEditor: Editor, files: File[]) => {
-    const notice = (message: string) => latest.current.onNotice?.(message);
+    const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
     for (const file of files) {
       if (activeEditor.isDestroyed) return;
       if (noteFileRoom(activeEditor) <= 0) {
-        notice(NOTE_FILE_LIMIT_MESSAGE);
+        notice("warning", NOTE_FILE_LIMIT_MESSAGE);
         return;
       }
       const name = file.name || "file";
       const controller = new AbortController();
       uploads.current.add(controller);
-      notice(`Uploading ${name}…`);
+      const id = `upload:${crypto.randomUUID()}`;
+      notice("info", `Uploading ${name}…`, id);
       try {
         const { document } = await uploadForHost(file, "note", { signal: controller.signal });
         if (!insertDocument(activeEditor, document)) {
-          notice("Saved to Files › Attachments, but the note is no longer open for editing");
+          notice("warning", "Saved to Files › Attachments, but the note is no longer open for editing", id);
           continue;
         }
-        notice(`${document.name} added`);
+        notice("success", `${document.name} added`, id);
       } catch (reason) {
-        if (!controller.signal.aborted) notice(reason instanceof Error ? reason.message : "Upload failed");
+        if (!controller.signal.aborted) notice("error", reason instanceof Error ? reason.message : "Upload failed", id);
+        else notify.dismiss(id);
       } finally {
         uploads.current.delete(controller);
       }
@@ -265,7 +270,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         onPick={(document) => {
           const target = attachLayer.editor;
           setAttachLayer(null);
-          if (noteFileRoom(target) <= 0) latest.current.onNotice?.(NOTE_FILE_LIMIT_MESSAGE);
+          if (noteFileRoom(target) <= 0) latest.current.onNotice?.warning(NOTE_FILE_LIMIT_MESSAGE);
           else insertDocument(target, document);
         }} />}
       {preview && <AttachmentPreview documentId={preview.id} name={preview.name} onClose={() => setPreview(null)} />}

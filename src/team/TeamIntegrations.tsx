@@ -8,6 +8,7 @@ import { Avatar } from "../ui/Avatar";
 import { createIntegration, INTEGRATION_ROLE_OPTIONS, lastUsedText, listIntegrations, RETIRED_LABEL, type Integration, type IntegrationRole } from "./integrationsApi";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
+import { notify } from "../ui/notify";
 
 /** The help line under Team → Integrations (Wave 36, D287, T212): what an integration can and cannot reach. */
 export const INTEGRATIONS_HELP = "Accounts for AI clients and scripts. An integration never signs in: it acts only through the API keys you create for it here. "
@@ -82,7 +83,7 @@ export function TeamIntegrations({ onBack, onOpen, flash }: { onBack: () => void
     {creating && <IntegrationFormDialog title="New integration" submitLabel="Create integration" onClose={() => setCreating(false)} onSubmit={async (value) => {
       const { integration } = await createIntegration(value);
       setCreating(false);
-      flash(`${integration.displayName} was created. Give it a key next.`);
+      notify.success(`${integration.displayName} was created. Give it a key next.`);
       onOpen(integration.id);
     }} />}
   </article>;

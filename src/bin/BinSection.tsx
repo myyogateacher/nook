@@ -23,6 +23,7 @@ import {
 } from "./binFormat";
 import "./bin.css";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
+import { errorText, notify } from "../ui/notify";
 
 type BinSectionProps = {
   flash: (message: string) => void;
@@ -135,13 +136,13 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
       // Restoring a board brings its binned cards' board back too; refresh so their rows update.
       if (item.type === "board") void load();
     } catch (reason) {
-      if (errorCode(reason) === "PURGING") flash("This item is being deleted forever and can't be restored");
-      else if (errorCode(reason) === "BOARD_IN_BIN") flash(`Restore the board ${item.board_name ? `“${item.board_name}” ` : ""}first`);
-      else if (errorCode(reason) === "PARENT_IN_BIN" && item.type === "event") flash("Its calendar is in the Bin. Restore the calendar first.");
-      else if (errorCode(reason) === "PARENT_IN_BIN") flash(`Restore “${item.folder_name ?? "its collection"}” from the Bin first`);
-      else if (errorCode(reason) === "LIMIT_REACHED") flash(reason instanceof Error ? reason.message : "Limit reached");
-      else if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
-      else flash(reason instanceof Error ? reason.message : "Could not restore this item");
+      if (errorCode(reason) === "PURGING") notify.warning("This item is being deleted forever and can't be restored");
+      else if (errorCode(reason) === "BOARD_IN_BIN") notify.warning(`Restore the board ${item.board_name ? `“${item.board_name}” ` : ""}first`);
+      else if (errorCode(reason) === "PARENT_IN_BIN" && item.type === "event") notify.warning("Its calendar is in the Bin. Restore the calendar first.");
+      else if (errorCode(reason) === "PARENT_IN_BIN") notify.warning(`Restore “${item.folder_name ?? "its collection"}” from the Bin first`);
+      else if (errorCode(reason) === "LIMIT_REACHED") notify.warning(errorText(reason, "Limit reached"));
+      else if (reason instanceof ApiError && reason.status === 404) notify.warning("This item is no longer in the Bin");
+      else notify.error(errorText(reason, "Could not restore this item"));
       void load();
     } finally {
       setItemPending(item, null);
@@ -163,7 +164,7 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
       } else {
         retriedDeletesRef.current.delete(itemKey(item));
         removeItem(item);
-        flash("Deleted forever");
+        notify.success("Deleted forever");
       }
     } catch (reason) {
       const retry = retriedDeletesRef.current.has(itemKey(item));
@@ -171,15 +172,15 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
         // An earlier attempt finished after all.
         retriedDeletesRef.current.delete(itemKey(item));
         removeItem(item);
-        flash("Deleted forever");
+        notify.success("Deleted forever");
       } else {
-        if (reason instanceof ApiError && reason.status === 404) flash("This item is no longer in the Bin");
-        else if (errorCode(reason) === "NOT_IN_BIN") flash("This item was already restored");
-        else if (errorCode(reason) === "OWNER_ONLY") flash("Only the board owner can delete this forever");
+        if (reason instanceof ApiError && reason.status === 404) notify.warning("This item is no longer in the Bin");
+        else if (errorCode(reason) === "NOT_IN_BIN") notify.warning("This item was already restored");
+        else if (errorCode(reason) === "OWNER_ONLY") notify.warning("Only the board owner can delete this forever");
         else {
           // The request may or may not have reached the server; a later 404 means it did.
           retriedDeletesRef.current.add(itemKey(item));
-          flash(reason instanceof Error ? reason.message : "Could not delete this item");
+          notify.error(errorText(reason, "Could not delete this item"));
         }
         void load();
       }
@@ -195,7 +196,7 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
       const result = await emptyBin();
       flash(emptiedMessage(result.purged, result.pending));
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not empty the Bin");
+      notify.error(errorText(reason, "Could not empty the Bin"));
     } finally {
       setEmptying(false);
       void load();

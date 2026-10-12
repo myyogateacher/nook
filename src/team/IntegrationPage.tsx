@@ -18,6 +18,7 @@ import { hubDocumentTitle } from "../router";
 import { googleIntegrationResultFor } from "../auth/googleSignIn";
 import { googleIntegrationNotice } from "../auth/GoogleAccountCard";
 import { GoogleReturnNotice } from "./TeamGoogle";
+import { errorText, notify } from "../ui/notify";
 
 const formatDate = (value: string) => new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
@@ -74,7 +75,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
     } catch (reason) {
       if (current !== generation.current) return;
       if (reason instanceof ApiError && reason.status === 404) {
-        flash("Integration not found");
+        notify.warning("Integration not found");
         onDeleted();
         return;
       }
@@ -90,9 +91,9 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
       const result = await operation();
       setIntegration(result.integration);
       reloadKeys();
-      flash(message);
+      notify.success(message);
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Something went wrong");
+      notify.error(errorText(reason, "Something went wrong"));
       void load();
     } finally {
       setBusy(false);
@@ -127,7 +128,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
     try {
       const result = await deleteIntegration(integration.id);
       if (result.deleted) {
-        flash(`${integration.displayName} was deleted`);
+        notify.success(`${integration.displayName} was deleted`);
         onDeleted();
         return;
       }
@@ -135,7 +136,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
       reloadKeys();
       flash(retainedMessage(integration));
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not delete the integration");
+      notify.error(errorText(reason, "Could not delete the integration"));
     } finally {
       setBusy(false);
     }
@@ -214,7 +215,7 @@ export function IntegrationPage({ integrationId, totpEnabled, onBack, onDeleted,
       const result = await updateIntegration(integration.id, { name: value.name, description: value.description, ...(value.role !== integration.role ? { role: value.role, expectedRole: integration.role } : {}) });
       setIntegration(result.integration);
       setEditing(false);
-      flash("Integration saved");
+      notify.success("Integration saved");
     }} />}
     {confirmElement}
   </article>;

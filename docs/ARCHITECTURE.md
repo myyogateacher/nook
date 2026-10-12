@@ -319,3 +319,23 @@ History state layers hints over the URL:
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.
 
 Dialogs and sheets push no history. While one is open, the app registers a guard (`src/historyDialogs.ts`; guards form a stack, newest asked first, so shared chrome such as the notification bell and nested Tasks dialogs each register their own): the first `popstate` handler to see a Back or Forward closes the dialog and undoes the move with `history.go(±1)`, chosen by comparing `mynotes.depth` of the two entries, and the popstate that causes is ignored once.
+
+### Toasts
+
+Toasts use [Sonner](https://sonner.emilkowal.ski/) (MIT, pinned in `package.json`). One `<Toaster>` (`src/ui/AppToaster.tsx`) is mounted once at the app root in `main.tsx`. It sits bottom-centre on a desktop. On a phone (≤ 760 px) it sits above the bottom bar and the safe area (`--toast-offset-bottom` in `src/ui/toasts.css`). At most 3 toasts show at once. They stack, can be swiped away on touch, pause while hovered or focused, and lose their motion under `prefers-reduced-motion`. Toasts push no history entry, so Back still closes dialogs and never a toast.
+
+Code calls the wrapper `src/ui/notify.ts`, never Sonner directly:
+
+| Call | When | Duration |
+| --- | --- | --- |
+| `notify.success(message, { action? })` | A change went through: saved, published, created, moved, moved to the Bin, restored, shared or access updated, copied, uploaded, attached. | 4 s |
+| `notify.info(message)` | Neutral news, such as "Published in another window". `flash(message)` (the old one-line toast, still the `flash` prop) is `notify.info`. | 4 s |
+| `notify.warning(message)` | Nook refused, or only part went through: no permission, a limit, a stale copy ("changed meanwhile"), not found, a clipboard that refused. | 6 s |
+| `notify.error(message)` | Something failed: an API error, an upload that failed. Use `errorText(reason, "Could not …")`. | Stays until dismissed, with a close button |
+
+- **Actions.** `{ action: { label, onClick } }` adds one button, such as Undo, Open, View or Move. Clicking it closes the toast. A toast with an action stays at least 10 s. Undo is offered only where an undo already exists: Files and Tasks moves to the Bin, deleted Tasks views, and Open after an Inbox approval on a phone.
+- **Copying by hand.** `{ selectable: true }` is for text the user must copy by hand, such as a link when the clipboard refused. It can be selected, cannot be swiped, and stays 15 s.
+- **Duplicates.** The same type and message replaces the toast on screen instead of stacking a copy.
+- **Screen readers.** Sonner's region is polite. An error's text is its own `role="alert"`, so it is read at once.
+- **Notifiers.** Tasks and Collections hand their views a `notify` prop of type `Notifier`. It has the same four methods. Calling it as a plain function (`notify(message, action?)`) is neutral and kept for older call sites.
+- **CSP.** Sonner normally writes its stylesheet into a runtime `<style>` tag. The Vite plugin `sonnerStaticStyles` (`vite.config.ts`) strips that call, and `sonner/dist/styles.css` is imported as a static file. Toasts therefore need no inline style. A build fails if the call can no longer be found.

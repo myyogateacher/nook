@@ -51,7 +51,7 @@ export function CommentReactions({ commentId, reactions, readOnly, onUpdate, not
       .then(({ reactions: fresh }) => onUpdate(commentId, (current) => replaceAggregate(current, emoji, fresh.find((item) => item.emoji === emoji), fresh.findIndex((item) => item.emoji === emoji))))
       .catch((reason: unknown) => {
         onUpdate(commentId, (current) => replaceAggregate(current, emoji, previous, previousIndex));
-        notify(taskErrorCode(reason) === "RATE_LIMITED" ? "Slow down a little." : taskErrorMessage(reason, "Could not update the reaction"));
+        notify.error(taskErrorCode(reason) === "RATE_LIMITED" ? "Slow down a little." : taskErrorMessage(reason, "Could not update the reaction"));
       })
       .finally(() => { pending.current.delete(emoji); });
   }

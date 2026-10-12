@@ -12,6 +12,7 @@ import "../bin/bin.css";
 import "../files/files.css";
 import "./collections.css";
 import { ReadOnlyBanner } from "../team/roleAccess";
+import { notifier, notify } from "../ui/notify";
 
 export type CollectionsNavigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -85,13 +86,13 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
   const onMissing = useCallback((what: "collection" | "view" | "row") => {
     const current = routeRef.current;
     if (what === "collection") {
-      flash("Collection not found");
+      notify.warning("Collection not found");
       go(collectionsRoute(), { replace: true });
     } else if (what === "view") {
-      flash("View not found");
+      notify.warning("View not found");
       go(collectionsRoute(current.collectionId), { replace: true });
     } else {
-      flash("Row not found");
+      notify.warning("Row not found");
       go(collectionsRoute(current.collectionId, { viewId: underlyingRef.current }), { replace: true });
     }
   }, [flash, go]);
@@ -115,9 +116,9 @@ export function CollectionsApp({ userId, displayName, navigate, flash, onHome, o
         onMissing={onMissing}
         openImport={importFor === route.collectionId}
         onImportOpened={importOpened}
-        notify={flash}
+        notify={notifier}
       />
-      : <CollectionList userId={userId} onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={flash}
+      : <CollectionList userId={userId} onOpen={(collection) => go(collectionsRoute(collection.id))} onOpenRow={(collectionId, rowId) => go(collectionsRoute(collectionId, { rowId }))} notify={notifier}
         onCreatedForImport={(collection) => { setImportFor(collection.id); go(collectionsRoute(collection.id)); }} />}
   </main>;
 }

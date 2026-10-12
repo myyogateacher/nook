@@ -5,6 +5,7 @@ import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks
 import { createGroup, guestCountLabel, listGroups, memberCountLabel, type GroupSummary } from "./groupsApi";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
+import { notify } from "../ui/notify";
 
 /**
  * Team → Groups at /team/groups (Wave 32, access plan §C.6, D267), admins only: every group with
@@ -66,7 +67,7 @@ export function TeamGroups({ onBack, onOpenGroup, flash }: { onBack: () => void;
     {creating && <GroupFormDialog title="New group" submitLabel="Create group" onClose={() => setCreating(false)} onSubmit={async (value) => {
       const { group } = await createGroup(value);
       setCreating(false);
-      flash(`${group.name} was created`);
+      notify.success(`${group.name} was created`);
       onOpenGroup(group.id);
     }} />}
   </article>;

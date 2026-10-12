@@ -42,7 +42,7 @@ export function TasksHome({ userId, home, onHome, onOpenBoard, onOpenBoardId, on
   const segments = <HomeSegments active={segment} onSelect={select} />;
   const openView = useCallback((view: TaskView, options?: { replace?: boolean }) => onHome({ section: "view", viewId: view.id }, options), [onHome]);
   const onMissing = useCallback(() => {
-    notify("That view was deleted or is not shared with you");
+    notify.warning("That view was deleted or is not shared with you");
     onHome({ section: "views" }, { replace: true });
   }, [notify, onHome]);
 

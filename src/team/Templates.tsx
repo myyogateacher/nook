@@ -11,6 +11,7 @@ import { collectProblems, FieldError, useFieldErrors } from "../auth/fieldChecks
 import "../keys/keys.css";
 import "../access/memberAccess.css";
 import { hubDocumentTitle } from "../router";
+import { notify } from "../ui/notify";
 
 /**
  * Team → Templates at /team/templates (Wave 33, access plan D286), admins only: a name, a team
@@ -84,8 +85,8 @@ export function Templates({ onBack, flash }: { onBack: () => void; flash: (messa
         </span>
       </li>)}
     </ul>}
-    {editing && <TemplateFormDialog template={editing === "new" ? null : editing} groups={groups} onClose={() => setEditing(null)} onSaved={(message) => { setEditing(null); flash(message); void load(); }} onStale={() => { setEditing(null); flash("Someone else changed this template. It now shows the latest."); void load(); }} />}
-    {deleting && <DeleteTemplateDialog template={deleting} onClose={() => setDeleting(null)} onDone={(message) => { setDeleting(null); flash(message); void load(); }} />}
+    {editing && <TemplateFormDialog template={editing === "new" ? null : editing} groups={groups} onClose={() => setEditing(null)} onSaved={(message) => { setEditing(null); notify.success(message); void load(); }} onStale={() => { setEditing(null); notify.warning("Someone else changed this template. It now shows the latest."); void load(); }} />}
+    {deleting && <DeleteTemplateDialog template={deleting} onClose={() => setDeleting(null)} onDone={(message) => { setDeleting(null); notify.success(message); void load(); }} />}
   </article>;
 }
 

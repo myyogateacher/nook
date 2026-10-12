@@ -8,6 +8,7 @@ import type { SecretType } from "../../shared/vault";
 import { canWriteEnv, errorCode, messageOf, RevealedText } from "./VaultDialogs";
 import { ReauthCancelled, useVaultReauth } from "./VaultReauth";
 import { listVersions, readVersion, restoreVersion, type VaultEnvironment, type VersionInfo } from "./vaultApi";
+import { notify } from "../ui/notify";
 
 /**
  * A value's history (D224; Wave 26 UI for the Wave 25 API): the last 20 versions of one secret in one
@@ -55,7 +56,7 @@ export function VersionHistoryDialog({ vaultId, secret, env, ask, flash, onClose
       const result = await run(() => readVersion(vaultId, secret.id, env.id, version));
       if (result.version.value !== null) setShown({ version, value: result.version.value, comment: result.version.comment });
     } catch (reason) {
-      if (!(reason instanceof ReauthCancelled)) flash(messageOf(reason, "Could not show that version"));
+      if (!(reason instanceof ReauthCancelled)) notify.error(messageOf(reason, "Could not show that version"));
     }
   }
 
@@ -65,12 +66,12 @@ export function VersionHistoryDialog({ vaultId, secret, env, ask, flash, onClose
     setBusy(true);
     try {
       await restoreVersion(vaultId, secret.id, env.id, version, data.current.version);
-      flash(`Restored version ${version} in ${env.name}`);
+      notify.success(`Restored version ${version} in ${env.name}`);
       setShown(null);
       onRestored();
       await load();
     } catch (reason) {
-      flash(errorCode(reason) === "VALUE_CHANGED" ? "The value changed meanwhile. The history now shows the latest; restore again if you still want to." : messageOf(reason, "Could not restore that version"));
+      notify.error(errorCode(reason) === "VALUE_CHANGED" ? "The value changed meanwhile. The history now shows the latest; restore again if you still want to." : messageOf(reason, "Could not restore that version"));
       await load();
     } finally {
       setBusy(false);

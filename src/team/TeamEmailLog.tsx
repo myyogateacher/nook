@@ -4,6 +4,7 @@ import { api } from "../api";
 import { appName } from "../appName";
 import { relativeTime } from "../files/format";
 import { hubDocumentTitle } from "../router";
+import { errorText, notify } from "../ui/notify";
 
 /**
  * Team → Email log at /team/email (Wave 28, outbound email §D.4, §E.5), admins only: what Nook
@@ -73,10 +74,10 @@ export function TeamEmailLog({ onBack, flash }: { onBack: () => void; flash: (me
   async function retry(entry: MailLogEntry) {
     try {
       await api(`/team/mail-log/${entry.id}/retry`, { method: "POST", body: "{}" });
-      flash("Queued to send again");
+      notify.success("Queued to send again");
       void load(filter);
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not retry");
+      notify.error(errorText(reason, "Could not retry"));
     }
   }
 

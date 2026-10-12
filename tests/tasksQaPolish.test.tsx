@@ -98,7 +98,8 @@ test("polish: Move-to toast, tree toggle counts, action toasts, titles, and the 
   const data = boardData({ columns, cards, board: { structure: epics } });
   expect(treeRows(data.cards).map((row) => [row.card.id, row.childCount, row.descendantCount])).toEqual([["e", 1, 2], ["s", 1, 1], ["t", 0, 0]]);
   expect(source("../src/tasks/BoardTable.tsx")).toContain("the ${descendantCount} ${descendantCount === 1 ? \"card\" : \"cards\"} under");
-  expect(source("../src/tasks/TasksApp.tsx")).toContain("toast.action || toast.selectable ? 15000 : 3200");
+  // Toasts with an action (Undo, Move, Open, View) are the shared toasts, which stay long enough to reach it.
+  expect(source("../src/tasks/TasksApp.tsx")).toContain("const notify: TaskNotify = notifier;");
   expect(source("../src/tasks/BoardView.tsx")).toContain("useTasksTitle(board ? `${openCardTitle ? `${openCardTitle} · ` : \"\"}${board.name} · Tasks` : null);");
   expect(source("../src/tasks/MoveCardSheet.tsx")).toContain("useHistoryDialogGuard(picking, () => setPicking(false));");
   expect(source("../src/tasks/home/home.css")).toContain(".task-view-actions .primary-button:disabled {");

@@ -12,6 +12,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { Folder } from "../types";
 import { whiteboardDisplayName, whiteboardFileName } from "../../shared/whiteboardScene";
 import { createWhiteboard, downloadUrl, type WhiteboardSummary } from "./whiteboardsApi";
+import { notify } from "../ui/notify";
 
 /**
  * The board sheets and dialogs shared by the list and the canvas (whiteboard plan §10.2–§10.4).
@@ -144,7 +145,7 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
         const { document } = await renameFile(board.id, next);
         onChanged({ id: board.id, name: document.name, updated_at: document.updated_at });
         onClose();
-        flash("Renamed");
+        notify.success("Renamed");
       }} />;
   }
   if (dialog.kind === "move") {
@@ -173,9 +174,9 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
       notifyBinChanged();
       onClose();
       onDeleted(board);
-      flash(`Moved “${name}” to the Bin`);
+      notify.success(`Moved “${name}” to the Bin`);
     } catch (reason) {
-      flash(messageOf(reason, "Could not move the whiteboard to the Bin"));
+      notify.error(messageOf(reason, "Could not move the whiteboard to the Bin"));
     } finally {
       setBusy(false);
     }

@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Bookmark, Columns3, Download, Eye, Pencil, RotateCcw, Save, Share2, SlidersHorizontal, Trash2, TriangleAlert, Upload, X } from "lucide-react";
 import { ApiError } from "../api";
@@ -51,7 +52,7 @@ type CollectionViewProps = {
   go: (route: ReturnType<typeof collectionsRoute>, options?: GoOptions) => void;
   onBack: () => void;
   onMissing: (what: "collection" | "view" | "row") => void;
-  notify: (message: string) => void;
+  notify: Notifier;
   /** Open the CSV import once loaded (New collection → Create and import CSV). */
   openImport?: boolean;
   onImportOpened?: () => void;
@@ -155,7 +156,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     setViews((items) => [...items, saved]);
     setDialog(null);
     setLocal(null);
-    notify(`Saved view “${saved.name}”`);
+    notify.success(`Saved view “${saved.name}”`);
     go(collectionsRoute(collectionId, { viewId: saved.id }));
   }
 
@@ -165,9 +166,9 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       const { view: saved } = await updateView(view.id, { config: configOf(local) });
       setViews((items) => items.map((item) => item.id === saved.id ? saved : item));
       setLocal(null);
-      notify(`Updated “${saved.name}”`);
+      notify.success(`Updated “${saved.name}”`);
     } catch (reason) {
-      notify(errorMessage(reason, "Could not update the view"));
+      notify.error(errorMessage(reason, "Could not update the view"));
     }
   }
 
@@ -175,10 +176,10 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     setDialog(null);
     try {
       await deleteCollection(collectionId);
-      notify("Collection moved to the Bin");
+      notify.success("Collection moved to the Bin");
       go(collectionsRoute(), { replace: true });
     } catch (reason) {
-      notify(errorMessage(reason, "Could not delete the collection"));
+      notify.error(errorMessage(reason, "Could not delete the collection"));
     }
   }
 
@@ -188,10 +189,10 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     try {
       await deleteView(view.id);
       setViews((items) => items.filter((item) => item.id !== view.id));
-      notify(`Deleted view “${view.name}”`);
+      notify.success(`Deleted view “${view.name}”`);
       go(collectionsRoute(collectionId), { replace: true });
     } catch (reason) {
-      notify(errorMessage(reason, "Could not delete the view"));
+      notify.error(errorMessage(reason, "Could not delete the view"));
     }
   }
 
@@ -210,13 +211,13 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     setDialog(null);
     try {
       showRow((await undoRow(row.id, row.revision)).row);
-      notify("Change undone");
+      notify.success("Change undone");
     } catch (reason) {
       if (errorCode(reason) === "ROW_CHANGED") {
         const current = errorPayload<{ row?: CollectionRow }>(reason)?.row;
         if (current) showRow(current);
-        notify("Someone else changed this row since. Check it before undoing.");
-      } else notify(errorMessage(reason, "Could not undo"));
+        notify.warning("Someone else changed this row since. Check it before undoing.");
+      } else notify.error(errorMessage(reason, "Could not undo"));
     }
   }
 
@@ -226,9 +227,9 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       await deleteRow(row.id);
       rows.removeRow(row.id);
       if (rowId === row.id) onBack();
-      notify("Row moved to the Bin");
+      notify.success("Row moved to the Bin");
     } catch (reason) {
-      notify(errorMessage(reason, "Could not delete the row"));
+      notify.error(errorMessage(reason, "Could not delete the row"));
     }
   }
 
@@ -237,9 +238,9 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     const url = `${window.location.origin}${formatRoute(collectionsRoute(collectionId, { rowId: row.id }))}`;
     try {
       await navigator.clipboard.writeText(url);
-      notify("Link copied");
+      notify.success("Link copied");
     } catch {
-      notify(url);
+      notify.warning(`Could not copy. The link is ${url}`, { selectable: true });
     }
   }
 
@@ -358,7 +359,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     {dialog?.kind === "fields" && <FieldEditor collection={collection} onClose={closeDialog} onReload={() => { setDialog(null); void loadCollection(); }} onSaved={(saved) => {
       setDialog(null);
       setCollection(saved);
-      notify("Fields saved");
+      notify.success("Fields saved");
     }} />}
     {dialog?.kind === "rename" && <NameDialog title="Rename collection" eyebrow="Collections" label="Name" initialValue={collection.name} submitLabel="Rename" hint="Up to 120 characters."
       validate={(value) => validateCollectionName(value, collection.name)} onCancel={closeDialog} onSubmit={async (name) => {
@@ -368,12 +369,12 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       }} />}
     {dialog?.kind === "import" && <ImportDialog collection={collection} onClose={closeDialog} onImported={(count) => {
       setDialog(null);
-      notify(`Imported ${rowCountLabel(count)}`);
+      notify.success(`Imported ${rowCountLabel(count)}`);
       void rows.reload();
     }} />}
     {dialog?.kind === "share" && <AccessSheet kind="collection" id={collection.id} title={collection.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Access updated");
+      notify.success("Access updated");
       void loadCollection();
     }} />}
     {dialog?.kind === "sortFilter" && <SortFilterSheet fields={collection.fields} value={effective} onClose={closeDialog} onApply={(next) => {

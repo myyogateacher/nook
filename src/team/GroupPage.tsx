@@ -9,6 +9,7 @@ import { GroupFormDialog } from "./TeamGroups";
 import { deleteGroup, deleteGroupMessage, getGroup, groupEventLabel, guestCountLabel, KIND_LABELS, LEVEL_LABELS, memberCountLabel, patchGroup, putGroupMembers, type GroupDetail } from "./groupsApi";
 import { ROLE_LABELS, type Role } from "./teamRoles";
 import { hubDocumentTitle } from "../router";
+import { errorText, notify } from "../ui/notify";
 
 type TeamPerson = { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
 
@@ -56,7 +57,7 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
     } catch (reason) {
       if (current !== generation.current) return;
       if (reason instanceof ApiError && reason.status === 404) {
-        flash("Group not found");
+        notify.warning("Group not found");
         onDeleted();
         return;
       }
@@ -75,13 +76,13 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
       flash(result.selfAdded ? `${message}. You added yourself; this is noted in the group's history.` : message);
     } catch (reason) {
       if (isStale(reason)) {
-        flash(staleMessage);
+        notify.warning(staleMessage);
         void load();
       } else if (isGuestRefusal(reason)) {
         // The policy or the group's grants changed since the page loaded: say why and show the latest.
-        flash(guestRefusedMessage);
+        notify.warning(guestRefusedMessage);
         void load();
-      } else flash(reason instanceof Error ? reason.message : "Could not change the members");
+      } else notify.error(errorText(reason, "Could not change the members"));
     } finally {
       setBusy(false);
     }
@@ -161,15 +162,15 @@ export function GroupPage({ groupId, members, onBack, onDeleted, flash }: {
         const result = await patchGroup(group.id, { ...value, revision: group.revision });
         setGroup(result.group);
         setDialog(null);
-        flash("Group saved");
+        notify.success("Group saved");
       } catch (reason) {
         if (!isStale(reason)) throw reason;
         setDialog(null);
-        flash(staleMessage);
+        notify.warning(staleMessage);
         void load();
       }
     }} />}
-    {dialog === "delete" && <DeleteGroupDialog group={group} onClose={() => setDialog(null)} onDeleted={() => { setDialog(null); flash(`${group.name} was deleted`); onDeleted(); }} onStale={() => { setDialog(null); flash(staleMessage); void load(); }} />}
+    {dialog === "delete" && <DeleteGroupDialog group={group} onClose={() => setDialog(null)} onDeleted={() => { setDialog(null); notify.success(`${group.name} was deleted`); onDeleted(); }} onStale={() => { setDialog(null); notify.warning(staleMessage); void load(); }} />}
   </article>;
 }
 

@@ -8,6 +8,7 @@ import { formatFromFileName, parseImport, type ParseProblem, type TransferFormat
 import { canWriteEnv, errorCode, messageOf } from "./VaultDialogs";
 import { useVaultReauth } from "./VaultReauth";
 import { exportEnvironment, importEntries, type ImportResult, type ImportStatus, type VaultSummary } from "./vaultApi";
+import { notify } from "../ui/notify";
 
 /**
  * Import and Export (vault plan §6.4; Wave 26). Both are sheets and history layers: Back closes them
@@ -165,7 +166,7 @@ export function ExportDialog({ vault, initialEnvId, onClose, flash }: { vault: V
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      flash(`Exported ${file.count} ${file.count === 1 ? "value" : "values"}${file.skipped ? `; ${file.skipped} left out (not valid .env names)` : ""}. Delete the file when you are done with it.`);
+      notify.success(`Exported ${file.count} ${file.count === 1 ? "value" : "values"}${file.skipped ? `; ${file.skipped} left out (not valid .env names)` : ""}. Delete the file when you are done with it.`);
       onClose();
     } catch (reason) {
       setBusy(false);

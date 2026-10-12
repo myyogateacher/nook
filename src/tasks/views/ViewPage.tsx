@@ -107,7 +107,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       setDialog({ kind: "conflict", latest });
       return;
     }
-    notify(taskErrorMessage(reason, fallback));
+    notify.error(taskErrorMessage(reason, fallback));
   }
 
   async function save() {
@@ -117,7 +117,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       const { view: next } = await updateView(view.id, { query: format(effective.filter), display: displayOf(effective), revision: view.revision });
       setView(next);
       onQuery(undefined, { push: false, saved: true });
-      notify(`Saved “${next.name}”`);
+      notify.success(`Saved “${next.name}”`);
     } catch (reason) {
       conflictOr(reason, "Could not save the view");
     } finally {
@@ -128,7 +128,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
   async function saveAs(name: string) {
     const { view: next } = await createView({ name, query: format(effective.filter), display: displayOf(effective) });
     setDialog(null);
-    notify(`Saved “${next.name}” to your views`);
+    notify.success(`Saved “${next.name}” to your views`);
     onOpenView(next, { replace: isNew });
   }
 
@@ -138,7 +138,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       const { view: next } = await updateView(view.id, { name, revision: view.revision });
       setView(next);
       setDialog(null);
-      notify(`Renamed to “${next.name}”`);
+      notify.success(`Renamed to “${next.name}”`);
     } catch (reason) {
       if (taskErrorCode(reason) === "VIEW_CHANGED") conflictOr(reason, "Could not rename the view");
       else throw reason;
@@ -150,10 +150,10 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
     setDialog(null);
     try {
       const { view: copy } = await duplicateView(view.id);
-      notify(`Duplicated as “${copy.name}”`);
+      notify.success(`Duplicated as “${copy.name}”`);
       onOpenView(copy);
     } catch (reason) {
-      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? "You already have 50 views" : taskErrorMessage(reason, "Could not duplicate the view"));
+      notify.error(taskErrorCode(reason) === "LIMIT_REACHED" ? "You already have 50 views" : taskErrorMessage(reason, "Could not duplicate the view"));
     }
   }
 
@@ -166,15 +166,15 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       returnFocusRef.current = null;
       onDeleted();
       const body = viewUndoBody(view);
-      notify(`Deleted “${view.name}”`, { label: "Undo", run: () => {
+      notify.success(`Deleted “${view.name}”`, { action: { label: "Undo", onClick: () => {
         createView(body).then(({ view: restored }) => {
           announceViewsChanged();
-          notify(`Restored “${restored.name}” as a private view`, { label: "Open", run: () => onOpenView(restored) });
-        }, (reason) => notify(taskErrorMessage(reason, "Could not restore the view")));
-      } });
+          notify.success(`Restored “${restored.name}” as a private view`, { action: { label: "Open", onClick: () => onOpenView(restored) } });
+        }, (reason) => notify.error(taskErrorMessage(reason, "Could not restore the view")));
+      } } });
     } catch (reason) {
       closeDialog();
-      notify(taskErrorMessage(reason, "Could not delete the view"));
+      notify.error(taskErrorMessage(reason, "Could not delete the view"));
     } finally {
       setBusy(false);
     }
@@ -187,11 +187,11 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
     try {
       await saveViewSharing(view.id, "private", []);
       setDialog(null);
-      notify(`“${view.name}” is private now`);
+      notify.success(`“${view.name}” is private now`);
       void load();
     } catch (reason) {
       closeDialog();
-      notify(taskErrorMessage(reason, "Could not make the view private"));
+      notify.error(taskErrorMessage(reason, "Could not make the view private"));
     } finally {
       setBusy(false);
     }
@@ -248,7 +248,7 @@ export function ViewPage({ userId, viewId, query, onQuery, directory, notify, on
       validate={(value) => validateViewName(value, view.name)} onSubmit={rename} onCancel={closeDialog} />}
     {dialog?.kind === "share" && view && canShare && <AccessSheet kind="task_view" id={view.id} title={view.name} onClose={closeDialog} onSaved={() => {
       closeDialog();
-      notify("Access updated");
+      notify.success("Access updated");
       // Sharing bumps the view's revision.
       void load();
     }} />}

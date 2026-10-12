@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNotify } from "./taskActions";
+import { notifier } from "../ui/notify";
 import { House, Sparkles } from "lucide-react";
 import { AccountActions, AppPageName } from "../AppShell";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
@@ -21,7 +22,7 @@ type TasksAppProps = {
   userId: string;
   displayName: string;
   navigate: TasksNavigate;
-  /** The app toast; Tasks shows its own so a message can carry Undo. */
+  /** The app toast (unused: Tasks calls the shared toasts, ui/notify.ts, which can carry Undo). */
   flash: (message: string) => void;
   onHome: () => void;
   onSettings: () => void;
@@ -40,16 +41,9 @@ const currentTasksRoute = (): TasksRoute => {
 export function TasksApp({ userId, displayName, navigate, onHome, onSettings, onSignOut }: TasksAppProps) {
   const [route, setRoute] = useState<TasksRoute>(currentTasksRoute);
   const { readOnly } = useRole();
-  // Tasks keeps its own toast so a message can carry an action (Undo after moving to the Bin). One
-  // with an action (Undo, Move, Open, View) stays 15 s so there is time to reach it (QA 0.9.0).
-  const [toast, setToast] = useState<{ id: number; message: string; action?: { label: string; run: () => void }; selectable?: boolean } | null>(null);
-  const toastIdRef = useRef(0);
-  const notify = useCallback<TaskNotify>((message, action, options) => setToast({ id: ++toastIdRef.current, message, action, selectable: options?.selectable === true }), []);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast((current) => current?.id === toast.id ? null : current), toast.action || toast.selectable ? 15000 : 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
+  // The shared toasts (ui/notify.ts). One with an action (Undo, Move, Open, View) stays long enough
+  // to reach it, and pauses while hovered or focused (QA 0.9.0).
+  const notify: TaskNotify = notifier;
   const routeRef = useRef(route);
   routeRef.current = route;
   // App's navigate is recreated on every render; read it through a ref so effects run once.
@@ -167,7 +161,7 @@ export function TasksApp({ userId, displayName, navigate, onHome, onSettings, on
   const openResultCard = useCallback((card: { board_id: string; id: string }) => go(tasksRoute(card.board_id, card.id)), [go]);
 
   const onMissing = useCallback(() => {
-    notify("Board not found");
+    notify.warning("Board not found");
     go(tasksRoute(), true);
   }, [notify, go]);
 
@@ -184,9 +178,5 @@ export function TasksApp({ userId, displayName, navigate, onHome, onSettings, on
         query={route.query ?? DEFAULT_BOARD_QUERY} onQueryChange={changeQuery} sprintsOpen={route.sprints === true} onOpenSprints={openSprints} onCloseSprints={closeSprints} />
       : <TasksHome userId={userId} home={route.home} onHome={goHome} onOpenBoard={(board) => go(tasksRoute(board.id))} onOpenBoardId={(boardId) => go(tasksRoute(boardId))}
         onOpenCard={openResultCard} onBack={back} notify={notify} />}
-    {toast && <div className="toast file-toast" role="status">
-      <span className={toast.selectable ? "task-toast-selectable" : undefined}>{toast.message}</span>
-      {toast.action && <button className="file-toast-action" onClick={() => { const run = toast.action!.run; setToast(null); run(); }}>{toast.action.label}</button>}
-    </div>}
   </main>;
 }

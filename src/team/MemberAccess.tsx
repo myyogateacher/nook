@@ -15,6 +15,7 @@ import {
 import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
+import { notify } from "../ui/notify";
 
 /**
  * A member's access at /team/:userId/access (Wave 33, access plan §C.6, §E, D268, D269), admins
@@ -67,7 +68,7 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
   const loadPage = useCallback((kind: AccessKind, cursor?: string | null) => getMemberAccessPage(userId, kind, cursor), [userId]);
   const changed = useCallback((message: string) => {
     setDialog(null);
-    flash(message);
+    notify.success(message);
     setReloadKey((value) => value + 1);
     void load();
   }, [flash, load]);
@@ -99,9 +100,9 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
     } catch (reason) {
       // Already gone or already paused: the page shows the latest.
       if (reason instanceof ApiError && (reason.status === 404 || reason.status === 409)) {
-        flash("That changed meanwhile. The page now shows the latest.");
+        notify.warning("That changed meanwhile. The page now shows the latest.");
         void load();
-      } else flash(messageOf(reason, "Something went wrong"));
+      } else notify.error(messageOf(reason, "Something went wrong"));
     } finally {
       setActing(false);
     }
@@ -161,7 +162,7 @@ export function MemberAccess({ userId, onBack, flash }: { userId: string; onBack
         onRemoveVault: (row) => setDialog({ kind: "vaultRemove", row }), onLowerVault: (row) => setDialog({ kind: "vaultLower", row }) }} />
 
     {confirmElement}
-    {dialog && <ActionDialog dialog={dialog} summary={summary} onClose={() => setDialog(null)} onDone={changed} onStale={() => { setDialog(null); flash("That access changed meanwhile. The page now shows the latest."); setReloadKey((value) => value + 1); void load(); }} />}
+    {dialog && <ActionDialog dialog={dialog} summary={summary} onClose={() => setDialog(null)} onDone={changed} onStale={() => { setDialog(null); notify.warning("That access changed meanwhile. The page now shows the latest."); setReloadKey((value) => value + 1); void load(); }} />}
   </article>;
 }
 

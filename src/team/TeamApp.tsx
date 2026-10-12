@@ -25,6 +25,7 @@ import { IntegrationPage } from "./IntegrationPage";
 import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, statusLabel, teamBackAction, teamFilters, type TeamFilter } from "./teamFormat";
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
+import { notify } from "../ui/notify";
 
 /** The history-free navigation the Settings hub hands Team: it moves the hub's route and the URL together. */
 type TeamNavigate = (route: Route, options?: { replace?: boolean }) => void;
@@ -207,7 +208,7 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
   useEffect(() => {
     if (!replacesInvitesRoute(view, role)) return;
     // QA Q7: say why the screen is Members instead of the section the URL named.
-    flash(ADMINS_ONLY_HINT);
+    notify.warning(ADMINS_ONLY_HINT);
     navigateRef.current({ app: "team", userId: null }, { replace: true });
   }, [flash, role, view]);
 
@@ -224,7 +225,7 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
       if (generation === detailGeneration.current) setDetail(member);
     }, (reason) => {
       if (generation !== detailGeneration.current) return;
-      flash(reason instanceof ApiError && reason.status === 404 ? "Team member not found" : messageOf(reason, "Could not open this member"));
+      notify.error(reason instanceof ApiError && reason.status === 404 ? "Team member not found" : messageOf(reason, "Could not open this member"));
       go(null, true);
     });
   }, [flash, go, routeUserId, visibleToRole]);
@@ -245,7 +246,7 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
   const applied = useCallback((member: TeamMemberDetail, message: string) => {
     setDetail(member);
     setDialog(null);
-    flash(message);
+    notify.success(message);
     void loadList();
   }, [flash, loadList]);
 
@@ -260,7 +261,7 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
     onDone={applied}
     onStale={(message) => {
       setDialog(null);
-      flash(message);
+      notify.warning(message);
       void loadList();
       getTeamMember(detail.id).then(({ member }) => setDetail(member), () => undefined);
     }}

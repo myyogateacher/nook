@@ -64,13 +64,13 @@ test("bulk summaries name the failed items when titles are known (note 9)", () =
 
 test("the phone approve toast sits above the sticky bar and phone targets are 44 px (F3, note 8)", async () => {
   const css = await Bun.file(new URL("../src/inbox/inbox.css", import.meta.url)).text();
-  expect(css).toMatch(/\.inbox-detail-open \.inbox-toast \{ bottom: calc\(76px \+ env\(safe-area-inset-bottom\)\); \}/);
+  expect(css).toContain("@media (max-width: 760px) { :root:has(.inbox-detail-open) { --toast-offset-bottom: calc(76px + env(safe-area-inset-bottom)); } }");
   const phone = css.slice(css.lastIndexOf("@media (max-width: 760px)"));
   expect(phone).toMatch(/\.inbox-toggle button \{ min-height: 44px; \}/);
   expect(phone).toMatch(/\.inbox-facts dd \.inbox-link-button \{ min-height: 44px; \}/);
   const source = await Bun.file(new URL("../src/inbox/InboxApp.tsx", import.meta.url)).text();
   // The toast carries the same Open link as the desktop banner.
-  expect(source).toMatch(/phoneToast\.ref && <button[^\n]*?\{refLabel\[phoneToast\.ref\.type\]\}/);
+  expect(source).toContain(`notify.success("Approved", { action: ref ? { label: refLabel[ref.type], onClick: () => onOpenPath(ref.href) } : undefined });`);
 });
 
 test("Cancel or Escape in the Reject dialog hands focus back to the opener (4c)", async () => {

@@ -133,10 +133,6 @@
 .move-option svg { width: 17px; height: 17px; color: #b99b59; }
 .move-option span { min-width: 0; display: grid; gap: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .move-option small { color: #77777e; font-size: .72rem; }
-.file-toast { display: flex; align-items: center; gap: 14px; }
-.file-toast span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.file-toast-action { flex: none; min-height: 30px; border: 0; border-radius: 7px; padding: 0 10px; background: #2c2922; color: #f5cf79; font-weight: 700; cursor: pointer; }
-.file-toast-action:hover { background: #3a3323; }
 
 .file-row-item { position: relative; }
 .file-row-more, .file-preview-more { display: none; }
@@ -186,8 +182,6 @@
   .file-dialog-actions button, .file-dialog-form input { min-height: 44px; }
   .file-dialog-actions button { flex: 1; }
   .move-option { min-height: 52px; }
-  .file-toast { max-width: calc(100vw - 28px); }
-  .file-toast-action { min-height: 44px; padding: 0 14px; }
   /* The upload queue becomes a bottom sheet above the tab bar while uploads are running. */
   .upload-queue { position: fixed; z-index: 26; left: 0; right: 0; bottom: calc(61px + env(safe-area-inset-bottom)); max-height: 50dvh; border: 1px solid #35353a; border-bottom: 0; border-radius: 18px 18px 0 0; padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left); box-shadow: 0 -18px 50px rgb(0 0 0 / 55%); }
   .upload-queue:not(.active) { box-shadow: none; }

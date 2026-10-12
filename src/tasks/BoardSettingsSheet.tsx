@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, Columns3, Layers, Mail, Minus, Pencil, Plus, Share2, Trash2, X } from "lucide-react";
 import { MuteEmailsToggle } from "../notifications/emailMutes";
@@ -37,7 +38,7 @@ type BoardSettingsSheetProps = {
   onStructureSaved: (board: BoardSummary) => void;
   /** Board settings → Sprint defaults (17B), shown when the saved structure has sprints on. The sprint list is the Sprints sheet. */
   sprintsSection?: ReactNode;
-  notify: (message: string) => void;
+  notify: Notifier;
 };
 
 /** The structure without its sprint defaults: what Save structure compares and sends. */
@@ -111,7 +112,7 @@ export function BoardSettingsSheet({ board, owner, isOwner = owner, showAllLevel
       const { board: next } = await updateBoardStructure(board.id, levelsOnly(check.structure));
       onStructureSaved(next);
       setDraft(structureOf(next));
-      notify(`Structure saved: ${structureLabel(structureOf(next))}`);
+      notify.success(`Structure saved: ${structureLabel(structureOf(next))}`);
     } catch (reason) {
       // LEVEL_IN_USE and SPRINTS_IN_USE explain themselves (T120).
       setError(taskErrorMessage(reason, "Could not save the structure"));

@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { formatBytes } from "../files/filesApi";
@@ -12,7 +13,7 @@ import { taskErrorMessage, uploadAttachment, type UploadedAttachment } from "./t
  */
 export type UploadRow = { key: string; name: string; loaded: number; total: number; cancel: () => void };
 
-export function useCardUploads(notify: (message: string) => void) {
+export function useCardUploads(notify: Notifier) {
   const [rows, setRows] = useState<UploadRow[]>([]);
   const live = useRef(new Set<AbortController>());
   useEffect(() => () => { for (const controller of live.current) controller.abort(); }, []);
@@ -31,7 +32,7 @@ export function useCardUploads(notify: (message: string) => void) {
         });
         await onUploaded(uploaded);
       } catch (reason) {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) notify(uploadFailure(file, reason));
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) notify.error(uploadFailure(file, reason));
       } finally {
         live.current.delete(controller);
         setRows((current) => current.filter((row) => row.key !== key));

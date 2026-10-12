@@ -24,6 +24,7 @@ import {
   type RunSummary
 } from "./inboxApi";
 import { dueText, KIND_OPTIONS, runMetrics, runStatusLabel } from "./inboxFormat";
+import { notify } from "../ui/notify";
 
 /**
  * Routines (agent inbox Wave 22, §5, §9.2 C): the owner's stored prompts for outside agents. The
@@ -73,9 +74,9 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
     try {
       const { routine: updated } = await setRoutineEnabled(routine.id, !routine.enabled);
       setRoutines((current) => current?.map((item) => item.id === updated.id ? updated : item) ?? null);
-      flash(updated.enabled ? "Routine resumed" : "Routine paused");
+      notify.success(updated.enabled ? "Routine resumed" : "Routine paused");
     } catch (reason) {
-      flash(messageOf(reason, "Could not change the routine"));
+      notify.error(messageOf(reason, "Could not change the routine"));
     } finally {
       setBusy(null);
     }
@@ -133,7 +134,7 @@ export function RoutinesPane({ canWrite, flash }: { canWrite: boolean; flash: (m
         });
         setDialog({ kind: "edit", routine: saved });
       }}
-      onDeleted={(id) => { setRoutines((current) => current?.filter((item) => item.id !== id) ?? null); closeSheet(); flash("Routine deleted"); }} />}
+      onDeleted={(id) => { setRoutines((current) => current?.filter((item) => item.id !== id) ?? null); closeSheet(); notify.success("Routine deleted"); }} />}
   </section>;
 }
 
@@ -300,7 +301,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
       const modules = new Set<string>(form.outputKinds.map(moduleOfKind));
       const input = inputOf({ ...form, pins: form.pins.filter((pin) => modules.has(pin.split(":")[0]!)) });
       const { routine: saved } = routine ? await updateRoutine(routine.id, { ...input, revision: routine.revision }) : await createRoutine(input);
-      flash(routine ? "Routine saved" : "Routine created");
+      notify.success(routine ? "Routine saved" : "Routine created");
       onSaved(saved);
     } catch (reason) {
       setError(messageOf(reason, "Could not save the routine"));

@@ -41,10 +41,10 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     try {
       const { sprint } = await createSprint(detail.board.id, fields);
       setSprints((current) => withSprint(current, sprint));
-      notify(`Added ${sprint.name}`);
+      notify.success(`Added ${sprint.name}`);
       return sprint;
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not add the sprint"));
+      notify.error(taskErrorMessage(reason, "Could not add the sprint"));
       return null;
     }
   }, [detail, notify, setSprints]);
@@ -55,7 +55,7 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
       setSprints((current) => withSprint(current, saved));
       return true;
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not change the sprint"));
+      notify.error(taskErrorMessage(reason, "Could not change the sprint"));
       return false;
     }
   }, [notify, setSprints]);
@@ -65,10 +65,10 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     try {
       const { sprint: saved } = await updateSprint(sprint.id, { state: "active" });
       setSprints((current) => withSprint(current, saved));
-      notify(`${saved.name} started`);
+      notify.success(`${saved.name} started`);
       if (query.sprint) onQueryChange(withBoardQuery(query, { sprint: null }), { push: true });
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not start the sprint"));
+      notify.error(taskErrorMessage(reason, "Could not start the sprint"));
       void load();
     }
   }, [load, notify, onQueryChange, query, setSprints]);
@@ -77,10 +77,10 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     try {
       await deleteSprint(sprint.id);
       setSprints((current) => current.filter((item) => item.id !== sprint.id));
-      notify(`Deleted ${sprint.name}`);
+      notify.success(`Deleted ${sprint.name}`);
       if (query.sprint === sprint.id) onQueryChange(withBoardQuery(query, { sprint: null }));
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not delete the sprint"));
+      notify.error(taskErrorMessage(reason, "Could not delete the sprint"));
     }
   }, [notify, onQueryChange, query, setSprints]);
 
@@ -96,8 +96,8 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     // would jump to the backlog), and View follows the unfinished cards. No sprint is active now, so
     // the backlog is the default view (no `sprint` in the URL).
     onQueryChange(withBoardQuery(query, { sprint: result.sprint.id }));
-    notify(`${result.sprint.name} completed${result.carried ? ` · ${cards(result.carried)} moved to ${where}` : ""}`, {
-      label: "View", run: () => onQueryChange(withBoardQuery(query, { sprint: result.target ? result.target.id : null }), { push: true })
+    notify.success(`${result.sprint.name} completed${result.carried ? ` · ${cards(result.carried)} moved to ${where}` : ""}`, {
+      action: { label: "View", onClick: () => onQueryChange(withBoardQuery(query, { sprint: result.target ? result.target.id : null }), { push: true }) }
     });
     void load();
     return result;
@@ -109,10 +109,10 @@ export function useBoardSprints({ detail, setDetail, query, onQueryChange, notif
     try {
       const { board } = await updateBoardStructure(detail.board.id, { ...structure, sprintDefaults: defaults });
       setDetail((current) => current ? { ...current, board } : current);
-      notify("Sprint defaults saved");
+      notify.success("Sprint defaults saved");
       return true;
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not save the sprint defaults"));
+      notify.error(taskErrorMessage(reason, "Could not save the sprint defaults"));
       return false;
     }
   }, [detail, notify, setDetail, structure]);

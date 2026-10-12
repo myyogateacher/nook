@@ -8,6 +8,7 @@ import { AGENT_BOUNDS, type CatalogTool, type DeclaredStdioServer, type ServerAu
 import { createServer, deleteServer, errorCode, listServers, messageOf, setServerPolicies, syncServer, updateServer, type ToolServerList } from "./chatApi";
 import { POLICY_BADGES } from "./toolPicker";
 import "./chat.css";
+import { notify } from "../ui/notify";
 
 /**
  * Settings → AI → Tool servers (agent chat plan §4.1, §13.4, D349, D354; Wave 41 AC-B): the list
@@ -47,9 +48,9 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
     try {
       const { server: next } = await syncServer(server.id);
       setList((current) => current ? { ...current, servers: current.servers.map((item) => item.id === next.id ? next : item) } : current);
-      flash(next.status === "ok" ? `${next.tools.length} ${next.tools.length === 1 ? "tool" : "tools"} synced` : `Sync failed: ${next.lastError ?? STATUS_TEXT[next.status]}`);
+      (next.status === "ok" ? notify.success : notify.error)(next.status === "ok" ? `${next.tools.length} ${next.tools.length === 1 ? "tool" : "tools"} synced` : `Sync failed: ${next.lastError ?? STATUS_TEXT[next.status]}`);
     } catch (reason) {
-      flash(messageOf(reason, "Could not sync"));
+      notify.error(messageOf(reason, "Could not sync"));
     } finally {
       setSyncing(null);
     }
@@ -58,10 +59,10 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
     if (!await confirm.ask({ title: `Remove ${server.name}?`, message: "Agents lose its tools at their next step. Its credential is deleted.", confirmLabel: "Remove", danger: true })) return;
     try {
       await deleteServer(server.id);
-      flash("Tool server removed");
+      notify.success("Tool server removed");
       void load();
     } catch (reason) {
-      flash(messageOf(reason, "Could not remove the server"));
+      notify.error(messageOf(reason, "Could not remove the server"));
     }
   }
   async function toggleEnabled(server: ToolServerSummary) {
@@ -69,7 +70,7 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
       const { server: next } = await updateServer(server.id, { enabled: !server.enabled, expectedRevision: server.revision });
       setList((current) => current ? { ...current, servers: current.servers.map((item) => item.id === next.id ? next : item) } : current);
     } catch (reason) {
-      flash(errorCode(reason) === "REVISION_MISMATCH" ? "This server changed elsewhere; reload" : messageOf(reason, "Could not change the server"));
+      notify.error(errorCode(reason) === "REVISION_MISMATCH" ? "This server changed elsewhere; reload" : messageOf(reason, "Could not change the server"));
     }
   }
   async function setPolicy(server: ToolServerSummary, tool: CatalogTool, policy: ToolPolicy) {
@@ -83,7 +84,7 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
       const { server: next } = await setServerPolicies(server.id, { [tool.name]: policy });
       setList((current) => current ? { ...current, servers: current.servers.map((item) => item.id === next.id ? next : item) } : current);
     } catch (reason) {
-      flash(messageOf(reason, "Could not change the policy"));
+      notify.error(messageOf(reason, "Could not change the policy"));
     }
   }
 

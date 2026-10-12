@@ -14,6 +14,7 @@ import { errorCode, messageOf } from "./VaultDialogs";
 import { getVault, getVaultAccess, putVaultAccess, type AccessPutBody, type SheetEnvironment, type SheetGroup, type SheetPerson, type VaultAccessSheet } from "./vaultApi";
 import { VaultKeysSection } from "./VaultKeysSection";
 import { appName } from "../appName";
+import { notify } from "../ui/notify";
 
 /**
  * Who has access to one vault, at /vault/:id/access (vault plan §10 Access; D214–D216, V-O3; Wave 26).
@@ -244,7 +245,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
       const result = await putVaultAccess(vaultId, bodyOf(draft), sheet.etag);
       if (!result.access) {
         // Saved, and the caller no longer manages this vault: leave past the leave guard.
-        flash(result.stillReads ? "Saved. You no longer manage who has access to this vault." : "Saved. You no longer have access to this vault.");
+        notify.success(result.stillReads ? "Saved. You no longer manage who has access to this vault." : "Saved. You no longer have access to this vault.");
         setAllowLeave(true);
         const stillReads = result.stillReads;
         setTimeout(() => whenHistorySettled(() => onHandedOver(stillReads)), 0);
@@ -253,7 +254,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
       setSheet(result.access);
       setDraft(draftOf(result.access));
       setBusy(false);
-      flash("Saved who has access");
+      notify.success("Saved who has access");
       if (result.lostAccess > 0) {
         const single = removed.length === 1 ? removed[0]! : null;
         const open = await ask({

@@ -19,10 +19,8 @@ import {
   canManage as ownsDocument,
   deleteConfirmMessage,
   DOCUMENT_DRAG_TYPE,
-  emptyToastState,
   fileCountLabel,
   fileSortOptions,
-  fileToastReducer,
   filesEmptyState,
   filterDocuments,
   isDocumentDrag,
@@ -36,12 +34,12 @@ import {
   shortcutDocumentId,
   readFileSort,
   sortDocuments,
-  toastDuration,
   uploadDropMessage,
   validateFolderName,
   writeFileSort,
   type FileSort
 } from "./fileActions";
+import { notify } from "../ui/notify";
 import { contentUrl, deleteFile, formatBytes, getFile, listFiles, moveFile, renameFile, uploadFile, UploadRequestError } from "./filesApi";
 import { FileActionSheet, type FileSheetAction } from "./FileActionSheet";
 import { FilePreview } from "./FilePreview";
@@ -151,7 +149,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   // Review M1: withdrawing the file from places its owner can no longer open, from the same confirm.
   const [removingHidden, setRemovingHidden] = useState(false);
   const [hiddenStatus, setHiddenStatus] = useState<string | null>(null);
-  const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
   // The row (document id) or control that opened the current dialog, so focus can go back to it.
   const returnFocusRef = useRef<string | HTMLElement | null>(null);
   const [sort, setSort] = useState<FileSort>(() => readFileSort(browserStorage(), userId));
@@ -163,7 +160,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [fileDragOver, setFileDragOver] = useState(false);
   const fileDragDepthRef = useRef(0);
-  const notify = useCallback((message: string, undoDocumentId: string | null = null) => toastDispatch({ type: "show", message, undoDocumentId }), []);
 
   useEffect(() => {
     if (!sortOpen) return;
@@ -191,13 +187,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     return () => { window.removeEventListener("dragover", guard); window.removeEventListener("drop", guard); };
   }, []);
 
-  const toast = toastState.toast;
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => toastDispatch({ type: "dismiss", id: toast.id }), toastDuration(toast));
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
   // Applies a Files URL (first load or Back/Forward) to the loaded data.
   const applyRoute = useCallback(async (route: FilesRoute, snapshot: FilesNavigationSnapshot | null, loaded: LoadedData) => {
     const generation = ++routeGenerationRef.current;
@@ -213,7 +202,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     setDocumentId(resolved.documentId);
     setExtraDocument(named && !loaded.documents.some((item) => item.id === named.id) ? named : null);
     setPanel(nextPanel);
-    if (resolved.missing) flash(resolved.missing === "document" ? "File not found" : "Folder not found");
+    if (resolved.missing) notify.warning(resolved.missing === "document" ? "File not found" : "Folder not found");
     const target = filesRoute(resolved.folder, resolved.documentId);
     if (resolved.missing || formatRoute(target) !== window.location.pathname) navigate(target, { replace: true, filesPanel: nextPanel });
   }, [flash, navigate]);
@@ -422,7 +411,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     setDialog(null);
     returnFocusRef.current = null;
     selectFolder(created.id);
-    notify(`Created folder ${created.name}`);
+    notify.success(`Created folder ${created.name}`);
   }
 
   // Optimistic: the list shows the new name at once and goes back to the old one if the server refuses.
@@ -432,11 +421,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     storeDocument({ ...document, name });
     renameFile(document.id, name).then(({ document: saved }) => {
       storeDocument(saved);
-      notify(`Renamed to “${saved.name}”`);
+      notify.success(`Renamed to “${saved.name}”`);
     }).catch((reason) => {
       setDocuments((items) => rollbackRename(items, document.id, name, previous));
       setExtraDocument((current) => current ? rollbackRename([current], document.id, name, previous)[0] : current);
-      notify(errorMessage(reason, "Could not rename the file"));
+      notify.error(errorMessage(reason, "Could not rename the file"));
     });
   }
 
@@ -448,7 +437,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       setFolder(target.id);
       navigate(filesRoute(target.id, moved.id), { replace: true, filesPanel: panel });
     }
-    notify(movedMessage(target.name, moved.visibility));
+    notify.success(movedMessage(target.name, moved.visibility));
   }
 
   async function refreshDocument(id: string) {
@@ -473,15 +462,16 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       setDialog(null);
       returnFocusRef.current = null;
       focusRow(neighbour?.id ?? null);
-      notify(`Moved “${document.name}” to the Bin`, document.id);
+      // Undo restores it from the Bin (the toast stays long enough to reach it).
+      notify.success(`Moved “${document.name}” to the Bin`, { action: { label: "Undo", onClick: () => { void undoDelete(document.id); } } });
     } catch (reason) {
       setDialog(null);
       if (reason instanceof ApiError && reason.status === 404) {
         setDocuments((items) => items.filter((item) => item.id !== document.id));
-        notify("This file no longer exists");
+        notify.warning("This file no longer exists");
       } else {
         focusRow(returnFocusRef.current);
-        notify(errorMessage(reason, "Could not delete the file"));
+        notify.error(errorMessage(reason, "Could not delete the file"));
       }
     } finally {
       setDeleting(false);
@@ -489,21 +479,20 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   }
 
   async function undoDelete(id: string) {
-    toastDispatch({ type: "clear" });
     try {
       const result = await restoreBinItem({ type: "document", id });
       try {
         await refreshDocument(id);
       } catch {
-        notify(`${restoredMessage(result.folderName ?? "Default", result.visibility)}, but the list could not be refreshed. Reload to see the file.`);
+        notify.warning(`${restoredMessage(result.folderName ?? "Default", result.visibility)}, but the list could not be refreshed. Reload to see the file.`);
         return;
       }
-      notify(result.alreadyRestored ? `Already restored to ${result.folderName ?? "Default"}` : restoredMessage(result.folderName ?? "Default", result.visibility));
+      notify.success(result.alreadyRestored ? `Already restored to ${result.folderName ?? "Default"}` : restoredMessage(result.folderName ?? "Default", result.visibility));
       focusRow(id);
     } catch (reason) {
-      if (errorCode(reason) === "PURGING") notify("This file is being deleted forever and can't be restored");
-      else if (reason instanceof ApiError && reason.status === 404) notify("This file is no longer in the Bin");
-      else notify(errorMessage(reason, "Could not restore the file"));
+      if (errorCode(reason) === "PURGING") notify.warning("This file is being deleted forever and can't be restored");
+      else if (reason instanceof ApiError && reason.status === 404) notify.warning("This file is no longer in the Bin");
+      else notify.error(errorMessage(reason, "Could not restore the file"));
     }
   }
 
@@ -570,7 +559,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     endRowDrag();
     const dragged = id ? findDocument(id) : null;
     if (!dragged || !canDropOnFolder(target, dragged)) return;
-    moveDocument(dragged, target).catch((reason) => notify(errorMessage(reason, "Could not move the file")));
+    moveDocument(dragged, target).catch((reason) => notify.error(errorMessage(reason, "Could not move the file")));
   }
 
   const uploadTarget = canUpload ? (folder === "all" ? defaultFolder?.name ?? "Default" : currentFolder?.name ?? "") : null;
@@ -602,7 +591,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     fileDragDepthRef.current = 0;
     setFileDragOver(false);
     if (!canUpload) {
-      notify(uploadDropMessage(null));
+      notify.warning(uploadDropMessage(null));
       return;
     }
     // A dropped folder is recreated as folders (U6); loose files dropped with it upload as usual.
@@ -614,9 +603,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     void readDroppedEntries(entries).then((dropped) => {
       if (!mountedRef.current) return;
       if (dropped.files.length) chooseFiles(dropped.files);
-      if (dropped.overflow) notify(`A folder upload takes at most ${FOLDER_UPLOAD_MAX_FILES.toLocaleString("en-US")} files. Upload its subfolders one at a time.`);
+      if (dropped.overflow) notify.warning(`A folder upload takes at most ${FOLDER_UPLOAD_MAX_FILES.toLocaleString("en-US")} files. Upload its subfolders one at a time.`);
       else if (dropped.folders.length) void uploadFolders(dropped.folders);
-      else if (dropped.folderCount) notify(dropped.unreadable ? "The browser could not read the dropped folder" : "The dropped folder is empty");
+      else if (dropped.folderCount) notify.warning(dropped.unreadable ? "The browser could not read the dropped folder" : "The dropped folder is empty");
     });
   }
 
@@ -702,7 +691,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (!refused.length || uploadFolderId === undefined) return;
     dispatch({ type: "enqueue", uploads: refused.map(({ file, error }) => ({ id: crypto.randomUUID(), key: crypto.randomUUID(), name: file.name, size: file.size, folderId: uploadFolderId, rejected: error! })) });
     setQueueOpen(true);
-    notify(refused.length === 1 ? refused[0].error! : `${refused.length} pictures were not uploaded because their location could not be removed`);
+    notify.error(refused.length === 1 ? refused[0].error! : `${refused.length} pictures were not uploaded because their location could not be removed`);
   }
 
   // U6: pasting files or a screenshot anywhere in Files uploads them into the open folder. Text pastes
@@ -714,7 +703,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (!files.length) return;
     event.preventDefault();
     if (!canUpload) {
-      if (canWrite) notify(uploadDropMessage(null));
+      if (canWrite) notify.warning(uploadDropMessage(null));
       return;
     }
     const at = new Date();
@@ -737,8 +726,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     if (parentId === undefined || !entries.length || preparingRef.current) return;
     const siblings = owned.filter((item) => (item.parent_id ?? null) === parentId).map((item) => item.name);
     const plan = planFolderUpload(entries, siblings);
-    if (plan.error) { notify(plan.error); return; }
-    if (!plan.files.length && !plan.rejected.length) { notify(plan.skipped ? "Nothing to upload: the folder only holds system files" : "The folder is empty"); return; }
+    if (plan.error) { notify.warning(plan.error); return; }
+    if (!plan.files.length && !plan.rejected.length) { notify.warning(plan.skipped ? "Nothing to upload: the folder only holds system files" : "The folder is empty"); return; }
     const label = plan.roots.length === 1 ? plan.roots[0] : `${plan.roots.length} folders`;
     const created = new Map<string, string>();
     const failedFolders = new Map<string, string>();
@@ -797,9 +786,9 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       const counts = finishedBatch(queue, batch);
       if (!counts) continue;
       info.announced = true;
-      notify(folderUploadSummary(info.roots, { ...counts, skipped: info.skipped }));
+      (counts.failed ? notify.error : notify.success)(folderUploadSummary(info.roots, { ...counts, skipped: info.skipped }));
     }
-  }, [queue, notify]);
+  }, [queue]);
 
   // Take photo only where a camera is the likely input (phones and tablets); a folder chooser only
   // where the browser has one and a mouse (phones offer no folder picking worth the menu row).
@@ -1006,7 +995,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     {dialog?.kind === "move" && dialogDocument && <MoveSheet document={dialogDocument} folders={folders} onMove={async (target) => { await moveDocument(dialogDocument, target); closeDialog(); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogDocument && <AccessSheet kind="document" id={dialogDocument.id} title={dialogDocument.name} onClose={closeDialog} onSaved={() => {
       closeDialog();
-      notify("Access updated");
+      notify.success("Access updated");
       refreshDocument(dialogDocument.id).catch(() => undefined);
     }} />}
     {dialog?.kind === "delete" && dialogDocument && <DeleteFileDialog
@@ -1019,10 +1008,6 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       onConfirm={() => { void deleteDocument(dialogDocument); }}
       onCancel={closeDialog}
     />}
-    {toast && <div className="toast file-toast" role="status">
-      <span>{toast.message}</span>
-      {toast.undoDocumentId && <button className="file-toast-action" onClick={() => { void undoDelete(toast.undoDocumentId!); }}>Undo</button>}
-    </div>}
 
     <nav className="mobile-tabbar" aria-label="Files panels">
       <button className={panel === "folders" ? "active" : ""} onClick={() => showPanel("folders")}><Menu />Folders</button>

@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Columns3, Layers, Link2, Paperclip, Plus, X } from "lucide-react";
 import { aLevel, FLAT_STRUCTURE, levelName, parentRequired, type BoardStructure } from "../../shared/boardStructure";
@@ -48,7 +49,7 @@ type CardComposerProps = {
   onClose: () => void;
   /** The card was created; for "another" the composer stays open and starts over. */
   onCreated: (card: CardDetail, mode: ComposerMode, options: { hadRelations: boolean }) => void;
-  notify: (message: string) => void;
+  notify: Notifier;
   /** The board's tags for the Tags field (13C), whether the caller manages them, and how the board hears of a change. */
   tags?: BoardTag[];
   owner?: boolean;
@@ -150,7 +151,7 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
       const { card } = await createCard(boardId, { ...createBody({ ...current, sprintId: planned }, check.name), sprintId: planned });
       onCreated(card, mode, { hadRelations: current.relations.length > 0 });
       if (mode === "another") {
-        notify(`Added “${card.title}”. Add another.`);
+        notify.success(`Added “${card.title}”. Add another.`);
         // "Create another" keeps the column, the level, and the parent (a run of subtasks).
         update(() => emptyDraft(current.columnId, { parentId: current.parentId, level: current.level, sprintId: current.sprintId }));
         setTitleError(null);
@@ -195,7 +196,7 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
   /** Files picked, pasted, or dropped: uploaded now with progress, attached when the card is created. */
   async function attachFiles(files: readonly File[]) {
     const { kept, notice } = fitToCap(files, draftRef.current.attachments.length + uploads.rows.length, MAX_COMPOSER_ATTACHMENTS, "card");
-    if (notice) notify(notice);
+    if (notice) notify.warning(notice);
     await uploads.upload(kept, (uploaded) => update((current) => ({ ...current, attachments: [...current.attachments, uploaded] })));
   }
 

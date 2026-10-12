@@ -32,6 +32,7 @@ import {
 import { Avatar } from "../ui/Avatar";
 import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { appName } from "../appName";
+import { notify } from "../ui/notify";
 
 /**
  * One board's canvas (whiteboard plan §10.3, D194, D202, D210): Excalidraw under Nook's 44 px header
@@ -673,7 +674,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     try {
       image = await loadNookImage(document.id);
     } catch (reason) {
-      if (!tearingDownRef.current) flash(messageOf(reason, "Could not load the picture"));
+      if (!tearingDownRef.current) notify.error(messageOf(reason, "Could not load the picture"));
       return false;
     }
     const live = apiRef.current;
@@ -719,7 +720,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         uploadsRef.current.delete(controller);
         if (!tearingDownRef.current) await placeImage(document, at);
       } catch (reason) {
-        if (!controller.signal.aborted && !tearingDownRef.current) flash(messageOf(reason, "Could not upload the picture"));
+        if (!controller.signal.aborted && !tearingDownRef.current) notify.error(messageOf(reason, "Could not upload the picture"));
       } finally {
         uploadsRef.current.delete(controller);
         if (mounted.current && !tearingDownRef.current) setUploading(null);
@@ -853,7 +854,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refsRef.current)) as never;
       download(await exportToBlob({ elements, appState: { ...captured.appState, exportBackground: true, exportWithDarkMode: false }, files: filesRef.current, mimeType: "image/png", exportPadding: 16 }), `${name}.png`);
     } catch {
-      flash("Could not export this whiteboard");
+      notify.error("Could not export this whiteboard");
     }
   }, [download, flash, name]);
 
@@ -870,7 +871,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       const svg = await exportToSvg({ elements, appState: { ...captured.appState, exportBackground: true, exportWithDarkMode: false } as never, files: filesRef.current, exportPadding: 16, skipInliningFonts: true });
       download(new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" }), `${name}.svg`);
     } catch {
-      flash("Could not export this whiteboard");
+      notify.error("Could not export this whiteboard");
     }
   }, [download, flash, name]);
 
@@ -909,7 +910,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       await showServerScene("Showing the latest version");
     } catch (reason) {
       if (lostAccess(reason)) loseAccess();
-      else flash(messageOf(reason, "Could not load the latest version"));
+      else notify.error(messageOf(reason, "Could not load the latest version"));
     }
   }, [flash, loseAccess, showServerScene]);
 
@@ -980,7 +981,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
         } else if (lostAccess(reason) && payload?.code !== "NO_SNAPSHOT") loseAccess();
         else if (!tearingDownRef.current) {
           setLayer(null);
-          flash(messageOf(reason, "Could not restore that version"));
+          notify.error(messageOf(reason, "Could not restore that version"));
         }
       }
     } finally {
@@ -1003,7 +1004,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       flash(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
       onOpenBoard(whiteboard.id);
     } catch (reason) {
-      if (!tearingDownRef.current) flash(messageOf(reason, "Could not duplicate this whiteboard"));
+      if (!tearingDownRef.current) notify.error(messageOf(reason, "Could not duplicate this whiteboard"));
     }
   }, [boardId, flash, flush, onOpenBoard]);
 
@@ -1054,7 +1055,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       flash("Saved your version as a copy");
       onOpenBoard(whiteboard.id);
     } catch (reason) {
-      flash(messageOf(reason, "Could not save a copy"));
+      notify.error(messageOf(reason, "Could not save a copy"));
     }
   }, [boardId, flash, onOpenBoard, userId]);
 

@@ -22,6 +22,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOptions, INVITE_STATUS_LABELS, inviteLimitHint, inviteRoleOptions, inviteTimeLabel, mailOutcomeLabel, shownOnceWarning, templateLabel, type ExpiryDays } from "./inviteFormat";
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
+import { notify } from "../ui/notify";
 
 type Props = {
   data: TeamInviteList | null;
@@ -99,7 +100,7 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
           <span>Created {relativeTime(invite.createdAt)}{invite.createdBy ? ` by ${invite.createdBy.displayName}` : ""}</span>
         </p>
         {(invite.status === "live" || (invite.status === "used" && invite.usedBy)) && <div className="team-invite-actions">
-          {invite.status === "live" && invite.email && <button type="button" className="team-action" onClick={() => { if (emailEnabled) open({ kind: "email", invite }); else flash(EMAIL_NOT_CONFIGURED); }}><Mail />Resend email</button>}
+          {invite.status === "live" && invite.email && <button type="button" className="team-action" onClick={() => { if (emailEnabled) open({ kind: "email", invite }); else notify.warning(EMAIL_NOT_CONFIGURED); }}><Mail />Resend email</button>}
           {invite.status === "live" && <button type="button" className="team-action danger" onClick={() => open({ kind: "revoke", invite })}><Ban />Revoke</button>}
           {invite.status === "used" && invite.usedBy && <button type="button" className="team-action" onClick={() => onOpenMember(invite.usedBy!.id)}>Open {invite.usedBy.displayName}</button>}
         </div>}
@@ -107,8 +108,8 @@ export function TeamInvites({ data, error, onBack, onReload, onOpenMember, flash
     </ul>}
 
     {dialog?.kind === "create" && <InviteCreateDialog emailEnabled={emailEnabled} onClose={close} onCreated={onReload} />}
-    {dialog?.kind === "email" && <InviteEmailDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); flash(message); onReload(); }} />}
-    {dialog?.kind === "revoke" && <InviteRevokeDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); flash(message); onReload(); }} />}
+    {dialog?.kind === "email" && <InviteEmailDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); notify.success(message); onReload(); }} />}
+    {dialog?.kind === "revoke" && <InviteRevokeDialog invite={dialog.invite} onClose={close} onDone={(message) => { close(); notify.success(message); onReload(); }} />}
   </article>;
 }
 

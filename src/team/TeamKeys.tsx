@@ -9,6 +9,7 @@ import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { listIntegrations, type Integration } from "./integrationsApi";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
+import { notify } from "../ui/notify";
 
 /**
  * Team → Keys at /team/keys (Wave 31, access plan §C.6, §E), admins only: every live key across
@@ -123,7 +124,7 @@ export function TeamKeys({ members, onBack, flash }: { members: ReadonlyArray<{ 
       {data.keys.map((key) => <KeyRow key={key.id} apiKey={key} owner={<>{key.owner.displayName}{key.owner.kind === "service" && <IntegrationBadge />}{key.owner.blocked ? " (blocked)" : ""}</>} onRevoke={() => setRevoking(key)} />)}
     </ul>}
     {data?.nextCursor && <button type="button" className="secondary-button team-keys-more" onClick={() => { void load(data.nextCursor); }}>Show more</button>}
-    {revoking && <AdminRevokeDialog apiKey={revoking} onClose={() => setRevoking(null)} onDone={() => { flash(`${revoking.name} was revoked`); setRevoking(null); void load(); }} />}
+    {revoking && <AdminRevokeDialog apiKey={revoking} onClose={() => setRevoking(null)} onDone={() => { notify.success(`${revoking.name} was revoked`); setRevoking(null); void load(); }} />}
   </article>;
 }
 

@@ -1,4 +1,5 @@
 // Pure helpers for the Tasks UI: name validation that mirrors the server rules.
+import type { Notifier } from "../ui/notify";
 import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
 import { isGeneratedCommentBody } from "../../shared/commentFiles";
 import type { HostAttachment } from "../ui/attachments";
@@ -125,9 +126,8 @@ export const binConfirmMessage = (kind: "card" | "board", name: string, descenda
   ? `Move “${name}”${descendants ? ` and ${descendants === 1 ? "the card under it" : `the ${descendants} cards under it`}` : ""} to the Bin? You can restore ${descendants ? "them together" : "it"} for 30 days.`
   : `Move the board “${name}” and all its cards to the Bin? You can restore it for 30 days.`;
 
-/** A toast action, such as Undo after moving something to the Bin. */
-/** `selectable`: the message holds text to copy by hand (a link); it wraps, and stays 15 s like one with an action. */
-export type TaskNotify = (message: string, action?: { label: string; run: () => void }, options?: { selectable?: boolean }) => void;
+/** The shared toasts (ui/notify.ts): `notify.success / info / warning / error(message, { action, selectable })`. */
+export type TaskNotify = Notifier;
 
 /**
  * After CARD_CHANGED on a title save: retrying at the new revision is safe only when the server's

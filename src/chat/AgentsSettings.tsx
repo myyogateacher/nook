@@ -14,6 +14,7 @@ import { TrifectaBadge } from "./ToolDisclosure";
 import { hasRef, knowledgePickerBases, nookGroups, nookWriteMode, orphanRefs, pickCounts, POLICY_BADGES, policyOptions, refKey, refName, setRefPolicy, toggleRef } from "./toolPicker";
 import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./chat.css";
+import { notify } from "../ui/notify";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -202,11 +203,11 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     try {
       if (creating) {
         const { agent: created } = await createAgent(input);
-        flash("Agent created");
+        notify.success("Agent created");
         navigate({ ...toList, agentId: created.id }, { replace: true });
       } else if (agent) {
         fill((await updateAgent(agent.id, { ...input, expectedRevision: agent.revision })).agent);
-        flash("Saved");
+        notify.success("Saved");
       }
     } catch (reason) {
       if (errorCode(reason) === "REVISION_MISMATCH") setStale(true);
@@ -220,10 +221,10 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     if (!await confirm.ask({ title: `Move ${agent.name} to the Bin?`, message: "Its chats stay readable; sending in them needs the agent restored. Deleted forever after 30 days.", confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteAgent(agent.id);
-      flash("Moved to the Bin");
+      notify.success("Moved to the Bin");
       navigate(toList, { replace: true });
     } catch (reason) {
-      flash(messageOf(reason, "Could not delete the agent"));
+      notify.error(messageOf(reason, "Could not delete the agent"));
     }
   }
 
@@ -277,7 +278,7 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     </form>}
     {agent && !creating && <AgentApiRuns agentId={agent.id} />}
     {linking && agent && <LinkNookKeySheet agentId={agent.id} agentName={agent.name} onClose={() => setLinking(false)} onChanged={onLinkChanged} onOpenKeys={() => { setLinking(false); navigate(keysRoute); }} />}
-    {sharing && agent && <AccessSheet kind="agent" id={agent.id} title={agent.name} guardHistory note={AGENT_SHARE_NOTE} onClose={() => setSharing(false)} onSaved={() => { setSharing(false); flash("Access updated"); }} />}
+    {sharing && agent && <AccessSheet kind="agent" id={agent.id} title={agent.name} guardHistory note={AGENT_SHARE_NOTE} onClose={() => setSharing(false)} onSaved={() => { setSharing(false); notify.success("Access updated"); }} />}
     {confirm.confirmElement}
   </div>;
 }

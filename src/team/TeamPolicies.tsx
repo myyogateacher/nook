@@ -12,6 +12,7 @@ import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
 import { useBeforeHubLeave } from "../settings/hubLeave";
 import { whenHistorySettled } from "../historyDialogs";
+import { notify } from "../ui/notify";
 
 /**
  * Team → Policies at /team/policies (Wave 31, access plan D285, §C.6), admins only: key lifetime,
@@ -154,11 +155,11 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
       setState(saved);
       setDraft(saved.policies);
       setImpact(saved.impact);
-      flash(saved.changed.length ? "Policies saved" : "Nothing changed");
+      notify.success(saved.changed.length ? "Policies saved" : "Nothing changed");
     } catch (reason) {
       const code = reason instanceof ApiError && reason.payload && typeof reason.payload === "object" ? (reason.payload as { code?: string }).code : undefined;
       if (code === "POLICIES_CHANGED") {
-        flash("Another admin changed the policies. Review them and save again.");
+        notify.warning("Another admin changed the policies. Review them and save again.");
         void load();
       } else setFormError(reason instanceof Error ? reason.message : "Could not save the policies");
     } finally {

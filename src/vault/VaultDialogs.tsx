@@ -13,6 +13,7 @@ import {
   createEnvironment, createSecret, createVault, deleteEnvironment, deleteVault, getVault, leaveVault, readValue, reorderEnvironments, rotateVault, setValue, setValues, updateEnvironment, updateSecret, updateVault,
   type SecretDetail, type SecretSummary, type VaultEnvironment, type VaultSummary
 } from "./vaultApi";
+import { notify } from "../ui/notify";
 
 /**
  * The Vault's sheets and dialogs (vault plan §10). Each is one history layer (useHistoryDialogGuard):
@@ -610,7 +611,7 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
         setNames(Object.fromEntries(next.environments.map((env) => [env.id, env.name])));
         onChanged(next);
       }
-      if (done) flash(done);
+      if (done) notify.success(done);
     } catch (reason) {
       setError(errorCode(reason) === "REVISION_CHANGED" ? "This vault changed since you opened it. Close this and open it again." : messageOf(reason, "Could not save"));
     } finally {
@@ -648,7 +649,7 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
                 const refreshedVault = (await getVault(vault.id)).vault;
                 setCurrent(refreshedVault);
                 onChanged(refreshedVault);
-                flash(next ? `${env.name} is protected` : `${env.name} is no longer protected`);
+                notify.success(next ? `${env.name} is protected` : `${env.name} is no longer protected`);
               }, (reason) => setError(messageOf(reason, "Could not change protection")));
             }} /><ShieldCheck aria-hidden="true" /><span className="sr-only">Protected</span>
           </label>}
@@ -682,7 +683,7 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
             setBusy(true);
             try {
               const { rotation } = await rotateVault(vault.id);
-              flash(rotation.done ? "Rotated the data key" : `Rotating the data key: ${rotation.pendingRows} stored values are moving to it in the background`);
+              notify.success(rotation.done ? "Rotated the data key" : `Rotating the data key: ${rotation.pendingRows} stored values are moving to it in the background`);
             } catch (reason) {
               setError(messageOf(reason, "Could not rotate the key"));
             } finally {

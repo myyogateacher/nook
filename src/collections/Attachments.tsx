@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Paperclip, Upload } from "lucide-react";
 import { contentUrl } from "../files/filesApi";
@@ -11,7 +12,7 @@ type AttachmentsProps = {
   field: FieldDefinition;
   editable: boolean;
   onChanged: (row: CollectionRow) => void;
-  notify: (message: string) => void;
+  notify: Notifier;
 };
 
 /** A row's file as the attach kit lists it (D398). Rows only list live files, so none is `removed`. */
@@ -77,7 +78,7 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
     const used = Object.values(current.files ?? {}).reduce((sum, list) => sum + list.length, 0) + inFlight.current;
     const room = Math.max(0, ROW_FILE_LIMIT - used);
     const taken = chosen.slice(0, room);
-    if (taken.length < chosen.length) notify(`A row can have up to ${ROW_FILE_LIMIT} files. ${chosen.length - taken.length === 1 ? "1 file was" : `${chosen.length - taken.length} files were`} not attached.`);
+    if (taken.length < chosen.length) notify.warning(`A row can have up to ${ROW_FILE_LIMIT} files. ${chosen.length - taken.length === 1 ? "1 file was" : `${chosen.length - taken.length} files were`} not attached.`);
     if (!taken.length) return;
     const queued = taken.map((file) => ({ file, key: crypto.randomUUID() }));
     inFlight.current += queued.length;
@@ -93,7 +94,7 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
         onChanged(saved);
       } catch (reason) {
         failed = true;
-        notify(reason instanceof LocationStripError
+        notify.error(reason instanceof LocationStripError
           ? `${file.name} was not uploaded: Nook could not remove the photo's location. Try a screenshot or an exported copy of it.`
           : errorMessage(reason, `Could not attach ${file.name}`));
       } finally {
@@ -109,10 +110,10 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
       const { row: saved } = await attachDocument(rowRef.current.id, document.id, field.id, options);
       onChanged(saved);
       setSheetOpen(false);
-      notify(`Attached ${document.name}`);
+      notify.success(`Attached ${document.name}`);
     } catch (reason) {
       const code = errorCode(reason);
-      notify(code === "ALREADY_ATTACHED" ? `${document.name} is already on this row` : errorMessage(reason, `Could not attach ${document.name}`));
+      notify.error(code === "ALREADY_ATTACHED" ? `${document.name} is already on this row` : errorMessage(reason, `Could not attach ${document.name}`));
     }
   }
 
@@ -124,14 +125,14 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
         const result = await unlinkFromHost("row", rowRef.current.id, item.documentId);
         const { row: fresh } = await getRow(rowRef.current.id);
         onChanged(fresh);
-        notify(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
+        notify.success(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
         return;
       }
       const result = await detachDocument(rowRef.current.id, item.documentId);
       onChanged(result.row);
-      notify(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
+      notify.success(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
     } catch (reason) {
-      notify(errorMessage(reason, "Could not remove the file"));
+      notify.error(errorMessage(reason, "Could not remove the file"));
     }
   }
 

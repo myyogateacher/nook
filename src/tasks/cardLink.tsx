@@ -54,8 +54,8 @@ export async function copyText(text: string, deps: ClipboardDeps = {
 /** Copies a card's permalink and says so; on failure the toast shows the link to select by hand. */
 export async function copyCardLink(boardId: string, cardId: string, notify: TaskNotify, copy: (text: string) => Promise<boolean> = copyText) {
   const url = cardPermalink(boardId, cardId);
-  if (await copy(url)) notify("Link copied");
-  else notify(`Could not copy — here is the link: ${url}`, undefined, { selectable: true });
+  if (await copy(url)) notify.success("Link copied");
+  else notify.warning(`Could not copy — here is the link: ${url}`, { selectable: true });
 }
 
 /** The card header's "Copy link" (the dialog and the full-page card). */

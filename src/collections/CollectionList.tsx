@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useState } from "react";
 import { Pencil, Plus, RotateCcw, Search, Share2, Table2, Trash2, TriangleAlert, Users } from "lucide-react";
 import { ConfirmDialog } from "../files/Dialog";
@@ -16,7 +17,7 @@ type CollectionListProps = {
   userId?: string;
   onOpen: (collection: Pick<CollectionSummary, "id">) => void;
   onOpenRow: (collectionId: string, rowId: string) => void;
-  notify: (message: string) => void;
+  notify: Notifier;
   /** Opens a new collection straight into the CSV import (stage D). */
   onCreatedForImport?: (collection: CollectionDetail) => void;
 };
@@ -115,7 +116,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     const { collection: saved } = await renameCollection(collection.id, name);
     setCollections((current) => current?.map((item) => item.id === saved.id ? { ...item, ...saved } : item) ?? current);
     setDialog(null);
-    notify(`Renamed to “${saved.name}”`);
+    notify.success(`Renamed to “${saved.name}”`);
   }
 
   async function remove(collection: CollectionSummary) {
@@ -124,10 +125,10 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       await deleteCollection(collection.id);
       setCollections((current) => current?.filter((item) => item.id !== collection.id) ?? current);
       setDialog(null);
-      notify(`Moved “${collection.name}” to the Bin`);
+      notify.success(`Moved “${collection.name}” to the Bin`);
     } catch (reason) {
       setDialog(null);
-      notify(errorMessage(reason, "Could not delete the collection"));
+      notify.error(errorMessage(reason, "Could not delete the collection"));
       void load();
     } finally {
       setDeleting(false);
@@ -187,7 +188,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       onCancel={closeDialog}
       onCreated={(collection) => {
         setDialog(null);
-        notify(`Created “${collection.name}”`);
+        notify.success(`Created “${collection.name}”`);
         onOpen(collection);
       }}
       onImport={onCreatedForImport ? (collection) => { setDialog(null); onCreatedForImport(collection); } : undefined}
@@ -197,7 +198,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     {dialog?.kind === "delete" && dialogCollection && <ConfirmDialog title="Move to the Bin?" message={collectionBinMessage(dialogCollection)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogCollection); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogCollection && <AccessSheet kind="collection" id={dialogCollection.id} title={dialogCollection.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Access updated");
+      notify.success("Access updated");
       void load();
     }} />}
   </section>;

@@ -20,6 +20,7 @@ import { duplicateWhiteboard, importWhiteboard, listWhiteboards, THUMBNAIL_EVENT
 import "../files/files.css";
 import "./whiteboards.css";
 import { appName } from "../appName";
+import { notify } from "../ui/notify";
 
 /**
  * The canvas is the app's only lazy route chunk (D191, Q13): Excalidraw and its CSS load on the
@@ -216,7 +217,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
       setBoards((existing) => [...(existing ?? []), ...page.whiteboards.filter((board) => !(existing ?? []).some((item) => item.id === board.id))]);
       setNextCursor(page.nextCursor);
     } catch (reason) {
-      flash(messageOf(reason, "Could not load more whiteboards"));
+      notify.error(messageOf(reason, "Could not load more whiteboards"));
     } finally {
       setLoadingMore(false);
     }
@@ -248,7 +249,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   /** Import `.excalidraw`: the server runs the save validator and stores embedded pictures as Files. */
   async function importFile(file: File) {
     if (file.size > IMPORT_MAX_BYTES) {
-      flash("This drawing is too large to import (at most 32 MB, pictures included).");
+      notify.warning("This drawing is too large to import (at most 32 MB, pictures included).");
       return;
     }
     setImporting(true);
@@ -257,15 +258,15 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
       try {
         parsed = JSON.parse(await file.text());
       } catch {
-        flash("This file is not an Excalidraw drawing.");
+        notify.warning("This file is not an Excalidraw drawing.");
         return;
       }
       const owned = folders.find((folder) => folder.id === route.folder && folder.is_owner === 1);
       const { whiteboard, images, imagesLeftOut } = await importWhiteboard(importedName(file.name), owned?.id ?? null, parsed);
-      flash(`Imported ${whiteboardDisplayName(whiteboard.name)}${images ? `; ${images === 1 ? "its picture is" : `its ${images} pictures are`} saved in Files` : ""}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} had no data or could not be opened and ${imagesLeftOut === 1 ? "was" : "were"} left out` : ""}.`);
+      notify.success(`Imported ${whiteboardDisplayName(whiteboard.name)}${images ? `; ${images === 1 ? "its picture is" : `its ${images} pictures are`} saved in Files` : ""}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} had no data or could not be opened and ${imagesLeftOut === 1 ? "was" : "were"} left out` : ""}.`);
       openBoard(whiteboard);
     } catch (reason) {
-      flash(messageOf(reason, "Could not import this drawing"));
+      notify.error(messageOf(reason, "Could not import this drawing"));
     } finally {
       setImporting(false);
     }
@@ -274,19 +275,19 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   async function duplicate(board: WhiteboardSummary) {
     try {
       const { whiteboard, imagesLeftOut } = await duplicateWhiteboard(board.id);
-      flash(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
+      notify.success(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
       void loadList();
     } catch (reason) {
-      flash(messageOf(reason, "Could not duplicate this whiteboard"));
+      notify.error(messageOf(reason, "Could not duplicate this whiteboard"));
     }
   }
 
   async function copyLink(board: WhiteboardSummary) {
     try {
       await navigator.clipboard.writeText(whiteboardLink(board.id));
-      flash("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
+      notify.success("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
     } catch {
-      flash(`Could not copy. The link is ${whiteboardLink(board.id)}`);
+      notify.warning(`Could not copy. The link is ${whiteboardLink(board.id)}`, { selectable: true });
     }
   }
 
@@ -312,7 +313,7 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
         onBack={back}
         onOpenPath={onOpenPath}
         onOpenBoard={(id) => go(whiteboardsRoute(folderFilter, id))}
-        onAccessLost={() => { flash("You no longer have access to this whiteboard"); go(whiteboardsRoute(folderFilter), true); }}
+        onAccessLost={() => { notify.warning("You no longer have access to this whiteboard"); go(whiteboardsRoute(folderFilter), true); }}
         onDeleted={() => {
           // Wave 23 QA 1e: the board is gone, so its entry is not left behind for Back to repeat.
           const list = whiteboardsRoute(folderFilter);

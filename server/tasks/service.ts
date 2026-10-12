@@ -7,7 +7,7 @@ import { atLeast, type ItemLevel } from "../access/levels";
 import { assigneesForBoard, assigneesForCard, MAX_ASSIGNEES, newAssignees, replaceAssignees, type CardAssignee } from "./assignees";
 import { planInsert, type Positioned } from "./boardOrder";
 import { dueAt, resolveDue, type DueInput } from "./dueTime";
-import { linkAttachments } from "./attachments";
+import { linkableCardDocument, linkAttachments, needsLinkConfirm } from "./attachments";
 import { insertRelation } from "./cardRelations";
 import { descriptionExcerpt } from "./excerpt";
 import type { RelationType } from "./relations";
@@ -587,8 +587,12 @@ export type CardCreateInput = {
   flags?: CardFlag[];
   /** Relations from the new card toward readable cards, as POST /cards/:k/relations creates them (D104–D107). */
   relations?: Array<{ targetCardId: string; type: RelationType }>;
-  /** The caller's own task-attachment uploads that no card links yet. */
+  /**
+   * The caller's own uploads that no card links yet (task attachments, or Attachments-folder files),
+   * and their own Files items when `attachmentsConfirmed` (U2, D396).
+   */
   attachmentIds?: string[];
+  attachmentsConfirmed?: boolean;
   /** A live card of this board one level up (D121); the level then defaults to the parent's plus one. */
   parentId?: string | null;
   /** 0–2 and below the board's level count; defaults to the parent's level plus one, else the work level (D122). */
@@ -715,14 +719,16 @@ export function createCard(userId: string, boardId: string, input: CardCreateInp
         audit(userId, null, "task.relation_create", { boardId, cardId: id, relationId: inserted.id, kind: inserted.kind });
       }
       if (attachmentIds.length) {
-        // Only the uploader's own files (404 like a missing id otherwise), and only ones no card links yet.
-        const owned = db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND purpose = 'task_attachment' AND deleted_at IS NULL");
+        // Only the uploader's own files (404 like a missing id otherwise). Fresh uploads (task
+        // attachments, Attachments-folder files) must not be on a card yet; a Files item picked
+        // From Files may be anywhere, and needs the confirm (D396).
         const linked = db.query("SELECT 1 FROM card_attachments WHERE document_id = ?");
         for (const documentId of attachmentIds) {
-          if (!owned.get(documentId, userId)) throw new TaskError(404, "File not found");
-          if (linked.get(documentId)) throw new TaskError(409, "This file is already attached to a card", "ATTACHMENT_LINKED", { documentId });
+          const document = linkableCardDocument(documentId, userId);
+          if (!document) throw new TaskError(404, "File not found");
+          if (!needsLinkConfirm(document) && linked.get(documentId)) throw new TaskError(409, "This file is already attached to a card", "ATTACHMENT_LINKED", { documentId });
         }
-        linkAttachments({ userId, cardId: id, documentIds: attachmentIds, commentId: null });
+        linkAttachments({ userId, cardId: id, documentIds: attachmentIds, commentId: null, confirmed: input.attachmentsConfirmed });
         for (const documentId of attachmentIds) audit(userId, null, "task.attachment_link", { boardId, cardId: id, documentId });
       }
     })();

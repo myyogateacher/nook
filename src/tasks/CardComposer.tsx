@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Columns3, File as FileIcon, Layers, Link2, Paperclip, Plus, X } from "lucide-react";
+import { Columns3, Layers, Link2, Paperclip, Plus, X } from "lucide-react";
 import { aLevel, FLAT_STRUCTURE, levelName, parentRequired, type BoardStructure } from "../../shared/boardStructure";
 import { hasLevels, levelOf, parentCandidates } from "./hierarchyModel";
 import { ApiError } from "../api";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
-import { deleteFile, formatBytes } from "../files/filesApi";
+import { deleteFile } from "../files/filesApi";
+import { AttachmentList, AttachSheet, pastedFiles, useFileDrop } from "../ui/attachments";
+import type { DocumentSummary } from "../types";
+import { attachZoneOf, UploadRows, useCardUploads } from "./cardUploads";
 import { Select } from "../ui/Select";
 import { CardFields } from "./CardFields";
 import { SprintSelect } from "./SprintField";
@@ -27,8 +30,8 @@ import {
   type FieldContext
 } from "./composerDraft";
 import { RelationAdder, RelationList } from "./RelationsSection";
-import { canEnterColumn, validateCardTitle } from "./taskActions";
-import { createCard, taskErrorCode, taskErrorMessage, uploadAttachment, type BoardColumn, type BoardTag, type CardDetail, type CardSearchResult, type RelationType, type SprintSummary } from "./tasksApi";
+import { attachCapReason, canEnterColumn, fitToCap, validateCardTitle } from "./taskActions";
+import { createCard, taskErrorCode, taskErrorMessage, uploadAttachment, type UploadedAttachment, type BoardColumn, type BoardTag, type CardDetail, type CardSearchResult, type RelationType, type SprintSummary } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
 
 export type ComposerMode = "close" | "open" | "another";
@@ -80,7 +83,10 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const titleRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  // The attach sheet (uploads everywhere U2, D398): Take photo, Choose files, From Files.
+  const [attachOpen, setAttachOpen] = useState(false);
+  const uploads = useCardUploads(notify);
   const baseId = useId();
   const titleId = `${baseId}-title`;
   const column = columns.find((item) => item.id === draft.columnId);
@@ -111,13 +117,16 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     return () => window.removeEventListener("keydown", onKey);
   }, [confirmDiscard, requestClose]);
 
-  /** Moves uploads that will not be attached to the Bin (T100); the hourly sweeper catches any left over. */
-  const discardUploads = (ids: string[]) => {
-    for (const id of ids) deleteFile(id).catch(() => undefined);
+  /**
+   * Moves uploads that will not be attached to the Bin (T100); the hourly sweeper catches any left
+   * over. Files picked From Files are the person's own Files items and are never discarded.
+   */
+  const discardUploads = (files: readonly UploadedAttachment[]) => {
+    for (const file of files) if (!file.fromFiles) deleteFile(file.id).catch(() => undefined);
   };
 
   async function submit(mode: ComposerMode) {
-    if (creating || uploading > 0) return;
+    if (creating || uploading > 0 || uploads.busy) return;
     const current = draftRef.current;
     const check = validateCardTitle(current.title);
     if (!check.ok) {
@@ -183,15 +192,40 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     }
   }
 
-  async function attachFiles(list: FileList | null) {
-    for (const file of Array.from(list ?? [])) {
-      try {
-        await upload(file);
-      } catch (reason) {
-        notify(`${file.name}: ${taskErrorMessage(reason, "could not upload")}`);
-      }
-    }
+  /** Files picked, pasted, or dropped: uploaded now with progress, attached when the card is created. */
+  async function attachFiles(files: readonly File[]) {
+    const { kept, notice } = fitToCap(files, draftRef.current.attachments.length + uploads.rows.length, MAX_COMPOSER_ATTACHMENTS, "card");
+    if (notice) notify(notice);
+    await uploads.upload(kept, (uploaded) => update((current) => ({ ...current, attachments: [...current.attachments, uploaded] })));
   }
+
+  /** From Files (D396): the person's own file, confirmed in the picker when it is outside Attachments. */
+  function attachDocument(document: DocumentSummary, options: { confirmed: boolean }) {
+    if (draftRef.current.attachments.some((file) => file.id === document.id)) return;
+    update((current) => ({ ...current, attachments: [...current.attachments, {
+      id: document.id, name: document.name, mime_type: document.mime_type, preview_kind: document.preview_kind, size_bytes: document.size_bytes, fromFiles: true, confirmed: options.confirmed
+    }] }));
+  }
+
+  // Paste a screenshot anywhere in the form but the description (which inserts it inline), and drop
+  // files on the form (desktop): both attach to the new card.
+  const attachRef = useRef(attachFiles);
+  attachRef.current = attachFiles;
+  useEffect(() => {
+    const element = sectionRef.current;
+    if (!element) return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented || attachZoneOf(event.target) === "editor") return;
+      const files = pastedFiles(event.clipboardData);
+      if (!files.length) return;
+      event.preventDefault();
+      void attachRef.current(files);
+    };
+    element.addEventListener("paste", onPaste);
+    return () => element.removeEventListener("paste", onPaste);
+  }, []);
+  const dropIntoEditor = useRef(false);
+  const drop = useFileDrop((files) => { if (!dropIntoEditor.current) void attachRef.current(files); }, { enabled: !creating });
 
   // Images pasted or dropped into the description are attachments of the new card, shown inline.
   async function uploadDescriptionImage(file: File) {
@@ -204,8 +238,9 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
   }
 
   function removeFile(id: string) {
-    update((current) => ({ ...current, attachments: current.attachments.filter((file) => file.id !== id) }));
-    discardUploads([id]);
+    const file = draftRef.current.attachments.find((item) => item.id === id);
+    update((current) => ({ ...current, attachments: current.attachments.filter((item) => item.id !== id) }));
+    if (file) discardUploads([file]);
   }
 
   async function stageRelation(type: RelationType, card: CardSearchResult) {
@@ -231,7 +266,8 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
     const full = !canEnterColumn(cards, item, null);
     return { value: item.id, label: item.name, disabled: full, ...(full ? { description: `Full (limit ${item.wip_limit})` } : item.is_done === 1 ? { description: "Done column" } : {}) };
   });
-  const busy = creating || uploading > 0;
+  const busy = creating || uploading > 0 || uploads.busy;
+  const uploadedCount = draft.attachments.filter((file) => !file.fromFiles).length;
   const levels = hasLevels(structure);
   const draftLevel = draft.level ?? structure.workLevel;
   const candidates = levels && draftLevel > 0 ? parentCandidates(parentCards, { id: "", title: "", column_id: "", position: 0, level: draftLevel }) : [];
@@ -244,7 +280,9 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
 
   return <>
     <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close the new card" tabIndex={-1} />
-    <section className="task-card-dialog task-composer" role="dialog" aria-modal="true" aria-labelledby={`${baseId}-heading`} onKeyDownCapture={onKeyDownCapture} onKeyDown={trapTabKey}>
+    <section ref={sectionRef} className={`task-card-dialog task-composer${drop.dragging ? " task-card-dragging" : ""}`} role="dialog" aria-modal="true" aria-labelledby={`${baseId}-heading`} onKeyDownCapture={onKeyDownCapture} onKeyDown={trapTabKey}
+      {...drop.bind} onDropCapture={(event) => { dropIntoEditor.current = attachZoneOf(event.target) === "editor"; }}>
+      {drop.dragging && <div className="task-card-drop" aria-hidden="true"><Paperclip />Drop files to attach them</div>}
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
           <span className="eyebrow" id={`${baseId}-heading`}>New {levels ? levelName(structure, draftLevel).toLowerCase() : "card"} · {boardName}</span>
@@ -306,7 +344,7 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
 
         <section className="task-card-section" aria-labelledby={`${baseId}-description`}>
           <header><h3 id={`${baseId}-description`}>Description</h3></header>
-          <div className="task-description-editor">
+          <div className="task-description-editor" data-attach-zone="editor">
             <NoteEditor key={round} markdown={draft.description} editable={!creating} onNotice={notify} label="Card description" placeholder="Describe the work… Type / for commands"
               onChange={(description) => update((current) => ({ ...current, description }))} uploadImage={uploadDescriptionImage} />
           </div>
@@ -328,19 +366,14 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
         <section className="task-card-section" aria-labelledby={`${baseId}-files`}>
           <header>
             <h3 id={`${baseId}-files`}><Paperclip aria-hidden="true" />Attachments</h3>
-            <button type="button" className="secondary-button task-small-button" onClick={() => fileRef.current?.click()} disabled={creating || draft.attachments.length >= MAX_COMPOSER_ATTACHMENTS}><Paperclip />{uploading ? "Uploading…" : "Attach"}</button>
-            <input ref={fileRef} type="file" multiple hidden onChange={(event) => { void attachFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
+            <button type="button" className="secondary-button task-small-button" onClick={() => setAttachOpen(true)} aria-haspopup="dialog" disabled={creating}><Paperclip />{uploading || uploads.busy ? "Uploading…" : "Attach"}</button>
           </header>
+          <UploadRows rows={uploads.rows} label="Uploading for the new card" />
           {draft.attachments.length
-            ? <ul className="task-attachments" aria-label="Files to attach">
-              {draft.attachments.map((file) => <li key={file.id} className="task-attachment">
-                <span className="task-attachment-icon" aria-hidden="true"><FileIcon /></span>
-                <span className="task-attachment-copy"><span title={file.name}>{file.name}</span><small>{formatBytes(file.size_bytes)}</small></span>
-                <span />
-                <button type="button" className="icon-button" onClick={() => removeFile(file.id)} disabled={creating} aria-label={`Don't attach ${file.name}`} title="Don't attach"><X /></button>
-              </li>)}
-            </ul>
-            : <p className="task-comment-empty">Files upload now and are attached when the card is created.</p>}
+            ? <AttachmentList label="Files to attach"
+              items={draft.attachments.map((file) => ({ documentId: file.id, removed: false, name: file.name, mimeType: file.mime_type, previewKind: file.preview_kind, sizeBytes: file.size_bytes, partId: null, position: 0, linkedAt: "", isOwner: true, inAttachmentsFolder: !file.fromFiles }))}
+              canRemove={() => !creating} onRemove={(item) => removeFile(item.documentId)} />
+            : !uploads.busy && <p className="task-comment-empty">Files upload now and are attached when the card is created. You can also drop or paste them here.</p>}
         </section>
       </div>
 
@@ -354,12 +387,17 @@ export function CardComposer({ boardId, boardName, userId, columns, cards, initi
         </span>
       </footer>
     </section>
-    {confirmDiscard && <ConfirmDialog title="Discard this card?" message={draft.attachments.length
-      ? `Nothing is saved, and the ${draft.attachments.length === 1 ? "uploaded file moves" : `${draft.attachments.length} uploaded files move`} to your Bin.`
+    {attachOpen && <AttachSheet hostNoun="card" closeOnPick
+      disabledReason={attachCapReason(draft.attachments.length, MAX_COMPOSER_ATTACHMENTS, "card")}
+      onClose={() => setAttachOpen(false)}
+      onFiles={(files) => { void attachFiles(files); }}
+      onPickDocument={attachDocument} />}
+    {confirmDiscard && <ConfirmDialog title="Discard this card?" message={uploadedCount
+      ? `Nothing is saved, and the ${uploadedCount === 1 ? "uploaded file moves" : `${uploadedCount} uploaded files move`} to your Bin.`
       : "Nothing you entered is saved."} confirmLabel="Discard" danger
       onConfirm={() => {
         setConfirmDiscard(false);
-        discardUploads(draftRef.current.attachments.map((file) => file.id));
+        discardUploads(draftRef.current.attachments);
         onClose();
       }} onCancel={keepEditing} />}
   </>;

@@ -180,8 +180,10 @@ describe("MCP task tools", () => {
     const card = await callTool(key, "get_card", { cardId: s.cardId });
     expect(card.value.card).toMatchObject({ title: "Owner card", description: "Read the spec", column_name: "To do", board_id: s.boardId });
     expect(card.value.attachments).toEqual(["plan.txt"]);
+    // Uploads everywhere U2 (D402): get_card also lists the files with ids, for read_attachment_text.
+    expect(card.value.files).toEqual([{ id: documentId, name: "plan.txt", mimeType: expect.any(String), sizeBytes: 5, commentId: null }]);
     const text = JSON.stringify(card.value);
-    for (const leaked of ["https://example.test", "**", documentId, "sha256"]) expect(text).not.toContain(leaked);
+    for (const leaked of ["https://example.test", "**", "/api/files", "sha256"]) expect(text).not.toContain(leaked);
   });
 
   test("stale anchors map to STALE_POSITION with the current order, and route validation applies", async () => {

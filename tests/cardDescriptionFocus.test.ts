@@ -10,7 +10,7 @@ test("the description editor opens with the caret at the end of the content", ()
   const editor = source("../src/editor/NoteEditor.tsx");
   expect(editor).toContain("autofocus: autoFocus && editable ? \"end\" : false,");
   const dialog = source("../src/tasks/CardDialog.tsx");
-  const editing = dialog.slice(dialog.indexOf('<div className="task-description-editor">'), dialog.indexOf('label="Card description"', dialog.indexOf('<div className="task-description-editor">')));
+  const editing = dialog.slice(dialog.indexOf('<div className="task-description-editor"'), dialog.indexOf('label="Card description"', dialog.indexOf('<div className="task-description-editor"')));
   expect(editing).toContain("autoFocus");
   // The read-only view never takes focus.
   expect(dialog).toMatch(/<NoteEditor key=\{`\$\{card\.id\}:\$\{card\.revision\}`\} markdown=\{card\.description\} editable=\{false\}(?![^>]*autoFocus)/);

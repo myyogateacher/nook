@@ -2,15 +2,18 @@ import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as 
 import { Avatar } from "../ui/Avatar";
 import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { initials } from "./CardFace";
-import { ArrowRightLeft, Copy, Download, File as FileIcon, Maximize2, MessageSquare, Minimize2, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Copy, Maximize2, MessageSquare, Minimize2, Paperclip, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
-import { contentUrl, formatBytes } from "../files/filesApi";
+import { deleteFile } from "../files/filesApi";
 import { ApiError } from "../api";
+import { AttachmentList, AttachmentPreview, AttachSheet, pastedFiles, unlinkFromHost, useFileDrop } from "../ui/attachments";
+import type { DocumentSummary } from "../types";
+import { attachTarget, attachZoneOf, UploadRows, useCardUploads, type AttachZone } from "./cardUploads";
 import { CardTitleField } from "./CardTitleField";
 import { NoteEditor } from "../editor/NoteEditor";
 import { ConfirmDialog, trapTabKey } from "../files/Dialog";
 import { relativeTime } from "../files/format";
-import { attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, columnEyebrow, descriptionDirty, commentBodyError, isInlineImage, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
+import { attachCapReason, attachmentsFor, binConfirmMessage, canRetryTitle, canUnlink, CARD_ATTACHMENT_CAP, columnEyebrow, COMMENT_ATTACHMENT_CAP, commentFilesOnly, descriptionDirty, commentBodyError, fitToCap, hostAttachment, unlinkConfirmMessage, validateCardTitle } from "./taskActions";
 import { CardFields } from "./CardFields";
 import { CardBreadcrumb, CardParentFields, SubtasksSection } from "./CardHierarchySection";
 import { CardSprintField } from "./SprintField";
@@ -135,16 +138,25 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   const [deletingComment, setDeletingComment] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [attachments, setAttachments] = useState<CardAttachment[]>(initialView?.attachments ?? []);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const [relations, setRelations] = useState<CardRelation[]>(initialView?.relations ?? []);
-  const [attaching, setAttaching] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<UploadedAttachment[]>([]);
+  // Files to add to the comment being edited (U2), staged like the composer's.
+  const [editFiles, setEditFiles] = useState<UploadedAttachment[]>([]);
+  // The attach sheet (uploads everywhere D398): for the card, the new comment, or the comment being edited.
+  const [sheet, setSheet] = useState<"card" | "comment" | "edit" | null>(null);
+  const [preview, setPreview] = useState<{ documentId: string; name: string } | null>(null);
   const [unlinking, setUnlinking] = useState<CardAttachment | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [detailsConflict, setDetailsConflict] = useState<string | null>(null);
-  const cardFileRef = useRef<HTMLInputElement>(null);
-  const commentFileRef = useRef<HTMLInputElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const uploads = useCardUploads(notify);
+  const commentUploads = useCardUploads(notify);
+  const editUploads = useCardUploads(notify);
+  const attaching = uploads.busy;
   const cardRef = useRef<CardDetail | null>(null);
   cardRef.current = card;
   const titleId = useId();
@@ -183,7 +195,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // The page is not a dialog: Escape does not leave it.
-      if (page || event.key !== "Escape" || event.defaultPrevented || subDialogOpen || editingComment) return;
+      if (page || event.key !== "Escape" || event.defaultPrevented || subDialogOpen || editingComment || sheet || preview) return;
       // A dialog opened over the card (Move to…) handles its own Escape.
       if (window.document.querySelector(".file-dialog, .side-panel")) return;
       event.preventDefault();
@@ -191,7 +203,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [page, subDialogOpen, editingComment, requestClose]);
+  }, [page, subDialogOpen, editingComment, sheet, preview, requestClose]);
 
   // The page names the card in the tab; the app's own title comes back when it closes.
   const pageTitle = page ? card?.title ?? null : null;
@@ -333,7 +345,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   }
 
   async function post() {
-    const error = commentBodyError(composer);
+    const error = commentBodyError(composer, pendingFiles.length);
     if (error) {
       notify(error);
       return;
@@ -341,13 +353,14 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     setPosting(true);
     try {
       const files = pendingFiles;
-      const { comment } = await createCommentWithFiles(cardId, composer, files.map((file) => file.id));
+      // No text with files posts a files-only comment (D397): the server writes "📎 name".
+      const { comment } = await createCommentWithFiles(cardId, composer.trim() ? composer : "", files.map((file) => file.id), { confirmed: files.some((file) => file.confirmed) });
       setComments((current) => [...current, comment]);
       setComposer("");
       setPendingFiles([]);
       if (files.length) {
         const timestamp = comment.created_at;
-        setAttachments((current) => [...current, ...files.map((file): CardAttachment => ({ document_id: file.id, card_id: cardId, comment_id: comment.id, linked_by: userId, linker_name: comment.author_name, name: file.name, mime_type: file.mime_type, preview_kind: file.preview_kind, size_bytes: file.size_bytes, created_at: timestamp }))]);
+        setAttachments((current) => [...current, ...files.map((file) => stagedAttachment(file, comment.id, comment.author_name, timestamp))]);
       }
       if (card) {
         const next = { ...card, comment_count: card.comment_count + 1, attachment_count: card.attachment_count + files.length };
@@ -361,16 +374,42 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     }
   }
 
+  /** A staged file as the card lists it once linked (the server's row, without a reload). */
+  function stagedAttachment(file: UploadedAttachment, commentId: string | null, linkerName: string | null, timestamp: string): CardAttachment {
+    return { document_id: file.id, card_id: cardId, comment_id: commentId, linked_by: userId, linker_name: linkerName, name: file.name, mime_type: file.mime_type, preview_kind: file.preview_kind, size_bytes: file.size_bytes, created_at: timestamp, removed: 0 };
+  }
+
+  function startEditingComment(comment: CardComment) {
+    // A files-only comment edits as empty text: leaving it empty keeps the generated body (D397).
+    setEditingComment({ id: comment.id, body: commentFilesOnly(comment.body, attachmentsFor(attachments, comment.id)) ? "" : comment.body });
+    setEditFiles([]);
+  }
+
+  function cancelEditingComment() {
+    discardStaged(editFiles);
+    setEditFiles([]);
+    setEditingComment(null);
+  }
+
   async function saveComment() {
     if (!editingComment) return;
-    const error = commentBodyError(editingComment.body);
+    const files = editFiles;
+    const error = commentBodyError(editingComment.body, attachmentsFor(attachments, editingComment.id).length + files.length);
     if (error) {
       notify(error);
       return;
     }
     try {
-      const { comment } = await updateComment(editingComment.id, editingComment.body);
+      const { comment } = await updateComment(editingComment.id, {
+        body: editingComment.body,
+        ...(files.length ? { attachmentIds: files.map((file) => file.id), ...(files.some((file) => file.confirmed) ? { confirmed: true } : {}) } : {})
+      });
       setComments((current) => current.map((item) => item.id === comment.id ? comment : item));
+      if (files.length) {
+        setAttachments((current) => [...current, ...files.map((file) => stagedAttachment(file, comment.id, comment.author_name, comment.edited_at ?? comment.created_at))]);
+        countChanged(files.length);
+      }
+      setEditFiles([]);
       setEditingComment(null);
     } catch (reason) {
       notify(taskErrorMessage(reason, "Could not edit the comment"));
@@ -408,35 +447,105 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     const current = cardRef.current;
     if (!current) return;
     const next = { ...current, attachment_count: Math.max(0, current.attachment_count + delta) };
+    // Uploads can finish between renders; the next one counts from this one.
+    cardRef.current = next;
     setCard(next);
     onChanged(next);
   }
 
-  /** Uploads a file as a task attachment and links it to the card. */
+  function addAttachment(attachment: CardAttachment) {
+    // Several uploads finish between renders: the ref holds every one added so far.
+    if (attachmentsRef.current.some((item) => item.document_id === attachment.document_id)) return;
+    attachmentsRef.current = [...attachmentsRef.current, attachment];
+    setAttachments((current) => current.some((item) => item.document_id === attachment.document_id) ? current : [...current, attachment]);
+    countChanged(1);
+  }
+
+  /** Uploads a file to Files › Attachments and links it to the card (the description's images). */
   async function attachFile(file: File) {
     const uploaded = await uploadAttachment(file);
     const { attachment } = await linkAttachment(cardId, uploaded.id);
-    setAttachments((current) => current.some((item) => item.document_id === attachment.document_id) ? current : [...current, attachment]);
-    countChanged(1);
+    addAttachment(attachment);
     return { uploaded, attachment };
   }
 
-  async function attachFiles(list: FileList | null) {
-    const files = Array.from(list ?? []);
+  /** Files picked, pasted, or dropped onto the card: uploaded with progress, then linked (≤ 50 per card). */
+  async function attachFiles(files: readonly File[]) {
     if (!files.length) return;
-    setAttaching(true);
-    try {
-      for (const file of files) {
-        try {
-          await attachFile(file);
-        } catch (reason) {
-          notify(`${file.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
-        }
+    const { kept, notice } = fitToCap(files, attachments.length + uploads.rows.length, CARD_ATTACHMENT_CAP, "card");
+    if (notice) notify(notice);
+    await uploads.upload(kept, async (uploaded) => {
+      try {
+        addAttachment((await linkAttachment(cardId, uploaded.id)).attachment);
+      } catch (reason) {
+        // The upload stays in Files › Attachments and the sweeper bins it in a day; say why it is not on the card.
+        notify(`${uploaded.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
       }
-    } finally {
-      setAttaching(false);
+    });
+  }
+
+  /** From Files (D396): the person's own file, after the confirm the picker asked for. */
+  async function attachDocument(document: DocumentSummary, options: { confirmed: boolean }) {
+    try {
+      addAttachment((await linkAttachment(cardId, document.id, { confirmed: options.confirmed })).attachment);
+      notify(`Attached “${document.name}”`);
+    } catch (reason) {
+      notify(`${document.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
     }
   }
+
+  /** Staged uploads that will not be posted move to the Bin (T100); picks from Files are left alone. */
+  function discardStaged(files: readonly UploadedAttachment[]) {
+    for (const file of files) if (!file.fromFiles) deleteFile(file.id).catch(() => undefined);
+  }
+
+  const stagedFromDocument = (document: DocumentSummary, options: { confirmed: boolean }): UploadedAttachment => ({
+    id: document.id, name: document.name, mime_type: document.mime_type, preview_kind: document.preview_kind, size_bytes: document.size_bytes, fromFiles: true, confirmed: options.confirmed
+  });
+
+  const editingFileCount = () => editingComment ? attachmentsFor(attachments, editingComment.id).length : 0;
+
+  /** Files for the new comment or the comment being edited (≤ 10 per comment): uploaded now, linked on post. */
+  async function stageFiles(files: readonly File[], target: "comment" | "edit") {
+    if (!files.length) return;
+    const staged = target === "comment" ? pendingFiles.length + commentUploads.rows.length : editingFileCount() + editFiles.length + editUploads.rows.length;
+    const { kept, notice } = fitToCap(files, staged, COMMENT_ATTACHMENT_CAP, "comment");
+    if (notice) notify(notice);
+    const add = target === "comment" ? setPendingFiles : setEditFiles;
+    await (target === "comment" ? commentUploads : editUploads).upload(kept, (uploaded) => add((current) => [...current, uploaded]));
+  }
+
+  function stageDocument(document: DocumentSummary, options: { confirmed: boolean }, target: "comment" | "edit") {
+    const add = target === "comment" ? setPendingFiles : setEditFiles;
+    add((current) => current.some((file) => file.id === document.id) ? current : [...current, stagedFromDocument(document, options)]);
+  }
+
+  // Paste a screenshot (D398, the editor's rule: rich text stays text) into the comment box, the
+  // comment being edited, or anywhere else on the card; the description editor takes its own images.
+  const routeFiles = useRef<(files: File[], zone: AttachZone) => boolean>(() => false);
+  routeFiles.current = (files, zone) => {
+    const target = attachTarget(zone, { readOnly, commentReadOnly });
+    if (target === "card") void attachFiles(files);
+    else if (target) void stageFiles(files, target);
+    return target !== null;
+  };
+  const cardLoaded = card !== null;
+  useEffect(() => {
+    const element = sectionRef.current;
+    if (!element || !cardLoaded) return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
+      const files = pastedFiles(event.clipboardData);
+      if (files.length && routeFiles.current(files, attachZoneOf(event.target))) event.preventDefault();
+    };
+    element.addEventListener("paste", onPaste);
+    return () => element.removeEventListener("paste", onPaste);
+  }, [cardLoaded]);
+
+  // Drag-drop of system files onto the card (desktop): the comment box stages them for the comment,
+  // anywhere else attaches them to the card; the description editor handles its own drops.
+  const dropZone = useRef<AttachZone>("card");
+  const drop = useFileDrop((files) => { routeFiles.current(files, dropZone.current); }, { enabled: cardLoaded && !(readOnly && commentReadOnly) });
 
   // Images pasted, dropped, or picked into the description become attachments of this card and
   // are shown inline through the same content URL (never a data: or external URL).
@@ -449,31 +558,18 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     return { src: imageContentUrl(uploaded.id), alt: imageAltText(uploaded.name || file.name) };
   }
 
-  async function pickCommentFiles(list: FileList | null) {
-    const files = Array.from(list ?? []);
-    if (!files.length) return;
-    setAttaching(true);
-    try {
-      for (const file of files) {
-        try {
-          const uploaded = await uploadAttachment(file);
-          setPendingFiles((current) => [...current, uploaded]);
-        } catch (reason) {
-          notify(`${file.name}: ${taskErrorMessage(reason, "could not upload")}`);
-        }
-      }
-    } finally {
-      setAttaching(false);
-    }
-  }
-
   async function unlink(attachment: CardAttachment) {
     setDeleteBusy(true);
     try {
-      const result = await unlinkAttachment(cardId, attachment.document_id);
+      // Without edit rights only the file's owner removes it (U0 review M1), through the generic route,
+      // which the role write gate allows for read-only roles too.
+      const movedToBin = readOnly
+        ? (await unlinkFromHost("card", cardId, attachment.document_id)).documentBinned === true
+        : (await unlinkAttachment(cardId, attachment.document_id)).movedToBin;
       setAttachments((current) => current.filter((item) => item.document_id !== attachment.document_id));
       countChanged(-1);
-      notify(result.movedToBin ? `Removed “${attachment.name}”; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed “${attachment.name}” from this card`);
+      const name = attachment.removed ? "the removed file" : `“${attachment.name}”`;
+      notify(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
     } catch (reason) {
       notify(taskErrorMessage(reason, "Could not remove the attachment"));
     } finally {
@@ -482,16 +578,27 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     }
   }
 
-  const attachmentList = (items: CardAttachment[]) => items.length > 0 && <ul className="task-attachments">
-    {items.map((item) => <li key={item.document_id} className="task-attachment">
-      {isInlineImage(item)
-        ? <a className="task-attachment-thumb" href={contentUrl(item.document_id, "inline")} target="_blank" rel="noopener noreferrer"><img src={contentUrl(item.document_id, "inline")} alt="" loading="lazy" /></a>
-        : <span className="task-attachment-icon" aria-hidden="true"><FileIcon /></span>}
-      <span className="task-attachment-copy"><span title={item.name}>{item.name}</span><small>{formatBytes(item.size_bytes)}{item.linker_name ? ` · ${item.linker_name}` : ""}</small></span>
-      <a className="icon-button" href={contentUrl(item.document_id, "attachment")} download aria-label={`Download ${item.name}`} title="Download"><Download /></a>
-      {!readOnly && canUnlink(item, userId, boardOwner) && <button className="icon-button" onClick={() => setUnlinking(item)} aria-haspopup="dialog" aria-label={`Remove ${item.name}`} title="Remove"><Trash2 /></button>}
-    </li>)}
+  // The attach kit's list (D398, D399): thumbnails, Download, Remove, "File removed"; opening one shows
+  // it in the preview sheet (Back closes it) instead of a new tab.
+  const attachmentList = (items: CardAttachment[], label: string) => items.length > 0 && <AttachmentList
+    label={label}
+    items={items.map((item) => hostAttachment(item, userId))}
+    onOpen={(item) => setPreview({ documentId: item.documentId, name: item.name })}
+    canRemove={(item) => {
+      const original = items.find((candidate) => candidate.document_id === item.documentId);
+      // Writers: the linker or the board owner; anyone: their own file (U0 review M1).
+      return original !== undefined && ((!readOnly && canUnlink(original, userId, boardOwner)) || original.linked_by === userId);
+    }}
+    onRemove={(item) => setUnlinking(items.find((candidate) => candidate.document_id === item.documentId) ?? null)}
+  />;
+
+  const stagedList = (files: UploadedAttachment[], onRemove: (file: UploadedAttachment) => void) => files.length > 0 && <ul className="task-pending-files" aria-label="Files to attach">
+    {files.map((file) => <li key={file.id}><Paperclip aria-hidden="true" /><span title={file.name}>{file.name}</span><button type="button" className="icon-button" onClick={() => onRemove(file)} aria-label={`Don't attach ${file.name}`}><X /></button></li>)}
   </ul>;
+  const unstage = (setter: typeof setPendingFiles) => (file: UploadedAttachment) => {
+    setter((current) => current.filter((item) => item.id !== file.id));
+    discardStaged([file]);
+  };
 
   const column = card ? columns.find((item) => item.id === (columnId ?? card.column_id)) : undefined;
   const composerKey = (event: ReactKeyboardEvent<HTMLTextAreaElement>, submit: () => void) => {
@@ -503,7 +610,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
 
   return <>
     {!page && <button className="panel-scrim task-card-scrim" onClick={requestClose} aria-label="Close card" tabIndex={-1} />}
-    <section className={page ? "task-card-dialog task-card-page" : "task-card-dialog task-card-modal"} role={page ? undefined : "dialog"} aria-modal={page ? undefined : true} aria-labelledby={titleId} onKeyDown={page ? undefined : trapTabKey}>
+    <section ref={sectionRef} className={`${page ? "task-card-dialog task-card-page" : "task-card-dialog task-card-modal"}${drop.dragging ? " task-card-dragging" : ""}`} role={page ? undefined : "dialog"} aria-modal={page ? undefined : true} aria-labelledby={titleId} onKeyDown={page ? undefined : trapTabKey}
+      {...drop.bind} onDropCapture={(event) => { dropZone.current = attachZoneOf(event.target); }}>
+      {drop.dragging && <div className="task-card-drop" aria-hidden="true"><Paperclip />Drop files to attach them</div>}
       <header className="task-card-dialog-header">
         <div className="task-card-dialog-heading">
           <span className="eyebrow">{[card && hierarchy ? levelEyebrow(hierarchy.structure, levelOf(card)) : null, column ? columnEyebrow(column.name) : "Card"].filter(Boolean).join(" · ")}</span>
@@ -565,7 +674,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
           <section className="task-card-section" aria-labelledby={`${titleId}-description`}>
             <header><h3 id={`${titleId}-description`}>Description</h3>{!editing && !readOnly && <button className="secondary-button task-small-button" onClick={startEditing}><Pencil />Edit</button>}</header>
             {editing && !readOnly
-              ? <div className="task-description-editor">
+              ? <div className="task-description-editor" data-attach-zone="editor">
                 <NoteEditor
                   markdown={draft}
                   editable={!saving}
@@ -598,54 +707,60 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
           <section className="task-card-section" aria-labelledby={`${titleId}-files`}>
             <header>
               <h3 id={`${titleId}-files`}><Paperclip aria-hidden="true" />Attachments</h3>
-              {!readOnly && <>
-                <button className="secondary-button task-small-button" onClick={() => cardFileRef.current?.click()} disabled={attaching}><Paperclip />{attaching ? "Uploading…" : "Attach"}</button>
-                <input ref={cardFileRef} type="file" multiple hidden onChange={(event) => { void attachFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
-              </>}
+              {!readOnly && <button className="secondary-button task-small-button" onClick={() => setSheet("card")} aria-haspopup="dialog"><Paperclip />{attaching ? "Uploading…" : "Attach"}</button>}
             </header>
-            {attachmentList(attachmentsFor(attachments, null)) || <p className="task-comment-empty">{readOnly ? "No files." : "No files yet. Pasted images in the description are attached here too."}</p>}
+            <UploadRows rows={uploads.rows} label="Uploading to this card" />
+            {attachmentList(attachmentsFor(attachments, null), "Files on this card") || (!attaching && <p className="task-comment-empty">{readOnly ? "No files." : "No files yet. Drop or paste files on the card, or attach them here; pasted images in the description are attached here too."}</p>)}
           </section>
 
           <section className="task-card-section" aria-labelledby={`${titleId}-comments`}>
             <header><h3 id={`${titleId}-comments`}><MessageSquare aria-hidden="true" />Comments</h3></header>
             {hasMore && <button className="task-load-earlier" onClick={() => { void loadEarlier(); }} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load earlier comments"}</button>}
             <ol className="task-comments">
-              {comments.map((comment) => <li key={comment.id} className="task-comment">
+              {comments.map((comment) => {
+                const commentFiles = attachmentsFor(attachments, comment.id);
+                const filesOnly = commentFilesOnly(comment.body, commentFiles);
+                return <li key={comment.id} className="task-comment">
                 <header>
                   <Avatar className="task-avatar task-comment-avatar" name={comment.author_name ?? "?"} url={comment.author_avatar_url} fallback={initials(comment.author_name ?? "?")} integration={comment.author_is_integration === 1} />
                   <strong>{comment.author_name ?? "Former member"}{comment.author_is_integration === 1 && <IntegrationBadge />}</strong>
                   <time dateTime={comment.created_at}>{relativeTime(comment.created_at)}</time>
                   {comment.edited_at && <span className="task-comment-edited">edited</span>}
                   <span className="task-comment-actions">
-                    {!commentReadOnly && comment.is_author === 1 && editingComment?.id !== comment.id && <button className="icon-button" onClick={() => setEditingComment({ id: comment.id, body: comment.body })} aria-label="Edit comment" title="Edit"><Pencil /></button>}
+                    {!commentReadOnly && comment.is_author === 1 && editingComment?.id !== comment.id && <button className="icon-button" onClick={() => startEditingComment(comment)} aria-label="Edit comment" title="Edit"><Pencil /></button>}
                     {!commentReadOnly && (comment.is_author === 1 || boardOwner) && <button className="icon-button" onClick={() => setDeletingComment(comment.id)} aria-haspopup="dialog" aria-label="Delete comment" title="Delete"><Trash2 /></button>}
                   </span>
                 </header>
                 {!commentReadOnly && editingComment?.id === comment.id
-                  ? <div className="task-comment-edit">
+                  ? <div className="task-comment-edit" data-attach-zone="edit">
                     <textarea value={editingComment.body} onChange={(event) => setEditingComment({ id: comment.id, body: event.target.value })} onKeyDown={(event) => {
-                      if (event.key === "Escape") { event.preventDefault(); setEditingComment(null); }
+                      if (event.key === "Escape") { event.preventDefault(); cancelEditingComment(); }
                       composerKey(event, () => { void saveComment(); });
-                    }} aria-label="Edit comment" autoFocus rows={3} />
-                    <span><button className="secondary-button task-small-button" onClick={() => setEditingComment(null)}>Cancel</button><button className="primary-button task-small-button" onClick={() => { void saveComment(); }}>Save</button></span>
+                    }} aria-label="Edit comment" placeholder={commentFiles.length ? "Add text, or leave it empty to show only the files" : undefined} autoFocus rows={3} />
+                    {stagedList(editFiles, unstage(setEditFiles))}
+                    <UploadRows rows={editUploads.rows} label="Uploading to this comment" />
+                    <span>
+                      <button className="secondary-button task-small-button" onClick={() => setSheet("edit")} aria-haspopup="dialog" disabled={editUploads.busy}><Paperclip />{editUploads.busy ? "Uploading…" : "Add files"}</button>
+                      <button className="secondary-button task-small-button" onClick={cancelEditingComment}>Cancel</button>
+                      <button className="primary-button task-small-button" onClick={() => { void saveComment(); }} disabled={editUploads.busy}>Save</button>
+                    </span>
                   </div>
-                  : <p className="task-comment-body">{comment.body}</p>}
-                {attachmentList(attachmentsFor(attachments, comment.id))}
+                  : !filesOnly && <p className="task-comment-body">{comment.body}</p>}
+                {attachmentList(commentFiles, filesOnly ? "Files in this comment" : "Files on this comment")}
                 <CommentReactions commentId={comment.id} reactions={comment.reactions ?? []} readOnly={commentReadOnly} onUpdate={updateReactions} notify={notify} />
-              </li>)}
+              </li>;
+              })}
               {!comments.length && <li className="task-comment-empty">No comments yet.</li>}
             </ol>
             {commentReadOnly
               ? <p className="task-comment-empty" role="note">{roleReadOnly ? "View only: your Team role can read comments but not post them." : "View only: you can read this board's comments but not post them."}</p>
-              : <div className="task-comment-composer">
-              <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder="Write a comment" aria-label="Write a comment" rows={2} disabled={posting} />
-              {pendingFiles.length > 0 && <ul className="task-pending-files" aria-label="Files to attach">
-                {pendingFiles.map((file) => <li key={file.id}><Paperclip aria-hidden="true" /><span title={file.name}>{file.name}</span><button className="icon-button" onClick={() => setPendingFiles((current) => current.filter((item) => item.id !== file.id))} aria-label={`Don't attach ${file.name}`}><X /></button></li>)}
-              </ul>}
+              : <div className="task-comment-composer" data-attach-zone="comment">
+              <textarea value={composer} onChange={(event) => setComposer(event.target.value)} onKeyDown={(event) => composerKey(event, () => { void post(); })} placeholder={pendingFiles.length ? "Add a comment, or post the files alone" : "Write a comment"} aria-label="Write a comment" rows={2} disabled={posting} />
+              {stagedList(pendingFiles, unstage(setPendingFiles))}
+              <UploadRows rows={commentUploads.rows} label="Uploading for your comment" />
               <span className="task-composer-actions">
-                <button className="secondary-button task-small-button" onClick={() => commentFileRef.current?.click()} disabled={attaching || posting || pendingFiles.length >= 10}><Paperclip />{attaching ? "Uploading…" : "Attach"}</button>
-                <input ref={commentFileRef} type="file" multiple hidden onChange={(event) => { void pickCommentFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
-                <button className="primary-button" onClick={() => { void post(); }} disabled={posting || attaching || !composer.trim()}>{posting ? "Posting…" : "Comment"}</button>
+                <button className="secondary-button task-small-button" onClick={() => setSheet("comment")} aria-haspopup="dialog" disabled={posting}><Paperclip />{commentUploads.busy ? "Uploading…" : "Attach"}</button>
+                <button className="primary-button" onClick={() => { void post(); }} disabled={posting || commentUploads.busy || (!composer.trim() && pendingFiles.length === 0)}>{posting ? "Posting…" : "Comment"}</button>
               </span>
             </div>}
           </section>
@@ -666,7 +781,18 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       setEditing(false);
       onDelete(card.id).catch((reason) => notify(taskErrorMessage(reason, "Could not delete the card")));
     }} onCancel={closeSubDialog} />}
-    {unlinking && <ConfirmDialog title="Remove this attachment?" message={unlinkConfirmMessage(unlinking.name, unlinking.linked_by === userId)} confirmLabel="Remove" danger busy={deleteBusy} onConfirm={() => { void unlink(unlinking); }} onCancel={closeSubDialog} />}
+    {sheet && <AttachSheet
+      hostNoun={sheet === "card" ? "card" : "comment"}
+      closeOnPick
+      disabledReason={sheet === "card"
+        ? attachCapReason(attachments.length, CARD_ATTACHMENT_CAP, "card")
+        : attachCapReason(sheet === "comment" ? pendingFiles.length : editingFileCount() + editFiles.length, COMMENT_ATTACHMENT_CAP, "comment")}
+      onClose={() => setSheet(null)}
+      onFiles={(files) => { if (sheet === "card") void attachFiles(files); else void stageFiles(files, sheet); }}
+      onPickDocument={(document, options) => { if (sheet === "card") void attachDocument(document, options); else stageDocument(document, options, sheet); }}
+    />}
+    {preview && <AttachmentPreview documentId={preview.documentId} name={preview.name} onClose={() => setPreview(null)} />}
+    {unlinking && <ConfirmDialog title="Remove this attachment?" message={unlinkConfirmMessage(unlinking.removed ? null : unlinking.name, unlinking.linked_by === userId)} confirmLabel="Remove" danger busy={deleteBusy} onConfirm={() => { void unlink(unlinking); }} onCancel={closeSubDialog} />}
     {deletingComment && <ConfirmDialog title="Delete this comment?" message="The comment is deleted for everyone. This cannot be undone." confirmLabel="Delete comment" danger busy={deleteBusy} onConfirm={() => { void removeComment(deletingComment); }} onCancel={closeSubDialog} />}
   </>;
 }

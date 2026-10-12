@@ -1,5 +1,5 @@
 import { audit, db, now } from "../db";
-import { binUnlinkedAttachments, cardAttachmentIds } from "./attachments";
+import { binUnlinkedAttachments, cardAttachmentIds, notifyBinnedFiles } from "./attachments";
 import { planInsert } from "./boardOrder";
 import { applyRenumber, LIMITS, liveCardsIn, withBoardLock } from "./service";
 import { liveChildCount } from "./hierarchy";
@@ -198,7 +198,8 @@ export type TaskPurgeReason = "user" | "retention";
 export function purgeTaskLocked(type: TaskBinType, id: string, options: { actorId: string | null; reason: TaskPurgeReason; dueBy?: string }) {
   const table = type === "card" ? "cards" : "boards";
   const retention = options.dueBy === undefined ? "" : " AND (purge_started_at IS NOT NULL OR purge_after <= $dueBy)";
-  return db.transaction(() => {
+  const binnedFiles: string[] = [];
+  const purged = db.transaction(() => {
     const marked = db.query(`UPDATE ${table} SET purge_started_at = COALESCE(purge_started_at, $startedAt) WHERE id = $id AND deleted_at IS NOT NULL${retention}`)
       .run({ startedAt: now(), id, ...(options.dueBy === undefined ? {} : { dueBy: options.dueBy }) });
     if (marked.changes === 0) return false;
@@ -214,12 +215,14 @@ export function purgeTaskLocked(type: TaskBinType, id: string, options: { actorI
     // Deepest first, so no delete detaches a card that is about to go too.
     for (const memberId of members) removeMember.run(memberId);
     db.query(`DELETE FROM ${table} WHERE id = ? AND purge_started_at IS NOT NULL`).run(id);
-    binUnlinkedAttachments(documentIds, options.actorId);
+    binUnlinkedAttachments(documentIds, options.actorId, binnedFiles);
     audit(options.actorId, null, `task.${type}_purge`, type === "card"
       ? { boardId, cardId: id, reason: options.reason, ...(members.length ? { descendantCount: members.length } : {}) }
       : { boardId, reason: options.reason });
     return true;
   })();
+  notifyBinnedFiles(binnedFiles);
+  return purged;
 }
 
 export type TaskPurgeOutcome = "purged" | "not_found" | "live" | "owner_only";

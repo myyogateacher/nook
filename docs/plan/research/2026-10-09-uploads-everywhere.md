@@ -471,3 +471,11 @@ API changes, all additive except where marked:
 | L2 | MCP `purpose: "attachment"` says it is only useful with a module tool that attaches files over MCP. | U1/U2/U3: name your attach tool in that description when it ships. |
 | L3 | Boot self-check: the sweeper's boot run logs `Attachment self-check: migration 046 triggers are missing (…)` when any of `ATTACHMENT_TRIGGERS` is gone (the grant self-check's pattern: loud, not fatal). | — |
 | L4 | **U4b:** call `syncDerivedLinks("whiteboard", boardId, boardOwnerId, ids)` with the **board's owner** as the actor (not the saving editor), so only the owner's pictures ever follow board sharing (Q4). | U4b. |
+
+### U4 and U4b as built (branch `uploads-u4`)
+
+- **Notes.** `publishDraft` calls `syncNoteLinks` (`server/noteAttachments.ts`) in its transaction; the response adds `skippedAttachments` and `binnedAttachments`. Files are `[📎 name](/files/<uuid>)` cards (`src/editor/fileChip.tsx`), images stay `![alt](/api/files/<uuid>/content…)`. The editor takes any file (`attachHost="note"`): the attach sheet (`/file`), From Files (`/from files`), paste, drop; uploads use `?attachTo=note`; cards open `AttachmentPreview`. Card descriptions keep their own image upload (no `attachHost`).
+- **Existing notes:** backfilled once at boot (owner's own documents, `attachment.backfill` audit marker), not lazily, so G1 is fixed for every existing note without a republish. Later publishes keep links in step.
+- **Binned own files (M3):** after a publish the app offers Restore; `POST /api/notes/:id/attachments/sync` then re-derives the links (caller's own files) without a new version.
+- **Whiteboards:** `saveScene` and `createWhiteboard` derive links with the board owner as actor (L4); boards backfilled once at boot; canvas uploads use `?attachTo=whiteboard`; the Insert image picker has Take photo on touch devices and the new hint.
+- **MCP:** `read_note` and `read_whiteboard` return `attachments`; `publish_note_draft` returns `skippedAttachments` / `binnedAttachments`.

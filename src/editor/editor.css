@@ -27,3 +27,13 @@
   .whiteboard-embed-thumb { width: 72px; height: 48px; }
   .whiteboard-embed-card { gap: 8px; }
 }
+/* U4 (D408): a file in a note, as a card that opens its preview; fits a 390 px phone. */
+.note-prose .file-chip { margin: .7em 0; }
+.file-chip-card { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; min-height: 48px; border: 1px solid #2c2c31; border-radius: 12px; padding: 6px 12px 6px 8px; background: #151518; color: #ededee; font: 500 .9rem/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; text-align: left; cursor: pointer; user-select: none; }
+.file-chip-card:hover { border-color: #3a3a41; background: #1a1a1e; }
+.file-chip-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.file-chip.is-selected .file-chip-card { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.file-chip-icon { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #1d1d21; color: #b8b8be; }
+.file-chip-icon svg { width: 18px; height: 18px; }
+.file-chip-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip-open { flex: none; color: #85858c; font-size: .78rem; }

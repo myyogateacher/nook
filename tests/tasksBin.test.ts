@@ -147,9 +147,10 @@ describe("cards and boards in the Bin", () => {
     expect((await call(owner, "DELETE", `/bin/card/${card.id}`)).status).toBe(200);
     expect(db.query("SELECT 1 FROM cards WHERE id = ?").get(card.id)).toBeNull();
     expect(db.query("SELECT COUNT(*) AS count FROM card_comments WHERE card_id = ?").get(card.id)).toEqual({ count: 0 });
-    expect(documentRow(documentId)).toMatchObject({ deleted_by: owner.userId });
+    // Binned by the attachment lifecycle (D395), it is recorded as removed by its uploader (U8).
+    expect(documentRow(documentId)).toMatchObject({ deleted_by: member.userId });
     expect(documentRow(documentId)!.deleted_at).toBeTruthy();
-    expect((await binItems(member)).find((item) => item.id === documentId)).toMatchObject({ type: "document", attachment: true });
+    expect((await binItems(member)).find((item) => item.id === documentId)).toMatchObject({ type: "document", attachment: false, folder_name: "Attachments" });
     expect((await call(owner, "DELETE", `/bin/card/${card.id}`)).status).toBe(404);
 
     // Restoring the file brings it back as an ordinary Files item in Default.
@@ -205,28 +206,29 @@ describe("cards and boards in the Bin", () => {
 });
 
 describe("restoring attachments", () => {
-  test("a still-linked attachment restores as an attachment; an unlinked one restores into Files", async () => {
+  test("a still-linked attachment restores into the Attachments folder; an unlinked one restores into Default", async () => {
     const { owner, member, addCard } = await setup("Restore attachment");
     const card = await addCard("Keeps its file");
     const linked = await attach(owner, card.id, "linked.txt");
-    // Binned while still linked (for example before the Files delete guard existed).
-    const now = new Date().toISOString();
-    db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(now, owner.userId, now, linked);
+    // Binned while still linked (deleted from Files, D409).
+    expect((await request(`/files/${linked}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
     expect((await request(`/files/${linked}/content`, {}, member)).status).toBe(404);
-    // While a live card links it, the Bin names that card.
-    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: true, attachment_of: "Keeps its file" });
+    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: false, folder_name: "Attachments" });
     const restored = await call(owner, "POST", `/bin/document/${linked}/restore`);
     expect(restored.status).toBe(200);
-    expect(restored.body).toMatchObject({ ok: true, folderId: null, folderName: null });
-    expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "task_attachment", folder_id: null });
+    expect(restored.body).toMatchObject({ ok: true, folderName: "Attachments" });
+    expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "file", folder_id: restored.body.folderId });
     expect((await request(`/files/${linked}/content`, {}, member)).status).toBe(200);
+    // Listed in its owner's Files (the Attachments folder), never in the board member's.
     const files = (await (await request("/files", {}, owner)).json()) as { documents: Array<{ id: string }> };
-    expect(files.documents.some((item) => item.id === linked)).toBe(false);
+    expect(files.documents.some((item) => item.id === linked)).toBe(true);
+    const memberFiles = (await (await request("/files", {}, member)).json()) as { documents: Array<{ id: string }> };
+    expect(memberFiles.documents.some((item) => item.id === linked)).toBe(false);
 
     // Unlinked: back in Files, in Default.
     await tasks(owner, "DELETE", `/cards/${card.id}/attachments/${linked}`);
     expect(documentRow(linked)!.deleted_at).toBeTruthy();
-    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: true, attachment_of: null });
+    expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: false, attachment_of: null });
     const back = await call(owner, "POST", `/bin/document/${linked}/restore`);
     expect(back.body.folderName).toBe("Default");
     expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "file" });

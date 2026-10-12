@@ -288,7 +288,8 @@ describe("GET /api/today", () => {
 
     const ownerView = await expectParity(owner);
     expect(ids(ownerView.sections.files)).toEqual(expect.arrayContaining([sharedFile, privateFile]));
-    expect(ids(ownerView.sections.files)).not.toContain(attachment);
+    // An attachment is a Files item in its owner's Attachments folder (U8), so it is the owner's recent file too.
+    expect(ids(ownerView.sections.files)).toContain(attachment);
     expect(ownerView.sections.files!.items[0]).not.toHaveProperty("sha256");
     const all = [sharedFile, privateFile, attachment];
     const recipientView = await expectParity(recipient);

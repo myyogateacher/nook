@@ -384,15 +384,17 @@ function uploadResponse(c: Context<AppEnv>, document: DocumentSummary, replay: b
 
 async function handleUpload(c: Context<AppEnv>) {
   const userId = c.get("user").id;
-  // Attachments (WAVES_7-9.md §7, WAVES_10-12.md D58) have no folder and never appear in Files;
-  // they become readable to a board or collection once linked to one of its cards or rows.
+  // Every upload is a Files document (D390). The older `?purpose=task_attachment` and
+  // `?purpose=collection_attachment` (hidden attachments until 047, uploads everywhere U8) are still
+  // accepted from older clients and mean `?attachTo=card` and `?attachTo=row`.
   const purposeParam = c.req.query("purpose");
   if (purposeParam !== undefined && purposeParam !== "file" && purposeParam !== "task_attachment" && purposeParam !== "collection_attachment") {
     return c.json({ error: "Invalid request", details: ["purpose must be file, task_attachment, or collection_attachment"] }, 400);
   }
-  const purpose = purposeParam ?? "file";
+  const purpose = "file";
+  const legacyAttach = purposeParam === "task_attachment" || purposeParam === "collection_attachment";
   const folderParam = c.req.query("folderId");
-  if (purpose !== "file" && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["Attachments have no folder"] }, 400);
+  if (legacyAttach && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["Attachments have no folder"] }, 400);
   // Uploads everywhere (D390, D391): `?attachTo=<host kind>` stores an ordinary Files document in the
   // uploader's Attachments folder, created on first use; the caller then links it to the host.
   const attachTo = c.req.query("attachTo");
@@ -400,10 +402,11 @@ async function handleUpload(c: Context<AppEnv>) {
     if (!isHostKind(attachTo)) return c.json({ error: "Invalid request", details: ["attachTo must be a host kind such as event, note, card, row, or chat_message"] }, 400);
     if (purposeParam !== undefined || folderParam !== undefined) return c.json({ error: "Invalid request", details: ["attachTo takes no purpose or folderId"] }, 400);
   }
-  const folderId = attachTo !== undefined ? ensureSystemFolder(userId) : purpose !== "file" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
-  if (folderId !== null && !ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
+  const toAttachments = attachTo !== undefined || legacyAttach;
+  const folderId = toAttachments ? ensureSystemFolder(userId) : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
+  if (!ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
   // T342: nothing is uploaded into a system folder directly; attachments arrive through attachTo.
-  if (attachTo === undefined && folderId !== null && isSystemFolder(folderId)) return c.json(SYSTEM_FOLDER_BODY, 400);
+  if (!toAttachments && isSystemFolder(folderId)) return c.json(SYSTEM_FOLDER_BODY, 400);
 
   const keyHeader = c.req.header("Idempotency-Key");
   const uploadKey = keyHeader === undefined ? null : uuid.safeParse(keyHeader.trim().toLowerCase()).data ?? null;
@@ -712,13 +715,9 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
       const document = ownedDocument(id, userId, { includeDeleted: true });
       if (!document) return notFound(c);
       if (document.deleted_at) return c.json({ ok: true, alreadyDeleted: true, purgeAfter: document.purge_after });
-      // An attachment is removed from its cards (Tasks) or rows (Collections), which bins it once nothing uses it.
-      if (document.purpose !== "file" && db.query("SELECT 1 FROM card_attachments WHERE document_id = ?").get(id)) {
-        return c.json({ error: "Remove this file from its cards first", code: "ATTACHMENT_LINKED" }, 409);
-      }
-      if (document.purpose !== "file" && db.query("SELECT 1 FROM collection_row_attachments WHERE document_id = ?").get(id)) {
-        return c.json({ error: "Remove this file from its rows first", code: "ATTACHMENT_LINKED" }, 409);
-      }
+      // A file still on cards, rows, or other hosts may be deleted (D409; it replaced the hidden
+      // attachments' 409 ATTACHMENT_LINKED, gone with them in 047): its links stay, hosts show "File
+      // removed", and a restore brings it back. Files asks first, naming the uses (GET /api/files/:id/usage).
       const deletedAt = new Date();
       const purgeAfter = purgeAfterFrom(deletedAt);
       db.transaction(() => {

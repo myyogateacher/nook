@@ -131,7 +131,8 @@ describe("collections in the Bin", () => {
     expect(db.query("SELECT 1 FROM collections WHERE id = ?").get(collection.id)).toBeNull();
     expect(db.query("SELECT 1 FROM collection_rows WHERE id = ?").get(second.id)).toBeNull();
     expect(documentDeleted(shared)).toBe(true);
-    expect((db.query("SELECT deleted_by FROM documents WHERE id = ?").get(shared) as { deleted_by: string | null }).deleted_by).toBeNull();
+    // An Attachments-folder file binned by its links' end is recorded as removed by its owner (D395; U8).
+    expect((db.query("SELECT deleted_by FROM documents WHERE id = ?").get(shared) as { deleted_by: string | null }).deleted_by).toBe(owner.userId);
     // A binned row whose retention ended is swept too.
     const again = await newCollection(owner, { name: "Again" });
     const row = await addRow(owner, again.id, { [again.fields[0]!.id]: "Old" });

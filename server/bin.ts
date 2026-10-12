@@ -183,24 +183,10 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
       const folder = ownedFolder(row.folder_id, ownerId);
       return { status: "already_restored", folderId: folder?.id ?? null, folderName: folder?.name ?? null };
     }
-    // An attachment (purpose <> 'file') that a card or a collection row still links comes back as an
-    // attachment: no folder, same purpose, since a folder would expose it to that folder's audience
-    // (WAVES_7-9.md §7, WAVES_10-12.md D58). One that nothing links returns to Files, in its folder or Default.
-    const linkedAttachment = type === "document" && Boolean(db.query(`SELECT 1 FROM documents d WHERE d.id = ? AND d.purpose <> 'file'
-      AND (EXISTS (SELECT 1 FROM card_attachments ca WHERE ca.document_id = d.id)
-        OR EXISTS (SELECT 1 FROM collection_row_attachments cra WHERE cra.document_id = d.id))`).get(id));
-    if (linkedAttachment) {
-      return db.transaction((): RestoreOutcome => {
-        const restored = db.query(`UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = NULL, updated_at = ?
-          WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`).run(now(), id, ownerId);
-        if (restored.changes !== 1) return { status: "purging" };
-        audit(ownerId, null, "document.restore", { documentId: id, folderId: null });
-        return { status: "restored", folderId: null, folderName: null, visibility: "private" };
-      })();
-    }
     // Uploads everywhere (D395, §4.4): a file from the Attachments folder that something still links
     // returns there; one that nothing links any more returns to Default as an ordinary file, so the
-    // orphan sweep never bins it again (server/attachments/sweep.ts).
+    // orphan sweep never bins it again (server/attachments/sweep.ts). Since 047 (U8) this covers the
+    // older card and row attachments too: they are Attachments-folder files.
     const fromAttachments = type === "document" && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ? AND system_kind IS NOT NULL").get(row.folder_id, ownerId));
     const stillLinked = fromAttachments && Boolean(db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
       OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id) OR EXISTS (SELECT 1 FROM collection_row_attachments WHERE document_id = $id)`).get({ id }));
@@ -210,9 +196,6 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
       const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
         WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
         .run(folder.id, now(), id, ownerId);
-      if (type === "document" && restored.changes === 1) {
-        db.query("UPDATE documents SET purpose = 'file' WHERE id = ? AND purpose IN ('task_attachment', 'collection_attachment')").run(id);
-      }
       if (restored.changes !== 1) return { status: "purging" };
       if (type === "note") audit(ownerId, id, "note.restore", { folderId: folder.id });
       else audit(ownerId, null, "document.restore", { documentId: id, folderId: folder.id });
@@ -288,7 +271,11 @@ export type BinItem = {
   /** Cards: their board; boards: themselves. Null for notes and documents. */
   board_id: string | null;
   board_name: string | null;
-  /** A document that was a card attachment (it returns to Files when restored). */
+  /**
+   * A hidden card or row attachment (it returns to Files when restored). Always false since 047 (U8):
+   * those became Attachments-folder files, listed like any file in the Attachments folder. The three
+   * attachment fields stay for older clients.
+   */
   attachment: boolean;
   /**
    * For an attachment still linked to a live card on a board the caller can read, that card's title;

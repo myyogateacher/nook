@@ -2,8 +2,6 @@ import { sweepBin, type BinSweepCounts } from "./bin";
 import { sweepNotifications } from "./calendar/reminders";
 import { db } from "./db";
 import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
-import { sweepUnlinkedAttachments } from "./tasks/attachments";
-import { sweepUnlinkedRowAttachments } from "./collections/sweep";
 import { missingAttachmentTriggers, sweepAttachments } from "./attachments/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
@@ -64,22 +62,9 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       } catch (error) {
         console.error("Document sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
-      // Task attachments never linked to a card move to the Bin after a day (and purge 30 days later).
-      try {
-        const unlinked = sweepUnlinkedAttachments({ nowMs: options.nowMs });
-        if (unlinked) console.info(`Attachment sweep: ${unlinked} never-linked attachments moved to the Bin`);
-      } catch (error) {
-        console.error("Attachment sweep failed", error instanceof Error ? error.name : "Unknown error");
-      }
-      // Row attachments never linked to a row move to the Bin after a day (and purge 30 days later).
-      try {
-        const unlinked = sweepUnlinkedRowAttachments({ nowMs: options.nowMs });
-        if (unlinked) console.info(`Row attachment sweep: ${unlinked} never-linked attachments moved to the Bin`);
-      } catch (error) {
-        console.error("Row attachment sweep failed", error instanceof Error ? error.name : "Unknown error");
-      }
       // Uploads everywhere (D395, T348): links whose host is gone, then Attachments-folder files nothing
-      // has linked for a day (never linked, or every host purged) move to the Bin.
+      // has linked for a day (never linked, or every host purged) move to the Bin. Since 047 (U8) this
+      // also covers the card and row uploads the older task and row sweeps used to handle.
       try {
         // Review L3: the attachment and system-folder rules rely on the 046 triggers; say so loudly if any is missing.
         if (options.boot) {

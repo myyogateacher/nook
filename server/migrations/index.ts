@@ -42,6 +42,7 @@ import { knowledgeMigration } from "./042_knowledge";
 import { chatToolImagesMigration } from "./043_chat_tool_images";
 import { signInDevicesMigration } from "./044_sign_in_devices";
 import { attachmentsMigration } from "./046_attachments";
+import { legacyAttachmentsMigration } from "./047_legacy_attachments";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -97,7 +98,10 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // id on its own, so 045 may land after 046. 046 (uploads everywhere, U0: folders.system_kind, the
   // Attachments folder guards, attachment_links and its purge triggers) needs 001, 002, 006, 013, 025,
   // 030, and 039. The Messages migration moves to 048.
-  attachmentsMigration
+  attachmentsMigration,
+  // 047 (uploads everywhere, U8: legacy task and row attachments become Files documents in each
+  // uploader's Attachments folder, in place, with their links kept) needs 006, 009, 012, 025, and 046.
+  legacyAttachmentsMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

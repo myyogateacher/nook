@@ -44,13 +44,14 @@ describe("create_text_file (D176a)", () => {
     expect((await ok(reader, "read_document_text", { documentId: stored.document.id })).text).toBe("# Report\n\nAll good.");
   });
 
-  test("a task attachment has no folder and links to a card", async () => {
+  test("the older purpose task_attachment lands in the Attachments folder (U8) and links to a card", async () => {
     const owner = await createUser("Text attachment owner");
     const key = makeKey(owner, ["files:write", "tasks:write"]);
     const created = await api(owner, "POST", "/tasks/boards", { name: "Attach board" });
     const cardId = (await api(owner, "POST", `/tasks/boards/${created.body.board.id}/cards`, { columnId: created.body.columns[0].id, title: "Card" })).body.card.id as string;
     const stored = await ok(key, "create_text_file", { name: "notes.csv", text: "a,b\n1,2\n", purpose: "task_attachment" });
-    expect(documentRow(stored.document.id)).toMatchObject({ folder_id: null, purpose: "task_attachment" });
+    const attachmentsFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND system_kind = 'attachments'").get(owner.userId) as { id: string }).id;
+    expect(documentRow(stored.document.id)).toMatchObject({ folder_id: attachmentsFolder, purpose: "file" });
     expect(await errorCode(key, "create_text_file", { name: "x.txt", text: "x", purpose: "task_attachment", folderId: defaultFolder(owner)! })).toBe("INVALID");
     expect((await ok(key, "link_attachment", { cardId, documentId: stored.document.id })).alreadyLinked).toBe(false);
   });

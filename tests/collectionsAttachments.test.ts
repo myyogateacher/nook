@@ -12,6 +12,9 @@ async function upload(session: Session, purpose: "file" | "collection_attachment
 
 const content = (session: Session, documentId: string) => request(`/files/${documentId}/content`, {}, session).then((response) => response.status);
 const metadata = (session: Session, documentId: string) => request(`/files/${documentId}`, {}, session).then((response) => response.status);
+/** The person's Attachments folder (U0): uploads made to attach, and since 047 (U8) the older row uploads, live there. */
+const attachmentsFolder = async (userId: string) => (await import("../server/attachments/service")).ensureSystemFolder(userId);
+
 const filesList = async (session: Session) => ((await (await request("/files", {}, session)).json()) as { documents: Array<{ id: string }> }).documents.map((document) => document.id);
 
 async function setup(label: string) {
@@ -25,7 +28,7 @@ async function setup(label: string) {
 }
 
 describe("row attachments", () => {
-  test("a linked upload is readable through a live row, never listed in Files, and 404 after unshare, bin, or unlink", async () => {
+  test("a linked upload is readable through a live row, listed in its owner's Files only, and 404 after unshare, bin, or unlink", async () => {
     const { owner, member, stranger, collection, row, receipt } = await setup("Attach");
     const documentId = await upload(owner, "collection_attachment");
     const attached = await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id });
@@ -33,14 +36,14 @@ describe("row attachments", () => {
     expect(attached.body.row.files[receipt.id].map((file: { id: string; name: string }) => [file.id, file.name])).toEqual([[documentId, "receipt.txt"]]);
     expect(attached.body.row.values[receipt.id]).toBeUndefined();
 
-    // Not readable before sharing, readable after, and never listed in Files for anyone.
+    // Not readable before sharing, readable after, and listed in Files for its owner only (their Attachments folder, U8).
     expect(await content(member, documentId)).toBe(404);
     await shareCollection(owner, collection.id, "selected", [member.userId], "viewer");
     expect(await content(member, documentId)).toBe(200);
     expect(await metadata(member, documentId)).toBe(200);
     expect(await content(stranger, documentId)).toBe(404);
     expect(await filesList(member)).not.toContain(documentId);
-    expect(await filesList(owner)).not.toContain(documentId);
+    expect(await filesList(owner)).toContain(documentId);
     const contentResponse = await request(`/files/${documentId}/content`, {}, member);
     expect(contentResponse.headers.get("cache-control")).toContain("no-store");
 
@@ -66,7 +69,7 @@ describe("row attachments", () => {
     expect(await content(member, documentId)).toBe(404);
     expect(await content(owner, documentId)).toBe(404);
     const document = db.query("SELECT deleted_at, deleted_by, purpose, folder_id FROM documents WHERE id = ?").get(documentId) as { deleted_at: string | null; deleted_by: string; purpose: string; folder_id: string | null };
-    expect(document).toMatchObject({ deleted_by: owner.userId, purpose: "collection_attachment", folder_id: null });
+    expect(document).toMatchObject({ deleted_by: owner.userId, purpose: "file", folder_id: await attachmentsFolder(owner.userId) });
     expect(document.deleted_at).not.toBeNull();
     // Restoring an attachment no row links any more makes it a Files item in the uploader's
     // Default folder, never a hidden orphan; nobody else gains access.
@@ -77,29 +80,29 @@ describe("row attachments", () => {
     expect(await content(member, documentId)).toBe(404);
   });
 
-  test("a binned attachment that a row still links is restored as an attachment, outside every folder", async () => {
+  test("a binned attachment that a row still links is restored into the Attachments folder, readable through the row again", async () => {
     const { owner, member, collection, row, receipt } = await setup("Linked restore");
     await shareCollection(owner, collection.id, "all_users");
     const documentId = await upload(owner, "collection_attachment", "linked.txt");
     expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
     db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), owner.userId, new Date(Date.now() + 86_400_000).toISOString(), documentId);
     const binItem = async () => ((await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean; attachment_of: string | null; attachment_kind: string | null }> }).items.find((item) => item.id === documentId);
-    // The Bin names the row it still belongs to; once the row is binned it is still a row attachment.
-    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: "Fridge", attachment_kind: "row" });
-    db.query("UPDATE collection_rows SET deleted_at = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), row.id);
-    expect(await binItem()).toMatchObject({ attachment: true, attachment_of: null, attachment_kind: "row" });
-    db.query("UPDATE collection_rows SET deleted_at = NULL, purge_after = NULL WHERE id = ?").run(row.id);
+    // The Bin lists it as a file of the Attachments folder (the hidden-attachment fields stay false since 047).
+    expect(await binItem()).toMatchObject({ attachment: false, attachment_of: null, attachment_kind: null });
+    expect(await content(member, documentId)).toBe(404);
     expect((await request(`/bin/document/${documentId}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
-    expect(db.query("SELECT purpose, folder_id, deleted_at FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "collection_attachment", folder_id: null, deleted_at: null });
-    expect(await filesList(owner)).not.toContain(documentId);
+    expect(db.query("SELECT purpose, folder_id, deleted_at FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "file", folder_id: await attachmentsFolder(owner.userId), deleted_at: null });
+    expect(await filesList(owner)).toContain(documentId);
+    expect(await filesList(member)).not.toContain(documentId);
     expect(await content(member, documentId)).toBe(200);
   });
 
   test("files linked in the same millisecond list, and snapshot for Undo, in linking order whatever their random ids", async () => {
     const { owner, row, receipt } = await setup("Link ties");
+    await attachmentsFolder(owner.userId);
     const timestamp = new Date().toISOString();
     const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
-      VALUES (?, ?, NULL, 'f.txt', 'text/plain', 'text', 1, ?, ?, ?, 'collection_attachment')`);
+      VALUES (?1, ?2, (SELECT id FROM folders WHERE owner_id = ?2 AND system_kind = 'attachments'), 'f.txt', 'text/plain', 'text', 1, ?3, ?4, ?5, 'file')`);
     const link = db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)");
     // Each later link gets a smaller document id, so a document-id tie-break would reverse them.
     const ids = Array.from({ length: 3 }, () => crypto.randomUUID()).sort().reverse();
@@ -142,7 +145,7 @@ describe("row attachments", () => {
     expect(restored.status).toBe(200);
     expect(restored.body.row.files[receipt.id].map((file: { id: string }) => file.id)).toEqual([second]);
     expect(restored.body.row.can_undo).toBe(false);
-    expect(db.query("SELECT deleted_at, purpose FROM documents WHERE id = ?").get(second)).toEqual({ deleted_at: null, purpose: "collection_attachment" });
+    expect(db.query("SELECT deleted_at, purpose FROM documents WHERE id = ?").get(second)).toEqual({ deleted_at: null, purpose: "file" });
     expect(await content(owner, second)).toBe(200);
   });
 
@@ -182,7 +185,8 @@ describe("row attachments", () => {
     const ownerUndo = await call(owner, "POST", `/rows/${row.id}/undo`, { revision: attached.body.row.revision });
     expect(ownerUndo.status).toBe(200);
     expect(linkedDocument(upload1)).toBeNull();
-    expect(db.query("SELECT deleted_by FROM documents WHERE id = ? AND deleted_at IS NOT NULL").get(upload1)).toEqual({ deleted_by: owner.userId });
+    // Binned by the attachment lifecycle (D395), it is recorded as removed by its owner, whoever undid the link.
+    expect(db.query("SELECT deleted_by FROM documents WHERE id = ? AND deleted_at IS NOT NULL").get(upload1)).toEqual({ deleted_by: member.userId });
   });
 
   test("Files items the linker owns can be linked and are never binned on unlink", async () => {
@@ -219,10 +223,9 @@ describe("row attachments", () => {
     expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: ownerUpload, fieldId: receipt.id })).status).toBe(404);
     expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: memberUpload, fieldId: notes.id })).status).toBe(400);
     expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: crypto.randomUUID(), fieldId: receipt.id })).status).toBe(404);
-    const taskDoc = crypto.randomUUID();
-    db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
-      VALUES (?, ?, NULL, 't.txt', 'text/plain', 'text', 1, ?, ?, ?, 'task_attachment')`).run(taskDoc, member.userId, "c".repeat(64), new Date().toISOString(), new Date().toISOString());
-    expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: taskDoc, fieldId: receipt.id })).status).toBe(404);
+    const binned = await upload(member, "collection_attachment", "binned.txt");
+    db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), member.userId, new Date(Date.now() + 86_400_000).toISOString(), binned);
+    expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: binned, fieldId: receipt.id })).status).toBe(404);
 
     expect((await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: memberUpload, fieldId: receipt.id })).status).toBe(201);
     const again = await call(member, "POST", `/rows/${row.id}/attachments`, { documentId: memberUpload, fieldId: receipt.id });
@@ -236,7 +239,7 @@ describe("row attachments", () => {
     expect((await call(owner, "DELETE", `/rows/${row.id}/attachments/${memberUpload}`)).status).toBe(404);
 
     const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, created_at, updated_at, purpose)
-      VALUES (?, ?, NULL, 'f.txt', 'text/plain', 'text', 1, ?, ?, ?, 'collection_attachment')`);
+      VALUES (?1, ?2, (SELECT id FROM folders WHERE owner_id = ?2 AND system_kind = 'attachments'), 'f.txt', 'text/plain', 'text', 1, ?3, ?4, ?5, 'file')`);
     const link = db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)");
     for (let index = 0; index < 19; index += 1) {
       const id = crypto.randomUUID();
@@ -247,55 +250,43 @@ describe("row attachments", () => {
     expect([full.status, full.body.code]).toEqual([409, "LIMIT_REACHED"]);
   });
 
-  test("Files routes never rename, move, share, or bin a linked row attachment; sharing rows never widen it", async () => {
+  test("a row upload is its owner's Files item in the Attachments folder: deleting it while linked bins it, and the row hides it until a restore (D409)", async () => {
     const { owner, member, collection, row, receipt } = await setup("Files rule");
     const documentId = await upload(owner, "collection_attachment");
-    const folderId = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
     const json = (method: string, body: unknown) => ({ method, body: JSON.stringify(body) });
-    expect((await request(`/files/${documentId}`, json("PATCH", { name: "renamed.txt" }), owner)).status).toBe(404);
-    expect((await request(`/files/${documentId}`, json("PATCH", { folderId }), owner)).status).toBe(404);
-    expect((await request(`/files/${documentId}/sharing`, {}, owner)).status).toBe(404);
-    expect((await request(`/files/${documentId}/sharing`, json("PUT", { visibility: "all_users", userIds: [] }), owner)).status).toBe(404);
-    // Sharing rows or a folder set before this rule never make an attachment readable.
-    db.query("UPDATE documents SET sharing_override = 1, visibility = 'all_users' WHERE id = ?").run(documentId);
-    expect(await content(member, documentId)).toBe(404);
-    db.query("UPDATE documents SET sharing_override = 0, visibility = 'private', folder_id = ? WHERE id = ?").run(folderId, documentId);
-    db.query("UPDATE folders SET visibility = 'all_users' WHERE id = ?").run(folderId);
-    expect(await content(member, documentId)).toBe(404);
-    db.query("UPDATE folders SET visibility = 'private' WHERE id = ?").run(folderId);
-    db.query("UPDATE documents SET folder_id = NULL WHERE id = ?").run(documentId);
-    // While a row links it, DELETE /api/files is refused; the owner still reads it.
+    expect((await request(`/files/${documentId}`, json("PATCH", { name: "renamed.txt" }), owner)).status).toBe(200);
     expect((await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId, fieldId: receipt.id })).status).toBe(201);
-    const linked = await request(`/files/${documentId}`, json("DELETE", {}), owner);
-    expect(linked.status).toBe(409);
-    expect(((await linked.json()) as { code: string }).code).toBe("ATTACHMENT_LINKED");
-    expect(await content(owner, documentId)).toBe(200);
     await shareCollection(owner, collection.id, "all_users");
     expect(await content(member, documentId)).toBe(200);
-    // Unlinked (here by the owner through the row), the upload is binned; an unlinked upload can be deleted directly.
-    await call(owner, "DELETE", `/rows/${row.id}/attachments/${documentId}`);
+    expect(await filesList(member)).not.toContain(documentId);
+    // No 409 ATTACHMENT_LINKED any more: the file goes to the Bin, the row keeps the link, and a restore brings it back.
+    expect((await request(`/files/${documentId}`, json("DELETE", {}), owner)).status).toBe(200);
+    expect(await content(member, documentId)).toBe(404);
+    expect((await call(member, "GET", `/rows/${row.id}`)).body.row.files[receipt.id] ?? []).toEqual([]);
+    expect(db.query("SELECT 1 AS linked FROM collection_row_attachments WHERE document_id = ?").get(documentId)).toEqual({ linked: 1 });
+    expect((await request(`/bin/document/${documentId}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
+    expect(await content(member, documentId)).toBe(200);
+    // An unlinked upload can be deleted directly.
     const spare = await upload(owner, "collection_attachment");
     expect((await request(`/files/${spare}`, json("DELETE", {}), owner)).status).toBe(200);
   });
 
   test("the sweeper bins uploads that were never linked to a row after 24 hours", async () => {
     const { owner, row, receipt } = await setup("Sweep unlinked");
-    const { sweepUnlinkedRowAttachments } = await import("../server/collections/sweep");
+    const { sweepAttachments } = await import("../server/attachments/sweep");
     const stale = await upload(owner, "collection_attachment", "stale.txt");
     const linked = await upload(owner, "collection_attachment", "linked.txt");
     const fresh = await upload(owner, "collection_attachment", "fresh.txt");
     const fileItem = await upload(owner, "file", "file.txt");
     await call(owner, "POST", `/rows/${row.id}/attachments`, { documentId: linked, fieldId: receipt.id });
     const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
-    for (const id of [stale, linked, fileItem]) db.query("UPDATE documents SET created_at = ? WHERE id = ?").run(old, id);
-    expect(sweepUnlinkedRowAttachments()).toBeGreaterThanOrEqual(1);
-    const state = (id: string) => db.query("SELECT deleted_at IS NOT NULL AS binned, deleted_by FROM documents WHERE id = ?").get(id) as { binned: number; deleted_by: string | null };
-    expect(state(stale)).toEqual({ binned: 1, deleted_by: null });
+    for (const id of [stale, linked, fileItem]) db.query("UPDATE documents SET created_at = ?, updated_at = ? WHERE id = ?").run(old, old, id);
+    expect((await sweepAttachments()).orphansBinned).toBeGreaterThanOrEqual(1);
+    const state = (id: string) => db.query("SELECT deleted_at IS NOT NULL AS binned FROM documents WHERE id = ?").get(id) as { binned: number };
+    expect(state(stale).binned).toBe(1);
     expect(state(linked).binned).toBe(0);
     expect(state(fresh).binned).toBe(0);
     expect(state(fileItem).binned).toBe(0);
-    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.delete' AND metadata_json LIKE ?").get(`%${stale}%`) as { metadata_json: string };
-    expect(JSON.parse(audit.metadata_json)).toEqual({ documentId: stale, reason: "attachment_never_linked" });
   });
 
   test("IDOR: attachment routes join the row to a readable collection", async () => {

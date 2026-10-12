@@ -165,6 +165,34 @@ const ownedFolder = (folderId: string | null, ownerId: string) => folderId === n
   : db.query("SELECT id, name, visibility FROM folders WHERE id = ? AND owner_id = ?").get(folderId, ownerId) as FolderRow | null;
 
 /**
+ * Where a restore puts a binned note or document, short of Default (null means the owner's Default
+ * folder). Uploads everywhere (D395, §4.4): a file from the Attachments folder that something still
+ * links returns there; one that nothing links any more returns to Default as an ordinary file, so the
+ * orphan sweep never bins it again (server/attachments/sweep.ts). Since 047 (U8) this covers the older
+ * card and row attachments too: they are Attachments-folder files. Any other item returns to its
+ * folder while the owner still has it. restoreItem and the Bin list (restore_folder_name) both call
+ * this, so the Bin's "Restore to …" always names where the restore really goes.
+ */
+export function restoreKeptFolder(type: CoreBinType, id: string, folderId: string | null, ownerId: string): FolderRow | null {
+  const fromAttachments = type === "document" && folderId !== null
+    && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ? AND system_kind IS NOT NULL").get(folderId, ownerId));
+  if (fromAttachments) {
+    const stillLinked = Boolean(db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
+      OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id) OR EXISTS (SELECT 1 FROM collection_row_attachments WHERE document_id = $id)`).get({ id }));
+    if (!stillLinked) return null;
+  }
+  return ownedFolder(folderId, ownerId);
+}
+
+/** The name of the folder a restore of this note or document goes to now (see restoreKeptFolder). Never creates a folder. */
+export function restoreFolderName(type: CoreBinType, id: string, folderId: string | null, ownerId: string) {
+  const kept = restoreKeptFolder(type, id, folderId, ownerId);
+  if (kept) return kept.name;
+  const fallback = db.query("SELECT name FROM folders WHERE owner_id = ? AND is_default = 1").get(ownerId) as { name: string } | null;
+  return fallback?.name ?? "Default";
+}
+
+/**
  * Restore (owner only), DEVELOPMENT_PLAN §9.1 and D14. Compare-and-swap under
  * the resource lock; a row with a purge in progress is never restored. The
  * item returns to its original folder if the owner still has it, otherwise to
@@ -183,16 +211,8 @@ export function restoreItem(type: BinType, id: string, ownerId: string): Promise
       const folder = ownedFolder(row.folder_id, ownerId);
       return { status: "already_restored", folderId: folder?.id ?? null, folderName: folder?.name ?? null };
     }
-    // Uploads everywhere (D395, §4.4): a file from the Attachments folder that something still links
-    // returns there; one that nothing links any more returns to Default as an ordinary file, so the
-    // orphan sweep never bins it again (server/attachments/sweep.ts). Since 047 (U8) this covers the
-    // older card and row attachments too: they are Attachments-folder files.
-    const fromAttachments = type === "document" && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ? AND system_kind IS NOT NULL").get(row.folder_id, ownerId));
-    const stillLinked = fromAttachments && Boolean(db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
-      OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id) OR EXISTS (SELECT 1 FROM collection_row_attachments WHERE document_id = $id)`).get({ id }));
     return db.transaction((): RestoreOutcome => {
-      const kept = fromAttachments && !stillLinked ? null : ownedFolder(row.folder_id, ownerId);
-      const folder = kept ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
+      const folder = restoreKeptFolder(type, id, row.folder_id, ownerId) ?? ownedFolder(ensureDefaultFolder(ownerId), ownerId)!;
       const restored = db.query(`UPDATE ${table} SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, folder_id = ?, updated_at = ?
         WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL`)
         .run(folder.id, now(), id, ownerId);
@@ -290,6 +310,12 @@ export type BinItem = {
   descendant_count?: number;
   /** Documents only: a whiteboard (Wave 23) or any other file. */
   kind?: "file" | "whiteboard";
+  /**
+   * Notes and documents: the folder a restore puts it in right now (restoreFolderName, the same rule
+   * the restore uses). Differs from folder_name for an Attachments-folder file nothing links any
+   * more (it restores to Default) and for an item whose folder is gone.
+   */
+  restore_folder_name?: string;
 };
 
 export const BIN_LIST_LIMIT = 500;
@@ -330,6 +356,7 @@ export function listBin(ownerId: string, type: BinListType | null) {
       .all({ ownerId, limit: BIN_LIST_LIMIT }) as Array<Omit<BinItem, "purging" | "attachment" | "board_id" | "board_name" | "can_purge" | "kind"> & { purging: number; attachment: number; row_attachment_of: string | null; whiteboard: number }>;
     items.push(...rows.map(({ row_attachment_of, whiteboard, ...row }): BinItem => ({
       ...row, attachment_of: row.attachment_of ?? row_attachment_of, purging: row.purging === 1, attachment: row.attachment === 1, board_id: null, board_name: null, can_purge: true,
+      restore_folder_name: restoreFolderName(row.type as CoreBinType, row.id, row.folder_id, ownerId),
       ...(row.type === "document" ? { kind: whiteboard === 1 ? "whiteboard" as const : "file" as const } : {})
     })));
   }

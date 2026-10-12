@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Bot, Check, ChevronLeft, ChevronRight, Copy, CopyPlus, Ellipsis, Globe, House, KeyRound, MessagesSquare, Pencil, Pin, Plus, RotateCcw, Search, Send, Share2, Sparkles, Square, Trash2, UsersRound, X } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, Copy, CopyPlus, Ellipsis, Globe, House, ImagePlus, KeyRound, MessagesSquare, Paperclip, Pencil, Pin, Plus, RotateCcw, Search, Send, Share2, Sparkles, Square, Trash2, UsersRound, X } from "lucide-react";
 import { AccessSheet } from "../access/AccessSheet";
 import { AccountActions, AppPageName } from "../AppShell";
 import { appName } from "../appName";
@@ -13,8 +13,11 @@ import { auditRoute, chatBackAction, chatGroup, chatRoute, type ChatRoute } from
 import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { AttachSheet, AttachmentPreview, pastedFiles, useFileDrop } from "../ui/attachments";
+import { ComposerImageStrip, MessageImages, useComposerImages } from "./ComposerImages";
+import { CHAT_IMAGE_ACCEPT, IMAGES_FULL_MESSAGE, visionMissingMessage } from "./chatImageFiles";
 import { dropSharedChat, forkFailureText, syncSharedChat } from "./sharedChatState";
-import { AGENT_BOUNDS, type AgentSummary, type ChatDetail, type ChatMessage, type ChatSummary, type DailyUsage, type PendingConfirmation, type PublicLinkState, type RunStatus, type TokenUsage, type ToolCallView } from "../../shared/agents";
+import { AGENT_BOUNDS, type AgentSummary, type ChatAttachment, type ChatAttachmentInput, type ChatDetail, type ChatMessage, type ChatSummary, type DailyUsage, type PendingConfirmation, type PublicLinkState, type RunStatus, type TokenUsage, type ToolCallView } from "../../shared/agents";
 import { agentsStatus, cancelRun, confirmRun, LIVE_RUN_STATUSES, createChat, deleteChat, errorCode, followChatUpdates, followRun, forkChat, getChat, listAgents, listChats, listSharedChats, messageOf, myUsage, regenerate, sendMessage, updateChat, type AgentsStatus, type SequencedRunEvent, type StartedRun } from "./chatApi";
 import { PublicLinkSheet } from "./PublicLinkSheet";
 import { leafForSibling, shownBranch, type Shown } from "./chatTree";
@@ -102,7 +105,17 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
   const [sharing, setSharing] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publicLink, setPublicLink] = useState<PublicLinkState | null>(null);
+  // U5: the attach sheet and the image viewer (both history layers: Back closes them).
+  const [attaching, setAttaching] = useState(false);
+  const [viewing, setViewing] = useState<{ documentId: string; name: string } | null>(null);
   const confirm = useConfirm();
+  // U5 (Q10): images go only to a model an admin marked vision-capable (the agent the composer sends to).
+  const composerAgent = route.newChat ? agents?.find((agent) => agent.id === newAgentId) ?? null : detail ? agents?.find((agent) => agent.id === detail.chat.agentId) ?? null : null;
+  const composerVision = composerAgent?.vision === true;
+  const composerAgentName = composerAgent?.name ?? detail?.chat.agentName ?? null;
+  const composerImages = useComposerImages({ vision: composerVision, agentName: composerAgentName, flash });
+  // Desktop drag-and-drop of image files onto the open chat (not a chat shared read-only).
+  const drop = useFileDrop(composerImages.addFiles, { enabled: Boolean(route.newChat || (route.chatId && detail && detail.chat.yourLevel !== "view")) });
   const paneRef = useRef<HTMLElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const resetComposer = () => { if (composerRef.current) composerRef.current.style.height = ""; };
@@ -394,7 +407,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     else document.title = route.audit ? `Audit log · Chat · ${appName()}` : route.newChat ? `New chat · Chat · ${appName()}` : `Chat · ${appName()}`;
   }, [detail, route.audit, route.chatId, route.newChat]);
 
-  useEffect(() => { setNewAgentId(route.newChat ? route.agentId ?? null : null); setDraft(""); resetComposer(); }, [route.newChat, route.agentId, route.chatId]);
+  useEffect(() => { setNewAgentId(route.newChat ? route.agentId ?? null : null); setDraft(""); resetComposer(); setAttaching(false); setViewing(null); composerImages.clear(); }, [composerImages.clear, route.newChat, route.agentId, route.chatId]);
 
   const back = useCallback(() => {
     const action = chatBackAction(routeRef.current, readHistoryDepth(window.history.state));
@@ -446,18 +459,24 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     follow(started.runId, 0);
   }, [follow]);
 
-  async function submit(content: string, parentId?: string | null) {
+  /** `attachments` undefined: the composer's images (a new message); an edit passes the edited message's own. */
+  async function submit(content: string, parentId?: string | null, attachments?: ChatAttachmentInput[]) {
     const text = content.trim();
-    if (!text || busy) return;
+    const fromComposer = attachments === undefined;
+    const images = attachments ?? composerImages.attachments;
+    if ((!text && images.length === 0) || busy) return;
+    if (fromComposer && (composerImages.uploading || composerImages.failed)) { flash(composerImages.uploading ? "Wait for the images to finish uploading" : "Remove the images that failed to upload"); return; }
+    if (images.length > 0 && !composerVision) { flash(visionMissingMessage(composerAgentName)); return; }
     setBusy(true);
     try {
       if (route.newChat) {
         if (!newAgentId) { flash("Choose an agent first"); return; }
         const { chat } = await createChat(newAgentId);
-        const started = await sendMessage(chat.id, text);
+        const started = await sendMessage(chat.id, text, undefined, images);
         setDetail({ chat, messages: [started.userMessage!, started.assistantMessage], activeRunId: started.runId, pendingConfirmation: null });
         setDraft("");
         resetComposer();
+        composerImages.clear();
         go(chatRoute(chat.id), true);
         setLive(freshLive(started.runId, started.assistantMessage.id));
         follow(started.runId, 0);
@@ -465,8 +484,9 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
         return;
       }
       if (!route.chatId) return;
-      const started = await sendMessage(route.chatId, text, parentId);
+      const started = await sendMessage(route.chatId, text, parentId, images);
       if (parentId === undefined) { setDraft(""); resetComposer(); }
+      if (fromComposer) composerImages.clear();
       setEditing(null);
       startRun(started, route.chatId);
     } catch (reason) {
@@ -578,6 +598,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
   const chatAgent = detail ? agents?.find((agent) => agent.id === detail.chat.agentId) ?? null : null;
   // Wave 43 (AC-D): a chat shared with me is read-only; I continue in my own copy.
   const readOnly = detail?.chat.yourLevel === "view";
+  const composerOpen = Boolean(route.newChat || (detail && !readOnly && route.chatId));
   const account = <AccountActions displayName={displayName} onSettings={onSettings} onSignOut={onSignOut} />;
 
   // --- Screens the module shows instead of chats ---
@@ -628,7 +649,11 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
 
   const budget = usage && usage.budget > 0 ? Math.min(100, Math.round(((usage.promptTokens + usage.completionTokens) / usage.budget) * 100)) : null;
 
+  const imagesBlocked = composerImages.items.length > 0 && !composerVision;
   const composer = <form className="chat-composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(draft); }}>
+    <ComposerImageStrip items={composerImages.items} onRemove={composerImages.remove} disabled={busy} />
+    {imagesBlocked && <p className="chat-composer-note" role="alert">{visionMissingMessage(composerAgentName)} Remove the images to send.</p>}
+    <button type="button" className="icon-button chat-attach" onClick={() => setAttaching(true)} disabled={busy || (route.newChat && !newAgentId)} aria-label="Attach images" aria-haspopup="dialog" title={composerVision ? "Attach images" : "This agent's model can't see images"}><Paperclip /></button>
     <textarea
       ref={composerRef}
       value={draft}
@@ -637,6 +662,13 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       aria-label="Message"
       disabled={busy || (route.newChat && !newAgentId)}
       onChange={(event) => { setDraft(event.target.value); autoGrow(event.target); }}
+      onPaste={(event) => {
+        // U5: a paste of only images (a screenshot) attaches them; rich text stays text (the kit's rule).
+        const files = pastedFiles(event.clipboardData);
+        if (!files.length) return;
+        event.preventDefault();
+        composerImages.addFiles(files);
+      }}
       onKeyDown={(event) => {
         // Enter sends on a keyboard; Shift+Enter adds a line; on touch devices Enter only adds a line (plan §13.2).
         if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || window.matchMedia?.("(pointer: coarse)").matches) return;
@@ -645,14 +677,14 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       }}
     />
     {running ? <button type="button" className="chat-stop" onClick={() => { void stop(); }}><Square />Stop</button>
-      : <button type="submit" className="chat-send" disabled={busy || !draft.trim() || (route.newChat && !newAgentId)} aria-label="Send"><Send /></button>}
+      : <button type="submit" className="chat-send" disabled={busy || (!draft.trim() && composerImages.attachments.length === 0) || composerImages.uploading || composerImages.failed || imagesBlocked || (route.newChat && !newAgentId)} aria-label="Send"><Send /></button>}
     <div className="chat-composer-foot">
       {budget !== null && usage && <span className={`chat-budget${budget >= 100 ? " chat-budget-full" : budget >= 80 ? " chat-budget-high" : ""}`} title={`${(usage.promptTokens + usage.completionTokens).toLocaleString()} of ${usage.budget.toLocaleString()} tokens today`}>{budget}% of today's tokens</span>}
-      <span className="chat-muted">Messages leave this Nook for the configured model provider.</span>
+      <span className="chat-muted">{composerImages.items.length ? "Messages and their images leave this Nook for the configured model provider." : "Messages leave this Nook for the configured model provider."}</span>
     </div>
   </form>;
 
-  const pane = <section ref={paneRef} className="chat-pane split-pane" aria-label="Chat">
+  const pane = <section ref={paneRef} className="chat-pane split-pane" aria-label="Chat" {...drop.bind}>
     {!detailOpen ? <div className="chat-placeholder"><MessagesSquare /><p>Pick a chat, or start a new one.</p></div>
       : route.newChat ? <div className="chat-thread">
         <header className="chat-thread-header">
@@ -669,6 +701,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
           {newAgent?.description && <p>{newAgent.description}</p>}
           {newAgent && newAgent.starters.length > 0 && <div className="chat-starters">{newAgent.starters.map((starter) => <button key={starter} type="button" className="secondary-button" onClick={() => { void submit(starter); }}>{starter}</button>)}</div>}
         </div>
+        {drop.dragging && <DropOverlay />}
         {composer}
       </div>
       : detailError ? <div className="chat-state chat-error" role="alert"><p>{detailError}</p><button className="secondary-button" onClick={() => { if (route.chatId) void refreshDetail(route.chatId); }}>Retry</button></div>
@@ -699,11 +732,13 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
             editing={editing?.id === shown.message.id ? editing.text : null}
             onEdit={(text) => setEditing({ id: shown.message.id, text })}
             onCancelEdit={() => setEditing(null)}
-            onSubmitEdit={(text) => { void submit(text, shown.message.parentId); }}
+            onSubmitEdit={(text) => { void submit(text, shown.message.parentId, editAttachments(shown.message)); }}
+            onOpenImage={(item) => setViewing({ documentId: item.documentId, name: item.name })}
             onRegenerate={() => { void regenerateMessage(shown.message); }}
             onSwitch={(direction) => { void switchBranch(shown, direction); }}
             onCopied={() => flash("Copied")} />)}
         </ol>
+        {drop.dragging && <DropOverlay />}
         {!readOnly && composer}
       </div>}
   </section>;
@@ -720,6 +755,10 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     {linking && chatAgent && <LinkNookKeySheet agentId={chatAgent.id} agentName={chatAgent.name} onClose={() => setLinking(false)} onChanged={() => { void loadAgents(); }} />}
     {sharing && detail && !readOnly && <AccessSheet kind="chat" id={detail.chat.id} title={detail.chat.title} guardHistory note={CHAT_SHARE_WARNING}
       onClose={() => setSharing(false)} onSaved={() => { setSharing(false); flash("Access updated"); void refreshDetail(detail.chat.id, true); }} />}
+    {attaching && composerOpen && <AttachSheet hostNoun="message" accept={CHAT_IMAGE_ACCEPT} closeOnPick onClose={() => setAttaching(false)}
+      onFiles={composerImages.addFiles} onPickDocument={composerImages.addDocument}
+      disabledReason={!composerVision ? visionMissingMessage(composerAgentName) : composerImages.full ? IMAGES_FULL_MESSAGE : null} />}
+    {viewing && <AttachmentPreview documentId={viewing.documentId} name={viewing.name} onClose={() => setViewing(null)} />}
     {publishing && detail && !readOnly && <PublicLinkSheet chatId={detail.chat.id} title={detail.chat.title} onClose={() => setPublishing(false)} onChanged={setPublicLink} />}
     {confirm.confirmElement}
   </main>;
@@ -739,6 +778,14 @@ function failureText(reason: unknown, fallback: string) {
   return messageOf(reason, fallback);
 }
 
+/** An edit sends the edited message's images again (they were confirmed when first attached). */
+const editAttachments = (message: ChatMessage): ChatAttachmentInput[] => (message.attachments ?? []).flatMap((item) => item.removed ? [] : [{ documentId: item.documentId, confirmed: true }]);
+
+/** The drop target's overlay while image files are dragged over the chat. */
+function DropOverlay() {
+  return <div className="chat-drop-overlay" aria-hidden="true"><ImagePlus /><span>Drop images to attach</span></div>;
+}
+
 function autoGrow(element: HTMLTextAreaElement) {
   element.style.height = "auto";
   element.style.height = `${Math.min(element.scrollHeight, 220)}px`;
@@ -748,10 +795,12 @@ type MessageViewProps = {
   shown: Shown; context: RenderContext; streaming: boolean; live: LiveRun | null; busy: boolean; editing: string | null; deciding: boolean;
   /** Wave 43: a shared chat's reader sees the turns and "Continue from here", never Edit, Regenerate, or the card. */
   readOnly?: boolean; onContinue?: () => void;
+  /** U5: opens one of a user message's images in the viewer. */
+  onOpenImage?: (item: Extract<ChatAttachment, { removed: false }>) => void;
   onEdit: (text: string) => void; onCancelEdit: () => void; onSubmitEdit: (text: string) => void; onRegenerate: () => void; onSwitch: (direction: 1 | -1) => void; onCopied: () => void; onDecide: (decision: "once" | "deny", card: PendingConfirmation) => void;
 };
 
-function MessageView({ shown, context, streaming, live, busy, editing, deciding, readOnly = false, onContinue, onEdit, onCancelEdit, onSubmitEdit, onRegenerate, onSwitch, onCopied, onDecide }: MessageViewProps) {
+function MessageView({ shown, context, streaming, live, busy, editing, deciding, readOnly = false, onContinue, onOpenImage, onEdit, onCancelEdit, onSubmitEdit, onRegenerate, onSwitch, onCopied, onDecide }: MessageViewProps) {
   const { message, index, count } = shown;
   const user = message.role === "user";
   const continueAction = readOnly && onContinue && !streaming && <button type="button" className="chat-action" onClick={onContinue} disabled={busy}><CopyPlus />Continue from here</button>;
@@ -767,8 +816,12 @@ function MessageView({ shown, context, streaming, live, busy, editing, deciding,
     return <li className="chat-message chat-user">
       {editing !== null ? <form className="chat-edit" onSubmit={(event) => { event.preventDefault(); onSubmitEdit(editing); }}>
         <textarea value={editing} rows={3} aria-label="Edit message" autoFocus onChange={(event) => onEdit(event.target.value)} />
-        <div className="chat-edit-actions"><button type="button" className="secondary-button" onClick={onCancelEdit}>Cancel</button><button type="submit" className="primary-button" disabled={busy || !editing.trim()}>Save &amp; submit</button></div>
-      </form> : <div className="chat-bubble"><p className="chat-user-text">{message.content}</p></div>}
+        <div className="chat-edit-actions"><button type="button" className="secondary-button" onClick={onCancelEdit}>Cancel</button><button type="submit" className="primary-button" disabled={busy || (!editing.trim() && !(message.attachments ?? []).some((item) => !item.removed))}>Save &amp; submit</button></div>
+      </form> : <div className="chat-bubble">
+        {message.attachments && message.attachments.length > 0 && <MessageImages items={message.attachments} onOpen={(item) => onOpenImage?.(item)} />}
+        {message.content && <p className="chat-user-text">{message.content}</p>}
+      </div>}
+      {editing !== null && message.attachments && message.attachments.some((item) => !item.removed) && <p className="chat-muted chat-edit-images">The {message.attachments.filter((item) => !item.removed).length === 1 ? "image is" : "images are"} sent again with the edit.</p>}
       <div className="chat-message-actions">
         {switcher}
         {editing === null && !readOnly && <button type="button" className="chat-action" onClick={() => onEdit(message.content)} disabled={busy}><Pencil />Edit</button>}

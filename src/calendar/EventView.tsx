@@ -18,10 +18,12 @@ type EventViewProps = {
   onLoaded?: (data: EventResponse) => void;
   renderLinks?: (data: EventResponse) => ReactNode;
   renderReminders?: (data: EventResponse) => ReactNode;
+  /** The event's files (uploads everywhere U1), above its links. */
+  renderAttachments?: (data: EventResponse) => ReactNode;
 };
 
 /** /calendar/event/:e: the event, what it links to, and the viewer's own reminders. */
-export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, onEdit, onUndo, onSkip, onDelete, onLoaded, renderLinks, renderReminders }: EventViewProps) {
+export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, onEdit, onUndo, onSkip, onDelete, onLoaded, renderLinks, renderReminders, renderAttachments }: EventViewProps) {
   const { canWrite } = useRole();
   const [data, setData] = useState<EventResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,6 +87,8 @@ export function EventView({ eventId, occurrence, reloadKey, onBack, onMissing, o
       {skippable && <button className="secondary-button" onClick={() => onSkip(data, occurrence)}><CalendarX2 />Skip {shortDate(occurrence)}</button>}
       <button className="danger-button" onClick={() => onDelete(data)}><Trash2 />Move to Bin</button>
     </div>}
+
+    {renderAttachments?.(data)}
 
     {renderLinks?.(data)}
 

@@ -1,6 +1,8 @@
 import { registerBinProvider, SWEEP_BATCH_SIZE, SWEEP_RESUME_BATCH_SIZE, type BinItem, type RestoreOutcome } from "../bin";
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
+import { binIfOrphanedAttachment } from "../attachments/service";
+import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { calendarWriterPredicate, editableCalendarPredicate } from "./access";
 import { rescheduleCalendarReminders, rescheduleEventReminders } from "./reminders";
 import { MAX_CALENDARS_PER_OWNER } from "./service";
@@ -106,10 +108,20 @@ function purgeLocked(type: CalendarBinType, id: string, options: { reason: Purge
   const marked = db.query(`UPDATE ${tables[type]} SET purge_started_at = COALESCE(purge_started_at, $startedAt) WHERE id = $id AND deleted_at IS NOT NULL${owner}${retention}`)
     .run({ startedAt: now(), id, ...(options.ownerId === undefined ? {} : { ownerId: options.ownerId }), ...(options.dueBy === undefined ? {} : { dueBy: options.dueBy }) });
   if (marked.changes === 0) return "not_found";
-  db.transaction(() => {
+  const binned = db.transaction(() => {
+    // Uploads everywhere U1 (D395, §4.4): the files this event (or every event of this calendar)
+    // links. The 046 trigger drops the links with the rows, including FK cascades from a calendar;
+    // an Attachments-folder file nothing else links then goes to its owner's Bin at once, instead
+    // of waiting for the hourly sweep. Files from elsewhere in Files are never touched.
+    const linked = db.query(type === "event"
+      ? "SELECT DISTINCT document_id FROM attachment_links WHERE host_kind = 'event' AND host_id = ?"
+      : "SELECT DISTINCT l.document_id FROM attachment_links l JOIN events e ON e.id = l.host_id WHERE l.host_kind = 'event' AND e.calendar_id = ?")
+      .all(id) as Array<{ document_id: string }>;
     const removed = db.query(`DELETE FROM ${tables[type]} WHERE id = ? AND purge_started_at IS NOT NULL`).run(id);
     if (removed.changes) audit(options.actorId, null, `${type}.purge`, type === "calendar" ? { calendarId: id, reason: options.reason } : { eventId: id, reason: options.reason });
+    return linked.filter((row) => binIfOrphanedAttachment(row.document_id, options.actorId, { notify: false })).map((row) => row.document_id);
   })();
+  if (binned.length) sourceAccessChangedHook({ kind: "document", ids: binned });
   return "purged";
 }
 

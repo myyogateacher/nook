@@ -1,5 +1,7 @@
 # Nook: Messages module (Slack-like channels, DMs, threads, webhooks)
 
+> **Status (2026-10-12): not planned.** The operator decided not to build the Messages module. This document is kept for reference only; its migration numbers are not reserved.
+
 *2026-09-30. Research and plan only; no code has changed. TODO.md named the target file `2026-09-27-messages-module.md` (the date the operator queued it); this doc carries the date the research ran. The operator's requirement list (TODO.md, "Messages module") is the brief, and every item in it gets a decision below.*
 
 **Numbering.** Decisions **D301–D340**, threat rows **T280–T299**, open decisions **M-O1…**. D300 (Wave 35, Google sign-in) and T276 are the highest numbers in the docs today; T277–T279 are left as a gap for late additions to other plans. Migration **`036_messages`** (035 is the latest registered; 031 stays reserved for a parallel wave). The four waves are called **MSG-A … MSG-D** until the director gives them numbers (proposed 36–39).

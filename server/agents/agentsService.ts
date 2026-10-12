@@ -8,7 +8,7 @@ import { agentToolRefs, linkStateOf, refKeyOf, setAgentTools, trifectaOf } from 
 import { manageableKbIds } from "../knowledge/service";
 import { serversAvailableTo } from "./toolServers";
 import { agentChangeMask, notifyAccess } from "../access/notices";
-import { effectiveModelOf, providerNameOf } from "./providers";
+import { effectiveModelOf, providerNameOf, visionFor } from "./providers";
 
 /**
  * Agents (plan §5.1, D355, D356). Create needs the `create_roles` policy. Wave 43 (AC-D) shares
@@ -68,7 +68,8 @@ export const agentSummary = (row: AgentRow, userId: string, level: ShareLevel = 
     ownerName: (ownerNameQuery.get(row.owner_id) as { display_name: string } | null)?.display_name ?? "Former member",
     usesNook: tools.some((tool) => tool.source === "nook"),
     providerName: providerNameOf(row.provider_id),
-    effectiveModel: effectiveModelOf(row.provider_id, row.model)
+    effectiveModel: effectiveModelOf(row.provider_id, row.model),
+    vision: visionFor(row.provider_id, row.model)
   };
 };
 export const agentDetail = (row: AgentRow, userId: string): AgentDetail => {

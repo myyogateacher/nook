@@ -56,11 +56,14 @@ describe("card attachments", () => {
     const { owner, member, other, stranger, cardId } = await setup("Attach access");
     const document = await uploadAttachment(member);
     expect((await content(owner, document.id)).status).toBe(404);
-    // Someone else's document, and a regular Files document, cannot be linked.
+    // Someone else's document cannot be linked; the owner's own Files document needs the confirm (U2, D396).
     expect((await call(owner, "POST", `/cards/${cardId}/attachments`, { documentId: document.id })).status).toBe(404);
     const filesUpload = await upload(member, "", "notes.txt", "plain");
     const filesDocument = ((await filesUpload.json()) as { document: { id: string } }).document;
-    expect((await call(member, "POST", `/cards/${cardId}/attachments`, { documentId: filesDocument.id })).status).toBe(404);
+    const unconfirmed = await call(member, "POST", `/cards/${cardId}/attachments`, { documentId: filesDocument.id });
+    expect(unconfirmed.status).toBe(409);
+    expect(unconfirmed.body).toMatchObject({ code: "CONFIRM_REQUIRED", documentName: "notes.txt" });
+    expect((await call(owner, "POST", `/cards/${cardId}/attachments`, { documentId: filesDocument.id, confirmed: true })).status).toBe(404);
     expect((await call(stranger, "POST", `/cards/${cardId}/attachments`, { documentId: document.id })).status).toBe(404);
 
     const linked = await call(member, "POST", `/cards/${cardId}/attachments`, { documentId: document.id });

@@ -126,8 +126,10 @@ export const cardCreateSchema = z.object({
   tagIds: tagIdsSchema.optional(),
   flags: flagsSchema.optional(),
   relations: createRelationsSchema.optional(),
-  /** The caller's own unlinked task-attachment uploads (LIMITS.attachmentsPerCard). */
+  /** The caller's own unlinked uploads, or their own Files items with attachmentsConfirmed (LIMITS.attachmentsPerCard). */
   attachmentIds: z.array(uuid).max(50).optional(),
+  /** The caller confirmed that the board's readers will be able to open Files items in attachmentIds (D396). */
+  attachmentsConfirmed: z.boolean().optional(),
   /** A live card of this board one level up (D121). */
   parentId: uuid.nullable().optional(),
   level: levelSchema.optional(),
@@ -159,11 +161,21 @@ export const cardPatchSchema = z.object({
     || value.dueTz !== undefined || value.assigneeId !== undefined || value.assigneeIds !== undefined || value.tagIds !== undefined || value.flags !== undefined
     || value.parentId !== undefined || value.level !== undefined || value.sprintId !== undefined,
   "Provide a title, description, dueOn, dueTime, assigneeIds, tagIds, flags, parentId, level, or sprintId");
-const commentBody = z.string().refine((value) => value.trim().length > 0, "Write a comment")
-  .refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
-export const commentCreateSchema = z.object({ body: commentBody, attachmentIds: z.array(uuid).max(10).optional() }).strict();
-export const attachmentSchema = z.object({ documentId: uuid, commentId: uuid.nullable().optional() }).strict();
-export const commentPatchSchema = z.object({ body: commentBody }).strict();
+// A blank body is allowed only with files (files-only comments, uploads everywhere D397): the server
+// stores a generated body then (shared/commentFiles.ts).
+const commentBody = z.string().refine((value) => Buffer.byteLength(value, "utf8") <= COMMENT_MAX_BYTES, `Comments can be at most ${COMMENT_MAX_BYTES} bytes`);
+const commentFiles = z.array(uuid).max(10);
+const hasText = (value: { body?: string }) => value.body !== undefined && value.body.trim().length > 0;
+export const commentCreateSchema = z.object({
+  body: commentBody.optional(),
+  attachmentIds: commentFiles.optional(),
+  /** Files items outside the Attachments folder need this (D396, Q2): the board's readers will open them. */
+  confirmed: z.boolean().optional()
+}).strict().refine((value) => hasText(value) || (value.attachmentIds?.length ?? 0) > 0, "Write a comment or attach a file");
+export const attachmentSchema = z.object({ documentId: uuid, commentId: uuid.nullable().optional(), confirmed: z.boolean().optional() }).strict();
+/** Edit the text, add files (U2), or both; a blank body keeps the comment only while it has files. */
+export const commentPatchSchema = z.object({ body: commentBody.optional(), attachmentIds: commentFiles.optional(), confirmed: z.boolean().optional() }).strict()
+  .refine((value) => value.body !== undefined || (value.attachmentIds?.length ?? 0) > 0, "Provide a body or attachmentIds");
 export const cardMoveSchema = z.object({ columnId: uuid, afterCardId: uuid.nullable() }).strict();
 
 const id = (c: Context<AppEnv>, name: string) => uuid.parse(c.req.param(name));
@@ -383,7 +395,7 @@ export function registerTaskRoutes(app: Hono<AppEnv>) {
   app.patch("/api/tasks/comments/:commentId", async (c) => {
     const commentId = id(c, "commentId");
     const body = await parseJson(c.req.raw, commentPatchSchema);
-    return respond(c, async () => withAuthorAvatar(await updateComment(c.get("user").id, commentId, body.body)));
+    return respond(c, async () => withAuthorAvatar(await updateComment(c.get("user").id, commentId, body)));
   });
 
   app.delete("/api/tasks/comments/:commentId", (c) => {

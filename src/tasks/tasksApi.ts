@@ -1,5 +1,5 @@
-import { api, ApiError, getCsrfToken } from "../api";
-import { uploadErrorMessage } from "../files/filesApi";
+import { api, ApiError } from "../api";
+import { uploadForHost } from "../ui/attachments";
 import { TASK_FLAGS, type TaskFlag } from "../../shared/taskQuery";
 import type { BoardStructure, BoardTemplateId } from "../../shared/boardStructure";
 import type { ReactionAggregate, ReactionKey } from "../../shared/reactions";
@@ -166,6 +166,8 @@ export type CardCreate = {
   flags?: string[];
   relations?: Array<{ targetCardId: string; type: RelationType }>;
   attachmentIds?: string[];
+  /** The person confirmed that the board's readers will open the Files items in attachmentIds (D396). */
+  attachmentsConfirmed?: boolean;
   /** A card one level up on this board (D121); the level then defaults to the parent's plus one. */
   parentId?: string | null;
   level?: number;
@@ -244,7 +246,12 @@ export const deleteTag = (tagId: string) => api<{ ok: true; removedFrom: number 
 export const listComments = (cardId: string, before: string) =>
   api<{ comments: CardComment[]; hasMore: boolean }>(`/tasks/cards/${cardId}/comments?before=${encodeURIComponent(before)}`);
 export const createComment = (cardId: string, body: string) => api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", { body }));
-export const updateComment = (commentId: string, body: string) => api<{ comment: CardComment }>(`/tasks/comments/${commentId}`, json("PATCH", { body }));
+/**
+ * The author's edit: new text, files to add (≤ 10 per comment, uploads everywhere U2), or both. A
+ * blank body is kept only while the comment has files (the server stores the generated body, D397).
+ */
+export type CommentChange = { body?: string; attachmentIds?: string[]; confirmed?: boolean };
+export const updateComment = (commentId: string, change: CommentChange) => api<{ comment: CardComment }>(`/tasks/comments/${commentId}`, json("PATCH", change));
 /** Idempotent set-state (D184): `on` sends PUT, off sends DELETE. The body is empty, so the JSON type is set explicitly. */
 export const setCommentReaction = (commentId: string, emoji: ReactionKey, on: boolean) =>
   api<{ reactions: ReactionAggregate[] }>(`/tasks/comments/${commentId}/reactions/${emoji}`, { method: on ? "PUT" : "DELETE", headers: { "Content-Type": "application/json" } });
@@ -261,29 +268,36 @@ export type CardAttachment = {
   preview_kind: string;
   size_bytes: number;
   created_at: string;
+  /** 1 when the file is in its owner's Bin: the name is blank and the card shows "File removed" (D409). Older servers omit it. */
+  removed?: 0 | 1;
 };
 
-export type UploadedAttachment = { id: string; name: string; mime_type: string; preview_kind: string; size_bytes: number };
+/**
+ * A file staged to attach (the composer, a comment). `fromFiles` marks a pick from the person's own
+ * Files (D396): it is never discarded with the draft, and it needs the confirm the picker asked for.
+ */
+export type UploadedAttachment = { id: string; name: string; mime_type: string; preview_kind: string; size_bytes: number; fromFiles?: boolean; confirmed?: boolean };
 
-/** Uploads a file as a task attachment (no folder, never in Files). It is readable to the board only once linked. */
-export async function uploadAttachment(file: File): Promise<UploadedAttachment> {
-  const body = new FormData();
-  body.append("file", file, file.name || "attachment");
-  const headers = new Headers({ "Idempotency-Key": crypto.randomUUID() });
-  const csrf = getCsrfToken();
-  if (csrf) headers.set("X-CSRF-Token", csrf);
-  const response = await fetch("/api/files?purpose=task_attachment", { method: "POST", body, headers, credentials: "same-origin" });
-  const payload = await response.json().catch(() => ({})) as { document?: UploadedAttachment };
-  if (!response.ok || !payload.document) throw new Error(uploadErrorMessage(response.status, payload));
-  return payload.document;
+export type UploadOptions = { onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal };
+
+/**
+ * Uploads a file to attach to a card (uploads everywhere U2, D390): the attach kit's upload, so it lands
+ * in the uploader's Files › Attachments folder with JPEG location removed (Q9). It is readable to the
+ * board only once linked; an upload never linked moves to the Bin after a day.
+ */
+export async function uploadAttachment(file: File, options: UploadOptions = {}): Promise<UploadedAttachment> {
+  const { document } = await uploadForHost(file, "card", options);
+  return { id: document.id, name: document.name, mime_type: document.mime_type, preview_kind: document.preview_kind, size_bytes: document.size_bytes };
 }
 
-export const linkAttachment = (cardId: string, documentId: string, commentId?: string) =>
-  api<{ attachment: CardAttachment }>(`/tasks/cards/${cardId}/attachments`, json("POST", commentId ? { documentId, commentId } : { documentId }));
+/** `confirmed`: a Files item outside the Attachments folder, after the From Files confirm (409 CONFIRM_REQUIRED otherwise). */
+export const linkAttachment = (cardId: string, documentId: string, options: { commentId?: string; confirmed?: boolean } = {}) =>
+  api<{ attachment: CardAttachment }>(`/tasks/cards/${cardId}/attachments`, json("POST", { documentId, ...(options.commentId ? { commentId: options.commentId } : {}), ...(options.confirmed ? { confirmed: true } : {}) }));
 export const unlinkAttachment = (cardId: string, documentId: string) =>
   api<{ ok: true; movedToBin: boolean }>(`/tasks/cards/${cardId}/attachments/${documentId}`, json("DELETE", {}));
-export const createCommentWithFiles = (cardId: string, body: string, attachmentIds: string[]) =>
-  api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", attachmentIds.length ? { body, attachmentIds } : { body }));
+/** A blank body with files posts a files-only comment (D397). */
+export const createCommentWithFiles = (cardId: string, body: string, attachmentIds: string[], options: { confirmed?: boolean } = {}) =>
+  api<{ comment: CardComment }>(`/tasks/cards/${cardId}/comments`, json("POST", attachmentIds.length ? { body, attachmentIds, ...(options.confirmed ? { confirmed: true } : {}) } : { body }));
 
 /** Titles of live cards on boards the caller can read (D106): `boardId` sorts first, `excludeCardId` drops the card itself. */
 export function searchCards(q: string, options: { boardId?: string; excludeCardId?: string; signal?: AbortSignal } = {}) {

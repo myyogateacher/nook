@@ -1,10 +1,11 @@
 import { audit, db, now } from "../db";
 import { readableBoardPredicate } from "./access";
-import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments } from "./attachments";
+import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments, notifyBinnedFiles } from "./attachments";
 import { LIMITS, limitReached, requireBoardAt, requireCardAt, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
 import { mailComment } from "../mail/triggers";
 import type { ReactionAggregate } from "../../shared/reactions";
+import { FILES_ONLY_MARK, generatedCommentBody, isGeneratedCommentBody } from "../../shared/commentFiles";
 
 /**
  * Card comments (WAVES_7-9.md §3.3, D38). Any reader comments; only the author edits; the author
@@ -73,7 +74,42 @@ function readableComment(commentId: string, userId: string) {
     WHERE m.id = $commentId AND ${readableBoardPredicate}`).get({ commentId, userId }) as CommentRow | null;
 }
 
-export async function createComment(userId: string, cardId: string, input: { body: string; attachmentIds?: string[] }) {
+export type CommentInput = {
+  /** The text; blank is allowed only when the comment has files (D397). */
+  body?: string;
+  /** The caller's own files to attach through the comment (≤ 10 per comment). */
+  attachmentIds?: string[];
+  /** The caller confirmed that the board's readers will be able to open a Files item (D396, Q2). */
+  confirmed?: boolean;
+};
+
+const blank = (body: string | undefined) => body === undefined || body.trim().length === 0;
+const noText = () => new TaskError(400, "Write a comment or attach a file", "INVALID");
+
+/** Names of the live files linked through a comment, in linking order (for a generated body). */
+function commentFileNames(commentId: string) {
+  return (db.query(`SELECT d.name FROM card_attachments ca JOIN documents d ON d.id = ca.document_id AND d.deleted_at IS NULL
+    WHERE ca.comment_id = ? ORDER BY ca.created_at, ca.rowid`).all(commentId) as Array<{ name: string }>).map((row) => row.name);
+}
+
+/**
+ * Links files through a comment and audits each link; a files-only comment whose files were all
+ * on the card already would be empty, so that is refused (the caller's transaction rolls back).
+ */
+function linkCommentFiles(userId: string, boardId: string, cardId: string, commentId: string, input: CommentInput) {
+  if (!input.attachmentIds?.length) return [];
+  const linked = linkAttachments({ userId, cardId, documentIds: input.attachmentIds, commentId, confirmed: input.confirmed });
+  for (const documentId of linked) audit(userId, null, "task.attachment_link", { boardId, cardId, documentId, commentId });
+  return linked;
+}
+
+/**
+ * Posts a comment. With files and no text (D397, Q12) the stored body is generated from the files
+ * (`📎 name` or `📎 N files`, shared/commentFiles.ts), which the app shows as the files alone.
+ */
+export async function createComment(userId: string, cardId: string, input: CommentInput) {
+  const filesOnly = blank(input.body);
+  if (filesOnly && !input.attachmentIds?.length) throw noText();
   const { board } = requireCardAt(cardId, userId, "comment");
   return withBoardLock(board.id, () => {
     requireCardAt(cardId, userId, "comment");
@@ -82,15 +118,16 @@ export async function createComment(userId: string, cardId: string, input: { bod
     const id = crypto.randomUUID();
     db.transaction(() => {
       const timestamp = now();
-      db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)").run(id, cardId, userId, input.body, timestamp);
+      // The CHECK needs a body before the links exist; a files-only one is replaced once they do.
+      db.query("INSERT INTO card_comments (id, card_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)").run(id, cardId, userId, filesOnly ? FILES_ONLY_MARK : input.body!, timestamp);
       // Files attached with the comment are linked to the card through it (their owner only).
-      if (input.attachmentIds?.length) {
-        for (const documentId of linkAttachments({ userId, cardId, documentIds: input.attachmentIds, commentId: id })) {
-          audit(userId, null, "task.attachment_link", { boardId: board.id, cardId, documentId, commentId: id });
-        }
+      const linked = linkCommentFiles(userId, board.id, cardId, id, input);
+      if (filesOnly) {
+        if (!linked.length) throw new TaskError(409, "These files are already attached to this card", "ATTACHMENT_LINKED");
+        db.query("UPDATE card_comments SET body = ? WHERE id = ?").run(generatedCommentBody(commentFileNames(id)), id);
       }
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(timestamp, cardId);
-      audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id });
+      audit(userId, null, "task.comment_create", { boardId: board.id, cardId, commentId: id, ...(linked.length ? { files: linked.length } : {}), ...(filesOnly ? { filesOnly: true } : {}) });
       // "New comment on your card" mail for its assignees and creator (outbound email #17).
       mailComment(userId, cardId, id);
     })();
@@ -98,7 +135,12 @@ export async function createComment(userId: string, cardId: string, input: { bod
   });
 }
 
-export async function updateComment(userId: string, commentId: string, body: string) {
+/**
+ * The author edits the text and may add files (≤ 10 per comment, U2). A blank body is allowed while
+ * the comment has files: it becomes the generated body. A generated body is regenerated when files
+ * are added, so `📎 a.png` plus one more reads `📎 2 files`.
+ */
+export async function updateComment(userId: string, commentId: string, input: CommentInput) {
   const found = readableComment(commentId, userId);
   if (!found) throw commentNotFound();
   return withBoardLock(found.board_id, () => {
@@ -108,8 +150,18 @@ export async function updateComment(userId: string, commentId: string, body: str
     // An author whose level dropped below comment keeps reading, not writing (D272).
     requireBoardAt(current.board_id, userId, "comment");
     db.transaction(() => {
-      db.query("UPDATE card_comments SET body = ?, edited_at = ? WHERE id = ?").run(body, now(), commentId);
-      audit(userId, null, "task.comment_update", { boardId: current.board_id, cardId: current.card_id, commentId });
+      const before = commentFileNames(commentId);
+      const wasGenerated = isGeneratedCommentBody(current.body, { count: before.length, names: before });
+      const linked = linkCommentFiles(userId, current.board_id, current.card_id, commentId, input);
+      const names = linked.length ? commentFileNames(commentId) : before;
+      let body = input.body === undefined ? current.body : input.body;
+      if (blank(body) || (input.body === undefined && wasGenerated && linked.length)) {
+        if (!names.length) throw noText();
+        body = generatedCommentBody(names);
+      }
+      if (body !== current.body || linked.length) db.query("UPDATE card_comments SET body = ?, edited_at = ? WHERE id = ?").run(body, now(), commentId);
+      if (linked.length) db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), current.card_id);
+      audit(userId, null, "task.comment_update", { boardId: current.board_id, cardId: current.card_id, commentId, ...(linked.length ? { filesAdded: linked.length } : {}) });
     })();
     return { comment: commentById(userId, commentId)! };
   });
@@ -123,13 +175,16 @@ export async function deleteComment(userId: string, commentId: string) {
     if (!current) throw commentNotFound();
     if (current.author_id !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the author or the board owner can delete this comment", "AUTHOR_ONLY");
     if (current.owner_id !== userId) requireBoardAt(current.board_id, userId, "comment");
+    const binnedFiles: string[] = [];
     db.transaction(() => {
-      // Links made through the comment go with it; files no card links any more move to the Bin.
+      // Links made through the comment go with it; files no card links any more move to the Bin
+      // (task attachments and Attachments-folder files; a Files item linked from elsewhere stays, D395).
       const documentIds = commentAttachmentIds(commentId);
       db.query("DELETE FROM card_comments WHERE id = ?").run(commentId);
-      binUnlinkedAttachments(documentIds, userId);
+      binUnlinkedAttachments(documentIds, userId, binnedFiles);
       audit(userId, null, "task.comment_delete", { boardId: current.board_id, cardId: current.card_id, commentId });
     })();
+    notifyBinnedFiles(binnedFiles);
     return { ok: true as const };
   });
 }

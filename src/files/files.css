@@ -241,3 +241,18 @@
 @media (max-width: 760px) { .file-header-row .app-account-inbox { width: 44px; min-width: 44px; height: 44px; } }
 /* With the Inbox button the phone header row has no room for the Upload label: the button keeps its name for assistive tech and shows its icon. */
 @media (max-width: 760px) { .files-upload-button { width: 44px; min-width: 44px; justify-content: center; padding: 0; } .files-upload-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } }
+/* Uploads everywhere (D391): the Attachments folder is managed by Nook; a lock marks it in the folder list. */
+.folder-link:has(> .folder-system-badge) { grid-template-columns: 20px minmax(0, 1fr) auto auto; }
+.folder-link .folder-system-badge { width: 13px; height: 13px; color: #8d8d94; }
+
+/* Uploads everywhere U6: the upload menu (Take photo on phones, Upload files, Upload folder), folder
+   upload progress, and subfolders indented under their folder (four steps at most). */
+.files-upload-control .sort-menu { top: 44px; right: 0; width: 200px; }
+.files-upload-menu button svg { flex: none; }
+.upload-queue-preparing { margin: 0; padding: 0 16px 8px; color: #a9a9af; font-size: .78rem; overflow-wrap: anywhere; }
+.folder-link[data-depth] { padding-left: calc(10px + var(--folder-depth, 1) * 14px); }
+@media (max-width: 760px) {
+  .files-upload-control .sort-menu { top: 50px; }
+  .files-upload-menu button { min-height: 44px; }
+  .folder-link[data-depth] { padding-left: calc(13px + var(--folder-depth, 1) * 14px); }
+}

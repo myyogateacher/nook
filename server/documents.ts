@@ -20,6 +20,8 @@ import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, writeDirectShares } from
 import { whiteboardFileName } from "../shared/whiteboardScene";
 import { isWhiteboard, renameWhiteboardIndex } from "./whiteboards/search";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
+import { isHostKind } from "./attachments/hosts";
+import { ensureSystemFolder, isSystemFolder, SYSTEM_FOLDER_BODY, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
@@ -399,8 +401,17 @@ async function handleUpload(c: Context<AppEnv>) {
   const purpose = purposeParam ?? "file";
   const folderParam = c.req.query("folderId");
   if (purpose !== "file" && folderParam !== undefined) return c.json({ error: "Invalid request", details: ["Attachments have no folder"] }, 400);
-  const folderId = purpose !== "file" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
+  // Uploads everywhere (D390, D391): `?attachTo=<host kind>` stores an ordinary Files document in the
+  // uploader's Attachments folder, created on first use; the caller then links it to the host.
+  const attachTo = c.req.query("attachTo");
+  if (attachTo !== undefined) {
+    if (!isHostKind(attachTo)) return c.json({ error: "Invalid request", details: ["attachTo must be a host kind such as event, note, card, row, or chat_message"] }, 400);
+    if (purposeParam !== undefined || folderParam !== undefined) return c.json({ error: "Invalid request", details: ["attachTo takes no purpose or folderId"] }, 400);
+  }
+  const folderId = attachTo !== undefined ? ensureSystemFolder(userId) : purpose !== "file" ? null : folderParam === undefined ? ensureDefaultFolder(userId) : uuid.parse(folderParam);
   if (folderId !== null && !ownsFolder(folderId, userId)) return c.json({ error: "Folder not found" }, 404);
+  // T342: nothing is uploaded into a system folder directly; attachments arrive through attachTo.
+  if (attachTo === undefined && folderId !== null && isSystemFolder(folderId)) return c.json(SYSTEM_FOLDER_BODY, 400);
 
   const keyHeader = c.req.header("Idempotency-Key");
   const uploadKey = keyHeader === undefined ? null : uuid.safeParse(keyHeader.trim().toLowerCase()).data ?? null;
@@ -575,7 +586,7 @@ const notFound = (c: Context<AppEnv>) => c.json({ error: "File not found" }, 404
 const withDocumentLock = <T>(id: string, operation: () => Promise<T>) => withResourceLock(`document:${id}`, operation);
 
 export class DocumentPatchError extends Error {
-  constructor(readonly status: 400 | 404 | 409, message: string, readonly code?: "AUDIENCE_CHANGE") {
+  constructor(readonly status: 400 | 404 | 409, message: string, readonly code?: "AUDIENCE_CHANGE" | "SYSTEM_FOLDER") {
     super(message);
     this.name = "DocumentPatchError";
   }
@@ -617,6 +628,8 @@ export async function patchDocument(userId: string, id: string, input: { name?: 
     if (input.folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(input.folderId, userId)) {
       throw new DocumentPatchError(404, "Folder not found");
     }
+    // T342, D392: files may leave a system folder, never enter one (an upload with attachTo puts them there).
+    if (input.folderId && input.folderId !== document.folder_id && isSystemFolder(input.folderId)) throw new DocumentPatchError(400, SYSTEM_FOLDER_MESSAGE, "SYSTEM_FOLDER");
     if (moving && options.refuseAudienceChange && document.sharing_override === 0 && folderAudience(document.folder_id) !== folderAudience(input.folderId ?? null)) {
       throw new DocumentPatchError(409, "Moving this file would change who can see it", "AUDIENCE_CHANGE");
     }
@@ -657,7 +670,7 @@ export function registerDocumentRoutes(app: Hono<AppEnv>) {
     try {
       return c.json({ document: await patchDocument(userId, id, body) });
     } catch (error) {
-      if (error instanceof DocumentPatchError) return c.json({ error: error.message }, error.status);
+      if (error instanceof DocumentPatchError) return c.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, error.status);
       throw error;
     }
   });

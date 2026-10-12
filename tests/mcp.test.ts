@@ -68,7 +68,8 @@ async function publishedNote(session: Session, markdown: string, folderId: strin
   return note.id;
 }
 
-const NOTES_READ_TOOLS = ["list_folders", "list_notes", "read_note", "search_notes"];
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const NOTES_READ_TOOLS = ["list_attachments", "list_folders", "list_notes", "read_attachment_text", "read_note", "search_notes"];
 
 describe("MCP scopes", () => {
   test("a key created through the API defaults to notes:read and sees only the read tools", async () => {

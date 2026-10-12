@@ -1,6 +1,6 @@
 # Uploads everywhere: one attachment model for every module
 
-**Status:** research and plan, 2026-10-09, against v0.34.0 (`ba52881`). No code has changed. The operator asked to "research all places that user would like to upload file and where we support that, and if its missing implement that". This doc covers the research and the plan. The implementation runs later, in separate agents, one slice each (§6).
+**Status:** research and plan, 2026-10-09, against v0.34.0 (`ba52881`). Operator decisions recorded in §9 (2026-10-09). **U0 built** on branch `uploads-u0` (§10 lists its APIs for U1–U7). The operator asked to "research all places that user would like to upload file and where we support that, and if its missing implement that". This doc covers the research and the plan. The implementation runs later, in separate agents, one slice each (§6).
 
 **Numbering.** Other plans are being written in parallel, so this plan takes its own blocks: decisions **D390–D409** and threats **T340–T352**. Whoever merges the plans renumbers if the blocks collide. Migration ids are reserved: the S3 storage backend (branch `s3-storage`) takes **045**, this plan takes **046** and, if a second one is needed, **047**. The Messages migration moves after them, to 048.
 
@@ -384,3 +384,88 @@ Converts existing `task_attachment` and `collection_attachment` documents into A
 | Q10 | Chat: allow images only for vision-flagged models, and refuse PDFs until a text extractor exists? | **Yes.** PDF text extraction would need a dependency (D20) and gets its own decision. |
 | Q11 | Per-host caps: events 20, notes 100, chat 5 per message? | **Yes.** |
 | Q12 | Should files-only comments get a generated body (`📎 name`), or should we wait for a `card_comments` rebuild? | **Generated body** (D397). |
+
+---
+
+## 9. Decision log
+
+**Operator decisions, 2026-10-09 (binding).**
+
+| # | Decision | Effect on this plan |
+| --- | --- | --- |
+| Q1 | **Visible.** Every attachment is a normal Files document in a per-person "Attachments" system folder (`folders.system_kind = 'attachments'`), visible in Files and counted toward the quota. | D390–D392 as written. |
+| Q2 | **Yes.** People may attach a file they **own** from Files to cards, events, rows, and notes, after a short confirm in the app's dialog (D91). | D396. **Relaxes D179** (`docs/plan/WAVES_18-20_SMALL.md`, annotated); U2 changes `link_attachment`. The server enforces the confirm: a Files item outside the Attachments folder needs `confirmed: true` (409 `CONFIRM_REQUIRED` otherwise). |
+| Q4 | **Yes.** Whiteboard pictures follow board sharing. | **Changes T165** (THREAT_MODEL annotated). The `whiteboard` host and its access rule are in the U0 registry (§10); U4b derives the links on save and updates the picker hint. |
+| Q10 | Chat composer: images go only to models an admin marks vision-capable; PDFs and other files are refused for now; up to 5 per message. | U5. The `chat_message` host cap is 5 in U0. |
+| Q3 | Default accepted: convert hidden task and row attachments later, in U8, with migration 047. | U8. |
+| Q5 | Default accepted: thumbnails generated in the browser, later. | Phase 2 (047 candidate (a)). U0's list draws originals ≤ 8 MiB. |
+| Q6 | Default accepted: Messages shares the Attachments folder. | Messages uses `host_kind = 'message'`; it registers in hosts.ts. |
+| Q7 | Default accepted: no virus-scan hook. | T352 accepted. |
+| Q8 | Default accepted: vault file secrets deferred. | — |
+| Q9 | Default accepted: strip location (EXIF GPS) from every JPEG upload by default. | D401 as built: the kit rewrites every JPEG it uploads (not only camera shots) unless the caller passes `keepLocation`. A per-person "keep location" setting is not built (no UI asked for it in U0). The server never rewrites bytes (an upload's SHA-256 must match), so MCP, REST, and Files-app uploads keep their metadata; USING and OPERATIONS say so. |
+| Q11 | Default accepted: caps of 20 per event, 100 per note, 5 per chat message. | Registry caps (cards 50/10 and rows 20 unchanged). |
+| Q12 | Default accepted: a generated body for files-only comments. | D397, U2. |
+
+**U0 build notes (2026-10-09), where the build differs from or adds to §4–§6:**
+
+- **System-folder guards in 046.** Besides the designed objects, 046 adds triggers that refuse folder shares, folder group grants, a non-private visibility, renames, moves, subfolders, notes, and whiteboards in a system folder, and any change of `system_kind` after creation. The routes refuse first with 400 `SYSTEM_FOLDER`; the triggers hold the rule for every other path (the app's error handler and MCP map them to the same answer). 046 also adds `whiteboards_attachment_links_ad` for U4b.
+- **`GET /api/folders` hides system folders** unless `?include=system` (Files asks for it). Notes, Whiteboards, Routines, and the key pickers therefore need no change. MCP `list_folders` lists it with `system_kind`.
+- **Restore.** A binned Attachments-folder file comes back to the Attachments folder while something links it, and otherwise to Default as an ordinary file, so the orphan sweep never bins it again (§4.4 said "into the Attachments folder" unconditionally).
+- **Derived links never bin.** `syncDerivedLinks` removes links that are no longer referenced but does not bin the file (an older note version may still show it); the hourly orphan sweep handles files nothing links.
+- **Generic MCP tools** are declared `list` mode over the host containers with `listsNeedReach`, so a key whose chosen items hold no host container (only knowledge bases) is not offered them; each call checks the host module's scope and the key's grant on the host. They are classified "never" for agents in chats (`NOOK_NEVER_TOOLS`) until the bridge maps a multi-module tool to the module of the item it is called on.
+- **Chat messages** are readable by someone the chat is shared with only when the message is on the branch on screen (a bounded recursive walk from `active_leaf_id`, review L5).
+- **Not built in U0:** the "keep photo location" per-person setting (Q9 says "by default"; the kit has the switch); `useLeaveGuard` wiring is the host slice's (the kit exposes abort signals).
+
+---
+
+## 10. U0 as built: the APIs for U1–U7
+
+Branch `uploads-u0`. Slices **call** these and never edit them; a bug or a missing hook goes back to U0's owner (§6 "Parallel safety").
+
+### Server (`server/attachments/`)
+
+| File | What it gives slices |
+| --- | --- |
+| `hosts.ts` | `HOST_KINDS` (`event`, `note`, `chat_message`, `whiteboard`, `card`, `row`), `HOSTS[kind]` (`noun`, `store`, `linking: "declared" \| "derived" \| "module"`, `readScope`, `itemKind`, `caps`, `hasParts`, `readableSql`, `ownerOf`, `title`, `canLink`, `canUnlink`), `isHostKind`. The access rule of every host lives here (T340); `attachmentLinkReadBranch` is the one branch `documentAccess.ts` adds. |
+| `service.ts` | `ensureSystemFolder(userId)` → folder id; `attachmentsFolderOf(userId)`; `isSystemFolder(folderId)`, `refuseSystemFolder(folderId)` (throws 400 `SYSTEM_FOLDER`), `SYSTEM_FOLDER_BODY`; `hostReadable(kind, hostId, userId)`; `hostLinks(kind, hostId)`; `listAttachments(kind, hostId, userId)` → `AttachmentView[]` (404 `AttachmentError` when unreadable); `readableAttachment(kind, hostId, documentId, userId)` → `DocumentRow \| null`; `linkAttachment(userId, kind, hostId, { documentId, partId?, confirmed? })` (declared hosts); `unlinkAttachment(userId, kind, hostId, documentId)` → `{ documentBinned }`; `syncDerivedLinks(kind, hostId, actorId, documentIds)` → `{ linked, unlinked, skipped }` (notes, whiteboards; call inside the host's own lock); `binIfOrphanedAttachment(documentId)` (call inside your transaction after removing a link, e.g. a comment or host delete); `documentLinkCount(documentId)`; `documentUsage(documentId, ownerId)`; `AttachmentError` (`status`, `code`, `body`). |
+| `routes.ts` | `GET/POST /api/attachments/:hostKind/:hostId`, `DELETE /api/attachments/:hostKind/:hostId/:documentId`, `GET /api/files/:id/usage` (API_CONTRACTS § Attachments everywhere). |
+| `sweep.ts` | Hourly: stale links and never-linked Attachments-folder files older than a day. Nothing for slices to call. |
+| `mcpTools.ts` | `list_attachments`, `read_attachment_text`. Slices add their attach tools (`attach_file_to_event`, `attach_file_to_row`, U2's `link_attachment`) in their own `mcpTools.ts`, taking a `documentId` from `create_text_file` / `begin_upload` with `purpose: "attachment"`, and calling `linkAttachment` (or their module's link function for cards and rows). |
+| `noteLinks.ts` | `referencedDocumentIds(markdown)` (`/api/files/<id>/content` images and `/files/<id>` chips). U4 calls `syncDerivedLinks("note", noteId, publisherId, referencedDocumentIds(published))` from `publishDraft`. |
+
+Uploads: `POST /api/files?attachTo=<kind>` (web) or `purpose: "attachment"` (MCP) put the file in the uploader's Attachments folder as `purpose = 'file'`. Cards and rows keep `card_attachments` and `collection_row_attachments`; U2 and U3 extend their own link paths to accept the caller's own Attachments-folder and (confirmed) Files documents, and should call `binIfOrphanedAttachment` where they bin legacy attachments today.
+
+Per slice: **U1** wires events through the generic routes (declared host; editors link, the linker, file owner, or calendar owner/manager unlinks). **U4** wires `noteLinks.ts` into publish plus the boot reconcile. **U4b** calls `syncDerivedLinks("whiteboard", boardId, boardOwnerId, ids)` on save, with the board's owner as the actor (L4). **U5** links user messages through `linkAttachment(userId, "chat_message", messageId, …)` at send time (cap 5). Messages registers `message` in hosts.ts (a reviewed change to U0's file).
+
+### Client (`src/ui/attachments/`, import from `src/ui/attachments/index.ts`)
+
+| Export | Use |
+| --- | --- |
+| `<AttachSheet hostNoun onClose onFiles onPickDocument? accept? multiple? camera? disabledReason? closeOnPick? children?>` | The one attach sheet: **Take photo** (`accept="image/*" capture="environment"`, shown on `(pointer: coarse)` unless `camera` says otherwise), **Choose files**, **From Files** (only when `onPickDocument` is given: the caller's own files; outside the Attachments folder it asks the D91 confirm first and hands back `{ confirmed: true }`). A bottom sheet at ≤ 760 px, one history layer (Back closes it; the picker and its confirm are layers above it). Put progress rows in `children`. |
+| `<AttachmentList items onOpen? onRemove? canRemove? label?>` | Thumbnails (originals ≤ 8 MiB, PNG/JPEG/GIF/WebP), name, size, Download, Remove; "File removed" rows. |
+| `<AttachmentPreview documentId name onClose>` | The Files preview stage in a guarded sheet (Back closes it), with Download. |
+| `useFileDrop(onFiles, { enabled })` → `{ dragging, bind }` | Desktop drag-drop of system files onto a host. |
+| `usePasteFiles(ref, onFiles, { enabled })`, `pastedFiles(clipboardData)` | Paste with the editor's rule: rich text stays text. |
+| `uploadForHost(file, kind, { onProgress, signal, idempotencyKey, keepLocation })` | XHR upload to `?attachTo=` with progress and abort; strips JPEG location first (Q9). |
+| `listHostAttachments`, `linkToHost(kind, hostId, documentId, { partId, confirmed })`, `unlinkFromHost`, `fileUsage`, `usageSummary` | The generic routes. |
+| `stripImageLocation(file)`, `stripJpegMetadata(bytes)` | The EXIF rewrite, if a slice uploads some other way. |
+
+History: the sheet, the From Files picker, its confirm, and the preview are history layers (`useHistoryDialogGuard`), so Back closes the innermost first and Forward reopens nothing. They rely on the host app's `popstate` listener calling `popStateClosedDialog(event)` first, as every Nook app already does. U0's live QA drove the kit from a QA-only harness page (not shipped) at 1280 and 390 px.
+
+Files (`src/files/`): the Attachments folder shows with a lock, is never a move or drop target, takes no direct uploads, and the delete confirm names the uses (D409).
+
+### Review fixes (2026-10-09, after the independent U0 review; slices branched from 79241a3 merge these)
+
+API changes, all additive except where marked:
+
+| Item | Change | What slices do |
+| --- | --- | --- |
+| M1 | `unlinkAttachment(userId, kind, hostId, documentId)` and `DELETE /api/attachments/…`: **the file's owner may always withdraw it**, from every host kind (cards and rows included, straight from `card_attachments` / `collection_row_attachments`), whatever their access to the host now. The owner path is checked first; when the owner cannot read the host the result is `{}` (the route answers `{ ok: true }`). Return type is now `{ documentBinned?: boolean }`. The role write gate allows this one DELETE for viewers and guests; the service then allows only the owner path. Non-owners are unchanged. | U2/U3: your own detach routes may keep their rules for non-owners; the generic route already covers owners. Clients: `unlinkFromHost` may return no `documentBinned`. |
+| M1 | `documentUsage` / `GET /api/files/:id/usage` gain `hidden: Array<{ hostKind, hostId }>` (registered hosts the owner cannot open, by id only). Files' delete confirm offers "Remove from places you can't open" (`src/files/DeleteFileDialog.tsx`). | U6: keep the dialog. |
+| M2 | `stripImageLocation` now also strips PNG `eXIf`/XMP and WebP `EXIF`/`XMP `, drops everything after a JPEG's primary EOI (MPF images, motion-photo MP4), skips stray bytes, caps at `STRIP_MAX_BYTES` (64 MiB; larger files pass unchanged), and for an unwalkable JPEG that still holds EXIF/XMP re-encodes through a canvas or **throws `LocationStripError`** (so `uploadForHost` rejects with a readable message). HEIC is not stripped. New exports: `stripPngMetadata`, `stripWebpMetadata`, `LocationStripError`, `STRIP_MAX_BYTES`. | Show the rejection message like any upload error; `keepLocation` bypasses. |
+| M3 | The orphan sweep keeps Attachments-folder files that **any note draft, any stored published version (live or binned notes), any whiteboard scene or snapshot**, or a registered checker references (`server/attachments/references.ts`: built-in `noteReferences` and `whiteboardReferences`, plus `registerAttachmentReferenceChecker(name, checker)`). A failing checker keeps everything. `sweepOrphanedAttachments` and `sweepAttachments` are now **async** (changed). | **U4 needs nothing for the sweep.** Messages or other content kinds register a checker. |
+| M3 | `syncDerivedLinks` returns `binned: string[]` too: the actor's own referenced files that are in their Bin (also listed in `skipped`). | **U4:** show those as broken images or chips with a Restore action (`POST /api/bin/document/:id/restore`); the next publish links them. |
+| L1 | The system folder is named "Attachments (Nook)" when the person already has an ordinary root folder named "Attachments" (any case). | Never match the folder by name; use `system_kind`. |
+| L2 | MCP `purpose: "attachment"` says it is only useful with a module tool that attaches files over MCP. | U1/U2/U3: name your attach tool in that description when it ships. |
+| L3 | Boot self-check: the sweeper's boot run logs `Attachment self-check: migration 046 triggers are missing (…)` when any of `ATTACHMENT_TRIGGERS` is gone (the grant self-check's pattern: loud, not fatal). | — |
+| L4 | **U4b:** call `syncDerivedLinks("whiteboard", boardId, boardOwnerId, ids)` with the **board's owner** as the actor (not the saving editor), so only the owner's pictures ever follow board sharing (Q4). | U4b. |

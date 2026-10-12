@@ -45,7 +45,21 @@ export function closeTopLayer(poppedState: unknown, undo: typeof undoDialogPop =
   return true;
 }
 
-export const openLayerCount = () => layers.length;
+/**
+ * Sheets from the shared kits (the attach sheet and preview, src/ui/attachments) guard Back themselves
+ * (useHistoryDialogGuard), so they are not layers here; they only hold Escape away from the row panel
+ * while open, which counts them in openLayerCount.
+ */
+let held = 0;
+export function useEscapeHold(open: boolean) {
+  useEffect(() => {
+    if (!open) return;
+    held += 1;
+    return () => { held -= 1; };
+  }, [open]);
+}
+
+export const openLayerCount = () => layers.length + held;
 
 /** Registered once by CollectionsApp. */
 export function useCollectionsDialogGuard() {

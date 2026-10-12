@@ -1,4 +1,5 @@
 import { audit, db, now } from "./db";
+import { isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
 
 /**
  * Folder creation shared by POST /api/folders and the MCP create_folder tool (Wave 19). A new folder
@@ -6,7 +7,7 @@ import { audit, db, now } from "./db";
  * can see anything.
  */
 export class FolderError extends Error {
-  constructor(readonly status: 404 | 409, message: string, readonly code?: "NAME_TAKEN") {
+  constructor(readonly status: 400 | 404 | 409, message: string, readonly code?: "NAME_TAKEN" | "SYSTEM_FOLDER") {
     super(message);
     this.name = "FolderError";
   }
@@ -17,6 +18,8 @@ export function createFolder(userId: string, name: string, parentId: string | nu
   if (parentId && !db.query("SELECT id FROM folders WHERE id = ? AND owner_id = ?").get(parentId, userId)) {
     throw new FolderError(404, "Parent folder not found");
   }
+  // T342, D392: a system folder (Attachments) holds no subfolders.
+  if (isSystemFolder(parentId)) throw new FolderError(400, SYSTEM_FOLDER_MESSAGE, "SYSTEM_FOLDER");
   const id = crypto.randomUUID();
   const timestamp = now();
   db.transaction(() => {

@@ -70,6 +70,8 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
 const READ_TOOLS = ["get_event", "list_calendars", "list_events"];
 const WRITE_TOOLS = ["create_event", "create_reminder", "update_event"];
 
@@ -77,9 +79,9 @@ describe("MCP calendar tools", () => {
   test("appear only for calendar scopes, write implies read, the handler re-checks, and nothing deletes", async () => {
     const user = await createUser("Calendar scopes");
     const reader = makeKey(user, ["calendar:read"]);
-    expect(await toolNames(reader)).toEqual(READ_TOOLS);
+    expect(await toolNames(reader)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS].sort());
     const writer = makeKey(user, ["calendar:write"]);
-    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
+    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS, ...WRITE_TOOLS].sort());
     const other = makeKey(user, ["notes:read", "tasks:write", "today:read"]);
     const otherTools = await toolNames(other);
     for (const name of [...READ_TOOLS, ...WRITE_TOOLS]) expect(otherTools).not.toContain(name);

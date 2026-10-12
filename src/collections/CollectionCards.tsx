@@ -2,6 +2,17 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Ellipsis, Plus, RotateCcw } from "lucide-react";
 import type { CollectionRow, FieldDefinition } from "./collectionsApi";
 import { cardFields, displayValue, rowTitle, submitOnEnter } from "./values";
+import { FileThumb, firstImage } from "./Attachments";
+
+/** The phone card's cover: the first image in the row's file fields, in field order (U3, D399). */
+export function coverImage(fields: FieldDefinition[], row: CollectionRow) {
+  for (const field of fields) {
+    if (field.type !== "file") continue;
+    const image = firstImage(row, field);
+    if (image) return image;
+  }
+  return null;
+}
 
 /** True at phone widths (the 760 px breakpoint used everywhere), following resizes. */
 export function useIsPhone() {
@@ -53,7 +64,9 @@ export function CollectionCards({ fields, rows, editable, conflicts, onOpenRow, 
       {rows.map((row) => {
         const extras = cardFields(fields, row);
         const title = rowTitle(row);
-        return <li key={row.id} className={`collection-card${conflicts[row.id] ? " row-conflict" : ""}`}>
+        const cover = coverImage(fields, row);
+        return <li key={row.id} className={`collection-card${conflicts[row.id] ? " row-conflict" : ""}${cover ? " has-cover" : ""}`}>
+          {cover && <FileThumb file={cover} className="file-thumb collection-card-cover" />}
           <button className="collection-card-open" onClick={() => onOpenRow(row)}>
             <span className="collection-card-title">{title}</span>
             {extras.length > 0 && <span className="collection-card-fields">

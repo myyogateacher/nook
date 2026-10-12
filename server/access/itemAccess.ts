@@ -17,6 +17,7 @@ import { recordAccessEvent } from "./events";
 import { AUDIENCE_LEVELS, KIND_LEVELS, LEVELS, isLevel, levelToShareRole, shareRoleToLevel, type AccessKind, type ItemLevel, type Level } from "./levels";
 import { directShares, guestShareAdditions, GUEST_SHARE_DISABLED, writeDirectShares } from "./shares";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
+import { isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
 
 /**
  * The item access API behind the Access sheet (access plan §C.5, §C.7, D270–D275, T204, T207,
@@ -303,6 +304,8 @@ function dedupe(entries: Array<{ id: string; level: Level }>) {
 
 function validate(kind: AccessKind, id: string, current: ItemAccess, body: AccessPut, people: Array<{ id: string; level: Level }>, groups: Array<{ id: string; level: Level }>, userId: string) {
   const invalid = (message: string, code = "INVALID") => new AccessError(400, code, message);
+  // T342, D392: the Attachments folder (a system folder) is never shared, by name, group, or audience.
+  if (kind === "folder" && body.audience !== "private" && isSystemFolder(id)) throw invalid(SYSTEM_FOLDER_MESSAGE, "SYSTEM_FOLDER");
   if (body.audience === "inherit" && !current.inheritable) throw invalid("Only notes and files can use their folder's access");
   if (body.audienceLevel !== undefined) {
     const allowed = AUDIENCE_LEVELS[kind];

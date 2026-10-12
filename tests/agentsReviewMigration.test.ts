@@ -60,7 +60,8 @@ const rows = (db: Database) => db.query("SELECT * FROM api_key_grants ORDER BY i
 
 describe("review: migration 039", () => {
   test("the rebuild reproduces 025's and 038's indexes and triggers (whitespace aside), keeps every row and column, and resets legacy_alter_table", () => {
-    const db = openWithout([39, 40, 41, 42]);
+    // 046 triggers on chat_messages (039), so it waits too.
+    const db = openWithout([39, 40, 41, 42, 46]);
     const before = { triggers: schemaOf(db, "trigger"), indexes: schemaOf(db, "index"), columns: columnsOf(db) };
     expect(before.triggers).toHaveLength(6);
     expect(before.indexes).toHaveLength(2);

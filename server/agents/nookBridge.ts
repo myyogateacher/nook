@@ -54,7 +54,12 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   "submit_proposals", "list_my_proposals", "withdraw_proposal", "list_routines", "list_due_routines", "start_run", "finish_run",
   "begin_upload", "finish_upload", "list_agents", "list_chats", "get_chat", "run_agent",
   // AC-E: an agent searches knowledge bases through its own Knowledge picks, never through a key.
-  "search_knowledge"
+  "search_knowledge",
+  // Uploads everywhere U0: the generic attachment reads span several modules' scopes; agents get them
+  // once the bridge maps a tool to the module of the item it is called on (left to a later slice).
+  "list_attachments", "read_attachment_text",
+  // Uploads everywhere U3: attaching shares the file with the row's readers, and has no proposal kind yet.
+  "attach_file_to_row"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

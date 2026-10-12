@@ -500,7 +500,7 @@ describe("MCP tools (agents:read, D281)", () => {
     const chat = await newChat(owner, agent.id);
     await sendAndWait(owner, chat.id, "echo:Over MCP.");
     const key = makeKey(owner, ["agents:read"]);
-    expect(await toolNames(key)).toEqual(["get_chat", "list_agents", "list_chats", "search_knowledge"]);
+    expect(await toolNames(key)).toEqual(["get_chat", "list_agents", "list_attachments", "list_chats", "read_attachment_text", "search_knowledge"]);
     const agents = await ok(key, "list_agents");
     expect(agents.agents.map((item: { id: string }) => item.id)).toContain(agent.id);
     expect(JSON.stringify(agents)).not.toContain("SECRET PROMPT");
@@ -525,6 +525,6 @@ describe("MCP tools (agents:read, D281)", () => {
     }
     const grantKey = createApiKey(owner.userId, { name: "Grant", surfaces: "mcp", grants: [{ module: "agents", permission: "read", resourceKind: null, resourceId: null }], expiresInDays: 30 });
     const live = loadLiveKey(grantKey.id)!;
-    expect(mcpToolSpecs.filter((spec) => toolVisible(spec, live)).map((spec) => spec.name).sort()).toEqual(["get_chat", "list_agents", "list_chats", "search_knowledge"]);
+    expect(mcpToolSpecs.filter((spec) => toolVisible(spec, live)).map((spec) => spec.name).sort()).toEqual(["get_chat", "list_agents", "list_attachments", "list_chats", "read_attachment_text", "search_knowledge"]);
   });
 });

@@ -80,19 +80,22 @@ async function setup(label: string) {
 const auditRows = (actorId: string, eventType: string) => (db.query("SELECT metadata_json FROM audit_log WHERE actor_id = ? AND event_type = ? ORDER BY created_at").all(actorId, eventType) as Array<{ metadata_json: string }>)
   .map((row) => JSON.parse(row.metadata_json) as Record<string, unknown>);
 
+// Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
+const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
 const READ_TOOLS = ["get_row", "list_collections", "query_rows"];
-const WRITE_TOOLS = ["create_collection", "create_row", "update_row"];
+const WRITE_TOOLS = ["attach_file_to_row", "create_collection", "create_row", "update_row"];
 
 describe("MCP collection tools", () => {
   test("appear only for collection scopes, write implies read, the handler re-checks, and nothing deletes or edits schema", async () => {
     const user = await createUser("Collections scopes");
     const reader = makeKey(user, ["collections:read"]);
-    expect(await toolNames(reader)).toEqual(READ_TOOLS);
+    expect(await toolNames(reader)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS].sort());
     const writer = makeKey(user, ["collections:write"]);
-    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
+    expect(await toolNames(writer)).toEqual([...READ_TOOLS, ...ATTACHMENT_READS, ...WRITE_TOOLS].sort());
     const other = makeKey(user, ["notes:read", "calendar:write", "tasks:write", "today:read"]);
     for (const name of [...READ_TOOLS, ...WRITE_TOOLS]) expect(await toolNames(other)).not.toContain(name);
-    for (const name of await toolNames(writer)) expect(name).not.toMatch(/delete|schema|share|import|view|attach/);
+    // U3: attach_file_to_row is the one attachment write (an upload made to attach; no detach over MCP).
+    for (const name of (await toolNames(writer)).filter((tool) => !ATTACHMENT_READS.includes(tool) && tool !== "attach_file_to_row")) expect(name).not.toMatch(/delete|schema|share|import|view|attach/);
     expect((await direct(other, "list_collections", {})).value.code).toBe("SCOPE_REQUIRED");
     expect((await direct(reader, "create_row", { collectionId: crypto.randomUUID(), values: {} })).value.code).toBe("SCOPE_REQUIRED");
     const created = await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "all", password: user.password, scopes: ["notes:read", "notes:write-draft", "files:read", "tasks:read", "tasks:write", "today:read", "calendar:read", "calendar:write", "collections:read", "collections:write"] }) }, user);
@@ -168,7 +171,7 @@ describe("MCP collection tools", () => {
     }
   });
 
-  test("links come back as titles or restricted, and attachments as names only", async () => {
+  test("links come back as titles or restricted, and attachments as ids and names", async () => {
     const s = await setup("Collections links");
     const readable = insertNote(s.owner.userId, "Grandma's soup", { visibility: "all_users" });
     const hidden = insertNote(s.owner.userId, "Owner private note");
@@ -186,8 +189,9 @@ describe("MCP collection tools", () => {
     const collectionsOnly = (await callTool(makeKey(s.viewer, ["collections:read"]), "get_row", { rowId: withReadable.id })).value.row;
     expect(collectionsOnly.values["Recipe note"]).toEqual({ restricted: true });
     expect(JSON.stringify(collectionsOnly)).not.toContain("Grandma's soup");
-    expect(readableRow.values.Photo).toEqual(["soup-photo.txt"]);
-    expect(JSON.stringify(readableRow)).not.toContain(documentId);
+    // U3 (D402): { id, name }, so an agent can read it with read_attachment_text; never a content URL (D407).
+    expect(readableRow.values.Photo).toEqual([{ id: documentId, name: "soup-photo.txt" }]);
+    expect(JSON.stringify(readableRow)).not.toContain("/api/files");
     const hiddenRow = (await callTool(viewer, "get_row", { rowId: withHidden.id })).value.row;
     expect(hiddenRow.values["Recipe note"]).toEqual({ restricted: true });
     expect(JSON.stringify(hiddenRow)).not.toContain("Owner private note");

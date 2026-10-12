@@ -33,6 +33,8 @@ import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { countRunToolCall } from "./inbox/routineHooks";
 import { canWriteContent } from "./team/userRole";
 import { registerVaultTools } from "./vault/mcpTools";
+import { attachmentTools } from "./attachments/mcpTools";
+import { isSystemFolder, isSystemFolderError, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -177,6 +179,8 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, s
     if (error instanceof McpToolError) return errorResult(error.code, error.message, error.details);
     // S3 storage (review L1): any tool that reads file bytes (files, whiteboards) reports an outage as retryable.
     if (error instanceof StorageUnavailableError) return errorResult("STORAGE_UNAVAILABLE", "File storage is unavailable. Try again later.");
+    // The 046 triggers' backstop (T342): a write that would put something into a system folder.
+    if (isSystemFolderError(error)) return errorResult("INVALID", SYSTEM_FOLDER_MESSAGE, { reason: "SYSTEM_FOLDER" });
     console.error(`MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
     return errorResult("INTERNAL", "Something went wrong");
   }
@@ -319,6 +323,7 @@ const noteWriteTools: McpToolSpec[] = [
     handler: async ({ markdown, folderId }, key) => {
       assertMarkdownSize(markdown);
       if (folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, key.userId)) throw notFound("Folder");
+      if (isSystemFolder(folderId)) throw new McpToolError("INVALID", SYSTEM_FOLDER_MESSAGE, { reason: "SYSTEM_FOLDER" });
       const created = await createDraftNote(key.userId, folderId ?? null, markdown, { keyId: key.keyId });
       rememberSeenDraft(key.keyId, created.id, created.revision, checksum(markdown));
       return { noteId: created.id, revision: created.revision, title: created.title, folderId: created.folderId, url: noteUrl(created.id) };
@@ -384,7 +389,7 @@ const noteWriteTools: McpToolSpec[] = [
 
 export const MCP_MAX_TEXT_BYTES = 1_048_576;
 
-async function readDocumentText(document: DocumentRow) {
+export async function readDocumentText(document: DocumentRow) {
   if (document.preview_kind !== "text") throw new McpToolError("NOT_TEXT", "Only text files can be read. This file is not text.");
   if (document.size_bytes > MCP_MAX_TEXT_BYTES) throw new McpToolError("TOO_LARGE", `Text files larger than ${MCP_MAX_TEXT_BYTES} bytes cannot be read over MCP`);
   let bytes: Uint8Array;
@@ -466,7 +471,9 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...inboxTools,
   ...whiteboardTools,
   ...agentTools,
-  ...knowledgeTools
+  ...knowledgeTools,
+  // Uploads everywhere (U0, D402): list and read attachments, gated by each host module's read scope.
+  ...attachmentTools
 ];
 
 /** Whether a key holding `scopes` may see and call `spec`: any one of its scopes and all of alsoRequires (D172). */

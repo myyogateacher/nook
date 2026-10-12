@@ -12,7 +12,9 @@ import { RecurrenceError, rangeFor, zonedToUtc } from "./recurrence";
 import { reminderSchema } from "./reminderRoutes";
 import { createReminder, ReminderError } from "./reminders";
 import { eventCreateSchema, eventPatchSchema } from "./routes";
-import { CalendarError, createEvent, deleteEvent, getEvent, listCalendars, listOccurrences, patchEvent, type EventInput, type EventPatch } from "./service";
+import { CalendarError, createEvent, deleteEvent, eventAttachments, getEvent, listCalendars, listOccurrences, patchEvent, type EventInput, type EventPatch } from "./service";
+import { MAX_ATTACHMENTS_PER_EVENT } from "./attachments";
+import { AttachmentError, linkAttachment } from "../attachments/service";
 
 /**
  * MCP tools for Calendar (docs/plan/WAVES_10-12.md §4.5, D70, T72–T75).
@@ -122,7 +124,7 @@ function nextDay(value: string) {
  * key needs the target module's read grant, inside its chosen boards or collections if it has any).
  */
 function eventOutput(result: ReturnType<typeof getEvent>, key: McpKeyContext) {
-  const { event, calendar, role, links } = result;
+  const { event, calendar, role, links, attachments } = result;
   return {
     event: {
       id: event.id,
@@ -143,9 +145,16 @@ function eventOutput(result: ReturnType<typeof getEvent>, key: McpKeyContext) {
     revision: event.revision,
     role,
     links: links.map((link) => link.restricted || !keyMayRead(key, { type: link.targetType, id: link.targetId }) ? { targetType: link.targetType, restricted: true } : { targetType: link.targetType, targetId: link.targetId, title: link.title }),
+    // Uploads everywhere U1 (D402): names and ids only; read_attachment_text reads the text ones.
+    attachments: attachmentsOutput(attachments),
     url: eventUrl(event.id)
   };
 }
+
+/** An event's files for an agent: id, name, type, size; a file in its owner's Bin is `removed`, with no name. */
+const attachmentsOutput = (attachments: ReturnType<typeof eventAttachments>) => attachments.map((item) => item.removed
+  ? { id: item.documentId, removed: true }
+  : { id: item.documentId, name: item.name, mimeType: item.mimeType, sizeBytes: item.sizeBytes });
 
 const uuid = z.string().uuid();
 
@@ -183,7 +192,7 @@ export const calendarTools: McpToolSpec[] = [
       return {
         occurrences: result.occurrences.map((item) => ({
           eventId: item.eventId, calendarId: item.calendarId, title: item.title, location: item.location,
-          start: item.start, end: item.end, allDay: item.allDay, recurring: item.recurring, date: item.date
+          start: item.start, end: item.end, allDay: item.allDay, recurring: item.recurring, date: item.date, attachmentCount: item.attachmentCount
         })),
         truncated: result.truncated
       };
@@ -192,7 +201,7 @@ export const calendarTools: McpToolSpec[] = [
   defineTool({
     name: "get_event",
     title: "Get an event",
-    description: "Read one event: timing, repeat rule, skipped dates, plain-text description, links (titles, or restricted when the user cannot open them), and the revision update_event needs.",
+    description: "Read one event: timing, repeat rule, skipped dates, plain-text description, links (titles, or restricted when the user cannot open them), attached files (id, name, type, size; read text ones with read_attachment_text), and the revision update_event needs.",
     scopes: ["calendar:read"],
     access: { mode: "items", items: [{ arg: "eventId", kind: "event" }] },
     write: false,
@@ -260,6 +269,32 @@ export const calendarTools: McpToolSpec[] = [
       const patch = routeInput(eventPatchSchema, body) as EventPatch;
       const { event } = patchEvent(key.userId, id, patch, { keyId: key.keyId });
       return { eventId: event.id, revision: event.revision, url: eventUrl(event.id) };
+    })
+  }),
+  // Uploads everywhere U1 (D402): attach a file the user uploaded for attaching.
+  defineTool({
+    name: "attach_file_to_event",
+    title: "Attach a file to an event",
+    description: `Attach a file to an event on a calendar the user owns or may edit (the whole series, for a repeating event). The file must be the user's own upload made for attaching: create_text_file or begin_upload with purpose "attachment". Files kept elsewhere in Files cannot be attached this way, because that would let the calendar's readers open them. Everyone who can read the event can open the file. Up to ${MAX_ATTACHMENTS_PER_EVENT} files per event; attaching the same file again is harmless.`,
+    scopes: ["calendar:write"],
+    // documentId: the service links only the key owner's own Attachments-folder documents (T341, D396).
+    access: { mode: "items", items: [{ arg: "eventId", kind: "event" }], related: ["documentId"] },
+    write: true,
+    dailyBucket: "event_write",
+    inputSchema: z.object({ eventId: uuid, documentId: uuid.describe("The file's id, from create_text_file or finish_upload") }).strict(),
+    handler: async ({ eventId, documentId }, key) => service(key, () => {
+      const id = eventId.toLowerCase();
+      try {
+        // Never `confirmed`: an agent cannot share an ordinary Files item by side effect (D396).
+        const result = linkAttachment(key.userId, "event", id, { documentId: documentId.toLowerCase() });
+        const attachments = eventAttachments(id, key.userId);
+        return { eventId: id, documentId: result.documentId, alreadyAttached: !result.created, attachments: attachmentsOutput(attachments), limit: MAX_ATTACHMENTS_PER_EVENT, url: eventUrl(id) };
+      } catch (error) {
+        if (!(error instanceof AttachmentError)) throw error;
+        if (error.code === "CONFIRM_REQUIRED") throw new McpToolError("INVALID", "Only files uploaded for attaching can be attached here: use create_text_file or begin_upload with purpose \"attachment\"");
+        const code: McpErrorCode = error.status === 404 ? "NOT_FOUND" : error.code === "READ_ONLY" ? "READ_ONLY" : error.code === "LIMIT_REACHED" ? "LIMIT_REACHED" : "INVALID";
+        throw new McpToolError(code, error.message, error.code === "LIMIT_REACHED" ? { limit: MAX_ATTACHMENTS_PER_EVENT } : undefined);
+      }
     })
   }),
   defineTool({

@@ -73,7 +73,7 @@ const auditRows = (actorId: string, eventType: string) => (db.query("SELECT meta
 // Uploads everywhere U0 (D402): the generic attachment reads come with every host module's read scope.
 const ATTACHMENT_READS = ["list_attachments", "read_attachment_text"];
 const READ_TOOLS = ["get_event", "list_calendars", "list_events"];
-const WRITE_TOOLS = ["create_event", "create_reminder", "update_event"];
+const WRITE_TOOLS = ["attach_file_to_event", "create_event", "create_reminder", "update_event"];
 
 describe("MCP calendar tools", () => {
   test("appear only for calendar scopes, write implies read, the handler re-checks, and nothing deletes", async () => {

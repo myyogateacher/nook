@@ -125,7 +125,7 @@ describe("ChatApp wiring", () => {
 
   test("Send waits for uploads, refuses failed ones, and is blocked on a model that cannot see images", () => {
     expect(app).toContain("composerImages.uploading || composerImages.failed || imagesBlocked");
-    expect(app).toMatch(/if \(images\.length > 0 && !composerVision\) \{ flash\(visionMissingMessage/);
+    expect(app).toMatch(/if \(images\.length > 0 && !composerVision\) \{ notify\.warning\(visionMissingMessage/);
     expect(app).toContain("sendMessage(route.chatId, text, parentId, images)");
     expect(app).toContain("editAttachments(shown.message)");
     // The disclosure names images when there are some.

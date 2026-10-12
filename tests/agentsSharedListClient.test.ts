@@ -76,7 +76,7 @@ describe("QA L2: Continue as a copy says what the server says", () => {
     expect(forkFailureText(refused(500, {}))).toBe("Could not copy the chat");
     expect(forkFailureText(new TypeError("Failed to fetch"))).toBe("Could not copy the chat");
     expect(serverMessage(refused(409, { error: "  " }))).toBeNull();
-    expect(source).toContain("flash(forkFailureText(reason));");
+    expect(source).toContain("notify.error(forkFailureText(reason));");
     expect(source).not.toContain('code === "AGENT_GONE" ? ERROR_TEXT.AGENT_GONE!');
   });
 });

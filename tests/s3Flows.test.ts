@@ -393,3 +393,39 @@ describe.skipIf(!s3Backend)("S3 backend: outages and limits (review H2, L1, M3)"
     expect((await upload(owner, "a slot again", "after.txt")).status).toBe(201);
   });
 });
+
+describe.skipIf(!s3Backend)("S3 backend: uploads everywhere (U0, U1, U5)", () => {
+  test("an attachment upload (?attachTo=event) is stored on S3 under its id, links to an event, and is served", async () => {
+    const owner = await createUser("S3 attachment owner");
+    const calendar = await api(owner, "POST", "/calendars", { name: "S3 calendar" });
+    const event = await api(owner, "POST", `/calendars/${calendar.body.calendar.id}/events`, { title: "S3 planning", allDay: true, startDate: "2026-10-12", endDate: "2026-10-13" });
+    const form = new FormData();
+    form.append("file", new Blob(["agenda stored on S3"]), "s3-agenda.txt");
+    const uploaded = await request("/files?attachTo=event", { method: "POST", body: form }, owner);
+    expect(uploaded.status).toBe(201);
+    const document = ((await uploaded.json()) as { document: Json }).document;
+    expect(new TextDecoder().decode(fakeS3!.objects.get(key(document.id))!.bytes)).toBe("agenda stored on S3");
+    expect((await api(owner, "POST", `/attachments/event/${event.body.event.id}`, { documentId: document.id })).status).toBeLessThan(300);
+    const listed = await api(owner, "GET", `/attachments/event/${event.body.event.id}`);
+    expect(JSON.stringify(listed.body)).toContain(document.id);
+    const served = await request(`/files/${document.id}/content`, {}, owner);
+    expect(served.status).toBe(200);
+    expect(await served.text()).toBe("agenda stored on S3");
+  });
+
+  test("a chat image (?attachTo=chat_message) is stored on S3 and read back through the store for a model turn", async () => {
+    const owner = await createUser("S3 chat image owner");
+    const png = makePng(12, 12);
+    const form = new FormData();
+    form.append("file", new Blob([png]), "s3-chat.png");
+    const uploaded = await request("/files?attachTo=chat_message", { method: "POST", body: form }, owner);
+    expect(uploaded.status).toBe(201);
+    const document = ((await uploaded.json()) as { document: Json }).document;
+    expect(fakeS3!.objects.get(key(document.id))?.bytes.byteLength).toBe(png.byteLength);
+    // The model-turn reader (server/agents/chatImages.ts) goes through openObjectForRead → the S3 store.
+    const before = fakeS3!.log.length;
+    const bytes = await (await objectStoreModule.objectStore().open("documents", document.id, png.byteLength)).bytes();
+    expect(bytes).toEqual(png);
+    expect(fakeS3!.log.slice(before).some((line) => line.startsWith(`GET ${key(document.id)}`))).toBe(true);
+  });
+});

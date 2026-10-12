@@ -335,7 +335,7 @@ The **Vault** keeps a team's secrets (API keys, database URLs, service passwords
 
 **Settings** is a page of its own at `/settings`. Open it with **Settings** in the account row or the Notes and Files sidebar footer. On a computer a nav on the left lists every section and the section you chose fills the rest of the window; the nav and the section scroll on their own. The header over the section shows your picture, name, team role, and the section's name.
 
-- **Account:** **Security** (password, two-factor, Google sign-in), **Notifications**, **My access** (not for guests), **API keys**, **Agents** and **Knowledge** (not for guests), **AI** (admins), **Modules**, and **About**.
+- **Account:** **Security** (password, two-factor, Google sign-in, profile picture, recognised devices), **Notifications**, **My access** (not for guests), **API keys**, **Agents** and **Knowledge** (not for guests), **AI** (admins), **Modules**, and **About**.
 - **Workspace:** **Bin** ([Bin](#bin)), for everyone except guests (a guest can delete nothing, so their Bin is always empty), with its item count. It is hidden while the Bin module is off or for a guest, and `/settings/bin` then opens **Security**.
 - **Team:** for everyone but guests, **Members** (admins see the number of blocked accounts beside it); admins also get **Invites**, **Groups**, **Integrations**, **Keys**, **Policies**, **Templates**, **Access activity**, and **Email log**. Members, viewers, and guests see Team only while the Team module is on; admins always keep it here.
 
@@ -434,6 +434,18 @@ When email is off on your Nook, the forgot page says so and sends nothing: ask a
 - **Forget** removes one device from the list, and **Forget all** removes every one. Forgetting signs nothing out; the next sign-in from that browser is new again. To sign other devices out, change your password.
 - Both ask first in Nook's own dialog; Back (or Escape) closes it without changing anything.
 - An admin blocking your account, or resetting it for Google sign-in, clears the list.
+
+### Profile picture
+
+**Settings → Security → Profile picture** (`/settings/security`) shows the picture people see beside your name. **Your picture is visible to everyone who can see your name in Nook:** your team, the people you share with or who share with you, comments, mentions, assignees, and sharing lists. It is never put in emails.
+
+- **Change picture** opens a sheet: **Take photo** (phones and tablets, the camera), **Choose a picture** (PNG, JPEG, or WebP), **Use my Google picture** (when Google sign-in is linked and Google has a picture), and **Remove picture**. On a computer you can also drop a picture file on the card.
+- A new picture opens **Crop your picture**: drag it (or use the arrow keys) to place it, and zoom with the slider, the mouse wheel, or **+** and **−**. The circle shows how people see it. **Save picture** saves the square at up to 512 × 512 pixels as a new image made in your browser, so the photo's location, camera details, and other metadata are **not** kept.
+- **Remove picture** goes back to your initial. **Use my Google picture** brings back the picture of your linked Google account.
+- With Google sign-in, Nook copies your Google picture and keeps it in step each time you sign in with Google, **until you upload a picture or remove it**: from then on Google never changes it, and unlinking Google keeps it. **Use my Google picture** hands it back to Google.
+- The new picture shows at once in Settings and the top bar; lists other people already have open show it when they next load (their old copy stops working, so no one keeps seeing the previous picture for long).
+- Everyone can change their own picture, viewers and guests included: up to 10 changes a minute. Integrations never have a picture; they always show the integration icon, and admins cannot give them one.
+- Pictures you upload with the API rather than this page are stored as sent (up to 1 MiB and 4,096 pixels a side, PNG, JPEG, or WebP; SVG and GIF are refused).
 
 ## Team
 

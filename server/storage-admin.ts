@@ -53,7 +53,7 @@ function wantedObjects(): Wanted[] {
     UNION ALL SELECT w.object_id, d.size_bytes, d.sha256 FROM whiteboards w JOIN documents d ON d.id = w.document_id WHERE d.purge_started_at IS NULL
     UNION ALL SELECT s.object_id, s.size_bytes, s.sha256 FROM whiteboard_snapshots s JOIN documents d ON d.id = s.document_id WHERE d.purge_started_at IS NULL`)
     .all() as Array<{ id: string; size: number; sha256: string }>;
-  const avatars = db.query("SELECT avatar_id AS id FROM users WHERE avatar_id IS NOT NULL").all() as Array<{ id: string }>;
+  const avatars = db.query("SELECT avatar_id AS id FROM users WHERE avatar_id IS NOT NULL AND avatar_id <> ?").all("00000000-0000-8000-8000-000000000000") as Array<{ id: string }>; // AVATAR_REMOVED (server/avatars.ts): a marker, never a file
   return [
     ...documents.map((row) => ({ namespace: "documents" as const, id: row.id, size: row.size, sha256: row.sha256 })),
     ...avatars.map((row) => ({ namespace: "avatars" as const, id: row.id, size: null, sha256: null }))

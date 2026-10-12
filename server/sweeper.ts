@@ -56,7 +56,7 @@ async function countIntegrityErrors(listed?: Map<string, number>) {
  * prefix's newest claimant (a restored copy, a second server) is fenced: it skips the file sweeps, and
  * every delete it tries fails (Bin purges stay pending). A store that does not answer skips this round.
  */
-async function fileSweepsAllowed() {
+export async function fileSweepsAllowed() {
   const store = objectStore();
   if (store.backend !== "s3") return true;
   if (s3Internals(store).isFenced?.()) return false;

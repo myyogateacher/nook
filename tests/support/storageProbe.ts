@@ -5,6 +5,7 @@
  * one line, `PROBE {json}`. DATA_DIR and the STORAGE_BACKEND / S3_* settings come from the environment.
  *
  *   mode=start  start the server and report the backend
+ *   mode=serve  start the server and keep running until a signal stops it
  *   mode=seed   register, upload two Files and a picture, create a whiteboard, set a profile picture
  *   mode=check  download every seeded file (ids in PROBE_SEED) and report sizes and hashes
  */
@@ -49,6 +50,10 @@ async function signIn() {
 
 if (mode === "start") {
   console.log(`PROBE ${JSON.stringify({ backend: objectStore().backend })}`);
+} else if (mode === "serve") {
+  // Runs like a server until it is stopped with a signal (the S3 claim is released on SIGTERM).
+  console.log(`PROBE ${JSON.stringify({ backend: objectStore().backend, serving: true })}`);
+  await new Promise(() => undefined);
 } else if (mode === "seed") {
   const session = await signIn();
   const uploadFile = async (bytes: Uint8Array, name: string) => {

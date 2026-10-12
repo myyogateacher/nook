@@ -1,4 +1,5 @@
-import { constants } from "node:fs";
+import { createHash } from "node:crypto";
+import { constants, readFileSync, statSync } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, realpath, rename, unlink, type FileHandle } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -95,8 +96,8 @@ export interface ObjectStore {
   createWriter(namespace: ObjectNamespace, id: string, options?: WriterOptions): ObjectWriter;
   /**
    * Writes a whole object (staged, then committed); nothing is left behind on failure. The sweep keeps
-   * skipping it until the caller's current synchronous step is over, so a row inserted right after the
-   * await is always in place before the object can be judged an orphan.
+   * skipping it only until setImmediate after the await, so a row must be inserted in the same synchronous
+   * step. When anything is awaited between the write and the row, use putHeld() and release explicitly.
    */
   put(namespace: ObjectNamespace, id: string, bytes: Uint8Array, options?: WriterOptions): Promise<void>;
   /** Opens an object for reading; with `expectedSize`, a different size is an ObjectIntegrityError. */
@@ -149,6 +150,24 @@ function holdObject(namespace: ObjectNamespace, id: string) {
       else inFlight.set(key, left);
     });
   };
+}
+
+/**
+ * Writes a whole object and keeps it protected from the orphan sweeps until the caller releases it (review
+ * L-a): call the returned release once the row naming the object is committed, or the object abandoned.
+ * Prefer this to put() wherever a row follows; put()'s own release relies on the row being written in
+ * the same synchronous step as the await.
+ */
+export async function putHeld(store: ObjectStore, namespace: ObjectNamespace, id: string, bytes: Uint8Array): Promise<() => void> {
+  const writer = store.createWriter(namespace, id);
+  try {
+    await writer.write(bytes);
+    await writer.commit();
+  } catch (error) {
+    await writer.discard().catch(() => undefined);
+    throw error;
+  }
+  return () => writer.release();
 }
 
 async function putThrough(writer: ObjectWriter, bytes: Uint8Array) {
@@ -716,39 +735,81 @@ export function setObjectStoreForTests(store: ObjectStore | null) {
 
 const INSTANCE_FILE = "storage-instance";
 const INSTANCE_KEY = ".nook-instance";
+/** How often a running server claims the prefix again (review N1): the window a copy can slip into. */
+export const PREFIX_REFRESH_MS = 5 * 60_000;
+/** A claim this fresh from another host or directory means a live server: a copy is refused (review N1). */
+export const COPY_WINDOW_MS = 2 * PREFIX_REFRESH_MS;
 
 type LocalInstance = { id: string; seq: number };
-type Marker = { id: string; seq: number; nonce: string };
+type Marker = { id: string; seq: number; nonce: string; identity: string; refreshedAt: number; released: boolean };
 
 /**
- * The prefix claim (review M2). `DATA_DIR/storage-instance` holds this data directory's id and claim
- * number (`<uuid> <n>`); `<S3_PREFIX>.nook-instance` holds the newest claim (`<uuid> <n> <nonce>`).
+ * The prefix claim (reviews M2 and N1). `DATA_DIR/storage-instance` holds this data directory's id and
+ * claim number (`<uuid> <n>`); `<S3_PREFIX>.nook-instance` holds the newest claim:
+ * `<uuid> <n> <nonce> <identity> <refreshed-at-ms> <released 0|1>`. The identity is a hash of the host's
+ * machine id and the data directory's device and inode: it survives renames, restarts, and container
+ * re-creation over the same volume, and differs for every copy (cp, rsync, a restored archive, another host).
  *
  * - Another id in the marker: another Nook's prefix. Refused (two Nooks would sweep each other's files).
- * - A marker number above this directory's: this directory is older than the bucket's last claim, which
- *   is what a restored backup looks like (the live server claimed again since). Refused at startup, and a
- *   running server that finds itself behind at its hourly check is fenced: no sweeps and no deletes.
- *   `storage-admin.ts reclaim` accepts the directory after a real disaster restore.
- * - Otherwise the claim moves on: the local number first, then the marker, then the marker is read back
- *   (Bun 1.4.2 has no conditional PUT); a different nonce means another process claimed at the same time.
+ * - A marker number above this directory's: this directory is behind the bucket's last claim (a restored
+ *   backup, or the live server overtaken by a copy). Refused at startup; a running server that finds itself
+ *   behind is fenced: no sweeps and no deletes. `storage-admin.ts reclaim` takes the prefix back.
+ * - The same id from another identity, refreshed within COPY_WINDOW_MS and not released: a copy of a live
+ *   data directory. Refused (fenced), unless reclaimed. A server releases the claim when it stops (SIGTERM,
+ *   SIGINT), so moving a data directory and starting it elsewhere is not a copy.
+ * - Otherwise the claim moves on: the local number first, then the marker, then, after a short random wait,
+ *   the marker is read back (Bun 1.4.2 has no conditional PUT); a different nonce means another process
+ *   claimed at the same time (review L-b).
  *
- * Every start and every hourly sweep claims again, and backup.sh restarts the server, so an archive's
- * number is always behind the live bucket's.
+ * Every start, every PREFIX_REFRESH_MS, and every hourly sweep claims again, and backup.sh restarts the
+ * server, so an archive's number is always behind the live bucket's.
  */
 export class PrefixClaimError extends Error {
-  constructor(readonly reason: "foreign" | "stale" | "race", message: string) {
+  constructor(readonly reason: "foreign" | "stale" | "copy" | "race", message: string) {
     super(message);
     this.name = "PrefixClaimError";
   }
 }
 
 const foreignMessage = "S3_PREFIX already holds files of another Nook data directory (its .nook-instance marker differs). Use another S3_PREFIX or bucket; two Nooks must never share one, or each would delete the other's files as orphans";
-const staleMessage = "This data directory is older than the S3 prefix's last claim: it looks like a restored backup while the live Nook still uses this bucket. A restore test must use another S3_PREFIX (copy the objects there) or a read-only key. After a real disaster restore, run bun server/storage-admin.ts reclaim";
+const staleMessage = [
+  "This data directory is behind the S3 prefix's last claim. Either it is a restored backup or a copy while the live Nook still uses this bucket,",
+  "or it is the live server and a copy of its data directory (cp, rsync, a VM snapshot, an archive restored next to it) was started against the same prefix and took the claim.",
+  "Check which Nook servers use this S3_PREFIX and stop every copy. Then, on the live server only, run bun server/storage-admin.ts reclaim and check the Bin and recent files (a copy may have swept or purged).",
+  "A restore test must use another S3_PREFIX (copy the objects there) or a read-only key"
+].join(" ");
+const copyMessage = [
+  `This looks like a copy of a live data directory: the S3 prefix was claimed less than ${COPY_WINDOW_MS / 60_000} minutes ago by this data directory's id from another host or directory, and that server has not released it.`,
+  "Refused, so a copy cannot sweep or purge the live Nook's files. Give a copy another S3_PREFIX or a read-only key.",
+  `If the other server is really gone (the data directory was moved), wait ${COPY_WINDOW_MS / 60_000} minutes or run bun server/storage-admin.ts reclaim`
+].join(" ");
+
+let identityCache: { root: string; value: string } | null = null;
+/** This host and data directory: machine id (when there is one), plus the directory's device and inode. */
+export function storageIdentity(dataRoot: string) {
+  const root = resolve(dataRoot);
+  if (identityCache?.root === root) return identityCache.value;
+  let machine = "";
+  for (const path of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+    try {
+      machine = readFileSync(path, "utf8").trim();
+      if (machine) break;
+    } catch {
+      // Not on this system (containers often have none): the directory's inode still tells copies apart.
+    }
+  }
+  const info = statSync(root);
+  const value = createHash("sha256").update(`nook-storage-identity\0${machine}\0${info.dev}\0${info.ino}`).digest("hex").slice(0, 24);
+  identityCache = { root, value };
+  return value;
+}
 
 function parseMarker(text: string): Marker | null {
-  const [id, seq, nonce] = text.trim().split(/\s+/);
+  const [id, seq, nonce, identity, refreshedAt, released] = text.trim().split(/\s+/);
   if (!id || !isObjectId(id)) return null;
-  return { id, seq: Number.isSafeInteger(Number(seq)) ? Number(seq) : 0, nonce: nonce ?? "" };
+  const number = (value: string | undefined) => Number.isSafeInteger(Number(value)) ? Number(value) : 0;
+  // A marker from before review N1 has no identity: it never counts as a fresh claim from elsewhere.
+  return { id, seq: number(seq), nonce: nonce ?? "", identity: identity ?? "", refreshedAt: number(refreshedAt), released: released === undefined || released === "1" };
 }
 
 async function readMarker(store: ObjectStore): Promise<Marker | "absent"> {
@@ -756,7 +817,7 @@ async function readMarker(store: ObjectStore): Promise<Marker | "absent"> {
   const file = internals.client!.file(`${internals.prefix ?? ""}${INSTANCE_KEY}`);
   try {
     const text = await withDeadline(file.text(), internals.timeoutMs ?? 30_000, "marker");
-    return parseMarker(text) ?? { id: "unreadable", seq: Number.MAX_SAFE_INTEGER, nonce: "" };
+    return parseMarker(text) ?? { id: "unreadable", seq: Number.MAX_SAFE_INTEGER, nonce: "", identity: "", refreshedAt: 0, released: true };
   } catch (error) {
     if (isNoSuchKey(error)) return "absent";
     throw error instanceof StorageUnavailableError ? error : new StorageUnavailableError("marker", s3Code(error));
@@ -766,43 +827,71 @@ async function readMarker(store: ObjectStore): Promise<Marker | "absent"> {
 async function writeMarker(store: ObjectStore, marker: Marker) {
   const internals = s3Internals(store);
   const file = internals.client!.file(`${internals.prefix ?? ""}${INSTANCE_KEY}`);
+  const line = `${marker.id} ${marker.seq} ${marker.nonce} ${marker.identity} ${marker.refreshedAt} ${marker.released ? 1 : 0}\n`;
   try {
-    await withDeadline(file.write(`${marker.id} ${marker.seq} ${marker.nonce}\n`, { type: "text/plain" }), internals.timeoutMs ?? 30_000, "marker");
+    await withDeadline(file.write(line, { type: "text/plain" }), internals.timeoutMs ?? 30_000, "marker");
   } catch (error) {
     throw error instanceof StorageUnavailableError ? error : new StorageUnavailableError("marker", s3Code(error));
   }
 }
 
-/** Read only: whether the prefix is free, this directory's, or refused (foreign or stale). */
-export async function checkS3Prefix(store: ObjectStore, dataRoot: string): Promise<"absent" | "matched"> {
+type ClaimOptions = { reclaim?: boolean; identity?: string; nowMs?: number; settleMs?: number };
+
+/** The refusals shared by the read-only check and the claim. */
+function refusal(marker: Marker, own: LocalInstance, identity: string, nowMs: number, reclaim: boolean) {
+  if (marker.id !== own.id) return new PrefixClaimError("foreign", foreignMessage);
+  if (reclaim) return null;
+  if (marker.seq > own.seq) return new PrefixClaimError("stale", staleMessage);
+  if (marker.identity && marker.identity !== identity && !marker.released && nowMs - marker.refreshedAt < COPY_WINDOW_MS) return new PrefixClaimError("copy", copyMessage);
+  return null;
+}
+
+/** Read only: whether the prefix is free, this directory's, or refused (foreign, stale, or a copy). */
+export async function checkS3Prefix(store: ObjectStore, dataRoot: string, options: ClaimOptions = {}): Promise<"absent" | "matched"> {
   if (store.backend !== "s3") return "matched";
   const own = await readLocalInstance(dataRoot);
   const marker = await readMarker(store);
   if (marker === "absent") return "absent";
-  if (marker.id !== own.id) throw new PrefixClaimError("foreign", foreignMessage);
-  if (marker.seq > own.seq) throw new PrefixClaimError("stale", staleMessage);
+  const refused = refusal(marker, own, options.identity ?? storageIdentity(dataRoot), options.nowMs ?? Date.now(), false);
+  if (refused) throw refused;
   return "matched";
 }
 
 /** Claims the prefix for this data directory (see PrefixClaimError). Returns "created" when no marker existed. */
-export async function claimS3Prefix(store: ObjectStore, dataRoot: string, options: { reclaim?: boolean } = {}): Promise<"matched" | "created"> {
+export async function claimS3Prefix(store: ObjectStore, dataRoot: string, options: ClaimOptions = {}): Promise<"matched" | "created"> {
   if (store.backend !== "s3") return "matched";
+  const identity = options.identity ?? storageIdentity(dataRoot);
   const own = await readLocalInstance(dataRoot);
   const marker = await readMarker(store);
-  if (marker !== "absent" && marker.id !== own.id) throw new PrefixClaimError("foreign", foreignMessage);
-  if (marker !== "absent" && marker.seq > own.seq && !options.reclaim) {
-    s3Internals(store).fence?.();
-    throw new PrefixClaimError("stale", staleMessage);
+  if (marker !== "absent") {
+    const refused = refusal(marker, own, identity, options.nowMs ?? Date.now(), options.reclaim ?? false);
+    if (refused) {
+      if (refused.reason !== "foreign") s3Internals(store).fence?.();
+      throw refused;
+    }
   }
-  const next: Marker = { id: own.id, seq: Math.max(own.seq, marker === "absent" ? 0 : marker.seq) + 1, nonce: crypto.randomUUID() };
+  const next: Marker = { id: own.id, seq: Math.max(own.seq, marker === "absent" ? 0 : marker.seq) + 1, nonce: crypto.randomUUID(), identity, refreshedAt: options.nowMs ?? Date.now(), released: false };
   await writeLocalInstance(dataRoot, { id: own.id, seq: next.seq });
   await writeMarker(store, next);
+  // Review L-b: two processes that both read the old marker before either wrote: wait a little, at random,
+  // so the later writer's marker is in place before the read-back, and only one of them keeps the claim.
+  await Bun.sleep(options.settleMs ?? 100 + Math.floor(Math.random() * 300));
   const back = await readMarker(store);
   if (back === "absent" || back.nonce !== next.nonce) {
     s3Internals(store).fence?.();
     throw new PrefixClaimError("race", "Another process claimed this S3_PREFIX at the same moment; only one Nook may use a prefix");
   }
   return marker === "absent" ? "created" : "matched";
+}
+
+/** Marks this server's claim released (a clean stop), so the data directory may start elsewhere at once. */
+export async function releaseS3Prefix(store: ObjectStore, dataRoot: string) {
+  if (store.backend !== "s3" || s3Internals(store).isFenced?.()) return false;
+  const own = await readLocalInstance(dataRoot);
+  const marker = await readMarker(store);
+  if (marker === "absent" || marker.id !== own.id || marker.seq !== own.seq || marker.identity !== storageIdentity(dataRoot)) return false;
+  await writeMarker(store, { ...marker, released: true });
+  return true;
 }
 
 /** DATA_DIR/storage-instance (`<uuid> <n>`; an older file holds the id alone), created on first use. */

@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import type { AppEnv } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
-import { isObjectInFlight, objectStore } from "./objectStore";
+import { isObjectInFlight, objectStore, putHeld } from "./objectStore";
 
 /**
  * Profile pictures (Wave 35, D299, T257, T262). The server downloads a Google picture once, stores it
@@ -130,16 +130,22 @@ export async function storeAvatarFromUrl(userId: string, pictureUrl: string) {
     return false;
   }
   const id = crypto.randomUUID();
+  let release: () => void;
   try {
-    await objectStore().put("avatars", id, fetched.bytes);
+    // The picture stays out of the avatar sweep until the pointer below is written (review L-a).
+    release = await putHeld(objectStore(), "avatars", id, fetched.bytes);
   } catch (error) {
     console.error("Avatar store failed", error instanceof Error ? error.name : "Unknown error");
     return false;
   }
-  const previous = (db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null)?.avatar_id ?? null;
-  const updated = db.query("UPDATE users SET avatar_id = ? WHERE id = ?").run(id, userId).changes;
-  await removeFile(updated ? previous : id);
-  return updated === 1;
+  try {
+    const previous = (db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null)?.avatar_id ?? null;
+    const updated = db.query("UPDATE users SET avatar_id = ? WHERE id = ?").run(id, userId).changes;
+    await removeFile(updated ? previous : id);
+    return updated === 1;
+  } finally {
+    release();
+  }
 }
 
 /** Removes a user's avatar file and clears the pointer (unlinking Google keeps it: the name stays too). */

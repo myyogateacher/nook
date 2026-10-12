@@ -4,7 +4,7 @@ import { statfs } from "node:fs/promises";
 import { config } from "../config";
 import { audit, db, ensureDefaultFolder, now } from "../db";
 import { documentSummarySelect, readableDocumentPredicate, readableSinglePredicate, type DocumentSummary } from "../documentAccess";
-import { DocumentIntegrityError, openObjectForRead, removeObject, writeObject } from "../documentStorage";
+import { DocumentIntegrityError, openObjectForRead, removeObject, writeObjectHeld } from "../documentStorage";
 import { diskBytesNeeded } from "../objectStore";
 import { storedBytes } from "../documents";
 import { withResourceLock } from "../storage";
@@ -329,7 +329,8 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
   await ensureDiskSpace(prepared.bytes.byteLength);
   const documentId = crypto.randomUUID();
   const objectId = crypto.randomUUID();
-  await writeObject(objectId, prepared.bytes);
+  // The object stays out of the orphan sweeps until its row commits (or it is removed again).
+  const release = await writeObjectHeld(objectId, prepared.bytes);
   let replayOf: string | null = null;
   try {
     db.transaction(() => {
@@ -357,6 +358,8 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
   } catch (error) {
     await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
     throw error;
+  } finally {
+    release();
   }
   if (replayOf) {
     await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
@@ -474,7 +477,7 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     checkQuota(userId, delta);
     await ensureDiskSpace(prepared.bytes.byteLength);
     const objectId = crypto.randomUUID();
-    await writeObject(objectId, prepared.bytes);
+    const release = await writeObjectHeld(objectId, prepared.bytes);
     const savedAt = now();
     let dropped: string[] = [];
     try {
@@ -507,6 +510,8 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     } catch (error) {
       await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
       throw error;
+    } finally {
+      release();
     }
     if (!keep) await removeObject(board.object_id).catch(() => console.error("Could not remove a superseded whiteboard object; the sweeper will"));
     for (const object of dropped) await removeObject(object).catch(() => console.error("Could not remove a dropped whiteboard snapshot; the sweeper will"));

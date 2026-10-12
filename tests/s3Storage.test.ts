@@ -110,9 +110,43 @@ describe("startup with STORAGE_BACKEND=s3", () => {
     expect((await probe("start", { DATA_DIR: live, STORAGE_BACKEND: "s3", ...s3Env("restored/") })).code).toBe(0);
     const copy = await probe("start", { DATA_DIR: restored, STORAGE_BACKEND: "s3", ...s3Env("restored/") });
     expect(copy.code).toBe(1);
-    expect(copy.stderr).toContain("older than the S3 prefix's last claim");
+    expect(copy.stderr).toContain("behind the S3 prefix's last claim");
     expect(copy.stderr).not.toContain("..");
   }, 30_000);
+
+  test("a copy of a live data directory (another directory, same id) refuses to start while the live server runs; a clean stop releases the claim (review N1)", async () => {
+    const live = scratch();
+    const env = (dir: string) => ({ DATA_DIR: dir, STORAGE_BACKEND: "s3", ...s3Env("livecopy/") });
+    const server = Bun.spawn(["bun", "--no-env-file", join("tests", "support", "storageProbe.ts"), "serve"], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env(live) }, stdout: "pipe", stderr: "pipe" });
+    const reader = server.stdout.getReader();
+    let seen = "";
+    while (!seen.includes("PROBE ")) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      seen += new TextDecoder().decode(value);
+    }
+    expect(seen).toContain('"serving":true');
+    // cp -a of the running server's data directory, started against the same prefix: refused, nothing taken over.
+    // (Wait for the boot sweep's own claim, so the copy holds the live claim number, as a copy usually does.)
+    await Bun.sleep(1500);
+    const copy = scratch();
+    copyFileSync(join(live, "storage-instance"), join(copy, "storage-instance"));
+    copyFileSync(join(live, "mynotes.sqlite"), join(copy, "mynotes.sqlite"));
+    const refused = await probe("start", env(copy));
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("looks like a copy of a live data directory");
+    const markerBefore = new TextDecoder().decode(fake.objects.get("livecopy/.nook-instance")!.bytes).trim().split(" ");
+    expect(markerBefore[5]).toBe("0");
+    // The live server stops cleanly (SIGTERM): the claim is released, and the directory may start elsewhere.
+    server.kill("SIGTERM");
+    expect(await server.exited).toBe(0);
+    expect(new TextDecoder().decode(fake.objects.get("livecopy/.nook-instance")!.bytes).trim().split(" ")[5]).toBe("1");
+    expect((await probe("start", env(copy))).code).toBe(0);
+    // Now the old place is behind, and its refusal says it may be the live server overtaken by a copy.
+    const behind = await probe("start", env(live));
+    expect(behind.code).toBe(1);
+    expect(behind.stderr).toContain("or it is the live server and a copy of its data directory");
+  }, 60_000);
 
   test("another data directory's prefix refuses to start", async () => {
     expect((await probe("start", { DATA_DIR: scratch(), STORAGE_BACKEND: "s3", ...s3Env("shared/") })).code).toBe(0);

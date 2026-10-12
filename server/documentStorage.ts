@@ -1,4 +1,4 @@
-import { isObjectId, isObjectInFlight, objectStore, type ObjectStore } from "./objectStore";
+import { isObjectId, isObjectInFlight, objectStore, putHeld, type ObjectStore } from "./objectStore";
 
 /**
  * Document objects: the bytes of Files documents, attachments, note and whiteboard pictures, and
@@ -22,6 +22,12 @@ export const createDocumentWriter = (id: string) => objectStore().createWriter("
  * (whiteboard copy-on-write saves, D193). Nothing is left behind on failure.
  */
 export const writeObject = (id: string, bytes: Uint8Array) => objectStore().put("documents", id, bytes);
+
+/**
+ * writeObject() for callers that commit a row afterwards (whiteboard saves, review L-a): the object stays
+ * out of the orphan sweeps until the returned release is called, after the row commits or is abandoned.
+ */
+export const writeObjectHeld = (id: string, bytes: Uint8Array) => putHeld(objectStore(), "documents", id, bytes);
 
 /**
  * Opens a committed object for reading. Locally the path must be a regular file (not a symlink) and is

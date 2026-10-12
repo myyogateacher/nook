@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBlackHole, startFakeS3 } from "./support/fakeS3";
 import { parseStorageConfig } from "../server/config";
-import { claimS3Prefix, createLocalObjectStore, createS3ObjectStore, diskBytesNeeded, isObjectInFlight, ObjectIntegrityError, PrefixClaimError, S3_PART_BYTES, setS3UploadLimitForTests, StorageUnavailableError, type ObjectStore } from "../server/objectStore";
+import { checkS3Prefix, claimS3Prefix, COPY_WINDOW_MS, createLocalObjectStore, releaseS3Prefix, storageIdentity, createS3ObjectStore, diskBytesNeeded, isObjectInFlight, ObjectIntegrityError, PrefixClaimError, S3_PART_BYTES, setS3UploadLimitForTests, StorageUnavailableError, type ObjectStore } from "../server/objectStore";
 import { sweepDocumentFiles } from "../server/documentStorage";
 
 /**
@@ -485,7 +485,7 @@ describe("object store: the prefix claim (review M2)", () => {
     const store = createS3ObjectStore(s3Settings("race/"));
     await claimS3Prefix(store, dir);
     const marker = new TextDecoder().decode(fake.objects.get("race/.nook-instance")!.bytes).trim().split(" ");
-    expect(marker.length).toBe(3);
+    expect(marker.length).toBe(6);
     expect(marker[1]).toBe("1");
     expect(readdirSync(dir)).toEqual(["storage-instance"]);
   });
@@ -512,5 +512,76 @@ describe("storage configuration (review L3, L4, L5)", () => {
     expect(() => parseStorageConfig({ ...complete, AWS_SESSION_TOKEN: "x" })).toThrow("Unset AWS_SESSION_TOKEN");
     expect(() => parseStorageConfig({ ...complete, S3_SESSION_TOKEN: "x" })).toThrow("Unset S3_SESSION_TOKEN");
     expect(parseStorageConfig({ AWS_SESSION_TOKEN: "x" })).toEqual({ backend: "local" });
+  });
+});
+
+describe("object store: copies of a live data directory (review N1, L-b)", () => {
+  const quick = { settleMs: 20 };
+  const copyOf = (live: string) => {
+    const copy = scratch();
+    copyFileSync(join(live, "storage-instance"), join(copy, "storage-instance"));
+    return copy;
+  };
+
+  test("the identity tells a data directory from its copy and is stable for the same directory", () => {
+    const live = scratch();
+    expect(storageIdentity(live)).toBe(storageIdentity(live));
+    expect(storageIdentity(live)).not.toBe(storageIdentity(scratch()));
+  });
+
+  test("a copy started while the live claim is fresh is refused and fenced; the live server keeps its claim", async () => {
+    const live = scratch();
+    const store = createS3ObjectStore(s3Settings("copy/"));
+    expect(await claimS3Prefix(store, live, quick)).toBe("created");
+    const copy = copyOf(live);
+    const copyStore = createS3ObjectStore(s3Settings("copy/"));
+    const refused = await claimS3Prefix(copyStore, copy, quick).catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(PrefixClaimError);
+    expect((refused as PrefixClaimError).reason).toBe("copy");
+    expect((refused as Error).message).toContain("looks like a copy of a live data directory");
+    expect((refused as Error).message).not.toContain("..");
+    expect(((await copyStore.remove("documents", crypto.randomUUID()).catch((error: unknown) => error)) as StorageUnavailableError).code).toBe("Fenced");
+    expect((await checkS3Prefix(createS3ObjectStore(s3Settings("copy/")), copy).catch((error: PrefixClaimError) => error.reason))).toBe("copy");
+    // The live server is untouched and claims again as usual.
+    expect(await claimS3Prefix(store, live, quick)).toBe("matched");
+  });
+
+  test("a claim older than the copy window, or a released one, lets the directory start elsewhere (a move)", async () => {
+    const live = scratch();
+    const store = createS3ObjectStore(s3Settings("moved/"));
+    await claimS3Prefix(store, live, quick);
+    const moved = copyOf(live);
+    expect(await claimS3Prefix(createS3ObjectStore(s3Settings("moved/")), moved, { ...quick, nowMs: Date.now() + COPY_WINDOW_MS + 1000 })).toBe("matched");
+    // Then the old place is behind; its message says it may be the live server overtaken by a copy.
+    const behind = await claimS3Prefix(createS3ObjectStore(s3Settings("moved/")), live, quick).catch((error: unknown) => error) as PrefixClaimError;
+    expect(behind.reason).toBe("stale");
+    expect(behind.message).toContain("or it is the live server and a copy of its data directory");
+
+    const second = scratch();
+    const secondStore = createS3ObjectStore(s3Settings("released/"));
+    await claimS3Prefix(secondStore, second, quick);
+    expect(await releaseS3Prefix(secondStore, second)).toBe(true);
+    expect(new TextDecoder().decode(fake.objects.get("released/.nook-instance")!.bytes).trim().split(" ")[5]).toBe("1");
+    expect(await claimS3Prefix(createS3ObjectStore(s3Settings("released/")), copyOf(second), quick)).toBe("matched");
+  });
+
+  test("reclaim takes the prefix over from a live claim on purpose", async () => {
+    const live = scratch();
+    await claimS3Prefix(createS3ObjectStore(s3Settings("reclaim/")), live, quick);
+    expect(await claimS3Prefix(createS3ObjectStore(s3Settings("reclaim/")), copyOf(live), { ...quick, reclaim: true })).toBe("matched");
+  });
+
+  test("two copies claiming at the same moment: only one keeps the claim (read back after a wait)", async () => {
+    const live = scratch();
+    writeFileSync(join(live, "storage-instance"), `${crypto.randomUUID()} 0\n`);
+    const first = copyOf(live);
+    const second = copyOf(live);
+    const results = await Promise.allSettled([
+      claimS3Prefix(createS3ObjectStore(s3Settings("race-two/")), first, { settleMs: 150 }),
+      claimS3Prefix(createS3ObjectStore(s3Settings("race-two/")), second, { settleMs: 150 })
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled").length).toBe(1);
+    const rejected = results.find((result) => result.status === "rejected") as PromiseRejectedResult;
+    expect((rejected.reason as PrefixClaimError).reason).toBe("race");
   });
 });

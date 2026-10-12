@@ -16,9 +16,9 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { registerDeviceRoutes } from "./signInDevices";
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
-import { startSweeper } from "./sweeper";
+import { fileSweepsAllowed, startSweeper } from "./sweeper";
 import { startServerHeartbeat } from "./serverHeartbeat";
-import { claimS3Prefix, CLOCK_SKEW_WARN_MS, objectStore, StorageUnavailableError, withDeadline } from "./objectStore";
+import { claimS3Prefix, CLOCK_SKEW_WARN_MS, objectStore, PREFIX_REFRESH_MS, releaseS3Prefix, StorageUnavailableError, withDeadline } from "./objectStore";
 import { startDispatcher } from "./calendar/reminders";
 import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
@@ -1056,6 +1056,19 @@ if (config.storage.backend === "s3") {
     process.exit(1);
   }
   console.info(`File storage: s3 bucket ${bucket}${prefix ? ` prefix ${prefix}` : ""} at ${new URL(endpoint).host}`);
+  // Review N1: claim the prefix again every five minutes (a copy of this data directory started meanwhile
+  // is refused while the claim is fresh), and release it on a clean stop so a moved directory may start at once.
+  setInterval(() => void fileSweepsAllowed(), PREFIX_REFRESH_MS).unref();
+  let stopping = false;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      if (stopping) return;
+      stopping = true;
+      void withDeadline(releaseS3Prefix(objectStore(), config.dataDir), 3_000, "marker")
+        .catch((error) => console.error("File storage: the prefix claim could not be released", error instanceof Error ? error.message : "Unknown error"))
+        .finally(() => process.exit(0));
+    });
+  }
 } else {
   console.info("File storage: local (DATA_DIR)");
 }

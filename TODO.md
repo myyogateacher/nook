@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0–U8 (migrations 046, 047), S3 storage, toasts via the Sonner package, whiteboard thumbnails with the owner's pictures, Bin restore label + Undo on every move to the Bin. In progress: Google re-auth fix (Google alone confirms, except two-factor actions, which also need the TOTP or a recovery code; audit of every re-auth flow). Then a combined review and release check, the release, and the GitHub release. Operator to try Take photo on a real phone (QA instance).
+- [ ] **v0.35.0 — uploads everywhere + S3 storage.** All features on main (U0–U8 with migrations 046 and 047, S3 storage, Sonner toasts, whiteboard thumbnails with pictures, Bin restore label + Undo, Google re-auth fix). In progress: combined security review and release QA (gates, S3 suite, upgrade from v0.34.0, scroll audit). Then the release and the GitHub release. Operator to try Take photo on a real phone (QA instance).
 
 ## Known LOW leftovers
 

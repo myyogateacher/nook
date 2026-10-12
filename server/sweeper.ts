@@ -1,7 +1,9 @@
 import { sweepBin, type BinSweepCounts } from "./bin";
 import { sweepNotifications } from "./calendar/reminders";
+import { config } from "./config";
 import { db } from "./db";
-import { objectIsIntact, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
+import { claimS3Prefix, objectStore, PrefixClaimError, s3Internals } from "./objectStore";
+import { documentObjectSizes, sweepDocumentFiles, type SweepCounts } from "./documentStorage";
 import { missingAttachmentTriggers, sweepAttachments } from "./attachments/sweep";
 import { sweepInvites } from "./team/invites";
 import { sweepProposals } from "./inbox/service";
@@ -32,13 +34,38 @@ export const hasDocumentRow = (id: string) => Boolean(db.query(`SELECT 1 FROM do
   UNION ALL SELECT 1 FROM whiteboards WHERE object_id = $id
   UNION ALL SELECT 1 FROM whiteboard_snapshots WHERE object_id = $id LIMIT 1`).get({ id }));
 
-async function countIntegrityErrors() {
+/**
+ * Review L6 (accepted): the check holds every live object's id and size in memory, about 150 MB at a
+ * million objects. At boot it reuses the orphan sweep's listing, so the bucket is listed once.
+ */
+async function countIntegrityErrors(listed?: Map<string, number>) {
   // A whiteboard's bytes live in its current scene object, never under the document id.
   const rows = db.query(`SELECT COALESCE(w.object_id, d.id) AS object_id, d.size_bytes FROM documents d LEFT JOIN whiteboards w ON w.document_id = d.id
     WHERE d.purge_started_at IS NULL`).all() as Array<{ object_id: string; size_bytes: number }>;
+  // One listing instead of a stat per row: on S3 that is one request per 1,000 objects, not one per file.
+  const sizes = listed ?? await documentObjectSizes();
   let broken = 0;
-  for (const row of rows) if (!await objectIsIntact(row.object_id, row.size_bytes)) broken += 1;
+  for (const row of rows) if (sizes.get(row.object_id) !== row.size_bytes) broken += 1;
   return broken;
+}
+
+/**
+ * S3 (review M2): before deleting anything, claim the prefix again. A process that is no longer the
+ * prefix's newest claimant (a restored copy, a second server) is fenced: it skips the file sweeps, and
+ * every delete it tries fails (Bin purges stay pending). A store that does not answer skips this round.
+ */
+export async function fileSweepsAllowed() {
+  const store = objectStore();
+  if (store.backend !== "s3") return true;
+  if (s3Internals(store).isFenced?.()) return false;
+  try {
+    await claimS3Prefix(store, config.dataDir);
+    return true;
+  } catch (error) {
+    if (error instanceof PrefixClaimError) console.error(`File storage: ${error.message.replace(/\.$/, "")}. This server no longer sweeps or deletes files; restart it once the prefix is sorted out.`);
+    else console.error("File storage: the prefix claim could not be checked; file sweeps skipped this hour", error instanceof Error ? error.message : "Unknown error");
+    return false;
+  }
 }
 
 /**
@@ -50,13 +77,16 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
   running ??= (async () => {
     try {
       let counts: SweepCounts | null = null;
+      const filesAllowed = await fileSweepsAllowed();
       try {
-        counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow });
+        if (!filesAllowed) throw new Error("File sweeps are off for this run");
+        const sizes = options.boot ? new Map<string, number>() : undefined;
+        counts = await sweepDocumentFiles({ boot: options.boot ?? false, nowMs: options.nowMs, hasDocumentRow, sizes });
         if (counts.stagingRemoved || counts.orphansRemoved || counts.ignored) {
           console.info(`Document sweep: ${counts.stagingRemoved} staging removed, ${counts.orphansRemoved} orphans removed, ${counts.ignored} unexpected entries ignored`);
         }
         if (options.boot) {
-          const broken = await countIntegrityErrors();
+          const broken = await countIntegrityErrors(sizes);
           if (broken) console.error(`Document integrity check: ${broken} stored documents are missing or have the wrong size`);
         }
       } catch (error) {
@@ -172,7 +202,7 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       try {
         // Google sign-in (Wave 35): flows past their 10 minutes, and avatar files no account points at.
         const flows = sweepGoogleFlows(options.nowMs);
-        const avatars = await sweepAvatarFiles(options.nowMs);
+        const avatars = filesAllowed ? await sweepAvatarFiles(options.nowMs) : 0;
         if (flows || avatars) console.info(`Google sweep: ${flows} sign-in flows and ${avatars} avatar files removed`);
       } catch (error) {
         console.error("Google sweep failed", error instanceof Error ? error.name : "Unknown error");

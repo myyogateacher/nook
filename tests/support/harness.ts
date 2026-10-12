@@ -19,7 +19,7 @@
  */
 import { expect } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,7 +61,20 @@ process.env.MAX_UPLOAD_BYTES = "4194304";
 process.env.USER_STORAGE_QUOTA_BYTES = "12582912";
 process.env.MIN_FREE_DISK_BYTES = "0";
 
+// S3 storage slice: `MYNOTES_TEST_STORAGE=s3 bun test <files>` runs the shared server against an
+// in-process fake S3 (tests/support/fakeS3.ts) instead of DATA_DIR; the default run stays on the local
+// backend. A test-only switch, not STORAGE_BACKEND itself: Bun.spawn without `env` hands children the
+// environment the process started with, and probe children must keep the local backend (a spawnSync
+// child could never reach the in-process fake while this process waits for it).
+export const s3Backend = process.env.MYNOTES_TEST_STORAGE?.trim() === "s3";
+if (process.env.STORAGE_BACKEND?.trim() === "s3") throw new Error("Run the server tests on S3 with MYNOTES_TEST_STORAGE=s3, not STORAGE_BACKEND=s3 (probe children inherit it)");
+export const fakeS3 = s3Backend ? (await import("./fakeS3")).startFakeS3() : null;
+const s3Env = fakeS3 ? { STORAGE_BACKEND: "s3", S3_ENDPOINT: fakeS3.url, S3_BUCKET: fakeS3.bucket, S3_REGION: "us-east-1", S3_ACCESS_KEY_ID: fakeS3.accessKeyId, S3_SECRET_ACCESS_KEY: fakeS3.secretAccessKey, S3_PREFIX: "nook-test" } : {};
+Object.assign(process.env, s3Env);
+
 const serverModule = await import("../../server/index");
+// Children given `{ ...process.env }` keep the local backend too.
+for (const name of Object.keys(s3Env)) delete process.env[name];
 export const serverOptions = serverModule.default;
 // Every test request comes from one address: the per-client sign-in, registration, and invite
 // buckets (S7) are covered in tests/authLimits.test.ts and off everywhere else.
@@ -71,8 +84,34 @@ export const server = Bun.serve(serverOptions);
 
 (globalThis as { __mynotesHarnessCleanup?: () => void }).__mynotesHarnessCleanup = () => {
   server.stop(true);
+  fakeS3?.stop();
   rmSync(dataDir, { recursive: true, force: true });
 };
+
+/** Whether a document object exists in the configured store (local disk or the fake S3). */
+export async function storedObjectExists(id: string, namespace: "documents" | "avatars" = "documents") {
+  const { objectStore } = await import("../../server/objectStore");
+  return (await objectStore().stat(namespace, id)) !== null;
+}
+
+/** A stored object's bytes from the configured store. */
+export async function storedObjectBytes(id: string, namespace: "documents" | "avatars" = "documents") {
+  const { objectStore } = await import("../../server/objectStore");
+  return Buffer.from(await (await objectStore().open(namespace, id)).bytes());
+}
+
+/** Writes an object straight into the configured store (fixtures for sweeper tests). */
+export async function putStoredObject(id: string, bytes: Uint8Array | string, namespace: "documents" | "avatars" = "documents") {
+  const { objectStore } = await import("../../server/objectStore");
+  await objectStore().put(namespace, id, typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes);
+}
+
+/** Makes a stored object look `ms` old to the sweepers. */
+export function ageStoredObject(id: string, ms: number, namespace: "documents" | "avatars" = "documents") {
+  if (fakeS3) return fakeS3.age(`nook-test/${namespace}/${id}`, ms);
+  const when = (Date.now() - ms) / 1000;
+  utimesSync(namespace === "documents" ? join(dataDir, "documents", "objects", id) : join(dataDir, "avatars", id), when, when);
+}
 
 export type Session = { cookie: string; setCookie: string; csrf: string; userId: string; email: string; password: string };
 /** createUser() takes allowlisted emails from the start; spareEmail() hands them out from the end. */

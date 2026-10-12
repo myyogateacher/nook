@@ -54,12 +54,7 @@ export const noteReferences: ReferenceChecker = async (candidates) => {
 };
 
 async function readObjectText(objectId: string, size: number) {
-  const { handle } = await openObjectForRead(objectId, size);
-  try {
-    return new TextDecoder().decode(await handle.readFile());
-  } finally {
-    await handle.close();
-  }
+  return new TextDecoder().decode(await (await openObjectForRead(objectId, size)).bytes());
 }
 
 /** Whiteboard scenes (`nookDocumentId`) and snapshots. */

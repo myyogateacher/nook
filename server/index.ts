@@ -16,8 +16,9 @@ import { createSession, logoutCurrentSession, requireAuth, requireMutationSafety
 import { registerDeviceRoutes } from "./signInDevices";
 import { editableNote, listReadableFolders, noteLevel, ownedNote, readableNote, readableNotePredicate, visibleNoteFolderIdExpression } from "./access";
 import { checksum, storage, withNoteLock } from "./storage";
-import { startSweeper } from "./sweeper";
+import { fileSweepsAllowed, startSweeper } from "./sweeper";
 import { startServerHeartbeat } from "./serverHeartbeat";
+import { claimS3Prefix, CLOCK_SKEW_WARN_MS, objectStore, PREFIX_REFRESH_MS, releaseS3Prefix, StorageUnavailableError, withDeadline } from "./objectStore";
 import { startDispatcher } from "./calendar/reminders";
 import { startMailDispatcher } from "./mail/dispatcher";
 import { initPush } from "./calendar/push";
@@ -1035,6 +1036,42 @@ try {
 warnIfNoActiveAdmin();
 // Wave 39: the effective APP_NAME, so an operator can see the override took.
 console.info(`App name: ${config.appName}${config.appName === DEFAULT_APP_NAME ? " (default)" : " (APP_NAME)"}`);
+// S3 storage slice: where file bytes live. An s3 backend must answer a write, read, and delete under
+// its prefix, and the prefix must belong to this data directory, or the server refuses to start.
+if (config.storage.backend === "s3") {
+  const { endpoint, bucket, prefix, timeoutMs } = config.storage;
+  try {
+    const store = objectStore();
+    // Every request has its own deadline; the whole check gets one too (review H2), so a silent endpoint exits 1.
+    const { clockSkewMs } = await withDeadline(store.probe(), timeoutMs * 4, "probe");
+    if (clockSkewMs !== null && Math.abs(clockSkewMs) > CLOCK_SKEW_WARN_MS) {
+      console.warn(`File storage: this host's clock differs from the S3 service's by about ${Math.round(clockSkewMs / 60_000)} minutes. Fix the clock (NTP): S3 refuses requests past 15 minutes, and the orphan sweep's age checks depend on it.`);
+    }
+    if (await withDeadline(claimS3Prefix(store, config.dataDir), timeoutMs * 4, "marker") === "created") console.info("File storage: marked the S3 prefix as this Nook's (.nook-instance)");
+  } catch (error) {
+    const detail = error instanceof StorageUnavailableError
+      ? `${error.message}. Check S3_BUCKET, S3_ENDPOINT, S3_REGION, the access key, and that the key may put, get, list, and delete under S3_PREFIX`
+      : error instanceof Error ? error.message.replace(/\.$/, "") : "Unknown error";
+    console.error(`File storage check failed: ${detail}. Nook did not start.`);
+    process.exit(1);
+  }
+  console.info(`File storage: s3 bucket ${bucket}${prefix ? ` prefix ${prefix}` : ""} at ${new URL(endpoint).host}`);
+  // Review N1: claim the prefix again every five minutes (a copy of this data directory started meanwhile
+  // is refused while the claim is fresh), and release it on a clean stop so a moved directory may start at once.
+  setInterval(() => void fileSweepsAllowed(), PREFIX_REFRESH_MS).unref();
+  let stopping = false;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      if (stopping) return;
+      stopping = true;
+      void withDeadline(releaseS3Prefix(objectStore(), config.dataDir), 3_000, "marker")
+        .catch((error) => console.error("File storage: the prefix claim could not be released", error instanceof Error ? error.message : "Unknown error"))
+        .finally(() => process.exit(0));
+    });
+  }
+} else {
+  console.info("File storage: local (DATA_DIR)");
+}
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
 // choose their own X-Forwarded-For. One line, no addresses.
 if (config.trustedProxyHops >= 1 && config.trustedProxyAddresses.length === 0) {

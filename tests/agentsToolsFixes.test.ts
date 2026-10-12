@@ -19,12 +19,12 @@ const { resetMcpLimits } = await import("../server/mcpRateLimit");
 
 /**
  * Wave 41 review fixes (AC-B tools): the checks the review's own probes (tests/agentsToolsReview.test.ts)
- * do not cover. Port 24473 (a fake MCP server, in the fake's reserved range).
+ * do not cover. The fake MCP server listens on a free port.
  */
 
 retireUsersAfterFile();
 
-const mcp = startFakeMcpServer(24473);
+const mcp = startFakeMcpServer(0);
 let admin: Session;
 let member: Session;
 let serverId: string;

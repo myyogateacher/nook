@@ -1,8 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { createUser, dataDir, db, request, type Session } from "./support/harness";
+import { ageStoredObject, createUser, db, putStoredObject, request, storedObjectBytes, storedObjectExists, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { runSweep, hasDocumentRow } = await import("../server/sweeper");
@@ -36,7 +34,6 @@ async function api(session: Session | undefined, method: string, path: string, b
   return { status: response.status, body: parsed, headers: response.headers };
 }
 
-const objectPath = (id: string) => join(dataDir, "documents", "objects", id);
 const boardRow = (id: string) => db.query("SELECT * FROM whiteboards WHERE document_id = ?").get(id) as Json | null;
 const docRow = (id: string) => db.query("SELECT * FROM documents WHERE id = ?").get(id) as Json | null;
 
@@ -82,9 +79,9 @@ describe("whiteboards API", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM documents WHERE owner_id = ?").get(owner.userId)).toEqual({ n: 1 });
     // The board's bytes are its scene object, never an object under the document id (D193).
     const row = boardRow(board.id)!;
-    expect(existsSync(objectPath(row.object_id))).toBe(true);
-    expect(existsSync(objectPath(board.id))).toBe(false);
-    expect(JSON.parse(readFileSync(objectPath(row.object_id), "utf8"))).toMatchObject({ type: "excalidraw", source: "nook", elements: [] });
+    expect(await storedObjectExists(row.object_id)).toBe(true);
+    expect(await storedObjectExists(board.id)).toBe(false);
+    expect(JSON.parse((await storedObjectBytes(row.object_id)).toString("utf8"))).toMatchObject({ type: "excalidraw", source: "nook", elements: [] });
     // Files lists it too, as a whiteboard (Q2).
     const files = await api(owner, "GET", "/files");
     expect(files.body.documents.find((item: Json) => item.id === board.id)).toMatchObject({ kind: "whiteboard" });
@@ -158,8 +155,8 @@ describe("whiteboards API", () => {
     expect(first.body).toMatchObject({ revision: 2 });
     const after = boardRow(board.id)!;
     expect(after.object_id).not.toBe(before.object_id);
-    expect(existsSync(objectPath(before.object_id))).toBe(false);
-    const bytes = readFileSync(objectPath(after.object_id));
+    expect(await storedObjectExists(before.object_id)).toBe(false);
+    const bytes = await storedObjectBytes(after.object_id);
     expect(docRow(board.id)).toMatchObject({ size_bytes: bytes.byteLength, sha256: createHash("sha256").update(bytes).digest("hex") });
     expect(first.body.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
     // text and originalText both count: (6 + 4) * 2.
@@ -271,7 +268,7 @@ describe("whiteboards API", () => {
       { revision: 2, object_id: firstKept, size_bytes: expect.any(Number) },
       { revision: 4, object_id: beforeEmpty.object_id, size_bytes: expect.any(Number) }
     ]);
-    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(true);
+    expect(await storedObjectExists(beforeEmpty.object_id)).toBe(true);
     const { storedBytes } = await import("../server/documents");
     expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + (snapshots[0]!.size_bytes as number) + (snapshots[1]!.size_bytes as number));
     // Only the owner sees them.
@@ -308,13 +305,13 @@ describe("whiteboards API", () => {
       revision = (await save(owner, board.id, revision, sceneWith(texts(2, `r${round}`)))).body.revision;
     }
     expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 20 });
-    expect(existsSync(objectPath(firstKept))).toBe(false);
-    expect(existsSync(objectPath(beforeEmpty.object_id))).toBe(true);
+    expect(await storedObjectExists(firstKept)).toBe(false);
+    expect(await storedObjectExists(beforeEmpty.object_id)).toBe(true);
     // Purging the board removes the snapshot objects too.
     const kept = (db.query("SELECT object_id FROM whiteboard_snapshots WHERE document_id = ?").all(board.id) as Json[]).map((row) => row.object_id as string);
     await api(owner, "DELETE", `/files/${board.id}`);
     await api(owner, "DELETE", `/bin/document/${board.id}`);
-    for (const object of kept) expect(existsSync(objectPath(object))).toBe(false);
+    for (const object of kept) expect(await storedObjectExists(object)).toBe(false);
     expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_snapshots WHERE document_id = ?").get(board.id)).toEqual({ n: 0 });
   }, 30_000);
 
@@ -435,7 +432,7 @@ describe("whiteboards API", () => {
     expect(purged.status).toBe(200);
     expect(docRow(board.id)).toBeNull();
     expect(boardRow(board.id)).toBeNull();
-    expect(existsSync(objectPath(objectId))).toBe(false);
+    expect(await storedObjectExists(objectId)).toBe(false);
     expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_search WHERE document_id = ?").get(board.id)).toEqual({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM whiteboard_fts WHERE whiteboard_fts MATCH 'keep'").get()).toEqual({ n: 0 });
   });
@@ -446,28 +443,27 @@ describe("whiteboards API", () => {
     await save(owner, board.id, 1, sceneWith(["live"]));
     const live = boardRow(board.id)!.object_id as string;
     const snapshotObject = crypto.randomUUID();
-    writeFileSync(objectPath(snapshotObject), "{}", { mode: 0o600 });
+    await putStoredObject(snapshotObject, "{}");
     db.query("INSERT INTO whiteboard_snapshots (id, document_id, revision, object_id, size_bytes, sha256, created_at) VALUES (?, ?, 1, ?, 2, ?, ?)")
       .run(crypto.randomUUID(), board.id, snapshotObject, "0".repeat(64), new Date().toISOString());
     const orphan = crypto.randomUUID();
-    writeFileSync(objectPath(orphan), "{}", { mode: 0o600 });
-    const old = new Date(Date.now() - 2 * 3_600_000);
-    for (const id of [live, snapshotObject, orphan]) utimesSync(objectPath(id), old, old);
+    await putStoredObject(orphan, "{}");
+    for (const id of [live, snapshotObject, orphan]) ageStoredObject(id, 86_400_000);
     expect(hasDocumentRow(live)).toBe(true);
     expect(hasDocumentRow(snapshotObject)).toBe(true);
     expect(hasDocumentRow(orphan)).toBe(false);
     await runSweep();
-    expect(existsSync(objectPath(live))).toBe(true);
-    expect(existsSync(objectPath(snapshotObject))).toBe(true);
-    expect(existsSync(objectPath(orphan))).toBe(false);
+    expect(await storedObjectExists(live)).toBe(true);
+    expect(await storedObjectExists(snapshotObject)).toBe(true);
+    expect(await storedObjectExists(orphan)).toBe(false);
     // Snapshots count against the quota (§6).
     const { storedBytes } = await import("../server/documents");
     expect(storedBytes(owner.userId)).toBe((docRow(board.id)!.size_bytes as number) + 2);
     // Purge removes the snapshot object too.
     await api(owner, "DELETE", `/files/${board.id}`);
     await api(owner, "DELETE", `/bin/document/${board.id}`);
-    expect(existsSync(objectPath(live))).toBe(false);
-    expect(existsSync(objectPath(snapshotObject))).toBe(false);
+    expect(await storedObjectExists(live)).toBe(false);
+    expect(await storedObjectExists(snapshotObject)).toBe(false);
   });
 
   test("thumbnails (T169): PNG only, ≤ 128 KiB, ≤ 2048 px, stale revisions ignored, exact headers", async () => {

@@ -91,6 +91,7 @@ export const REST_STATUS: Partial<Record<McpErrorCode, number>> = {
   BUDGET_EXCEEDED: 429,
   NO_PROVIDER: 409,
   AGENT_SECRET_INTEGRITY: 500,
+  STORAGE_UNAVAILABLE: 503,
   INTERNAL: 500
 };
 

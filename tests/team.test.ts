@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { createUser, dataDir, db, origin, request, type Session } from "./support/harness";
+import { createUser, dataDir, db, origin, request, s3Backend, type Session } from "./support/harness";
 
 const { createMcpApiKey } = await import("../server/mcp");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
@@ -297,7 +297,8 @@ describe("Team API: blocking", () => {
     expect(sessionCount(target)).toBe(1);
   });
 
-  test("an upload that started before a block cannot commit after it", async () => {
+  // Watches the local staging directory; tests/s3Flows.test.ts covers the same case on S3.
+  test.skipIf(s3Backend)("an upload that started before a block cannot commit after it", async () => {
     const admin = await user("Upload admin", "admin");
     const target = await user("Upload target");
     const encoder = new TextEncoder();

@@ -18,7 +18,7 @@ import {
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
 import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedImagesMessage, refusedLinks, restoreMessage, sceneForLoad, sceneForSave, withoutRefusedImages } from "./historyGuard";
-import { IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize } from "./boardImages";
+import { IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize, thumbnailFiles } from "./boardImages";
 import { isTouchLike, swallowNextClick } from "./touchClick";
 import { HistorySheet } from "./HistorySheet";
 import { ImagePickerSheet, LinkPickerSheet } from "./NookPickers";
@@ -26,7 +26,7 @@ import { markBoardOpen } from "./pendingSync";
 import { onBeforeChunkReload } from "../chunkReload";
 import { clearPending, readPending, writePending, type PendingEntry } from "./pendingStore";
 import {
-  announceThumbnail, createWhiteboard, duplicateWhiteboard, getWhiteboard, putWhiteboardThumbnail, restoreSnapshot, saveWhiteboardScene, whiteboardLink,
+  announceThumbnail, createWhiteboard, duplicateWhiteboard, getThumbnailPictures, getWhiteboard, putWhiteboardThumbnail, restoreSnapshot, saveWhiteboardScene, whiteboardLink,
   type WhiteboardSnapshot, type WhiteboardSummary
 } from "./whiteboardsApi";
 import { Avatar } from "../ui/Avatar";
@@ -263,10 +263,19 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       else {
         const elements = captured.elements.filter((element) => element.isDeleted !== true && isKeptElement(element, refsRef.current)) as never;
         const appState = { ...captured.appState, exportBackground: true, exportWithDarkMode: false };
-        // The whole drawing, with padding, fitted into the longest side (QA Q3). Never with its
-        // pictures (T165): everyone who can read the board sees the thumbnail, also people who
-        // cannot open a picture's file, so pictures are left blank in it.
-        const files: BinaryFiles = {};
+        // The whole drawing, with padding, fitted into the longest side (QA Q3). Everyone who can read
+        // the board sees the thumbnail, so it shows only the owner's own live pictures, which follow
+        // the board's sharing (v0.35.0, thumbnailFiles); any other picture stays a placeholder.
+        let allowed: string[] = [];
+        if (Object.keys(filesRef.current).length) {
+          try {
+            allowed = (await getThumbnailPictures(boardId)).documentIds;
+          } catch (reason) {
+            if (lostAccess(reason)) throw reason;
+            // Not known now: no pictures in this thumbnail rather than a wrong one.
+          }
+        }
+        const files = thumbnailFiles(filesRef.current, refsRef.current, allowed) as BinaryFiles;
         const first = await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE, mimeType: "image/png", exportPadding: 24 });
         blob = first.size <= THUMBNAIL_MAX_BYTES ? first : await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 2, mimeType: "image/png", exportPadding: 16 });
         if (blob && blob.size > THUMBNAIL_MAX_BYTES) blob = await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 4, mimeType: "image/png", exportPadding: 8 });
@@ -660,8 +669,15 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const loadedKey = loaded ? loaded.board.id : null;
   useEffect(() => {
     if (!apiReady || !loadedKey) return;
-    void hydrate(refsRef.current.values());
-  }, [apiReady, hydrate, loadedKey]);
+    void hydrate(refsRef.current.values()).then(() => {
+      // v0.35.0: the owner's thumbnail of a board with pictures is drawn again once per opening, after
+      // its pictures loaded, so a picture binned (or no longer the owner's) since drops out of it
+      // without waiting for an edit. The usual idle wait and 5 s spacing apply.
+      if (!refsRef.current.size || !boardRef.current?.canEdit || tearingDownRef.current || !mounted.current || stateRef.current.baseRevision <= 1) return;
+      thumbRevision.current = null;
+      scheduleThumbnail(stateRef.current.baseRevision);
+    });
+  }, [apiReady, hydrate, loadedKey, scheduleThumbnail]);
 
   /**
    * Places a Nook picture on the board: only once its file is stored and loaded, only while the

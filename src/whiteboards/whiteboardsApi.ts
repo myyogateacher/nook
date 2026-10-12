@@ -81,6 +81,10 @@ export async function putWhiteboardThumbnail(id: string, revision: number, png: 
   await api<unknown>(`/whiteboards/${encodeURIComponent(id)}/thumbnail`, { method: "PUT", body: JSON.stringify({ revision, png: btoa(binary) }) });
 }
 
+/** The board owner's own pictures on the saved board, the only ones a thumbnail may show (v0.35.0). */
+export const getThumbnailPictures = (id: string) =>
+  api<{ revision: number; documentIds: string[] }>(`/whiteboards/${encodeURIComponent(id)}/thumbnail-pictures`);
+
 /** Fired after a thumbnail upload, so a list already on screen shows it (the upload can finish after the canvas closed). */
 export const THUMBNAIL_EVENT = "nook:whiteboard-thumbnail";
 export const announceThumbnail = (id: string, revision: number) => window.dispatchEvent(new CustomEvent(THUMBNAIL_EVENT, { detail: { id, revision } }));

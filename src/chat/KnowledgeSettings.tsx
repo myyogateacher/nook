@@ -14,6 +14,7 @@ import { ModelSheet, SourceChunks } from "./KnowledgeModel";
 import "./chat.css";
 import "./knowledge.css";
 import { notify } from "../ui/notify";
+import { notifyBinned, onBinRestored } from "../bin/binUndo";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -43,6 +44,7 @@ export function KnowledgeSettings({ kbId, navigate, flash }: { kbId: string | nu
     }
   }, []);
   useEffect(() => { void load(); }, [kbId, load]);
+  useEffect(() => onBinRestored(["knowledge_base"], () => { void load(); }), [load]);
   useEffect(() => { if (!kbId) document.title = hubDocumentTitle("Knowledge"); }, [kbId]);
   const toList = { app: "settings" as const, section: "knowledge" as const };
   if (kbId) return <KnowledgePage kbId={kbId} navigate={navigate} flash={flash} />;
@@ -178,7 +180,8 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
     if (!await confirm.ask({ title: `Move ${kb.name} to the Bin?`, message: "Agents that use it stop finding it at once. Deleted forever after 30 days.", confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteKnowledge(kb.id);
-      notify.success("Moved to the Bin");
+      // Undo restores it through the Bin; the list (onBinRestored in KnowledgeSettings) shows it again.
+      notifyBinned("Moved to the Bin", [{ type: "knowledge_base", id: kb.id }]);
       navigate(toList, { replace: true });
     } catch (reason) {
       notify.error(messageOf(reason, "Could not delete the knowledge base"));

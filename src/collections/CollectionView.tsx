@@ -40,6 +40,7 @@ import { RowActionSheet } from "./RowActionSheet";
 import { RowPanel } from "./RowPanel";
 import { SortFilterSheet, type SortFilter } from "./SortFilterSheet";
 import { useRows } from "./useRows";
+import { notifyBinned } from "../bin/binUndo";
 import { collectionBinMessage, roleLabel, rowCountLabel, validateCollectionName, validateName } from "./values";
 import { useRole } from "../team/roleAccess";
 
@@ -176,7 +177,8 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     setDialog(null);
     try {
       await deleteCollection(collectionId);
-      notify.success("Collection moved to the Bin");
+      // Undo restores it through the Bin; the list it went back to reloads (onBinRestored there).
+      notifyBinned("Collection moved to the Bin", [{ type: "collection", id: collectionId }]);
       go(collectionsRoute(), { replace: true });
     } catch (reason) {
       notify.error(errorMessage(reason, "Could not delete the collection"));
@@ -189,7 +191,15 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
     try {
       await deleteView(view.id);
       setViews((items) => items.filter((item) => item.id !== view.id));
-      notify.success(`Deleted view “${view.name}”`);
+      // A view is deleted, not binned (there is no Bin row to restore): Undo saves it again with the
+      // same name and settings, as Tasks views do (v0.35.0).
+      const { name, config } = view;
+      notify.success(`Deleted view “${name}”`, { action: { label: "Undo", onClick: () => {
+        createView(collectionId, name, config).then(({ view: restored }) => {
+          setViews((items) => items.some((item) => item.id === restored.id) ? items : [...items, restored]);
+          notify.success("Restored");
+        }, (reason) => notify.error(errorMessage(reason, "Could not restore the view")));
+      } } });
       go(collectionsRoute(collectionId), { replace: true });
     } catch (reason) {
       notify.error(errorMessage(reason, "Could not delete the view"));
@@ -227,7 +237,7 @@ export function CollectionView({ collectionId, viewId, rowId, go, onBack, onMiss
       await deleteRow(row.id);
       rows.removeRow(row.id);
       if (rowId === row.id) onBack();
-      notify.success("Row moved to the Bin");
+      notifyBinned("Row moved to the Bin", [{ type: "collection_row", id: row.id }], () => rows.reload());
     } catch (reason) {
       notify.error(errorMessage(reason, "Could not delete the row"));
     }

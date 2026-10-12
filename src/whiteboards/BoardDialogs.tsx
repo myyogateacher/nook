@@ -12,6 +12,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { Folder } from "../types";
 import { whiteboardDisplayName, whiteboardFileName } from "../../shared/whiteboardScene";
 import { createWhiteboard, downloadUrl, type WhiteboardSummary } from "./whiteboardsApi";
+import { notifyBinned } from "../bin/binUndo";
 import { notify } from "../ui/notify";
 
 /**
@@ -174,7 +175,7 @@ export function BoardDialogs({ dialog, folders, flash, onClose, onChanged, onDel
       notifyBinChanged();
       onClose();
       onDeleted(board);
-      notify.success(`Moved “${name}” to the Bin`);
+      notifyBinned(`Moved “${name}” to the Bin`, [{ type: "document", id: board.id }]);
     } catch (reason) {
       notify.error(messageOf(reason, "Could not move the whiteboard to the Bin"));
     } finally {

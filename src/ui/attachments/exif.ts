@@ -16,8 +16,9 @@
  *   (`LocationStripError`); the caller may retry with `keepLocation`.
  * - **Not stripped:** HEIC/HEIF (and any other format), and files larger than 64 MiB
  *   (`STRIP_MAX_BYTES`), which are uploaded as they are. The server never rewrites bytes (an upload's
- *   SHA-256 must match what the client sent), so files uploaded by other means (MCP, REST, the Files
- *   app) keep their metadata.
+ *   SHA-256 must match what the client sent), so files uploaded by other means (MCP, REST, and in the
+ *   Files app Upload files, Upload folder, and drag and drop) keep their metadata. Files' Take photo
+ *   and paste do go through this function (U6).
  */
 
 const SOI = 0xd8;

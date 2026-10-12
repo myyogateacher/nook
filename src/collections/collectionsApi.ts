@@ -1,4 +1,4 @@
-import { api, ApiError, getCsrfToken } from "../api";
+import { api, ApiError } from "../api";
 import type { ItemLevel } from "../access/accessLevels";
 
 /** docs/plan/API_CONTRACTS.md § Collections. */
@@ -93,32 +93,17 @@ export const createView = (collectionId: string, name: string, config: ViewConfi
 export const updateView = (viewId: string, change: { name?: string; config?: ViewConfig }) => api<{ view: CollectionView }>(`/collections/views/${viewId}`, json("PATCH", change));
 export const deleteView = (viewId: string) => api<{ ok: true }>(`/collections/views/${viewId}`, json("DELETE", {}));
 
-export const attachDocument = (rowId: string, documentId: string, fieldId: string) =>
-  api<{ row: CollectionRow }>(`/collections/rows/${rowId}/attachments`, json("POST", { documentId, fieldId }));
+/**
+ * Links one of the caller's own documents to a file field (uploads everywhere U3). A Files item outside
+ * the Attachments folder needs `confirmed` (the From Files confirm, D396); otherwise 409 CONFIRM_REQUIRED.
+ */
+export const attachDocument = (rowId: string, documentId: string, fieldId: string, options: { confirmed?: boolean } = {}) =>
+  api<{ row: CollectionRow }>(`/collections/rows/${rowId}/attachments`, json("POST", { documentId, fieldId, ...(options.confirmed ? { confirmed: true } : {}) }));
 export const detachDocument = (rowId: string, documentId: string) =>
   api<{ row: CollectionRow; documentBinned: boolean }>(`/collections/rows/${rowId}/attachments/${documentId}`, json("DELETE", {}));
 
-/** Uploads a row attachment (stored outside every folder; never listed in Files). XHR for progress. */
-export function uploadAttachment(file: File, onProgress: (fraction: number) => void): Promise<{ id: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/files?purpose=collection_attachment");
-    const token = getCsrfToken();
-    if (token) xhr.setRequestHeader("X-CSRF-Token", token);
-    xhr.setRequestHeader("Idempotency-Key", crypto.randomUUID());
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded / event.total); };
-    xhr.onload = () => {
-      let payload: { document?: { id: string }; error?: string } = {};
-      try { payload = JSON.parse(xhr.responseText || "{}"); } catch { /* keep the empty payload */ }
-      if (xhr.status >= 200 && xhr.status < 300 && payload.document) resolve(payload.document);
-      else reject(new ApiError(payload.error ?? `Upload failed (${xhr.status})`, xhr.status, payload));
-    };
-    xhr.onerror = () => reject(new ApiError("The upload was interrupted", 0));
-    const form = new FormData();
-    form.append("file", file, file.name);
-    xhr.send(form);
-  });
-}
+/** Files per row, across its file fields (server LIMITS.attachmentsPerRow, D400). */
+export const ROW_FILE_LIMIT = 20;
 
 export type ImportError = { row: number; column: number; fieldId: string | null; message: string };
 export type ImportPreview = { dryRun: true; header: string[]; total: number; valid: number; errorCount: number; errors: ImportError[]; mapping: Array<string | null>; preview: Array<Record<string, FieldValue>>; wouldExceedLimit: boolean };

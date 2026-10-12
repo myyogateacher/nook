@@ -60,16 +60,19 @@ export function ownedDocumentSummary(documentId: string, userId: string) {
  * owner; or a document-level override (all users, or selected with a share
  * row); or, when inheriting, the immediate folder's visibility and shares.
  * Folder sharing does not cascade to subfolders. Binned rows never match.
- * Sharing and folder access apply to Files documents only: an attachment is
- * readable by its owner and through its card and row links (below), nothing else.
+ * Every document is a Files document since 047 (U8): the hidden card and row
+ * attachments, which this predicate gave to their owner only, became files in
+ * the owner's Attachments folder, which is private and can never be shared
+ * (046), so they still match for their owner only. Their card and row readers
+ * get them through the link branches below.
  */
 export const readableDocumentPredicate = `
   d.deleted_at IS NULL AND (
     d.owner_id = $userId
-    OR (d.purpose = 'file' AND d.sharing_override = 1 AND ((d.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (d.visibility = 'selected' AND (EXISTS (
+    OR (d.sharing_override = 1 AND ((d.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (d.visibility = 'selected' AND (EXISTS (
       SELECT 1 FROM document_shares s WHERE s.document_id = d.id AND s.user_id = $userId
     ) OR ${groupGrantExists("document", "d.id")}))))
-    OR (d.purpose = 'file' AND d.sharing_override = 0 AND EXISTS (
+    OR (d.sharing_override = 0 AND EXISTS (
       SELECT 1 FROM folders rf WHERE rf.id = d.folder_id AND (
         (rf.visibility = 'all_users' AND ${AUDIENCE_ALL_USERS}) OR (rf.visibility = 'selected' AND (EXISTS (
           SELECT 1 FROM folder_shares rfs WHERE rfs.folder_id = rf.id AND rfs.user_id = $userId
@@ -128,9 +131,10 @@ export function readableDocumentSummary(documentId: string, userId: string) {
 }
 
 /**
- * The Files list. Only `purpose = 'file'` documents are listed: task and
- * collection attachments never appear in Files (WAVES_7-9.md §7), even for
- * their uploader.
+ * The Files list: ownership and Files sharing only, never a card, row, or other
+ * host link (T40, T58, T340), so an attachment shows in its owner's Files
+ * (their Attachments folder) and nobody else's. The `purpose = 'file'` guard is
+ * kept although 047 (U8) left no other purpose.
  */
 export function listReadableDocuments(userId: string, folderId: string | null, keyScope: SqlFilter = NO_FILTER) {
   // keyScope (Wave 34): an API key limited to chosen files or folders, applied before the LIMIT.
@@ -140,8 +144,8 @@ export function listReadableDocuments(userId: string, folderId: string | null, k
 
 /**
  * One document under the Files list predicate: readable through ownership or
- * sharing, and `purpose = 'file'`. MCP uses this, never readableDocument*, so
- * attachments reachable only through another module (task cards) stay out.
+ * sharing. MCP uses this, never readableDocument*, so files reachable only
+ * through another module's link (a card, a row) stay out.
  */
 export function listableDocumentSummary(documentId: string, userId: string) {
   return db.query(`${documentSummarySelect} WHERE d.id = $documentId AND ${readablePredicate} AND d.purpose = 'file'`)

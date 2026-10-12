@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useRef, useState } from "react";
 import { createRow, errorCode, errorMessage, errorPayload, patchRow, queryRows, type CollectionRow, type FieldValue, type QueryRequest } from "./collectionsApi";
 
@@ -10,7 +11,7 @@ type RowsState = { rows: CollectionRow[]; nextCursor: string | null; total: numb
  * uses: one save at a time per row, each sent with the row's latest revision (CAS). A 409
  * ROW_CHANGED keeps the user's screen and records the server's row so the UI can offer Reload.
  */
-export function useRows(collectionId: string, notify: (message: string) => void) {
+export function useRows(collectionId: string, notify: Notifier) {
   const [state, setState] = useState<RowsState>({ rows: [], nextCursor: null, total: 0, schemaVersion: null });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export function useRows(collectionId: string, notify: (message: string) => void)
     } catch (reason) {
       // The fields changed under the cursor: start over from the first page.
       if (errorCode(reason) === "SCHEMA_CHANGED") void load(specRef.current);
-      else notify(errorMessage(reason, "Could not load more rows"));
+      else notify.error(errorMessage(reason, "Could not load more rows"));
     }
   }, [collectionId, load, notify, state.nextCursor]);
 
@@ -90,12 +91,12 @@ export function useRows(collectionId: string, notify: (message: string) => void)
         if (code === "ROW_CHANGED") {
           const current = errorPayload<{ row?: CollectionRow }>(reason)?.row;
           if (current) setConflicts((items) => ({ ...items, [rowId]: current }));
-          notify("Someone else changed this row. Reload it to see their change.");
+          notify.warning("Someone else changed this row. Reload it to see their change.");
         } else if (code === "INVALID_VALUES") {
           const fieldErrors = errorPayload<{ fieldErrors?: Record<string, string> }>(reason)?.fieldErrors ?? {};
-          notify(Object.values(fieldErrors)[0] ?? "That value is not valid");
+          notify.warning(Object.values(fieldErrors)[0] ?? "That value is not valid");
         } else {
-          notify(errorMessage(reason, "Could not save the change"));
+          notify.error(errorMessage(reason, "Could not save the change"));
         }
         return null;
       }
@@ -111,7 +112,7 @@ export function useRows(collectionId: string, notify: (message: string) => void)
       return row;
     } catch (reason) {
       const fieldErrors = errorPayload<{ fieldErrors?: Record<string, string> }>(reason)?.fieldErrors;
-      notify(fieldErrors ? `Could not add the row: ${Object.values(fieldErrors)[0]}` : errorMessage(reason, "Could not add the row"));
+      notify.error(fieldErrors ? `Could not add the row: ${Object.values(fieldErrors)[0]}` : errorMessage(reason, "Could not add the row"));
       return null;
     }
   }, [addRow, collectionId, notify]);

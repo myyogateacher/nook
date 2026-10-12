@@ -125,6 +125,7 @@ import { useWhiteboardSearch, WhiteboardSearchResults } from "./search/Whiteboar
 import { ModulesSettings } from "./ModulesSettings";
 import { hiddenEntryStep, hiddenModuleForApp, normalizeDisabledModules, recordPopDepth, isAppEnabled, isModuleEnabled, moduleOffHint, ModulesContext, parsePreferences, routeGateModules, unavailableModules, type ModuleId, moduleDef } from "./modules";
 import { usePreferences, type PreferencesStatus } from "./usePreferences";
+import { errorText, flash as flashToast, notify } from "./ui/notify";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
@@ -960,7 +961,6 @@ export function App() {
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error" | "conflict">("saved");
-  const [toast, setToast] = useState("");
   // Settings → Modules (D92): per-user, saved on the server, UI only.
   const modulePreferences = usePreferences(session?.user.id ?? null, session && session.preferences !== undefined ? parsePreferences(session.preferences) : undefined);
   // Wave 25: modules the server does not offer this person (the Vault without its key) are hidden
@@ -1023,13 +1023,8 @@ export function App() {
   // a draft that was already waiting (another session, or an MCP key) needs an explicit Publish.
   const sessionEditedRef = useRef<string | null>(null);
 
-  // One timer for the one toast: an earlier message's timer must not clear a newer message early.
-  const toastTimerRef = useRef<number | null>(null);
-  const flash = useCallback((message: string) => {
-    setToast(message);
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => { toastTimerRef.current = null; setToast(""); }, 2600);
-  }, []);
+  // A neutral toast (ui/notify.ts); successes, errors and refusals call notify.* with their type.
+  const flash = flashToast;
 
   const loadNavigation = useCallback(async (expectedUserId = sessionUserRef.current) => {
     const [{ folders: folderRows }, { notes: noteRows }] = await Promise.all([
@@ -1117,7 +1112,7 @@ export function App() {
         let panel: MobilePanel = "folders";
         if (route.app === "notes" && (route.noteId || route.folder !== "all")) {
           const resolved = resolveNotesRoute(route, { folders: folderRows, notes: noteRows }, { snapshot, lastFolder: "all" });
-          if (resolved.missing) flash(resolved.missing === "note" ? "Note not found" : "Folder not found");
+          if (resolved.missing) notify.warning(resolved.missing === "note" ? "Note not found" : "Folder not found");
           selection = resolved;
           panel = resolveNotesPanel(resolved, snapshot);
         } else {
@@ -1146,7 +1141,7 @@ export function App() {
         historyDepthRef.current = readHistoryDepth(window.history.state);
       }).catch((reason) => {
         if (applyRoute && sessionUserRef.current === userId && routeAppliedUserRef.current !== userId) startupFailedUserRef.current = userId;
-        flash(reason instanceof Error ? reason.message : "Could not open your notes");
+        notify.error(errorText(reason, "Could not open your notes"));
       });
     }
   }, [flash, session, loadNavigation, startupRetry]);
@@ -1171,7 +1166,7 @@ export function App() {
     loadNote(noteId).catch((reason) => {
       // Give the user a way out: keep the last loaded note readable instead of leaving it locked.
       if (selectedNoteIdRef.current !== noteId) return;
-      flash(reason instanceof Error && reason.message !== "Not found" ? reason.message : "Could not open this note");
+      notify.error(reason instanceof Error && reason.message !== "Not found" ? reason.message : "Could not open this note");
       setSelectedNoteId(null);
       // QA L1 (Wave 24): on a phone, land on the list the entry names, not an empty editor.
       setMobilePanel("notes");
@@ -1389,7 +1384,7 @@ export function App() {
     const { folder } = await api<{ folder: { id: string; name: string } }>("/folders", { method: "POST", body: JSON.stringify({ name, parentId: null }) });
     await loadNavigation();
     closeNewFolder();
-    flash(`Created folder ${folder.name}`);
+    notify.success(`Created folder ${folder.name}`);
   }
 
   async function createNote() {
@@ -1408,7 +1403,7 @@ export function App() {
       // A blank note that was just removed should not stay behind as a Back target.
       navigate(notesRoute(selectedFolder, created.id), { panel: "editor", replace: finalized === "removed-empty" });
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not create note");
+      notify.error(errorText(reason, "Could not create note"));
     } finally {
       switchingRef.current = false;
       setSwitchingNote(false);
@@ -1423,7 +1418,7 @@ export function App() {
     setDropFolderId(null);
     await loadNavigation();
     if (selectedNoteId === noteId) navigate(notesRoute(folder.id, noteId), { replace: true });
-    flash(`Moved to ${folder.name}`);
+    notify.success(`Moved to ${folder.name}`);
   }
 
   // Clears the editor after the open note left the list (moved to the Bin or purged).
@@ -1470,7 +1465,7 @@ export function App() {
       const result = await api<{ purged?: boolean }>(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
       if (deletingOpenNote) closeRemovedNote(noteId);
       await loadNavigation();
-      flash(result.purged ? "Empty note removed" : "Moved to the Bin");
+      notify.success(result.purged ? "Empty note removed" : "Moved to the Bin");
       if (!result.purged) notifyBinChanged();
     } finally {
       switchingRef.current = false;
@@ -1493,14 +1488,15 @@ export function App() {
       // Someone else (an MCP key or another session) wrote the draft after this editor's last save.
       // Show it instead of publishing text the user has not seen.
       await Promise.all([loadNote(note.id), loadNavigation()]);
-      flash(DRAFT_CHANGED_MESSAGE);
+      notify.warning(DRAFT_CHANGED_MESSAGE);
       return false;
     }
     if (sessionEditedRef.current === note.id) sessionEditedRef.current = null;
     if (reloadCurrent) await Promise.all([loadNote(note.id), loadNavigation()]);
     else await loadNavigation();
     // U4 (D408): files in the note that are not the publisher's are not shared through it.
-    flash(skipped ? `New version published. ${skipped === 1 ? "One file in it is" : `${skipped} files in it are`} not shared through the note (someone else's, or in the Bin).` : "New version published");
+    // Published either way; a warning when some files are not shared through the note.
+    (skipped ? notify.warning : notify.success)(skipped ? `New version published. ${skipped === 1 ? "One file in it is" : `${skipped} files in it are`} not shared through the note (someone else's, or in the Bin).` : "New version published");
     // Review M3: your own files in the note that are in your Bin: offer to restore them (not when leaving).
     if (binned.length && reloadCurrent) setBinnedFiles({ noteId: note.id, documentIds: binned });
     return true;
@@ -1524,7 +1520,7 @@ export function App() {
       setMobilePanel("editor");
       navigate(notesRoute(folder, nextId), { panel: "editor", replace: finalized === "removed-empty" });
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not switch notes");
+      notify.error(errorText(reason, "Could not switch notes"));
     } finally {
       switchingRef.current = false;
       setSwitchingNote(false);
@@ -1555,7 +1551,7 @@ export function App() {
       setMobilePanel("notes");
       navigate(notesRoute(nextFolder, null), { panel: "notes", replace: finalized === "removed-empty" });
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not switch folders");
+      notify.error(errorText(reason, "Could not switch folders"));
     } finally {
       switchingRef.current = false;
       setSwitchingNote(false);
@@ -1614,14 +1610,14 @@ export function App() {
       if (removesNote) {
         closeRemovedNote(noteId);
         await loadNavigation();
-        flash(result.binned ? "Moved to the Bin" : "Empty note removed");
+        notify.success(result.binned ? "Moved to the Bin" : "Empty note removed");
       } else {
         if (sessionEditedRef.current === noteId) sessionEditedRef.current = null;
         await Promise.all([loadNote(noteId), loadNavigation()]);
-        flash("Draft discarded");
+        notify.success("Draft discarded");
       }
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not discard this draft");
+      notify.error(errorText(reason, "Could not discard this draft"));
     } finally {
       switchingRef.current = false;
       setSwitchingNote(false);
@@ -1661,12 +1657,12 @@ export function App() {
       }
       setMobilePanel(targetPanel);
       setActiveApp("notes");
-      if (resolved.missing) flash(resolved.missing === "note" ? "Note not found" : "Folder not found");
+      if (resolved.missing) notify.warning(resolved.missing === "note" ? "Note not found" : "Folder not found");
       if (resolved.missing || formatRoute(notesRoute(resolved.folder, resolved.noteId)) !== window.location.pathname) {
         navigate(notesRoute(resolved.folder, resolved.noteId), { panel: targetPanel, replace: true });
       }
     } catch (reason) {
-      flash(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
+      notify.error(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
       navigate(routeForApp(activeApp), { replace: true });
     } finally {
       switchingRef.current = false;
@@ -1705,7 +1701,7 @@ export function App() {
       setMobileActions(false);
       return true;
     } catch (reason) {
-      flash(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
+      notify.error(`${reason instanceof Error ? reason.message : "Could not save this note"}. Your note is still open.`);
       return false;
     } finally {
       switchingRef.current = false;
@@ -1748,7 +1744,7 @@ export function App() {
       if (data.stale) return;
       await restoreNotesRoute(route, null, data);
     } catch (reason) {
-      flash(reason instanceof Error ? reason.message : "Could not open your notes");
+      notify.error(errorText(reason, "Could not open your notes"));
       // Step back to the Today entry this link pushed.
       window.history.back();
     }
@@ -2045,7 +2041,7 @@ export function App() {
     (userId ? countPendingForUser(userId) : Promise.resolve(0)).then(async (count) => {
       if (count > 0 && !await appConfirm.ask(signOutPendingRequest(count))) return;
       return logout();
-    }).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+    }).catch((reason) => notify.error(errorText(reason, "Could not sign out")));
   }
 
   async function logout() {
@@ -2150,7 +2146,7 @@ export function App() {
     acceptSession(result);
   }} />;
   if (invite.onRegister && session) return <InviteWhileSignedIn displayName={session.user.displayName} onContinue={leaveInvite} onSignOut={() => {
-    logout().then(() => window.history.replaceState(null, "", "/register"), (reason) => flash(reason instanceof Error ? reason.message : "Could not sign out"));
+    logout().then(() => window.history.replaceState(null, "", "/register"), (reason) => notify.error(errorText(reason, "Could not sign out")));
   }} />;
   if (!session) return <AuthScreen onAuthenticated={acceptSession} onForgotPassword={openForgotPassword} googleResult={googleSignIn} />;
 
@@ -2161,7 +2157,7 @@ export function App() {
     setSession((current) => current ? { ...current, notices: { ...current.notices, googleReset: null } } : current);
     void api("/auth/notices/google-reset/dismiss", { method: "POST", body: "{}" }).catch(() => undefined);
   };
-  const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{toast && <div className="toast" role="status">{toast}</div>}{moduleHint && <div className="module-hint" role="status">
+  const toastStatus = <>{appConfirm.confirmElement}{resetNotice && <GoogleResetNoticeBanner notice={resetNotice} onDismiss={dismissResetNotice} />}{moduleHint && <div className="module-hint" role="status">
     <p>{unavailable.includes(moduleHint) ? `${moduleDef(moduleHint).label} is not available on this server.` : moduleOffHint(moduleHint)}</p>
     {!unavailable.includes(moduleHint) && <button className="secondary-button" onClick={() => { setHighlightModule(moduleHint); setModuleHint(null); openSettings("modules"); }}>Turn on in Settings</button>}
     <button className="icon-button" onClick={() => setModuleHint(null)} aria-label="Dismiss"><X /></button>
@@ -2248,7 +2244,7 @@ export function App() {
                 event.preventDefault();
                 if (folder.is_owner !== 1) return;
                 const noteId = event.dataTransfer.getData("application/x-mynotes-note") || draggingNoteId;
-                if (noteId) moveNote(noteId, folder).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not move note"));
+                if (noteId) moveNote(noteId, folder).catch((reason) => notify.error(errorText(reason, "Could not move note")));
               }}
             >
               <FolderIcon />
@@ -2383,19 +2379,19 @@ export function App() {
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={flash} />
+            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify} />
           </article>
         </>}
       </section>
 
-      {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
-      {panel === "share" && note && <AccessSheet kind="note" id={note.id} title={note.title || "Untitled"} guardHistory onClose={() => setPanel(null)} onSaved={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Access updated"); }} />}
+      {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); notify.success("Version restored as a draft"); }} />}
+      {panel === "share" && note && <AccessSheet kind="note" id={note.id} title={note.title || "Untitled"} guardHistory onClose={() => setPanel(null)} onSaved={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); notify.success("Access updated"); }} />}
       {binnedFiles && <BinnedFilesConfirm noteId={binnedFiles.noteId} documentIds={binnedFiles.documentIds}
         onCancel={() => setBinnedFiles(null)}
         onDone={(message) => {
           const shown = binnedFiles.noteId;
           setBinnedFiles(null);
-          flash(message);
+          notify.success(message);
           if (note?.id === shown) void loadNote(shown);
         }} />}
       {deletingNote && <NoteDeleteConfirm title={deletingNote.title}
@@ -2403,7 +2399,7 @@ export function App() {
         onConfirm={() => {
           const target = deletingNote;
           setDeletingNote(null);
-          void deleteNote(target.id).catch((reason) => flash(reason instanceof Error ? reason.message : "Could not delete note")).finally(focusAfterDeleteConfirm);
+          void deleteNote(target.id).catch((reason) => notify.error(errorText(reason, "Could not delete note"))).finally(focusAfterDeleteConfirm);
         }} />}
       {movingNote && note && <MoveSheet
         document={{ name: note.title.trim() || "Untitled", folder_id: note.folder_id }}
@@ -2423,7 +2419,7 @@ export function App() {
         onSubmit={createFolder}
         onCancel={closeNewFolder}
       />}
-      {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); flash("Folder access updated"); }} />}
+      {sharingFolder && <AccessSheet kind="folder" id={sharingFolder.id} title={sharingFolder.name} guardHistory onClose={() => setSharingFolder(null)} onSaved={async () => { setSharingFolder(null); await loadNavigation(); notify.success("Folder access updated"); }} />}
       {panel && panel !== "share" && <button className="panel-scrim" onClick={() => { setPanel(null); setSharingFolder(null); }} aria-label="Close panel" />}
       {toastStatus}
       <nav className="mobile-tabbar">

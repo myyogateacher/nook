@@ -56,7 +56,7 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
     const { board: saved } = await renameBoard(board.id, name);
     setBoards((current) => current?.map((item) => item.id === saved.id ? saved : item) ?? current);
     setDialog(null);
-    notify(`Renamed to “${saved.name}”`);
+    notify.success(`Renamed to “${saved.name}”`);
   }
 
   async function remove(board: BoardSummary) {
@@ -65,10 +65,10 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
       await deleteBoard(board.id);
       setBoards((current) => current?.filter((item) => item.id !== board.id) ?? current);
       setDialog(null);
-      notify(`Moved “${board.name}” to the Bin`, { label: "Undo", run: () => { void undoDelete(board); } });
+      notify.success(`Moved “${board.name}” to the Bin`, { action: { label: "Undo", onClick: () => { void undoDelete(board); } } });
     } catch (reason) {
       setDialog(null);
-      notify(taskErrorMessage(reason, "Could not delete the board"));
+      notify.error(taskErrorMessage(reason, "Could not delete the board"));
       void load();
     } finally {
       setDeleting(false);
@@ -78,9 +78,9 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
   async function undoDelete(board: BoardSummary) {
     try {
       await restoreTaskItem("board", board.id);
-      notify(`Restored the board “${board.name}”`, onOpenBoard ? { label: "Open", run: () => onOpenBoard(board.id) } : undefined);
+      notify.success(`Restored the board “${board.name}”`, { action: onOpenBoard ? { label: "Open", onClick: () => onOpenBoard(board.id) } : undefined });
     } catch (reason) {
-      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? "You already have 50 boards" : taskErrorMessage(reason, "Could not restore the board"));
+      notify.error(taskErrorCode(reason) === "LIMIT_REACHED" ? "You already have 50 boards" : taskErrorMessage(reason, "Could not restore the board"));
     }
     void load();
   }
@@ -137,7 +137,7 @@ export function BoardList({ onOpen, onOpenBoard, notify, header }: BoardListProp
     {dialog?.kind === "delete" && dialogBoard && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", dialogBoard.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void remove(dialogBoard); }} onCancel={closeDialog} />}
     {dialog?.kind === "share" && dialogBoard && <AccessSheet kind="board" id={dialogBoard.id} title={dialogBoard.name} onClose={closeDialog} onSaved={() => {
       setDialog(null);
-      notify("Access updated");
+      notify.success("Access updated");
       void load();
     }} />}
   </section>;

@@ -74,31 +74,6 @@ export function deleteConfirmMessage(name: string) {
 
 export const canManage = (document: Pick<DocumentSummary, "is_owner">) => document.is_owner === 1;
 
-// A single toast slot owned by Files, so a delete can offer Undo. The id lets a timer dismiss only
-// the toast it was started for.
-export type FileToast = { id: number; message: string; undoDocumentId: string | null };
-export type FileToastState = { next: number; toast: FileToast | null };
-export type FileToastAction =
-  | { type: "show"; message: string; undoDocumentId?: string | null }
-  | { type: "dismiss"; id: number }
-  | { type: "clear" };
-
-export const emptyToastState: FileToastState = { next: 1, toast: null };
-
-export function fileToastReducer(state: FileToastState, action: FileToastAction): FileToastState {
-  switch (action.type) {
-    case "show":
-      return { next: state.next + 1, toast: { id: state.next, message: action.message, undoDocumentId: action.undoDocumentId ?? null } };
-    case "dismiss":
-      return state.toast?.id === action.id ? { ...state, toast: null } : state;
-    case "clear":
-      return state.toast ? { ...state, toast: null } : state;
-  }
-}
-
-/** How long a toast stays: long enough to reach Undo. */
-export const toastDuration = (toast: FileToast) => toast.undoDocumentId ? 8000 : 3200;
-
 export type FileSort = "name-asc" | "name-desc" | "updated-desc" | "updated-asc" | "size-desc" | "size-asc";
 
 export const fileSortOptions: Array<{ value: FileSort; label: string }> = [

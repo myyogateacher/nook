@@ -1,3 +1,4 @@
+import type { Notifier } from "../ui/notify";
 import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { CircleCheck, Link2, Lock, Plus, TriangleAlert, X } from "lucide-react";
 import { Combobox } from "../ui/Combobox";
@@ -137,7 +138,7 @@ type RelationsSectionProps = {
   relations: CardRelation[];
   onChange: (relations: CardRelation[]) => void;
   onOpen: (card: RelatedCardTarget) => void;
-  notify: (message: string) => void;
+  notify: Notifier;
   /** A read-only Team role: the links only (no Add relation, no Remove). */
   readOnly?: boolean;
 };
@@ -158,7 +159,7 @@ export function RelationsSection({ cardId, boardId, idPrefix, relations, onChang
     try {
       const { relation } = await createRelation(cardId, type, card.id);
       onChange([relation, ...latest.current.filter((item) => item.id !== relation.id)]);
-      notify(`Linked: ${RELATION_LABELS[relation.type].toLowerCase()} “${card.title}”`);
+      notify.success(`Linked: ${RELATION_LABELS[relation.type].toLowerCase()} “${card.title}”`);
       return null;
     } catch (reason) {
       const code = taskErrorCode(reason);
@@ -172,11 +173,11 @@ export function RelationsSection({ cardId, boardId, idPrefix, relations, onChang
     try {
       await deleteRelation(cardId, row.key);
       onChange(latest.current.filter((item) => item.id !== row.key));
-      notify(row.card ? `Removed the link to “${row.card.title}”` : "Removed the link");
+      notify.success(row.card ? `Removed the link to “${row.card.title}”` : "Removed the link");
     } catch (reason) {
       // Already gone (someone else removed it): drop the row.
       if (reason instanceof ApiError && reason.status === 404) onChange(latest.current.filter((item) => item.id !== row.key));
-      else notify(taskErrorMessage(reason, "Could not remove the link"));
+      else notify.error(taskErrorMessage(reason, "Could not remove the link"));
     } finally {
       setBusyKey(null);
     }

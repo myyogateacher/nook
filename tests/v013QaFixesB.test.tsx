@@ -64,7 +64,9 @@ test("copy: levels on the Tasks home, the phone's Filters, and deleting an empty
 
 test("toasts wrap within a phone's width (B8) and phone inputs are 40 px tall (B11)", () => {
   const styles = src("styles.css");
-  expect(styles).toMatch(/\.toast \{ bottom: calc\(74px \+ env\(safe-area-inset-bottom\)\); width: max-content; max-width: calc\(100vw - 28px\); white-space: normal;/);
+  // Toasts are Sonner's (ui/toasts.css): on a phone they span the width less a gutter and wrap.
+  expect(src("ui", "toasts.css")).toContain("--toast-offset-side: 14px;");
+  expect(styles).not.toMatch(/^\.toast \{/m);
   expect(src("access", "access.css")).toContain(".access-picker .ui-combobox-field .ui-combobox-input { min-height: 40px; }");
   expect(src("team", "team.css")).toContain(".team-group-page .ui-combobox-field .ui-combobox-input { min-height: 40px; }");
   expect(src("tasks", "boardViews.css")).toContain(".task-filter-text input { min-height: 40px;");

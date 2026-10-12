@@ -92,10 +92,10 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
     try {
       const { card } = await updateCard(cardId, { parentId, ...(level === undefined ? {} : { level }), revision: current.revision });
       replaceCard(card);
-      notify(parent ? `Moved “${current.title}” under “${parent.title}”`
+      notify.success(parent ? `Moved “${current.title}” under “${parent.title}”`
         : level !== undefined && level !== levelOf(current) ? `“${current.title}” is ${aLevel(structure, level)} now` : `“${current.title}” has no parent now`);
     } catch (reason) {
-      notify(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed that card. Showing the latest board." : taskErrorMessage(reason, "Could not change the parent"));
+      notify.error(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed that card. Showing the latest board." : taskErrorMessage(reason, "Could not change the parent"));
       void load();
     }
   }, [detailRef, load, notify, replaceCard, structure]);
@@ -142,8 +142,8 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
       const doneIds = new Set(board.columns.filter((column) => column.is_done === 1).map((column) => column.id));
       const siblings = childrenOf(board.cards, board.columns, parent.id);
       if (siblings.length && siblings.every((item) => doneIds.has(item.column_id)) && !doneIds.has(parent.column_id)) {
-        notify(`All ${(structure.levels[levelOf(parent) + 1]?.plural ?? "subtasks").toLowerCase()} are done. Move “${parent.title}” to done?`, {
-          label: "Move", run: () => { void moveRef.current(parent.id, columnId, bottomOf(columnId, parent.id)); }
+        notify.info(`All ${(structure.levels[levelOf(parent) + 1]?.plural ?? "subtasks").toLowerCase()} are done. Move “${parent.title}” to done?`, {
+          action: { label: "Move", onClick: () => { void moveRef.current(parent.id, columnId, bottomOf(columnId, parent.id)); } }
         });
       }
     },
@@ -155,7 +155,7 @@ export function useBoardHierarchy({ detail, detailRef, setDetail, move, notify, 
         setDetail((current) => current ? { ...current, cards: [...current.cards, card], board: { ...current.board, card_count: current.board.card_count + 1 } } : current);
         return true;
       } catch (reason) {
-        notify(taskErrorCode(reason) === "COLUMN_FULL" ? "The first open column is full. Make room there, or add it with details." : taskErrorMessage(reason, "Could not add it"));
+        notify.error(taskErrorCode(reason) === "COLUMN_FULL" ? "The first open column is full. Make room there, or add it with details." : taskErrorMessage(reason, "Could not add it"));
         return false;
       }
     },

@@ -21,6 +21,9 @@ async function uploadAttachment(session: Session, name = "shot.png") {
   return ((await response.json()) as { document: { id: string; folder_id: string | null } }).document;
 }
 
+/** The person's Attachments folder (U0), where uploads made to attach, and since 047 the older task attachments, live. */
+const attachmentsFolder = async (userId: string) => (await import("../server/attachments/service")).ensureSystemFolder(userId);
+
 const content = (session: Session, id: string) => request(`/files/${id}/content`, {}, session);
 const deletedAt = (id: string) => (db.query("SELECT deleted_at FROM documents WHERE id = ?").get(id) as { deleted_at: string | null }).deleted_at;
 
@@ -38,13 +41,18 @@ async function setup(label: string) {
 }
 
 describe("card attachments", () => {
-  test("attachment uploads have no folder, are never listed in Files, and reject unknown purposes", async () => {
+  test("the older ?purpose=task_attachment lands in the uploader's Attachments folder, listed in their Files only (U8), and unknown purposes are refused", async () => {
     const owner = await createUser("Attachment uploader");
+    const someoneElse = await createUser("Attachment onlooker");
     const document = await uploadAttachment(owner);
-    expect(document.folder_id).toBeNull();
-    expect((db.query("SELECT purpose FROM documents WHERE id = ?").get(document.id) as { purpose: string }).purpose).toBe("task_attachment");
+    const attachmentsFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND system_kind = 'attachments'").get(owner.userId) as { id: string }).id;
+    expect(document.folder_id).toBe(attachmentsFolder);
+    expect((db.query("SELECT purpose FROM documents WHERE id = ?").get(document.id) as { purpose: string }).purpose).toBe("file");
     const listed = (await (await request("/files", {}, owner)).json()) as { documents: Array<{ id: string }> };
-    expect(listed.documents.some((item) => item.id === document.id)).toBe(false);
+    expect(listed.documents.some((item) => item.id === document.id)).toBe(true);
+    const elsewhere = (await (await request("/files", {}, someoneElse)).json()) as { documents: Array<{ id: string }> };
+    expect(elsewhere.documents.some((item) => item.id === document.id)).toBe(false);
+    expect((await content(someoneElse, document.id)).status).toBe(404);
     const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
     expect((await upload(owner, `?purpose=task_attachment&folderId=${defaultFolder}`)).status).toBe(400);
     expect((await upload(owner, "?purpose=board_attachment")).status).toBe(400);
@@ -130,7 +138,7 @@ describe("card attachments", () => {
     expect((await call(member, "POST", `/cards/${cardId}/comments`, { body: "too many", attachmentIds: many })).status).toBe(400);
     const timestamp = new Date().toISOString();
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
-      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
+      VALUES (?1, ?2, (SELECT id FROM folders WHERE owner_id = ?2 AND system_kind = 'attachments'), 'f.bin', 'application/octet-stream', 'none', 1, ?3, 'file', ?4, ?5)`);
     const ten = Array.from({ length: 10 }, () => {
       const id = crypto.randomUUID();
       insertDocument.run(id, member.userId, "0".repeat(64), timestamp, timestamp);
@@ -148,9 +156,10 @@ describe("card attachments", () => {
 
   test("attachments linked in the same millisecond list in linking order, whatever their random ids", async () => {
     const { owner, cardId } = await setup("Attach ties");
+    await attachmentsFolder(owner.userId);
     const timestamp = new Date().toISOString();
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
-      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
+      VALUES (?1, ?2, (SELECT id FROM folders WHERE owner_id = ?2 AND system_kind = 'attachments'), 'f.bin', 'application/octet-stream', 'none', 1, ?3, 'file', ?4, ?5)`);
     const link = db.query("INSERT INTO card_attachments (card_id, document_id, linked_by, created_at) VALUES (?, ?, ?, ?)");
     // Each later link gets a smaller document id, so a document-id tie-break would reverse them.
     const ids = Array.from({ length: 3 }, () => crypto.randomUUID()).sort().reverse();
@@ -164,9 +173,10 @@ describe("card attachments", () => {
 
   test("a card holds at most 50 attachments", async () => {
     const { owner, cardId } = await setup("Attach cap");
+    await attachmentsFolder(owner.userId);
     const timestamp = new Date().toISOString();
     const insertDocument = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
-      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
+      VALUES (?1, ?2, (SELECT id FROM folders WHERE owner_id = ?2 AND system_kind = 'attachments'), 'f.bin', 'application/octet-stream', 'none', 1, ?3, 'file', ?4, ?5)`);
     const link = db.query("INSERT INTO card_attachments (card_id, document_id, linked_by, created_at) VALUES (?, ?, ?, ?)");
     for (let index = 0; index < 50; index += 1) {
       const id = crypto.randomUUID();
@@ -215,9 +225,10 @@ describe("card attachments", () => {
 });
 
 describe("never-linked attachments", () => {
-  test("the sweeper bins task attachments with no link after 24 hours, in batches of 100", async () => {
+  // U8: the older task attachments are Attachments-folder files, so U0's generic sweep bins them.
+  test("the sweeper bins uploads with no link after 24 hours", async () => {
     const { runSweep } = await import("../server/sweeper");
-    const { sweepUnlinkedAttachments } = await import("../server/tasks/attachments");
+    const { sweepAttachments } = await import("../server/attachments/sweep");
     const { owner, cardId } = await setup("Unlinked sweep");
     const stale = await uploadAttachment(owner, "stale.png");
     const fresh = await uploadAttachment(owner, "fresh.png");
@@ -226,62 +237,63 @@ describe("never-linked attachments", () => {
     const filesResponse = await upload(owner, "", "plain.txt", "plain");
     const plainFile = ((await filesResponse.json()) as { document: { id: string } }).document;
     const old = new Date(Date.now() - 25 * 3_600_000).toISOString();
-    for (const id of [stale.id, linked.id, plainFile.id]) db.query("UPDATE documents SET created_at = ? WHERE id = ?").run(old, id);
+    for (const id of [stale.id, linked.id, plainFile.id]) db.query("UPDATE documents SET created_at = ?, updated_at = ? WHERE id = ?").run(old, old, id);
 
     await runSweep();
     expect(deletedAt(stale.id)).toBeTruthy();
-    expect((db.query("SELECT deleted_by FROM documents WHERE id = ?").get(stale.id) as { deleted_by: string | null }).deleted_by).toBeNull();
     expect(deletedAt(fresh.id)).toBeNull();
     expect(deletedAt(linked.id)).toBeNull();
     expect(deletedAt(plainFile.id)).toBeNull();
-    const bin = (await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean }> };
-    expect(bin.items.find((item) => item.id === stale.id)).toMatchObject({ attachment: true });
+    const bin = (await (await request("/bin", {}, owner)).json()) as { items: Array<{ id: string; attachment: boolean; folder_name: string | null }> };
+    expect(bin.items.find((item) => item.id === stale.id)).toMatchObject({ attachment: false, folder_name: "Attachments" });
     // With an injected clock a day later, the fresh one goes too.
-    expect(sweepUnlinkedAttachments({ nowMs: Date.now() + 25 * 3_600_000 })).toBeGreaterThanOrEqual(1);
+    expect((await sweepAttachments({ nowMs: Date.now() + 25 * 3_600_000 })).orphansBinned).toBeGreaterThanOrEqual(1);
     expect(deletedAt(fresh.id)).toBeTruthy();
-    const event = db.query("SELECT actor_id, metadata_json FROM audit_log WHERE event_type = 'document.delete' AND metadata_json LIKE ?").get(`%${stale.id}%`) as { actor_id: string | null; metadata_json: string };
-    expect(event.actor_id).toBeNull();
-    expect(JSON.parse(event.metadata_json)).toEqual({ documentId: stale.id, reason: "attachment_never_linked" });
+    expect(deletedAt(linked.id)).toBeNull();
   });
 
   test("one run bins at most 100", async () => {
-    const { sweepUnlinkedAttachments } = await import("../server/tasks/attachments");
+    const { sweepOrphanedAttachments } = await import("../server/attachments/sweep");
     const owner = await createUser("Unlinked batch");
+    const folder = await attachmentsFolder(owner.userId);
     const old = new Date(Date.now() - 48 * 3_600_000).toISOString();
     const insert = db.query(`INSERT INTO documents (id, owner_id, folder_id, name, mime_type, preview_kind, size_bytes, sha256, purpose, created_at, updated_at)
-      VALUES (?, ?, NULL, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'task_attachment', ?, ?)`);
-    db.transaction(() => { for (let index = 0; index < 105; index += 1) insert.run(crypto.randomUUID(), owner.userId, "0".repeat(64), old, old); })();
+      VALUES (?, ?, ?, 'f.bin', 'application/octet-stream', 'none', 1, ?, 'file', ?, ?)`);
+    db.transaction(() => { for (let index = 0; index < 105; index += 1) insert.run(crypto.randomUUID(), owner.userId, folder, "0".repeat(64), old, old); })();
     // Other tests may leave their own stale rows; only this owner's are counted.
     let runs = 0;
     const live = () => (db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND deleted_at IS NULL").get(owner.userId) as { count: number }).count;
-    expect(sweepUnlinkedAttachments()).toBeLessThanOrEqual(100);
+    expect(await sweepOrphanedAttachments()).toBeLessThanOrEqual(100);
     runs += 1;
-    while (live() > 0 && runs < 5) { sweepUnlinkedAttachments(); runs += 1; }
+    while (live() > 0 && runs < 5) { await sweepOrphanedAttachments(); runs += 1; }
     expect(live()).toBe(0);
     expect(runs).toBeGreaterThanOrEqual(2);
   });
 });
 
 describe("Files routes and attachments", () => {
-  test("rename, move, and sharing return 404 for attachments; delete needs the file unlinked", async () => {
-    const { owner, stranger, cardId } = await setup("Files routes");
+  test("an attachment is its owner's Files item: deleting it while linked bins it and the card shows it removed until a restore (D409)", async () => {
+    const { owner, member, stranger, cardId } = await setup("Files routes");
     const linked = await uploadAttachment(owner, "linked.png");
     const loose = await uploadAttachment(owner, "loose.png");
     await call(owner, "POST", `/cards/${cardId}/attachments`, { documentId: linked.id });
-    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
     const files = (method: string, path: string, body?: unknown) => request(`/files${path}`, { method, body: JSON.stringify(body ?? {}) }, owner);
 
-    expect((await files("PATCH", `/${linked.id}`, { name: "renamed.png" })).status).toBe(404);
-    expect((await files("PATCH", `/${linked.id}`, { folderId: defaultFolder })).status).toBe(404);
-    expect((await files("PUT", `/${linked.id}/sharing`, { visibility: "all_users", userIds: [] })).status).toBe(404);
-    expect((await request(`/files/${linked.id}/sharing`, {}, owner)).status).toBe(404);
-    expect(db.query("SELECT name, folder_id, sharing_override FROM documents WHERE id = ?").get(linked.id)).toEqual({ name: "linked.png", folder_id: null, sharing_override: 0 });
+    expect((await files("PATCH", `/${linked.id}`, { name: "renamed.png" })).status).toBe(200);
     expect((await content(stranger, linked.id)).status).toBe(404);
+    expect((await content(member, linked.id)).status).toBe(200);
 
-    const refused = await files("DELETE", `/${linked.id}`);
-    expect(refused.status).toBe(409);
-    expect(((await refused.json()) as { code: string }).code).toBe("ATTACHMENT_LINKED");
-    expect(deletedAt(linked.id)).toBeNull();
+    // No 409 ATTACHMENT_LINKED any more: the file goes to the Bin, and the card keeps its link.
+    expect((await files("DELETE", `/${linked.id}`)).status).toBe(200);
+    expect(deletedAt(linked.id)).toBeTruthy();
+    expect((await content(member, linked.id)).status).toBe(404);
+    const card = await call(member, "GET", `/cards/${cardId}`);
+    expect(card.body.attachments).toEqual([expect.objectContaining({ document_id: linked.id, removed: 1, name: "" })]);
+    // Restored, it returns to the Attachments folder (something still links it) and the card shows it again.
+    const restored = await request(`/bin/document/${linked.id}/restore`, { method: "POST", body: "{}" }, owner);
+    expect(restored.status).toBe(200);
+    expect(((await restored.json()) as { folderId: string }).folderId).toBe(await attachmentsFolder(owner.userId));
+    expect((await content(member, linked.id)).status).toBe(200);
     // An unlinked attachment may be binned directly.
     expect((await files("DELETE", `/${loose.id}`)).status).toBe(200);
     expect(deletedAt(loose.id)).toBeTruthy();
@@ -300,25 +312,16 @@ describe("Files routes and attachments", () => {
       expect(await refused.json()).toEqual(missingBody);
     }
     expect(deletedAt(discarded.id)).toBeNull();
-    // The uploader discards it: it moves to their Bin as an attachment, and a second discard is idempotent.
+    // The uploader discards it: it moves to their Bin from the Attachments folder, and a second discard is idempotent.
     const binned = await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, member);
     expect(binned.status).toBe(200);
     expect(deletedAt(discarded.id)).toBeTruthy();
     expect(((await (await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, member)).json()) as { alreadyDeleted?: boolean }).alreadyDeleted).toBe(true);
-    const bin = (await (await request("/bin", {}, member)).json()) as { items: Array<{ id: string; attachment: boolean }> };
-    expect(bin.items.find((item) => item.id === discarded.id)).toMatchObject({ attachment: true });
-    // Restoring an unlinked upload makes it an ordinary Files item.
+    const bin = (await (await request("/bin", {}, member)).json()) as { items: Array<{ id: string; attachment: boolean; folder_name: string | null }> };
+    expect(bin.items.find((item) => item.id === discarded.id)).toMatchObject({ attachment: false, folder_name: "Attachments" });
+    // Restoring an unlinked upload makes it an ordinary Files item in Default.
     expect((await request(`/bin/document/${discarded.id}/restore`, { method: "POST", body: "{}" }, member)).status).toBe(200);
-    expect(db.query("SELECT purpose, deleted_at FROM documents WHERE id = ?").get(discarded.id)).toMatchObject({ purpose: "file", deleted_at: null });
-  });
-
-  test("sharing rows on an attachment never widen its audience", async () => {
-    const { owner, stranger } = await setup("Stale sharing");
-    const document = await uploadAttachment(owner, "old.png");
-    // As an attachment could have been shared before this fix.
-    db.query("UPDATE documents SET sharing_override = 1, visibility = 'all_users' WHERE id = ?").run(document.id);
-    expect((await content(stranger, document.id)).status).toBe(404);
-    expect((await request(`/files/${document.id}`, {}, stranger)).status).toBe(404);
-    expect((await content(owner, document.id)).status).toBe(200);
+    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(member.userId) as { id: string }).id;
+    expect(db.query("SELECT purpose, deleted_at, folder_id FROM documents WHERE id = ?").get(discarded.id)).toEqual({ purpose: "file", deleted_at: null, folder_id: defaultFolder });
   });
 });

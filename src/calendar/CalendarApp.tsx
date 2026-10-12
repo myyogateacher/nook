@@ -64,6 +64,7 @@ import "../bin/bin.css";
 import "../files/files.css";
 import "./calendar.css";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
+import { notify } from "../ui/notify";
 
 export type CalendarNavigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -170,7 +171,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     try {
       setCalendars((await listCalendars()).calendars);
     } catch (reason) {
-      flash(errorMessage(reason, "Could not load your calendars"));
+      notify.error(errorMessage(reason, "Could not load your calendars"));
       setCalendars((current) => current ?? []);
     }
   }, [flash]);
@@ -305,7 +306,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   function startCreate(day: string) {
     const target = writable[0] ?? writableAll[0];
     if (!target) {
-      flash("You can only view the calendars shared with you. Create your own calendar first.");
+      notify.warning("You can only view the calendars shared with you. Create your own calendar first.");
       return;
     }
     const form = newEventForm(day, today, new Date(), zone);
@@ -343,7 +344,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
   function addSheetFiles(files: File[]) {
     if (!sheet || !files.length) return;
     const room = attachmentRoom(sheet.attachments, sheet.attachmentLimit);
-    if (files.length > room) flash(room === 0 ? limitMessage(sheet.attachmentLimit) : `${limitMessage(sheet.attachmentLimit)} Only the first ${room} ${room === 1 ? "was" : "were"} added.`);
+    if (files.length > room) notify.warning(room === 0 ? limitMessage(sheet.attachmentLimit) : `${limitMessage(sheet.attachmentLimit)} Only the first ${room} ${room === 1 ? "was" : "were"} added.`);
     const staged = files.slice(0, room).map(stagedFromFile);
     if (!staged.length) return;
     updateSheetAttachments((state) => ({ ...state, added: [...state.added, ...staged] }));
@@ -355,7 +356,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     const already = sheet.attachments.existing.some((item) => item.documentId === document.id && !sheet.attachments.removed.includes(document.id))
       || sheet.attachments.added.some((item) => item.documentId === document.id);
     if (already) {
-      flash(`“${document.name}” is already on this event`);
+      notify.warning(`“${document.name}” is already on this event`);
       return;
     }
     if (sheet.attachments.removed.includes(document.id)) {
@@ -364,7 +365,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       return;
     }
     if (attachmentRoom(sheet.attachments, sheet.attachmentLimit) === 0) {
-      flash(limitMessage(sheet.attachmentLimit));
+      notify.warning(limitMessage(sheet.attachmentLimit));
       return;
     }
     updateSheetAttachments((state) => ({ ...state, added: [...state.added, stagedFromDocument(document, options.confirmed)] }));
@@ -398,13 +399,13 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
         const failures = await applySheetAttachments(created.event.id, sheet.attachments);
         closeSheet();
         setReloadKey((value) => value + 1);
-        flash(failures.length ? `Added “${created.event.title}”, but ${failures.join("; ")}` : `Added “${created.event.title}”`);
+        (failures.length ? notify.warning : notify.success)(failures.length ? `Added “${created.event.title}”, but ${failures.join("; ")}` : `Added “${created.event.title}”`);
       } else if (sheet.event) {
         await updateEvent(sheet.event.id, { ...result.input, revision: sheet.event.revision });
         const failures = await applySheetAttachments(sheet.event.id, sheet.attachments);
         closeSheet();
         setReloadKey((value) => value + 1);
-        flash(failures.length ? `Event saved, but ${failures.join("; ")}` : "Event saved");
+        (failures.length ? notify.warning : notify.success)(failures.length ? `Event saved, but ${failures.join("; ")}` : "Event saved");
       }
     } catch (reason) {
       if (errorCode(reason) === "EVENT_CHANGED") {
@@ -426,9 +427,9 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     try {
       await undoEvent(data.event.id, data.event.revision);
       setReloadKey((value) => value + 1);
-      flash("Undid the last change");
+      notify.success("Undid the last change");
     } catch (reason) {
-      flash(errorCode(reason) === "EVENT_CHANGED" ? "The event changed again; reloaded the latest version" : errorMessage(reason, "Could not undo"));
+      notify.error(errorCode(reason) === "EVENT_CHANGED" ? "The event changed again; reloaded the latest version" : errorMessage(reason, "Could not undo"));
       setReloadKey((value) => value + 1);
     }
   }
@@ -437,9 +438,9 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     try {
       await skipOccurrence(data.event.id, date, data.event.revision);
       setReloadKey((value) => value + 1);
-      flash(`Skipped ${shortDate(date)}. Undo brings it back.`);
+      notify.success(`Skipped ${shortDate(date)}. Undo brings it back.`);
     } catch (reason) {
-      flash(errorMessage(reason, "Could not skip this date"));
+      notify.error(errorMessage(reason, "Could not skip this date"));
       setReloadKey((value) => value + 1);
     }
   }
@@ -456,18 +457,18 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       if (pendingConfirm.kind === "deleteEvent") {
         await deleteEvent(pendingConfirm.data.event.id);
         setConfirm(null);
-        flash("Moved to the Bin");
+        notify.success("Moved to the Bin");
         setReloadKey((value) => value + 1);
         back();
       } else {
         await deleteCalendar(pendingConfirm.calendar.id);
         setConfirm(null);
-        flash(`Moved “${pendingConfirm.calendar.name}” to the Bin`);
+        notify.success(`Moved “${pendingConfirm.calendar.name}” to the Bin`);
         await loadCalendars();
         setReloadKey((value) => value + 1);
       }
     } catch (reason) {
-      flash(errorMessage(reason, "Could not move it to the Bin"));
+      notify.error(errorMessage(reason, "Could not move it to the Bin"));
       setConfirm(null);
     } finally {
       setBusy(false);
@@ -485,15 +486,15 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     await addEventReminder(eventId, offset, zone, channels);
     setReminderPicker(null);
     setReloadKey((value) => value + 1);
-    flash("Reminder added. Only you will see it.");
+    notify.success("Reminder added. Only you will see it.");
   }
 
   async function dropReminder(reminder: ReminderSummary, allDay: boolean) {
     try {
       await removeReminder(reminder.id);
-      flash(`Removed the reminder ${reminderLabel(reminder.offsetMinutes ?? 0, allDay).toLowerCase()}`);
+      notify.success(`Removed the reminder ${reminderLabel(reminder.offsetMinutes ?? 0, allDay).toLowerCase()}`);
     } catch (reason) {
-      flash(errorMessage(reason, "Could not remove the reminder"));
+      notify.error(errorMessage(reason, "Could not remove the reminder"));
     }
     setReloadKey((value) => value + 1);
   }
@@ -502,15 +503,15 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     await addEventLink(data.event.id, "note", noteId);
     setPicker(null);
     setReloadKey((value) => value + 1);
-    flash("Note linked");
+    notify.success("Note linked");
   }
 
   async function removeLink(data: EventResponse, link: EventResponse["links"][number]) {
     try {
       await removeEventLink(data.event.id, link.targetType, link.targetId);
-      flash(`Removed the link to ${linkLabel(link)}`);
+      notify.success(`Removed the link to ${linkLabel(link)}`);
     } catch (reason) {
-      flash(errorMessage(reason, "Could not remove the link"));
+      notify.error(errorMessage(reason, "Could not remove the link"));
     }
     setReloadKey((value) => value + 1);
   }
@@ -571,7 +572,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
       occurrence={hint?.eventId === route.eventId ? hint.occurrence : null}
       reloadKey={reloadKey}
       onBack={back}
-      onMissing={() => { flash("Event not found"); go(agendaRoute(), true); }}
+      onMissing={() => { notify.warning("Event not found"); go(agendaRoute(), true); }}
       onEdit={startEdit}
       onUndo={(data) => { void undo(data); }}
       onSkip={(data, date) => { void skip(data, date); }}
@@ -680,7 +681,7 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     {reminderPicker && <ReminderPicker allDay={reminderPicker.allDay} existing={reminderPicker.existing} event={reminderPicker.event} timeZone={zone} onPick={(offset, channels) => addReminder(reminderPicker.eventId, offset, channels)} onClose={() => setReminderPicker(null)} />}
     {picker && <NoteLinkPicker linkedIds={picker.links.filter((link) => link.targetType === "note").map((link) => link.targetId)} onPick={(note) => linkNote(picker, note.id)} onClose={() => setPicker(null)} />}
     {feeds && <FeedDialog calendar={feeds} onClose={() => setFeeds(null)} flash={flash} />}
-    {sharing && <AccessSheet kind="calendar" id={sharing.id} title={sharing.name} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); flash("Access updated"); void loadCalendars(); }} />}
+    {sharing && <AccessSheet kind="calendar" id={sharing.id} title={sharing.name} onClose={() => setSharing(null)} onSaved={() => { setSharing(null); notify.success("Access updated"); void loadCalendars(); }} />}
     {pendingConfirm?.kind === "discard" && <DiscardEventPrompt onDiscard={() => { void confirmAction(); }} onKeep={keepEditing} />}
     {pendingConfirm?.kind === "deleteEvent" && <ConfirmDialog title="Move to the Bin?" message={`Move “${pendingConfirm.data.event.title}”${pendingConfirm.data.event.repeat ? " and all its repeats" : ""} to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}
     {pendingConfirm?.kind === "deleteCalendar" && <ConfirmDialog title="Move calendar to the Bin?" message={`Move “${pendingConfirm.calendar.name}” and its events to the Bin? You can restore it for 30 days.`} confirmLabel="Move to Bin" danger busy={busy} onConfirm={() => { void confirmAction(); }} onCancel={() => setConfirm(null)} />}

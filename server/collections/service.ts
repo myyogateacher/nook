@@ -770,8 +770,8 @@ export function queryRows(userId: string, collectionId: string, input: QueryInpu
 
 // ---------------------------------------------------------------------------
 // Attachments (D58; uploads everywhere U3). A linked document is one the linker
-// owns: an upload in their Attachments folder (`?attachTo=row`, D390), a legacy
-// hidden `collection_attachment` upload, or (after a confirm, D396) a Files item.
+// owns: an upload in their Attachments folder (`?attachTo=row`, D390; the hidden
+// `collection_attachment` uploads became these in 047), or (after a confirm, D396) a Files item.
 // It is readable through a live row of a readable collection (documentAccess.ts);
 // links never widen Files lists.
 
@@ -783,37 +783,24 @@ const candidateSelect = `SELECT d.id, d.owner_id, d.name, d.purpose, d.deleted_a
 const linkCandidate = (documentId: string) => db.query(candidateSelect).get(documentId) as LinkCandidate | null;
 
 /**
- * An upload that exists to be attached: a legacy `collection_attachment`, or a Files document in its
- * owner's Attachments folder (D391). These follow their links (the last unlink bins them, Undo brings
- * them back); a Files item someone linked from elsewhere never does (D395).
+ * An upload that exists to be attached: a Files document in its owner's Attachments folder (D391;
+ * since 047 that includes the hidden row uploads of v0.34.0 and earlier, U8). These follow their links
+ * (the last unlink bins them, Undo brings them back); a Files item someone linked from elsewhere never
+ * does (D395).
  */
-const isAttachmentUpload = (document: Pick<LinkCandidate, "purpose" | "system_kind">) =>
-  document.purpose === "collection_attachment" || (document.purpose === "file" && document.system_kind === ATTACHMENTS_FOLDER_KIND);
+const isAttachmentUpload = (document: Pick<LinkCandidate, "system_kind">) => document.system_kind === ATTACHMENTS_FOLDER_KIND;
 
 /**
- * Moves uploads that no row (and, for Attachments-folder files, no other host) links any more to the
- * Bin, so they clear in 30 days instead of holding quota: legacy `collection_attachment` documents
- * (deleted_by = actor) and Attachments-folder files (U0's binIfOrphanedAttachment, D395). Files items
- * elsewhere are left alone. Call inside the transaction that removed the links; ids of binned
- * Attachments-folder files are pushed to `binned` so the caller can tell the knowledge module after
- * the commit (they are Files documents, so a base may hold one as a source).
+ * Moves Attachments-folder uploads that no row and no other host links any more to the Bin, so they
+ * clear in 30 days instead of holding quota (U0's binIfOrphanedAttachment, D395). Files items
+ * elsewhere are left alone. Call inside the transaction that removed the links; ids of binned files
+ * are pushed to `binned` so the caller can tell the knowledge module after the commit (they are Files
+ * documents, so a base may hold one as a source).
  */
 export function binUnlinkedAttachments(documentIds: string[], actorId: string | null, binned: string[] = []) {
-  const deletedAt = new Date();
-  const purgeAfter = purgeAfterFrom(deletedAt);
   let moved = 0;
   for (const documentId of new Set(documentIds)) {
-    // Checked with a SELECT first: `changes` of an UPDATE that matched nothing is not reliable after a
-    // cascading DELETE in the same transaction (it reported the DELETE's count), so it never decides.
-    const purpose = (db.query("SELECT purpose FROM documents WHERE id = ?").get(documentId) as { purpose: string } | null)?.purpose;
-    if (purpose === "collection_attachment") {
-      const orphan = db.query(`SELECT 1 AS orphan FROM documents d WHERE d.id = ? AND d.deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM collection_row_attachments a WHERE a.document_id = d.id)`).get(documentId);
-      if (!orphan) continue;
-      db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(deletedAt.toISOString(), actorId, purgeAfter, documentId);
-      moved += 1;
-      audit(actorId, null, "document.delete", { documentId, reason: "attachment_unlinked" });
-    } else if (purpose === "file" && binIfOrphanedAttachment(documentId, actorId, { notify: false })) {
+    if (binIfOrphanedAttachment(documentId, actorId, { notify: false })) {
       moved += 1;
       binned.push(documentId);
     }
@@ -903,7 +890,7 @@ function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string, cha
       const restored = db.query("UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL WHERE id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL").run(documentId);
       if (restored.changes !== 1) continue;
       audit(userId, null, "document.restore", { documentId, reason: "attachment_undo" });
-      if (document.purpose === "file") changedDocuments.push(documentId);
+      changedDocuments.push(documentId);
     }
     db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)").run(rowId, documentId, fieldId, userId, createdAt);
     relinked += 1;
@@ -917,7 +904,7 @@ export type AttachInput = {
   fieldId: string;
   /**
    * The person confirmed that the collection's audience will be able to open a Files item (D396, Q2).
-   * Not needed for an upload in their Attachments folder or a legacy row upload.
+   * Not needed for an upload in their Attachments folder.
    */
   confirmed?: boolean;
 };
@@ -926,8 +913,8 @@ export type AttachOptions = {
   /** An MCP key making the link: the row shows "Changed by <key>" (T73). */
   keyId?: string;
   /**
-   * MCP (D402, T341, T345): only an upload made to attach (an Attachments-folder file or a legacy row
-   * upload) that nothing outside this collection links. An agent never shares a Files item, or a file
+   * MCP (D402, T341, T345): only an upload made to attach (an Attachments-folder file)
+   * that nothing outside this collection links. An agent never shares a Files item, or a file
    * attached somewhere its key may not reach, by side effect.
    */
   uploadsOnly?: boolean;
@@ -935,7 +922,7 @@ export type AttachOptions = {
 
 /**
  * Links one of the caller's own documents to a file field (an editor of the row's collection, D58).
- * Refuses: a document they do not own, or that is binned, a whiteboard, or a task attachment (404, the
+ * Refuses: a document they do not own, or that is binned or a whiteboard (404, the
  * same as missing, T341); a Files item outside the Attachments folder without `confirmed` (409
  * CONFIRM_REQUIRED, D396); a document already on the row (409 ALREADY_ATTACHED); the 21st file (409
  * LIMIT_REACHED).
@@ -947,10 +934,10 @@ export async function attachDocument(userId: string, rowId: string, input: Attac
     const schema = schemaOf(collection);
     const field = schema.fields.find((item) => item.id === input.fieldId);
     if (!field || field.type !== "file") throw new CollectionError(400, "Attach files to a file field", "INVALID_VALUES", { fieldErrors: { [input.fieldId.slice(0, 16)]: "Not a file field" } });
-    // Only the linker's own live documents: a Files document (never a whiteboard) or a legacy row upload.
+    // Only the linker's own live Files documents (never a whiteboard).
     const document = linkCandidate(input.documentId);
     if (!document || document.owner_id !== userId || document.deleted_at !== null || document.whiteboard === 1
-      || (document.purpose !== "file" && document.purpose !== "collection_attachment")) throw new CollectionError(404, "File not found");
+      || document.purpose !== "file") throw new CollectionError(404, "File not found");
     if (options.uploadsOnly && (!isAttachmentUpload(document) || linkedOutsideCollection(document.id, collection.id))) {
       throw new CollectionError(400, "Only a file uploaded to attach (create_text_file or begin_upload with purpose attachment) can be attached here", "NOT_AN_UPLOAD");
     }

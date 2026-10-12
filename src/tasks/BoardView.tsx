@@ -215,7 +215,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const openCardIdRef = useRef(openCardId);
   openCardIdRef.current = openCardId;
   const onCardMissing = useCallback(() => {
-    if (!openCardIdRef.current || !binnedRef.current.has(openCardIdRef.current)) notify("Card not found");
+    if (!openCardIdRef.current || !binnedRef.current.has(openCardIdRef.current)) notify.warning("Card not found");
     onCloseCard();
   }, [notify, onCloseCard]);
 
@@ -335,9 +335,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     } catch (reason) {
       setCards(() => before);
       const code = taskErrorCode(reason);
-      if (code === "STALE_POSITION") notify("The board changed while you moved that card. Showing the latest order.");
-      else if (code === "COLUMN_FULL") notify(fullMessage(reason, columnId));
-      else notify(taskErrorMessage(reason, "Could not move the card"));
+      if (code === "STALE_POSITION") notify.warning("The board changed while you moved that card. Showing the latest order.");
+      else if (code === "COLUMN_FULL") notify.warning(fullMessage(reason, columnId));
+      else notify.error(taskErrorMessage(reason, "Could not move the card"));
       void load();
     }
   }
@@ -403,7 +403,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       focusCard(cardId);
     } catch (reason) {
       setCards(() => before);
-      notify(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed this card. It was reloaded." : taskErrorMessage(reason, "Could not change the due date"));
+      notify.error(taskErrorCode(reason) === "CARD_CHANGED" ? "Someone else changed this card. It was reloaded." : taskErrorMessage(reason, "Could not change the due date"));
       void load();
     }
   }
@@ -425,7 +425,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       onOpenCard(card.id);
       return;
     }
-    notify(`Added “${card.title}”`);
+    notify.success(`Added “${card.title}”`);
     const index = [...(detailRef.current?.columns ?? [])].sort(byPosition).findIndex((column) => column.id === card.column_id);
     if (isMobileViewport() && index >= 0 && index !== activeColumnRef.current) showColumn(index);
     focusCard(card.id);
@@ -435,14 +435,14 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     const { board: saved } = await renameBoard(boardId, name);
     setDetail((current) => current ? { ...current, board: saved } : current);
     closeLayer();
-    notify(`Renamed to “${saved.name}”`);
+    notify.success(`Renamed to “${saved.name}”`);
   }
 
   async function addColumn(name: string) {
     const { columns: saved } = await createColumn(boardId, name);
     setDetail((current) => current ? { ...current, columns: saved } : current);
     closeLayer();
-    notify(`Added column ${name}`);
+    notify.success(`Added column ${name}`);
   }
 
   async function renameColumn(columnId: string, name: string) {
@@ -456,7 +456,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     setDetail((current) => current ? { ...current, columns: saved } : current);
     closeDialog();
     const name = saved.find((column) => column.id === columnId)?.name ?? "this column";
-    notify(wipLimit === null ? `Removed the limit on ${name}` : `${name} takes at most ${cardCountLabel(wipLimit)}`);
+    notify.success(wipLimit === null ? `Removed the limit on ${name}` : `${name} takes at most ${cardCountLabel(wipLimit)}`);
   }
 
   async function moveColumn(columnId: string, direction: -1 | 1) {
@@ -468,7 +468,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       const moved = saved.find((column) => column.id === columnId);
       setAnnouncement(`${moved?.name ?? "Column"} moved ${direction < 0 ? "left" : "right"}`);
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not move the column"));
+      notify.error(taskErrorMessage(reason, "Could not move the column"));
       void load();
     }
   }
@@ -481,12 +481,12 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       setDialog(null);
       returnFocusRef.current = null;
       onBoardDeleted();
-      notify(`Moved “${name}” to the Bin`, { label: "Undo", run: () => {
-        restoreTaskItem("board", boardId).then(() => onOpenBoard(boardId), (reason) => notify(taskErrorMessage(reason, "Could not restore the board")));
-      } });
+      notify.success(`Moved “${name}” to the Bin`, { action: { label: "Undo", onClick: () => {
+        restoreTaskItem("board", boardId).then(() => onOpenBoard(boardId), (reason) => notify.error(taskErrorMessage(reason, "Could not restore the board")));
+      } } });
     } catch (reason) {
       closeLayer();
-      notify(taskErrorMessage(reason, "Could not delete the board"));
+      notify.error(taskErrorMessage(reason, "Could not delete the board"));
     } finally {
       setDeleting(false);
     }
@@ -507,13 +507,13 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     setDetail((current) => current ? { ...current, cards: current.cards.filter((item) => !gone.has(item.id)), board: { ...current.board, card_count: Math.max(0, current.board.card_count - gone.size) } } : current);
     lastOpenCardRef.current = null;
     onCloseCard();
-    notify(`Moved “${card?.title ?? "card"}”${descendantCount ? ` and ${descendantCount === 1 ? "1 card" : `${descendantCount} cards`} under it` : ""} to the Bin`, { label: "Undo", run: () => {
+    notify.success(`Moved “${card?.title ?? "card"}”${descendantCount ? ` and ${descendantCount === 1 ? "1 card" : `${descendantCount} cards`} under it` : ""} to the Bin`, { action: { label: "Undo", onClick: () => {
       restoreTaskItem("card", cardId, place).then((result) => {
         for (const id of gone) binnedRef.current.delete(id);
-        notify(`Restored to ${result.columnName ?? "the board"}${result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 card" : `${result.descendantCount} cards`} under it` : ""}${result.detached ? ", without its parent (it is in the Bin)" : ""}`);
+        notify.success(`Restored to ${result.columnName ?? "the board"}${result.descendantCount ? ` with ${result.descendantCount === 1 ? "1 card" : `${result.descendantCount} cards`} under it` : ""}${result.detached ? ", without its parent (it is in the Bin)" : ""}`);
         void load();
-      }, (reason) => notify(taskErrorMessage(reason, "Could not restore the card")));
-    } });
+      }, (reason) => notify.error(taskErrorMessage(reason, "Could not restore the card")));
+    } } });
   }
 
   async function removeColumn(columnId: string) {
@@ -523,12 +523,12 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
       setDetail((current) => current ? { ...current, columns: saved } : current);
       setDialog(null);
       returnFocusRef.current = null;
-      notify("Column deleted");
+      notify.success("Column deleted");
     } catch (reason) {
       const code = taskErrorCode(reason);
       // Someone added a card meanwhile: stay open; the reload disables Delete and says why.
       if (code !== "COLUMN_NOT_EMPTY") closeDialog();
-      notify(code === "COLUMN_NOT_EMPTY" ? "This column has cards now. Move or delete them first." : code === "LAST_COLUMN" ? "A board needs at least one column" : taskErrorMessage(reason, "Could not delete the column"));
+      notify.error(code === "COLUMN_NOT_EMPTY" ? "This column has cards now. Move or delete them first." : code === "LAST_COLUMN" ? "A board needs at least one column" : taskErrorMessage(reason, "Could not delete the column"));
       void load();
     } finally {
       setDeleting(false);
@@ -633,7 +633,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         onMoveColumn={(direction) => { void moveColumn(column.id, direction); }}
         onAddCard={() => {
           const refusal = addCardRefusal(cards, column);
-          if (refusal) { notify(refusal); setAnnouncement(refusal); } else setComposer({ columnId: column.id });
+          if (refusal) { notify.warning(refusal); setAnnouncement(refusal); } else setComposer({ columnId: column.id });
         }}
       />;
       })}
@@ -716,7 +716,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     {dialog?.kind === "rename" && board && <NameDialog title="Rename board" eyebrow="Tasks" label="Board name" initialValue={board.name} submitLabel="Rename" hint="Up to 120 characters." validate={(value) => validateBoardName(value, board.name)} onSubmit={rename} onCancel={closeLayer} />}
     {dialog?.kind === "share" && board && <AccessSheet kind="board" id={board.id} title={board.name} onClose={closeLayer} onSaved={() => {
       closeLayer();
-      notify("Access updated");
+      notify.success("Access updated");
       void load();
     }} />}
     {dialog?.kind === "deleteBoard" && board && <ConfirmDialog title="Move to the Bin?" message={binConfirmMessage("board", board.name)} confirmLabel="Move to Bin" danger busy={deleting} onConfirm={() => { void removeBoard(); }} onCancel={closeLayer} />}
@@ -726,7 +726,7 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
         <button className="move-option" autoFocus onClick={() => setDialog({ kind: "renameColumn", columnId: dialogColumn.id })}><Pencil aria-hidden="true" /><span>Rename</span></button>
         <ColumnStateField column={dialogColumn} onError={notify} onChanged={(saved, changed) => {
           setDetail((current) => current ? { ...current, columns: saved } : current);
-          notify(`${changed.name} is now ${STATE_LABELS[columnState(changed)].toLowerCase()}${changed.is_done === 1 ? ": its cards count as done" : ""}`);
+          notify.success(`${changed.name} is now ${STATE_LABELS[columnState(changed)].toLowerCase()}${changed.is_done === 1 ? ": its cards count as done" : ""}`);
         }} />
         <button className="move-option" onClick={() => setDialog({ kind: "wipLimit", columnId: dialogColumn.id })}><Gauge aria-hidden="true" /><span>{dialogColumn.wip_limit ? `WIP limit: ${dialogColumn.wip_limit}` : "Set WIP limit…"}<small>{dialogColumn.wip_limit ? "Change or remove the most cards it holds" : "Stop cards coming in once it holds this many"}</small></span></button>
         <button className="move-option" disabled={columns[0]?.id === dialogColumn.id} onClick={() => { closeDialog(); void moveColumn(dialogColumn.id, -1); }}><ArrowLeft aria-hidden="true" /><span>Move left</span></button>

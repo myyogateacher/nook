@@ -1,4 +1,5 @@
 import { imageContentUrl, INLINE_IMAGE_TYPES } from "../editor/imageUpload";
+import type { SceneFile } from "../../shared/whiteboardScene";
 
 /**
  * Pictures on the canvas (Wave 24, D198). The scene only ever holds references to Nook files; the
@@ -85,4 +86,21 @@ export const PLACE_STEP_PX = 24;
 export function nextPlacement(previous: { view: string; step: number } | null, view: string) {
   const step = previous && previous.view === view ? (previous.step + 1) % 8 : 0;
   return { view, step, offsetPx: step * PLACE_STEP_PX };
+}
+
+/**
+ * The pictures a board's thumbnail draws (v0.35.0): of the pictures this canvas already loaded for
+ * display (the saver's own loading path, never a second fetch), only those whose Nook file the
+ * server listed as the board owner's own live pictures (`allowed`). Everyone who can read the board
+ * sees its thumbnail and can open those through the board; any other picture (someone else's, binned,
+ * or not loaded yet) is left out and drawn as Excalidraw's placeholder.
+ */
+export function thumbnailFiles<T>(loaded: Readonly<Record<string, T>>, refs: ReadonlyMap<string, SceneFile>, allowed: Iterable<string>): Record<string, T> {
+  const owned = new Set([...allowed].map((id) => id.toLowerCase()));
+  const files: Record<string, T> = {};
+  for (const [fileId, data] of Object.entries(loaded)) {
+    const documentId = refs.get(fileId)?.nookDocumentId;
+    if (documentId && owned.has(documentId.toLowerCase())) files[fileId] = data;
+  }
+  return files;
 }

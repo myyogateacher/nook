@@ -5,6 +5,7 @@ import { AttachmentList, AttachmentPreview, AttachSheet, LocationStripError, lin
 import { useConfirm } from "../ui/useConfirm";
 import type { DocumentSummary } from "../types";
 import type { EventResponse } from "./calendarApi";
+import { notify } from "../ui/notify";
 
 /**
  * Event attachments (uploads everywhere U1). Files belong to the event's whole series: every
@@ -265,7 +266,7 @@ export function EventAttachmentsSection({ data, canEdit, canManage, onChanged, f
   function addFiles(files: File[]) {
     if (!canEdit || !files.length) return;
     if (files.length > room) {
-      flash(room === 0 ? limitMessage(limit) : `${limitMessage(limit)} Only the first ${room} ${room === 1 ? "was" : "were"} added.`);
+      notify.warning(room === 0 ? limitMessage(limit) : `${limitMessage(limit)} Only the first ${room} ${room === 1 ? "was" : "were"} added.`);
     }
     const accepted = files.slice(0, room).map(stagedFromFile);
     if (!accepted.length) return;
@@ -275,15 +276,15 @@ export function EventAttachmentsSection({ data, canEdit, canManage, onChanged, f
 
   async function addDocument(document: DocumentSummary, options: { confirmed: boolean }) {
     if (room === 0) {
-      flash(limitMessage(limit));
+      notify.warning(limitMessage(limit));
       return;
     }
     try {
       await linkToHost("event", eventId, document.id, options);
-      flash(`Attached “${document.name}”`);
+      notify.success(`Attached “${document.name}”`);
       onChanged();
     } catch (reason) {
-      flash(errorText(reason, "Could not attach the file"));
+      notify.error(errorText(reason, "Could not attach the file"));
     }
   }
 
@@ -292,9 +293,9 @@ export function EventAttachmentsSection({ data, canEdit, canManage, onChanged, f
     if (!await ask({ title: "Remove from this event?", message: `Remove ${name} from “${data.event.title}”? ${item.removed ? "" : item.inAttachmentsFolder ? "If nothing else uses it, it moves to its owner's Bin." : "It stays in its folder in Files."}`.trim(), confirmLabel: "Remove", danger: true, opener: trigger })) return;
     try {
       const result = await unlinkFromHost("event", eventId, item.documentId);
-      flash(result.documentBinned ? `Removed ${name}. The file moved to ${!item.removed && item.isOwner ? "your" : "its owner's"} Bin.` : `Removed ${name}`);
+      notify.success(result.documentBinned ? `Removed ${name}. The file moved to ${!item.removed && item.isOwner ? "your" : "its owner's"} Bin.` : `Removed ${name}`);
     } catch (reason) {
-      flash(errorText(reason, "Could not remove the file"));
+      notify.error(errorText(reason, "Could not remove the file"));
     }
     onChanged();
   }

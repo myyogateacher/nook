@@ -140,7 +140,7 @@ Every step runs under the item's resource lock and is idempotent. Restore is a c
 Bin purges run even when the file sweep fails. Logs carry counts only.
 
 - **Notifications (Wave 12):** calendar notifications and fired standalone reminders older than 30 days are removed (`sweepNotifications`).
-- **Task attachments never linked (Wave 9 review fix):** uploads with `purpose = 'task_attachment'` that have no `card_attachments` row after 24 hours are moved to the uploader's Bin, 100 per run, audited with reason `attachment_never_linked` and no actor.
+- **Never-linked attachment uploads:** Attachments-folder files nothing links after 24 hours move to the owner's Bin, 100 per run (`server/attachments/sweep.ts`). The older task and row sweeps for `task_attachment` / `collection_attachment` uploads were removed in U8: migration 047 made those uploads Attachments-folder files.
 
 ## Search
 
@@ -175,7 +175,7 @@ Kanban boards (WAVES_7-9.md §3 with the director's §7 review), migration 009: 
 
 **Concurrency.** Every write to a board runs under `withResourceLock("board:<id>")` and re-checks access inside the lock. Card edits compare-and-swap on `revision` (409 `CARD_CHANGED` returns the current card); moves take an `afterCardId` that must be a live card in the target column, or 409 `STALE_POSITION` returns that column's order.
 
-**Attachments.** An attachment is a document uploaded with `POST /api/files?purpose=task_attachment`: owned by the uploader, `folder_id = NULL`, never listed in Files, counted in the quota. Linking needs a live attachment the caller owns (and, for a comment, the caller's own comment). `readableDocument` and `readableDocumentSummary` also admit readers of a board whose live card links the live document; lists never do. When a document loses its last link (unlink, comment delete, card or board purge) it moves to its uploader's Bin with `deleted_by` = the actor. Restoring such a document turns it into a Files item in the owner's folder or Default.
+**Attachments.** An attachment is a Files document in its uploader's Attachments folder (`POST /api/files?attachTo=card`, or the older `?purpose=task_attachment`, which since U8 stores the same thing), counted in the quota. Linking needs a live document the caller owns (and, for a comment, the caller's own comment). `readableDocument` and `readableDocumentSummary` also admit readers of a board whose live card links the live document; lists never do. When an Attachments-folder document loses its last link anywhere (unlink, comment delete, card or board purge) it moves to its owner's Bin (D395). Until migration 047 (U8) these were hidden `purpose = 'task_attachment'` documents with no folder; 047 converted them in place.
 
 **Bin (D41).** Deleting a card or board sets its Bin columns. A binned board is listed for its owner; a binned card for the board owner and for its deleter while they can still open the board. Restore is a compare-and-swap under the board lock: a card returns to the bottom of its column, or of the first column when that is gone, and a card on a binned board is refused with 409 `BOARD_IN_BIN`. Purge (owner, Empty Bin, or the sweeper after 30 days) tombstones and deletes the row in one transaction, since there are no bytes; cascades remove columns, cards, comments, members, and links.
 
@@ -202,7 +202,7 @@ All `/api` routes except health, about, login, register, and the calendar feed n
 - **Folders:** `GET/POST /api/folders`, `PATCH/DELETE /api/folders/:id`, `GET/PUT /api/folders/:id/sharing`
 - **Notes:** `GET/POST /api/notes`, `GET/PATCH/DELETE /api/notes/:id`, `PUT/DELETE /api/notes/:id/draft`, `POST /api/notes/:id/publish`, `GET /api/notes/:id/versions`, `GET /api/notes/:id/versions/:version`, `POST /api/notes/:id/versions/:version/restore`, `GET/PUT /api/notes/:id/sharing`
 - **Files:** `POST /api/files?folderId=` (multipart upload), `GET /api/files?folderId=`, `GET/PATCH/DELETE /api/files/:id`, `GET/HEAD /api/files/:id/content`, `GET/PUT /api/files/:id/sharing`
-- **Files** also accept `?purpose=task_attachment` on upload (no folder; readable to a board only once linked to a card).
+- **Files** also accept `?purpose=task_attachment` on upload (since U8: the caller's Attachments folder, as `?attachTo=card`).
 - **Tasks:** `GET/POST /api/tasks/boards`, `GET/PATCH/DELETE /api/tasks/boards/:id`, `GET/PUT /api/tasks/boards/:id/sharing`, `POST /api/tasks/boards/:id/columns`, `PATCH/DELETE /api/tasks/columns/:id`, `POST /api/tasks/boards/:id/cards`, `GET/PATCH/DELETE /api/tasks/cards/:id`, `POST /api/tasks/cards/:id/move`, `GET/POST /api/tasks/cards/:id/comments`, `PATCH/DELETE /api/tasks/comments/:id`, `POST /api/tasks/cards/:id/attachments`, `DELETE /api/tasks/cards/:id/attachments/:documentId`
 - **Calendar:** `GET/POST /api/calendars`, `PATCH/DELETE /api/calendars/:id`, `GET/PUT /api/calendars/:id/sharing`, `POST /api/calendars/:id/events`, `GET /api/events?from&to&tz&calendars&include=tasks`, `GET/PATCH/DELETE /api/events/:id`, `POST /api/events/:id/undo`, `POST /api/events/:id/exdates`, `POST/DELETE /api/events/:id/links`
 - **Reminders and notifications:** `GET/POST /api/reminders`, `DELETE /api/reminders/:id`, `GET /api/notifications`, `POST /api/notifications/read`
@@ -254,7 +254,7 @@ Typed tables (WAVES_10-12.md §3), in `server/collections/` with routes under `/
 
 **Concurrency.** Row writes use a compare-and-swap on `revision` (409 `ROW_CHANGED` with the current row). A patch keeps the previous values for one undo. Schema changes use a CAS on `schema_version`; rows are never rewritten.
 
-**Attachments.** Uploads with `?purpose=collection_attachment` have `folder_id = NULL` and never appear in Files lists; Files routes (rename, move, sharing) refuse them, and folder or sharing access never applies to them. `readableDocument*` (only) also admits readers of a live row in a live collection that links the document, so unsharing, binning, and unlinking take effect at once. Losing the last link, a purge, or 24 hours without any link moves a `collection_attachment` upload to its uploader's Bin.
+**Attachments.** Row uploads are Files documents in the uploader's Attachments folder (`?attachTo=row`, or the older `?purpose=collection_attachment`, which since U8 stores the same thing; migration 047 converted the hidden ones made before 0.35.0). `readableDocument*` (only) also admits readers of a live row in a live collection that links the document, so unsharing, binning, and unlinking take effect at once. Losing the last link anywhere, or 24 hours without any link, moves such an upload to its owner's Bin.
 
 **Search index.** `collection_row_search` maps an FTS rowid to a row with the `source_revision` and `schema_version` it was built from (`ON DELETE CASCADE` from rows; a trigger removes the FTS row). The title is the primary field and the body the other text, url, number, and date values and option labels; note titles and file names are never indexed. Rows are indexed in the transaction that writes them, a schema change reindexes its collection in the schema transaction, and boot runs `reconcileCollectionSearchIndex()` after the notes reconcile to rebuild missing or stale entries and drop orphans. `GET /api/search?scope=collections` applies the collection access rule inside the query, before `LIMIT`, and returns segments as notes search does.
 
@@ -319,3 +319,23 @@ History state layers hints over the URL:
 Leaving a note by any route change runs `finalizeOpenNote` (remove a blank never-published note, or save and publish a changed draft) with the editor locked; on failure the URL stays on the note. Deep links resume the named note or file; unreadable ids fall back to the list with a toast. A signed-out deep link is kept in memory through login. A failed first workspace load retries on the next route change.
 
 Dialogs and sheets push no history. While one is open, the app registers a guard (`src/historyDialogs.ts`; guards form a stack, newest asked first, so shared chrome such as the notification bell and nested Tasks dialogs each register their own): the first `popstate` handler to see a Back or Forward closes the dialog and undoes the move with `history.go(±1)`, chosen by comparing `mynotes.depth` of the two entries, and the popstate that causes is ignored once.
+
+### Toasts
+
+Toasts use [Sonner](https://sonner.emilkowal.ski/) (MIT, pinned in `package.json`). One `<Toaster>` (`src/ui/AppToaster.tsx`) is mounted once at the app root in `main.tsx`. It sits bottom-centre on a desktop. On a phone (≤ 760 px) it sits above the bottom bar and the safe area (`--toast-offset-bottom` in `src/ui/toasts.css`). At most 3 toasts show at once. They stack, can be swiped away on touch, pause while hovered or focused, and lose their motion under `prefers-reduced-motion`. Toasts push no history entry, so Back still closes dialogs and never a toast.
+
+Code calls the wrapper `src/ui/notify.ts`, never Sonner directly:
+
+| Call | When | Duration |
+| --- | --- | --- |
+| `notify.success(message, { action? })` | A change went through: saved, published, created, moved, moved to the Bin, restored, shared or access updated, copied, uploaded, attached. | 4 s |
+| `notify.info(message)` | Neutral news, such as "Published in another window". `flash(message)` (the old one-line toast, still the `flash` prop) is `notify.info`. | 4 s |
+| `notify.warning(message)` | Nook refused, or only part went through: no permission, a limit, a stale copy ("changed meanwhile"), not found, a clipboard that refused. | 6 s |
+| `notify.error(message)` | Something failed: an API error, an upload that failed. Use `errorText(reason, "Could not …")`. | Stays until dismissed, with a close button |
+
+- **Actions.** `{ action: { label, onClick } }` adds one button, such as Undo, Open, View or Move. Clicking it closes the toast. A toast with an action stays at least 10 s. Undo is offered only where an undo already exists: Files and Tasks moves to the Bin, deleted Tasks views, and Open after an Inbox approval on a phone.
+- **Copying by hand.** `{ selectable: true }` is for text the user must copy by hand, such as a link when the clipboard refused. It can be selected, cannot be swiped, and stays 15 s.
+- **Duplicates.** The same type and message replaces the toast on screen instead of stacking a copy.
+- **Screen readers.** Sonner's region is polite. An error's text is its own `role="alert"`, so it is read at once.
+- **Notifiers.** Tasks and Collections hand their views a `notify` prop of type `Notifier`. It has the same four methods. Calling it as a plain function (`notify(message, action?)`) is neutral and kept for older call sites.
+- **CSP.** Sonner normally writes its stylesheet into a runtime `<style>` tag. The Vite plugin `sonnerStaticStyles` (`vite.config.ts`) strips that call, and `sonner/dist/styles.css` is imported as a static file. Toasts therefore need no inline style. A build fails if the call can no longer be found.

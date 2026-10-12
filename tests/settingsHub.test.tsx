@@ -432,7 +432,7 @@ describe("Wave 37 fixes (QA)", () => {
     expect(app).toContain('useEffect(() => { if (guestAccess) go(settingsRoute("security"), { replace: true }); }, [go, guestAccess]);');
     const team = read("team/TeamApp.tsx");
     expect(team).toContain('export const ADMINS_ONLY_HINT = "That section is for admins";');
-    expect(team).toContain("flash(ADMINS_ONLY_HINT);\n    navigateRef.current({ app: \"team\", userId: null }, { replace: true });");
+    expect(team).toContain("notify.warning(ADMINS_ONLY_HINT);\n    navigateRef.current({ app: \"team\", userId: null }, { replace: true });");
   });
 
   test("L6: a Google return to an integration's page shows its result there", () => {

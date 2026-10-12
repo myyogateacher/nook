@@ -22,7 +22,8 @@ export const UPLOAD_TICKET_TTL_MS = 15 * 60_000;
 export const OPEN_TICKETS_PER_KEY = 3;
 export const DAILY_UPLOAD_BYTES_PER_USER = 1_073_741_824;
 
-type Purpose = "file" | "task_attachment";
+/** Every upload is stored as a Files document (D390; the hidden purposes went in 047). */
+type Purpose = "file";
 export type UploadTicket = {
   id: string; keyId: string; userId: string; name: string; sizeBytes: number; sha256: string; folderId: string | null; purpose: Purpose;
   /** The surface begin_upload was called on (review S4): the PUT must use the key on that surface. */
@@ -90,27 +91,27 @@ export function ticketBudgetError(ticket: UploadTicket) {
   return ticket.sizeBytes > budgetLeft(ticket.userId, ticket.id) ? budgetError() : null;
 }
 
-/** What a caller asks for: the stored purposes, plus `attachment` (D402), a Files document in the Attachments folder. */
-type PurposeInput = Purpose | "attachment";
+/**
+ * What a caller asks for: `file`, or `attachment` (D402), a Files document in the Attachments folder.
+ * `task_attachment` is the older name for `attachment` (uploads everywhere U8): it lands there too.
+ */
+type PurposeInput = Purpose | "attachment" | "task_attachment";
 
 /**
- * Folder for a new upload: an owned folder, or Default for Files; none for a task attachment; the
- * caller's Attachments folder (created on first use) for `attachment`, ready to attach to an event,
- * card, or row. Never a system folder by id (T342).
+ * Folder for a new upload: an owned folder, or Default for Files; the caller's Attachments folder
+ * (created on first use) for `attachment` and the older `task_attachment`, ready to attach to an
+ * event, card, or row. Never a system folder by id (T342).
  */
 function uploadFolder(userId: string, purpose: PurposeInput, folderId: string | undefined) {
   if (purpose === "task_attachment" || purpose === "attachment") {
     if (folderId) throw new McpToolError("INVALID", "Attachments have no folder");
-    return purpose === "attachment" ? ensureSystemFolder(userId) : null;
+    return ensureSystemFolder(userId);
   }
   if (!folderId) return ensureDefaultFolder(userId);
   if (!db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId, userId)) throw notFound("Folder");
   if (isSystemFolder(folderId)) throw new McpToolError("INVALID", SYSTEM_FOLDER_MESSAGE, { reason: "SYSTEM_FOLDER" });
   return folderId;
 }
-
-/** The purpose stored for a request: `attachment` is an ordinary Files document (D390). */
-const storedPurpose = (purpose: PurposeInput): Purpose => purpose === "attachment" ? "file" : purpose;
 
 function uploadName(name: string) {
   const cleaned = sanitizeDisplayName(name, "upload");
@@ -151,7 +152,7 @@ export async function storeForKey(key: Pick<McpKeyContext, "keyId" | "userId">, 
 
 const uuid = z.string().uuid();
 const sha256Hex = z.string().regex(/^[0-9a-fA-F]{64}$/, "sha256 is 64 hex characters");
-const purposeInput = z.enum(["file", "task_attachment", "attachment"]).optional().describe("file (default): a Files document in folderId or Default. task_attachment: no folder, for link_attachment. attachment: a Files document in your Attachments folder, only useful with a module tool that attaches files over MCP (check that tool's description; until one exists, nothing links it and it moves to the Bin after a day)");
+const purposeInput = z.enum(["file", "task_attachment", "attachment"]).optional().describe("file (default): a Files document in folderId or Default. attachment: a Files document in your Attachments folder, only useful with a module tool that attaches files over MCP (check that tool's description; until one exists, nothing links it and it moves to the Bin after a day). task_attachment: the older name for attachment, stored the same way");
 
 function patchErrorToMcp(error: DocumentPatchError) {
   if (error.code === "AUDIENCE_CHANGE") return new McpToolError("AUDIENCE_CHANGE", error.message);
@@ -182,7 +183,7 @@ export const fileWriteTools: McpToolSpec[] = [
       const kind = purpose ?? "file";
       const folder = uploadFolder(key.userId, kind, folderId);
       quotaCheck(key.userId, bytes.byteLength);
-      const result = await storeForKey(key, Readable.from([bytes]), { userId: key.userId, name: cleanName, folderId: folder, purpose: storedPurpose(kind), uploadKey: null, expectedBytes: bytes.byteLength });
+      const result = await storeForKey(key, Readable.from([bytes]), { userId: key.userId, name: cleanName, folderId: folder, purpose: "file", uploadKey: null, expectedBytes: bytes.byteLength });
       if (result.status !== 201) throw uploadErrorToMcp(result.status, result.body);
       return { document: result.body.document };
     }
@@ -215,7 +216,7 @@ export const fileWriteTools: McpToolSpec[] = [
       quotaCheck(key.userId, sizeBytes);
       const id = crypto.randomUUID();
       const expiresAt = Date.now() + UPLOAD_TICKET_TTL_MS;
-      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: storedPurpose(kind), expiresAt, state: "pending", surface: key.surface ?? "mcp" });
+      tickets.set(id, { id, keyId: key.keyId, userId: key.userId, name: cleanName, sizeBytes, sha256: sha256.toLowerCase(), folderId: folder, purpose: "file", expiresAt, state: "pending", surface: key.surface ?? "mcp" });
       return {
         uploadId: id,
         uploadUrl: `${config.appOrigin}/mcp/uploads/${id}`,

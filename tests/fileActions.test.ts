@@ -23,13 +23,10 @@ import {
   validateFolderName,
   writeFileSort,
   deleteConfirmMessage,
-  emptyToastState,
   filesEmptyState,
-  fileToastReducer,
   moveTargets,
   movedMessage,
   sanitizeRenameInput,
-  toastDuration,
   validateRename
 } from "../src/files/fileActions";
 import type { DocumentSummary, Folder } from "../src/types";
@@ -77,18 +74,6 @@ test("move and delete copy", () => {
   expect(movedMessage("Default", "private")).toBe("Moved to Default · private");
   expect(movedMessage("Team", "all_users")).toBe("Moved to Team · shared with everyone");
   expect(deleteConfirmMessage("a.pdf")).toBe("Move “a.pdf” to the Bin? You can restore it for 30 days.");
-});
-
-test("the toast reducer keeps one toast and only dismisses the one a timer started for", () => {
-  let state = fileToastReducer(emptyToastState, { type: "show", message: "Moved to the Bin", undoDocumentId: "d1" });
-  const first = state.toast!;
-  expect(first).toEqual({ id: 1, message: "Moved to the Bin", undoDocumentId: "d1" });
-  expect(toastDuration(first)).toBeGreaterThan(toastDuration({ ...first, undoDocumentId: null }));
-  state = fileToastReducer(state, { type: "show", message: "Renamed" });
-  expect(state.toast).toEqual({ id: 2, message: "Renamed", undoDocumentId: null });
-  expect(fileToastReducer(state, { type: "dismiss", id: first.id })).toBe(state);
-  expect(fileToastReducer(state, { type: "dismiss", id: 2 }).toast).toBeNull();
-  expect(fileToastReducer(fileToastReducer(state, { type: "clear" }), { type: "clear" }).toast).toBeNull();
 });
 
 const doc = (id: string, name: string, updated_at: string, size_bytes: number, extra: Partial<DocumentSummary> = {}): DocumentSummary => ({

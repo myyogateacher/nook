@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { cardPermalink, copyCardLink, copyText, CopyCardLinkButton } from "../src/tasks/cardLink";
 import { MoveCardSheet } from "../src/tasks/MoveCardSheet";
 import type { BoardColumn, CardSummary } from "../src/tasks/tasksApi";
+import { notifier } from "../src/ui/notify";
 
 // Operator request: "Copy link" on the card header (dialog and full page) and in the lane card's ⋯
 // sheet copies the card's permalink, without the board's view or filter query.
@@ -45,19 +46,20 @@ test("copyCardLink says Link copied, or shows the link to select by hand", async
   host.window = { location: { origin: "https://nook.example" } };
   const origin = "https://nook.example";
   const calls: unknown[][] = [];
-  const notify = (...args: unknown[]) => { calls.push(args); };
+  const record = (kind: string) => (...args: unknown[]) => { calls.push([kind, ...args]); };
+  const notify = Object.assign(record("plain"), { success: record("success"), info: record("info"), warning: record("warning"), error: record("error") });
   let copied = "";
   await copyCardLink(board, card, notify, async (text) => { copied = text; return true; });
   expect(copied).toBe(`${origin}/tasks/${board}/card/${card}`);
-  expect(calls.at(-1)).toEqual(["Link copied"]);
+  expect(calls.at(-1)).toEqual(["success", "Link copied"]);
   await copyCardLink(board, card, notify, async () => false);
-  expect(calls.at(-1)).toEqual([`Could not copy — here is the link: ${origin}/tasks/${board}/card/${card}`, undefined, { selectable: true }]);
+  expect(calls.at(-1)).toEqual(["warning", `Could not copy — here is the link: ${origin}/tasks/${board}/card/${card}`, { selectable: true }]);
   if (saved === undefined) delete host.window;
   else host.window = saved;
 });
 
 test("the header button and the ⋯ sheet offer Copy link", () => {
-  const button = renderToStaticMarkup(<CopyCardLinkButton boardId={board} cardId={card} notify={noop} />);
+  const button = renderToStaticMarkup(<CopyCardLinkButton boardId={board} cardId={card} notify={notifier} />);
   expect(button).toContain('aria-label="Copy link to this card"');
   expect(button).toContain('title="Copy link"');
   expect(button).toContain("lucide-link");

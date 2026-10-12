@@ -25,6 +25,7 @@ import { actionLabel, BULK_CONFIRM_OVER, bulkConfirmText, bulkSummary, expiresTe
 import { RoutinesPane } from "./RoutinesPane";
 import "./inbox.css";
 import { appName } from "../appName";
+import { notify } from "../ui/notify";
 
 type InboxRoute = Extract<Route, { app: "inbox" }>;
 type InboxNavigate = (route: Route, options?: { replace?: boolean }) => void;
@@ -88,7 +89,6 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
   };
   const [banner, setBanner] = useState<Banner | null>(null);
   // Phones: the list (and its banner) hides behind the next proposal, so approving says so in a toast above the sticky bar.
-  const [phoneToast, setPhoneToast] = useState<{ text: string; ref: ProposalRef | null } | null>(null);
   // J/K move keyboard focus to the newly selected row once it renders.
   const focusSelected = useRef(false);
   const navigateRef = useRef(navigate);
@@ -132,7 +132,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
       setGroups((current) => [...(current ?? []), ...result.groups]);
       setNextCursor(result.nextCursor);
     } catch (reason) {
-      flash(messageOf(reason, "Could not load more"));
+      notify.error(messageOf(reason, "Could not load more"));
     } finally {
       setLoadingMore(false);
     }
@@ -158,7 +158,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
     } catch (reason) {
       if (generation !== detailGeneration.current) return;
       if (reason instanceof ApiError && reason.status === 404) {
-        flash("Proposal not found");
+        notify.warning("Proposal not found");
         go({ view: routeRef.current.view, proposalId: null }, true);
       } else {
         setDetailError(messageOf(reason, "Could not open this proposal"));
@@ -188,12 +188,6 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
   }, [go, onHome]);
 
   const items = useMemo(() => (groups ?? []).flatMap((group) => group.items), [groups]);
-
-  useEffect(() => {
-    if (!phoneToast) return;
-    const timer = window.setTimeout(() => setPhoneToast(null), 6000);
-    return () => window.clearTimeout(timer);
-  }, [phoneToast]);
 
   useEffect(() => {
     if (!focusSelected.current || !route.proposalId) return;
@@ -227,13 +221,16 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
       const result = await approveProposal(proposal.id);
       setBanner({ text: `Approved: ${proposal.title}`, ref: result.ref, tone: "ok" });
       // On a phone the list (and its banner) is hidden behind the next proposal, so say it in a toast
-      // that sits above the sticky Approve bar and offers the same Open link as the banner.
-      if (routeRef.current.proposalId && nextId && window.matchMedia?.("(max-width: 760px)").matches) setPhoneToast({ text: "Approved", ref: result.ref });
+      // (above the sticky Approve bar) that offers the same Open link as the banner.
+      if (routeRef.current.proposalId && nextId && window.matchMedia?.("(max-width: 760px)").matches) {
+        const ref = result.ref;
+        notify.success("Approved", { action: ref ? { label: refLabel[ref.type], onClick: () => onOpenPath(ref.href) } : undefined });
+      }
       await settled(proposal.id, nextId);
     } catch (reason) {
       const code = codeOf(reason);
       if (reason instanceof ApiError && reason.status === 409 && code && code !== "NOT_PENDING") setBanner({ text: failureText(code), tone: "warn" });
-      else flash(messageOf(reason, "Could not approve"));
+      else notify.error(messageOf(reason, "Could not approve"));
       await settled(proposal.id, null);
     } finally {
       setBusy(null);
@@ -270,7 +267,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
       await loadList();
       if (routeRef.current.proposalId && group.some((item) => item.id === routeRef.current.proposalId)) go({ view: "pending", proposalId: null }, true);
     } catch (reason) {
-      flash(messageOf(reason, "Could not approve"));
+      notify.error(messageOf(reason, "Could not approve"));
     } finally {
       setBusy(null);
     }
@@ -397,12 +394,6 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
             : <div className="inbox-placeholder"><Inbox aria-hidden="true" /><p>Choose a proposal to see exactly what it changes.</p></div>}
       </section>}
     </div>
-
-    {phoneToast && <div className="inbox-toast" role="status">
-      <span>{phoneToast.text}</span>
-      {phoneToast.ref && <button type="button" className="inbox-link-button" onClick={() => { const ref = phoneToast.ref!; setPhoneToast(null); onOpenPath(ref.href); }}>{refLabel[phoneToast.ref.type]}<ExternalLink aria-hidden="true" /></button>}
-      <button type="button" className="icon-button" onClick={() => setPhoneToast(null)} aria-label="Dismiss"><X /></button>
-    </div>}
 
     {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={closeDialog} onReject={(reason) => reject(dialog.ids, reason)} />}
     {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={closeDialog} onConfirm={() => { void approveAll(dialog.items); }} />}

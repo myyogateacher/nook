@@ -163,6 +163,9 @@ describe.skipIf(!s3Backend)("S3 backend: file flows", () => {
     expect(content.status).toBe(200);
     expect(sha(new Uint8Array(await content.arrayBuffer()))).toBe(saved.body.sha256);
 
+    // The thumbnail's pictures (v0.35.0) come from the scene object read back from S3.
+    expect((await api(owner, "GET", `/whiteboards/${boardId}/thumbnail-pictures`)).body).toEqual({ revision: 2, documentIds: [picture.id] });
+
     const thumb = makePng(24, 16);
     expect((await api(owner, "PUT", `/whiteboards/${boardId}/thumbnail`, { revision: 2, png: Buffer.from(thumb).toString("base64") })).status).toBe(204);
     const thumbnail = await request(`/whiteboards/${boardId}/thumbnail`, {}, owner);

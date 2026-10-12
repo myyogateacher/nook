@@ -254,7 +254,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
         }
       }
       setTitle(current.title);
-      notify(taskErrorMessage(reason, "Could not rename the card"));
+      notify.error(taskErrorMessage(reason, "Could not rename the card"));
     }
   }
 
@@ -268,7 +268,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     setDetailsConflict(null);
     try {
       applyCard((await updateCard(current.id, { ...change, revision: current.revision })).card);
-      notify(success);
+      notify.success(success);
       return true;
     } catch (reason) {
       const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
@@ -278,7 +278,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
         setDetailsConflict("Someone else changed this card, so your change was not saved. The card now shows their version; make your change again if it is still needed.");
         return false;
       }
-      notify(taskErrorCode(reason) === "ASSIGNEE_NOT_MEMBER"
+      notify.error(taskErrorCode(reason) === "ASSIGNEE_NOT_MEMBER"
         ? "That person can no longer open this board"
         : taskErrorMessage(reason, "Could not save the change"));
       return false;
@@ -302,11 +302,11 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       applyCard((await updateCard(current.id, { description: draft, revision: current.revision })).card);
       setEditing(false);
       setConflict(null);
-      notify("Description saved");
+      notify.success("Description saved");
     } catch (reason) {
       const latest = taskErrorCode(reason) === "CARD_CHANGED" ? payloadCard(reason) : null;
       if (latest) setConflict(latest);
-      else notify(taskErrorMessage(reason, "Could not save the description"));
+      else notify.error(taskErrorMessage(reason, "Could not save the description"));
     } finally {
       setSaving(false);
     }
@@ -323,9 +323,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   async function copyDraft() {
     try {
       await navigator.clipboard.writeText(draft);
-      notify("Your text is on the clipboard");
+      notify.success("Your text is on the clipboard");
     } catch {
-      notify("Could not copy. Select the text and copy it yourself.");
+      notify.warning("Could not copy. Select the text and copy it yourself.");
     }
   }
 
@@ -338,7 +338,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       setComments((current) => [...page.comments, ...current]);
       setHasMore(page.hasMore);
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not load earlier comments"));
+      notify.error(taskErrorMessage(reason, "Could not load earlier comments"));
     } finally {
       setLoadingMore(false);
     }
@@ -347,7 +347,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   async function post() {
     const error = commentBodyError(composer, pendingFiles.length);
     if (error) {
-      notify(error);
+      notify.warning(error);
       return;
     }
     setPosting(true);
@@ -368,7 +368,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
         onChanged(next);
       }
     } catch (reason) {
-      notify(taskErrorCode(reason) === "LIMIT_REACHED" ? taskErrorMessage(reason, "This card is full") : taskErrorMessage(reason, "Could not post the comment"));
+      notify.error(taskErrorCode(reason) === "LIMIT_REACHED" ? taskErrorMessage(reason, "This card is full") : taskErrorMessage(reason, "Could not post the comment"));
     } finally {
       setPosting(false);
     }
@@ -396,7 +396,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     const files = editFiles;
     const error = commentBodyError(editingComment.body, attachmentsFor(attachments, editingComment.id).length + files.length);
     if (error) {
-      notify(error);
+      notify.warning(error);
       return;
     }
     try {
@@ -412,7 +412,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       setEditFiles([]);
       setEditingComment(null);
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not edit the comment"));
+      notify.error(taskErrorMessage(reason, "Could not edit the comment"));
     }
   }
 
@@ -434,10 +434,10 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
         onChanged(next);
       }
       setDeletingComment(null);
-      notify("Comment deleted");
+      notify.success("Comment deleted");
     } catch (reason) {
       setDeletingComment(null);
-      notify(taskErrorMessage(reason, "Could not delete the comment"));
+      notify.error(taskErrorMessage(reason, "Could not delete the comment"));
     } finally {
       setDeleteBusy(false);
     }
@@ -473,13 +473,13 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   async function attachFiles(files: readonly File[]) {
     if (!files.length) return;
     const { kept, notice } = fitToCap(files, attachments.length + uploads.rows.length, CARD_ATTACHMENT_CAP, "card");
-    if (notice) notify(notice);
+    if (notice) notify.warning(notice);
     await uploads.upload(kept, async (uploaded) => {
       try {
         addAttachment((await linkAttachment(cardId, uploaded.id)).attachment);
       } catch (reason) {
         // The upload stays in Files › Attachments and the sweeper bins it in a day; say why it is not on the card.
-        notify(`${uploaded.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
+        notify.error(`${uploaded.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
       }
     });
   }
@@ -488,9 +488,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   async function attachDocument(document: DocumentSummary, options: { confirmed: boolean }) {
     try {
       addAttachment((await linkAttachment(cardId, document.id, { confirmed: options.confirmed })).attachment);
-      notify(`Attached “${document.name}”`);
+      notify.success(`Attached “${document.name}”`);
     } catch (reason) {
-      notify(`${document.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
+      notify.error(`${document.name}: ${taskErrorCode(reason) === "LIMIT_REACHED" ? "this card has reached its attachment limit" : taskErrorMessage(reason, "could not attach")}`);
     }
   }
 
@@ -510,7 +510,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     if (!files.length) return;
     const staged = target === "comment" ? pendingFiles.length + commentUploads.rows.length : editingFileCount() + editFiles.length + editUploads.rows.length;
     const { kept, notice } = fitToCap(files, staged, COMMENT_ATTACHMENT_CAP, "comment");
-    if (notice) notify(notice);
+    if (notice) notify.warning(notice);
     const add = target === "comment" ? setPendingFiles : setEditFiles;
     await (target === "comment" ? commentUploads : editUploads).upload(kept, (uploaded) => add((current) => [...current, uploaded]));
   }
@@ -569,9 +569,9 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       setAttachments((current) => current.filter((item) => item.document_id !== attachment.document_id));
       countChanged(-1);
       const name = attachment.removed ? "the removed file" : `“${attachment.name}”`;
-      notify(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
+      notify.success(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
     } catch (reason) {
-      notify(taskErrorMessage(reason, "Could not remove the attachment"));
+      notify.error(taskErrorMessage(reason, "Could not remove the attachment"));
     } finally {
       setDeleteBusy(false);
       setUnlinking(null);
@@ -779,7 +779,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       // dialog's guard would otherwise swallow that step.
       setConfirmDelete(false);
       setEditing(false);
-      onDelete(card.id).catch((reason) => notify(taskErrorMessage(reason, "Could not delete the card")));
+      onDelete(card.id).catch((reason) => notify.error(taskErrorMessage(reason, "Could not delete the card")));
     }} onCancel={closeSubDialog} />}
     {sheet && <AttachSheet
       hostNoun={sheet === "card" ? "card" : "comment"}

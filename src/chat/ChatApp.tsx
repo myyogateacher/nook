@@ -27,6 +27,7 @@ import { ConfirmationCard, ToolCallsDisclosure, TrifectaBadge } from "./ToolDisc
 import { AuditLog } from "./AuditLog";
 import { ACCESS_REVOKED_TEXT, accessLost, ChatOffNotice } from "./accessNotice";
 import "./chat.css";
+import { notify } from "../ui/notify";
 
 type ChatNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean }) => void;
 type ChatAppProps = {
@@ -154,7 +155,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       setChats(own.chats);
       setSharedChats(shared.chats);
     } catch (reason) {
-      if (!(reason instanceof ApiError && reason.status === 503)) flash(messageOf(reason, "Could not load chats"));
+      if (!(reason instanceof ApiError && reason.status === 503)) notify.error(messageOf(reason, "Could not load chats"));
     }
   }, [flash]);
   const loadAgents = useCallback(async () => {
@@ -281,7 +282,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       if (generation !== detailGeneration.current) return;
       if (reason instanceof ApiError && reason.status === 404) {
         setSharedChats((list) => dropSharedChat(list, chatId));
-        flash("Chat not found");
+        notify.warning("Chat not found");
         go(chatRoute(), true);
       } else {
         // A chat opened (a deep link, a bell link) by someone whose role may not chat: no answer
@@ -432,7 +433,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       await confirmRun(current.runId, card, decision);
     } catch (reason) {
       if (errorCode(reason) === "NO_PENDING_CONFIRMATION") setLive((value) => value ? { ...value, pending: null } : value);
-      else flash(messageOf(reason, "Could not answer the confirmation"));
+      else notify.error(messageOf(reason, "Could not answer the confirmation"));
     } finally {
       setDeciding(false);
     }
@@ -465,12 +466,12 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     const fromComposer = attachments === undefined;
     const images = attachments ?? composerImages.attachments;
     if ((!text && images.length === 0) || busy) return;
-    if (fromComposer && (composerImages.uploading || composerImages.failed)) { flash(composerImages.uploading ? "Wait for the images to finish uploading" : "Remove the images that failed to upload"); return; }
-    if (images.length > 0 && !composerVision) { flash(visionMissingMessage(composerAgentName)); return; }
+    if (fromComposer && (composerImages.uploading || composerImages.failed)) { notify.warning(composerImages.uploading ? "Wait for the images to finish uploading" : "Remove the images that failed to upload"); return; }
+    if (images.length > 0 && !composerVision) { notify.warning(visionMissingMessage(composerAgentName)); return; }
     setBusy(true);
     try {
       if (route.newChat) {
-        if (!newAgentId) { flash("Choose an agent first"); return; }
+        if (!newAgentId) { notify.warning("Choose an agent first"); return; }
         const { chat } = await createChat(newAgentId);
         const started = await sendMessage(chat.id, text, undefined, images);
         setDetail({ chat, messages: [started.userMessage!, started.assistantMessage], activeRunId: started.runId, pendingConfirmation: null });
@@ -491,7 +492,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       startRun(started, route.chatId);
     } catch (reason) {
       if (accessLost(reason)) loseAccess();
-      flash(failureText(reason, "Could not send"));
+      notify.error(failureText(reason, "Could not send"));
     } finally {
       setBusy(false);
     }
@@ -502,7 +503,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     try {
       await cancelRun(live.runId);
     } catch (reason) {
-      flash(messageOf(reason, "Could not stop"));
+      notify.error(messageOf(reason, "Could not stop"));
     }
   }
 
@@ -514,7 +515,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       startRun(started, route.chatId);
     } catch (reason) {
       if (accessLost(reason)) loseAccess();
-      flash(failureText(reason, "Could not regenerate"));
+      notify.error(failureText(reason, "Could not regenerate"));
     } finally {
       setBusy(false);
     }
@@ -530,7 +531,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       setDetail((current) => current ? { ...current, chat } : current);
     } catch (reason) {
       if (errorCode(reason) === "REVISION_MISMATCH") void refreshDetail(detail.chat.id);
-      else flash(messageOf(reason, "Could not switch"));
+      else notify.error(messageOf(reason, "Could not switch"));
     }
   }
 
@@ -542,7 +543,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       setRenaming(false);
       void loadChats(query);
     } catch (reason) {
-      flash(messageOf(reason, "Could not rename"));
+      notify.error(messageOf(reason, "Could not rename"));
     }
   }
   async function togglePin() {
@@ -553,7 +554,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
       setDetail((current) => current ? { ...current, chat } : current);
       void loadChats(query);
     } catch (reason) {
-      flash(messageOf(reason, "Could not pin"));
+      notify.error(messageOf(reason, "Could not pin"));
     }
   }
   // Continue as a copy (D361): your own chat with the branch up to `messageId`; the agent then runs as you.
@@ -562,12 +563,12 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     setBusy(true);
     try {
       const { chat } = await forkChat(detail.chat.id, messageId);
-      flash("Copied to your chats");
+      notify.success("Copied to your chats");
       void loadChats(query);
       go(chatRoute(chat.id));
     } catch (reason) {
       // QA L2: the server's message ("no longer available" to recipients, "in the Bin" to the agent's owner).
-      flash(forkFailureText(reason));
+      notify.error(forkFailureText(reason));
     } finally {
       setBusy(false);
     }
@@ -579,12 +580,12 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     if (!await confirm.ask({ title: "Move this chat to the Bin?", message: `“${detail.chat.title}” stays in the Bin for 30 days; a running answer stops.`, confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteChat(detail.chat.id);
-      flash("Moved to the Bin");
+      notify.success("Moved to the Bin");
       void loadChats(query);
       navigate(chatRoute(), { replace: true, removed: true });
       setRoute(chatRoute());
     } catch (reason) {
-      flash(messageOf(reason, "Could not delete"));
+      notify.error(messageOf(reason, "Could not delete"));
     }
   }
 
@@ -736,7 +737,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
             onOpenImage={(item) => setViewing({ documentId: item.documentId, name: item.name })}
             onRegenerate={() => { void regenerateMessage(shown.message); }}
             onSwitch={(direction) => { void switchBranch(shown, direction); }}
-            onCopied={() => flash("Copied")} />)}
+            onCopied={() => notify.success("Copied")} />)}
         </ol>
         {drop.dragging && <DropOverlay />}
         {!readOnly && composer}
@@ -754,7 +755,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}
     {linking && chatAgent && <LinkNookKeySheet agentId={chatAgent.id} agentName={chatAgent.name} onClose={() => setLinking(false)} onChanged={() => { void loadAgents(); }} />}
     {sharing && detail && !readOnly && <AccessSheet kind="chat" id={detail.chat.id} title={detail.chat.title} guardHistory note={CHAT_SHARE_WARNING}
-      onClose={() => setSharing(false)} onSaved={() => { setSharing(false); flash("Access updated"); void refreshDetail(detail.chat.id, true); }} />}
+      onClose={() => setSharing(false)} onSaved={() => { setSharing(false); notify.success("Access updated"); void refreshDetail(detail.chat.id, true); }} />}
     {attaching && composerOpen && <AttachSheet hostNoun="message" accept={CHAT_IMAGE_ACCEPT} closeOnPick onClose={() => setAttaching(false)}
       onFiles={composerImages.addFiles} onPickDocument={composerImages.addDocument}
       disabledReason={!composerVision ? visionMissingMessage(composerAgentName) : composerImages.full ? IMAGES_FULL_MESSAGE : null} />}

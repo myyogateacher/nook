@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, Copy, Rss, Trash2 } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { createFeed, listFeeds, revokeFeed, type CalendarFeed, type CalendarSummary, type FeedDetail } from "./calendarApi";
+import { notify } from "../ui/notify";
 
 export const MAX_FEEDS = 5;
 
@@ -64,7 +65,7 @@ export function FeedDialog({ calendar, onClose, flash }: FeedDialogProps) {
     try {
       await revokeFeed(feed.id);
       setFeeds((current) => (current ?? []).filter((item) => item.id !== feed.id));
-      flash("Feed link revoked");
+      notify.success("Feed link revoked");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not revoke the link");
     } finally {

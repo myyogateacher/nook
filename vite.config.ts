@@ -93,6 +93,29 @@ function excalidrawFonts(): Plugin {
   };
 }
 
+/**
+ * Sonner (the toasts, ui/AppToaster.tsx) writes its stylesheet into a runtime <style> tag when the
+ * module loads. Nook imports the same stylesheet as a static file (sonner/dist/styles.css), so the
+ * injection is removed: toasts need no inline style, under any CSP. A build fails if Sonner's code
+ * changed shape and the call was not found.
+ */
+function sonnerStaticStyles(): Plugin {
+  let building = false;
+  let stripped = 0;
+  return {
+    name: "nook-sonner-static-styles",
+    configResolved(config) { building = config.command === "build"; },
+    transform(code, id) {
+      if (!/[\\/]node_modules[\\/]sonner[\\/]dist[\\/]index\.m?js$/.test(id.split("?")[0])) return null;
+      const out = code.replace(/__insertCSS\("(?:[^"\\]|\\.)*"\);?/g, () => { stripped += 1; return ""; });
+      return out === code ? null : { code: out, map: null };
+    },
+    buildEnd(error) {
+      if (building && !error && stripped === 0) this.error("Sonner's runtime stylesheet injection was not found; update sonnerStaticStyles (toasts)");
+    }
+  };
+}
+
 /** Kept in step with COMPRESSIBLE in server/staticFiles.ts: images, fonts, and wasm are left alone. */
 const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".map", ".webmanifest", ".svg", ".txt", ".xml"]);
 
@@ -128,7 +151,9 @@ export default defineConfig({
   // Order matters: the Excalidraw patches run while modules are transformed, the fonts are copied
   // when the bundle is written, and precompress runs last (closeBundle), so the .br and .gz twins
   // are made from the patched chunks. Fonts (woff2) are already compressed and are left alone.
-  plugins: [react(), tailwindcss(), excalidrawFonts(), precompress()],
+  plugins: [react(), tailwindcss(), excalidrawFonts(), sonnerStaticStyles(), precompress()],
+  // Sonner is served from source in development too, so its stylesheet is not injected at runtime.
+  optimizeDeps: { exclude: ["sonner"] },
   server: {
     port: 5173,
     proxy: {

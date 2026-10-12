@@ -14,6 +14,7 @@ import { policyDraft, policyFromDraft, policySummary, ProviderKnowledgeFields } 
 import { ProviderVisionFields, visionDraft, visionFromDraft, visionSummary } from "./ProviderVisionPolicy";
 import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./chat.css";
+import { notify } from "../ui/notify";
 
 /**
  * Settings → AI (admins; agent chat plan §4.1, §13.4): providers (name, base URL, a write-only API
@@ -62,7 +63,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
       const { test: result } = await testProvider(provider.id);
       setTests((current) => ({ ...current, [provider.id]: result }));
     } catch (reason) {
-      flash(messageOf(reason, "The test could not run"));
+      notify.error(messageOf(reason, "The test could not run"));
       setTests((current) => { const next = { ...current }; delete next[provider.id]; return next; });
     }
   }
@@ -70,10 +71,10 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
     if (!await confirm.ask({ title: `Remove ${provider.name}?`, message: "Agents using it fall back to the default provider. Its API key is deleted.", confirmLabel: "Remove", danger: true })) return;
     try {
       await deleteProvider(provider.id);
-      flash("Provider removed");
+      notify.success("Provider removed");
       void load();
     } catch (reason) {
-      flash(messageOf(reason, "Could not remove the provider"));
+      notify.error(messageOf(reason, "Could not remove the provider"));
     }
   }
   async function makeDefault(provider: ProviderSummary) {
@@ -81,7 +82,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
       await updateProvider(provider.id, { isDefault: true, expectedRevision: provider.revision });
       void load();
     } catch (reason) {
-      flash(messageOf(reason, "Could not change the default"));
+      notify.error(messageOf(reason, "Could not change the default"));
     }
   }
 
@@ -161,9 +162,9 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     try {
       const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks, expectedRevision: settings.revision });
       onSaved(next);
-      flash("Policy saved");
+      notify.success("Policy saved");
     } catch (reason) {
-      flash(errorCode(reason) === "REVISION_MISMATCH" ? "The policy changed elsewhere; reload and try again" : messageOf(reason, "Could not save the policy"));
+      notify.error(errorCode(reason) === "REVISION_MISMATCH" ? "The policy changed elsewhere; reload and try again" : messageOf(reason, "Could not save the policy"));
     } finally {
       setBusy(false);
     }

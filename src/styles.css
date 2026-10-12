@@ -425,7 +425,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .user-picker span { display: grid; gap: 2px; font-size: .84rem; }
 .user-picker small { color: #74747b; }
 .share-save { margin: 14px; flex: none; }
-.toast { position: fixed; z-index: 60; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 11px 16px; border: 1px solid #39393e; border-radius: 10px; background: #202024; box-shadow: 0 12px 40px rgb(0 0 0 / 45%); font-size: .82rem; }
 
 .collapsed-trigger { display: none; }
 .workspace.nav-collapsed { grid-template-columns: 0 320px minmax(0, 1fr); }
@@ -497,8 +496,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .qr-frame { margin: auto; }
   .verify-totp-form, .disable-totp-form > div, .view-recovery-form > div, .regenerate-recovery form > div { grid-template-columns: 1fr; }
   .recovery-code-grid { grid-template-columns: 1fr; }
-  /* Long messages wrap inside the viewport (QA v0.13.0: "Added to the group. You added yourself…" ran past the edge). */
-  .toast { bottom: calc(74px + env(safe-area-inset-bottom)); width: max-content; max-width: calc(100vw - 28px); white-space: normal; overflow-wrap: anywhere; }
   .slash-menu { max-height: 40vh; }
 }
 

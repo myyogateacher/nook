@@ -33,7 +33,7 @@ export const subitemLabel = (count: number) => count === 1 ? "+ 1 subitem" : `+ 
  * card's board, Collections for a collection, a row's collection (Wave 11), Calendar for a
  * calendar, or an event's calendar (Wave 12).
  */
-export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick<BinItem, "type" | "board_name">>) {
+export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick<BinItem, "type" | "board_name" | "restore_folder_name">>) {
   if (item.type === "card") return item.board_name ?? "its board";
   if (item.type === "board") return "Tasks";
   if (item.type === "collection") return "Collections";
@@ -42,7 +42,9 @@ export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick
   if (item.type === "event") return item.folder_name ?? "Calendar";
   if (item.type === "vault") return "Vault";
   if (item.type === "vault_environment" || item.type === "vault_secret") return item.folder_name ?? "its vault";
-  return item.folder_name ?? "Default";
+  // Notes and files: the server names the folder the restore really uses (an Attachments file that
+  // nothing links any more goes to Default, not back to Attachments).
+  return item.restore_folder_name ?? item.folder_name ?? "Default";
 }
 
 /** The Tasks filter shows cards and boards together; Collections, collections and rows; Calendar, calendars and events. */
@@ -70,7 +72,7 @@ const attachmentKindLabel = (item: Partial<Pick<BinItem, "attachment_kind">>) =>
  * Row meta for an attachment: the card or row it still belongs to, a kind label while something
  * still links it, or where it restores to once nothing does.
  */
-export function attachmentLabel(item: Pick<BinItem, "attachment_of"> & Partial<Pick<BinItem, "attachment_kind" | "folder_name">>) {
+export function attachmentLabel(item: Pick<BinItem, "attachment_of"> & Partial<Pick<BinItem, "attachment_kind" | "folder_name" | "restore_folder_name">>) {
   if (item.attachment_of != null) {
     const name = item.attachment_of.trim() || (item.attachment_kind === "row" ? "Untitled row" : "Untitled card");
     return `Attachment of ${name}`;
@@ -78,7 +80,7 @@ export function attachmentLabel(item: Pick<BinItem, "attachment_of"> & Partial<P
   const kind = attachmentKindLabel(item);
   // Older servers omit attachment_kind; they only report a card link through attachment_of.
   const linked = item.attachment_kind === "card" || item.attachment_kind === "row";
-  return linked ? kind : `${kind} · restores to ${item.folder_name ?? "Default"}`;
+  return linked ? kind : `${kind} · restores to ${item.restore_folder_name ?? item.folder_name ?? "Default"}`;
 }
 
 /** The kind shown to screen readers and in the row meta. */

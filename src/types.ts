@@ -93,6 +93,8 @@ export type BinItem = {
   descendant_count?: number;
   /** Documents: a whiteboard (Wave 23) or any other file. */
   kind?: "file" | "whiteboard";
+  /** Notes and documents: the folder a restore puts it in now, by the restore's own rule (server/bin.ts restoreFolderName). Older servers omit it. */
+  restore_folder_name?: string;
 };
 export type BinRestoreResult = {
   ok: true;

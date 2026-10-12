@@ -113,6 +113,7 @@ import { clearPendingForUser, countPendingForUser } from "./whiteboards/pendingS
 import { usePendingWhiteboardSync } from "./whiteboards/pendingSync";
 import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
+import { notifyBinned } from "./bin/binUndo";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
 import { formatRoute, hubDocumentTitle, keysTabRoute, locationUrl, parseRoute, routeFromLocation, SETTINGS_SECTION_NAMES, settingsDocumentTitle, settingsPath, type KeysTab, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
@@ -1465,7 +1466,9 @@ export function App() {
       const result = await api<{ purged?: boolean }>(`/notes/${noteId}`, { method: "DELETE", body: "{}" });
       if (deletingOpenNote) closeRemovedNote(noteId);
       await loadNavigation();
-      notify.success(result.purged ? "Empty note removed" : "Moved to the Bin");
+      // Undo restores it through the Bin and lists it again (v0.35.0); an empty note was purged, no Undo.
+      if (result.purged) notify.success("Empty note removed");
+      else notifyBinned("Moved to the Bin", [{ type: "note", id: noteId }], () => loadNavigation());
       if (!result.purged) notifyBinChanged();
     } finally {
       switchingRef.current = false;
@@ -1610,7 +1613,8 @@ export function App() {
       if (removesNote) {
         closeRemovedNote(noteId);
         await loadNavigation();
-        notify.success(result.binned ? "Moved to the Bin" : "Empty note removed");
+        if (result.binned) notifyBinned("Moved to the Bin", [{ type: "note", id: noteId }], () => loadNavigation());
+        else notify.success("Empty note removed");
       } else {
         if (sessionEditedRef.current === noteId) sessionEditedRef.current = null;
         await Promise.all([loadNote(noteId), loadNavigation()]);

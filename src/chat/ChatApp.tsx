@@ -28,6 +28,7 @@ import { AuditLog } from "./AuditLog";
 import { ACCESS_REVOKED_TEXT, accessLost, ChatOffNotice } from "./accessNotice";
 import "./chat.css";
 import { notify } from "../ui/notify";
+import { notifyBinned } from "../bin/binUndo";
 
 type ChatNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean }) => void;
 type ChatAppProps = {
@@ -579,8 +580,10 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
     setMenuOpen(false);
     if (!await confirm.ask({ title: "Move this chat to the Bin?", message: `“${detail.chat.title}” stays in the Bin for 30 days; a running answer stops.`, confirmLabel: "Move to Bin", danger: true })) return;
     try {
-      await deleteChat(detail.chat.id);
-      notify.success("Moved to the Bin");
+      const chatId = detail.chat.id;
+      await deleteChat(chatId);
+      // Undo restores it through the Bin and lists it again (v0.35.0).
+      notifyBinned("Moved to the Bin", [{ type: "chat", id: chatId }], () => loadChats(queryRef.current));
       void loadChats(query);
       navigate(chatRoute(), { replace: true, removed: true });
       setRoute(chatRoute());

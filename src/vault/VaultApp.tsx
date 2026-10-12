@@ -28,6 +28,7 @@ import "../files/files.css";
 import "./vault.css";
 import { appName } from "../appName";
 import { notify } from "../ui/notify";
+import { notifyBinned, onBinRestored } from "../bin/binUndo";
 
 type VaultNavigate = (route: Route, options?: { replace?: boolean; removed?: boolean }) => void;
 type VaultAppProps = {
@@ -149,7 +150,9 @@ export function VaultApp({ displayName, role, navigate, flash, onHome, onSetting
       onOpenPage={(page, name) => { vaultNames.current.set(route.vaultId!, name); setActivityActor(null); go(vaultRoute(route.vaultId, { page })); }}
       onLeft={() => { pageCache.current.delete(route.vaultId!); const target = vaultRoute(); setRoute(target); navigateRef.current(target, { replace: true, removed: true }); }}
       onMissing={() => { notify.warning("That vault is not available"); go(vaultRoute(), true); }}
-      onDeleted={() => { pageCache.current.delete(route.vaultId!); const target = vaultRoute(); setRoute(target); navigateRef.current(target, { replace: true, removed: true }); notify.success("Moved the vault to the Bin"); }} />;
+      onDeleted={() => { const deletedVaultId = route.vaultId!; pageCache.current.delete(deletedVaultId); const target = vaultRoute(); setRoute(target); navigateRef.current(target, { replace: true, removed: true });
+        // Undo restores it through the Bin; the vault list (onBinRestored there) shows it again (v0.35.0).
+        notifyBinned("Moved the vault to the Bin", [{ type: "vault", id: deletedVaultId }]); }} />;
   }
 
   return <main ref={mainRef} className="app-page vault-app">
@@ -195,6 +198,7 @@ function VaultList({ onOpen, onReady, flash }: { onOpen: (vault: VaultSummary) =
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => onBinRestored(["vault"], () => { void load(); }), [load]);
   useEffect(() => { document.title = `Vault · ${appName()}`; }, []);
   const ready = vaults !== null;
   useLayoutEffect(() => { if (ready) onReady(); }, [ready, onReady]);
@@ -318,6 +322,8 @@ function VaultPage({ vaultId, envId, cache, onBack, onReady, flash, ask, onEnvir
     const timer = setTimeout(() => { void load(); }, query ? 250 : 0);
     return () => clearTimeout(timer);
   }, [load, query]);
+  // Undo after a secret or an environment went to the Bin (v0.35.0): this vault's page shows it again.
+  useEffect(() => onBinRestored(["vault_secret", "vault_environment"], () => { cache.current.delete(vaultId); void load(); }), [cache, load, vaultId]);
   const ready = data !== null;
   useLayoutEffect(() => { if (ready) onReady(); }, [ready, onReady]);
   useEffect(() => { if (data) document.title = `${data.vault.name} · Vault · ${appName()}`; }, [data]);
@@ -508,7 +514,7 @@ function SecretPage({ vaultId, secretId, onBack, onReady, flash, ask, onMissing,
     if (!await ask({ title: `Delete ${secret.name}?`, message: `${secret.name} and its values in every environment move to the Bin for 30 days.`, confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteSecret(vaultId, secretId);
-      notify.success(`Moved ${secret.name} to the Bin`);
+      notifyBinned(`Moved ${secret.name} to the Bin`, [{ type: "vault_secret", id: secretId }]);
       onDeleted();
     } catch (reason) {
       notify.error(messageOf(reason, "Could not delete the secret"));

@@ -14,6 +14,7 @@ import {
   type SecretDetail, type SecretSummary, type VaultEnvironment, type VaultSummary
 } from "./vaultApi";
 import { notify } from "../ui/notify";
+import { notifyBinned } from "../bin/binUndo";
 
 /**
  * The Vault's sheets and dialogs (vault plan §10). Each is one history layer (useHistoryDialogGuard):
@@ -658,7 +659,17 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
           {owner && <button type="button" className="icon-button" aria-label={`Move ${env.name} down`} disabled={busy || index === current.environments.length - 1} onClick={() => move(index, 1)}><ArrowDown /></button>}
           {env.level === "admin" && <button type="button" className="icon-button" aria-label={`Delete ${env.name}`} disabled={busy || current.environments.length <= 1} onClick={() => {
             void ask({ title: `Delete ${env.name}?`, message: `${env.name} and its values move to the Bin for 30 days. Restoring it brings the values back.`, confirmLabel: "Move to Bin", danger: true }).then((confirmed) => {
-              if (confirmed) void run(async () => { await withReauth(() => deleteEnvironment(vault.id, env.id)); return refreshed(); }, `Moved ${env.name} to the Bin`);
+              if (confirmed) void run(async () => {
+                await withReauth(() => deleteEnvironment(vault.id, env.id));
+                // Undo restores it through the Bin; the vault page reloads (onBinRestored there), and so does this sheet.
+                notifyBinned(`Moved ${env.name} to the Bin`, [{ type: "vault_environment", id: env.id }], async () => {
+                  const next = await refreshed();
+                  setCurrent(next);
+                  setNames(Object.fromEntries(next.environments.map((item) => [item.id, item.name])));
+                  onChanged(next);
+                });
+                return refreshed();
+              });
             });
           }}><Trash2 /></button>}
         </li>)}

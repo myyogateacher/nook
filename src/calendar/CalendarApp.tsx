@@ -58,6 +58,7 @@ import {
 import { AttachmentPreview, AttachSheet } from "../ui/attachments";
 import type { DocumentSummary } from "../types";
 import { deleteFile } from "../files/filesApi";
+import { notifyBinned } from "../bin/binUndo";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery, useReturnFocus } from "./hooks";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
@@ -455,15 +456,21 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     setBusy(true);
     try {
       if (pendingConfirm.kind === "deleteEvent") {
-        await deleteEvent(pendingConfirm.data.event.id);
+        const eventId = pendingConfirm.data.event.id;
+        await deleteEvent(eventId);
         setConfirm(null);
-        notify.success("Moved to the Bin");
+        // Undo restores it through the Bin and redraws the grid (v0.35.0).
+        notifyBinned("Moved to the Bin", [{ type: "event", id: eventId }], () => { setReloadKey((value) => value + 1); });
         setReloadKey((value) => value + 1);
         back();
       } else {
-        await deleteCalendar(pendingConfirm.calendar.id);
+        const calendarId = pendingConfirm.calendar.id;
+        await deleteCalendar(calendarId);
         setConfirm(null);
-        notify.success(`Moved “${pendingConfirm.calendar.name}” to the Bin`);
+        notifyBinned(`Moved “${pendingConfirm.calendar.name}” to the Bin`, [{ type: "calendar", id: calendarId }], async () => {
+          await loadCalendars();
+          setReloadKey((value) => value + 1);
+        });
         await loadCalendars();
         setReloadKey((value) => value + 1);
       }

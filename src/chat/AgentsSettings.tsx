@@ -15,6 +15,7 @@ import { hasRef, knowledgePickerBases, nookGroups, nookWriteMode, orphanRefs, pi
 import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./chat.css";
 import { notify } from "../ui/notify";
+import { notifyBinned, onBinRestored } from "../bin/binUndo";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -51,6 +52,7 @@ export function AgentsSettings({ agentId, navigate, flash, onOpenChat }: { agent
   // once for a deep link to the editor (Wave 41): `canCreate` comes from the status, so /settings/agents/new
   // opened directly must load it too.
   useEffect(() => { void load(); }, [agentId, load]);
+  useEffect(() => onBinRestored(["agent"], () => { void load(); }), [load]);
   useEffect(() => { if (!agentId) document.title = hubDocumentTitle("Agents"); }, [agentId]);
 
   if (agentId) return <AgentEditor agentId={agentId} navigate={navigate} flash={flash} canCreate={status?.canCreate ?? false} onOpenChat={onOpenChat} keysRoute={agentKeysRoute()} />;
@@ -221,7 +223,8 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     if (!await confirm.ask({ title: `Move ${agent.name} to the Bin?`, message: "Its chats stay readable; sending in them needs the agent restored. Deleted forever after 30 days.", confirmLabel: "Move to Bin", danger: true })) return;
     try {
       await deleteAgent(agent.id);
-      notify.success("Moved to the Bin");
+      // Undo restores it through the Bin; the list (onBinRestored in AgentsSettings) shows it again.
+      notifyBinned("Moved to the Bin", [{ type: "agent", id: agent.id }]);
       navigate(toList, { replace: true });
     } catch (reason) {
       notify.error(messageOf(reason, "Could not delete the agent"));

@@ -14,6 +14,7 @@ import { IntegrationBadge } from "../ui/IntegrationBadge";
 import { Select } from "../ui/Select";
 import { whiteboardsBackAction, whiteboardsRoute, type WhiteboardsRoute } from "../whiteboardsRoute";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
+import { onBinRestored } from "../bin/binUndo";
 import { BoardDialogs, NewBoardDialog, type BoardDialog } from "./BoardDialogs";
 import { PENDING_SYNCED_EVENT, pendingSyncDeps, requestPendingSync } from "./pendingSync";
 import { duplicateWhiteboard, importWhiteboard, listWhiteboards, THUMBNAIL_EVENT, thumbnailUrl, whiteboardLink, type WhiteboardSort, type WhiteboardSummary } from "./whiteboardsApi";
@@ -170,6 +171,12 @@ export function WhiteboardsApp({ userId, displayName, navigate, flash, onHome, o
   useEffect(() => {
     if (route.boardId) return;
     void loadList();
+  }, [loadList, route.boardId]);
+
+  // Undo after a move to the Bin (v0.35.0): the restored board is listed again.
+  useEffect(() => {
+    if (route.boardId) return undefined;
+    return onBinRestored(["document"], () => { void loadList(); });
   }, [loadList, route.boardId]);
 
   // QA E5: showing the list sends pending copies from earlier visits (one at a time, through the

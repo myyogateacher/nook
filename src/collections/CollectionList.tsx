@@ -12,6 +12,7 @@ import { AccessSheet } from "../access/AccessSheet";
 import { NewCollectionDialog } from "./NewCollectionDialog";
 import { collectionBinMessage, ownerSharingLabel, roleLabel, rowCountLabel, validateCollectionName } from "./values";
 import { useRole } from "../team/roleAccess";
+import { notifyBinned, onBinRestored } from "../bin/binUndo";
 
 type CollectionListProps = {
   userId?: string;
@@ -103,6 +104,8 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // Undo after a move to the Bin (v0.35.0), from here or from the collection's page: list it again.
+  useEffect(() => onBinRestored(["collection"], () => { void load(); }), [load]);
 
   const closeDialog = useCallback(() => setDialog(null), []);
   useDialogLayer(dialog !== null, closeDialog);
@@ -125,7 +128,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       await deleteCollection(collection.id);
       setCollections((current) => current?.filter((item) => item.id !== collection.id) ?? current);
       setDialog(null);
-      notify.success(`Moved “${collection.name}” to the Bin`);
+      notifyBinned(`Moved “${collection.name}” to the Bin`, [{ type: "collection", id: collection.id }]);
     } catch (reason) {
       setDialog(null);
       notify.error(errorMessage(reason, "Could not delete the collection"));

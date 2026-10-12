@@ -910,19 +910,16 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2,
     expect((await createKey(session, csrf)).status).toBe(401);
     let account = await (await fetch(`${origin}/api/auth/account`, { headers: { Cookie: session } })).json() as { reauth: string; reauthUntil: string | null; hasPassword: boolean; google: { email: string } };
     expect(account).toMatchObject({ reauth: "google", reauthUntil: null, hasPassword: false, google: { email } });
-    // MEDIUM-3: the request forces a new Google login.
+    // MEDIUM-3 (2026-10-12): Google supports no re-authentication request, so the account chooser it is.
     const started = await start("?intent=reauth&return=/settings/keys", { Cookie: session });
     const params = new URL(started.location).searchParams;
-    expect(params.get("prompt")).toBe("login");
-    expect(params.get("max_age")).toBe("0");
+    expect(params.get("prompt")).toBe("select_account");
+    expect(params.get("max_age")).toBeNull();
     // A reauth with a different Google account is refused.
     const wrong = await googleSignIn(identityFor(spareEmail()), { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session } });
     expect(wrong.location).toBe("/settings/keys#google-error=reauth_mismatch");
-    // An old or missing auth_time is not a re-authentication.
-    const stale = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session }, tweaks: { claims: { auth_time: Math.floor(Date.now() / 1000) - 600 } } });
-    expect(stale.location).toBe("/settings/keys#google-error=reauth_stale");
-    const missing = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session }, tweaks: { claims: { auth_time: undefined } } });
-    expect(missing.location).toBe("/settings/keys#google-error=reauth_stale");
+    expect((await createKey(session, csrf)).status).toBe(401);
+    // Real Google sends no auth_time by default (the fake does the same): that confirms.
     const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/keys", headers: { Cookie: session } });
     expect(confirmed.location).toBe("/settings/keys#google=reauthed");
     expect(confirmed.session).toBeNull();
@@ -939,17 +936,20 @@ describe("re-authentication, linking, and unlinking (D297, D300, T261, MEDIUM-2,
     expect((await start("?intent=reauth")).location).toBe("/login#error=expired");
   });
 
-  test("MEDIUM-2 repro: an account with a password must give it, even right after a Google confirmation", async () => {
+  test("MEDIUM-2 superseded (2026-10-12): an account with a password and Google confirms with either", async () => {
     const person = await createUser("Password and Google");
     verify(person);
     const identity = workspace(person.email);
     expect((await googleSignIn(identity)).session).toBeTruthy();
+    // Linked now: Google is offered first, the password stays an alternative.
+    expect((await (await request("/auth/account", {}, person)).json() as { reauth: string }).reauth).toBe("google");
+    expect((await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "k", scopes: ["notes:read"] }) }, person)).status).toBe(401);
     const confirmed = await googleSignIn(identity, { query: "?intent=reauth&return=/settings/security", headers: { Cookie: person.cookie } });
     expect(confirmed.location).toBe("/settings/security#google=reauthed");
-    const setup = await request("/auth/totp/setup", { method: "POST", body: "{}" }, person);
-    expect(setup.status).toBe(400);
-    expect((await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "k", scopes: ["notes:read"] }) }, person)).status).toBe(401);
-    expect((await request("/auth/totp/setup", { method: "POST", body: JSON.stringify({ password: person.password }) }, person)).status).toBe(200);
+    expect((await request("/auth/totp/setup", { method: "POST", body: "{}" }, person)).status).toBe(200);
+    expect((await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "k", scopes: ["notes:read"] }) }, person)).status).toBe(201);
+    // A wrong password is still wrong.
+    expect((await request("/mcp/keys", { method: "POST", body: JSON.stringify({ name: "k2", scopes: ["notes:read"], password: "not the password" }) }, person)).status).toBe(401);
   });
 
   test("Settings links Google only after re-authentication, for the same address, and unlinks with the password (L3)", async () => {

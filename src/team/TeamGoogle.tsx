@@ -2,8 +2,8 @@ import { useCallback, useEffect, useId, useState } from "react";
 import { Check, ShieldAlert, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { GoogleMark, googleTeamResultFor } from "../auth/googleSignIn";
-import { useAccountAuthLoader } from "../auth/accountAuth";
-import { googleSettingsNotice, reauthBody, ReauthFields, reauthProblems } from "../auth/GoogleAccountCard";
+import { isGoogleReauthRequired, useAccountAuthLoader } from "../auth/accountAuth";
+import { googleSettingsNotice, reauthBody, ReauthFields, reauthProblems, reauthReady } from "../auth/GoogleAccountCard";
 import { fieldName, useFieldErrors } from "../auth/fieldChecks";
 import { KeysDialog } from "../keys/KeysDialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -98,6 +98,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
   const [step, setStep] = useState<Step | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [expired, setExpired] = useState(false);
   const [result, setResult] = useState<Outcome | null>(null);
   const { account } = useAccountAuthLoader();
   const fields = useFieldErrors();
@@ -141,6 +142,11 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     if (fields.show(event.currentTarget, reauthProblems(form, account!, twoFactor))) return;
+    if (!reauthReady(event.currentTarget, account!)) {
+      setExpired(true);
+      setError("Confirm with Google first, then try again.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -154,6 +160,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
       }
       load();
     } catch (reason) {
+      if (isGoogleReauthRequired(reason)) setExpired(true);
       setError(reason instanceof ApiError ? reason.message : "Something went wrong");
     }
     setBusy(false);
@@ -222,7 +229,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
       {step !== "done" && <>
         <p className="team-google-copy team-google-note">Confirm it's you to continue.</p>
         <form id={formId} className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
-          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/settings/team/members/${userId}`} disabled={busy} />
+          <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix={`team-google-${step}`} returnTo={`/settings/team/members/${userId}`} disabled={busy} secondFactor expired={expired} />
         </form>
       </>}
       {step === "done" && result && <>

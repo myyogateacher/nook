@@ -4,8 +4,9 @@ import { isUsablePasswordHash, verifyPassword } from "./passwords";
 import { decryptRecoveryCodes, decryptTotpSecret, encryptRecoveryCodes, recoveryCodeMatches, verifyTotp } from "./totp";
 
 /**
- * Second-factor checks shared by sign-in, MCP key creation, and Team re-authentication. Each code
- * is consumed with a compare-and-swap, so a TOTP counter or recovery code works once.
+ * Second-factor checks shared by sign-in, and the one re-authentication check (`checkReauth`) every
+ * step-up flow uses. Each code is consumed with a compare-and-swap, so a TOTP counter or recovery
+ * code works once.
  */
 
 export function consumeTotp(user: Pick<UserRow, "id" | "totp_secret" | "totp_last_counter">, code: string) {
@@ -45,7 +46,7 @@ export function consumeRecoveryCode(user: Pick<UserRow, "id" | "totp_recovery_co
 
 export type ReauthInput = { password?: string; totpCode?: string; recoveryCode?: string };
 
-/** How long a Google confirmation stands in for the password on its session (D297). */
+/** How long a Google confirmation counts on its session (D297). */
 export const GOOGLE_REAUTH_MS = 5 * 60_000;
 
 /** When this session's Google confirmation stops counting, or null when there is none (D297). */
@@ -58,41 +59,82 @@ export function googleReauthUntil(sessionId: string | undefined, userId: string)
   return until > Date.now() ? new Date(until).toISOString() : null;
 }
 
+/** Whether the password can confirm this account: the password method is on and the account has one. */
+export const passwordReauthAvailable = (user: Pick<UserRow, "password_hash">) => passwordAuthEnabled() && isUsablePasswordHash(user.password_hash);
+
 /**
- * Which proof a re-authentication prompt asks for (D297): the password while the password method is
- * on and the account has one, else a Google confirmation while Google is on and the account is
- * linked, else none (nothing can confirm it: the account must set a password or link Google).
+ * Which proof a re-authentication prompt shows first (D297; operator decision 2026-10-12, MEDIUM-3):
+ * a Google confirmation for every account with a linked Google identity while Google is on (its
+ * password, if it has one, stays an optional alternative); else the password; else none (nothing can
+ * confirm it: the account must set a password or link Google).
  */
 export function reauthMethod(user: Pick<UserRow, "id" | "password_hash">): "password" | "google" | "none" {
-  if (passwordAuthEnabled() && isUsablePasswordHash(user.password_hash)) return "password";
   if (googleAuthEnabled() && db.query("SELECT 1 FROM google_identities WHERE user_id = ?").get(user.id)) return "google";
+  if (passwordReauthAvailable(user)) return "password";
   return "none";
 }
 
+export type ReauthRefusalCode = "REAUTH_FAILED" | "GOOGLE_REAUTH_REQUIRED" | "REAUTH_UNAVAILABLE";
+export type ReauthResult =
+  | { ok: true; via: "google" | "password"; recoveryCodeUsed: boolean }
+  | { ok: false; code: ReauthRefusalCode; error: string };
+
+export const REAUTH_MESSAGES = {
+  failed: "Invalid password or authentication code",
+  googleRequired: "Your Google confirmation ran out or was not done on this device. Confirm with Google again, then try once more.",
+  unavailable: "This account has no password here and no linked Google account, so it cannot confirm changes. Link Google under Settings → Security, or ask your admin."
+} as const;
+
+const refusal = (code: ReauthRefusalCode, error: string): ReauthResult => ({ ok: false, code, error });
+
+/** `secondFactor`: the action changes the factors themselves, so the code is asked for on the Google route too. */
+export type ReauthOptions = { secondFactor?: boolean };
+
 /**
- * The first factor of a re-authentication: the password (only while the password method is on), or,
- * when no password is given, this session's Google confirmation from the last 5 minutes.
+ * The one re-authentication check every step-up flow uses: API keys (own and integration), the vault's
+ * protected environments, two-factor setup, recovery codes and turning it off, the password change,
+ * Google link and unlink, and the Team admin Google actions. Two ways through:
+ *
+ * - Google (no password given): this session completed a Google round trip for the account's linked
+ *   identity in the last 5 minutes (`sessions.reauth_at`). That alone is enough for keys, the vault,
+ *   linking Google, two-factor setup, and the password (operator decision 2026-10-12, THREAT_MODEL
+ *   MEDIUM-3). With two-factor on, the actions that change the factors (turning it off, recovery
+ *   codes, unlinking Google, Team admin Google actions) also need a code: `secondFactor: true`.
+ * - The password (only while the password method is on), plus, with two-factor on, a fresh
+ *   authentication code or a recovery code (unchanged). A code is consumed only after the first factor.
+ *
+ * A recovery code stands in for the authenticator code everywhere. `purpose` is recorded when one is used.
  */
-export async function verifyFirstFactor(user: Pick<UserRow, "id" | "password_hash">, password: string | undefined, sessionId: string | undefined) {
-  if (password) return passwordAuthEnabled() && await verifyPassword(password, user.password_hash);
-  // MEDIUM-2: Google stands in only where it is the account's re-authentication method (no usable
-  // password, or AUTH_METHODS=google); an account with a password must give it.
-  return reauthMethod(user) === "google" && googleReauthUntil(sessionId, user.id) !== null;
+export async function checkReauth(userId: string, input: ReauthInput, purpose: string, sessionId?: string, options: ReauthOptions = {}): Promise<ReauthResult> {
+  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL AND kind = 'person'").get(userId) as UserRow | null;
+  if (!user) return refusal("REAUTH_FAILED", REAUTH_MESSAGES.failed);
+  let via: "google" | "password";
+  if (!input.password) {
+    const method = reauthMethod(user);
+    if (method === "none") return refusal("REAUTH_UNAVAILABLE", REAUTH_MESSAGES.unavailable);
+    if (method !== "google") return refusal("REAUTH_FAILED", REAUTH_MESSAGES.failed);
+    if (googleReauthUntil(sessionId, user.id) === null) return refusal("GOOGLE_REAUTH_REQUIRED", REAUTH_MESSAGES.googleRequired);
+    via = "google";
+  } else {
+    if (!passwordAuthEnabled() || !await verifyPassword(input.password, user.password_hash)) return refusal("REAUTH_FAILED", REAUTH_MESSAGES.failed);
+    via = "password";
+  }
+  // The code: always on the password route with two-factor on (unchanged); on the Google route only
+  // for the actions that change the factors themselves (`secondFactor: true`).
+  if (!user.totp_enabled_at || (via === "google" && !options.secondFactor)) return { ok: true, via, recoveryCodeUsed: false };
+  if (input.recoveryCode) {
+    if (!consumeRecoveryCode(user, input.recoveryCode)) return refusal("REAUTH_FAILED", REAUTH_MESSAGES.failed);
+    audit(user.id, null, "auth.recovery_code_used", { purpose });
+    return { ok: true, via, recoveryCodeUsed: true };
+  }
+  return input.totpCode && consumeTotp(user, input.totpCode) !== null
+    ? { ok: true, via, recoveryCodeUsed: false }
+    : refusal("REAUTH_FAILED", REAUTH_MESSAGES.failed);
 }
 
 /**
- * Re-authenticates an active user with their password (or this session's fresh Google confirmation, D297) plus, when TOTP is enabled, a fresh
- * authentication or recovery code (the MCP key creation rule, index.ts). Codes are consumed only
- * after the password verifies. `purpose` is recorded when a recovery code is used.
+ * Whether a request still lacks its two-factor code (the 428 `TOTP_REQUIRED` hint some forms answer
+ * first): with two-factor on, on the password route, or on the Google route of a `secondFactor` action.
  */
-export async function verifyReauth(userId: string, input: ReauthInput, purpose: string, sessionId?: string) {
-  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL AND kind = 'person'").get(userId) as UserRow | null;
-  if (!user || !await verifyFirstFactor(user, input.password, sessionId)) return false;
-  if (!user.totp_enabled_at) return true;
-  if (input.recoveryCode) {
-    if (!consumeRecoveryCode(user, input.recoveryCode)) return false;
-    audit(user.id, null, "auth.recovery_code_used", { purpose });
-    return true;
-  }
-  return input.totpCode ? consumeTotp(user, input.totpCode) !== null : false;
-}
+export const needsTotpCode = (user: Pick<UserRow, "totp_enabled_at">, input: ReauthInput, options: ReauthOptions = {}) =>
+  Boolean(user.totp_enabled_at && (input.password || options.secondFactor) && !input.totpCode && !input.recoveryCode);

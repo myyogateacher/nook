@@ -67,7 +67,7 @@ import { ProfilePictureCard } from "./settings/ProfilePicture";
 import { Avatar, SelfAvatar } from "./ui/Avatar";
 import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
-import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
+import { AccountAuthContext, GoogleReauthNotice, reauthPassword, ReauthRouteToggle, useAccountAuthLoader, useReauthRoute } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
 import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
 import { AuthDivider, currentReturnPath, googleOnlyHint, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, initialGoogleTeamResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
@@ -380,8 +380,21 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   const [googleNotice, setGoogleNotice] = useState(() => googleSettingsNotice(googleResult));
   // Q2: shown in whichever section the Google round trip started from (Security or API keys).
   const googleNoticeLine = googleNotice && <p className={`settings-google-notice ${googleNotice.tone}`} role={googleNotice.tone === "error" ? "alert" : "status"}>{googleNotice.text}<button type="button" className="icon-button" aria-label="Dismiss" onClick={() => setGoogleNotice(null)}><X /></button></p>;
-  const reauthField = asksForPassword(account) ? <input name="password" type="password" autoComplete="current-password" placeholder="Password" required /> : null;
-  const reauthNotice = account && !asksForPassword(account) ? <GoogleReauthNotice account={account} returnTo="/settings/security" /> : null;
+  // 2026-10-12: Google first for an account with Google linked ("Use password instead" when it has one).
+  const securityRoute = useReauthRoute(account);
+  const routeToggle = <ReauthRouteToggle viaPassword={securityRoute.viaPassword} onToggle={securityRoute.toggle} />;
+  const reauthField = securityRoute.viaPassword ? <><input name="password" type="password" autoComplete="current-password" placeholder="Password" required />{routeToggle}</> : null;
+  const reauthNotice = account && !securityRoute.viaPassword ? <><GoogleReauthNotice account={account} returnTo="/settings/security" />{routeToggle}</> : null;
+  // The two-factor actions take the authenticator code, or a recovery code when it is lost.
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
+  const codeField = <>{useRecoveryCode
+    ? <input name="recoveryCode" autoComplete="one-time-code" maxLength={32} placeholder="Recovery code" aria-label="Recovery code" required />
+    : <input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" aria-label="Six-digit authentication code" required />}
+    <button type="button" className="inline-auth-switch reauth-toggle" onClick={() => setUseRecoveryCode((value) => !value)}>{useRecoveryCode ? "Use an authentication code instead" : "Lost your authenticator? Use a recovery code"}</button></>;
+  const codeBody = (form: FormData) => {
+    const recovery = String(form.get("recoveryCode") ?? "").trim();
+    return recovery ? { recoveryCode: recovery } : { code: form.get("code") };
+  };
   const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.34.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
@@ -578,7 +591,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     setBusy(true);
     setError("");
     try {
-      const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
+      const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setState(next);
       onSecurityChanged(next);
     } catch (reason) {
@@ -600,7 +613,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     setError("");
     try {
       const form = new FormData(event.currentTarget);
-      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not reveal recovery codes");
@@ -616,7 +629,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     setBusy(true);
     setError("");
     try {
-      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), code: form.get("code") }) });
+      const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not generate recovery codes");
@@ -639,7 +652,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   const securitySection = <section className="settings-content" aria-labelledby="security-heading">
     {googleNoticeLine}
-    {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} /> : <PasswordStateCard account={account} />)}
+    {!state.setupRequired && (!account || (account.methods.password && (account.hasPassword || account.reauth === "google")) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} account={account} onChanged={reloadAccount} /> : <PasswordStateCard account={account} />)}
     {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} />}
     {!state.setupRequired && <ProfilePictureCard name={session.user.displayName} />}
     {!state.setupRequired && <RecognisedDevices />}
@@ -649,11 +662,11 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     {state.enabled ? <div className="security-card enabled-card">
       <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account asks for an authentication code at every sign-in, after your password or Google.</small></div></div>
       {reauthNotice}
-      {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>View codes</button></div></form>}
-      <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
+      {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>View codes</button></div></form>}
+      <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
       {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
         <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
-        <div>{reauthField}<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" required /><button className="secondary-button" disabled={busy}>Disable</button></div>
+        <div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>Disable</button></div>
       </form>}
     </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
       <strong>Not available on this Nook</strong>
@@ -661,7 +674,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
       <strong>Authenticator not configured</strong>
       <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
-      {reauthField ? <label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label> : reauthNotice}
+      {reauthField ? <><label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label>{routeToggle}</> : reauthNotice}
       <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
     </form> : <div className="security-card enrollment-card">
       <div className="enrollment-grid">

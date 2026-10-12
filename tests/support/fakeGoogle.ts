@@ -77,11 +77,12 @@ export type TokenTweaks = {
 };
 
 /**
- * `maxAge`: the request's `max_age`. Like Google, a request with `max_age=0` (or `prompt=login`) makes
- * the person sign in again, so `auth_time` is now; otherwise the fake reuses a Google session that
- * started an hour ago.
+ * Like real Google (THREAT_MODEL MEDIUM-3): `prompt=login` and `max_age` change nothing (Google supports
+ * only none, consent, and select_account, and "does not support Google Account reauth requests"), and
+ * the ID token has no `auth_time` unless the request's `claims` parameter asks for it; then it is the
+ * browser's existing Google session, which started an hour ago. Tests add or change it with tweaks.
  */
-type Grant = { identity: FakeIdentity; nonce: string; challenge: string; redirectUri: string; clientId: string; tweaks: TokenTweaks; freshLogin: boolean };
+type Grant = { identity: FakeIdentity; nonce: string; challenge: string; redirectUri: string; clientId: string; tweaks: TokenTweaks; authTimeRequested: boolean };
 
 const b64 = (value: unknown) => Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
 
@@ -140,7 +141,7 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
             picture: picture in FAKE_PICTURES ? `${base}/avatar/color-${picture}.png` : null,
             ...(hd ? { hd } : {})
           };
-          // "Signed in to Google": now (a fresh login) or an hour ago (a reused session, not a re-auth).
+          // "Signed in to Google": not sent (Google's default), now, or an hour ago (a reused session).
           const authAge = String(form.get("authAge") ?? "request");
           const tweaks: TokenTweaks = authAge === "old" ? { claims: { auth_time: Math.floor(Date.now() / 1000) - 3600 } } : authAge === "now" ? { claims: { auth_time: Math.floor(Date.now() / 1000) } } : {};
           return Response.redirect(authorize(auth.toString(), identity, tweaks), 302);
@@ -159,7 +160,7 @@ export async function startFakeGoogle(options: { port?: number; clientId?: strin
 ${Object.keys(FAKE_PICTURES).map((name, index) => `<label><input type="radio" name="picture" value="${name}"${index === 0 ? " checked" : ""}> ${name} (256 × 256)</label>`).join("")}
 <label><input type="radio" name="picture" value="none"> No picture</label></fieldset>
 <fieldset><legend>Signed in to Google (auth_time)</legend>
-<label><input type="radio" name="authAge" value="request" checked> As requested (fresh when Nook asks for a new login)</label>
+<label><input type="radio" name="authAge" value="request" checked> Like Google: not sent unless the claims parameter asks</label>
 <label><input type="radio" name="authAge" value="now"> Just now</label>
 <label><input type="radio" name="authAge" value="old"> An hour ago</label></fieldset>
 <button type="submit">Continue</button><button type="submit" name="deny" value="1" formnovalidate>Cancel</button></form>`;
@@ -190,7 +191,7 @@ ${Object.keys(FAKE_PICTURES).map((name, index) => `<label><input type="radio" na
           nonce: grant.nonce,
           iat: nowS,
           exp: nowS + 3600,
-          auth_time: grant.freshLogin ? nowS : nowS - 3600,
+          ...(grant.authTimeRequested ? { auth_time: nowS - 3600 } : {}),
           ...grant.tweaks.claims
         };
         for (const [key, value] of Object.entries(payload)) if (value === undefined) delete payload[key];
@@ -214,9 +215,8 @@ ${Object.keys(FAKE_PICTURES).map((name, index) => `<label><input type="radio" na
     pendingTweaks = {};
     const params = new URL(authorizationUrl).searchParams;
     const code = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64url");
-    const maxAge = params.get("max_age");
-    const freshLogin = params.get("prompt") === "login" || (maxAge !== null && Number(maxAge) < 3600);
-    grants.set(code, { identity, nonce: params.get("nonce") ?? "", challenge: params.get("code_challenge") ?? "", redirectUri: params.get("redirect_uri") ?? "", clientId: params.get("client_id") ?? "", tweaks, freshLogin });
+    const authTimeRequested = /"auth_time"/.test(params.get("claims") ?? "");
+    grants.set(code, { identity, nonce: params.get("nonce") ?? "", challenge: params.get("code_challenge") ?? "", redirectUri: params.get("redirect_uri") ?? "", clientId: params.get("client_id") ?? "", tweaks, authTimeRequested });
     const callback = new URL(params.get("redirect_uri") ?? "");
     callback.searchParams.set("code", code);
     callback.searchParams.set("state", params.get("state") ?? "");

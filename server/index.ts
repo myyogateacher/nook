@@ -112,7 +112,10 @@ import {
   encryptTotpSecret,
   totpUri
 } from "./totp";
-import { consumeRecoveryCode, consumeTotp, verifyFirstFactor } from "./reauth";
+import { checkReauth, consumeRecoveryCode, consumeTotp } from "./reauth";
+
+/** A two-factor action's body as the shared re-authentication reads it (`code` is the authenticator code). */
+const secondFactorInput = (body: { password?: string; code?: string; recoveryCode?: string }) => ({ password: body.password, totpCode: body.code, recoveryCode: body.recoveryCode });
 
 const app = new Hono<AppEnv>();
 
@@ -429,23 +432,13 @@ app.post("/api/mcp/keys", async (c) => {
   // Nook keys (Wave 31): the alias obeys team policy (modules, MCP per role, key count) like /api/keys.
   const aliasRefusal = aliasKeyRefusal(c.get("user"), body.scopes ?? ["notes:read"]);
   if (aliasRefusal) return c.json({ error: aliasRefusal.message, code: aliasRefusal.code, ...aliasRefusal.details }, aliasRefusal.status);
-  const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as UserRow | null;
-  const passwordValid = user ? await verifyFirstFactor(user, body.password, c.get("sessionId")) : false;
-  if (!user || !passwordValid) {
+  // The shared re-authentication (server/reauth.ts): the password and code, or this session's Google confirmation.
+  const reauth = await checkReauth(userId, body, "mcp_key", c.get("sessionId"));
+  if (!reauth.ok) {
     audit(userId, null, "mcp.key_create_failed");
-    return c.json({ error: "Invalid password or authentication code" }, 401);
+    return c.json({ error: reauth.error, code: reauth.code }, 401);
   }
-  if (user.totp_enabled_at) {
-    const factorValid = body.recoveryCode ? consumeRecoveryCode(user, body.recoveryCode) : body.totpCode ? consumeTotp(user, body.totpCode) !== null : false;
-    if (!factorValid) {
-      audit(userId, null, "mcp.key_create_failed");
-      return c.json({ error: "Invalid password or authentication code" }, 401);
-    }
-    if (body.recoveryCode) {
-      audit(userId, null, "auth.recovery_code_used", { purpose: "mcp_key" });
-      mailTwoFactor(userId, "recovery_used");
-    }
-  }
+  if (reauth.recoveryCodeUsed) mailTwoFactor(userId, "recovery_used");
   const activeCount = liveKeyCount(userId);
   if (activeCount >= readPolicies().keysPerUser) return c.json({ error: "Revoke an existing API key before creating another", code: "KEY_LIMIT" }, 409);
   const key = createMcpApiKey(userId, body.name, body.scopes);
@@ -479,9 +472,10 @@ app.post("/api/auth/totp/setup", async (c) => {
   if (user.totp_enabled_at) return c.json({ error: "Two-factor authentication is already enabled" }, 409);
   if (!config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not configured on this service" }, 503);
   if (hit("totp-setup:account", user.id)) return c.json({ error: "Too many setup attempts. Try again soon." }, 429);
-  if (!await verifyFirstFactor(user, body.password, c.get("sessionId"))) {
+  const reauth = await checkReauth(user.id, { password: body.password }, "totp_setup", c.get("sessionId"));
+  if (!reauth.ok) {
     audit(user.id, null, "auth.totp_setup_password_failed");
-    return c.json({ error: "Invalid password" }, 400);
+    return c.json(reauth.code === "REAUTH_FAILED" ? { error: "Invalid password", code: reauth.code } : { error: reauth.error, code: reauth.code }, 400);
   }
   const secret = createTotpSecret();
   const encryptedSecret = encryptTotpSecret(secret, config.totpEncryptionKey, user.id);
@@ -522,12 +516,17 @@ app.post("/api/auth/totp/recovery-codes", async (c) => {
   if (!user?.totp_enabled_at || !user.totp_recovery_codes || !config.totpEncryptionKey) {
     return c.json({ error: "Recovery codes are not available" }, 409);
   }
-  if (!await verifyFirstFactor(user, body.password, c.get("sessionId")) || consumeTotp(user, body.code) === null) {
+  const reauth = await checkReauth(user.id, secondFactorInput(body), "recovery_codes_view", c.get("sessionId"), { secondFactor: true });
+  if (!reauth.ok) {
     audit(user.id, null, "auth.totp_recovery_view_failed");
-    return c.json({ error: "Invalid password or authentication code" }, 400);
+    return c.json({ error: reauth.error, code: reauth.code }, 400);
   }
+  if (reauth.recoveryCodeUsed) mailTwoFactor(user.id, "recovery_used");
+  // Read again: a recovery code used just now is no longer among them.
+  const current = db.query("SELECT totp_recovery_codes FROM users WHERE id = ?").get(user.id) as { totp_recovery_codes: string | null };
+  if (!current.totp_recovery_codes) return c.json({ error: "Recovery codes are not available" }, 409);
   try {
-    const recoveryCodes = decryptRecoveryCodes(user.totp_recovery_codes, config.totpEncryptionKey, user.id);
+    const recoveryCodes = decryptRecoveryCodes(current.totp_recovery_codes, config.totpEncryptionKey, user.id);
     audit(user.id, null, "auth.totp_recovery_viewed", { remaining: recoveryCodes.length });
     return c.json({ recoveryCodes });
   } catch {
@@ -540,9 +539,10 @@ app.post("/api/auth/totp/recovery-codes/regenerate", async (c) => {
   const body = await parseJson(c.req.raw, totpRecoveryViewSchema);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
   if (!user?.totp_enabled_at || !config.totpEncryptionKey) return c.json({ error: "Two-factor authentication is not enabled" }, 409);
-  if (!await verifyFirstFactor(user, body.password, c.get("sessionId")) || consumeTotp(user, body.code) === null) {
+  const reauth = await checkReauth(user.id, secondFactorInput(body), "recovery_codes_regenerate", c.get("sessionId"), { secondFactor: true });
+  if (!reauth.ok) {
     audit(user.id, null, "auth.totp_recovery_regenerate_failed");
-    return c.json({ error: "Invalid password or authentication code" }, 400);
+    return c.json({ error: reauth.error, code: reauth.code }, 400);
   }
   const recoveryCodes = createRecoveryCodes();
   const encrypted = encryptRecoveryCodes(recoveryCodes, config.totpEncryptionKey, user.id);
@@ -557,12 +557,13 @@ app.delete("/api/auth/totp", async (c) => {
   const body = await parseJson(c.req.raw, totpDisableSchema);
   const user = db.query("SELECT * FROM users WHERE id = ? AND disabled_at IS NULL").get(c.get("user").id) as UserRow | null;
   if (!user?.totp_enabled_at) return c.json({ error: "Two-factor authentication is not enabled" }, 409);
-  if (!await verifyFirstFactor(user, body.password, c.get("sessionId"))) return c.json({ error: "Invalid password or authentication code" }, 400);
-  const acceptedCounter = consumeTotp(user, body.code);
-  if (acceptedCounter === null) return c.json({ error: "Invalid or already-used authentication code" }, 400);
+  // The first factor (password, or this session's Google confirmation) and, always here, the
+  // authenticator code or a recovery code (2026-10-12: a lost authenticator can still turn it off).
+  const reauth = await checkReauth(user.id, secondFactorInput(body), "totp_disable", c.get("sessionId"), { secondFactor: true });
+  if (!reauth.ok) return c.json({ error: reauth.error, code: reauth.code }, 400);
   db.transaction(() => {
-    const result = db.query("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL WHERE id = ? AND totp_secret = ? AND totp_last_counter = ?")
-      .run(user.id, user.totp_secret, acceptedCounter);
+    const result = db.query("UPDATE users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_counter = NULL, totp_recovery_codes = NULL WHERE id = ? AND totp_secret = ? AND totp_enabled_at IS NOT NULL")
+      .run(user.id, user.totp_secret);
     if (result.changes !== 1) throw new Error("Concurrent authenticator update detected");
     db.query("DELETE FROM sessions WHERE user_id = ? AND id != ?").run(user.id, c.get("sessionId"));
     mailTwoFactor(user.id, "disabled");

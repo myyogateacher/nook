@@ -130,7 +130,8 @@ const messages = (): Record<string, string> => ({
   already_linked: `This ${appName()} account is linked to a different Google account.`,
   link_mismatch: `Choose the Google account for this ${appName()} account's email address, managed by Google: a Gmail address, or a Google Workspace account on the address's own domain. A personal Google account that only uses the address does not count.`,
   reauth_mismatch: `Confirm with the Google account that is linked to this ${appName()} account.`,
-  reauth_stale: "Google did not ask for your password again, so this does not count as a confirmation. Try again and sign in to Google when asked.",
+  // No longer sent (MEDIUM-3, 2026-10-12); kept so an old link still reads sensibly.
+  reauth_stale: "That Google confirmation did not go through. Choose Confirm with Google again and pick your account.",
   link_required: linkRequiredText(true),
   rate_limited: "Too many attempts. Try again soon."
 });

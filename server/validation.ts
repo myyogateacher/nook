@@ -30,8 +30,11 @@ export const totpCodeSchema = z.object({ code: totpCode }).strict();
 // The password is optional where a fresh Google confirmation of this session can stand in (D297).
 const reauthPassword = z.string().min(1).max(256).optional();
 export const totpSetupSchema = z.object({ password: reauthPassword }).strict();
-export const totpDisableSchema = z.object({ code: totpCode, password: reauthPassword }).strict();
-export const totpRecoveryViewSchema = z.object({ code: totpCode, password: reauthPassword }).strict();
+// The two-factor actions take the authenticator code or, when it is lost, a recovery code (2026-10-12).
+const secondFactorStep = z.object({ code: totpCode.optional(), recoveryCode: recoveryCode.optional(), password: reauthPassword }).strict()
+  .refine((value) => Boolean(value.code) !== Boolean(value.recoveryCode), "Enter an authentication code or a recovery code");
+export const totpDisableSchema = secondFactorStep;
+export const totpRecoveryViewSchema = secondFactorStep;
 export const folderSchema = z.object({ name: z.string().trim().min(1).max(120), parentId: uuid.nullish() }).strict();
 export const noteCreateSchema = z.object({ folderId: uuid.nullish() }).strict();
 export const noteMetaSchema = z.object({ folderId: uuid.nullish() }).strict();

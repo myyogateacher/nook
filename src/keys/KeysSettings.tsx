@@ -6,7 +6,7 @@ import { Select } from "../ui/Select";
 import { HistoryDialogReopen } from "../ui/useHistoryDialogGuard";
 import { GrantBuilder, newRowKey } from "./GrantBuilder";
 import { KeysDialog } from "./KeysDialog";
-import { asksForPassword, googleConfirmed, GoogleReauthNotice, reauthPassword, useAccountAuth } from "../auth/accountAuth";
+import { asksForCode, asksForPassword, googleConfirmed, GoogleReauthNotice, isGoogleReauthRequired, passwordAlternative, reauthPassword, ReauthRouteToggle, useAccountAuth, useReauthRoute } from "../auth/accountAuth";
 import {
   blockedSurfaceLine, checkAllowlist, deniedLine, expiryChoices, keyEventLine, expiryDays, GRACE_OPTIONS, lastUsedLine, resourceToken, rotationExpiryDefault, grantChips, keyStateLabel, rowsToGrants, SELECTOR_KINDS, SURFACE_LABELS, usageLabel,
   type GrantRow, type KeySurfaces, type PolicySummary
@@ -81,7 +81,8 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
   // QA U11: an account that confirms with Google does it BEFORE opening New key or Rotate, so the
   // round trip never loses what was typed into the dialog.
   const account = useAccountAuth();
-  const needsGoogle = Boolean(account && !asksForPassword(account) && !googleConfirmed(account));
+  // An account that can also use its password may open the dialog and choose "Use password instead".
+  const needsGoogle = Boolean(account && !asksForPassword(account) && !passwordAlternative(account) && !googleConfirmed(account));
 
   const load = useCallback(() => {
     keysApi.list().then((result) => { setData(result); setError(""); }).catch((reason) => setError(messageOf(reason, "Could not load API keys")));
@@ -402,15 +403,34 @@ function VaultFlags({ mcpValues, protectedAccess, onMcpValues, onProtectedAccess
   </fieldset>;
 }
 
-function ReauthFields({ totpEnabled, password, code, onPassword, onCode, disabled }: { totpEnabled: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
-  const keysApi = useKeysApi();
-  // Wave 35 (D297): accounts without a usable password confirm with Google instead.
+/**
+ * The key dialogs' confirmation (2026-10-12): Google alone for an account with Google linked ("Use
+ * password instead" when it has one); the password, plus the code with two-factor on, otherwise.
+ */
+function useKeyReauth(totpEnabled: boolean) {
   const account = useAccountAuth();
+  const route = useReauthRoute(account);
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [expired, setExpired] = useState(false);
+  const withCode = asksForCode(totpEnabled, route.viaPassword);
+  return {
+    body: () => ({ ...(route.viaPassword ? reauthPassword(password) : {}), ...(withCode ? { totpCode: code } : {}) }),
+    /** Why the request cannot be sent yet, or null. */
+    blocked: () => !route.viaPassword && account && !googleConfirmed(account) ? "Confirm with Google first. Or use your password instead." : null,
+    failed: (reason: unknown) => { if (isGoogleReauthRequired(reason)) setExpired(true); },
+    fields: (disabled: boolean) => <ReauthFields account={account} viaPassword={route.viaPassword} toggle={route.toggle} withCode={withCode} expired={expired} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={disabled} />
+  };
+}
+
+function ReauthFields({ account, viaPassword, toggle, withCode, expired, password, code, onPassword, onCode, disabled }: { account: ReturnType<typeof useAccountAuth>; viaPassword: boolean; toggle: (() => void) | null; withCode: boolean; expired: boolean; password: string; code: string; onPassword: (value: string) => void; onCode: (value: string) => void; disabled: boolean }) {
+  const keysApi = useKeysApi();
   return <div className="keys-reauth">
-    {asksForPassword(account)
+    {viaPassword
       ? <label className="keys-input">Confirm password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required disabled={disabled} /></label>
-      : <GoogleReauthNotice account={account!} returnTo={keysApi.returnTo} startable={false} />}
-    {totpEnabled && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
+      : <GoogleReauthNotice account={account!} returnTo={keysApi.returnTo} startable={false} expired={expired} />}
+    <ReauthRouteToggle viaPassword={viaPassword} onToggle={toggle} disabled={disabled} />
+    {withCode && <label className="keys-input">Fresh six-digit code<input inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" value={code} onChange={(event) => onCode(event.target.value)} required disabled={disabled} /></label>}
   </div>;
 }
 
@@ -437,8 +457,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
   const [surfaces, setSurfaces] = useState<KeySurfaces>(preset.surfaces);
   const [expires, setExpires] = useState(preset.expires);
   const [rows, setRows] = useState<GrantRow[]>(() => [{ key: newRowKey(), ...preset.firstRow, applies: "all", resourceIds: [] }]);
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
+  const reauth = useKeyReauth(totpEnabled);
   const [allowlist, setAllowlist] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -451,6 +470,8 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
     if (grantError) return setError(grantError);
     if (vault && namesProtected(vaultRows, vaults && vaults !== "error" ? vaults : []) && !protectedAccess) return setError("A row names a protected environment: turn on “Allow protected environments” or pick another environment.");
     if (!name.trim()) return setError("Give the key a name.");
+    const notReady = reauth.blocked();
+    if (notReady) return setError(notReady);
     setBusy(true);
     setError("");
     try {
@@ -463,10 +484,11 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
       const result = await keysApi.create({
         name: name.trim(), description: description.trim() || null, surfaces, expiresInDays: expiryDays(expires), grants, ...(ipAllowlist.length ? { ipAllowlist } : {}),
         ...(vault ? { kind: "vault" as const, allowMcpValueReads: mcpValues, protectedAccess } : {}),
-        ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {})
+        ...reauth.body()
       });
       onCreated(result.key);
     } catch (reason) {
+      reauth.failed(reason);
       setError(messageOf(reason, "Could not create the key"));
       setBusy(false);
     }
@@ -503,7 +525,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
       {kind === "vault" && mcpValues && surfaces !== "mcp" && <p className="grant-note" role="note">{MCP_VALUES_SURFACE_HINT}{policy.mcpAllowed && <> <button type="button" className="text-button" onClick={() => setSurfaces("mcp")} disabled={busy}>Use MCP only</button></>}</p>}
       <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={kind === "vault" ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{kind === "vault" ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} />
-      <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
+      {reauth.fields(busy)}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
@@ -638,8 +660,7 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
   const vaults = useVaultChoices(isVault);
   const [surfaces, setSurfaces] = useState<KeySurfaces>(apiKey.surfaces);
   const [allowlist, setAllowlist] = useState((apiKey.ipAllowlist ?? []).join("\n"));
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
+  const reauth = useKeyReauth(totpEnabled);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -657,12 +678,15 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
     }
     if (surfaces !== apiKey.surfaces) changes.surfaces = surfaces;
     if (checked.canonical.join("\n") !== (apiKey.ipAllowlist ?? []).join("\n")) changes.ipAllowlist = checked.canonical.length ? checked.canonical : null;
+    const notReady = reauth.blocked();
+    if (notReady) return setError(notReady);
     setBusy(true);
     setError("");
     try {
-      const result = await keysApi.rotate(apiKey.id, { ...changes, ...reauthPassword(password), ...(totpEnabled ? { totpCode: code } : {}) });
+      const result = await keysApi.rotate(apiKey.id, { ...changes, ...reauth.body() });
       onRotated(result.key);
     } catch (reason) {
+      reauth.failed(reason);
       setError(messageOf(reason, "Could not rotate the key"));
       setBusy(false);
     }
@@ -677,7 +701,7 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable) || Boolean(apiKey.ipAllowlist?.length)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode="rotate" />
       <div className="keys-select-field"><span id="keys-grace-label">Old key</span><Select labelledBy="keys-grace-label" label="Old key" value={grace} options={GRACE_OPTIONS.map((option) => ({ ...option }))} onChange={setGrace} disabled={busy} /></div>
       <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={isVault ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{isVault ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
-      <ReauthFields totpEnabled={totpEnabled} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={busy} />
+      {reauth.fields(busy)}
       {error && <p className="form-error" role="alert">{error}</p>}
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

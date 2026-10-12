@@ -15,7 +15,7 @@ import type { McpScope } from "./mcpScopes";
 import { BINNED_WINDOWS, binnedCountsByKey, isBinnedWindow, listKeyBinned, restoreKeyBinned } from "./mcpBinned";
 import { pendingProposalsByKey } from "./inbox/service";
 import { mailApiKeyCreated, mailTwoFactor } from "./mail/triggers";
-import { verifyReauth } from "./reauth";
+import { checkReauth } from "./reauth";
 import { readPolicies } from "./team/policies";
 import type { Role } from "./team/roles";
 import { parseJson, uuid } from "./validation";
@@ -116,11 +116,12 @@ async function createVaultKey(c: Context<AppEnv>, body: z.infer<typeof createKey
   const ipAllowlist = checkCreateAllowlist(body.ipAllowlist);
   checkKeyCount(user.id, policies);
   if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
-  if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
+  const reauth = await checkReauth(user.id, body, "api_key", c.get("sessionId"));
+  if (!reauth.ok) {
     audit(user.id, null, "mcp.key_create_failed");
-    return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+    return c.json({ error: reauth.error, code: reauth.code }, 401);
   }
-  if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+  if (reauth.recoveryCodeUsed) mailTwoFactor(user.id, "recovery_used");
   checkKeyCount(user.id, readPolicies());
   const created = createApiKey(user.id, {
     name: body.name, description: body.description ?? null, kind: "vault", surfaces: body.surfaces, grants: validated.grants, expiresInDays: days,
@@ -165,11 +166,12 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
       if (body.allowMcpValueReads || body.protectedAccess) throw new KeyError(400, "INVALID", "Only vault keys have these settings");
       const { grants, days, ipAllowlist } = precheckKeyCreate(user, { ...body, grants: split.general });
       if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
-      if (!await verifyReauth(user.id, body, "api_key", c.get("sessionId"))) {
+      const reauth = await checkReauth(user.id, body, "api_key", c.get("sessionId"));
+      if (!reauth.ok) {
         audit(user.id, null, "mcp.key_create_failed");
-        return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+        return c.json({ error: reauth.error, code: reauth.code }, 401);
       }
-      if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+      if (reauth.recoveryCodeUsed) mailTwoFactor(user.id, "recovery_used");
       // Counted again after the password check, which awaits: two parallel requests cannot both pass.
       checkKeyCount(user.id, readPolicies());
       const created = createApiKey(user.id, { name: body.name, description: body.description ?? null, surfaces: body.surfaces, grants, expiresInDays: days, limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null), ipAllowlist });
@@ -207,11 +209,12 @@ export function registerKeyRoutes(app: Hono<AppEnv>) {
       throw error;
     }
     if (createLimited(user.id)) return c.json({ error: "Too many API keys created. Try again later.", code: "RATE_LIMITED" }, 429);
-    if (!await verifyReauth(user.id, body, "api_key_rotate", c.get("sessionId"))) {
+    const reauth = await checkReauth(user.id, body, "api_key_rotate", c.get("sessionId"));
+    if (!reauth.ok) {
       audit(user.id, null, "key.rotate_failed", { keyId: id });
-      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+      return c.json({ error: reauth.error, code: reauth.code }, 401);
     }
-    if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+    if (reauth.recoveryCodeUsed) mailTwoFactor(user.id, "recovery_used");
     return run(c, () => {
       const rotated = rotateApiKey(user.id, id, body.graceHours, body.expiresInDays, rotationChanges(body));
       // A rotation makes a new secret, so it gets the same security mail as a new key.

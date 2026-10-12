@@ -4,7 +4,7 @@ import type { AppEnv } from "../auth";
 import { audit, db, now } from "../db";
 import { contentDisposition } from "../contentHeaders";
 import { mailTwoFactor } from "../mail/triggers";
-import { reauthMethod, verifyReauth } from "../reauth";
+import { checkReauth, reauthMethod } from "../reauth";
 import { parseJson, uuid } from "../validation";
 import { reauthUntil, VaultError, type VaultActor } from "./access";
 import { EVENT_FAMILIES, listVaultActivity, type EventFamily } from "./events";
@@ -147,12 +147,15 @@ export function registerVaultRoutes(app: Hono<AppEnv>) {
     // cookie) cannot use up this one's attempts, and succeeding costs nothing.
     const bucket = sessionId ?? user.id;
     chargeVault("reauth", bucket, 0);
-    if (!sessionId || !await verifyReauth(user.id, body, "vault_protected", sessionId)) {
+    const result = sessionId ? await checkReauth(user.id, body, "vault_protected", sessionId) : null;
+    if (!result?.ok) {
       chargeVault("reauth", bucket);
       audit(user.id, null, "vault.reauth_failed");
+      // A Google confirmation that ran out (or none possible) says what to do next; a wrong password or code keeps its words.
+      if (result && result.code !== "REAUTH_FAILED") throw new VaultError(403, result.code, result.error);
       throw new VaultError(403, "REAUTH_FAILED", "The password or the authentication code is not right");
     }
-    if (body.recoveryCode) mailTwoFactor(user.id, "recovery_used");
+    if (result.recoveryCodeUsed) mailTwoFactor(user.id, "recovery_used");
     db.query("UPDATE sessions SET vault_reauth_at = ? WHERE id = ? AND user_id = ?").run(now(), sessionId, user.id);
     audit(user.id, null, "vault.reauth");
     return { reauthUntil: reauthUntil(actorOf(c)) };

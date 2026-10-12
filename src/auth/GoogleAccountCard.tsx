@@ -3,8 +3,9 @@ import { Check, TriangleAlert } from "lucide-react";
 import { api, ApiError } from "../api";
 import { KeysDialog } from "../keys/KeysDialog";
 import "../keys/keys.css";
-import { asksForPassword, GoogleReauthNotice, type AccountAuth } from "./accountAuth";
+import { asksForCode, googleConfirmed, GoogleReauthNotice, isGoogleReauthRequired, ReauthRouteToggle, useReauthRoute, type AccountAuth } from "./accountAuth";
 import { collectProblems, FieldError, fieldName, secondFactorProblem, useFieldErrors } from "./fieldChecks";
+import { SecondFactorField, secondFactorName } from "./passwordPages";
 import { GoogleButton, GoogleMark, googleErrorMessage, type GoogleSettingsResult } from "./googleSignIn";
 import "./auth.css";
 
@@ -25,27 +26,46 @@ export function googleIntegrationNotice(result: GoogleSettingsResult) {
   return result?.kind === "linked" ? null : googleSettingsNotice(result);
 }
 
-/** The re-authentication part of a request body: the password (when asked for) and the code. */
-export function reauthBody(form: FormData, account: AccountAuth | null, totpEnabled: boolean) {
+/**
+ * The re-authentication part of a request body, read from the fields on screen (`ReauthFields` shows
+ * only those this route needs): the password on the password route, and the code or recovery code.
+ */
+export function reauthBody(form: FormData, _account?: AccountAuth | null, _totpEnabled?: boolean) {
   const password = String(form.get("password") ?? "");
   const code = String(form.get("totpCode") ?? "").trim();
-  return { ...(asksForPassword(account) && password ? { password } : {}), ...(totpEnabled && code ? { totpCode: code } : {}) };
+  const recoveryCode = String(form.get("recoveryCode") ?? "").trim();
+  return { ...(password ? { password } : {}), ...(code ? { totpCode: code } : {}), ...(recoveryCode ? { recoveryCode } : {}) };
 }
 
-/** Password (or the Google confirmation) and, with two-factor on, the code: inline errors, no native validation. */
-export function ReauthFields({ account, totpEnabled, errors, idPrefix, returnTo, disabled }: { account: AccountAuth; totpEnabled: boolean; errors: Record<string, string>; idPrefix: string; returnTo: string; disabled: boolean }) {
+/**
+ * Google first for accounts with Google linked ("Use password instead" when they have one), else the
+ * password; and the code where it is asked for (2026-10-12: on the password route with two-factor on,
+ * and on the Google route only for `secondFactor` actions), with "Use a recovery code" as the way
+ * round a lost authenticator. Inline errors, no native validation.
+ */
+export function ReauthFields({ account, totpEnabled, errors, idPrefix, returnTo, disabled, secondFactor = false, expired = false, startable = true }: { account: AccountAuth; totpEnabled: boolean; errors: Record<string, string>; idPrefix: string; returnTo: string; disabled: boolean; /** The action changes the factors: the code is asked for after Google too. */ secondFactor?: boolean; /** The server answered GOOGLE_REAUTH_REQUIRED. */ expired?: boolean; startable?: boolean }) {
+  const { viaPassword, toggle } = useReauthRoute(account);
+  const [recovery, setRecovery] = useState(false);
+  const code = asksForCode(totpEnabled, viaPassword, secondFactor);
+  const codeError = errors[secondFactorName(recovery)];
   return <>
-    {asksForPassword(account)
+    {viaPassword
       ? <label>Your password<input name="password" type="password" autoComplete="current-password" maxLength={256} disabled={disabled} aria-invalid={errors.password ? true : undefined} aria-describedby={errors.password ? `${idPrefix}-password-error` : undefined} /><FieldError id={`${idPrefix}-password-error`} message={errors.password} /></label>
-      : <GoogleReauthNotice account={account} returnTo={returnTo} />}
-    {totpEnabled && <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" disabled={disabled} aria-invalid={errors.totpCode ? true : undefined} aria-describedby={errors.totpCode ? `${idPrefix}-code-error` : undefined} /><FieldError id={`${idPrefix}-code-error`} message={errors.totpCode} /></label>}
+      : <GoogleReauthNotice account={account} returnTo={returnTo} expired={expired} startable={startable} />}
+    <ReauthRouteToggle viaPassword={viaPassword} onToggle={toggle} disabled={disabled} />
+    {code && <SecondFactorField recovery={recovery} disabled={disabled} error={codeError} onToggle={() => setRecovery((value) => !value)} />}
   </>;
 }
 
-export const reauthProblems = (form: FormData, account: AccountAuth, totpEnabled: boolean) => collectProblems({
-  password: asksForPassword(account) && !String(form.get("password") ?? "") ? "Enter your password." : null,
-  totpCode: totpEnabled ? secondFactorProblem(String(form.get("totpCode") ?? ""), false) : null
+/** What is missing from the fields on screen. */
+export const reauthProblems = (form: FormData, _account?: AccountAuth, _totpEnabled?: boolean) => collectProblems({
+  password: form.has("password") && !String(form.get("password") ?? "") ? "Enter your password." : null,
+  totpCode: form.has("totpCode") ? secondFactorProblem(String(form.get("totpCode") ?? ""), false) : null,
+  recoveryCode: form.has("recoveryCode") ? secondFactorProblem(String(form.get("recoveryCode") ?? ""), true) : null
 });
+
+/** Whether the form can be sent: on the Google route only while this session's confirmation counts. */
+export const reauthReady = (form: HTMLFormElement | null, account: AccountAuth) => Boolean(form?.querySelector("input[name=password]")) || googleConfirmed(account);
 
 /**
  * Settings → Security → Google sign-in (Wave 35, D300; review L3): the linked address and Unlink, or
@@ -62,18 +82,24 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  const [expired, setExpired] = useState(false);
   const fields = useFieldErrors();
   useEffect(() => { onDialogChange?.(dialog !== null); }, [dialog, onDialogChange]);
 
   if (!account.methods.google) return null;
   const canUnlink = account.google !== null && account.methods.password && account.hasPassword;
   const canLink = account.google === null && account.reauth !== "none";
-  const close = () => { if (!busy) { setDialog(null); setError(""); fields.clear(); } };
+  const close = () => { if (!busy) { setDialog(null); setError(""); setExpired(false); fields.clear(); } };
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     if (fields.show(event.currentTarget, reauthProblems(form, account, totpEnabled))) return;
+    if (!reauthReady(event.currentTarget, account)) {
+      setExpired(true);
+      setError("Confirm with Google first, then try again.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -87,6 +113,7 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
       setDone("Google sign-in was unlinked. Sign in with your email and password from now on.");
       onChanged();
     } catch (reason) {
+      if (isGoogleReauthRequired(reason)) setExpired(true);
       setError(reason instanceof ApiError && reason.status === 429 ? "Too many attempts. Try again in a few minutes." : reason instanceof Error ? reason.message : "Something went wrong");
     }
     setBusy(false);
@@ -108,11 +135,11 @@ export function GoogleAccountCard({ account, totpEnabled, onChanged, onDialogCha
     {done && <p className="password-change-done" role="status"><Check aria-hidden="true" />{done}</p>}
     {dialog && <KeysDialog title={dialog === "link" ? "Link Google" : "Unlink Google?"} description={dialog === "link" ? "Confirm it's you, then choose the Google account with this address." : "You will sign in with your email and password only. This device stays signed in; every other device where you are signed in is signed out. Your Google profile picture is removed too."} onClose={close} busy={busy}>
       <form className="auth-form google-reauth-form" noValidate onSubmit={submit} onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
-        <ReauthFields account={account} totpEnabled={totpEnabled} errors={fields.errors} idPrefix={`google-${dialog}`} returnTo="/settings/security" disabled={busy} />
+        <ReauthFields account={account} totpEnabled={totpEnabled} errors={fields.errors} idPrefix={`google-${dialog}`} returnTo="/settings/security" disabled={busy} secondFactor={dialog === "unlink"} expired={expired} />
         {error && <p className="form-error" role="alert"><TriangleAlert aria-hidden="true" className="inline-icon" />{error}</p>}
         <div className="keys-dialog-actions inline">
           <button type="button" className="secondary-button" onClick={close} disabled={busy}>Cancel</button>
-          <button type="submit" className={dialog === "link" ? "primary-button" : "danger-button"} disabled={busy || (!asksForPassword(account) && !account.reauthUntil)}>{busy ? "Please wait…" : dialog === "link" ? "Continue to Google" : "Unlink Google"}</button>
+          <button type="submit" className={dialog === "link" ? "primary-button" : "danger-button"} disabled={busy}>{busy ? "Please wait…" : dialog === "link" ? "Continue to Google" : "Unlink Google"}</button>
         </div>
       </form>
     </KeysDialog>}

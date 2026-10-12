@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { db, type DocumentRow } from "../db";
 import { DocumentIntegrityError, openObjectForRead } from "../documentStorage";
+import { StorageUnavailableError } from "../objectStore";
 import { AttachmentError, linkAttachment } from "../attachments/service";
 import { CHAT_IMAGE_BOUNDS, isChatImageType, type ChatAttachment, type ChatAttachmentInput } from "../../shared/agents";
 import { imageTypeOf } from "./images";
@@ -143,10 +144,14 @@ async function readImage(documentId: string, ownerId: string): Promise<{ mimeTyp
   if (!row || row.size_bytes > chatImageLimits.bytes || !isChatImageType(row.mime_type)) return null;
   let bytes: Uint8Array;
   try {
-    const { handle } = await openObjectForRead(row.id, row.size_bytes);
-    try { bytes = new Uint8Array(await handle.readFile()); } finally { await handle.close(); }
+    bytes = await (await openObjectForRead(row.id, row.size_bytes)).bytes();
   } catch (error) {
     if (error instanceof DocumentIntegrityError) return null;
+    // S3 storage: an unreachable store omits the picture from this turn (counted as omitted), never fails the run.
+    if (error instanceof StorageUnavailableError) {
+      console.warn(`Chat image omitted: file storage unavailable (${error.code})`);
+      return null;
+    }
     throw error;
   }
   if (createHash("sha256").update(bytes).digest("hex") !== row.sha256) return null;

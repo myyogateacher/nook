@@ -79,6 +79,7 @@
 .reauth-note { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; color: #b7b7bd; font-size: .84rem; line-height: 1.45; }
 .reauth-note svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
 .reauth-done { color: #b7e4c7; }
+.reauth-toggle { min-height: 36px; text-align: left; }
 .settings-google-notice { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; padding: 8px 8px 8px 13px; border: 1px solid #2f4a3a; border-radius: 10px; background: #15231b; color: #b7e4c7; font-size: .86rem; }
 .settings-google-notice.error { border-color: #5b2a31; background: #2a1518; color: #fda4af; }
 .settings-google-notice .icon-button { margin-left: auto; width: 40px; height: 40px; flex: none; }

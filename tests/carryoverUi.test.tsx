@@ -38,9 +38,9 @@ describe("C11a: the change-password hint offers Forgot password? only when it ex
     expect(forgotCurrentHint(false)).not.toContain("Forgot password?");
     expect(forgotCurrentHint(false)).toContain("ask an admin");
     const app = await read("App.tsx");
-    expect(app).toContain("<ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} />");
+    expect(app).toContain("<ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} account={account} onChanged={reloadAccount} />");
     const card = await read("auth/ChangePassword.tsx");
-    expect(card).toContain('<small className="password-change-hint">{forgotCurrentHint(passwordReset)}</small>');
+    expect(card).toContain('<small className="password-change-hint">{viaPassword ? forgotCurrentHint(passwordReset) : "Use at least 12 characters."}</small>');
   });
 });
 

@@ -11,9 +11,9 @@ import { enqueueMail } from "./mail/outbox";
 import { hashAuthToken } from "./mail/resolve";
 import { mailPasswordChanged, mailTwoFactor } from "./mail/triggers";
 import { bumpUnsubscribeEpoch } from "./mail/unsubscribe";
-import { consumeRecoveryCode, consumeTotp, verifyReauth } from "./reauth";
+import { checkReauth, consumeRecoveryCode, consumeTotp, needsTotpCode } from "./reauth";
 import { passwordMethodRefusal } from "./authMethods";
-import { hashPassword, verifyPassword } from "./passwords";
+import { hashPassword, isUsablePasswordHash, verifyPassword } from "./passwords";
 import { email, parseJson, password, recoveryCode, totpCode } from "./validation";
 
 /**
@@ -51,7 +51,8 @@ const resetToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 const resetCheckSchema = z.object({ token: resetToken }).strict();
 const resetCompleteSchema = z.object({ token: resetToken, newPassword: password, totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
   .refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
-const passwordChangeSchema = z.object({ currentPassword: z.string().min(1).max(256), newPassword: password, totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
+// `currentPassword` may be left out where this session's Google confirmation stands in (2026-10-12).
+const passwordChangeSchema = z.object({ currentPassword: z.string().min(1).max(256).optional(), newPassword: password, totpCode: totpCode.optional(), recoveryCode: recoveryCode.optional() }).strict()
   .refine((value) => !(value.totpCode && value.recoveryCode), "Use either an authentication code or a recovery code");
 
 type Bucket = { count: number; resetAt: number };
@@ -232,15 +233,20 @@ export function registerPasswordChangeRoute(app: Hono<AppEnv>) {
     const current = c.get("user");
     const body = await parseJson(c.req.raw, passwordChangeSchema);
     if (limited(`password-change:${current.id}`, RESET_LIMITS.changePerUserTenMinutes, 10 * 60_000)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
-    if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
-    // The password first; a code is consumed only after it verifies (server/reauth.ts).
-    if (!await verifyReauth(current.id, { password: body.currentPassword, totpCode: body.totpCode, recoveryCode: body.recoveryCode }, "password_change", c.get("sessionId"))) {
+    const input = { password: body.currentPassword, totpCode: body.totpCode, recoveryCode: body.recoveryCode };
+    if (needsTotpCode(current, input)) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    // The current password (plus the code with two-factor on), or, with no current password given, this
+    // session's Google confirmation: that is how a Google account sets its first password (2026-10-12).
+    // A code is consumed only after the first factor verifies (server/reauth.ts).
+    const reauth = await checkReauth(current.id, input, "password_change", c.get("sessionId"));
+    if (!reauth.ok) {
       audit(current.id, null, "auth.password_change_failed");
-      return c.json({ error: current.totp_enabled_at ? "Invalid password or authentication code" : "Your current password is not correct", code: "REAUTH_FAILED" }, 400);
+      const error = reauth.code !== "REAUTH_FAILED" ? reauth.error : current.totp_enabled_at ? "Invalid password or authentication code" : "Your current password is not correct";
+      return c.json({ error, code: reauth.code }, reauth.code === "REAUTH_FAILED" ? 400 : 401);
     }
-    if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
+    if (reauth.recoveryCodeUsed) mailTwoFactor(current.id, "recovery_used");
     const user = db.query("SELECT password_hash FROM users WHERE id = ?").get(current.id) as { password_hash: string };
-    if (await verifyPassword(body.newPassword, user.password_hash)) return c.json({ error: "Choose a password that is different from your current one", code: "SAME_PASSWORD" }, 400);
+    if (isUsablePasswordHash(user.password_hash) && await verifyPassword(body.newPassword, user.password_hash)) return c.json({ error: "Choose a password that is different from your current one", code: "SAME_PASSWORD" }, 400);
     const passwordHash = await hashPassword(body.newPassword);
     const signedOut = db.transaction(() => {
       db.query("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, current.id);

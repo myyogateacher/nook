@@ -14,7 +14,7 @@ import { kickMailDispatch } from "../mail/dispatcher";
 import { releaseWelcomeMail } from "../mail/signInMail";
 import { mailAccountEvent, mailPasswordChanged, mailTwoFactor } from "../mail/triggers";
 import { isUsablePasswordHash, UNUSABLE_PASSWORD } from "../passwords";
-import { consumeRecoveryCode, consumeTotp, googleReauthUntil, reauthMethod, verifyReauth } from "../reauth";
+import { checkReauth, consumeRecoveryCode, consumeTotp, googleReauthUntil, needsTotpCode, reauthMethod } from "../reauth";
 import { can } from "../team/roles";
 import { dismissGoogleResetNotice, allowGoogleLink, checkAllowGoogleLink, checkUnlinkGoogle, completeRelink, consumeGoogleLinkAllowance, emailDomain, googleAdminState, googleResetPreview, GoogleLinkError, hasGoogleLinkAllowance, recordGoogleRefusal, relinkRemovesCredentials, unlinkGoogleForAccount } from "./linkAdmin";
 import { hashInviteToken, InviteError, previewInvite, previewInviteHash } from "../team/invites";
@@ -187,7 +187,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       const identity = identityOfUser(session.user.id);
       if (!identity) return c.redirect(`${returnTo}#google-error=reauth_mismatch`, 303);
       const flow = createFlow(c, { intent, stage: "authorize", returnTo, userId: session.user.id, sessionId: session.sessionId, clientHash });
-      // MEDIUM-3: a real re-authentication (prompt=login, max_age=0; auth_time checked at the callback).
+      // MEDIUM-3: the account chooser, hinted to the linked address; the callback checks the identity.
       return c.redirect(authorizationUrl({ ...flow, loginHint: identity.email, reauth: true }), 302);
     }
     const flow = createFlow(c, { intent, stage: "authorize", returnTo: safeReturnPath(c.req.query("return")), clientHash });
@@ -251,11 +251,12 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       const identity = identityBySub(claims.sub);
       const user = flow.user_id ? userById(flow.user_id) : null;
       if (!identity || !user || identity.user_id !== user.id || user.disabled_at !== null) return failTo(c, flow, "reauth_mismatch");
-      // MEDIUM-3: Google must have asked for the password just now, not reused an old session.
-      if (!freshAuthTime(claims)) return failTo(c, flow, "reauth_stale");
+      // MEDIUM-3 (operator decision 2026-10-12): Google does not support re-authentication requests and
+      // sends auth_time only on request, so a completed round trip for the linked identity, on this
+      // session's own single-use flow, is the confirmation. auth_time is recorded, never required.
       const confirmed = db.query("UPDATE sessions SET reauth_at = ? WHERE id = ? AND user_id = ? AND expires_at > ?").run(now(), flow.session_id, user.id, now()).changes;
       if (!confirmed) return failTo(c, flow, "expired");
-      audit(user.id, null, "auth.google_reauth");
+      audit(user.id, null, "auth.google_reauth", { authTime: claims.authTime === null ? "missing" : freshAuthTime(claims) ? "fresh" : "stale" });
       refreshPicture(user.id, identity.id, identity.picture_url, claims.picture);
       return c.redirect(`${flow.return_to}#google=reauthed`, 303);
     }
@@ -474,12 +475,13 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
     const body = await parseJson(c.req.raw, reauthBodySchema);
     if (identityOfUser(current.id)) return c.json({ error: "This account already signs in with Google", code: "ALREADY_LINKED" }, 409);
     if (hit("google:link:account", current.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
-    if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
-    if (!await verifyReauth(current.id, body, "google_link", c.get("sessionId"))) {
+    if (needsTotpCode(current, body)) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    const reauth = await checkReauth(current.id, body, "google_link", c.get("sessionId"));
+    if (!reauth.ok) {
       audit(current.id, null, "auth.google_link_reauth_failed");
-      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+      return c.json({ error: reauth.error, code: reauth.code }, 401);
     }
-    if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
+    if (reauth.recoveryCodeUsed) mailTwoFactor(current.id, "recovery_used");
     createFlow(c, { intent: "link", stage: "prepared", returnTo: "/settings/security", userId: current.id, sessionId: c.get("sessionId"), clientHash: sha256Hex(`google-client:${clientAddress(c)}`) });
     return c.json({ start: "/api/auth/google/start?intent=link" });
   });
@@ -498,12 +500,14 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
     }
     // L3: re-authenticated like any other sign-in change.
     if (hit("google:unlink:account", current.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
-    if (current.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
-    if (!await verifyReauth(current.id, body, "google_unlink", c.get("sessionId"))) {
+    // Unlinking changes how the account signs in: with two-factor on it needs the code on either route.
+    if (needsTotpCode(current, body, { secondFactor: true })) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    const reauth = await checkReauth(current.id, body, "google_unlink", c.get("sessionId"), { secondFactor: true });
+    if (!reauth.ok) {
       audit(current.id, null, "auth.google_unlink_reauth_failed");
-      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+      return c.json({ error: reauth.error, code: reauth.code }, 401);
     }
-    if (body.recoveryCode) mailTwoFactor(current.id, "recovery_used");
+    if (reauth.recoveryCodeUsed) mailTwoFactor(current.id, "recovery_used");
     // QA G3: the person just re-authenticated here, so this session stays (its Google confirmation
     // ends); every other session of the account ends.
     const sessionsEnded = db.transaction(() => {
@@ -537,12 +541,14 @@ export function registerGoogleAccountRoutes(app: Hono<AppEnv>) {
   const adminReauth = async (c: Context<AppEnv>, body: z.infer<typeof reauthBodySchema>, purpose: string) => {
     const admin = c.get("user");
     if (hit("google:admin:admin", admin.id)) return c.json({ error: "Too many attempts. Try again soon.", code: "RATE_LIMITED" }, 429);
-    if (admin.totp_enabled_at && !body.totpCode && !body.recoveryCode) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
-    if (!await verifyReauth(admin.id, body, purpose, c.get("sessionId"))) {
+    // Team admin Google actions change another account's sign-in: the code too, with two-factor on.
+    if (needsTotpCode(admin, body, { secondFactor: true })) return c.json({ error: "Enter your six-digit authentication code", code: "TOTP_REQUIRED", requiresTotp: true }, 428);
+    const reauth = await checkReauth(admin.id, body, purpose, c.get("sessionId"), { secondFactor: true });
+    if (!reauth.ok) {
       audit(admin.id, null, "team.google_reauth_failed", { purpose });
-      return c.json({ error: "Invalid password or authentication code", code: "REAUTH_FAILED" }, 401);
+      return c.json({ error: reauth.error, code: reauth.code }, 401);
     }
-    if (body.recoveryCode) mailTwoFactor(admin.id, "recovery_used");
+    if (reauth.recoveryCodeUsed) mailTwoFactor(admin.id, "recovery_used");
     return null;
   };
   const linkError = (c: Context<AppEnv>, error: unknown) => {

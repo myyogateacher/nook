@@ -10,7 +10,7 @@ import { keyEvents } from "../access/events";
 import { GENERAL_KEY_MODULES, type GrantModule } from "../keyGrants";
 import { createLimited, precheckKeyCreate } from "../keyRoutes";
 import { mailTwoFactor } from "../mail/triggers";
-import { verifyReauth } from "../reauth";
+import { checkReauth } from "../reauth";
 import { readPolicies } from "./policies";
 import { parseJson, uuid } from "../validation";
 import { BLOCK_REASON_MAX, TeamError } from "./service";
@@ -179,11 +179,12 @@ export function registerIntegrationRoutes(app: Hono<AppEnv>, gates: { read: Gate
       // Every check that needs no password runs first, against the integration (its role, policy, and shares).
       const { grants, days, ipAllowlist } = precheckKeyCreate({ id: integration.id, role: integration.role }, { ...body, grants: general });
       if (createLimited(admin.id)) throw new KeyError(429, "RATE_LIMITED", "Too many API keys created. Try again later.");
-      if (!await verifyReauth(admin.id, body, "integration_key", c.get("sessionId"))) {
+      const reauth = await checkReauth(admin.id, body, "integration_key", c.get("sessionId"));
+      if (!reauth.ok) {
         audit(admin.id, null, "mcp.key_create_failed", { ownerId: integration.id });
-        throw new KeyError(401, "REAUTH_FAILED", "Invalid password or authentication code");
+        throw new KeyError(401, reauth.code, reauth.error);
       }
-      if (body.recoveryCode) mailTwoFactor(admin.id, "recovery_used");
+      if (reauth.recoveryCodeUsed) mailTwoFactor(admin.id, "recovery_used");
       checkKeyCount(integration.id, readPolicies());
       const created = createApiKey(integration.id, { name: body.name, description: body.description ?? null, surfaces: body.surfaces, grants, expiresInDays: days, limits: parseLimits(body.limits ? JSON.stringify(body.limits) : null), ipAllowlist }, { actorId: admin.id });
       return { key: { ...ownApiKey(integration.id, created.id), token: created.token } };
@@ -220,11 +221,12 @@ export function registerIntegrationRoutes(app: Hono<AppEnv>, gates: { read: Gate
       refuseExcludedModules(body.grants?.map((grant) => grant.module));
       checkRotation(integration.id, keyId, body.graceHours, body.expiresInDays, changes);
       if (createLimited(admin.id)) throw new KeyError(429, "RATE_LIMITED", "Too many API keys created. Try again later.");
-      if (!await verifyReauth(admin.id, body, "integration_key_rotate", c.get("sessionId"))) {
+      const reauth = await checkReauth(admin.id, body, "integration_key_rotate", c.get("sessionId"));
+      if (!reauth.ok) {
         audit(admin.id, null, "key.rotate_failed", { keyId, ownerId: integration.id });
-        throw new KeyError(401, "REAUTH_FAILED", "Invalid password or authentication code");
+        throw new KeyError(401, reauth.code, reauth.error);
       }
-      if (body.recoveryCode) mailTwoFactor(admin.id, "recovery_used");
+      if (reauth.recoveryCodeUsed) mailTwoFactor(admin.id, "recovery_used");
       const rotated = rotateApiKey(integration.id, keyId, body.graceHours, body.expiresInDays, changes, admin.id);
       return { key: { ...ownApiKey(integration.id, rotated.id), token: rotated.token }, oldKey: ownApiKey(integration.id, keyId) };
     }, 201);

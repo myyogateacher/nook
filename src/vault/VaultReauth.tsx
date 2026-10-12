@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { ShieldCheck } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { useAccountAuthLoader } from "../auth/accountAuth";
-import { reauthBody, ReauthFields, reauthProblems } from "../auth/GoogleAccountCard";
+import { reauthBody, ReauthFields, reauthProblems, reauthReady } from "../auth/GoogleAccountCard";
 import { useFieldErrors } from "../auth/fieldChecks";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { reauth, reauthStatus, type ReauthStatus } from "./vaultApi";
@@ -61,6 +61,7 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
   const [status, setStatus] = useState<ReauthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
   const fields = useFieldErrors();
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
   useEffect(() => { reauthStatus().then(setStatus, (reason) => setError(messageOf(reason, "Could not check how to confirm it's you"))); }, []);
@@ -71,6 +72,11 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
     if (!account) return;
     const form = new FormData(event.currentTarget);
     if (fields.show(event.currentTarget, reauthProblems(form, account, twoFactor))) return;
+    if (!reauthReady(event.currentTarget, account)) {
+      setExpired(true);
+      setError("Confirm with Google first, then press Confirm.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -79,6 +85,7 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
     } catch (reason) {
       setBusy(false);
       const code = errorCode(reason);
+      if (code === "GOOGLE_REAUTH_REQUIRED") setExpired(true);
       setError(code === "REAUTH_FAILED" ? "That password or code is not right. Try again." : code === "RATE_LIMITED" ? "Too many tries. Wait a few minutes, then try again." : messageOf(reason, "Could not confirm it's you"));
     }
   }
@@ -86,7 +93,7 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
   return <ModalDialog title="Confirm it's you" eyebrow="Protected environment" onClose={onCancel} busy={busy} className="vault-dialog vault-reauth">
     <form className="file-dialog-form vault-form" onSubmit={submit} noValidate>
       <p className="file-dialog-hint"><ShieldCheck className="vault-hint-icon" aria-hidden="true" />This environment is protected. Confirm it's you to open its values here for the next 15 minutes.</p>
-      {account ? <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix="vault-reauth" returnTo={typeof window === "undefined" ? "/vault" : window.location.pathname} disabled={busy} />
+      {account ? <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix="vault-reauth" returnTo={typeof window === "undefined" ? "/vault" : window.location.pathname} disabled={busy} expired={expired} />
         : <p className="file-dialog-hint" role="status">Loading…</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">

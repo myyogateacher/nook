@@ -39,10 +39,10 @@ export function authorizationUrl(input: { state: string; nonce: string; verifier
   url.searchParams.set("nonce", input.nonce);
   url.searchParams.set("code_challenge", pkceChallenge(input.verifier));
   url.searchParams.set("code_challenge_method", "S256");
-  // A re-authentication must be a real one (MEDIUM-3): Google asks for the password again and the
-  // token's auth_time is checked at the callback.
-  url.searchParams.set("prompt", input.reauth ? "login" : "select_account");
-  if (input.reauth) url.searchParams.set("max_age", "0");
+  // MEDIUM-3: Google supports only none, consent, and select_account, ignores max_age, and "does not
+  // support Google Account reauth requests". A re-authentication is the account chooser too: a person
+  // signed in to Google picks the linked account; the callback checks it is that identity.
+  url.searchParams.set("prompt", "select_account");
   if (input.loginHint) url.searchParams.set("login_hint", input.loginHint);
   // A hint only (T256): the signed `hd` claim is what is checked.
   if (google.allowedDomains.length === 1) url.searchParams.set("hd", google.allowedDomains[0]!);
@@ -198,7 +198,11 @@ export function googleAuthoritative(claims: Pick<GoogleClaims, "email" | "hd">) 
   return CONSUMER_DOMAINS.has(domain) ? claims.hd === null : claims.hd === domain;
 }
 
-/** A re-authentication's `auth_time` must be within 5 minutes (60 s skew) of now (MEDIUM-3). */
+/**
+ * Whether `auth_time` is within 5 minutes (60 s skew) of now. Recorded in the re-authentication's
+ * audit entry only (MEDIUM-3): Google sends it only on request, and then it is the browser's last
+ * Google login, so it is never required.
+ */
 export const REAUTH_MAX_AGE_S = 300;
 export function freshAuthTime(claims: Pick<GoogleClaims, "authTime">, nowMs = Date.now()) {
   if (claims.authTime === null) return false;

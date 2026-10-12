@@ -7,7 +7,7 @@ const { resetTeamRateLimits } = await import("../server/team/routes");
 const { resetKeyRouteLimits } = await import("../server/keyRoutes");
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
 const { createSession, ServiceAccountSignInError } = await import("../server/auth");
-const { verifyReauth } = await import("../server/reauth");
+const { checkReauth } = await import("../server/reauth");
 const { isEmailAllowed } = await import("../server/config");
 const { enqueueMail } = await import("../server/mail/outbox");
 const mail = await import("../server/mail");
@@ -110,7 +110,7 @@ describe("every sign-in path refuses an integration", () => {
       .run(crypto.randomUUID(), bot.id, "h".repeat(64), new Date().toISOString(), new Date().toISOString(), new Date(Date.now() + 3_600_000).toISOString())).toThrow("SERVICE_NO_SESSION");
 
     // 6. TOTP and re-authentication (the second factor and the key-creation check) never pass for it.
-    expect(await verifyReauth(bot.id, { password: admin.password }, "test")).toBe(false);
+    expect((await checkReauth(bot.id, { password: admin.password }, "test")).ok).toBe(false);
 
     // 7. Google: no identity can be linked, and admins cannot allow or reset Google for it.
     expect(() => db.query("INSERT INTO google_identities (id, user_id, subject, email, linked_at, linked_via) VALUES (?, ?, ?, ?, ?, 'signin')")

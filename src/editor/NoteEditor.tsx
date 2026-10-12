@@ -11,12 +11,17 @@ import {
 import { SlashCommands } from "./slash";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
-import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import { IMAGE_REJECTED_MESSAGE, imageAltText, imageContentUrl, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import { FILE_CHIP_OPEN_EVENT, type FileChipOpenDetail } from "./fileChip";
+import { NoteAttach, NOTE_FILE_LIMIT_MESSAGE, noteFileRoom } from "./noteAttach";
+import { AttachmentPreview, AttachSheet, FromFilesSheet, uploadForHost } from "../ui/attachments";
+import type { DocumentSummary } from "../types";
 import { NameDialog } from "../files/RenameDialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { isModuleEnabled, useDisabledModules } from "../modules";
 import { WhiteboardEmbedPicker } from "./whiteboardEmbed";
 import "./editor.css";
+import { notify, type NoticeSink, type NotifyKind } from "../ui/notify";
 
 // The "Embed a whiteboard" picker loads only when opened (Wave 24, D208), so notes stay light.
 const WhiteboardPicker = lazy(() => import("./WhiteboardPicker"));
@@ -48,10 +53,17 @@ type Props = {
   onChange: (markdown: string) => void;
   /** Folder that uploaded images are stored in; null uploads to the Default folder. */
   folderId?: string | null;
-  /** Shows a short status message (the app toast). */
-  onNotice?: (message: string) => void;
+  /** Shows a short status message: the app toasts (ui/notify.ts), or a module's Notifier. */
+  onNotice?: NoticeSink;
   /** Stores a picked, pasted, or dropped image and returns its node; defaults to a Files upload into `folderId`. */
   uploadImage?: (file: File) => Promise<{ src: string; alt: string }>;
+  /**
+   * "note" (uploads everywhere U4): any file can be added (Take photo, Choose files, From Files, paste,
+   * drop, the slash menu's "File" and "From Files"). Uploads go to the person's Attachments folder
+   * (`?attachTo=note`); a picture the server sniffs as PNG, JPEG, GIF, or WebP becomes an image, any
+   * other file a file card. Without it, only images are added, through `uploadImage` or `folderId`.
+   */
+  attachHost?: "note";
   /** Accessible name of the editing surface. */
   label?: string;
   placeholder?: string;
@@ -59,32 +71,83 @@ type Props = {
   autoFocus?: boolean;
 };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
-  const latest = useRef({ folderId, onNotice, uploadImage });
-  latest.current = { folderId, onNotice, uploadImage };
+  const latest = useRef({ folderId, onNotice, uploadImage, attachHost });
+  latest.current = { folderId, onNotice, uploadImage, attachHost };
+  // U4: the attach sheet or the From Files picker, for the editor that asked; and the file preview.
+  const [attachLayer, setAttachLayer] = useState<{ editor: Editor; what: "sheet" | "files" } | null>(null);
+  const [preview, setPreview] = useState<FileChipOpenDetail | null>(null);
+  const uploads = useRef(new Set<AbortController>());
+  const surface = useRef<HTMLDivElement | null>(null);
+  useEffect(() => () => {
+    for (const controller of uploads.current) controller.abort();
+  }, []);
   // Whiteboard cards (D208): the slash item and the paste rule, only while the module is on.
   const whiteboards = isModuleEnabled(useDisabledModules(), "whiteboards");
   const [boardPicker, setBoardPicker] = useState<Editor | null>(null);
 
   const insertImages = async (activeEditor: Editor, files: File[]) => {
-    const notice = (message: string) => latest.current.onNotice?.(message);
+    const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
     for (const file of files) {
       if (!isInsertableImageType(file.type)) {
-        notice(IMAGE_REJECTED_MESSAGE);
+        notice("warning", IMAGE_REJECTED_MESSAGE);
         continue;
       }
-      notice(`Uploading ${file.name || "image"}…`);
+      // One toast per upload: "Uploading…" turns into the outcome.
+      const id = `upload:${crypto.randomUUID()}`;
+      notice("info", `Uploading ${file.name || "image"}…`, id);
       try {
         const image = latest.current.uploadImage ? await latest.current.uploadImage(file) : await uploadNoteImage(file, latest.current.folderId);
         if (activeEditor.isDestroyed || !activeEditor.isEditable) {
-          notice("Image saved to Files, but the note is no longer open for editing");
+          notice("warning", "Image saved to Files, but the note is no longer open for editing", id);
           continue;
         }
         activeEditor.chain().focus().setImage(image).run();
-        notice("Image added");
+        notice("success", "Image added", id);
       } catch (reason) {
-        notice(reason instanceof Error ? reason.message : "Image upload failed");
+        notice("error", reason instanceof Error ? reason.message : "Image upload failed", id);
+      }
+    }
+  };
+
+  /** Inserts a stored document: an image when the server says it is one, otherwise a file card. */
+  const insertDocument = (activeEditor: Editor, document: Pick<DocumentSummary, "id" | "name" | "mime_type" | "preview_kind">) => {
+    if (activeEditor.isDestroyed || !activeEditor.isEditable) return false;
+    if (document.preview_kind === "image" && isInsertableImageType(document.mime_type)) {
+      activeEditor.chain().focus().setImage({ src: imageContentUrl(document.id), alt: imageAltText(document.name) }).run();
+    } else {
+      activeEditor.chain().focus().insertFileChip({ id: document.id, name: document.name }).run();
+    }
+    return true;
+  };
+
+  /** U4: uploads any files to the Attachments folder (`?attachTo=note`) and inserts each once stored. */
+  const attachFiles = async (activeEditor: Editor, files: File[]) => {
+    const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
+    for (const file of files) {
+      if (activeEditor.isDestroyed) return;
+      if (noteFileRoom(activeEditor) <= 0) {
+        notice("warning", NOTE_FILE_LIMIT_MESSAGE);
+        return;
+      }
+      const name = file.name || "file";
+      const controller = new AbortController();
+      uploads.current.add(controller);
+      const id = `upload:${crypto.randomUUID()}`;
+      notice("info", `Uploading ${name}…`, id);
+      try {
+        const { document } = await uploadForHost(file, "note", { signal: controller.signal });
+        if (!insertDocument(activeEditor, document)) {
+          notice("warning", "Saved to Files › Attachments, but the note is no longer open for editing", id);
+          continue;
+        }
+        notice("success", `${document.name} added`, id);
+      } catch (reason) {
+        if (!controller.signal.aborted) notice("error", reason instanceof Error ? reason.message : "Upload failed", id);
+        else notify.dismiss(id);
+      } finally {
+        uploads.current.delete(controller);
       }
     }
   };
@@ -94,7 +157,8 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       ...noteContentExtensions(),
       Placeholder.configure({ placeholder }),
       Markdown.configure({ markedOptions: markdownOptions }),
-      ImageInsert.configure({ onFiles: (activeEditor, files) => { void insertImages(activeEditor, files); } }),
+      ImageInsert.configure({ onFiles: (activeEditor, files) => { void (latest.current.attachHost ? attachFiles(activeEditor, files) : insertImages(activeEditor, files)); } }),
+      ...(attachHost ? [NoteAttach.configure({ onOpen: (activeEditor: Editor, what: "sheet" | "files") => setAttachLayer({ editor: activeEditor, what }) })] : []),
       ...(whiteboards ? [WhiteboardEmbedPicker.configure({ onOpenPicker: (activeEditor: Editor) => setBoardPicker(activeEditor) })] : []),
       SlashCommands
     ],
@@ -127,10 +191,26 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
   }, [editor]);
   useHistoryDialogGuard(linkDraft !== null, closeLink);
 
+  // A file card asks for its preview (FILE_CHIP_OPEN_EVENT); readers and editors alike.
+  useEffect(() => {
+    const element = surface.current;
+    if (!element) return;
+    const onOpen = (event: Event) => {
+      const detail = (event as CustomEvent<FileChipOpenDetail>).detail;
+      if (detail?.id) setPreview({ id: detail.id, name: detail.name });
+    };
+    element.addEventListener(FILE_CHIP_OPEN_EVENT, onOpen);
+    return () => element.removeEventListener(FILE_CHIP_OPEN_EVENT, onOpen);
+  }, [editor]);
+  const closeAttach = useCallback((target?: Editor) => {
+    setAttachLayer(null);
+    if (target && !target.isDestroyed) target.commands.focus();
+  }, []);
+
   if (!editor) return <div className="editor-skeleton" />;
 
   return (
-    <div className="editor-surface">
+    <div className="editor-surface" ref={surface}>
       {editable && (
         <BubbleMenu editor={editor} className="bubble-menu">
           <button type="button" className={editor.isActive("bold") ? "active" : ""} onClick={() => editor.chain().focus().toggleBold().run()} aria-label="Bold"><Bold /></button>
@@ -180,6 +260,20 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
           setBoardPicker(null);
           if (!target.isDestroyed && target.isEditable) target.chain().focus().insertWhiteboardEmbed(board).run();
         }} /></Suspense>}
+      {attachLayer?.what === "sheet" && <AttachSheet hostNoun="note" closeOnPick
+        disabledReason={noteFileRoom(attachLayer.editor) <= 0 ? NOTE_FILE_LIMIT_MESSAGE : null}
+        onClose={() => closeAttach(attachLayer.editor)}
+        onFiles={(files) => { void attachFiles(attachLayer.editor, files); }}
+        onPickDocument={(document) => { insertDocument(attachLayer.editor, document); }} />}
+      {attachLayer?.what === "files" && <FromFilesSheet hostNoun="note"
+        onClose={() => closeAttach(attachLayer.editor)}
+        onPick={(document) => {
+          const target = attachLayer.editor;
+          setAttachLayer(null);
+          if (noteFileRoom(target) <= 0) latest.current.onNotice?.warning(NOTE_FILE_LIMIT_MESSAGE);
+          else insertDocument(target, document);
+        }} />}
+      {preview && <AttachmentPreview documentId={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
   );
 }

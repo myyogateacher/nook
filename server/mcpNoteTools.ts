@@ -39,7 +39,7 @@ export const noteManageTools: McpToolSpec[] = [
   defineTool({
     name: "publish_note_draft",
     title: "Publish a note's draft",
-    description: "Makes the draft the note's published text (a new version), visible to everyone the note is shared with. Only for notes the user owns. Call get_note_draft first and pass its revision: a revision this key was not shown fails with DRAFT_NOT_SEEN, and a draft that changed since you read it fails with DRAFT_CHANGED. Returns the new version and whether the note is private or shared.",
+    description: "Makes the draft the note's published text (a new version), visible to everyone the note is shared with. Only for notes the user owns. Call get_note_draft first and pass its revision: a revision this key was not shown fails with DRAFT_NOT_SEEN, and a draft that changed since you read it fails with DRAFT_CHANGED. Returns the new version and whether the note is private or shared. The files the published Markdown references (/api/files/<id>/content images, /files/<id> links) that the user owns become readable to the note's readers; skippedAttachments counts the others, and binnedAttachments lists the user's own referenced files that are in their Bin (restore them in Nook's Bin, then publish again).",
     scopes: ["notes:publish"],
     access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: true,
@@ -59,7 +59,9 @@ export const noteManageTools: McpToolSpec[] = [
           }
         }));
         forgetSeenDraft(key.keyId, noteId);
-        return { noteId, version: published.version, publishedAt: published.publishedAt, audience: noteAudience(noteId), url: noteUrl(noteId) };
+        // U4 (D408): the published text's files are linked for the note's readers; `skippedAttachments`
+        // counts referenced files that are not the user's own (never shared through the note, T350).
+        return { noteId, version: published.version, publishedAt: published.publishedAt, audience: noteAudience(noteId), ...(published.skippedAttachments ? { skippedAttachments: published.skippedAttachments } : {}), ...(published.binnedAttachments ? { binnedAttachments: published.binnedAttachments } : {}), url: noteUrl(noteId) };
       } catch (error) {
         if (error instanceof DraftActionError) throw draftActionToMcp(error);
         throw error;

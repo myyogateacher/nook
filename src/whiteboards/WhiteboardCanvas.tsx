@@ -9,7 +9,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { whenHistorySettled } from "../historyDialogs";
 import type { Folder } from "../types";
 import { canonicalSceneJson, sceneWithoutImages, whiteboardDisplayName, type CanonicalScene, type SceneFile } from "../../shared/whiteboardScene";
-import { isInsertableImageType, uploadImageDocument } from "../editor/imageUpload";
+import { isInsertableImageType, uploadPictureForHost } from "../editor/imageUpload";
 import { useRole } from "../team/roleAccess";
 import type { DocumentSummary } from "../types";
 import {
@@ -319,7 +319,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (live && readyRef.current) {
       live.updateScene({ elements: live.getSceneElementsIncludingDeleted().filter((element) => !(element.type === "image" && typeof element.fileId === "string" && next.fileIds.has(element.fileId))) as never });
     }
-    flash(refusedImagesMessage(Math.max(1, next.removed)));
+    notify.warning(refusedImagesMessage(Math.max(1, next.removed)));
     return true;
   }, [flash]);
 
@@ -444,7 +444,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (uploadsRef.current.size) {
       for (const controller of uploadsRef.current) controller.abort();
       uploadsRef.current.clear();
-      flash("A picture was still uploading when you left, so it was not added to the whiteboard.");
+      notify.warning("A picture was still uploading when you left, so it was not added to the whiteboard.");
     }
     writeViewport(userId, boardId, viewportRef.current);
   };
@@ -487,7 +487,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const clean = await flush();
     if (!clean) {
       writePendingNow();
-      flash("Not saved yet. Your changes are kept on this device and saved when you open the whiteboard again.");
+      notify.warning("Not saved yet. Your changes are kept on this device and saved when you open the whiteboard again.");
     }
     if (mounted.current) setLeaving(false);
     onBack();
@@ -503,7 +503,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     // one friendly message instead of Excalidraw's error dialog.
     if (typeof state.errorMessage === "string" && /image/i.test(state.errorMessage)) {
       apiRef.current.updateScene({ appState: { errorMessage: null } as never });
-      flash(IMAGES_REFUSED_MESSAGE);
+      notify.warning(IMAGES_REFUSED_MESSAGE);
       return;
     }
     const loose = elements as ReadonlyArray<Record<string, unknown>>;
@@ -512,7 +512,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       // picture pasted from outside Nook) is removed before it is ever saved, and so are embeds and
       // AI frames (D199, review L2).
       apiRef.current.updateScene({ elements: (elements as never[]).filter((element) => isKeptElement(element as Record<string, unknown>, refsRef.current)) as never });
-      flash(IMAGES_REFUSED_MESSAGE);
+      notify.warning(IMAGES_REFUSED_MESSAGE);
       return;
     }
     // Where the person looks (kept on leave, D199) and what they selected (the link picker).
@@ -567,7 +567,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     if (thumbTimer.current !== null) window.clearTimeout(thumbTimer.current);
     // D199: a link outside the allowlist is not saved; say so once per new one.
     const refused = refusedLinks(loose, window.location.origin);
-    if (refused > linkWarned.current) flash("A link was not kept: shapes can link to web pages (https), email, or a Nook item.");
+    if (refused > linkWarned.current) notify.warning("A link was not kept: shapes can link to web pages (https), email, or a Nook item.");
     linkWarned.current = refused;
   }, [flash, schedulePendingWrite, scheduleThumbnail]);
 
@@ -702,21 +702,21 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     return true;
   }, [flash]);
 
-  /** Uploads pictures into the board's folder as Files, then places each (D198). */
+  /** Uploads pictures into the Attachments folder (U4b), then places each (D198); the next save links them to the board. */
   const uploadImages = useCallback(async (files: File[], at?: { x: number; y: number }) => {
     const board = boardRef.current;
     if (!board?.canEdit) return;
     for (const file of files) {
       if (tearingDownRef.current) return;
       if (!isInsertableImageType(file.type)) {
-        flash("Only PNG, JPEG, GIF, and WebP pictures can be added to a whiteboard");
+        notify.warning("Only PNG, JPEG, GIF, and WebP pictures can be added to a whiteboard");
         continue;
       }
       const controller = new AbortController();
       uploadsRef.current.add(controller);
       setUploading(file.name || "picture");
       try {
-        const document = await uploadImageDocument(file, board.folder_id, controller.signal);
+        const document = await uploadPictureForHost(file, "whiteboard", controller.signal);
         uploadsRef.current.delete(controller);
         if (!tearingDownRef.current) await placeImage(document, at);
       } catch (reason) {
@@ -751,7 +751,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       if (!boardRef.current?.canEdit) return;
       const images = files.filter((file) => isInsertableImageType(file.type));
       if (!images.length) {
-        flash("Only PNG, JPEG, GIF, and WebP pictures can be dropped on a whiteboard. To open a drawing, use Import on the whiteboards list.");
+        notify.warning("Only PNG, JPEG, GIF, and WebP pictures can be dropped on a whiteboard. To open a drawing, use Import on the whiteboards list.");
         return;
       }
       void uploadImages(images, { x: event.clientX, y: event.clientY });
@@ -807,7 +807,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const kept = element.link ? keptLink(element.link, window.location.origin) : null;
     const target = kept ? linkTarget(kept) : null;
     if (!target) {
-      flash("This link can't be opened: shapes can link to web pages (https), email, or a Nook item.");
+      notify.warning("This link can't be opened: shapes can link to web pages (https), email, or a Nook item.");
       return;
     }
     // A Nook item opens in the app as a new history entry; Back returns here, where the person was.
@@ -829,11 +829,11 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     const selected = live.getAppState().selectedElementIds;
     const ids = new Set(Object.keys(selected).filter((id) => selected[id]));
     if (!ids.size) {
-      flash("Select a shape first, then link it.");
+      notify.warning("Select a shape first, then link it.");
       return;
     }
     live.updateScene({ elements: live.getSceneElementsIncludingDeleted().map((element) => ids.has(element.id) ? newElementWith(element as never, { link } as never) : element) as never, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
-    flash(link ? "Linked. Select the shape and use its link to open it." : "Link removed");
+    notify.success(link ? "Linked. Select the shape and use its link to open it." : "Link removed");
   }, [flash]);
 
   // ------------------------------------------------------------------ export
@@ -954,12 +954,12 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       dispatch({ type: "conflict", revision });
       void writePendingNow();
       if (!tearingDownRef.current) setLayer({ kind: "conflict" });
-      flash(`Restored the version from ${formatTime(snapshot.createdAt)}. Changes you made meanwhile are kept on this device: choose which to keep.`);
+      notify.success(`Restored the version from ${formatTime(snapshot.createdAt)}. Changes you made meanwhile are kept on this device: choose which to keep.`);
     };
     try {
       if (!await flush()) {
         if (!tearingDownRef.current) setLayer(null);
-        flash("Your latest changes are not saved yet, so nothing was restored. Try again in a moment.");
+        notify.warning("Your latest changes are not saved yet, so nothing was restored. Try again in a moment.");
         return;
       }
       const before: SceneMark = { editVersion: stateRef.current.editVersion, key: lastKeyRef.current };
@@ -994,14 +994,14 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   /** A private copy of this board (or of one kept version), opened once it exists. */
   const duplicate = useCallback(async (snapshot?: WhiteboardSnapshot) => {
     if (boardRef.current?.canEdit && !snapshot && !await flush()) {
-      flash("Your latest changes are not saved yet. Try again in a moment.");
+      notify.warning("Your latest changes are not saved yet. Try again in a moment.");
       return;
     }
     try {
       const { whiteboard, imagesLeftOut } = await duplicateWhiteboard(boardId, snapshot ? { snapshotId: snapshot.id } : {});
       if (tearingDownRef.current) return;
       setLayer(null);
-      flash(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
+      notify.success(`Saved a copy: ${whiteboardDisplayName(whiteboard.name)}${imagesLeftOut ? `. ${imagesLeftOut === 1 ? "One picture" : `${imagesLeftOut} pictures`} you can't open ${imagesLeftOut === 1 ? "was" : "were"} left out.` : ""}`);
       onOpenBoard(whiteboard.id);
     } catch (reason) {
       if (!tearingDownRef.current) notify.error(messageOf(reason, "Could not duplicate this whiteboard"));
@@ -1014,9 +1014,9 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const copyLink = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(whiteboardLink(boardId));
-      flash("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
+      notify.success("Link copied. Paste it alone on a line in a note to show this whiteboard as a card.");
     } catch {
-      flash(`Could not copy. The link is ${whiteboardLink(boardId)}`);
+      notify.warning(`Could not copy. The link is ${whiteboardLink(boardId)}`, { selectable: true });
     }
   }, [boardId, flash]);
 
@@ -1052,7 +1052,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
       dispatch({ type: "reset", revision: stateRef.current.serverRevision ?? stateRef.current.baseRevision, live: stateRef.current.savedLive });
       setLayer(null);
       setOffer(null);
-      flash("Saved your version as a copy");
+      notify.success("Saved your version as a copy");
       onOpenBoard(whiteboard.id);
     } catch (reason) {
       notify.error(messageOf(reason, "Could not save a copy"));
@@ -1102,7 +1102,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
   const initialView = initialViewRef.current;
   const openLinkPicker = () => {
     if (!selection.count) {
-      flash("Select a shape first, then link it to a Nook item.");
+      notify.warning("Select a shape first, then link it to a Nook item.");
       return;
     }
     setLayer({ kind: "link" });

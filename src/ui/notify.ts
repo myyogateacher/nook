@@ -89,6 +89,9 @@ export const notifier: Notifier = Object.assign(
   }
 );
 
+/** Where a shared component (the note editor) sends its notices: `notify`, or a module's Notifier. */
+export type NoticeSink = Record<NotifyKind, (message: string, options?: NotifyOptions) => unknown>;
+
 /** The message of a caught value, or `fallback` (for `notify.error(errorText(reason, "Could not …"))`). */
 export function errorText(reason: unknown, fallback: string) {
   return reason instanceof Error && reason.message ? reason.message : fallback;

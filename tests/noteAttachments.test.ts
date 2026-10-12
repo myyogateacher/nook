@@ -3,7 +3,8 @@ import { createUser, db, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
 import { api, contentStatus, upload, uploadAttachment } from "./support/attachments";
 
-const { backfillNoteLinks, keepDraftAttachments } = await import("../server/noteAttachments");
+const { backfillNoteLinks } = await import("../server/noteAttachments");
+const { resetReferenceCacheForTests } = await import("../server/attachments/references");
 const { sweepOrphanedAttachments } = await import("../server/attachments/sweep");
 const { backfillWhiteboardLinks, resetWhiteboardLimitsForTests } = await import("../server/whiteboards/service");
 const { createApiKey } = await import("../server/apiKeys");
@@ -164,11 +165,12 @@ describe("notes (U4, G1)", () => {
     expect((await api(owner, "DELETE", `/bin/note/${noteId}`)).status).toBe(200);
     expect(linksOf(noteId)).toEqual([]);
     db.query("UPDATE documents SET created_at = ?, updated_at = ? WHERE id = ?").run("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", picture);
-    sweepOrphanedAttachments();
+    resetReferenceCacheForTests();
+    await sweepOrphanedAttachments();
     expect((db.query("SELECT deleted_at FROM documents WHERE id = ?").get(picture) as { deleted_at: string | null }).deleted_at).not.toBeNull();
   }, 30_000);
 
-  test("existing notes are backfilled once with the owner's own files; a draft keeps its uploads out of the sweep", async () => {
+  test("existing notes are backfilled once with the owner's own files; draft uploads survive the sweep; own binned files are reported and restored", async () => {
     const owner = await createUser("U4 backfill owner");
     const recipient = await createUser("U4 backfill recipient");
     const other = await createUser("U4 backfill other");
@@ -193,19 +195,38 @@ describe("notes (U4, G1)", () => {
     expect(linksOf(noteId)).toEqual([old]);
     expect(again!.failed).toBe(0);
 
-    // A draft upload older than a day survives the orphan sweep while the draft shows it; an
-    // unreferenced one of the same age goes to the Bin.
+    // A draft upload older than a day survives the orphan sweep while the draft shows it (U0's
+    // reference check, review M3); an unreferenced one of the same age goes to the Bin.
     const draftNote = await newNote(owner);
     const kept = (await upload(owner, "draft.png", PNG, { attachTo: "note" })).id;
     const stray = (await upload(owner, "stray.png", PNG, { attachTo: "note" })).id;
     await writeDraft(owner, draftNote, `# Draft\n\n${image(kept)}`);
     const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString();
     db.query(`UPDATE documents SET created_at = ?, updated_at = ? WHERE id IN (?, ?)`).run(twoDaysAgo, twoDaysAgo, kept, stray);
-    expect(await keepDraftAttachments()).toBeGreaterThanOrEqual(1);
-    sweepOrphanedAttachments();
+    resetReferenceCacheForTests();
+    await sweepOrphanedAttachments();
     const deleted = (id: string) => (db.query("SELECT deleted_at FROM documents WHERE id = ?").get(id) as { deleted_at: string | null }).deleted_at;
     expect(deleted(kept)).toBeNull();
     expect(deleted(stray)).not.toBeNull();
+
+    // Publishing a note that shows one of your binned files reports it; restoring it and syncing links it
+    // without a new version (POST …/attachments/sync, the caller's own files only).
+    await shareDirectly(owner, draftNote, [recipient.userId]);
+    const published = await publish(owner, draftNote, `# Draft\n\n${image(kept)}\n\n${image(stray, "stray.png")}`);
+    expect(published.binnedAttachments).toEqual([stray]);
+    expect(published.skippedAttachments).toBe(1);
+    expect(await contentStatus(recipient, stray)).toBe(404);
+    expect((await api(owner, "POST", `/bin/document/${stray}/restore`, {})).status).toBe(200);
+    const synced = await api(owner, "POST", `/notes/${draftNote}/attachments/sync`, {});
+    expect(synced.body).toMatchObject({ linked: 1, skippedAttachments: 0, binnedAttachments: [] });
+    expect(await contentStatus(recipient, stray)).toBe(200);
+    // Nobody else can sync: a reader gets 404, and a stranger's sync links nothing of theirs.
+    expect((await api(recipient, "POST", `/notes/${draftNote}/attachments/sync`, {})).status).toBe(404);
+    expect((await api(other, "POST", `/notes/${draftNote}/attachments/sync`, {})).status).toBe(404);
+    // A file that is already linked and then binned is reported too (it shows broken just the same).
+    expect((await api(owner, "DELETE", `/files/${kept}`, {})).status).toBe(200);
+    const again2 = await publish(owner, draftNote, `# Draft v2\n\n${image(kept)}\n\n${image(stray, "stray.png")}`);
+    expect(again2.binnedAttachments).toEqual([kept]);
   }, 30_000);
 
   test("MCP: read_note lists the note's files as the reader may open them; publish_note_draft reports skipped files", async () => {

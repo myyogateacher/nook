@@ -93,6 +93,16 @@ describe("editor wiring", () => {
     expect(source("tasks/CardDialog.tsx")).not.toContain("attachHost");
   });
 
+  test("own files in the Bin are offered for restore after publishing (review M3), in a guarded confirm", () => {
+    const confirm = source("editor/BinnedFilesConfirm.tsx");
+    expect(confirm).toContain("useHistoryDialogGuard(true, onCancel");
+    expect(confirm).toContain("/bin/document/");
+    expect(confirm).toContain("/attachments/sync");
+    const app = source("App.tsx");
+    expect(app).toContain("binnedAttachments");
+    expect(app).toContain("if (binned.length && reloadCurrent) setBinnedFiles");
+  });
+
   test("the slash menu offers File and From Files only where the editor has them", () => {
     const slash = source("editor/slash.ts");
     expect(slash).toMatch(/label: "File".*requires: "openAttachSheet"/);

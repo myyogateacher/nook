@@ -8,7 +8,7 @@ import { notePublishedHook, sourceAccessChangedHook } from "./knowledge/hooks";
 import { checksum, storage, withNoteLock } from "./storage";
 import { deriveNoteTitle } from "./validation";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
-import { keepDraftReferences, syncNoteLinks } from "./noteAttachments";
+import { syncNoteLinks } from "./noteAttachments";
 
 /**
  * Draft writes shared by the HTTP routes and the MCP tools, so both keep the
@@ -60,8 +60,6 @@ export async function writeDraftLocked(note: NoteRow, userId: string, input: str
     return true;
   })();
   if (!saved) return null;
-  // Uploads the draft shows stay out of the orphan sweep while it is a draft (U4; grants nothing).
-  keepDraftReferences(note.id, note.owner_id, markdown);
   return { revision: nextRevision, title, hasDelta: hasDraftDelta(note, draftChecksum), savedAt, ...(proposalId ? { proposalId } : {}) };
 }
 
@@ -108,7 +106,6 @@ export async function createDraftNote(userId: string, folderId: string | null, i
       audit(userId, id, "note.create");
     }
   })();
-  keepDraftReferences(id, userId, markdown);
   return { id, title, folderId: targetFolderId, revision: 1, ...(proposalId ? { proposalId } : {}) };
 }
 
@@ -199,7 +196,7 @@ export async function publishDraft(userId: string, noteId: string, revision: num
     await storage.stageVersion(noteId, nextVersion, markdown, true);
     const timestamp = now();
     const versionId = crypto.randomUUID();
-    let links: ReturnType<typeof syncNoteLinks> = { linked: [], unlinked: [], skipped: [] };
+    let links: ReturnType<typeof syncNoteLinks> = { linked: [], unlinked: [], skipped: [], binned: [] };
     db.transaction(() => {
       db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(versionId, noteId, nextVersion, note.title, checksum(markdown), userId, timestamp);
@@ -218,8 +215,13 @@ export async function publishDraft(userId: string, noteId: string, revision: num
     // Knowledge bases (Wave 44, AC-E) that use this note index it again after 60 s of quiet.
     notePublishedHook(noteId);
     // `skippedAttachments`: referenced files that are not the publisher's, which readers open only
-    // if the file itself is shared with them (or the cap of 100 was reached).
-    return { version: nextVersion, publishedAt: timestamp, ...(links.skipped.length ? { skippedAttachments: links.skipped.length } : {}) };
+    // if the file itself is shared with them (or the cap of 100 was reached). `binnedAttachments`: the
+    // publisher's own referenced files in their Bin (review M3), which the app offers to restore.
+    return {
+      version: nextVersion, publishedAt: timestamp,
+      ...(links.skipped.length ? { skippedAttachments: links.skipped.length } : {}),
+      ...(links.binned.length ? { binnedAttachments: links.binned } : {})
+    };
   });
 }
 

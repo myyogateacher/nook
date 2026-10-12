@@ -92,6 +92,7 @@ import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undo
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
 import { NoteEditor } from "./editor/NoteEditor";
+import { BinnedFilesConfirm } from "./editor/BinnedFilesConfirm";
 import { clearCardSummaries, OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
 import { createAppHistoryState, readHistoryDepth, resolveAppHistorySection, startupRouteState, withHistoryDepth, type AppSection } from "./appShellNavigation";
@@ -931,6 +932,8 @@ export function App() {
   const [sharingFolder, setSharingFolder] = useState<Folder | null>(null);
   // The note whose Move to the Bin is being confirmed, and the trash button that asked (focus returns to it).
   const [deletingNote, setDeletingNote] = useState<{ id: string; title: string } | null>(null);
+  // U4 (review M3): own files of a just-published note that are in the Bin, offered for restore.
+  const [binnedFiles, setBinnedFiles] = useState<{ noteId: string; documentIds: string[] } | null>(null);
   const deleteOpenerRef = useRef<HTMLElement | null>(null);
   // The app's own confirms: signing out with unsaved whiteboard copies, discarding a draft.
   const appConfirm = useConfirm();
@@ -1465,9 +1468,11 @@ export function App() {
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
     let skipped = 0;
+    let binned: string[] = [];
     try {
-      const published = await api<{ skippedAttachments?: number }>(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+      const published = await api<{ skippedAttachments?: number; binnedAttachments?: string[] }>(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
       skipped = published.skippedAttachments ?? 0;
+      binned = published.binnedAttachments ?? [];
     } catch (reason) {
       if (!(reason instanceof ApiError) || !isDraftChangedError(reason.status, reason.payload)) throw reason;
       // Someone else (an MCP key or another session) wrote the draft after this editor's last save.
@@ -1481,6 +1486,8 @@ export function App() {
     else await loadNavigation();
     // U4 (D408): files in the note that are not the publisher's are not shared through it.
     flash(skipped ? `New version published. ${skipped === 1 ? "One file in it is" : `${skipped} files in it are`} not shared through the note (someone else's, or in the Bin).` : "New version published");
+    // Review M3: your own files in the note that are in your Bin: offer to restore them (not when leaving).
+    if (binned.length && reloadCurrent) setBinnedFiles({ noteId: note.id, documentIds: binned });
     return true;
   }
 
@@ -2368,6 +2375,14 @@ export function App() {
 
       {panel === "history" && note && <HistoryPanel note={note} canRestore={canWrite} onClose={() => setPanel(null)} onRestored={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Version restored as a draft"); }} />}
       {panel === "share" && note && <AccessSheet kind="note" id={note.id} title={note.title || "Untitled"} guardHistory onClose={() => setPanel(null)} onSaved={async () => { setPanel(null); await loadNote(note.id); await loadNavigation(); flash("Access updated"); }} />}
+      {binnedFiles && <BinnedFilesConfirm noteId={binnedFiles.noteId} documentIds={binnedFiles.documentIds}
+        onCancel={() => setBinnedFiles(null)}
+        onDone={(message) => {
+          const shown = binnedFiles.noteId;
+          setBinnedFiles(null);
+          flash(message);
+          if (note?.id === shown) void loadNote(shown);
+        }} />}
       {deletingNote && <NoteDeleteConfirm title={deletingNote.title}
         onCancel={() => { setDeletingNote(null); focusAfterDeleteConfirm(); }}
         onConfirm={() => {

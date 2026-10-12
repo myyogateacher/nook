@@ -407,10 +407,11 @@ describe("Bin API", () => {
     expect(noteItem).toEqual({
       type: "note", id: noteId, title: "Listed note", folder_id: folderId, folder_name: "Listed folder", size_bytes: null,
       deleted_at: noteRow(noteId)!.deleted_at!, purge_after: noteRow(noteId)!.purge_after!, purging: false,
-      board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null, can_purge: true
+      board_id: null, board_name: null, attachment: false, attachment_of: null, attachment_kind: null, can_purge: true,
+      restore_folder_name: "Listed folder"
     });
     expect(documentItem).toMatchObject({ type: "document", title: "listed.txt", folder_name: "Default", size_bytes: 12, purging: false });
-    expect(Object.keys(documentItem!).sort()).toEqual(["attachment", "attachment_kind", "attachment_of", "board_id", "board_name", "can_purge", "deleted_at", "folder_id", "folder_name", "id", "kind", "purge_after", "purging", "size_bytes", "title", "type"]);
+    expect(Object.keys(documentItem!).sort()).toEqual(["attachment", "attachment_kind", "attachment_of", "board_id", "board_name", "can_purge", "deleted_at", "folder_id", "folder_name", "id", "kind", "purge_after", "purging", "restore_folder_name", "size_bytes", "title", "type"]);
     expect(documentItem!.kind).toBe("file");
     expect(items.some((item) => item.id === live || item.id === othersNote)).toBe(false);
     expect((await listBin(owner, "?type=note")).items.map((item) => item.id)).toEqual([noteId]);
@@ -419,7 +420,7 @@ describe("Bin API", () => {
 
     // The original folder is gone: the item reports no folder and will restore to Default.
     expect((await request(`/folders/${folderId}`, { method: "DELETE", body: "{}" }, owner)).status).toBe(200);
-    expect((await listBin(owner, "?type=note")).items[0]).toMatchObject({ folder_id: null, folder_name: null });
+    expect((await listBin(owner, "?type=note")).items[0]).toMatchObject({ folder_id: null, folder_name: null, restore_folder_name: "Default" });
     expect((await request("/bin", {}, undefined)).status).toBe(401);
   });
 

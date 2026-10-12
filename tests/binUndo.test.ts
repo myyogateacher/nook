@@ -13,10 +13,19 @@ const read = (...parts: string[]) => readFileSync(join(root, ...parts), "utf8");
 const latest = () => [...toast.getHistory()].reverse().find((item) => !("dismiss" in item && item.dismiss)) as ToastT;
 const titleText = (item: ToastT) => typeof item.title === "string" ? item.title : String((item.title as { props: { children: string } }).props.children);
 
-const hadWindow = "window" in globalThis;
-afterEach(() => { if (!hadWindow) delete (globalThis as { window?: unknown }).window; });
+// Other test files may leave `window` defined but undefined; put back whatever was there.
+const scope = globalThis as { window?: unknown };
+let saved: { had: boolean; value: unknown } | null = null;
+afterEach(() => {
+  if (!saved) return;
+  if (saved.had) scope.window = saved.value;
+  else delete scope.window;
+  saved = null;
+});
 function withWindow() {
-  if (!("window" in globalThis)) (globalThis as { window?: unknown }).window = new EventTarget();
+  if (scope.window && typeof (scope.window as EventTarget).addEventListener === "function") return;
+  saved = { had: "window" in scope, value: scope.window };
+  scope.window = new EventTarget();
 }
 
 const purging = () => new ApiError("This item is being permanently deleted", 409, { code: "PURGING" });

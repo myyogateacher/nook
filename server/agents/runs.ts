@@ -1,14 +1,15 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { config } from "../config";
 import { audit, db, now } from "../db";
-import { AGENT_BOUNDS, CHAT_RUN_TIMEOUT_S, CONFIRMATION_TTL_MS, PREAMBLE_VERSION, preambleFor, RUN_SLOTS, toolResultEnd, toolResultMarker, type DailyUsage, type PendingConfirmation, type RunErrorCode, type RunStatus, type TokenUsage, type ToolCallView, type ToolImageRef } from "../../shared/agents";
+import { AGENT_BOUNDS, CHAT_IMAGE_BOUNDS, CHAT_RUN_TIMEOUT_S, CONFIRMATION_TTL_MS, PREAMBLE_VERSION, preambleFor, RUN_SLOTS, toolResultEnd, toolResultMarker, type DailyUsage, type PendingConfirmation, type RunErrorCode, type RunStatus, type TokenUsage, type ToolCallView, type ToolImageRef, type ChatAttachmentInput } from "../../shared/agents";
 import type { AgentRow } from "./agentsService";
 import { chatAgent, finishAssistantMessage, flushAssistantText, flushToolCalls, insertAssistantPlaceholder, insertUserMessage, ownedChat, parseToolCalls, pathTo, type ChatRow, type MessageRow } from "./chats";
 import { McpClientError, type McpImage } from "./mcpClient";
 import { storeToolImages } from "./images";
 import { runNookTool } from "./nookBridge";
 import { ProviderError, runLoop, type ChatTurn, type ModelToolCall, type ToolExecution } from "./loop";
-import { connectionFor } from "./providers";
+import { connectionFor, connectionSeesImages } from "./providers";
+import { checkChatAttachments, imageCountsFor, linkChatAttachments, withImageParts } from "./chatImages";
 import { readAgentSettings, roleMayChat } from "./settings";
 import { AgentError } from "./status";
 import { channelOf, openChannel, type RunChannel } from "./stream";
@@ -107,26 +108,37 @@ function assertSlots(userId: string, chatId: string) {
  * message, and as many recent complete turns as fit the provider's context (characters ÷ 4).
  */
 export function windowTurns(agent: AgentRow, displayName: string, path: MessageRow[], contextTokens: number): ChatTurn[] {
-  const system: ChatTurn = { role: "system", content: `${preambleFor(displayName)}\n\n${agent.system_prompt}`.trim() };
-  const turns = path.filter((row) => (row.role === "user" || row.role === "assistant") && row.content.length > 0 && (row.role === "user" || row.status === "complete" || row.status === "step_limit" || row.status === "cancelled"))
-    .map((row): ChatTurn => ({ role: row.role as "user" | "assistant", content: row.content }));
+  return windowEntries(agent, displayName, path, contextTokens).map((entry) => entry.turn);
+}
+
+/**
+ * `windowTurns` with each turn's message id (null for the system turn), so U5 can add the images of
+ * the user turns it kept. `images` counts each message's images: a user turn with images but no text
+ * is kept, and each image counts `CHAT_IMAGE_BOUNDS.tokensEach` tokens against the window.
+ */
+export function windowEntries(agent: AgentRow, displayName: string, path: MessageRow[], contextTokens: number, images: ReadonlyMap<string, number> = new Map()): Array<{ turn: ChatTurn & { content: string }; messageId: string | null }> {
+  type Entry = { turn: ChatTurn & { content: string }; messageId: string | null; size: number };
+  const systemText = `${preambleFor(displayName)}\n\n${agent.system_prompt}`.trim();
+  const system: Entry = { turn: { role: "system", content: systemText }, messageId: null, size: systemText.length };
+  const turns = path.filter((row) => (row.role === "user" || row.role === "assistant") && (row.content.length > 0 || (row.role === "user" && (images.get(row.id) ?? 0) > 0)) && (row.role === "user" || row.status === "complete" || row.status === "step_limit" || row.status === "cancelled"))
+    .map((row): Entry => ({ turn: { role: row.role as "user" | "assistant", content: row.content }, messageId: row.id, size: row.content.length + (images.get(row.id) ?? 0) * CHAT_IMAGE_BOUNDS.tokensEach * 4 }));
   const budget = Math.max(2048, contextTokens - 1024) * 4;
-  let used = system.content.length;
-  const kept: ChatTurn[] = [];
+  let used = system.size;
+  const kept: Entry[] = [];
   const first = turns[0];
-  if (first) used += first.content.length;
+  if (first) used += first.size;
   for (let index = turns.length - 1; index >= 1; index -= 1) {
     const turn = turns[index]!;
-    if (used + turn.content.length > budget) break;
-    used += turn.content.length;
+    if (used + turn.size > budget) break;
+    used += turn.size;
     kept.unshift(turn);
   }
-  return [system, ...(first ? [first] : []), ...kept.filter((turn) => turn !== first)];
+  return [system, ...(first ? [first] : []), ...kept.filter((turn) => turn !== first)].map(({ turn, messageId }) => ({ turn, messageId }));
 }
 
 export type StartInput =
   /** `parentId` undefined = under the active leaf; null = a new root (an edit of the first message). */
-  | { kind: "send"; content: string; parentId?: string | null }
+  | { kind: "send"; content: string; parentId?: string | null; attachments?: ChatAttachmentInput[] }
   | { kind: "regenerate"; messageId: string };
 
 /** Starts a run on an owned chat. Answers once the rows exist; the loop runs in the background. */
@@ -145,9 +157,18 @@ export function startChatRun(actor: { userId: string; role: string; displayName:
 
   let userMessage: MessageRow | null = null;
   let parentId: string;
+  let imageCount = 0;
   if (input.kind === "send") {
     if (Buffer.byteLength(input.content, "utf8") > AGENT_BOUNDS.userMessageBytes) throw new AgentError(400, "TOO_LARGE", "A message can be at most 32 KiB");
-    userMessage = insertUserMessage(chat, actor.userId, input.content, input.parentId === undefined ? chat.active_leaf_id : input.parentId);
+    // U5 (Q10): images only to a vision-capable model, only the sender's own image files, at most 5; checked before any row.
+    const attachments = checkChatAttachments(actor.userId, input.attachments ?? [], connectionSeesImages(connection));
+    if (attachments.length === 0 && !input.content.trim()) throw new AgentError(400, "INVALID", "Write a message or attach an image");
+    imageCount = attachments.length;
+    userMessage = db.transaction(() => {
+      const row = insertUserMessage(chat, actor.userId, input.content, input.parentId === undefined ? chat.active_leaf_id : input.parentId, attachments.length ? (attachments.length === 1 ? "Image" : "Images") : undefined);
+      linkChatAttachments(actor.userId, row.id, attachments);
+      return row;
+    })();
     parentId = userMessage.id;
   } else {
     const target = db.query("SELECT * FROM chat_messages WHERE id = ? AND chat_id = ?").get(input.messageId, chat.id) as MessageRow | null;
@@ -171,7 +192,8 @@ export function startChatRun(actor: { userId: string; role: string; displayName:
   active.set(runId, run);
   const channel = openChannel(runId);
   channel.emit({ type: "run", data: { runId, chatId: chat.id, messageId: assistantMessage.id, userMessageId: userMessage?.id ?? null } });
-  audit(actor.userId, null, "agents.run.start", { runId, chatId: chat.id, agentId: agent.id });
+  // U5: ids and counts only, never image bytes or names.
+  audit(actor.userId, null, "agents.run.start", { runId, chatId: chat.id, agentId: agent.id, ...(imageCount ? { userMessageId: userMessage!.id, images: imageCount } : {}) });
   // QA M1: people reading the chat (shared with them) hear of the new turn and follow the run.
   const revision = (db.query("SELECT revision FROM chats WHERE id = ?").get(chat.id) as { revision: number } | null)?.revision ?? 0;
   if (userMessage) publishChatUpdate(chat.id, { type: "message_added", data: { messageId: userMessage.id, revision } });
@@ -470,9 +492,15 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
   let errorMessage: string | null = null;
   let toolCallCount = 0;
   let droppedToolCalls = 0;
+  let imageStats: { sent: number; omitted: number; bytes: number } | null = null;
   try {
     db.query("UPDATE agent_runs SET status = 'running', started_at = ? WHERE id = ?").run(now(), run.runId);
-    const turns = windowTurns(agent, displayName, pathTo(chat.id, parentId), connection.compat.contextTokens);
+    const path = pathTo(chat.id, parentId);
+    // U5: the user turns' images, for a vision-capable model (checked again now: an admin may have changed the mark).
+    const counts = imageCountsFor(path.filter((row) => row.role === "user").map((row) => row.id), chat.owner_id);
+    const entries = windowEntries(agent, displayName, path, connection.compat.contextTokens, counts);
+    const { turns, stats } = counts.size > 0 ? await withImageParts(entries, chat.owner_id, connectionSeesImages(connection)) : { turns: entries.map((entry) => entry.turn as ChatTurn), stats: null };
+    imageStats = stats;
     const result = await runLoop({
       connection,
       messages: turns,
@@ -588,7 +616,7 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
       console.error("Agent run could not be marked failed", again instanceof Error ? again.name : "Unknown error");
     }
   }
-  audit(run.userId, null, "agents.run.finish", { runId: run.runId, chatId: chat.id, status, errorCode, toolCalls: run.toolCalls.length, droppedToolCalls, promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0 });
+  audit(run.userId, null, "agents.run.finish", { runId: run.runId, chatId: chat.id, status, errorCode, toolCalls: run.toolCalls.length, droppedToolCalls, promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0, ...(imageStats ? { imagesSent: imageStats.sent, imagesOmitted: imageStats.omitted } : {}) });
   if (errorCode && errorMessage) channel.emit({ type: "error", data: { code: errorCode, message: errorMessage } });
   channel.emit({ type: "done", data: { status, messageId } });
   channel.close();

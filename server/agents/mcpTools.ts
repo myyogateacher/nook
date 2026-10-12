@@ -10,6 +10,7 @@ import { currentAgentRun } from "./depth";
 import { startExternalRun } from "./external";
 import { holdPlainRun } from "./limits";
 import { chatDetail, listChats, listSharedChats, parseToolCalls, pathTo } from "./chats";
+import { chatAttachmentsFor } from "./chatImages";
 import { roleMayChat } from "./settings";
 import { AgentError, agentsStatus } from "./status";
 
@@ -143,7 +144,7 @@ export const agentTools: McpToolSpec[] = [
   defineTool({
     name: "get_chat",
     title: "Read a chat",
-    description: `Read one of the key owner's chats, or a chat shared with them (read-only): the branch on screen (user and assistant turns, oldest first), each with its status and the names of the tools it called. At most 200 turns and 256 KiB of text; longer chats say so. ${UNTRUSTED}`,
+    description: `Read one of the key owner's chats, or a chat shared with them (read-only): the branch on screen (user and assistant turns, oldest first), each with its status, the names of the tools it called, and a user turn's attached images (id, name, type: read them with list_attachments, hostKind "chat_message"). At most 200 turns and 256 KiB of text; longer chats say so. ${UNTRUSTED}`,
     scopes: ["agents:read"],
     access: { mode: "global", related: ["chatId"] },
     write: false,
@@ -157,7 +158,10 @@ export const agentTools: McpToolSpec[] = [
         rethrow(error);
       }
       const path = pathTo(detail.chat.id, detail.chat.activeLeafId).filter((row) => row.role !== "tool");
-      const turns = path.slice(-200).map((row) => ({ id: row.id, role: row.role, content: row.content, status: row.status, model: row.model, createdAt: row.created_at, ...(row.role === "assistant" && row.tool_calls_json ? { toolCalls: parseToolCalls(row.tool_calls_json).map((call) => ({ tool: call.tool, server: call.server, ok: call.ok })) } : {}) }));
+      // U5: a user turn's images by id, name, and type (read one with list_attachments / read_attachment_text, hostKind "chat_message"); never bytes.
+      const images = chatAttachmentsFor(path.slice(-200).filter((row) => row.role === "user").map((row) => row.id));
+      const turns = path.slice(-200).map((row) => ({ id: row.id, role: row.role, content: row.content, status: row.status, model: row.model, createdAt: row.created_at, ...(row.role === "assistant" && row.tool_calls_json ? { toolCalls: parseToolCalls(row.tool_calls_json).map((call) => ({ tool: call.tool, server: call.server, ok: call.ok })) } : {}),
+        ...(images.get(row.id)?.length ? { attachments: images.get(row.id)!.map((item) => item.removed ? { id: item.documentId, removed: true } : { id: item.documentId, name: item.name, mimeType: item.mimeType }) } : {}) }));
       let size = 0;
       let truncated = path.length > 200;
       const kept: typeof turns = [];

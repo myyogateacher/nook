@@ -22,9 +22,31 @@ import { imagesSample, markdownSample } from "./markdownSamples";
  *   `md:<name>`        stream a Markdown sample (`gfm`, `long`; tests/support/markdownSamples.ts)
  *   `mdslow:<ms>:<name>` the same with `ms` between chunks (streaming performance)
  *   `mdimg:<file id>|<image URL>` stream the images sample (data:, a Nook file, an outside picture)
+ *
+ * U5: a user turn may be a content array (`text` and `image_url` parts); its text parts steer the
+ * reply as above, every image part is recorded on the call (`images`), and each counts
+ * `FAKE_IMAGE_TOKENS` prompt tokens in the usage chunk.
  */
 
-export type ProviderCall = { method: string; path: string; headers: Record<string, string>; body: unknown };
+/** An `image_url` part a chat request carried (U5): its data URL's type and decoded size, and which message (index) held it. */
+export type ProviderImagePart = { messageIndex: number; mimeType: string; bytes: number; dataUrl: boolean };
+export type ProviderCall = { method: string; path: string; headers: Record<string, string>; body: unknown; images: ProviderImagePart[] };
+
+/** The prompt tokens the fake reports for one image part (a real provider counts tiles; any fixed number will do). */
+export const FAKE_IMAGE_TOKENS = 765;
+
+type Part = { type?: string; text?: string; image_url?: { url?: string } };
+/** A turn's text: the string, or its `text` parts joined (U5 content arrays). */
+export const turnText = (content: unknown): string => typeof content === "string" ? content : Array.isArray(content) ? (content as Part[]).filter((part) => part?.type === "text").map((part) => part.text ?? "").join("\n") : "";
+/** Every `image_url` part of a request's messages. */
+export function imageParts(messages: unknown): ProviderImagePart[] {
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap((turn: { content?: unknown }, messageIndex) => Array.isArray(turn?.content) ? (turn.content as Part[]).filter((part) => part?.type === "image_url").map((part) => {
+    const url = part.image_url?.url ?? "";
+    const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
+    return { messageIndex, mimeType: match?.[1] ?? "", bytes: match ? Buffer.from(match[2]!, "base64").byteLength : 0, dataUrl: Boolean(match) };
+  }) : []);
+}
 
 export type FakeProvider = { baseUrl: string; port: number; calls: ProviderCall[]; stop: () => void; models: string[] };
 
@@ -65,7 +87,7 @@ export function startFakeProvider(port: number, options: { models?: string[]; na
       if (request.method === "POST") {
         try { body = await request.json(); } catch { body = null; }
       }
-      calls.push({ method: request.method, path: url.pathname, headers, body });
+      calls.push({ method: request.method, path: url.pathname, headers, body, images: imageParts((body as { messages?: unknown } | null)?.messages) });
       if (request.method === "GET" && url.pathname === "/v1/models") {
         return Response.json({ object: "list", data: models.map((id) => ({ id, object: "model" })) });
       }
@@ -86,7 +108,7 @@ export function startFakeProvider(port: number, options: { models?: string[]; na
       if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
         const payload = body as { model?: string; messages?: Array<{ role: string; content: string | null; tool_calls?: unknown[] }>; stream?: boolean; tools?: Array<{ function: { name: string } }> } | null;
         const model = payload?.model ?? "gpt-6-luna";
-        const last = [...(payload?.messages ?? [])].reverse().find((turn) => turn.role === "user")?.content ?? "";
+        const last = turnText([...(payload?.messages ?? [])].reverse().find((turn) => turn.role === "user")?.content ?? "");
         const lastTurn = payload?.messages?.at(-1);
         let match = /^(echo|slow|status|nousage|stall|redirect|huge|tool|toolbig|loop|md|mdslow|mdimg):(.*)$/s.exec(last);
         // AC-B: after a tool result came back (`tool:` mode), the model answers with an excerpt of it;
@@ -124,7 +146,7 @@ export function startFakeProvider(port: number, options: { models?: string[]; na
           text = imagesSample((fileId ?? "").trim(), (url ?? "").trim());
         }
         const words = mode === "huge" || mode === "toolbig" ? text.match(/.{1,4096}/g) ?? [] : text.split(/(?<=\s)/);
-        const promptTokens = Math.ceil((payload?.messages ?? []).reduce((sum, turn) => sum + (turn.content?.length ?? 0), 0) / 4);
+        const promptTokens = Math.ceil((payload?.messages ?? []).reduce((sum, turn) => sum + turnText(turn.content).length, 0) / 4) + imageParts(payload?.messages).length * FAKE_IMAGE_TOKENS;
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
             try {

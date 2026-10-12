@@ -1,5 +1,5 @@
 import { api, ApiError, getCsrfToken, noteRequestOutcome } from "../api";
-import type { AgentApiUsage, AgentProviderChoice, AuditFacets, AuditRunDetail, AuditRunSummary, AgentDetail, AgentSettings, AgentSummary, AgentToolRef, ChatDetail, ChatMessage, ChatUpdateEvent, ChatSummary, DailyUsage, DeclaredStdioServer, LinkableKey, NookLink, ProviderCompat, ProviderKnowledgePolicy, ProviderSummary, PublicLinkState, RunEvent, ServerAuthKind, ServerAvailability, ToolCatalog, ToolPolicy, ToolServerSummary } from "../../shared/agents";
+import type { ChatAttachmentInput, ProviderVisionPolicy, AgentApiUsage, AgentProviderChoice, AuditFacets, AuditRunDetail, AuditRunSummary, AgentDetail, AgentSettings, AgentSummary, AgentToolRef, ChatDetail, ChatMessage, ChatUpdateEvent, ChatSummary, DailyUsage, DeclaredStdioServer, LinkableKey, NookLink, ProviderCompat, ProviderKnowledgePolicy, ProviderSummary, PublicLinkState, RunEvent, ServerAuthKind, ServerAvailability, ToolCatalog, ToolPolicy, ToolServerSummary } from "../../shared/agents";
 
 /** The agent chat API (docs/plan/API_CONTRACTS.md § Agent chat), plus the SSE reader for runs. */
 
@@ -44,7 +44,8 @@ export const updateChat = (id: string, input: { title?: string; pinned?: boolean
 export const deleteChat = (id: string) => api<{ ok: true }>(`/chats/${id}`, { method: "DELETE", body: "{}" });
 export type StartedRun = { runId: string; userMessage: ChatMessage | null; assistantMessage: ChatMessage };
 /** `parentId` undefined: under the active leaf; null: a new first message (an edit of the first turn). */
-export const sendMessage = (chatId: string, content: string, parentId?: string | null) => api<StartedRun>(`/chats/${chatId}/messages`, { method: "POST", body: JSON.stringify({ content, ...(parentId !== undefined ? { parentId } : {}) }) });
+/** U5: `attachments` are images (the sender's own documents) to send with it, at most 5. */
+export const sendMessage = (chatId: string, content: string, parentId?: string | null, attachments: ChatAttachmentInput[] = []) => api<StartedRun>(`/chats/${chatId}/messages`, { method: "POST", body: JSON.stringify({ content, ...(parentId !== undefined ? { parentId } : {}), ...(attachments.length ? { attachments } : {}) }) });
 export const regenerate = (chatId: string, messageId: string) => api<StartedRun>(`/chats/${chatId}/messages/${messageId}/regenerate`, { method: "POST", body: "{}" });
 export const cancelRun = (runId: string) => api<{ status: string }>(`/runs/${runId}/cancel`, { method: "POST", body: "{}" });
 // AC-B: confirmations, the tool catalog, and the Link Nook key sheet.
@@ -57,7 +58,7 @@ export const agentLink = (agentId: string) => api<{ link: NookLink; keys: Linkab
 export const setAgentLink = (agentId: string, nookKeyId: string | null) => api<{ link: NookLink }>(`/agents/${agentId}/link`, { method: "PUT", body: JSON.stringify({ nookKeyId }) });
 
 // Admin (Settings → AI).
-export type ProviderInput = { name: string; baseUrl?: string; apiKey?: string | null; defaultModel?: string; compat?: Partial<ProviderCompat>; isDefault?: boolean; knowledge?: Partial<ProviderKnowledgePolicy> };
+export type ProviderInput = { name: string; baseUrl?: string; apiKey?: string | null; defaultModel?: string; compat?: Partial<ProviderCompat>; isDefault?: boolean; knowledge?: Partial<ProviderKnowledgePolicy>; vision?: Partial<ProviderVisionPolicy> };
 export const listProviders = () => api<{ providers: ProviderSummary[] }>("/agents/admin/providers");
 export const createProvider = (input: ProviderInput) => api<{ provider: ProviderSummary }>("/agents/admin/providers", { method: "POST", body: JSON.stringify(input) });
 export const updateProvider = (id: string, input: Partial<ProviderInput> & { expectedRevision: number; removeSecret?: boolean }) => api<{ provider: ProviderSummary }>(`/agents/admin/providers/${id}`, { method: "PATCH", body: JSON.stringify(input) });

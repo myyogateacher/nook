@@ -151,7 +151,7 @@ export async function storeForKey(key: Pick<McpKeyContext, "keyId" | "userId">, 
 
 const uuid = z.string().uuid();
 const sha256Hex = z.string().regex(/^[0-9a-fA-F]{64}$/, "sha256 is 64 hex characters");
-const purposeInput = z.enum(["file", "task_attachment", "attachment"]).optional().describe("file (default): a Files document in folderId or Default. task_attachment: no folder, for link_attachment. attachment: a Files document in your Attachments folder, to attach to an event, card, or row");
+const purposeInput = z.enum(["file", "task_attachment", "attachment"]).optional().describe("file (default): a Files document in folderId or Default. task_attachment: no folder, for link_attachment. attachment: a Files document in your Attachments folder, only useful with a module tool that attaches files over MCP (check that tool's description; until one exists, nothing links it and it moves to the Bin after a day)");
 
 function patchErrorToMcp(error: DocumentPatchError) {
   if (error.code === "AUDIENCE_CHANGE") return new McpToolError("AUDIENCE_CHANGE", error.message);

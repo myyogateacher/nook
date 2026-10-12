@@ -60,7 +60,8 @@ describe("upload targets", () => {
     const app = source("files/FilesApp.tsx");
     expect(app).toContain("uploadFolderFor(folder, currentFolder, defaultFolder)");
     expect(app).toContain("folderUploadParentFor(folder, currentFolder)");
-    expect(app).toMatch(/async function chooseCaptured[\s\S]{0,200}stripImageLocation/);
+    expect(app).toMatch(/async function chooseCaptured[\s\S]{0,600}stripImageLocation[\s\S]{0,300}reason instanceof LocationStripError \? reason.message/);
+    expect(app).toMatch(/refused.map[\s\S]{0,200}rejected: error!/);
     expect(app).toContain("onPhoto={(files) => { void chooseCaptured(files); }}");
     expect(app).toContain("void chooseCaptured(files.map((file) => renamePastedFile(file, at)))");
   });

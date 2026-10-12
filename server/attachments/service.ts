@@ -46,6 +46,16 @@ export function refuseSystemFolder(folderId: string | null | undefined) {
 export const isSystemFolderError = (error: unknown) => error instanceof Error && /\bSYSTEM_FOLDER\b/.test(error.message) && !(error instanceof AttachmentError);
 
 /**
+ * The name a new system folder gets: "Attachments", or "Attachments (Nook)" when the person already
+ * has an ordinary root folder called "Attachments" (any case; review L1), so the two never look alike.
+ */
+function systemFolderName(userId: string, kind: string) {
+  const base = kind === ATTACHMENTS_FOLDER_KIND ? ATTACHMENTS_FOLDER_NAME : kind;
+  const taken = db.query("SELECT 1 FROM folders WHERE owner_id = ? AND parent_id IS NULL AND system_kind IS NULL AND name = ? COLLATE NOCASE").get(userId, base);
+  return taken ? `${base} (Nook)` : base;
+}
+
+/**
  * The person's system folder of `kind`, created on first use (D391): "Attachments", at the root,
  * private. Concurrent first uses share one folder (the partial unique index decides).
  */
@@ -56,7 +66,7 @@ export function ensureSystemFolder(userId: string, kind: string = ATTACHMENTS_FO
     const id = crypto.randomUUID();
     const timestamp = now();
     const inserted = db.query("INSERT OR IGNORE INTO folders (id, owner_id, parent_id, name, created_at, updated_at, system_kind) VALUES (?, ?, NULL, ?, ?, ?, ?)")
-      .run(id, userId, kind === ATTACHMENTS_FOLDER_KIND ? ATTACHMENTS_FOLDER_NAME : kind, timestamp, timestamp, kind);
+      .run(id, userId, systemFolderName(userId, kind), timestamp, timestamp, kind);
     if (inserted.changes === 1) audit(userId, null, "folder.create", { folderId: id, systemKind: kind });
     return (db.query("SELECT id FROM folders WHERE owner_id = ? AND system_kind = ?").get(userId, kind) as { id: string }).id;
   })();
@@ -196,13 +206,38 @@ export function linkAttachment(userId: string, kind: HostKind, hostId: string, i
   })();
 }
 
+const DELETE_LINK: Record<HostSpec["store"], string> = {
+  attachment_links: "DELETE FROM attachment_links WHERE host_kind = $kind AND host_id = $hostId AND document_id = $documentId",
+  card_attachments: "DELETE FROM card_attachments WHERE card_id = $hostId AND document_id = $documentId AND $kind = 'card'",
+  collection_row_attachments: "DELETE FROM collection_row_attachments WHERE row_id = $hostId AND document_id = $documentId AND $kind = 'row'"
+};
+
 /**
- * Removes a link from a declared host (DELETE /api/attachments/…). The last link of an
- * Attachments-folder document moves it to its owner's Bin (D395); a Files item someone linked is
- * never binned by link changes. Unknown links answer 404.
+ * Removes a link (DELETE /api/attachments/…).
+ *
+ * - **The file's owner** may always withdraw their own document from any host, of every kind,
+ *   whatever their access to the host is now (review M1: a host they lost edit or read access to,
+ *   or a team role lowered to viewer). Nothing about the host is checked or told: when they can no
+ *   longer read the host the answer is `{}` (the route sends `{ ok: true }` only).
+ * - Anyone else needs a **declared** host's `canUnlink` (events: the linker or a calendar manager
+ *   while they can edit; chat messages: the chat's owner); derived and module hosts refuse.
+ *
+ * The last link of an Attachments-folder document moves it to its owner's Bin (D395); a Files item
+ * someone linked is never binned by link changes. Unknown links answer 404.
  */
-export function unlinkAttachment(userId: string, kind: HostKind, hostId: string, documentId: string) {
+export function unlinkAttachment(userId: string, kind: HostKind, hostId: string, documentId: string): { documentBinned?: boolean } {
   const spec = HOSTS[kind];
+  const ownerId = (db.query("SELECT owner_id FROM documents WHERE id = ? AND purge_started_at IS NULL").get(documentId) as { owner_id: string } | null)?.owner_id ?? null;
+  if (ownerId !== null && ownerId === userId) {
+    const outcome = db.transaction(() => {
+      const removed = db.query(DELETE_LINK[spec.store]).run({ kind, hostId, documentId }).changes;
+      if (!removed) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
+      audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId, asOwner: true });
+      return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
+    })();
+    if (outcome.documentBinned) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
+    return hostReadable(kind, hostId, userId) ? outcome : {};
+  }
   if (spec.linking !== "declared" || !spec.canUnlink) {
     throw new AttachmentError(409, spec.linking === "derived" ? "LINKS_DERIVED" : "HOST_MANAGED", `Remove files from the ${spec.noun} itself`);
   }
@@ -211,8 +246,7 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
     const link = db.query("SELECT host_kind, host_id, document_id, part_id, position, linked_by, created_at FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?")
       .get(kind, hostId, documentId) as LinkRow | null;
     if (!link) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
-    const ownerId = (db.query("SELECT owner_id FROM documents WHERE id = ?").get(documentId) as { owner_id: string } | null)?.owner_id ?? "";
-    if (!spec.canUnlink!(userId, hostId, link, ownerId)) throw new AttachmentError(403, "READ_ONLY", "You cannot remove this file");
+    if (!spec.canUnlink!(userId, hostId, link, ownerId ?? "")) throw new AttachmentError(403, "READ_ONLY", "You cannot remove this file");
     db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, documentId);
     audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId });
     return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
@@ -226,7 +260,8 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
  * referenced documents that are already linked, plus those the actor OWNS (live Files documents, not
  * whiteboards), capped at the host's limit in reference order. Nobody's file is ever linked by
  * someone else (T350). Links that are no longer referenced are removed; documents are never binned
- * here (an older version may still show them), the sweeper handles orphans. Call inside the host's
+ * here (an older version may still show them), the sweeper handles orphans. `binned` lists the
+ * actor's own referenced files that are in their Bin (review M3: show them broken, offer Restore). Call inside the host's
  * own lock; returns what changed.
  */
 export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string, documentIds: readonly string[]) {
@@ -236,12 +271,19 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
     const current = new Map(hostLinks(kind, hostId).map((link) => [link.document_id, link]));
     const wanted: string[] = [];
     const skipped: string[] = [];
+    // Review M3: the actor's own referenced files that are in their Bin, so the host can show them as
+    // broken with a Restore (they are also in `skipped`; a link already there is kept).
+    const binned: string[] = [];
+    const binnedOwned = db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL");
     for (const raw of documentIds) {
       const id = raw.toLowerCase();
-      if (wanted.includes(id)) continue;
+      if (wanted.includes(id) || skipped.includes(id)) continue;
       if (wanted.length >= spec.caps.perHost) { skipped.push(id); continue; }
       if (current.has(id) || linkableDocument(id, actorId)) wanted.push(id);
-      else skipped.push(id);
+      else {
+        skipped.push(id);
+        if (binnedOwned.get(id, actorId)) binned.push(id);
+      }
     }
     const unlinked = [...current.keys()].filter((id) => !wanted.includes(id));
     for (const id of unlinked) db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
@@ -257,7 +299,7 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
       linked.push(id);
     });
     if (linked.length || unlinked.length) audit(actorId, kind === "note" ? hostId : null, "attachment.sync", { hostKind: kind, hostId, linked: linked.length, unlinked: unlinked.length });
-    return { linked, unlinked, skipped };
+    return { linked, unlinked, skipped, binned };
   })();
 }
 
@@ -282,8 +324,8 @@ export function binIfOrphanedAttachment(documentId: string, actorId: string | nu
 
 /**
  * "Where is this file used?" for its owner (D409, T351): the hosts the owner can read, by kind, with
- * a title, and a count of the others (hosts the owner cannot open, such as a card on a board that
- * stopped being shared with them). 404 for anyone but the owner.
+ * a title, and the others (hosts the owner cannot open, such as a card on a board that stopped being
+ * shared with them) by kind and id only. 404 for anyone but the owner.
  */
 export function documentUsage(documentId: string, ownerId: string) {
   const owned = db.query("SELECT id FROM documents WHERE id = ? AND owner_id = ? AND purge_started_at IS NULL").get(documentId, ownerId);
@@ -292,11 +334,17 @@ export function documentUsage(documentId: string, ownerId: string) {
     UNION ALL SELECT 'card', card_id FROM card_attachments WHERE document_id = $id
     UNION ALL SELECT 'row', row_id FROM collection_row_attachments WHERE document_id = $id`).all({ id: documentId }) as Array<{ host_kind: string; host_id: string }>;
   const uses: Array<{ hostKind: HostKind; hostId: string; title: string | null }> = [];
+  // Review M1: the places the owner can no longer open, by id only (no title), so Files can offer
+  // "Remove from places you can't open" (the owner may always unlink their own file).
+  const hidden: Array<{ hostKind: HostKind; hostId: string }> = [];
   let hiddenCount = 0;
   for (const link of links) {
     const spec = (HOSTS as Record<string, HostSpec | undefined>)[link.host_kind];
     if (spec && hostReadable(spec.kind, link.host_id, ownerId)) uses.push({ hostKind: spec.kind, hostId: link.host_id, title: spec.title(link.host_id) });
-    else hiddenCount += 1;
+    else {
+      hiddenCount += 1;
+      if (spec) hidden.push({ hostKind: spec.kind, hostId: link.host_id });
+    }
   }
-  return { uses, hiddenCount, total: links.length };
+  return { uses, hidden, hiddenCount, total: links.length };
 }

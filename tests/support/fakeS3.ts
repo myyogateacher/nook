@@ -238,9 +238,11 @@ export function startFakeS3(options: { port?: number; bucket?: string; accessKey
 if (import.meta.main) {
   const [port, bucket, accessKeyId] = process.argv.slice(2);
   if (!port) {
-    console.error("Usage: bun tests/support/fakeS3.ts <port> [bucket] [accessKeyId]");
+    console.error("Usage: [FAKE_S3_DELAY_MS=<ms>] bun tests/support/fakeS3.ts <port> [bucket] [accessKeyId]");
     process.exit(2);
   }
   const fake = startFakeS3({ port: Number(port), bucket, accessKeyId });
+  // FAKE_S3_DELAY_MS slows every PUT and part upload (a slower link than the client's, for memory checks).
+  fake.delayWritesMs = Number(process.env.FAKE_S3_DELAY_MS ?? 0);
   console.log(`Fake S3 on ${fake.url}, bucket ${fake.bucket}`);
 }

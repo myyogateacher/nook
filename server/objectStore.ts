@@ -504,7 +504,11 @@ export function createS3ObjectStore(settings: S3StoreSettings): ObjectStore {
     const key = keyOf(namespace, id);
     const release = holdObject(namespace, id);
     let sink: ReturnType<ReturnType<typeof client.file>["writer"]> | null = null;
-    let sinceFlush = 0;
+    // Review N2: Bun 1.4.2's S3 writer keeps every view passed to write() (and the request buffer behind
+    // it) alive until the upload ends, so a 90 MiB upload held about its own size in memory. Chunks are
+    // copied into one part-sized buffer this writer owns, and only whole parts go to Bun.
+    let part = new Uint8Array(S3_PART_BYTES);
+    let filled = 0;
     let slot = false;
     let state: "open" | "committed" | "discarded" = "open";
     const freeSlot = () => {
@@ -525,13 +529,20 @@ export function createS3ObjectStore(settings: S3StoreSettings): ObjectStore {
         if (state !== "open") throw new Error("Object writer is closed");
         try {
           const opened = ensureSink();
-          await withDeadline(opened.write(chunk), partTimeoutMs, "write");
-          sinceFlush += chunk.byteLength;
-          // Bun's writer never pushes back on write(); a flush after every part waits for the upload, so at
-          // most about one part per upload is held in memory. Parts stay at least S3_PART_BYTES (S3's minimum).
-          if (sinceFlush >= S3_PART_BYTES) {
-            sinceFlush = 0;
-            await withDeadline(opened.flush(), partTimeoutMs, "write");
+          let offset = 0;
+          while (offset < chunk.byteLength) {
+            const take = Math.min(S3_PART_BYTES - filled, chunk.byteLength - offset);
+            part.set(chunk.subarray(offset, offset + take), filled);
+            filled += take;
+            offset += take;
+            if (filled === S3_PART_BYTES) {
+              // Bun's writer never pushes back on write(); the flush waits for the part's upload, so this
+              // request reads on only once the store has taken the part. Parts are exactly S3_PART_BYTES.
+              await withDeadline(opened.write(part), partTimeoutMs, "write");
+              await withDeadline(opened.flush(), partTimeoutMs, "write");
+              part = new Uint8Array(S3_PART_BYTES);
+              filled = 0;
+            }
           }
         } catch (error) {
           unavailable("write")(error);
@@ -541,7 +552,10 @@ export function createS3ObjectStore(settings: S3StoreSettings): ObjectStore {
         if (state !== "open") throw new Error("Object writer is closed");
         state = "committed";
         try {
-          await withDeadline(ensureSink().end(), partTimeoutMs, "write");
+          const opened = ensureSink();
+          if (filled > 0) await withDeadline(opened.write(part.subarray(0, filled)), partTimeoutMs, "write");
+          filled = 0;
+          await withDeadline(opened.end(), partTimeoutMs, "write");
         } catch (error) {
           // A failed completion may still have left an object; remove it so the caller sees nothing.
           await withDeadline(client.delete(key), timeoutMs, "delete").catch(() => undefined);

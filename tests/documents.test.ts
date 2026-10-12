@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createUser, dataDir, db, origin, port, request, type Session } from "./support/harness";
+import { createUser, dataDir, db, origin, port, request, s3Backend, storedObjectExists, type Session } from "./support/harness";
 
 const documentStorage = await import("../server/documentStorage");
 const { runSweep } = await import("../server/sweeper");
@@ -76,23 +76,30 @@ async function folderFor(session: Session, name: string) {
 
 const defaultFolderOf = (userId: string) => (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(userId) as { id: string }).id;
 
-async function writeObject(id: string, content: Uint8Array) {
-  const { handle } = await documentStorage.createStagingFile(id);
-  await handle.write(content);
-  await handle.close();
-  await documentStorage.commitStaged(id);
+const writeObject = (id: string, content: Uint8Array) => documentStorage.writeObject(id, content);
+/**
+ * Tests that look at the local backend's disk (modes, staging files, descriptors, symlinks). With
+ * STORAGE_BACKEND=s3 they are skipped; tests/s3Flows.test.ts covers the same behaviour on S3.
+ */
+const localTest = test.skipIf(s3Backend);
+
+/** Starts a staged write and leaves it open (an upload in flight); returns its discard. */
+async function stageOnly(id: string) {
+  const writer = documentStorage.createDocumentWriter(id);
+  await writer.write(new Uint8Array());
+  return writer;
 }
 
-describe("document storage", () => {
+// These suites check the local backend's disk layout; tests/objectStore.test.ts covers both backends.
+describe.skipIf(s3Backend)("document storage", () => {
   test("stages and commits objects under their UUID with private modes", async () => {
     const id = crypto.randomUUID();
-    const { handle, path } = await documentStorage.createStagingFile(id);
-    expect(path).toBe(join(stagingDir, `${id}.part`));
+    const writer = documentStorage.createDocumentWriter(id);
+    await writer.write(new TextEncoder().encode("hello"));
+    const path = join(stagingDir, `${id}.part`);
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    await handle.write(new TextEncoder().encode("hello"));
-    await handle.close();
-    await expect(documentStorage.createStagingFile(id)).rejects.toThrow();
-    await documentStorage.commitStaged(id);
+    await expect(stageOnly(id)).rejects.toThrow();
+    await writer.commit();
     expect(existsSync(path)).toBe(false);
     expect(statSync(objectPath(id)).mode & 0o777).toBe(0o600);
     expect(statSync(objectsDir).mode & 0o777).toBe(0o700);
@@ -101,24 +108,24 @@ describe("document storage", () => {
 
     const opened = await documentStorage.openObjectForRead(id, 5);
     expect(opened.size).toBe(5);
-    await opened.handle.close();
+    await opened.close();
     await expect(documentStorage.openObjectForRead(id, 6)).rejects.toBeInstanceOf(documentStorage.DocumentIntegrityError);
     await documentStorage.removeObject(id);
     await documentStorage.removeObject(id);
     await expect(documentStorage.openObjectForRead(id, 5)).rejects.toBeInstanceOf(documentStorage.DocumentIntegrityError);
-    await documentStorage.discardStaged(id);
+    await writer.discard();
   });
 
   test("rejects ids that are not UUIDs before building a path", async () => {
     for (const id of ["../mynotes.sqlite", "not-a-uuid", `${crypto.randomUUID()}/x`]) {
-      await expect(documentStorage.createStagingFile(id)).rejects.toThrow("Invalid document id");
+      expect(() => documentStorage.createDocumentWriter(id)).toThrow("Invalid document id");
       await expect(documentStorage.openObjectForRead(id, 0)).rejects.toThrow("Invalid document id");
       await expect(documentStorage.removeObject(id)).rejects.toThrow("Invalid document id");
     }
   });
 });
 
-describe("document sweeper", () => {
+describe.skipIf(s3Backend)("document sweeper", () => {
   test("removes stale staging files and orphaned objects only", async () => {
     await runSweep();
     const owner = await createUser("Sweeper owner");
@@ -126,10 +133,8 @@ describe("document sweeper", () => {
 
     const stale = crypto.randomUUID();
     const fresh = crypto.randomUUID();
-    for (const id of [stale, fresh]) {
-      const { handle } = await documentStorage.createStagingFile(id);
-      await handle.close();
-    }
+    mkdirSync(stagingDir, { recursive: true, mode: 0o700 });
+    for (const id of [stale, fresh]) writeFileSync(join(stagingDir, `${id}.part`), "", { mode: 0o600 });
     utimesSync(join(stagingDir, `${stale}.part`), hourAgo, hourAgo);
 
     const orphan = crypto.randomUUID();
@@ -152,12 +157,12 @@ describe("document sweeper", () => {
     expect(counts!.ignored).toBeGreaterThanOrEqual(1);
     expect(existsSync(join(stagingDir, `${stale}.part`))).toBe(false);
     expect(existsSync(join(stagingDir, `${fresh}.part`))).toBe(true);
-    expect(existsSync(objectPath(orphan))).toBe(false);
-    expect(existsSync(objectPath(freshOrphan))).toBe(true);
-    expect(existsSync(objectPath(live))).toBe(true);
+    expect(await storedObjectExists(orphan)).toBe(false);
+    expect(await storedObjectExists(freshOrphan)).toBe(true);
+    expect(await storedObjectExists(live)).toBe(true);
     expect(existsSync(stray)).toBe(true);
 
-    await documentStorage.discardStaged(fresh);
+    rmSync(join(stagingDir, `${fresh}.part`));
     await documentStorage.removeObject(freshOrphan);
     rmSync(stray);
   });
@@ -180,7 +185,7 @@ describe("document sweeper", () => {
 });
 
 describe("document uploads", () => {
-  test("stores the bytes under the UUID with private modes and a sanitized name", async () => {
+  localTest("stores the bytes under the UUID with private modes and a sanitized name", async () => {
     const owner = await createUser("Upload owner");
     const content = "# Plan\nhello \u00e9";
     const document = await uploadOk(owner, content, " q3:final\u202E\u200B.md ", { type: "text/html" });
@@ -206,7 +211,7 @@ describe("document uploads", () => {
     expect(traversal.status).toBe(201);
     const traversalDocument = ((await traversal.json()) as { document: UploadedDocument }).document;
     expect(traversalDocument.name).toBe("passwd");
-    expect(existsSync(objectPath(traversalDocument.id))).toBe(true);
+    expect(await storedObjectExists(traversalDocument.id)).toBe(true);
     const unnamed = await request("/files", { method: "POST", body: multipart([{ name: "file", filename: "...", content: "x" }]), headers: { "Content-Type": multipartType } }, owner);
     expect(((await unnamed.json()) as { document: UploadedDocument }).document.name).toBe("Untitled");
     expect(listDir(stagingDir).filter((name) => name.startsWith(document.id))).toEqual([]);
@@ -266,7 +271,7 @@ describe("document uploads", () => {
     expect(socket).toContain(`"limitBytes":${MAX_UPLOAD}`);
   });
 
-  test("rejects a file that overflows the limit while streaming and keeps nothing", async () => {
+  localTest("rejects a file that overflows the limit while streaming and keeps nothing", async () => {
     const owner = await createUser("Streamed size");
     const before = { staging: listDir(stagingDir).length, objects: listDir(objectsDir).length };
     const head = encoder.encode(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="big.bin"\r\n\r\n`);
@@ -299,7 +304,7 @@ describe("document uploads", () => {
     expect(document.size_bytes).toBe(MAX_UPLOAD);
   });
 
-  test("requires exactly one file part named file", async () => {
+  localTest("requires exactly one file part named file", async () => {
     const owner = await createUser("Part rules");
     const send = (body: string, type = multipartType) => request("/files", { method: "POST", body, headers: { "Content-Type": type } }, owner);
     const twoFiles = await send(multipart([{ name: "file", filename: "a.txt", content: "a" }, { name: "file", filename: "b.txt", content: "b" }]));
@@ -363,7 +368,7 @@ describe("document uploads", () => {
     await uploadOk(owner, new Uint8Array(1000), "fits.bin");
   });
 
-  test("allows three concurrent uploads per user and releases slots after aborts", async () => {
+  localTest("allows three concurrent uploads per user and releases slots after aborts", async () => {
     const owner = await createUser("Concurrent uploader");
     const other = await createUser("Concurrent other");
     const baseline = listDir(stagingDir).length;
@@ -382,7 +387,7 @@ describe("document uploads", () => {
     expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND name = 'slow.bin'").get(owner.userId)).toEqual({ count: 0 });
   });
 
-  test("replays an Idempotency-Key per user without storing new bytes", async () => {
+  localTest("replays an Idempotency-Key per user without storing new bytes", async () => {
     const owner = await createUser("Idempotent owner");
     const other = await createUser("Idempotent other");
     const key = crypto.randomUUID();
@@ -400,7 +405,7 @@ describe("document uploads", () => {
     expect((await upload(owner, "x", "x.txt", { key: "not-a-uuid" })).status).toBe(400);
   });
 
-  test("a client abort mid-upload leaves no row and no staging file", async () => {
+  localTest("a client abort mid-upload leaves no row and no staging file", async () => {
     const owner = await createUser("Abort owner");
     const baseline = listDir(stagingDir).length;
     const controller = new AbortController();
@@ -642,7 +647,7 @@ describe("document metadata and access", () => {
     expect(row).toEqual({ deleted_by: owner.userId, purge_after: body.purgeAfter, purge_started_at: null });
     // Share rows and bytes are retained so a restore brings sharing back as it was.
     expect(db.query("SELECT COUNT(*) AS count FROM document_shares WHERE document_id = ?").get(document.id)).toEqual({ count: 1 });
-    expect(existsSync(objectPath(document.id))).toBe(true);
+    expect(await storedObjectExists(document.id)).toBe(true);
 
     const again = await json<{ ok: boolean; alreadyDeleted: boolean; purgeAfter: string }>(await deleteDocument(owner, document.id));
     expect(again).toEqual({ ok: true, alreadyDeleted: true, purgeAfter: body.purgeAfter });
@@ -790,7 +795,7 @@ describe("document content", () => {
     expect(await inlineText.text()).toBe("plain words");
   });
 
-  test("supports single byte ranges, If-Range, and HEAD", async () => {
+  localTest("supports single byte ranges, If-Range, and HEAD", async () => {
     const owner = await createUser("Range owner");
     const body = "0123456789abcdefghij";
     const document = await uploadOk(owner, body, "range.txt");
@@ -849,7 +854,7 @@ describe("document content", () => {
     expect((await content(owner, document.id, { method: "HEAD" })).status).toBe(404);
   });
 
-  test("fails closed with 500 on integrity errors", async () => {
+  localTest("fails closed with 500 on integrity errors", async () => {
     const owner = await createUser("Integrity owner");
     const secret = "outside secret bytes";
     const outside = join(dataDir, "outside-target.txt");
@@ -877,7 +882,7 @@ describe("document content", () => {
     rmSync(outside);
   });
 
-  test("closes the file descriptor when the client aborts a download", async () => {
+  localTest("closes the file descriptor when the client aborts a download", async () => {
     const owner = await createUser("Abort download owner");
     const document = await uploadOk(owner, new Uint8Array(3_000_000).fill(0x63), "large.bin");
     const path = objectPath(document.id);
@@ -931,7 +936,7 @@ const ownerObjectsOnDisk = (userId: string) =>
   (db.query("SELECT id FROM documents WHERE owner_id = ?").all(userId) as Array<{ id: string }>).filter((row) => existsSync(objectPath(row.id))).length;
 
 describe("upload limit races", () => {
-  test("refuses an upload with 507 DISK_FULL when free space would drop below the floor", async () => {
+  localTest("refuses an upload with 507 DISK_FULL when free space would drop below the floor", async () => {
     const owner = await createUser("Disk full owner");
     const baseline = { staging: stagedCount(), objects: listDir(objectsDir).length };
     const previous = config.minFreeDiskBytes;
@@ -950,7 +955,7 @@ describe("upload limit races", () => {
     await uploadOk(owner, "some bytes", "disk.txt");
   });
 
-  test("parallel uploads never exceed the quota together", async () => {
+  localTest("parallel uploads never exceed the quota together", async () => {
     const owner = await createUser("Parallel quota owner");
     const quota = config.userStorageQuotaBytes;
     const used = 5 * 1_048_576;
@@ -975,7 +980,7 @@ describe("upload limit races", () => {
     await waitFor(() => stagedCount() === 0);
   });
 
-  test("the in-transaction quota re-check rejects an upload overtaken by other usage", async () => {
+  localTest("the in-transaction quota re-check rejects an upload overtaken by other usage", async () => {
     const owner = await createUser("Overtaken quota owner");
     const quota = config.userStorageQuotaBytes;
     insertDocumentRow(owner.userId, crypto.randomUUID(), quota - 4 * 1_048_576);
@@ -994,7 +999,7 @@ describe("upload limit races", () => {
     await waitFor(() => stagedCount() === 0);
   });
 
-  test("two concurrent uploads with one Idempotency-Key keep one document", async () => {
+  localTest("two concurrent uploads with one Idempotency-Key keep one document", async () => {
     const owner = await createUser("Concurrent key owner");
     const key = crypto.randomUUID();
     const objectsBefore = listDir(objectsDir).length;
@@ -1011,7 +1016,7 @@ describe("upload limit races", () => {
     expect(bodies.filter((body) => body.idempotentReplay === true)).toHaveLength(1);
     expect(db.query("SELECT COUNT(*) AS count FROM documents WHERE owner_id = ? AND upload_key = ?").get(owner.userId, key)).toEqual({ count: 1 });
     expect(listDir(objectsDir).length).toBe(objectsBefore + 1);
-    expect(existsSync(objectPath(bodies[0]!.document.id))).toBe(true);
+    expect(await storedObjectExists(bodies[0]!.document.id)).toBe(true);
     await waitFor(() => stagedCount() === 0);
   });
 });
@@ -1031,7 +1036,7 @@ function openStagingDescriptors() {
 }
 
 describe("upload body lifecycle", () => {
-  test("requires Content-Length and answers 411 before staging anything", async () => {
+  localTest("requires Content-Length and answers 411 before staging anything", async () => {
     const owner = await createUser("Length required owner");
     const baseline = stagedCount();
     for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -1050,7 +1055,7 @@ describe("upload body lifecycle", () => {
     await uploadOk(owner, "a", "after.txt");
   });
 
-  test("a chunked body past Bun's transport cap leaves the server healthy", async () => {
+  localTest("a chunked body past Bun's transport cap leaves the server healthy", async () => {
     const owner = await createUser("Transport cap owner");
     const baseline = stagedCount();
     const chunk = new Uint8Array(100_000);

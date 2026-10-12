@@ -1,13 +1,14 @@
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { Hono } from "hono";
 import type { AppEnv } from "./auth";
 import { config } from "./config";
 import { db } from "./db";
+import { isObjectInFlight, objectStore, putHeld } from "./objectStore";
 
 /**
  * Profile pictures (Wave 35, D299, T257, T262). The server downloads a Google picture once, stores it
- * as DATA_DIR/avatars/<uuid> (the name is never derived from input), and serves it same-origin at
+ * in the object store's `avatars` namespace under a new UUID (locally DATA_DIR/avatars/<uuid>, on S3
+ * <S3_PREFIX>avatars/<uuid>; the name is never derived from input), and serves it same-origin at
  * /api/users/:id/avatar?v=<uuid>. The browser never contacts Google, so the CSP stays as it is.
  *
  * `v` is the file's UUID: unguessable, and returned only in payloads that already carry the
@@ -20,8 +21,8 @@ export const AVATAR_TIMEOUT_MS = 5_000;
 const MAX_REDIRECTS = 2;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/** The local backend's avatar directory (STORAGE_BACKEND=local). */
 export const avatarDir = () => resolve(config.dataDir, "avatars");
-const avatarPath = (id: string) => join(avatarDir(), id);
 
 /** The same-origin avatar URL for a user, or null when they have no picture. */
 export function avatarUrlFor(userId: string, avatarId?: string | null) {
@@ -114,7 +115,7 @@ export async function fetchAvatar(raw: string): Promise<{ ok: true; bytes: Uint8
 }
 
 async function removeFile(id: string | null) {
-  if (id && UUID.test(id)) await rm(avatarPath(id), { force: true }).catch(() => undefined);
+  if (id && UUID.test(id)) await objectStore().remove("avatars", id).catch(() => undefined);
 }
 
 /**
@@ -129,19 +130,22 @@ export async function storeAvatarFromUrl(userId: string, pictureUrl: string) {
     return false;
   }
   const id = crypto.randomUUID();
+  let release: () => void;
   try {
-    await mkdir(avatarDir(), { recursive: true, mode: 0o700 });
-    const partial = join(avatarDir(), `.${id}.part`);
-    await writeFile(partial, fetched.bytes, { mode: 0o600 });
-    await rename(partial, avatarPath(id));
+    // The picture stays out of the avatar sweep until the pointer below is written (review L-a).
+    release = await putHeld(objectStore(), "avatars", id, fetched.bytes);
   } catch (error) {
     console.error("Avatar store failed", error instanceof Error ? error.name : "Unknown error");
     return false;
   }
-  const previous = (db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null)?.avatar_id ?? null;
-  const updated = db.query("UPDATE users SET avatar_id = ? WHERE id = ?").run(id, userId).changes;
-  await removeFile(updated ? previous : id);
-  return updated === 1;
+  try {
+    const previous = (db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null)?.avatar_id ?? null;
+    const updated = db.query("UPDATE users SET avatar_id = ? WHERE id = ?").run(id, userId).changes;
+    await removeFile(updated ? previous : id);
+    return updated === 1;
+  } finally {
+    release();
+  }
 }
 
 /** Removes a user's avatar file and clears the pointer (unlinking Google keeps it: the name stays too). */
@@ -156,29 +160,19 @@ export async function clearAvatar(userId: string) {
  * delete failed) and leftover partial writes older than an hour. Returns how many were removed.
  */
 export async function sweepAvatarFiles(nowMs = Date.now()) {
-  let names: string[];
-  try {
-    names = await readdir(avatarDir());
-  } catch {
-    return 0;
-  }
+  const store = objectStore();
+  let removed = (await store.sweepStaging("avatars", nowMs - 3_600_000)).removed;
   const referenced = new Set((db.query("SELECT avatar_id FROM users WHERE avatar_id IS NOT NULL").all() as Array<{ avatar_id: string }>).map((row) => row.avatar_id));
-  let removed = 0;
-  for (const name of names) {
-    const path = join(avatarDir(), name);
-    if (UUID.test(name)) {
-      if (referenced.has(name)) continue;
-    } else if (!name.endsWith(".part")) {
-      continue;
-    }
+  for await (const entry of store.list("avatars")) {
+    if (!entry.id || !UUID.test(entry.id) || referenced.has(entry.id) || isObjectInFlight("avatars", entry.id)) continue;
+    // A file younger than a minute may belong to a sign-in that has not written its pointer yet (on S3,
+    // the store's grace: its clock may differ from this host's).
+    if (nowMs - entry.modifiedMs < (store.backend === "s3" ? store.orphanGraceMs : 60_000)) continue;
     try {
-      // A file younger than a minute may belong to a sign-in that has not written its pointer yet.
-      const info = await stat(path);
-      if (nowMs - info.mtimeMs < (name.endsWith(".part") ? 3_600_000 : 60_000)) continue;
-      await rm(path, { force: true });
+      await store.remove("avatars", entry.id);
       removed += 1;
     } catch {
-      // Gone meanwhile.
+      // The next sweep tries again.
     }
   }
   return removed;
@@ -226,7 +220,7 @@ export function registerAvatarRoute(app: Hono<AppEnv>) {
     if (!row?.avatar_id || row.avatar_id !== version) return notFound();
     let bytes: Uint8Array;
     try {
-      bytes = new Uint8Array(await readFile(avatarPath(version)));
+      bytes = await (await objectStore().open("avatars", version)).bytes();
     } catch {
       return notFound();
     }

@@ -1,3 +1,4 @@
+import { StorageUnavailableError } from "../objectStore";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
@@ -27,6 +28,11 @@ function fail(c: Context<AppEnv>, error: unknown) {
   if (error instanceof WhiteboardError) {
     if (error.status === 429 && typeof error.details.retryAfter === "number") c.header("Retry-After", String(error.details.retryAfter));
     return c.json({ error: error.message, code: error.code, ...error.details }, error.status);
+  }
+  // S3 storage: an unreachable store is a retryable 503, never a 500.
+  if (error instanceof StorageUnavailableError) {
+    c.header("Retry-After", "5");
+    return c.json({ error: "File storage is unavailable. Try again later.", code: "STORAGE_UNAVAILABLE" }, 503);
   }
   throw error;
 }

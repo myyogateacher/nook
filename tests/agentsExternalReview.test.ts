@@ -27,7 +27,7 @@ type Grant = import("../server/keyGrants").Grant;
 
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
-const fake = startFakeProvider(24526);
+const fake = startFakeProvider(0);
 const mcp = startFakeMcpServer(24527);
 
 /**

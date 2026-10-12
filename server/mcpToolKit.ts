@@ -123,6 +123,8 @@ export type McpErrorCode =
   | "BUDGET_EXCEEDED"
   | "NO_PROVIDER"
   | "AGENT_SECRET_INTEGRITY"
+  // S3 storage: the object store could not be reached (a retry may work).
+  | "STORAGE_UNAVAILABLE"
   | "INTERNAL";
 
 /**

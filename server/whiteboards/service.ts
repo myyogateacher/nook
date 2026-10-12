@@ -4,7 +4,8 @@ import { statfs } from "node:fs/promises";
 import { config } from "../config";
 import { audit, db, ensureDefaultFolder, now } from "../db";
 import { documentSummarySelect, readableDocumentPredicate, readableSinglePredicate, type DocumentSummary } from "../documentAccess";
-import { DocumentIntegrityError, openObjectForRead, removeObject, writeObject } from "../documentStorage";
+import { DocumentIntegrityError, openObjectForRead, removeObject, writeObjectHeld } from "../documentStorage";
+import { diskBytesNeeded } from "../objectStore";
 import { storedBytes } from "../documents";
 import { withResourceLock } from "../storage";
 import { sanitizeDisplayName } from "../validation";
@@ -313,7 +314,8 @@ async function currentImageIds(documentId: string) {
 
 async function ensureDiskSpace(bytes: number) {
   const disk = await statfs(config.dataDir);
-  if (disk.bavail * disk.bsize < config.minFreeDiskBytes + bytes) throw new WhiteboardError(507, "DISK_FULL", "Storage is full");
+  // The floor protects SQLite on the data volume; the scene bytes count only when they land there (local).
+  if (disk.bavail * disk.bsize < diskBytesNeeded(bytes)) throw new WhiteboardError(507, "DISK_FULL", "Storage is full");
 }
 
 const quotaFits = (userId: string, delta: number) => {
@@ -366,7 +368,8 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
   await ensureDiskSpace(prepared.bytes.byteLength);
   const documentId = crypto.randomUUID();
   const objectId = crypto.randomUUID();
-  await writeObject(objectId, prepared.bytes);
+  // The object stays out of the orphan sweeps until its row commits (or it is removed again).
+  const release = await writeObjectHeld(objectId, prepared.bytes);
   let replayOf: string | null = null;
   try {
     db.transaction(() => {
@@ -393,11 +396,13 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
       else audit(userId, null, "whiteboard.create", { documentId, folderId });
     })();
   } catch (error) {
-    await removeObject(objectId);
+    await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
     throw error;
+  } finally {
+    release();
   }
   if (replayOf) {
-    await removeObject(objectId);
+    await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
     return { whiteboard: replay(userId, uploadKey!)!, replay: true };
   }
   return { whiteboard: readableWhiteboard(documentId, userId)!, replay: false };
@@ -418,12 +423,7 @@ async function readSceneBytes(documentId: string): Promise<{ bytes: Uint8Array; 
   if (!row) throw notFound();
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const { handle } = await openObjectForRead(row.object_id, row.size_bytes);
-      try {
-        return { bytes: new Uint8Array(await handle.readFile()), revision: row.revision, row };
-      } finally {
-        await handle.close();
-      }
+      return { bytes: await (await openObjectForRead(row.object_id, row.size_bytes)).bytes(), revision: row.revision, row };
     } catch (error) {
       const again = attempt === 0 && error instanceof DocumentIntegrityError ? read() : null;
       if (!again || again.object_id === row.object_id) throw error;
@@ -517,7 +517,7 @@ export async function saveScene(documentId: string, userId: string, baseRevision
     checkQuota(userId, delta);
     await ensureDiskSpace(prepared.bytes.byteLength);
     const objectId = crypto.randomUUID();
-    await writeObject(objectId, prepared.bytes);
+    const release = await writeObjectHeld(objectId, prepared.bytes);
     const savedAt = now();
     let dropped: string[] = [];
     try {
@@ -550,8 +550,10 @@ export async function saveScene(documentId: string, userId: string, baseRevision
         }
       })();
     } catch (error) {
-      await removeObject(objectId);
+      await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
       throw error;
+    } finally {
+      release();
     }
     if (!keep) await removeObject(board.object_id).catch(() => console.error("Could not remove a superseded whiteboard object; the sweeper will"));
     for (const object of dropped) await removeObject(object).catch(() => console.error("Could not remove a dropped whiteboard snapshot; the sweeper will"));
@@ -579,13 +581,7 @@ const noSnapshot = () => new WhiteboardError(404, "NO_SNAPSHOT", "There is no ea
 
 /** A snapshot's scene, validated like any stored scene (T160). Snapshot objects never change. */
 async function readSnapshotScene(snapshot: { object_id: string; size_bytes: number }): Promise<CanonicalScene> {
-  const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
-  let bytes: Uint8Array;
-  try {
-    bytes = new Uint8Array(await handle.readFile());
-  } finally {
-    await handle.close();
-  }
+  const bytes = await (await openObjectForRead(snapshot.object_id, snapshot.size_bytes)).bytes();
   const result = validateScene(JSON.parse(new TextDecoder().decode(bytes)));
   if (!result.ok) throw new Error("Stored whiteboard snapshot failed validation");
   return result.scene;
@@ -607,13 +603,7 @@ async function snapshotElementCount(snapshot: SnapshotRow) {
   if (known !== undefined) return known;
   let count: number;
   try {
-    const { handle } = await openObjectForRead(snapshot.object_id, snapshot.size_bytes);
-    let text: string;
-    try {
-      text = await handle.readFile("utf8");
-    } finally {
-      await handle.close();
-    }
+    const text = new TextDecoder().decode(await (await openObjectForRead(snapshot.object_id, snapshot.size_bytes)).bytes());
     const elements = (JSON.parse(text) as { elements?: unknown }).elements;
     if (!Array.isArray(elements)) return null;
     count = elements.length;

@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createUser, dataDir, db, origin, request, type Session } from "./support/harness";
+import { createUser, dataDir, db, origin, request, storedObjectExists, type Session } from "./support/harness";
 
 const { createMcpApiKey } = await import("../server/mcp");
 const bin = await import("../server/bin");
 const { runSweep } = await import("../server/sweeper");
 
 const noteDir = (id: string) => join(dataDir, "notes", id);
-const objectPath = (id: string) => join(dataDir, "documents", "objects", id);
 
 type NoteRowState = { deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null; draft_revision: number | null; draft_checksum: string | null };
 const noteRow = (id: string) => db.query("SELECT deleted_at, deleted_by, purge_after, purge_started_at, draft_revision, draft_checksum FROM notes WHERE id = ?").get(id) as NoteRowState | null;
@@ -217,7 +216,7 @@ describe("moving notes and documents to the Bin", () => {
     expect(firstBody.alreadyDeleted).toBeUndefined();
     const second = await json<{ ok: boolean; purgeAfter: string; alreadyDeleted: boolean }>(await deleteDocument(owner, document.id));
     expect(second).toEqual({ ok: true, alreadyDeleted: true, purgeAfter: firstBody.purgeAfter });
-    expect(existsSync(objectPath(document.id))).toBe(true);
+    expect(await storedObjectExists(document.id)).toBe(true);
 
     for (const session of [owner, recipient]) {
       expect((await request(`/files/${document.id}`, {}, session)).status).toBe(404);
@@ -287,8 +286,8 @@ describe("restore, purge, and the retention sweeper", () => {
     expect(noteRow(keep)).not.toBeNull();
     expect(existsSync(noteDir(keep))).toBe(true);
     expect(db.query("SELECT id FROM documents WHERE id = ?").get(dueDocument.id)).toBeNull();
-    expect(existsSync(objectPath(dueDocument.id))).toBe(false);
-    expect(existsSync(objectPath(liveDocument.id))).toBe(true);
+    expect(await storedObjectExists(dueDocument.id)).toBe(false);
+    expect(await storedObjectExists(liveDocument.id)).toBe(true);
     const audits = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.purge' AND metadata_json LIKE ?").all(`%${dueDocument.id}%`) as Array<{ metadata_json: string }>;
     expect(audits.map((row) => JSON.parse(row.metadata_json))).toEqual([{ documentId: dueDocument.id, reason: "retention" }]);
   }, 20_000);
@@ -501,7 +500,7 @@ describe("Bin API", () => {
     expect(db.query("SELECT 1 FROM note_shares WHERE note_id = ?").all(noteId)).toHaveLength(0);
     expect(db.query("SELECT 1 FROM documents WHERE id = ?").get(document.id)).toBeNull();
     expect(db.query("SELECT 1 FROM document_shares WHERE document_id = ?").all(document.id)).toHaveLength(0);
-    expect(existsSync(objectPath(document.id))).toBe(false);
+    expect(await storedObjectExists(document.id)).toBe(false);
     const audits = db.query("SELECT event_type, actor_id, note_id, metadata_json FROM audit_log WHERE event_type IN ('note.purge', 'document.purge') AND (metadata_json LIKE ? OR metadata_json LIKE ?) ORDER BY event_type")
       .all(`%${noteId}%`, `%${document.id}%`) as Array<{ event_type: string; actor_id: string; note_id: string | null; metadata_json: string }>;
     expect(audits.map((row) => [row.event_type, row.actor_id, row.note_id, JSON.parse(row.metadata_json)])).toEqual([
@@ -537,7 +536,7 @@ describe("Bin API", () => {
     expect(noteRow(noteId)).toBeNull();
     expect(existsSync(noteDir(noteId))).toBe(false);
     expect(db.query("SELECT 1 FROM documents WHERE id = ?").get(document.id)).toBeNull();
-    expect(existsSync(objectPath(document.id))).toBe(false);
+    expect(await storedObjectExists(document.id)).toBe(false);
   });
 
   test("a failed byte removal answers 202 pending and the next sweep finishes", async () => {
@@ -578,7 +577,7 @@ describe("Bin API", () => {
     expect(await response.json()).toEqual({ ok: true, purged: 3, pending: 0 });
     expect((await listBin(owner)).items).toHaveLength(0);
     for (const id of ownerNotes) expect(existsSync(noteDir(id))).toBe(false);
-    expect(existsSync(objectPath(ownerDocument.id))).toBe(false);
+    expect(await storedObjectExists(ownerDocument.id)).toBe(false);
     expect(noteRow(keepLive)!.deleted_at).toBeNull();
     expect((await listBin(other)).items.map((item) => item.id)).toEqual([othersNote]);
     expect(existsSync(noteDir(othersNote))).toBe(true);

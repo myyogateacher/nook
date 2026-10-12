@@ -63,7 +63,8 @@ import { initialMailLink, UnsubscribePage, VerifyEmailPage } from "./auth/mailPa
 import { FORGOT_PATH, ForgotPasswordPage, initialPasswordLink, ResetPasswordPage, takeNewResetLink, takePasswordLinkFromLocation } from "./auth/passwordPages";
 import { ChangePasswordCard } from "./auth/ChangePassword";
 import { RecognisedDevices } from "./auth/RecognisedDevices";
-import { Avatar } from "./ui/Avatar";
+import { ProfilePictureCard } from "./settings/ProfilePicture";
+import { Avatar, SelfAvatar } from "./ui/Avatar";
 import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
 import { AccountAuthContext, asksForPassword, GoogleReauthNotice, reauthPassword, useAccountAuthLoader } from "./auth/accountAuth";
@@ -638,6 +639,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     {googleNoticeLine}
     {!state.setupRequired && (!account || (account.methods.password && account.hasPassword) ? <ChangePasswordCard totpEnabled={state.enabled} passwordReset={appInfo.passwordReset === true} /> : <PasswordStateCard account={account} />)}
     {!state.setupRequired && account && <GoogleAccountCard account={account} totpEnabled={state.enabled} onChanged={reloadAccount} />}
+    {!state.setupRequired && <ProfilePictureCard name={session.user.displayName} />}
     {!state.setupRequired && <RecognisedDevices />}
     <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
     {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
@@ -2246,7 +2248,7 @@ export function App() {
         </nav>
         <footer className="sidebar-footer">
           <button className="footer-settings" title={session.user.displayName} onClick={() => openSettings()} aria-label={`Open settings for ${session.user.displayName}`}>
-            <strong className="footer-identity"><Avatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
+            <strong className="footer-identity"><SelfAvatar className="app-user-avatar" name={session.user.displayName} url={session.user.avatarUrl} /><span>{session.user.displayName}</span></strong>
             <span><Settings />Settings</span>
           </button>
           <SidebarInboxRow nav={inboxNav} />

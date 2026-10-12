@@ -228,7 +228,8 @@ describe("end-user QA fixes (U1–U11)", () => {
   test("U4: the header, sidebar footers, Settings, and comments draw the shared Avatar", () => {
     expect(readFileSync(join(src, "AppShell.tsx"), "utf8")).toContain('<Avatar className="app-user-avatar"');
     expect(readFileSync(join(src, "settings", "SettingsHub.tsx"), "utf8")).toContain('className="app-user-avatar settings-avatar"');
-    expect(app()).toContain('<strong className="footer-identity"><Avatar');
+    // U7: the Notes footer draws the live own picture (SelfAvatar wraps the shared Avatar).
+    expect(app()).toContain('<strong className="footer-identity"><SelfAvatar');
     expect(readFileSync(join(src, "files", "FilesApp.tsx"), "utf8")).toContain('<strong className="footer-identity"><Avatar');
     expect(readFileSync(join(src, "tasks", "CardDialog.tsx"), "utf8")).toContain("url={comment.author_avatar_url}");
     const shell = readFileSync(join(src, "appShell.css"), "utf8");

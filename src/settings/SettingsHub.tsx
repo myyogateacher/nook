@@ -3,7 +3,7 @@ import { Bell, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, History, House, In
 import { AppPageName } from "../AppShell";
 import { useAppName } from "../appName";
 import { isMobileViewport } from "../mobileNavigation";
-import { Avatar } from "../ui/Avatar";
+import { SelfAvatar } from "../ui/Avatar";
 import { focusFromScript } from "../ui/scriptFocus";
 import { ROLE_LABELS, type Role } from "../team/teamRoles";
 import { HUB_TITLE_ID, type HubEntry, type HubEntryId } from "./hubModel";
@@ -85,7 +85,7 @@ export function SettingsHubShell({ displayName, avatarUrl, role, entries, select
     <div className="settings-hub-layout">
       <nav className="settings-hub-nav" aria-label="Settings sections">
         <div className="settings-hub-identity">
-          <Avatar className="app-user-avatar settings-avatar" name={displayName} url={avatarUrl} />
+          <SelfAvatar className="app-user-avatar settings-avatar" name={displayName} url={avatarUrl} />
           <div><strong>{displayName}</strong>{roleLabel && <small>{roleLabel}</small>}</div>
         </div>
         {groups.map((group) => <div key={group.id} className="settings-hub-group" role="group" aria-labelledby={`settings-hub-group-${group.id}`}>
@@ -110,7 +110,7 @@ export function SettingsHubShell({ displayName, avatarUrl, role, entries, select
       <section className="settings-hub-main" aria-labelledby={HUB_TITLE_ID}>
         <header className="settings-hub-header">
           {showBack && <button type="button" className="icon-button settings-hub-back" onClick={onBack} aria-label="Back to Settings"><ChevronLeft /></button>}
-          <Avatar className="app-user-avatar settings-avatar" name={displayName} url={avatarUrl} />
+          <SelfAvatar className="app-user-avatar settings-avatar" name={displayName} url={avatarUrl} />
           <div className="settings-hub-heading">
             <span className="eyebrow">{displayName}{roleLabel ? ` · ${roleLabel}` : ""}</span>
             <h1 id={HUB_TITLE_ID} ref={headingRef} tabIndex={-1}>{title}</h1>

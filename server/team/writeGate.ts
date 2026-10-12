@@ -34,6 +34,7 @@ export const ROLE_READ_ONLY_ALLOWED_WRITES: readonly AllowedWrite[] = [
   { method: "POST", path: "/api/auth/notices/google-reset/dismiss", why: "dismiss own reset notice (Wave 35)" },
   { method: "DELETE", path: "/api/auth/devices/:id", why: "forget one of own recognised devices (migration 044)" },
   { method: "DELETE", path: "/api/auth/devices", why: "forget all own recognised devices (migration 044)" },
+  { method: "PUT", path: "/api/me/avatar", why: "own profile picture: upload, Google, or none (uploads everywhere U7)" },
   { method: "POST", path: "/api/notifications/read", why: "mark own notifications read" },
   { method: "POST", path: "/api/push/subscriptions", why: "own push devices" },
   { method: "DELETE", path: "/api/push/subscriptions", why: "own push devices" },

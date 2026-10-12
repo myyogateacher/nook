@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0–U8 (migrations 046, 047), S3 storage, toasts via the Sonner package. In progress: Google re-auth fix (Google alone confirms, except two-factor actions, which also need the TOTP or a recovery code; audit of every re-auth flow), Bin restore label + Undo on every move to the Bin, whiteboard thumbnails with pictures. Then a combined review and release check, the release, and a GitHub release (operator request, 2026-10-09). Operator to try Take photo on a real phone (QA instance) before or after release.
+- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0–U8 (migrations 046, 047), S3 storage, toasts via the Sonner package, whiteboard thumbnails with the owner's pictures, Bin restore label + Undo on every move to the Bin. In progress: Google re-auth fix (Google alone confirms, except two-factor actions, which also need the TOTP or a recovery code; audit of every re-auth flow). Then a combined review and release check, the release, and the GitHub release. Operator to try Take photo on a real phone (QA instance).
 
 ## Known LOW leftovers
 
@@ -16,5 +16,6 @@ None open.
 
 - Subagents run on Opus 5.5 at medium effort, each in its own worktree with pre-assigned ports and migration ids. Releases are serial.
 - Never stop processes by name or pattern (no pkill/killall); stop only your own pids. Production and QA containers run `bun server/index.ts` as the same host user.
+- Each agent keeps scratch files in its own subfolder of the scratchpad (`<scratchpad>/<lane>/`); never delete or reuse another lane's files.
 - Browser QA uses its own `<lane>.localhost:<port>` origin and its own tab or profile, because the session cookie is shared across localhost ports.
 - Tests that spawn `bun` use `--no-env-file`. The Docker verify image has no `docs/` and no `git`: guard with `test.skipIf` / `Bun.which`. Use `tests/support/agentRuns.ts` and `clock.ts` for timing-sensitive tests.

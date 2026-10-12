@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowUpDown, Check, TriangleAlert, ChevronDown, Ellipsis, ChevronLeft, ChevronUp, Files, Folder as FolderIcon, FolderPlus, House, LayoutGrid, List as ListIcon, Lock, LogOut, Paperclip, Menu, PanelLeftClose, PanelLeftOpen, RotateCcw, Search, Settings, Sparkles, Upload, Users, X } from "lucide-react";
 import { api, ApiError } from "../api";
 import { restoreBinItem } from "../bin/binApi";
@@ -14,7 +14,6 @@ import { closedPreviewTarget, documentInFolder, filesRoute, resolveFilesPanel, r
 import { isMobileViewport } from "../mobileNavigation";
 import { formatRoute, parseRoute, type Route } from "../router";
 import type { DocumentSummary, Folder } from "../types";
-import { ConfirmDialog } from "./Dialog";
 import {
   canDropOnFolder,
   canManage as ownsDocument,
@@ -49,10 +48,13 @@ import { FilePreview } from "./FilePreview";
 import { gridColumnCount, moveFileSelection, readFileView, writeFileView, type FileView } from "./fileView";
 import { AccessSheet } from "../access/AccessSheet";
 import { MoveSheet } from "./MoveSheet";
-import { fileUsage, usageSummary } from "../ui/attachments/uploadForHost";
+import { UploadMenu } from "./UploadMenu";
+import { coarsePointer, fileUsage, LocationStripError, stripImageLocation, unlinkFromHost, usageSummary, type FileUsage } from "../ui/attachments";
+import { DeleteFileDialog } from "./DeleteFileDialog";
+import { droppedEntries, filesToUploadFromPaste, folderUploadParentFor, folderUploadSummary, FOLDER_UPLOAD_MAX_FILES, nestFolders, planFolderUpload, readDroppedEntries, renamePastedFile, supportsFolderChooser, uploadFolderFor, type FolderFile } from "./uploadSources";
 import { NameDialog, RenameDialog } from "./RenameDialog";
 import { documentIcon, relativeTime } from "./format";
-import { canRetryUpload, emptyUploadQueue, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type UploadItem } from "./uploadQueue";
+import { canRetryUpload, emptyUploadQueue, finishedBatch, uploadAnnouncement, uploadQueueReducer, uploadQueueSummary, uploadsToStart, type NewUpload, type UploadItem } from "./uploadQueue";
 import "./files.css";
 import { Avatar } from "../ui/Avatar";
 import { useSelfAvatar } from "../ui/selfAvatar";
@@ -127,6 +129,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [queueOpen, setQueueOpen] = useState(true);
   const [queue, dispatch] = useReducer(uploadQueueReducer, emptyUploadQueue);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  // U6: folder uploads create their folders first ("Creating folders 3 of 12"), then queue the files.
+  const [preparing, setPreparing] = useState<{ label: string; done: number; total: number } | null>(null);
+  const preparingRef = useRef(false);
+  const batchesRef = useRef(new Map<string, { roots: string[]; skipped: number; announced: boolean }>());
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const filesRef = useRef(new Map<string, File>());
   const controllersRef = useRef(new Map<string, AbortController>());
   const startedRef = useRef(new Set<string>());
@@ -138,7 +147,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const [dialog, setDialog] = useState<FilesDialog | null>(null);
   const [deleting, setDeleting] = useState(false);
   // D409: where the file being deleted is attached ("Used on 2 cards and 1 event"), for the confirm.
-  const [deleteUsage, setDeleteUsage] = useState<{ documentId: string; summary: string | null } | null>(null);
+  const [deleteUsage, setDeleteUsage] = useState<{ documentId: string; summary: string | null; hidden: FileUsage["hidden"] } | null>(null);
+  // Review M1: withdrawing the file from places its owner can no longer open, from the same confirm.
+  const [removingHidden, setRemovingHidden] = useState(false);
+  const [hiddenStatus, setHiddenStatus] = useState<string | null>(null);
   const [toastState, toastDispatch] = useReducer(fileToastReducer, emptyToastState);
   // The row (document id) or control that opened the current dialog, so focus can go back to it.
   const returnFocusRef = useRef<string | HTMLElement | null>(null);
@@ -270,10 +282,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const folders = data?.folders ?? [];
   const documents = data?.documents ?? [];
   const { owned, shared } = useMemo(() => orderFolders(folders), [folders]);
+  const ownedTree = useMemo(() => nestFolders(owned), [owned]);
   const defaultFolder = owned.find((item) => item.is_default === 1 || item.name === "Default") ?? owned[0] ?? null;
   const currentFolder = folders.find((item) => item.id === folder) ?? null;
   // Nothing is uploaded into the Attachments folder directly (T342): uploads there come from attaching.
-  const uploadFolderId = folder === "all" ? defaultFolder?.id ?? null : currentFolder?.is_owner === 1 && !isSystemFolder(currentFolder) ? currentFolder.id : undefined;
+  // Every source (chooser, drop, paste, camera, folder) goes through these two.
+  const uploadFolderId = uploadFolderFor(folder, currentFolder, defaultFolder);
+  const folderUploadParent = folderUploadParentFor(folder, currentFolder);
   const canUpload = canWrite && uploadFolderId !== undefined && data !== null;
   const inFolder = useMemo(() => documents.filter((item) => documentInFolder(item, folder)), [documents, folder]);
   const visible = useMemo(() => sortDocuments(filterDocuments(inFolder, query), sort), [inFolder, query, sort]);
@@ -352,11 +367,31 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
   const deleteDocumentId = dialog?.kind === "delete" ? dialog.documentId : null;
   useEffect(() => {
     setDeleteUsage(null);
+    setHiddenStatus(null);
     if (!deleteDocumentId) return undefined;
     let live = true;
-    fileUsage(deleteDocumentId).then((usage) => { if (live) setDeleteUsage({ documentId: deleteDocumentId, summary: usageSummary(usage) }); }).catch(() => undefined);
+    fileUsage(deleteDocumentId).then((usage) => { if (live) setDeleteUsage({ documentId: deleteDocumentId, summary: usageSummary(usage), hidden: usage.hidden ?? [] }); }).catch(() => undefined);
     return () => { live = false; };
   }, [deleteDocumentId]);
+
+  async function removeFromHiddenPlaces(id: string, places: FileUsage["hidden"]) {
+    setRemovingHidden(true);
+    let removed = 0;
+    for (const place of places) {
+      try {
+        await unlinkFromHost(place.hostKind, place.hostId, id);
+        removed += 1;
+      } catch { /* already gone; the refreshed usage says what is left */ }
+    }
+    try {
+      const usage = await fileUsage(id);
+      setDeleteUsage({ documentId: id, summary: usageSummary(usage), hidden: usage.hidden ?? [] });
+    } catch {
+      setDeleteUsage({ documentId: id, summary: null, hidden: [] });
+    }
+    setHiddenStatus(`Removed from ${removed === 1 ? "1 place" : `${removed} places`} you can't open.`);
+    setRemovingHidden(false);
+  }
 
   const closeDialog = useCallback(() => {
     setDialog(null);
@@ -570,7 +605,19 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       notify(uploadDropMessage(null));
       return;
     }
-    chooseFiles(event.dataTransfer.files);
+    // A dropped folder is recreated as folders (U6); loose files dropped with it upload as usual.
+    const entries = droppedEntries(event.dataTransfer);
+    if (!entries) {
+      chooseFiles(event.dataTransfer.files);
+      return;
+    }
+    void readDroppedEntries(entries).then((dropped) => {
+      if (!mountedRef.current) return;
+      if (dropped.files.length) chooseFiles(dropped.files);
+      if (dropped.overflow) notify(`A folder upload takes at most ${FOLDER_UPLOAD_MAX_FILES.toLocaleString("en-US")} files. Upload its subfolders one at a time.`);
+      else if (dropped.folders.length) void uploadFolders(dropped.folders);
+      else if (dropped.folderCount) notify(dropped.unreadable ? "The browser could not read the dropped folder" : "The dropped folder is empty");
+    });
   }
 
   function folderLabel(document: DocumentSummary) {
@@ -629,7 +676,7 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     action();
   }
 
-  function chooseFiles(list: FileList | null) {
+  function chooseFiles(list: FileList | File[] | null) {
     if (!list?.length || uploadFolderId === undefined) return;
     const uploads = Array.from(list).map((file) => {
       const id = crypto.randomUUID();
@@ -639,6 +686,125 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
     dispatch({ type: "enqueue", uploads });
     setQueueOpen(true);
   }
+
+  // Camera shots and pasted pictures lose their location first (Q9, D401, through the attach kit's
+  // EXIF rewrite); files chosen, dropped, or uploaded as a folder are stored exactly as sent.
+  async function chooseCaptured(files: File[]) {
+    // A picture whose location cannot be removed (LocationStripError) is not uploaded: it shows in the
+    // queue as failed with the kit's message, and the toast says why; the others upload.
+    const results = await Promise.all(files.map((file) => stripImageLocation(file).then((clean) => ({ file: clean, error: null as string | null }), (reason: unknown) => ({
+      file,
+      error: reason instanceof LocationStripError ? reason.message : `“${file.name}” could not be prepared for upload`
+    }))));
+    if (!mountedRef.current) return;
+    chooseFiles(results.filter((result) => !result.error).map((result) => result.file));
+    const refused = results.filter((result) => result.error);
+    if (!refused.length || uploadFolderId === undefined) return;
+    dispatch({ type: "enqueue", uploads: refused.map(({ file, error }) => ({ id: crypto.randomUUID(), key: crypto.randomUUID(), name: file.name, size: file.size, folderId: uploadFolderId, rejected: error! })) });
+    setQueueOpen(true);
+    notify(refused.length === 1 ? refused[0].error! : `${refused.length} pictures were not uploaded because their location could not be removed`);
+  }
+
+  // U6: pasting files or a screenshot anywhere in Files uploads them into the open folder. Text pastes
+  // (the filter box, dialog fields, rich text) are left alone, and so is every paste while a dialog is open.
+  const pasteRef = useRef<(event: ClipboardEvent) => void>(() => undefined);
+  pasteRef.current = (event: ClipboardEvent) => {
+    if (!data || dialogOpenRef.current) return;
+    const files = filesToUploadFromPaste(event.clipboardData, event.target as HTMLElement | null);
+    if (!files.length) return;
+    event.preventDefault();
+    if (!canUpload) {
+      if (canWrite) notify(uploadDropMessage(null));
+      return;
+    }
+    const at = new Date();
+    void chooseCaptured(files.map((file) => renamePastedFile(file, at)));
+  };
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => pasteRef.current(event);
+    window.document.addEventListener("paste", onPaste);
+    return () => window.document.removeEventListener("paste", onPaste);
+  }, []);
+
+  /**
+   * U6 folder upload: creates the folders (parents first; a top folder whose name is taken becomes
+   * "Name (2)", so an upload never merges into an existing folder), then queues every file into its
+   * folder. Files the plan refuses, or whose folder could not be created, show as failed in the queue;
+   * a toast sums it up at the end.
+   */
+  async function uploadFolders(entries: Array<FolderFile<File>>) {
+    const parentId = folderUploadParent;
+    if (parentId === undefined || !entries.length || preparingRef.current) return;
+    const siblings = owned.filter((item) => (item.parent_id ?? null) === parentId).map((item) => item.name);
+    const plan = planFolderUpload(entries, siblings);
+    if (plan.error) { notify(plan.error); return; }
+    if (!plan.files.length && !plan.rejected.length) { notify(plan.skipped ? "Nothing to upload: the folder only holds system files" : "The folder is empty"); return; }
+    const label = plan.roots.length === 1 ? plan.roots[0] : `${plan.roots.length} folders`;
+    const created = new Map<string, string>();
+    const failedFolders = new Map<string, string>();
+    preparingRef.current = true;
+    setQueueOpen(true);
+    setPreparing({ label, done: 0, total: plan.folders.length });
+    try {
+      for (const [index, planned] of plan.folders.entries()) {
+        if (!mountedRef.current) return;
+        const parent = planned.parentKey === null ? parentId : created.get(planned.parentKey);
+        if (parent === undefined) {
+          failedFolders.set(planned.key, failedFolders.get(planned.parentKey ?? "") ?? "Its folder could not be created");
+        } else {
+          try {
+            const { folder: made } = await api<{ folder: { id: string } }>("/folders", { method: "POST", body: JSON.stringify({ name: planned.name, parentId: parent }) });
+            created.set(planned.key, made.id);
+          } catch (reason) {
+            failedFolders.set(planned.key, `Could not create the folder “${planned.name}”: ${errorMessage(reason, "it was refused")}`);
+          }
+        }
+        setPreparing({ label, done: index + 1, total: plan.folders.length });
+      }
+    } finally {
+      preparingRef.current = false;
+      if (mountedRef.current) setPreparing(null);
+    }
+    if (!mountedRef.current) return;
+    if (created.size) {
+      api<{ folders: Folder[] }>("/folders?include=system").then(({ folders: reloaded }) => {
+        if (mountedRef.current) setData((current) => current ? { ...current, folders: reloaded } : current);
+      }).catch(() => undefined);
+    }
+    const batch = crypto.randomUUID();
+    batchesRef.current.set(batch, { roots: plan.roots, skipped: plan.skipped, announced: false });
+    const uploads: NewUpload[] = [];
+    for (const file of plan.files) {
+      const id = crypto.randomUUID();
+      // A file at the top of the drop (no folder of its own) goes where single uploads go.
+      const folderId = file.folderKey ? created.get(file.folderKey) : uploadFolderId;
+      const base = { id, key: crypto.randomUUID(), name: file.name, size: file.item.size, label: file.path, batch };
+      if (folderId === undefined) {
+        uploads.push({ ...base, folderId: null, rejected: failedFolders.get(file.folderKey) ?? "Its folder could not be created" });
+        continue;
+      }
+      filesRef.current.set(id, file.item);
+      uploads.push({ ...base, folderId });
+    }
+    for (const file of plan.rejected) uploads.push({ id: crypto.randomUUID(), key: crypto.randomUUID(), name: file.name, size: file.item.size, folderId: null, label: file.path, batch, rejected: file.reason });
+    dispatch({ type: "enqueue", uploads });
+  }
+
+  // The toast that sums up a folder upload, once each of its files has an outcome.
+  useEffect(() => {
+    for (const [batch, info] of batchesRef.current) {
+      if (info.announced) continue;
+      const counts = finishedBatch(queue, batch);
+      if (!counts) continue;
+      info.announced = true;
+      notify(folderUploadSummary(info.roots, { ...counts, skipped: info.skipped }));
+    }
+  }, [queue, notify]);
+
+  // Take photo only where a camera is the likely input (phones and tablets); a folder chooser only
+  // where the browser has one and a mouse (phones offer no folder picking worth the menu row).
+  const canTakePhoto = coarsePointer();
+  const canChooseFolder = folderUploadParent !== undefined && supportsFolderChooser() && !canTakePhoto;
 
   // Starts queued uploads as slots free up. Each attempt runs once, even if React re-runs the effect.
   useEffect(() => {
@@ -691,8 +857,10 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         <button className={folder === "all" ? "active" : ""} aria-current={folder === "all" ? "page" : undefined} onClick={() => selectFolder("all")}><Files /><span>All files</span><b>{documents.length}</b></button>
         <button className={folder === "shared" ? "active" : ""} aria-current={folder === "shared" ? "page" : undefined} onClick={() => selectFolder("shared")}><Users /><span>Shared with me</span><b>{documents.filter((item) => item.is_owner === 0).length}</b></button>
         <div className="nav-label"><span>Folders</span>{canWrite && <button id="files-new-folder" onClick={(event) => openNewFolder(event.currentTarget)} aria-label="New folder" aria-haspopup="dialog" title="New folder"><FolderPlus /></button>}</div>
-        {owned.map((item) => <button
+        {ownedTree.map(({ folder: item, depth }) => <button
           key={item.id}
+          style={depth ? { "--folder-depth": Math.min(depth, 4) } as CSSProperties : undefined}
+          data-depth={depth || undefined}
           className={`folder-link${folder === item.id ? " active" : ""}${draggingId && canDropOnFolder(item, findDocument(draggingId)) ? " drop-candidate" : ""}${dropFolderId === item.id ? " drop-target" : ""}`}
           aria-current={folder === item.id ? "page" : undefined}
           onClick={() => selectFolder(item.id)}
@@ -737,7 +905,8 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           </div>
           <HeaderInboxButton />
           <NotificationBell />
-          {canUpload && <button className="primary-button files-upload-button" onClick={() => fileInputRef.current?.click()} title={`Upload to ${uploadDestination}`}><Upload /><span className="files-upload-label">Upload</span></button>}
+          {canUpload && <UploadMenu destination={uploadDestination} open={uploadMenuOpen} onOpenChange={setUploadMenuOpen} camera={canTakePhoto} folder={canChooseFolder}
+            onChooseFiles={() => fileInputRef.current?.click()} onPhoto={(files) => { void chooseCaptured(files); }} onFolder={(files) => { void uploadFolders(files); }} />}
           <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => { chooseFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
         <ReadOnlyBanner />
@@ -776,15 +945,16 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
         {!data && !loadError && <p className="file-preview-note" role="status">Loading files…</p>}
       </div>
       <p className="sr-only" aria-live="polite">{uploadAnnouncement(queue)}</p>
-      {queue.items.length > 0 && <section className={`upload-queue${pendingUploads ? " active" : ""}`} aria-label="Uploads">
+      {(queue.items.length > 0 || preparing) && <section className={`upload-queue${pendingUploads ? " active" : ""}`} aria-label="Uploads">
         <header className="upload-queue-header">
-          <button className="upload-queue-toggle" onClick={() => setQueueOpen((open) => !open)} aria-expanded={queueOpen} aria-controls="upload-queue-items">{queueOpen ? <ChevronDown /> : <ChevronUp />}<span>{summary}</span></button>
+          <button className="upload-queue-toggle" onClick={() => setQueueOpen((open) => !open)} aria-expanded={queueOpen} aria-controls="upload-queue-items">{queueOpen ? <ChevronDown /> : <ChevronUp />}<span>{summary || "Preparing upload"}</span></button>
           {queue.items.some((item) => item.status === "done" || item.status === "canceled") && <button className="text-action" onClick={clearFinished}>Clear</button>}
         </header>
+        {preparing && <p className="upload-queue-preparing" role="status">Creating folders for “{preparing.label}”: {preparing.done} of {preparing.total}</p>}
         {queueOpen && <ul id="upload-queue-items" className="upload-queue-items">
           {queue.items.map((item) => <li key={item.id} className={`upload-item ${item.status}`}>
             <div className="upload-item-row">
-              <span className="upload-item-name" title={item.name}>{item.name}</span>
+              <span className="upload-item-name" title={item.label ?? item.name}>{item.label ?? item.name}</span>
               <span className="upload-item-status">{item.status === "uploading" ? `${Math.round(item.progress * 100)}%` : statusLabels[item.status]}</span>
               {(item.status === "queued" || item.status === "uploading") && <button className="icon-button" onClick={() => cancelUpload(item.id)} aria-label={`Cancel upload of ${item.name}`} title="Cancel"><X /></button>}
               {canRetryUpload(item) && <button className="icon-button" onClick={() => dispatch({ type: "retry", id: item.id })} aria-label={`Retry upload of ${item.name}`} title="Retry"><RotateCcw /></button>}
@@ -839,12 +1009,13 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       notify("Access updated");
       refreshDocument(dialogDocument.id).catch(() => undefined);
     }} />}
-    {dialog?.kind === "delete" && dialogDocument && <ConfirmDialog
-      title="Move to the Bin?"
+    {dialog?.kind === "delete" && dialogDocument && <DeleteFileDialog
       message={deleteUsage?.documentId === dialogDocument.id && deleteUsage.summary ? `${deleteConfirmMessage(dialogDocument.name)} ${deleteUsage.summary}; those places show “File removed” until you restore it.` : deleteConfirmMessage(dialogDocument.name)}
-      confirmLabel="Move to Bin"
-      danger
+      hiddenCount={deleteUsage?.documentId === dialogDocument.id ? deleteUsage.hidden.length : 0}
       busy={deleting}
+      removing={removingHidden}
+      status={hiddenStatus}
+      onRemoveHidden={() => { if (deleteUsage) void removeFromHiddenPlaces(dialogDocument.id, deleteUsage.hidden); }}
       onConfirm={() => { void deleteDocument(dialogDocument); }}
       onCancel={closeDialog}
     />}

@@ -22,11 +22,19 @@ export type UploadItem = {
   documentId: string | null;
   // Bumped on every start, so the runner can tell attempts apart.
   attempt: number;
+  // U6: the path shown for a file from a folder upload ("Photos/2024/a.jpg"), and its batch.
+  label?: string;
+  batch?: string;
 };
 
 export type UploadQueueState = { items: UploadItem[] };
 
-export type NewUpload = { id: string; key: string; name: string; size: number; folderId: string | null };
+export type NewUpload = {
+  id: string; key: string; name: string; size: number; folderId: string | null;
+  label?: string; batch?: string;
+  // U6: refused before upload (a folder too deep, a folder that could not be created): listed as a final failure.
+  rejected?: string;
+};
 
 export type UploadAction =
   | { type: "enqueue"; uploads: NewUpload[] }
@@ -70,8 +78,8 @@ export function uploadQueueReducer(state: UploadQueueState, action: UploadAction
   switch (action.type) {
     case "enqueue": {
       const known = new Set(state.items.map((item) => item.id));
-      const added = action.uploads.filter((upload) => !known.has(upload.id)).map((upload): UploadItem => ({
-        ...upload, status: "queued", progress: 0, error: null, code: null, final: false, documentId: null, attempt: 0
+      const added = action.uploads.filter((upload) => !known.has(upload.id)).map(({ rejected, ...upload }): UploadItem => ({
+        ...upload, status: rejected ? "failed" : "queued", progress: 0, error: rejected ?? null, code: null, final: Boolean(rejected), documentId: null, attempt: 0
       }));
       return added.length ? { items: [...state.items, ...added] } : state;
     }
@@ -125,4 +133,12 @@ export function uploadAnnouncement(state: UploadQueueState) {
   if (count("failed")) parts.push(`${count("failed")} failed`);
   if (count("canceled")) parts.push(`${count("canceled")} canceled`);
   return state.items.length ? parts.join(", ") : "";
+}
+
+/** A batch (one folder upload) once every file in it has an outcome; null while any is still waiting or running. */
+export function finishedBatch(state: UploadQueueState, batch: string) {
+  const items = state.items.filter((item) => item.batch === batch);
+  if (!items.length || items.some((item) => item.status === "queued" || item.status === "uploading")) return null;
+  const count = (status: UploadStatus) => items.filter((item) => item.status === status).length;
+  return { done: count("done"), failed: count("failed"), canceled: count("canceled") };
 }

@@ -59,7 +59,9 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   // once the bridge maps a tool to the module of the item it is called on (left to a later slice).
   "list_attachments", "read_attachment_text",
   // U1: attaching needs an upload made for attaching, and uploads are never offered to agents.
-  "attach_file_to_event"
+  "attach_file_to_event",
+  // Uploads everywhere U3: attaching shares the file with the row's readers, and has no proposal kind yet.
+  "attach_file_to_row"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

@@ -99,6 +99,23 @@ describe("event payloads", () => {
   });
 });
 
+test("a file's owner who can now only view the event still removes their own file (U0 review M1)", async () => {
+  const owner = await createUser("U1 m1 owner");
+  const former = await createUser("U1 m1 former editor");
+  const { calendarId, eventId } = await calendarWithEvent(owner, "M1");
+  await shareCalendar(owner, calendarId, "selected", [former.userId], "viewer");
+  addCalendarMember(calendarId, former.userId, "edit");
+  const theirs = await uploadAttachment(former, "their-notes.txt");
+  const owners = await uploadAttachment(owner, "owners-notes.txt");
+  expect((await link(former, "event", eventId, { documentId: theirs })).status).toBe(201);
+  expect((await link(owner, "event", eventId, { documentId: owners })).status).toBe(201);
+  addCalendarMember(calendarId, former.userId, "view");
+  expect((await event(former, eventId)).body.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ documentId: theirs, isOwner: true })]));
+  expect((await unlink(former, "event", eventId, owners)).status).toBe(403);
+  expect((await unlink(former, "event", eventId, theirs)).status).toBe(200);
+  expect(names((await event(owner, eventId)).body)).toEqual(["owners-notes.txt"]);
+});
+
 describe("Bin and purge", () => {
   test("a binned event hides its files; restore brings them back; purge bins the uploads only", async () => {
     const owner = await createUser("U1 bin owner");

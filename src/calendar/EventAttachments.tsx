@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Paperclip, RotateCcw, X } from "lucide-react";
 import { formatBytes, deleteFile } from "../files/filesApi";
-import { AttachmentList, AttachmentPreview, AttachSheet, linkToHost, unlinkFromHost, uploadForHost, useFileDrop, type HostAttachment } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, LocationStripError, linkToHost, unlinkFromHost, uploadForHost, useFileDrop, type HostAttachment } from "../ui/attachments";
 import { useConfirm } from "../ui/useConfirm";
 import type { DocumentSummary } from "../types";
 import type { EventResponse } from "./calendarApi";
@@ -108,7 +108,16 @@ export function uploadStaged(item: StagedAttachment, signal: AbortSignal, update
   if (!item.file) return Promise.resolve();
   return uploadForHost(item.file, "event", { signal, idempotencyKey: item.key, onProgress: (loaded, total) => update(item.key, { progress: total ? loaded / total : 0 }) })
     .then(({ document }) => update(item.key, { status: "ready", progress: 1, documentId: document.id, name: document.name, sizeBytes: document.size_bytes, mimeType: document.mime_type, previewKind: document.preview_kind, file: null }))
-    .catch((reason) => { if (!isAbort(reason)) update(item.key, { status: "failed", error: errorText(reason, "Could not upload this file") }); });
+    .catch((reason) => { if (!isAbort(reason)) update(item.key, uploadFailure(reason)); });
+}
+
+/**
+ * How a failed upload shows. A photo whose location could not be removed is never uploaded (Q9),
+ * and retrying would fail the same way, so it says what to do and offers no Retry.
+ */
+export function uploadFailure(reason: unknown): Partial<StagedAttachment> {
+  if (reason instanceof LocationStripError) return { status: "failed", error: `${reason.message}. Remove its location in another app, or attach a screenshot instead.`, file: null };
+  return { status: "failed", error: errorText(reason, "Could not upload this file") };
 }
 
 /**

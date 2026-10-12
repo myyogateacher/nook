@@ -68,7 +68,7 @@ export const viewPatchSchema = safeJson(z.object({ name: labelSchema(60).optiona
 export const rowCreateSchema = safeJson(z.object({ values: valuesObject, afterRowId: uuid.nullable().optional() }).strict());
 export const rowPatchSchema = safeJson(z.object({ values: valuesObject, revision }).strict());
 export const rowUndoSchema = safeJson(z.object({ revision }).strict());
-export const attachSchema = safeJson(z.object({ documentId: uuid, fieldId: z.string().regex(FIELD_ID) }).strict());
+export const attachSchema = safeJson(z.object({ documentId: uuid, fieldId: z.string().regex(FIELD_ID), confirmed: z.boolean().optional() }).strict());
 // The CSV byte cap (2 MB) is checked by importRows so that an oversized file is 413, not a generic 400.
 export const importSchema = safeJson(z.object({ csv: z.string(), mapping: z.array(z.string().regex(FIELD_ID).nullable()).max(50).optional(), dryRun: z.boolean().default(false) }).strict());
 

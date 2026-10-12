@@ -7,7 +7,7 @@ import { readBoundedBody, uuid } from "../validation";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../../shared/whiteboardScene";
 import {
   binnedOwnWhiteboard, createWhiteboard, duplicateWhiteboard, listSnapshots, listWhiteboardsPage, previousVersion, putThumbnail, readableWhiteboard, readSnapshot, readThumbnail, readWhiteboard,
-  restorePreviousVersion, restoreSnapshot, saveScene, THUMBNAIL_MAX_BYTES, WHITEBOARD_SORTS, WhiteboardError, type WhiteboardSort
+  restorePreviousVersion, restoreSnapshot, saveScene, THUMBNAIL_MAX_BYTES, thumbnailPictureIds, WHITEBOARD_SORTS, WhiteboardError, type WhiteboardSort
 } from "./service";
 import { importWhiteboard, WHITEBOARD_IMPORT_MAX_BYTES } from "./import";
 
@@ -215,6 +215,15 @@ export function registerWhiteboardRoutes(app: Hono<AppEnv>) {
       if (!/^[A-Za-z0-9+/]*={0,2}$/.test(parsed.data.png)) throw new WhiteboardError(415, "NOT_PNG", "Thumbnails must be PNG images");
       await putThumbnail(id, c.get("user").id, parsed.data.revision, new Uint8Array(Buffer.from(parsed.data.png, "base64")));
       return c.body(null, 204);
+    } catch (error) {
+      return fail(c, error);
+    }
+  });
+
+  // The owner's pictures a thumbnail may show (v0.35.0); the owner only, everyone else 404.
+  app.get("/api/whiteboards/:id/thumbnail-pictures", async (c) => {
+    try {
+      return c.json(await thumbnailPictureIds(idParam(c), c.get("user").id));
     } catch (error) {
       return fail(c, error);
     }

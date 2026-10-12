@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0 foundation (migration 046), U3 collections, U5 chat images, U6 Files. In progress: U1 calendar events, U2 task cards and comments, U4 notes and whiteboards, S3 storage (review fixes N1/N2). Then U7 profile pictures (after S3), U8 conversion of hidden card/row attachments (migration 047, after U2), a combined review and release check, the release, and a GitHub release (operator request, 2026-10-09).
+- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0 foundation (migration 046), U1 calendar events, U2 task cards and comments, U3 collections, U4 notes and whiteboards, U5 chat images, U6 Files, S3 storage. In progress: U7 profile pictures, U8 conversion of hidden card/row attachments (migration 047), toasts via the Sonner package. Then a combined review and release check, the release, and a GitHub release (operator request, 2026-10-09).
 
 ## Known LOW leftovers
 

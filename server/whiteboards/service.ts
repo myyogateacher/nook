@@ -1,4 +1,4 @@
-import { isSystemFolder, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
+import { isSystemFolder, syncDerivedLinks, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
 import { createHash } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import { config } from "../config";
@@ -262,6 +262,45 @@ export function unavailableImages(userId: string, scene: Pick<CanonicalScene, "f
 
 const imagesUnavailable = (documentIds: Iterable<string>) => new WhiteboardError(400, "IMAGE_NOT_AVAILABLE", "An image on this whiteboard is not a file you can open", { documentIds: [...documentIds] });
 
+/**
+ * U4b (operator decision Q4, changing T165): the board's pictures follow the board's sharing. Every
+ * save derives `whiteboard` links from the scene's picture references, keeping only documents the
+ * owner (the only one who saves) owns, plus those already linked (server/attachments/service.ts
+ * `syncDerivedLinks`, T350); anyone who can open the board then opens those pictures through it. A
+ * picture someone else owns stays per viewer, as before. Call inside the save's transaction.
+ */
+function syncPictureLinks(documentId: string, ownerId: string, scene: Pick<CanonicalScene, "files">) {
+  return syncDerivedLinks("whiteboard", documentId, ownerId, [...sceneImageDocumentIds(scene)]);
+}
+
+/**
+ * Existing boards (U4b): derives picture links once at boot for every live board from its saved
+ * scene, for pictures its owner owns. A marker audit row (`attachment.backfill`, hostKind
+ * "whiteboard") records the run; later saves keep the links in step. `force` runs it again (tests).
+ */
+export async function backfillWhiteboardLinks(options: { force?: boolean } = {}) {
+  if (!options.force && db.query("SELECT 1 FROM audit_log WHERE event_type = 'attachment.backfill' AND json_extract(metadata_json, '$.hostKind') = 'whiteboard' LIMIT 1").get()) return null;
+  const boards = db.query(`SELECT w.document_id AS id FROM whiteboards w JOIN documents d ON d.id = w.document_id
+    WHERE d.deleted_at IS NULL AND d.purge_started_at IS NULL`).all() as Array<{ id: string }>;
+  const counts = { boards: 0, linked: 0, failed: 0 };
+  for (const { id } of boards) {
+    try {
+      await withResourceLock(lockKey(id), async () => {
+        const owner = db.query("SELECT d.owner_id FROM documents d WHERE d.id = ? AND d.deleted_at IS NULL").get(id) as { owner_id: string } | null;
+        if (!owner) return;
+        const pictures = await currentImageIds(id);
+        if (!pictures.size) return;
+        counts.boards += 1;
+        counts.linked += syncDerivedLinks("whiteboard", id, owner.owner_id, [...pictures]).linked.length;
+      });
+    } catch {
+      counts.failed += 1;
+    }
+  }
+  audit(null, null, "attachment.backfill", { hostKind: "whiteboard", at: now(), ...counts });
+  return counts;
+}
+
 /** The image references of the scene a board holds now (read only when a new reference fails its check). */
 async function currentImageIds(documentId: string) {
   try {
@@ -351,6 +390,7 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
       db.query("INSERT INTO whiteboards (document_id, revision, object_id, element_count, text_bytes, thumb_png, thumb_revision, thumb_sha256, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(documentId, objectId, prepared.stats.elementCount, prepared.stats.textBytes, input.thumbnail?.png ?? null, input.thumbnail ? 1 : null, input.thumbnail?.sha256 ?? null, timestamp, timestamp);
       indexWhiteboard(documentId, name, prepared.scene, prepared.sha256);
+      syncPictureLinks(documentId, userId, prepared.scene);
       if (input.audit) audit(userId, null, input.audit.action, { documentId, folderId, ...input.audit.details });
       else if (input.via) audit(userId, null, "mcp.whiteboard_create", { via: "mcp", keyId: input.via.keyId, documentId, folderId });
       else audit(userId, null, "whiteboard.create", { documentId, folderId });
@@ -495,6 +535,8 @@ export async function saveScene(documentId: string, userId: string, baseRevision
         db.query("UPDATE documents SET size_bytes = ?, sha256 = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
           .run(prepared.bytes.byteLength, prepared.sha256, savedAt, documentId, userId);
         indexWhiteboard(documentId, board.name, prepared.scene, prepared.sha256);
+        // L4: always the board OWNER (only the owner saves today; editors never auto-link their pictures).
+        syncPictureLinks(documentId, board.owner_id, prepared.scene);
         if (keep) {
           db.query(`INSERT INTO whiteboard_snapshots (id, document_id, revision, object_id, size_bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (document_id, revision) DO NOTHING`)

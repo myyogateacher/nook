@@ -52,7 +52,8 @@ import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
 import { initVaultStatus, vaultFeature } from "./vault/status";
 import { scheduleRotationRun } from "./vault/rotation";
-import { reconcileWhiteboardSearchIndex } from "./whiteboards/service";
+import { backfillWhiteboardLinks, reconcileWhiteboardSearchIndex } from "./whiteboards/service";
+import { backfillNoteLinks, resyncNoteLinks } from "./noteAttachments";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -877,6 +878,14 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
   });
 });
 
+// U4 (review M3): after restoring their own files from the Bin, an owner or editor re-derives the
+// published note's links (their own files only, T350) without publishing a new version.
+app.post("/api/notes/:id/attachments/sync", async (c) => {
+  const id = uuid.parse(c.req.param("id"));
+  const result = await resyncNoteLinks(id, c.get("user").id);
+  return result ? c.json(result) : c.json({ error: "Note not found" }, 404);
+});
+
 app.get("/api/notes/:id/sharing", (c) => {
   const id = uuid.parse(c.req.param("id"));
   const note = ownedNote(id, c.get("user").id);
@@ -1101,6 +1110,13 @@ try {
   reconcileCardExcerpts();
 } catch (error) {
   console.error("Card excerpt reconcile failed", errorClass(error));
+}
+// Uploads everywhere U4/U4b: published notes and boards get their derived file links once.
+try {
+  await backfillNoteLinks();
+  await backfillWhiteboardLinks();
+} catch (error) {
+  console.error("Note and whiteboard attachment backfill failed", errorClass(error));
 }
 startSweeper();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.

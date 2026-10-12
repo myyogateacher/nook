@@ -4,6 +4,7 @@ import { db } from "../db";
 import { keyContainerIds } from "../keyResources";
 import { defineTool, McpToolError, notFound, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import { sceneTexts, whiteboardDisplayName, type CanonicalScene } from "../../shared/whiteboardScene";
+import { listAttachments } from "../attachments/service";
 import { searchWhiteboards } from "./search";
 import { createWhiteboard, listWhiteboardsPage, readWhiteboard, readableWhiteboard, WhiteboardError, type WhiteboardSummary } from "./service";
 
@@ -86,6 +87,16 @@ function bounded<T extends { texts: unknown[]; elements?: unknown[]; truncated: 
   return result;
 }
 
+function boardAttachments(boardId: string, userId: string) {
+  try {
+    return listAttachments("whiteboard", boardId, userId).map((item) => item.removed
+      ? { id: item.documentId, removed: true as const }
+      : { id: item.documentId, name: item.name, mimeType: item.mimeType, sizeBytes: item.sizeBytes });
+  } catch {
+    return [];
+  }
+}
+
 function rethrow(error: unknown): never {
   if (error instanceof WhiteboardError) {
     if (error.status === 404) throw notFound(error.message.startsWith("Folder") ? "Folder" : "Whiteboard");
@@ -133,7 +144,7 @@ export const whiteboardTools: McpToolSpec[] = [
   defineTool({
     name: "read_whiteboard",
     title: "Read a whiteboard",
-    description: `Read a whiteboard's text: every text element (wrapped text in full), with the shape it sits in and its frame. With include "elements", also up to ${MCP_WHITEBOARD_ELEMENTS} element summaries (type, position, size, text, link, arrow ends, and for an image the id of the Nook file it shows); never raw points or image bytes. An image's file can be read only with the Files tools, and only if this key may read that file. The result is capped at 256 KiB and says when it was truncated. ${UNTRUSTED}`,
+    description: `Read a whiteboard's text: every text element (wrapped text in full), with the shape it sits in and its frame. With include "elements", also up to ${MCP_WHITEBOARD_ELEMENTS} element summaries (type, position, size, text, link, arrow ends, and for an image the id of the Nook file it shows); never raw points or image bytes. attachments lists the pictures shared through the board (pictures the board's owner owns; id, name, MIME type, size): anyone who can open the board can open these. Other pictures can be read only with the Files tools, and only if this key may read that file. The result is capped at 256 KiB and says when it was truncated. ${UNTRUSTED}`,
     scopes: ["whiteboards:read"],
     access: { mode: "items", items: [{ arg: "id", kind: "whiteboard" }] },
     write: false,
@@ -158,6 +169,8 @@ export const whiteboardTools: McpToolSpec[] = [
         updatedAt: whiteboard.updated_at,
         elementCount: whiteboard.elementCount,
         texts: sceneTexts(scene).texts,
+        // U4b (Q4): the pictures that follow the board's sharing, as this reader sees them.
+        attachments: boardAttachments(whiteboard.id, key.userId),
         ...(elements ? { elements } : {}),
         truncated: elements !== undefined && scene.elements.length > MCP_WHITEBOARD_ELEMENTS,
         url: boardUrl(whiteboard.id)

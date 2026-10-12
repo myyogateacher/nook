@@ -429,3 +429,28 @@ describe.skipIf(!s3Backend)("S3 backend: uploads everywhere (U0, U1, U5)", () =>
     expect(fakeS3!.log.slice(before).some((line) => line.startsWith(`GET ${key(document.id)}`))).toBe(true);
   });
 });
+
+describe.skipIf(!s3Backend)("S3 backend: card and comment attachments (U2)", () => {
+  test("a card attachment and a files-only comment's attachment are stored on S3 and served to board readers", async () => {
+    const owner = await createUser("S3 card owner");
+    const created = await api(owner, "POST", "/tasks/boards", { name: "S3 board" });
+    const card = (await api(owner, "POST", `/tasks/boards/${created.body.board.id}/cards`, { columnId: created.body.columns[0].id, title: "S3 card" })).body.card as Json;
+    const uploadTo = async (name: string, content: string) => {
+      const form = new FormData();
+      form.append("file", new Blob([content]), name);
+      const response = await request("/files?attachTo=card", { method: "POST", body: form }, owner);
+      expect(response.status).toBe(201);
+      return ((await response.json()) as { document: Json }).document.id as string;
+    };
+    const onCard = await uploadTo("s3-card.txt", "card bytes on S3");
+    expect((await api(owner, "POST", `/tasks/cards/${card.id}/attachments`, { documentId: onCard })).status).toBe(201);
+    const onComment = await uploadTo("s3-comment.txt", "comment bytes on S3");
+    expect((await api(owner, "POST", `/tasks/cards/${card.id}/comments`, { body: "", attachmentIds: [onComment] })).status).toBeLessThan(300);
+    for (const [id, text] of [[onCard, "card bytes on S3"], [onComment, "comment bytes on S3"]] as const) {
+      expect(new TextDecoder().decode(fakeS3!.objects.get(key(id))!.bytes)).toBe(text);
+      const served = await request(`/files/${id}/content`, {}, owner);
+      expect(served.status).toBe(200);
+      expect(await served.text()).toBe(text);
+    }
+  });
+});

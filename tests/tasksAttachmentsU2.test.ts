@@ -260,6 +260,32 @@ describe("U2: Bin (D395, D409)", () => {
     expect(db.query("SELECT COUNT(*) AS count FROM card_attachments WHERE card_id = ?").get(cardId)).toEqual({ count: 0 });
   });
 
+  test("a purge audits document.delete only for files it really binned (no stale .changes after the cascade)", async () => {
+    const { owner, cardId } = await board("Purge audit");
+    const spec = await filesItem(owner, "stays.txt");
+    const legacy = await upload(owner, "legacy.png", "png bytes", {});
+    // An older hidden upload that its owner already binned (still linked, as after a D409-style delete).
+    const hidden = db.query("SELECT id FROM documents WHERE id = ?").get(legacy.id) ? legacy.id : "";
+    db.query("UPDATE documents SET purpose = 'task_attachment', folder_id = NULL WHERE id = ?").run(hidden);
+    await tasks(owner, "POST", `/cards/${cardId}/attachments`, { documentId: hidden });
+    await tasks(owner, "POST", `/cards/${cardId}/attachments`, { documentId: spec, confirmed: true });
+    const binnedAt = new Date().toISOString();
+    db.query("UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ? WHERE id = ?").run(binnedAt, owner.userId, binnedAt, hidden);
+    const before = (db.query("SELECT COUNT(*) AS count FROM audit_log WHERE event_type = 'document.delete'").get() as { count: number }).count;
+    // The comment path too: deleting a comment cascades its links, then nothing is binned.
+    const viaComment = await filesItem(owner, "comment-spec.txt");
+    const comment = (await tasks(owner, "POST", `/cards/${cardId}/comments`, { body: "", attachmentIds: [viaComment], confirmed: true })).body.comment as { id: string };
+    expect((await tasks(owner, "DELETE", `/comments/${comment.id}`)).status).toBe(200);
+    expect(deletedAt(viaComment)).toBeNull();
+    expect((await tasks(owner, "DELETE", `/cards/${cardId}`)).status).toBe(200);
+    expect((await api(owner, "DELETE", `/bin/card/${cardId}`)).status).toBe(200);
+    const after = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'document.delete' ORDER BY rowid DESC LIMIT ?").all(
+      (db.query("SELECT COUNT(*) AS count FROM audit_log WHERE event_type = 'document.delete'").get() as { count: number }).count - before) as Array<{ metadata_json: string }>;
+    expect(after).toEqual([]);
+    expect(deletedAt(spec)).toBeNull();
+    expect(deletedAt(hidden)).toBe(binnedAt);
+  });
+
   test("a linked file deleted from Files shows as removed until its owner restores it", async () => {
     const { owner, member, cardId } = await board("Removed");
     const shot = await cardUpload(member, "gone.png");

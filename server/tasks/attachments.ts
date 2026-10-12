@@ -127,12 +127,17 @@ export function binUnlinkedAttachments(documentIds: Iterable<string>, actorId: s
   const stillLinked = db.query("SELECT 1 FROM card_attachments WHERE document_id = ?");
   const deletedAt = new Date();
   const purgeAfter = purgeAfterFrom(deletedAt);
+  // Eligibility is a SELECT, never the UPDATE's `.changes`: after a cascading DELETE in the same
+  // transaction (a card or comment purge), Bun can report that DELETE's count for an UPDATE that
+  // matched nothing, which would audit a "document.delete" that never happened (found in U3).
+  const eligible = db.query("SELECT 1 FROM documents WHERE id = ? AND purpose = 'task_attachment' AND deleted_at IS NULL");
   const bin = db.query(`UPDATE documents SET deleted_at = ?, deleted_by = ?, purge_after = ?
     WHERE id = ? AND purpose = 'task_attachment' AND deleted_at IS NULL`);
   let binned = 0;
   for (const documentId of new Set(documentIds)) {
     if (stillLinked.get(documentId)) continue;
-    if (bin.run(deletedAt.toISOString(), actorId, purgeAfter, documentId).changes) {
+    if (eligible.get(documentId)) {
+      bin.run(deletedAt.toISOString(), actorId, purgeAfter, documentId);
       binned += 1;
       audit(actorId, null, "document.delete", { documentId, reason: "attachment_unlinked" });
     } else if (binIfOrphanedAttachment(documentId, actorId, { notify: false })) {

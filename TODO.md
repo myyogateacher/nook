@@ -2,15 +2,11 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-08):** production runs **v0.34.0** (admin limits on knowledge-base embedding models and sizes). Released migrations are immutable: **001–044**. Messages takes **045**.
+**Current state (2026-10-08):** production runs **v0.34.0** (admin limits on knowledge-base embedding models and sizes). Released migrations are immutable: **001–044**.
 
 ## In flight
 
-Nothing. Waiting for the operator's next pick.
-
-## Next features (operator to pick)
-
-- [ ] **Messages module** (Slack-like: channels, DMs, threads, notes tab, webhooks, unfurl, reactions). The plan is ready: `docs/plan/research/2026-09-30-messages-module.md`, migration 045. Waiting for the operator's go-ahead.
+- [ ] **v0.35.0 — uploads everywhere + S3 storage.** On main: U0 foundation (migration 046), U3 collections, U5 chat images, U6 Files. In progress: U1 calendar events, U2 task cards and comments, U4 notes and whiteboards, S3 storage (review fixes N1/N2). Then U7 profile pictures (after S3), U8 conversion of hidden card/row attachments (migration 047, after U2), a combined review and release check, the release, and a GitHub release (operator request, 2026-10-09).
 
 ## Known LOW leftovers
 

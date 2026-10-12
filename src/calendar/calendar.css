@@ -244,3 +244,20 @@ button.calendar-link:hover strong { color: #f5cf79; }
 .calendar-feed-list .calendar-list-copy { flex: 1; min-width: 0; }
 .calendar-feed-list .icon-button { width: 44px; height: 44px; flex: none; }
 .calendar-feed-list .icon-button.danger { color: #f3a3ae; }
+
+/* Attachments (uploads everywhere U1): the event view's section and the event sheet's field. The list
+   itself is the shared kit's (.attachment-list); drop targets get an outline and a label while files
+   are dragged over them. */
+.calendar-event-attachments { position: relative; min-width: 0; }
+.calendar-event-attachments h2 .calendar-count { margin-left: 2px; border-radius: 999px; padding: 1px 7px; background: #26262b; color: #b5b5bb; font-size: .72rem; font-weight: 650; }
+.calendar-event-attachments .attachment-list + .attachment-list { margin-top: 6px; }
+.calendar-attach-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 10px; }
+.calendar-attach-row .calendar-hint { margin: 0; }
+.calendar-event-form { position: relative; }
+.calendar-event-form .calendar-event-attachments > span { display: block; }
+.calendar-event-attachments.dragging, .calendar-event-form.dragging { outline: 2px dashed #6b582f; outline-offset: 4px; border-radius: 12px; }
+.calendar-drop-overlay { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; background: rgb(11 11 13 / .86); color: #e6cf94; font-size: .92rem; font-weight: 650; pointer-events: none; }
+.calendar-drop-overlay svg { width: 18px; }
+.calendar-attachment-pending progress { width: 90px; height: 6px; vertical-align: middle; accent-color: #c9a85c; }
+.calendar-attachment-pending.failed small { color: #e59a8f; }
+@media (pointer: coarse) { .calendar-drop-hint { display: none; } }

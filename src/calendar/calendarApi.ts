@@ -1,6 +1,7 @@
 import { api } from "../api";
 import type { ItemLevel } from "../access/accessLevels";
 import type { Visibility } from "../types";
+import type { HostAttachment } from "../ui/attachments";
 
 export type CalendarColor = "blue" | "green" | "amber" | "red" | "violet" | "slate";
 export type CalendarRole = "owner" | "editor" | "viewer";
@@ -49,7 +50,11 @@ export type EventDetail = {
 };
 
 export type EventLink = { targetType: "note" | "card" | "collection_row"; targetId: string; title: string | null; restricted: boolean };
-export type EventResponse = { event: EventDetail; calendar: CalendarSummary; role: CalendarRole; links: EventLink[] };
+/**
+ * `attachments` (uploads everywhere U1): the event's files as the viewer sees them, for the whole
+ * series; `attachmentLimit` is the per-event cap (20). Older servers omit both.
+ */
+export type EventResponse = { event: EventDetail; calendar: CalendarSummary; role: CalendarRole; links: EventLink[]; attachments?: HostAttachment[]; attachmentLimit?: number };
 
 export type Occurrence = {
   eventId: string;
@@ -62,6 +67,8 @@ export type Occurrence = {
   start: string;
   end: string;
   recurring: boolean;
+  /** Files on the event that are not in their owner's Bin (U1); older servers omit it. */
+  attachmentCount?: number;
 };
 
 export type EventInput = {

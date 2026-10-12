@@ -1,5 +1,6 @@
-import { useId, useState } from "react";
-import { Repeat } from "lucide-react";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { Paperclip, Repeat } from "lucide-react";
+import { useFileDrop, usePasteFiles } from "../ui/attachments";
 import { ConfirmDialog, ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -21,9 +22,15 @@ type EventSheetProps = {
   onSave: () => void;
   onReload: () => void;
   onClose: () => void;
+  /** The Attachments field (U1), after Notes. */
+  attachments?: ReactNode;
+  /** Files pasted or dropped on the sheet (U1); omit when nothing can be attached. */
+  onFiles?: (files: File[]) => void;
+  /** Files are still uploading: Save waits for them. */
+  uploading?: boolean;
 };
 
-// The event sheet, its Repeat sheet, and the Discard prompt are shown one at a time, and each holds its
+// The event sheet, its Repeat sheet, its Attach sheet and attachment preview (U1), and the Discard prompt are shown one at a time, and each holds its
 // own history guard while it is on screen (the task composer's pattern): Back closes only the layer on
 // top, so Repeat goes back to the form, the form asks before losing changes, and Back or Cancel on the
 // prompt returns to the form with the draft. Each guard also holds the phone's depth-0 sentinel, which
@@ -35,13 +42,18 @@ type EventSheetProps = {
  * and Repeat on the left; the calendar, Location, and Notes (which grows) on the right. Narrower,
  * the columns are `display: contents` and the fields keep one column, the calendar after the title.
  */
-export function EventSheet({ mode, form, calendars, calendarId, busy, error, conflict, onChange, onCalendarChange, onRepeat, onSave, onReload, onClose }: EventSheetProps) {
+export function EventSheet({ mode, form, calendars, calendarId, busy, error, conflict, onChange, onCalendarChange, onRepeat, onSave, onReload, onClose, attachments, onFiles, uploading = false }: EventSheetProps) {
   // Back closes the sheet, or asks first when it was edited (the caller's onClose decides).
   useHistoryDialogGuard(true, onClose);
   const set = <K extends keyof EventForm>(key: K, value: EventForm[K]) => onChange({ ...form, [key]: value });
   const calendarLabelId = useId();
+  // U1: paste a screenshot anywhere in the form (rich-text pastes stay text) or drop files on it.
+  const formRef = useRef<HTMLFormElement>(null);
+  usePasteFiles(formRef, (files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
+  const drop = useFileDrop((files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
   return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy} className="calendar-event-dialog">
-    <form className="calendar-form calendar-event-form" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+    <form ref={formRef} className={`calendar-form calendar-event-form${drop.dragging ? " dragging" : ""}`} onSubmit={(event) => { event.preventDefault(); if (!uploading) onSave(); }} {...drop.bind}>
+      {drop.dragging && <div className="calendar-drop-overlay" aria-hidden="true"><Paperclip />Drop to attach to this event</div>}
       <div className="calendar-event-when">
       <label className="calendar-field calendar-event-title">
         <span>Title</span>
@@ -85,11 +97,12 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
         <span>Notes</span>
         <textarea value={form.description} rows={4} onChange={(event) => set("description", event.target.value)} aria-label="Notes" />
       </label>
+      {attachments}
       </div>
       {error && <p className="file-dialog-error" role="alert">{error}{conflict && <> <button type="button" className="calendar-link-button" onClick={onReload}>Load their changes</button></>}</p>}
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
-        <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : mode === "create" ? "Add event" : "Save"}</button>
+        <button type="submit" className="primary-button" disabled={busy || uploading}>{busy ? "Saving…" : uploading ? "Uploading…" : mode === "create" ? "Add event" : "Save"}</button>
       </footer>
     </form>
   </ModalDialog>;

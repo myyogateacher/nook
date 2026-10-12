@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CardDialog } from "../src/tasks/CardDialog";
-import { attachTarget, attachZoneOf } from "../src/tasks/cardUploads";
+import { attachTarget, attachZoneOf, uploadFailure } from "../src/tasks/cardUploads";
+import { LocationStripError } from "../src/ui/attachments";
+import { RoleContext } from "../src/team/roleAccess";
 import { createBody, emptyDraft } from "../src/tasks/composerDraft";
 import { attachCapReason, commentBodyError, commentFilesOnly, fitToCap, hostAttachment, unlinkConfirmMessage } from "../src/tasks/taskActions";
 import type { BoardColumn, CardAttachment, CardDetail, CardView } from "../src/tasks/tasksApi";
@@ -110,6 +112,21 @@ describe("the card dialog", () => {
     expect(markup).toContain('src="/api/files/d1/content?disposition=inline"');
     // Drop zones: the comment box stages for the comment, the description keeps its own drops.
     expect(markup).toContain('data-attach-zone="comment"');
+  });
+
+  test("without edit rights only the file's owner sees Remove, and it goes through the generic route (U0 review M1)", () => {
+    const readOnly = renderToStaticMarkup(<RoleContext.Provider value="viewer"><CardDialog userId="u1" cardId="k1" columns={columns} boardOwner={false} boardLevel="view"
+      onClose={() => undefined} onMissing={() => undefined} onChanged={() => undefined} onMove={() => undefined} onDelete={async () => undefined} notify={() => undefined}
+      initialView={{ ...view, attachments: [attachment("d1", null, "mine.png"), attachment("d2", null, "theirs.pdf", { linked_by: "u2" })] }} /></RoleContext.Provider>);
+    expect(readOnly).toContain('aria-label="Remove mine.png"');
+    expect(readOnly).not.toContain('aria-label="Remove theirs.pdf"');
+    expect(readOnly).not.toContain(">Attach<");
+    expect(source("tasks/CardDialog.tsx")).toContain('unlinkFromHost("card", cardId, attachment.document_id)');
+  });
+
+  test("a picture whose location could not be removed is refused with a plain message", () => {
+    expect(uploadFailure({ name: "IMG_1.jpg" }, new LocationStripError("IMG_1.jpg"))).toContain("could not remove the photo's location");
+    expect(uploadFailure({ name: "a.txt" }, new Error("Quota exceeded"))).toBe("a.txt: Quota exceeded");
   });
 
   test("history layers: the sheet and the preview are guarded, and the card's Escape waits for them (D18, D21)", () => {

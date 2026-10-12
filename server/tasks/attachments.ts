@@ -2,7 +2,7 @@ import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "../attachments/service";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
-import { LIMITS, limitReached, requireCardAt, TaskError, withBoardLock } from "./service";
+import { LIMITS, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 
 /**
  * Card attachments (WAVES_7-9.md D42/D43 as revised by the director's §7 review). An attachment is
@@ -173,14 +173,24 @@ export async function attachToCard(userId: string, cardId: string, input: { docu
   });
 }
 
-/** Unlinks (the linker or the board owner). A document no card links any more moves to its uploader's Bin. */
+/** Whether `userId` owns the document (they may always withdraw it, U0 review M1). */
+const ownsDocument = (documentId: string, userId: string) => Boolean(db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND purge_started_at IS NULL").get(documentId, userId));
+
+/**
+ * Unlinks (the linker or the board owner, at `edit`). The file's owner may always withdraw their own
+ * file from a card they can still open, whatever their level (U0 review M1; one they can no longer
+ * open goes through DELETE /api/attachments/card/…). A document no card links any more moves to its
+ * uploader's Bin.
+ */
 export async function detachFromCard(userId: string, cardId: string, documentId: string) {
-  const { board } = requireCardAt(cardId, userId, "edit");
+  const asOwner = ownsDocument(documentId, userId);
+  const access = () => asOwner ? requireReadableCard(cardId, userId) : requireCardAt(cardId, userId, "edit");
+  const { board } = access();
   return withBoardLock(board.id, () => {
-    const { board: current } = requireCardAt(cardId, userId, "edit");
+    const { board: current } = access();
     const link = db.query("SELECT linked_by FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, documentId) as { linked_by: string | null } | null;
     if (!link) throw attachmentNotFound();
-    if (link.linked_by !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the person who attached this file or the board owner can remove it", "LINKER_ONLY");
+    if (!asOwner && link.linked_by !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the person who attached this file or the board owner can remove it", "LINKER_ONLY");
     let binned = 0;
     const binnedFiles: string[] = [];
     db.transaction(() => {

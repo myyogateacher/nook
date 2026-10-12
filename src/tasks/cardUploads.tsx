@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { formatBytes } from "../files/filesApi";
+import { LocationStripError } from "../ui/attachments";
 import { taskErrorMessage, uploadAttachment, type UploadedAttachment } from "./tasksApi";
 
 /**
@@ -30,7 +31,7 @@ export function useCardUploads(notify: (message: string) => void) {
         });
         await onUploaded(uploaded);
       } catch (reason) {
-        if (!(reason instanceof DOMException && reason.name === "AbortError")) notify(`${file.name || "File"}: ${taskErrorMessage(reason, "could not attach")}`);
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) notify(uploadFailure(file, reason));
       } finally {
         live.current.delete(controller);
         setRows((current) => current.filter((row) => row.key !== key));
@@ -39,6 +40,16 @@ export function useCardUploads(notify: (message: string) => void) {
   }, [notify]);
 
   return { rows, busy: rows.length > 0, upload };
+}
+
+/**
+ * What a failed upload says. The kit refuses a picture whose location it could not remove (U0 review
+ * M2, LocationStripError) rather than share it with the board: say so plainly, with what to do.
+ */
+export function uploadFailure(file: { name: string }, reason: unknown) {
+  const name = file.name || "File";
+  if (reason instanceof LocationStripError) return `${name} was not attached: Nook could not remove the photo's location from it. Save it again as a new picture (for example, a screenshot of it) and attach that.`;
+  return `${name}: ${taskErrorMessage(reason, "could not attach")}`;
 }
 
 /** The progress rows: name, percent, and Cancel. */

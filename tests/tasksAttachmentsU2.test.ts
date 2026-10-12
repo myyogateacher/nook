@@ -205,6 +205,28 @@ describe("U2: files-only comments (D397, Q12) and adding files while editing", (
   });
 });
 
+describe("U2: the file's owner may always withdraw it (U0 review M1)", () => {
+  test("below edit through Tasks, and after losing the board through the generic route; others stay refused", async () => {
+    const { owner, member, boardId, cardId } = await board("Owner unlink");
+    const mine = await cardUpload(member, "mine.png");
+    const other = await cardUpload(member, "other.png");
+    await tasks(member, "POST", `/cards/${cardId}/attachments`, { documentId: mine });
+    await tasks(member, "POST", `/cards/${cardId}/attachments`, { documentId: other });
+    const ownerFile = await cardUpload(owner, "owner.png");
+    await tasks(owner, "POST", `/cards/${cardId}/attachments`, { documentId: ownerFile });
+    db.query("UPDATE board_members SET level = 'comment' WHERE board_id = ? AND user_id = ?").run(boardId, member.userId);
+    // Someone else's file at comment level: refused.
+    expect((await tasks(member, "DELETE", `/cards/${cardId}/attachments/${ownerFile}`)).status).toBe(403);
+    expect((await tasks(member, "DELETE", `/cards/${cardId}/attachments/${mine}`)).body).toEqual({ ok: true, movedToBin: true });
+    // Unshared entirely: the generic route still withdraws it, telling nothing about the card.
+    expect((await tasks(owner, "PUT", `/boards/${boardId}/sharing`, { visibility: "private", userIds: [] })).status).toBe(200);
+    expect((await tasks(member, "DELETE", `/cards/${cardId}/attachments/${other}`)).status).toBe(404);
+    const withdrawn = await api(member, "DELETE", `/attachments/card/${cardId}/${other}`);
+    expect(withdrawn.status).toBe(200);
+    expect(db.query("SELECT COUNT(*) AS count FROM card_attachments WHERE card_id = ?").get(cardId)).toEqual({ count: 1 });
+  });
+});
+
 describe("U2: Bin (D395, D409)", () => {
   test("deleting a comment bins its Attachments-folder files but never a linked Files item", async () => {
     const { owner, member, cardId } = await board("Comment bin");

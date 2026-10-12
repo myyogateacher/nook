@@ -37,7 +37,7 @@ const view: CardView = {
   card,
   comments: [{ id: "m1", card_id: "k1", author_id: "u1", author_name: "Ann", is_author: 1, body: "Looks good", created_at: stamp, edited_at: null }],
   hasMoreComments: false,
-  attachments: [{ document_id: "d1", card_id: "k1", comment_id: null, linked_by: "u1", linker_name: "Ann", name: "spec.pdf", mime_type: "application/pdf", preview_kind: "none", size_bytes: 10, created_at: stamp } as CardView["attachments"][number]],
+  attachments: [{ document_id: "d1", card_id: "k1", comment_id: null, linked_by: "u2", linker_name: "Bo", name: "spec.pdf", mime_type: "application/pdf", preview_kind: "none", size_bytes: 10, created_at: stamp } as CardView["attachments"][number]],
   relations: [{ id: "r1", type: "relates_to", restricted: false, created_at: stamp, creator_name: "Ann",
     card: { id: "k9", board_id: "b1", board_name: "Board", title: "Related card", column_name: "To do", is_done: 0, due_on: null } }]
 };

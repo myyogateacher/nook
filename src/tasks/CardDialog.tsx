@@ -6,7 +6,7 @@ import { ArrowRightLeft, Copy, Maximize2, MessageSquare, Minimize2, Paperclip, P
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { deleteFile } from "../files/filesApi";
 import { ApiError } from "../api";
-import { AttachmentList, AttachmentPreview, AttachSheet, pastedFiles, useFileDrop } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, pastedFiles, unlinkFromHost, useFileDrop } from "../ui/attachments";
 import type { DocumentSummary } from "../types";
 import { attachTarget, attachZoneOf, UploadRows, useCardUploads, type AttachZone } from "./cardUploads";
 import { CardTitleField } from "./CardTitleField";
@@ -561,11 +561,15 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
   async function unlink(attachment: CardAttachment) {
     setDeleteBusy(true);
     try {
-      const result = await unlinkAttachment(cardId, attachment.document_id);
+      // Without edit rights only the file's owner removes it (U0 review M1), through the generic route,
+      // which the role write gate allows for read-only roles too.
+      const movedToBin = readOnly
+        ? (await unlinkFromHost("card", cardId, attachment.document_id)).documentBinned === true
+        : (await unlinkAttachment(cardId, attachment.document_id)).movedToBin;
       setAttachments((current) => current.filter((item) => item.document_id !== attachment.document_id));
       countChanged(-1);
       const name = attachment.removed ? "the removed file" : `“${attachment.name}”`;
-      notify(result.movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
+      notify(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
     } catch (reason) {
       notify(taskErrorMessage(reason, "Could not remove the attachment"));
     } finally {
@@ -582,7 +586,8 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
     onOpen={(item) => setPreview({ documentId: item.documentId, name: item.name })}
     canRemove={(item) => {
       const original = items.find((candidate) => candidate.document_id === item.documentId);
-      return !readOnly && original !== undefined && canUnlink(original, userId, boardOwner);
+      // Writers: the linker or the board owner; anyone: their own file (U0 review M1).
+      return original !== undefined && ((!readOnly && canUnlink(original, userId, boardOwner)) || original.linked_by === userId);
     }}
     onRemove={(item) => setUnlinking(items.find((candidate) => candidate.document_id === item.documentId) ?? null)}
   />;

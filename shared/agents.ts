@@ -82,6 +82,36 @@ export const policyMaxDims = (policy: ProviderKnowledgePolicy) => policy.maxDims
 /** Whether a provider's policy allows this embedding model (case-sensitive: model ids are). */
 export const policyAllowsModel = (policy: ProviderKnowledgePolicy, model: string) => policy.models === null || policy.models.includes(model.trim());
 
+/**
+ * A provider's image policy (uploads everywhere U5, operator decision Q10): images attached in the chat
+ * composer go only to models an admin marks vision-capable here. Off by default; `models` null means
+ * every model of the provider, else only the listed ids. Stored on `compat_json` under `vision`, beside
+ * the knowledge policy, so no migration.
+ */
+export type ProviderVisionPolicy = { enabled: boolean; models: string[] | null };
+export const DEFAULT_VISION_POLICY: ProviderVisionPolicy = { enabled: false, models: null };
+export const VISION_POLICY_BOUNDS = { models: 20, modelName: 128 } as const;
+/** Whether the policy lets `model` see images (case-sensitive: model ids are). */
+export const visionAllowsModel = (policy: ProviderVisionPolicy, model: string) => policy.enabled && (policy.models === null || policy.models.includes(model.trim()));
+
+/**
+ * Images in the chat composer (U5, D404, Q10, Q11). PNG, JPEG, GIF, and WebP only (the server's sniff
+ * decides); at most `perMessage` on one message and `bytes` each (the browser downscales bigger photos
+ * to `maxEdge` px before upload). A model call carries at most `requestBytes` of images in all: older
+ * ones in the conversation are left out first, and the model is told. `tokensEach` is the estimate
+ * an image counts for when the provider reports no usage, and in the message window's budget.
+ */
+export const CHAT_IMAGE_BOUNDS = { perMessage: 5, bytes: 5 * 1024 * 1024, requestBytes: 20 * 1024 * 1024, maxEdge: 2048, tokensEach: 1000 } as const;
+export const CHAT_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export type ChatImageType = typeof CHAT_IMAGE_TYPES[number];
+export const isChatImageType = (type: string): type is ChatImageType => (CHAT_IMAGE_TYPES as readonly string[]).includes(type);
+/** An image on a user message (U5): `removed` when its owner moved the file to the Bin (hosts show "Image removed"). */
+export type ChatAttachment =
+  | { documentId: string; removed: false; name: string; mimeType: string; sizeBytes: number }
+  | { documentId: string; removed: true };
+/** One image to send with a message: a document the sender owns (uploaded with `?attachTo=chat_message`, or from Files with `confirmed`). */
+export type ChatAttachmentInput = { documentId: string; confirmed?: boolean };
+
 /** Run and message states (plan §2.2, §6.1). */
 export const RUN_STATUSES = ["queued", "running", "awaiting_confirmation", "ok", "error", "cancelled", "interrupted", "timeout", "step_limit", "budget"] as const;
 export type RunStatus = typeof RUN_STATUSES[number];
@@ -227,6 +257,8 @@ export type ProviderSummary = {
   compat: ProviderCompat; isDefault: boolean; hasSecret: boolean; hint: string | null; revision: number; createdAt: string; updatedAt: string;
   /** The knowledge base policy (2026-10-08). */
   knowledge: ProviderKnowledgePolicy;
+  /** U5: which of its models may be sent images. */
+  vision: ProviderVisionPolicy;
 };
 /**
  * A provider as the agent editor sees it (`GET /api/agents/providers`): anyone who may create agents
@@ -269,6 +301,8 @@ export type AgentSummary = {
   providerName: string | null;
   /** The model a run uses now: `model`, else the default model of the agent's provider (or of the default provider). Null with no provider at all. */
   effectiveModel: string | null;
+  /** U5: whether that model may be sent images (the admin's vision policy on its provider). */
+  vision: boolean;
 };
 export type AgentLevel = "owner" | "manage" | "view";
 /** The system prompt is null below `manage` (D356: viewers chat, they never read the prompt). */
@@ -317,6 +351,8 @@ export type ChatMessage = {
   model: string | null; usage: TokenUsage | null; runId: string | null; createdAt: string; finishedAt: string | null;
   /** AC-B: the tool calls an assistant turn made, oldest first (empty for user turns). */
   toolCalls: ToolCallView[];
+  /** U5: the images on a user turn, in order (absent or empty otherwise). */
+  attachments?: ChatAttachment[];
 };
 /** `agentState` (Wave 43 fixes, QA L3): whether the caller can use the chat's agent; `binned` only for the agent's owner. */
 export type ChatDetail = { chat: ChatSummary; messages: ChatMessage[]; activeRunId: string | null; pendingConfirmation: PendingConfirmation | null; agentState?: "usable" | "binned" | "unavailable" };

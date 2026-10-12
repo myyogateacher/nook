@@ -1,11 +1,12 @@
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
-import { AGENT_BOUNDS, type ChatDetail, type ChatMessage, type ChatSummary, type TokenUsage, type ToolCallView } from "../../shared/agents";
+import { AGENT_BOUNDS, type ChatAttachment, type ChatDetail, type ChatMessage, type ChatSummary, type TokenUsage, type ToolCallView } from "../../shared/agents";
 import { usableAgent, type AgentRow } from "./agentsService";
 import { shareLevel, shareReadableSql } from "./sharing";
 import { publishChatUpdate } from "./chatUpdates";
 import { AgentError } from "./status";
 import { copyToolImages } from "./images";
+import { chatAttachmentsFor, copyChatAttachments } from "./chatImages";
 
 /**
  * Chats and their message trees (plan §6.1, D360): a chat belongs to its owner and one agent; its
@@ -51,6 +52,12 @@ export const messageOf = (row: MessageRow): ChatMessage => ({
   id: row.id, parentId: row.parent_id, role: row.role, content: row.content, status: row.status, errorCode: row.error_code, model: row.model,
   usage: parseUsage(row.usage_json), runId: row.run_id, createdAt: row.created_at, finishedAt: row.finished_at, toolCalls: parseToolCalls(row.tool_calls_json)
 });
+
+/** A user message with its images (U5), when it has any. */
+export const withAttachments = (message: ChatMessage, attachments: ReadonlyMap<string, ChatAttachment[]>): ChatMessage => {
+  const list = attachments.get(message.id);
+  return list && list.length ? { ...message, attachments: list } : message;
+};
 
 const LIVE_RUN = "SELECT 1 FROM agent_runs r WHERE r.chat_id = c.id AND r.status IN ('queued','running','awaiting_confirmation')";
 
@@ -126,8 +133,10 @@ export function chatDetail(id: string, userId: string): ChatDetail {
     ? db.query("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at, rowid").all(id) as MessageRow[]
     : pathTo(id, row.active_leaf_id);
   const run = db.query("SELECT id FROM agent_runs WHERE chat_id = ? AND status IN ('queued','running','awaiting_confirmation') ORDER BY queued_at DESC LIMIT 1").get(id) as { id: string } | null;
+  // U5: the images of the messages this reader gets (the owner: all; people it is shared with: the branch on screen).
+  const attachments = chatAttachmentsFor(rows.filter((message) => message.role === "user").map((message) => message.id));
   // `pendingConfirmation` is filled by the route from the live run (runs.ts owns it).
-  return { chat, messages: rows.map(messageOf), activeRunId: run?.id ?? null, pendingConfirmation: null, agentState: agentStateFor(row.agent_id, userId) };
+  return { chat, messages: rows.map((message) => withAttachments(messageOf(message), attachments)), activeRunId: run?.id ?? null, pendingConfirmation: null, agentState: agentStateFor(row.agent_id, userId) };
 }
 
 export function createChat(userId: string, agentId: string): ChatSummary {
@@ -228,7 +237,7 @@ const titleFrom = (content: string) => {
  * Inserts a user message under `parentId` (null = a root; an edit passes the edited message's own
  * parent, which makes a sibling) and makes it the active leaf. The first message titles the chat.
  */
-export function insertUserMessage(chat: ChatRow, userId: string, content: string, parentId: string | null): MessageRow {
+export function insertUserMessage(chat: ChatRow, userId: string, content: string, parentId: string | null, titleFallback?: string): MessageRow {
   return db.transaction(() => {
     const count = (db.query("SELECT COUNT(*) AS count FROM chat_messages WHERE chat_id = ?").get(chat.id) as { count: number }).count;
     if (count >= AGENT_BOUNDS.messagesPerChat) throw new AgentError(409, "LIMIT_REACHED", `A chat holds at most ${AGENT_BOUNDS.messagesPerChat} messages; start a new one`);
@@ -238,7 +247,7 @@ export function insertUserMessage(chat: ChatRow, userId: string, content: string
     db.query("INSERT INTO chat_messages (id, chat_id, parent_id, role, content, status, author_id, created_at, finished_at) VALUES (?, ?, ?, 'user', ?, 'complete', ?, ?, ?)")
       .run(id, chat.id, parentId, content, userId, timestamp, timestamp);
     const first = count === 0;
-    db.query("UPDATE chats SET active_leaf_id = ?, title = CASE WHEN ? THEN ? ELSE title END, revision = revision + 1, updated_at = ? WHERE id = ?").run(id, first ? 1 : 0, titleFrom(content), timestamp, chat.id);
+    db.query("UPDATE chats SET active_leaf_id = ?, title = CASE WHEN ? THEN ? ELSE title END, revision = revision + 1, updated_at = ? WHERE id = ?").run(id, first ? 1 : 0, content.trim() || !titleFallback ? titleFrom(content) : titleFallback, timestamp, chat.id);
     const fts = db.query("SELECT title FROM chats WHERE id = ?").get(chat.id) as { title: string };
     db.query("INSERT INTO chat_fts (chat_id, owner_id, title, body) VALUES (?, ?, ?, ?)").run(chat.id, chat.owner_id, first ? fts.title : "", content.slice(0, 4096));
     return chatMessage(chat.id, id);
@@ -339,7 +348,9 @@ export function forkChat(userId: string, chatId: string, messageId: string): Cha
     db.query("UPDATE chats SET active_leaf_id = ? WHERE id = ?").run(parent, id);
     // The copy's messages keep their tool-call lists, so they keep the pictures those calls returned (same ids).
     copyToolImages(chatId, id, new Map([...copies].filter(([source]) => path.some((row) => row.id === source && row.role === "assistant"))));
-    audit(userId, null, "agents.chat.fork", { chatId: id, messages: path.length, ...(source.owner_id !== userId ? { shared: true } : {}) });
+    // U5: the user turns' images follow the copy when the copier owns them (the owner's own copy); never someone else's file.
+    const images = copyChatAttachments(userId, new Map([...copies].filter(([source]) => path.some((row) => row.id === source && row.role === "user"))));
+    audit(userId, null, "agents.chat.fork", { chatId: id, messages: path.length, ...(source.owner_id !== userId ? { shared: true } : {}), ...(images.linked || images.skipped ? { images: images.linked, imagesLeftBehind: images.skipped } : {}) });
     return summaryRows("c.id = $id", { id }, userId)[0]!;
   })();
 }

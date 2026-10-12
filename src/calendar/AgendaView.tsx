@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, CircleCheck, Repeat, RotateCcw, TriangleAlert } from "lucide-react";
+import { CalendarDays, CircleCheck, Paperclip, Repeat, RotateCcw, TriangleAlert } from "lucide-react";
 import { addDays, AGENDA_DAYS } from "../calendarRoute";
 import { listOccurrences, viewerTimeZone, type DueTask, type Occurrence, type OccurrenceList } from "./calendarApi";
 import { AgendaList } from "../ui/calendarGrid/AgendaList";
@@ -69,6 +69,7 @@ export function OccurrenceRow({ occurrence, day, zone, onOpen }: { occurrence: O
       <strong>{occurrence.title}</strong>
       {occurrence.location && <small>{occurrence.location}</small>}
     </span>
+    {(occurrence.attachmentCount ?? 0) > 0 && <Paperclip className="calendar-occurrence-repeat" aria-label={occurrence.attachmentCount === 1 ? "1 file attached" : `${occurrence.attachmentCount} files attached`} />}
     {occurrence.recurring && <Repeat className="calendar-occurrence-repeat" aria-label="Repeats" />}
   </button>;
 }

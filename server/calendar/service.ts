@@ -42,6 +42,7 @@ import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { mailEventChanged } from "../mail/calendarMail";
+import type { AttachmentView } from "../attachments/service";
 
 export const MAX_CALENDARS_PER_OWNER = 20;
 export const MAX_EVENTS_PER_CALENDAR = 20_000;
@@ -407,6 +408,23 @@ export function resetEventCreateLimit() {
   createWindows.clear();
 }
 
+/**
+ * The event's files (uploads everywhere U1), supplied by server/calendar/attachments.ts. It registers
+ * itself (the Bin-provider pattern) instead of being imported here: the attachment registry imports
+ * the calendar's access rules, and documentAccess.ts builds its predicate from that registry at load,
+ * so a static import from this file would close an import cycle.
+ */
+type AttachmentProvider = { list: (eventId: string, userId: string) => AttachmentView[]; limit: number };
+let attachmentProvider: AttachmentProvider | null = null;
+export function registerEventAttachments(provider: AttachmentProvider) {
+  attachmentProvider = provider;
+}
+
+/** The event's files as `userId` sees them (empty until the provider is registered). */
+export function eventAttachments(eventId: string, userId: string): AttachmentView[] {
+  return attachmentProvider?.list(eventId, userId) ?? [];
+}
+
 function eventResponse(event: EventRow, calendar: CalendarRow, userId: string) {
   const links = db.query("SELECT target_type, target_id FROM event_links WHERE event_id = ? ORDER BY rowid")
     .all(event.id) as Array<{ target_type: LinkTargetType; target_id: string }>;
@@ -414,7 +432,9 @@ function eventResponse(event: EventRow, calendar: CalendarRow, userId: string) {
     event: eventDetail(event),
     calendar: calendarSummary(calendar.id, userId)!,
     role: calendarRole(calendar, userId),
-    links: links.map((link) => resolveLink(link.target_type, link.target_id, userId))
+    links: links.map((link) => resolveLink(link.target_type, link.target_id, userId)),
+    attachments: eventAttachments(event.id, userId),
+    attachmentLimit: attachmentProvider?.limit ?? 0
   };
 }
 
@@ -592,6 +612,8 @@ export type OccurrenceItem = {
   start: string;
   end: string;
   recurring: boolean;
+  /** Files attached to the event (its whole series) that are not in their owner's Bin (U1). */
+  attachmentCount: number;
 };
 
 const DAY_MS = 86_400_000;
@@ -610,12 +632,15 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
   const lower = new Date(range.startMs - 2 * DAY_MS).toISOString();
   const upper = new Date(range.endMs + 2 * DAY_MS).toISOString();
   const filter = calendarIds === null ? "" : `AND k.id IN (SELECT value FROM json_each($calendarIds))`;
-  const rows = db.query(`SELECT e.*, k.color AS calendar_color FROM events e JOIN calendars k ON k.id = e.calendar_id
+  const rows = db.query(`SELECT e.*, k.color AS calendar_color,
+        (SELECT COUNT(*) FROM attachment_links al JOIN documents ad ON ad.id = al.document_id
+          WHERE al.host_kind = 'event' AND al.host_id = e.id AND ad.deleted_at IS NULL) AS attachment_count
+      FROM events e JOIN calendars k ON k.id = e.calendar_id
       WHERE e.deleted_at IS NULL AND ${readableCalendarPredicate} ${filter}
         AND e.start_utc < $upper AND (e.series_end_utc IS NULL OR e.series_end_utc > $lower)
         AND (e.next_occurrence_from IS NULL OR e.next_occurrence_revision IS NOT e.revision OR e.next_occurrence_from > $lower OR e.next_occurrence_utc < $upper)
       ORDER BY e.start_utc, e.id LIMIT $rowLimit`)
-    .all({ userId, upper, lower, rowLimit: MAX_ROWS_EXAMINED + 1, ...(calendarIds === null ? {} : { calendarIds: JSON.stringify(calendarIds) }) }) as Array<EventRow & { calendar_color: CalendarColor }>;
+    .all({ userId, upper, lower, rowLimit: MAX_ROWS_EXAMINED + 1, ...(calendarIds === null ? {} : { calendarIds: JSON.stringify(calendarIds) }) }) as Array<EventRow & { calendar_color: CalendarColor; attachment_count: number }>;
   const items: Array<OccurrenceItem & { sortKey: string }> = [];
   let truncated = rows.length > MAX_ROWS_EXAMINED;
   const budget: ExpansionBudget = { steps: MAX_EXPANSION_STEPS };
@@ -637,7 +662,7 @@ export function listOccurrences(userId: string, range: ExpansionRange, calendarI
       const end = occurrence.allDay ? occurrence.endDate : new Date(occurrence.endMs).toISOString();
       items.push({
         eventId: row.id, calendarId: row.calendar_id, title: row.title, location: row.location, color: row.calendar_color,
-        allDay: occurrence.allDay, date: occurrence.date, start, end, recurring: row.rrule_json !== null,
+        allDay: occurrence.allDay, date: occurrence.date, start, end, recurring: row.rrule_json !== null, attachmentCount: row.attachment_count,
         // All-day items sort before timed items of the same day.
         sortKey: occurrence.allDay ? `${occurrence.startDate}T00:00:00.000Z!0` : `${start}!1`
       });

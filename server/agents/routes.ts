@@ -5,9 +5,10 @@ import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
 import { parseJson, uuid } from "../validation";
-import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, DEFAULT_MODEL, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, SERVER_AUTH_KINDS, SERVER_AVAILABILITIES, TOOL_POLICIES, type ChatUpdateEvent } from "../../shared/agents";
+import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, CHAT_IMAGE_BOUNDS, DEFAULT_MODEL, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, SERVER_AUTH_KINDS, SERVER_AVAILABILITIES, TOOL_POLICIES, VISION_POLICY_BOUNDS, type ChatUpdateEvent } from "../../shared/agents";
 import { createAgent, deleteAgent, agentDetail, listUsableAgents, manageableAgent, updateAgent, usableAgent } from "./agentsService";
-import { chatDetail, createChat, deleteChat, forkChat, listChats, listSharedChats, messageOf, pathTo, readableChat, updateChat } from "./chats";
+import { chatDetail, createChat, deleteChat, forkChat, listChats, listSharedChats, messageOf, pathTo, readableChat, updateChat, withAttachments } from "./chats";
+import { chatAttachmentsFor } from "./chatImages";
 import { publicLinkFor, publicLinksOn, publicLinkState, revokePublicLink, roleMayPublish, upsertPublicLink } from "./publicShares";
 import { readShareAccess, shareLevel, writeShareAccess, type ShareKind } from "./sharing";
 import { subscribeChatUpdates } from "./chatUpdates";
@@ -48,6 +49,12 @@ const knowledgePolicy = z.object({
   models: z.array(embeddingModelId).min(1).max(KNOWLEDGE_POLICY_BOUNDS.models).refine((list) => new Set(list).size === list.length, "must not repeat").nullable().optional(),
   maxDims: z.number().int().min(KNOWLEDGE_POLICY_BOUNDS.minDims).max(KNOWLEDGE_POLICY_BOUNDS.maxDims).nullable().optional()
 }).strict();
+// U5 (Q10): which models may be sent images. `models: null` is "every model"; a list has 1 to 20 model ids.
+const visionModelId = z.string().trim().min(1).max(VISION_POLICY_BOUNDS.modelName).regex(EMBEDDING_MODEL_ID, "must be a model id");
+const visionPolicy = z.object({
+  enabled: z.boolean().optional(),
+  models: z.array(visionModelId).min(1).max(VISION_POLICY_BOUNDS.models).refine((list) => new Set(list).size === list.length, "must not repeat").nullable().optional()
+}).strict();
 const providerCreateSchema = z.object({
   name: line(AGENT_BOUNDS.providerName),
   baseUrl: z.string().trim().min(8).max(AGENT_BOUNDS.baseUrl).optional(),
@@ -57,6 +64,7 @@ const providerCreateSchema = z.object({
   embeddingDims: z.number().int().min(64).max(3072).nullish(),
   compat: compat.optional(),
   knowledge: knowledgePolicy.optional(),
+  vision: visionPolicy.optional(),
   isDefault: z.boolean().optional()
 }).strict();
 const providerPatchSchema = providerCreateSchema.partial().extend({ expectedRevision: revision, removeSecret: z.boolean().optional() }).strict();
@@ -118,10 +126,13 @@ const agentCreateSchema = z.object({
 const agentPatchSchema = agentCreateSchema.partial().extend({ expectedRevision: revision }).strict();
 const chatCreateSchema = z.object({ agentId: uuid }).strict();
 const chatPatchSchema = z.object({ title: line(AGENT_BOUNDS.chatTitle).optional(), pinned: z.boolean().optional(), activeLeafId: uuid.nullable().optional(), expectedRevision: revision }).strict();
+// U5: up to 5 images (`attachments`, checked in chatImages.ts); with images the text may be empty.
+const attachmentInput = z.object({ documentId: uuid, confirmed: z.boolean().optional() }).strict();
 const messageSchema = z.object({
-  content: z.string().min(1).max(AGENT_BOUNDS.userMessageBytes).refine((value) => value.trim().length > 0, "must not be blank").refine((value) => !value.includes("\u0000"), "must not contain NUL characters"),
-  parentId: uuid.nullable().optional()
-}).strict();
+  content: z.string().max(AGENT_BOUNDS.userMessageBytes).refine((value) => !value.includes("\u0000"), "must not contain NUL characters").default(""),
+  parentId: uuid.nullable().optional(),
+  attachments: z.array(attachmentInput).max(CHAT_IMAGE_BOUNDS.perMessage * 4).optional()
+}).strict().refine((value) => value.content.trim().length > 0 || (value.attachments?.length ?? 0) > 0, { message: "must not be blank", path: ["content"] });
 const emptySchema = z.object({}).strict();
 // Wave 43 (AC-D): the Access sheet's body (src/access/accessApi.ts), Continue as a copy, and the public link.
 const sharePrincipal = z.object({ id: uuid, level: z.enum(["view", "manage", "comment", "edit"]) }).strict();
@@ -425,9 +436,10 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
   app.post("/api/chats/:chatId/messages", handle(chatter(async (c) => {
     const chatId = id(c, "chatId");
     const body = await parseJson(c.req.raw, messageSchema);
-    const started = startChatRun(actorOf(c), chatId, { kind: "send", content: body.content, parentId: body.parentId });
+    const started = startChatRun(actorOf(c), chatId, { kind: "send", content: body.content, parentId: body.parentId, attachments: body.attachments });
     // The contract's camelCase message shape (QA Q12), the same as `messages[]` in GET /api/chats/:id.
-    return c.json({ runId: started.runId, userMessage: started.userMessage ? messageOf(started.userMessage) : null, assistantMessage: messageOf(started.assistantMessage) }, 201);
+    const userMessage = started.userMessage ? withAttachments(messageOf(started.userMessage), chatAttachmentsFor([started.userMessage.id])) : null;
+    return c.json({ runId: started.runId, userMessage, assistantMessage: messageOf(started.assistantMessage) }, 201);
   })));
   app.post("/api/chats/:chatId/messages/:messageId/regenerate", handle(chatter(async (c) => {
     const chatId = id(c, "chatId");

@@ -1,4 +1,4 @@
-import { AGENT_BOUNDS, MODEL_TIMEOUTS, type ProviderCompat, type TokenUsage } from "../../shared/agents";
+import { AGENT_BOUNDS, CHAT_IMAGE_BOUNDS, MODEL_TIMEOUTS, type ProviderCompat, type TokenUsage } from "../../shared/agents";
 import { EgressError, egressFetch, readEgressText, type EgressResponse } from "./egress";
 
 /**
@@ -16,8 +16,14 @@ export type ProviderConnection = { id: string; baseUrl: string; apiKey: string |
 /** A tool call as the model emitted it (plan §2.1): `arguments` is the raw JSON text. */
 export type ModelToolCall = { id: string; name: string; arguments: string };
 /** The wire turns (OpenAI Chat Completions): an assistant turn may carry `tool_calls`; a `tool` turn answers one. */
+/**
+ * A part of a user turn with images (U5): OpenAI-compatible `text` and `image_url` parts, the image a
+ * base64 data URL. Only chat runs with images on a vision-capable model send parts; every other turn is a string.
+ */
+export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 export type ChatTurn =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | ContentPart[] }
   | { role: "assistant"; content: string; tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> }
   | { role: "tool"; tool_call_id: string; content: string };
 /** A tool as offered to the model (`tools: [{type: "function", function}]`). */
@@ -30,7 +36,17 @@ export type CompletionResult = { content: string; finishReason: string | null; u
  * (Stop, the wall clock, a lost right, a failure mid-stream) is charged from this.
  */
 export type StreamProgress = { started: boolean; content: string; usage: TokenUsage | null; model: string | null; promptChars: number };
-export const newProgress = (messages: readonly ChatTurn[]): StreamProgress => ({ started: false, content: "", usage: null, model: null, promptChars: messages.reduce((sum, turn) => sum + (turn.content?.length ?? 0), 0) });
+/**
+ * A turn's size in characters for the estimates (÷ 4 = tokens): its text, plus
+ * `CHAT_IMAGE_BOUNDS.tokensEach` tokens (× 4 characters) per image part, never the data URL's length.
+ */
+export function turnChars(turn: ChatTurn): number {
+  const content = turn.content as string | ContentPart[] | null | undefined;
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  return content.reduce((sum, part) => sum + (part.type === "text" ? part.text.length : CHAT_IMAGE_BOUNDS.tokensEach * 4), 0);
+}
+export const newProgress = (messages: readonly ChatTurn[]): StreamProgress => ({ started: false, content: "", usage: null, model: null, promptChars: messages.reduce((sum, turn) => sum + turnChars(turn), 0) });
 
 /** The usage of a call that ended early: the provider's when it reported one, else prompt and kept text ÷ 4. */
 export const partialUsage = (progress: StreamProgress): TokenUsage => progress.usage ? cutUsage(progress.usage, progress.content) : { promptTokens: Math.ceil(progress.promptChars / 4), completionTokens: estimateTokens(progress.content), estimated: true };
@@ -257,7 +273,7 @@ export async function completeStreaming(connection: ProviderConnection, request:
     rethrow(error);
   }
   if (!usage) {
-    const promptChars = request.messages.reduce((sum, turn) => sum + (turn.content?.length ?? 0), 0);
+    const promptChars = request.messages.reduce((sum, turn) => sum + turnChars(turn), 0);
     usage = { promptTokens: Math.ceil(promptChars / 4), completionTokens: estimateTokens(content.slice(0, AGENT_BOUNDS.assistantMessageChars)), estimated: true };
   }
   // A reply cut at the stored bound is charged for the kept text only (TODO "usage charged on cut replies").

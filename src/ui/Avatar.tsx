@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Bot } from "lucide-react";
+import { useSelfAvatar } from "./selfAvatar";
 
 /**
  * The one avatar used wherever a person is drawn (Wave 35, D299): their picture when the server gave
@@ -45,4 +46,12 @@ export function Avatar(props: Omit<ViewProps, "failed" | "onError">) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const url = props.url ?? null;
   return <AvatarView {...props} failed={url !== null && failedUrl === url} onError={() => setFailedUrl(url)} />;
+}
+
+/**
+ * The signed-in person's own avatar (U7): the live picture from selfAvatar, so a change in Settings
+ * shows at once; `url` (the session's) until the shell has set it.
+ */
+export function SelfAvatar({ url, ...props }: Omit<ViewProps, "failed" | "onError" | "integration">) {
+  return <Avatar {...props} url={useSelfAvatar(url ?? null)} />;
 }

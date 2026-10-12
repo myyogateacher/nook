@@ -37,6 +37,8 @@ export const BUCKET_FAMILIES = {
   "google:link:account": { scope: "account", limit: 5 },
   "google:unlink:account": { scope: "account", limit: 5 },
   "totp-setup:account": { scope: "account", limit: 5 },
+  // Own profile picture changes (uploads everywhere U7, T353).
+  "avatar:account": { scope: "account", limit: 10 },
   // Team → Google actions, per acting admin.
   "google:admin:admin": { scope: "admin", limit: 10 }
 } as const satisfies Record<string, { scope: BucketScope; limit: number }>;

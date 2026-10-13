@@ -6,7 +6,7 @@ import { ArrowRightLeft, Copy, Maximize2, MessageSquare, Minimize2, Paperclip, P
 import { imageAltText, imageContentUrl, IMAGE_REJECTED_MESSAGE, isInsertableImageType } from "../editor/imageUpload";
 import { deleteFile } from "../files/filesApi";
 import { ApiError } from "../api";
-import { AttachmentList, AttachmentPreview, AttachSheet, pastedFiles, unlinkFromHost, useFileDrop } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, notifyRemoved, pastedFiles, relinkToHost, unlinkFromHost, useFileDrop } from "../ui/attachments";
 import type { DocumentSummary } from "../types";
 import { attachTarget, attachZoneOf, UploadRows, useCardUploads, type AttachZone } from "./cardUploads";
 import { CardTitleField } from "./CardTitleField";
@@ -52,6 +52,7 @@ import type { TaskNotify } from "./taskActions";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
 import { appName } from "../appName";
+import { FormError } from "../ui/FormError";
 
 type CardDialogProps = {
   userId: string;
@@ -569,7 +570,15 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
       setAttachments((current) => current.filter((item) => item.document_id !== attachment.document_id));
       countChanged(-1);
       const name = attachment.removed ? "the removed file" : `“${attachment.name}”`;
-      notify.success(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`);
+      // Undo (editors): back on the card, with its comment while that comment exists, and out of the
+      // Bin when the removal put it there; a file in someone else's Bin only they can restore.
+      const undoable = !readOnly && !attachment.removed && (!movedToBin || attachment.linked_by === userId);
+      notifyRemoved(movedToBin ? `Removed ${name}; it is in ${attachment.linked_by === userId ? "your" : "its uploader's"} Bin` : `Removed ${name} from this card`,
+        undoable ? async () => {
+          const result = await relinkToHost("card", cardId, attachment.document_id, { partId: attachment.comment_id });
+          if (result.relinked) countChanged(1);
+          await load();
+        } : null, notify);
     } catch (reason) {
       notify.error(taskErrorMessage(reason, "Could not remove the attachment"));
     } finally {
@@ -635,7 +644,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
               maxLength={200}
             />
             : <h2 id={titleId}>Loading…</h2>}
-          {titleError && <p className="file-dialog-error" role="alert">{titleError}</p>}
+          <FormError message={titleError} className="file-dialog-error" />
         </div>
         {card && <CopyCardLinkButton boardId={card.board_id} cardId={card.id} notify={notify} />}
         {card && !readOnly && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
@@ -659,7 +668,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
           <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} readOnly={readOnly} />
           {hierarchy && <div className="task-card-details"><CardParentFields card={card} context={hierarchy} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} readOnly={readOnly} />
             {sprints && <CardSprintField card={card} structure={hierarchy.structure} cards={hierarchy.cards} sprints={sprints} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} readOnly={readOnly} />}</div>}
-          {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
+          <FormError message={detailsConflict} className="file-dialog-error" />
 
           <RelationsSection cardId={card.id} boardId={card.board_id} idPrefix={titleId} relations={relations} notify={notify} readOnly={readOnly}
             onOpen={(target) => onOpenRelated?.(target)}

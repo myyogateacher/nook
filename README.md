@@ -102,7 +102,7 @@ You need Git, Docker Engine, and Docker Compose.
 git clone https://github.com/pankajsoni19/nook.git && cd nook
 cp .env.example .env            # set ALLOWED_EMAILS, TOTP_POLICY, APP_ORIGINS as needed
 sudo mkdir -p /srv/mynotes && sudo chown 1000:1000 /srv/mynotes   # or set MYNOTES_DATA_DIR
-APP_VERSION=0.35.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
+APP_VERSION=0.37.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build
 curl http://localhost:2026/api/health   # then open http://localhost:2026 and create the first account (the admin)
 ```
 
@@ -114,11 +114,11 @@ Back up first (`./scripts/backup.sh --force`), pull, rebuild, and let migrations
 
 ## What's new
 
-Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.35.0):
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md). Latest (v0.37.0):
 
-- **Attach files almost everywhere**: events, cards, comments, rows, notes, whiteboards and chat, kept in Files › Attachments.
-- **Optional S3 storage**, profile pictures, Sonner toasts with Undo, and whiteboard thumbnails with pictures.
-- **Confirming with Google works**; migrations 046–048 run on the first boot, so back up first.
+- **Undo for removed attachments survives a restart**, and saving an event that removed files offers Undo.
+- **Removed or replaced profile pictures** stop showing on other people's next page load.
+- Migration 049 runs on the first boot; back up first.
 
 ## Documentation
 

@@ -109,7 +109,8 @@ describe("bell deep links (id-only hrefs, T68)", () => {
       ["agent_changed", { kind: "agent", id: gone }, "/settings/agents"],
       ["new_sign_in", { kind: "device", id: "firefox:linux" }, "/settings/security"],
       ["feed_revoked", { kind: "calendar", id: calendar }, "/settings/access"],
-      ["routine_paused", { kind: "routine", id: routine }, "/inbox/routines"]
+      ["routine_paused", { kind: "routine", id: routine }, "/inbox/routines"],
+      ["avatar_removed", null, "/settings/security"]
     ];
     // Every kind the server can store is covered (readable agents, chats, and bases: tests/agentsSharing*.test.ts, knowledge tests).
     expect([...new Set(cases.map(([kind]) => kind))].sort()).toEqual(await noticeKinds());

@@ -6,6 +6,7 @@ import { ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { getSnapshot, listSnapshots, type WhiteboardSnapshot } from "./whiteboardsApi";
 import "../ui/pickerSheet.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * The History sheet (D207): the versions the server kept of this board, newest first, each with its
@@ -84,7 +85,7 @@ export function HistorySheet({ boardId, files, onRestore, onCopy, onClose, cover
   return <ModalDialog title="History" eyebrow="Whiteboard" onClose={onClose} variant="sheet" className="nook-picker whiteboard-history" busy={busy !== null || covered}>
     <p className="nook-picker-hint whiteboard-history-intro">Nook keeps a version when you empty the board or remove most of it, and one every 30 minutes while you draw, up to 20. Restoring one keeps what is on the board now as a version too.</p>
     <div className="nook-picker-body">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {!error && !snapshots && <p className="nook-picker-empty" role="status">Loading the history…</p>}
       {snapshots && snapshots.length === 0 && <p className="nook-picker-empty">No earlier versions yet. They are kept as you draw.</p>}
       {snapshots && snapshots.length > 0 && <ol className="whiteboard-history-list" aria-label="Versions">

@@ -8,6 +8,7 @@ import { fieldName, useFieldErrors } from "../auth/fieldChecks";
 import { KeysDialog } from "../keys/KeysDialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import "../keys/keys.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * Team → member → Google sign-in (Wave 35 review, HIGH-1, L6, N2, N5; admins only). A Google sign-in
@@ -241,7 +242,7 @@ export function TeamGoogleCard({ userId, name }: { userId: string; name: string 
           {result.removeCredentials === false && offersCredentials && <p className="team-google-copy team-google-note">{keptCredentialsText(Boolean(state.relinkPreview?.twoFactor))}</p>}
         </>}
       </>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
     </KeysDialog>}
   </section>;
 }

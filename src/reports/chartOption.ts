@@ -1,7 +1,7 @@
 import type { ChartBlock, ChartKind, ResultColumn, ValueFormat } from "../../shared/reports";
 
 /**
- * ECharts options for report charts (plan wave 47, T366 "chart option injection"). Nook builds every
+ * ECharts options for report charts (plan wave 47, T367 "chart option injection"). Nook builds every
  * option here from the validated block spec (kind, x, y[], series, format) and the stored result rows,
  * nothing else: no option, style, or formatter string ever comes from the spec or the model. The only
  * formatters are this file's functions, picked by the `ValueFormat` enum; every text that reaches the

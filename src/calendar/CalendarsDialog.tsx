@@ -133,7 +133,7 @@ export function CalendarsDialog({ calendars, hidden, busy, onToggle, onCreate, o
         <span className="calendar-list-copy"><strong>Tasks due</strong><small>Cards with a due date on boards you can open</small></span>
       </li>
     </ul>
-    {owned.length < 20 && canWrite && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }}>
+    {owned.length < 20 && canWrite && <form className="calendar-new" onSubmit={(event) => { event.preventDefault(); void create(); }} noValidate>
       <input value={name} maxLength={80} placeholder="New calendar" aria-label="New calendar name" onChange={(event) => setName(event.target.value)} />
       <Select variant="compact" value={color} label="Colour" options={colourOptions} onChange={setColor} />
       <button className="primary-button" type="submit" disabled={busy}><Plus />Add</button>

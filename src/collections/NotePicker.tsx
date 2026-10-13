@@ -4,6 +4,7 @@ import { api } from "../api";
 import { ModalDialog } from "../files/Dialog";
 import type { NoteSummary } from "../types";
 import type { FieldDefinition } from "./collectionsApi";
+import { FormError } from "../ui/FormError";
 
 type NotePickerProps = {
   field: FieldDefinition;
@@ -50,7 +51,7 @@ export function NotePicker({ field, selected, onSave, onClose }: NotePickerProps
       </button>)}
       {notes && !visible.length && <p className="empty-copy">No matching notes.</p>}
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
     <footer className="file-dialog-actions">
       {selected && <button className="secondary-button" onClick={() => { void choose(null); }} disabled={busy}>Remove link</button>}
       <button className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>

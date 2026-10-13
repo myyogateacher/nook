@@ -8,7 +8,7 @@ import { chQuery, ChError, queryIdFor, type ChTarget } from "./clickhouse";
 import { datasourceNotFound, ReportError } from "./errors";
 
 /**
- * Report data sources (plan wave 45, D413, D415, T357, T359): admin-configured ClickHouse endpoints.
+ * Report data sources (plan wave 45, D413, D415, T358, T360): admin-configured ClickHouse endpoints.
  * Admins create, edit, test, and delete them (Settings → Report data sources); authors only see the
  * enabled ones' names when they pick one for a report. The password is write-only: sealed under
  * AGENT_SECRETS_KEY with the AAD of its row (`datasource`), and the API returns only `hasPassword`.

@@ -2,7 +2,7 @@ import type { GuardCode, StatementClass } from "../../shared/reports";
 import { clickhouseRegex, databaseAllowed, tableAllowed } from "./allowlist";
 
 /**
- * The SQL guard for report queries (plan wave 45, D411, D412, T356). Defence in depth in front of the
+ * The SQL guard for report queries (plan wave 45, D411, D412, T357). Defence in depth in front of the
  * real boundary, which is ClickHouse itself: a read-only user with grants only on the allowed tables
  * (Test connection warns when the user can write), plus the per-query settings `clickhouse.ts` sends.
  *

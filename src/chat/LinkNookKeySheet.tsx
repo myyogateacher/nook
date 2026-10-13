@@ -6,6 +6,7 @@ import type { LinkableKey, NookLink } from "../../shared/agents";
 import { agentLink, messageOf, setAgentLink } from "./chatApi";
 import { MODULE_NAMES } from "./toolPicker";
 import "./chat.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * The Link Nook key sheet (agent chat plan §5.3, D359; Wave 41 AC-B): the person picks one of
@@ -60,7 +61,7 @@ export function LinkNookKeySheet({ agentId, agentName, onClose, onChanged, onOpe
   return <ModalDialog title="Link Nook key" eyebrow={agentName} onClose={onClose} busy={busy} variant="sheet" className="chat-dialog chat-link-key-sheet">
     <div className="chat-link-key">
       <p className="file-dialog-hint"><KeyRound /> {agentName} reaches your Nook only through a key you own: what the key may read, the agent may read, and its writes land in your Inbox as proposals. Your own session is never used, and whatever the agent reads is sent to the model provider.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {link && <div className="security-card chat-link-current">
         <strong>Linked: {link.name}</strong><small><code>{link.prefix}…</code> · {link.state}</small>
         <button type="button" className="secondary-button" onClick={() => { void choose(null); }} disabled={busy}>Unlink</button>

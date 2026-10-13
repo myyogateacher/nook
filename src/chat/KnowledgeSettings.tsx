@@ -15,6 +15,7 @@ import "./chat.css";
 import "./knowledge.css";
 import { notify } from "../ui/notify";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
+import { FormError } from "../ui/FormError";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -59,7 +60,7 @@ export function KnowledgeSettings({ kbId, navigate, flash }: { kbId: string | nu
   </li>;
   return <section className="settings-content agents-settings knowledge-settings" aria-labelledby={HUB_TITLE_ID}>
     <div className="settings-section-heading"><span className="settings-icon"><BookOpen /></span><div><p>A knowledge base holds notes, text files, and pasted text that your agents can search. Its text is sent to the model provider to be indexed and whenever an agent quotes it.</p></div></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {status && !status.enabled && <p className="settings-warning">Chat is not configured on this server{status.reason ? " (see Settings → AI)" : ""}.</p>}
     {status?.enabled && !status.canChat && <p className="settings-warning">Chat is off for your role.</p>}
     {own && own.length > 0 && <ul className="agents-list" aria-label="Your knowledge bases">{own.map(row)}</ul>}
@@ -97,8 +98,8 @@ function CreateSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (
     }
   }
   return <ModalDialog title="New knowledge base" onClose={onClose} busy={busy} variant="sheet" className="chat-dialog knowledge-sheet">
-    <form className="file-dialog-form" onSubmit={submit}>
-      {error && <p className="form-error" role="alert">{error}</p>}
+    <form className="file-dialog-form" onSubmit={submit} noValidate>
+      <FormError message={error} />
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={KNOWLEDGE_BOUNDS.name} autoComplete="off" autoFocus onChange={(event) => setName(event.target.value)} />
       <label htmlFor={ids.description}>Description</label>
@@ -191,7 +192,7 @@ function KnowledgePage({ kbId, navigate, flash }: { kbId: string; navigate: Navi
   return <div className="settings-content settings-team-content knowledge-page">
     <button type="button" className="team-back team-back-visible" onClick={() => navigate(toList)}><ChevronLeft />Knowledge</button>
     <div className="settings-section-heading"><span className="settings-icon"><BookOpen /></span><div><h3>{kb?.name ?? "Knowledge base"}</h3><p>{kb ? `${kb.description ? `${kb.description} · ` : ""}${kb.yourLevel === "owner" ? "Yours" : `${kb.ownerName}'s · ${kb.yourLevel === "manage" ? "you manage it" : "you can search it"}`}` : "Loading…"}</p></div></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {kb && <>
       <p className="settings-warning knowledge-warning" role="note">{KNOWLEDGE_WARNING}</p>
       {kb.notice && <p className="settings-warning knowledge-notice" role="status">{kb.notice}</p>}
@@ -255,8 +256,8 @@ function RenameSheet({ kb, onClose, onSaved }: { kb: KnowledgeDetail; onClose: (
     }
   }
   return <ModalDialog title="Rename" eyebrow={kb.name} onClose={onClose} busy={busy} variant="sheet" className="chat-dialog knowledge-sheet">
-    <form className="file-dialog-form" onSubmit={submit}>
-      {error && <p className="form-error" role="alert">{error}</p>}
+    <form className="file-dialog-form" onSubmit={submit} noValidate>
+      <FormError message={error} />
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={KNOWLEDGE_BOUNDS.name} autoComplete="off" onChange={(event) => setName(event.target.value)} />
       <label htmlFor={ids.description}>Description</label>
@@ -318,12 +319,12 @@ export function AddSourceSheet({ kb, onClose, onAdded }: { kb: KnowledgeDetail; 
   // end (sticky). It is one form in every mode (the mode buttons keep focus); only Paste text submits.
   const submitText = (event: FormEvent) => { event.preventDefault(); if (mode !== "text") return; if (!title.trim() || !text.trim()) { setError("Enter a title and some text."); return; } void add({ kind: "text", title: title.trim(), text }, "text"); };
   return <ModalDialog title="Add source" eyebrow={kb.name} onClose={onClose} busy={busy} variant="sheet" className="chat-dialog knowledge-sheet knowledge-add">
-    <form className="file-dialog-form knowledge-add-body" onSubmit={submitText}>
+    <form className="file-dialog-form knowledge-add-body" onSubmit={submitText} noValidate>
       <div className="knowledge-modes" role="group" aria-label="Source type">
         {MODES.map((option) => <button key={option.value} type="button" className={`knowledge-mode${mode === option.value ? " active" : ""}`} aria-pressed={mode === option.value} onClick={() => { setMode(option.value); setError(null); }}>{option.label}</button>)}
       </div>
       <p className="file-dialog-hint">{KNOWLEDGE_WARNING}{mode === "text" ? "" : ` ${readers}`}</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {mode !== "text" ? <>
         <label className="sr-only" htmlFor={ids.query}>Search {mode === "note" ? "notes" : "files"}</label>
         <div className="knowledge-search-field"><Search aria-hidden="true" /><input id={ids.query} type="search" value={query} autoComplete="off" placeholder={mode === "note" ? "Search published notes" : "Search .txt, .md, and .csv files"} onChange={(event) => setQuery(event.target.value)} /></div>
@@ -382,12 +383,12 @@ function TryIt({ kb }: { kb: KnowledgeDetail }) {
   }
   return <section className="knowledge-try" aria-labelledby={`${id}-heading`}>
     <h4 id={`${id}-heading`} className="knowledge-subheading">Try it</h4>
-    <form className="knowledge-try-form" onSubmit={run} role="search">
+    <form className="knowledge-try-form" onSubmit={run} role="search" noValidate>
       <label className="sr-only" htmlFor={id}>Ask the knowledge base</label>
       <input id={id} type="search" value={query} maxLength={KNOWLEDGE_BOUNDS.queryChars} autoComplete="off" placeholder="Ask what an agent would ask" onChange={(event) => setQuery(event.target.value)} />
       <button type="submit" className="action-button secondary" disabled={busy || !query.trim()}><Search />{busy ? "Searching…" : "Search"}</button>
     </form>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {hits && <div aria-live="polite">
       {mode === "keyword" && <p className="chat-muted">{notice ? `Matched by keywords only. ${notice}` : "Matched by keywords only: the embedding model was not available."}</p>}
       {hits.length === 0 ? <p className="chat-muted">No passages match.</p> : <ol className="knowledge-hits" aria-label="Top passages">

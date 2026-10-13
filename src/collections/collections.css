@@ -159,7 +159,9 @@
 /* Main area: the rows and, on desktop, the row side pane. */
 .collection-main { flex: 1; min-height: 0; display: flex; }
 .collection-main > .collection-body { flex: 1; min-width: 0; }
-.row-panel { flex: 0 0 min(440px, 42vw); min-height: 0; display: flex; flex-direction: column; border-left: 1px solid #28282d; background: #111113; }
+/* Scroll audit 2026-10-13: min-width 0 and a minmax(0, 1fr) body column keep a long value (a 400-character
+   title, a URL) from widening the panel past its 440 px and pushing the table and the close button off screen. */
+.row-panel { flex: 0 0 min(440px, 42vw); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid #28282d; background: #111113; }
 .row-panel-header { flex: none; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid #222226; padding: 10px 10px 10px 8px; }
 .row-panel-heading { min-width: 0; flex: 1; }
 .row-panel-heading h2 { margin: 2px 0 0; overflow: hidden; color: #f2f2f3; font-size: 1.05rem; text-overflow: ellipsis; white-space: nowrap; }
@@ -172,7 +174,7 @@
 .row-panel-agent span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .row-panel-agent button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; font-size: .8rem; flex: none; }
 .row-panel-agent svg { width: 14px; flex: none; }
-.row-panel-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 14px; padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); }
+.row-panel-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 14px; padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); }
 .row-field { display: grid; gap: 6px; }
 .row-field-label { display: inline-flex; align-items: center; gap: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .row-field-label .field-icon { width: 13px; height: 13px; }

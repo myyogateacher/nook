@@ -2,6 +2,23 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.37.0 — 2026-10-13
+
+- **Undo survives a restart**: the records behind Undo after removing an attachment are stored in the database, with the same rules as before (60 seconds, ended by any later change to that attachment, and cleared when the event, card, row, file or person is purged).
+- **Undo after saving an event**: saving an event that removed files shows one toast with Undo that puts them all back in order, or says how many could be restored.
+- **Profile pictures stop showing once removed or replaced**: browsers now check before reusing a picture, so other people stop seeing an old or admin-removed picture on their next page load.
+- Migration 049 runs once on the first boot; back up first. No new settings.
+
+## v0.36.0 — 2026-10-13
+
+- **Undo after removing an attachment**: on calendar events, task cards and collection rows the file goes back in the same place and order (and out of the Bin if the removal binned it); in notes the file card or picture goes back into the draft. Undo works for 60 seconds and ends as soon as anyone changes that attachment again.
+- **Note uploads show progress**: each file shows its own bar and percentage with Cancel, and leaving a note while files are uploading asks first, including on Back.
+- **Admins can remove a member's profile picture** from Team; it is audited, the member is told on the bell, and signing in with Google doesn't bring it back. Other people's changed pictures now update without a reload.
+- **Whiteboard "Save as copy"** thumbnails show the saver's own pictures.
+- **Form messages**: every form shows the app's own message instead of the browser's "Please fill in this field", announced to screen readers and scrolled into view on phones.
+- **Phone and layout fixes**: the Collections row panel and row sheets no longer overflow with long values, and the event editor's error line stays visible.
+- No migration and no new settings.
+
 ## v0.35.0 — 2026-10-13
 
 - **Attach files almost everywhere**: calendar events, task cards and comments, collection rows, notes (`/file`, `/from files`, paste, drop; non-images become file cards), whiteboards, and chat (pictures go to vision models). Take photo on phones, Choose files, or From Files (with a confirm naming who will see it). Photo locations are removed from JPEG, PNG and WebP before upload.

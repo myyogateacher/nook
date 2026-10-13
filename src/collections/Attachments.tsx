@@ -2,7 +2,7 @@ import type { Notifier } from "../ui/notify";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Paperclip, Upload } from "lucide-react";
 import { contentUrl } from "../files/filesApi";
-import { AttachmentList, AttachmentPreview, AttachSheet, listHostAttachments, LocationStripError, showsThumbnail, unlinkFromHost, uploadForHost, useFileDrop, usePasteFiles, type HostAttachment } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, listHostAttachments, LocationStripError, notifyRemoved, relinkToHost, showsThumbnail, unlinkFromHost, uploadForHost, useFileDrop, usePasteFiles, type HostAttachment } from "../ui/attachments";
 import type { DocumentSummary } from "../types";
 import { attachDocument, detachDocument, errorCode, errorMessage, getRow, ROW_FILE_LIMIT, type Attachment, type CollectionRow, type FieldDefinition } from "./collectionsApi";
 import { useEscapeHold } from "./dialogLayers";
@@ -128,9 +128,18 @@ export function Attachments({ row, field, editable, onChanged, notify }: Attachm
         notify.success(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
         return;
       }
-      const result = await detachDocument(rowRef.current.id, item.documentId);
+      const rowId = rowRef.current.id;
+      const result = await detachDocument(rowId, item.documentId);
       onChanged(result.row);
-      notify.success(result.documentBinned ? `Removed ${name}. It is in your Bin for 30 days.` : `Removed ${name}`);
+      // Undo puts it back in this field, and out of the Bin when the removal put it there (the file's
+      // owner only: a file in someone else's Bin only they can restore).
+      const undoable = !item.removed && (!result.documentBinned || owned.has(item.documentId));
+      notifyRemoved(result.documentBinned ? `Removed ${name}. It is in ${owned.has(item.documentId) ? "your" : "its owner's"} Bin for 30 days.` : `Removed ${name}`,
+        undoable ? async () => {
+          await relinkToHost("row", rowId, item.documentId, { partId: field.id });
+          const { row: fresh } = await getRow(rowId);
+          if (rowRef.current.id === rowId) onChanged(fresh);
+        } : null, notify);
     } catch (reason) {
       notify.error(errorMessage(reason, "Could not remove the file"));
     }

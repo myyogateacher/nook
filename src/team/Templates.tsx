@@ -12,6 +12,7 @@ import "../keys/keys.css";
 import "../access/memberAccess.css";
 import { hubDocumentTitle } from "../router";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Team → Templates at /team/templates (Wave 33, access plan D286), admins only: a name, a team
@@ -124,7 +125,7 @@ function TemplateFormDialog({ template, groups, onClose, onSaved, onStale }: { t
       <div className="keys-select-field"><span id="template-role">Team role</span><Select<TemplateRole> labelledBy="template-role" label="Team role" value={role} options={templateRoleOptions()} onChange={setRole} disabled={busy} /></div>
       <div className="keys-select-field"><span>Groups</span><Combobox multiple value={groupIds} onChange={setGroupIds} options={groupOptions} label="Groups" placeholder="Add groups…" emptyText={groups.length ? "No more groups" : "Create groups in Team → Groups first"} disabled={busy} maxSelected={20} /></div>
       <p className="team-muted">Invites that use this template must have the same role. Each invite keeps the groups this template had when the invite was created; editing it later changes only new invites, and deleting it leaves live invites with their role and no groups.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : template ? "Save" : "Create template"}</button>
@@ -149,7 +150,7 @@ function DeleteTemplateDialog({ template, onClose, onDone }: { template: AccessT
   }
   const invites = template.liveInvites;
   return <KeysDialog title={`Delete ${template.name}?`} description={`${invites ? `${invites} live ${invites === 1 ? "invite uses" : "invites use"} it; they keep working with their role and no groups. ` : ""}People who already joined stay in their groups.`} onClose={onClose} busy={busy}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
       <button type="button" className="primary-button danger" onClick={() => { void confirmAction(); }} disabled={busy}>{busy ? "Deleting…" : "Delete template"}</button>

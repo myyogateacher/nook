@@ -2,12 +2,12 @@ import { REPORT_LIMITS, type ResultColumn } from "../../shared/reports";
 import { egressFetch, EgressError, readEgressText } from "../agents/egress";
 
 /**
- * The ClickHouse HTTP client for reports (plan wave 45, D414, T357, T358). Every request goes through
+ * The ClickHouse HTTP client for reports (plan wave 45, D414, T358, T359). Every request goes through
  * `egressFetch` (https, or http only for hosts in AGENT_ALLOWED_PRIVATE_HOSTS; private addresses refused
  * unless listed; no redirects; pinned to the checked address; a byte cap and three timeouts), as a POST
  * with the statement as the body, Basic auth, `JSONCompact` output, and a query id (`nook-<run>-<key>`).
  *
- * The per-query settings are the resource ceiling (T358) and the second layer of the write ban:
+ * The per-query settings are the resource ceiling (T359) and the second layer of the write ban:
  * `readonly=2` (no writes, settings may still be set by Nook), `max_execution_time`, `max_result_rows`
  * with `result_overflow_mode=break`, `max_memory_usage`, `max_rows_to_read` / `max_bytes_to_read`,
  * `max_threads`, and `cancel_http_readonly_queries_on_client_close`, so an aborted request stops the

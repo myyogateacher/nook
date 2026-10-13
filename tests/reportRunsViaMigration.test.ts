@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { registeredMigrationIds, registeredMigrations, runMigrations } from "../server/migrations";
 import { agentRunsFamily, reportRunsViaMigration } from "../server/migrations/051_report_runs_via";
+import { UNDO_RECORD_TRIGGERS } from "../server/migrations/049_attachment_undo_records";
 
 /**
  * Migration 051 (reports wave 46, D424): `agent_runs.via` gains `reports` by a rebuild of agent_runs
@@ -87,6 +88,28 @@ describe("migration 051 report_runs_via", () => {
     expect(() => db.query("UPDATE agent_audit_steps SET text = 'x'").run()).toThrow("APPEND_ONLY");
     db.query("DELETE FROM report_runs WHERE id = 'rr1'").run();
     expect(db.query("SELECT COUNT(*) AS count FROM report_results").get()).toEqual({ count: 0 });
+  });
+
+  test("on a database built through v0.37.0's 049: every index and trigger in the schema survives, 049's Undo triggers included", () => {
+    const db = openDb(50);
+    expect(db.query("SELECT 1 AS ok FROM schema_migrations WHERE id = 49").get()).toEqual({ ok: 1 });
+    seed(db);
+    // 049's table references nothing and nothing in agent_runs' family references it.
+    const family = agentRunsFamily(db);
+    expect(family).not.toContain("attachment_undo_records");
+    expect(db.query("PRAGMA foreign_key_list(attachment_undo_records)").all()).toEqual([]);
+    const extras = () => db.query("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE type IN ('index','trigger') AND sql IS NOT NULL ORDER BY type, name").all() as Array<{ name: string; sql: string }>;
+    const before = extras();
+    db.transaction(() => reportRunsViaMigration.up(db))();
+    const after = extras();
+    expect(after.map((row) => row.name)).toEqual(before.map((row) => row.name));
+    for (const name of UNDO_RECORD_TRIGGERS) expect({ name, found: after.some((row) => row.name === name) }).toEqual({ name, found: true });
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    // The Undo triggers still fire: a purged user's records go with them.
+    db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES ('u2', 'b@example.test', 'B', 'x', ?, 'member')").run(at);
+    db.query("INSERT INTO attachment_undo_records (remover_id, host_kind, host_id, document_id, position, linked_at, expires_at) VALUES ('u2', 'event', 'e1', 'd1', 0, ?, 0)").run(at);
+    db.query("DELETE FROM users WHERE id = 'u2'").run();
+    expect(db.query("SELECT COUNT(*) AS count FROM attachment_undo_records").get()).toEqual({ count: 0 });
   });
 
   test("the shape: reports runs carry no key and no chat; api and mcp runs still need a key; reports.doc_arg", () => {

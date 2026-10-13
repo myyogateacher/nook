@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Mail, MailX } from "lucide-react";
 import { listEmailMutes, muteEmails, unmuteEmails, type EmailMute, type MuteType } from "./emailApi";
+import { FormError } from "../ui/FormError";
 
 /**
  * "Mute emails" for a board, calendar, or collection (Wave 29, outbound email §B.1 D249). The
@@ -58,7 +59,7 @@ export function MuteEmailsToggle({ type, id, name, className = "task-settings-to
       <input type="checkbox" checked={muted} disabled={!mutes.loaded || mutes.isBusy(type, id)} onChange={() => { void mutes.toggle(type, id, name); }} />
       <span>Mute emails from this {NOUNS[type]}<small>Nook won't email you about activity here{type === "calendar" ? " (event changes)" : " (assignments, comments, sprints)"}. Your own reminders and security email still come.</small></span>
     </label>
-    {mutes.error && <p className="file-dialog-error" role="alert">{mutes.error}</p>}
+    <FormError message={mutes.error} className="file-dialog-error" />
   </>;
 }
 
@@ -86,6 +87,6 @@ export function EmailMutesList() {
           aria-label={`Unmute emails from ${mute.name}`} onClick={() => { void mutes.toggle(mute.targetType, mute.targetId, mute.name); }}>Unmute</button>
       </li>)}
     </ul>}
-    {mutes.error && <p className="file-dialog-error" role="alert">{mutes.error}</p>}
+    <FormError message={mutes.error} className="file-dialog-error" />
   </>;
 }

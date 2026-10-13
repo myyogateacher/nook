@@ -5,6 +5,7 @@ import { asksForCode, GoogleReauthNotice, isGoogleReauthRequired, ReauthRouteTog
 import { collectProblems, confirmPasswordProblem, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import { PasswordInput, SecondFactorField, secondFactorBody, secondFactorName } from "./passwordPages";
 import "./auth.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → Security → Password (Wave 30). The form opens in place (no dialog, so there is no
@@ -96,7 +97,7 @@ export function ChangePasswordCard({ totpEnabled, passwordReset = false, account
       <PasswordInput name="confirmPassword" label="Confirm new password" autoComplete="new-password" disabled={busy} error={fields.errors.confirmPassword} />
       {withCode && <SecondFactorField recovery={recovery} disabled={busy} error={fields.errors[secondFactorName(recovery)]} onToggle={() => { setRecovery((value) => !value); setError(""); fields.clear(); }} />}
       <small className="password-change-hint">{viaPassword ? forgotCurrentHint(passwordReset) : "Use at least 12 characters."}</small>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="password-change-actions">
         <button className="primary-button" disabled={busy}>{busy ? "Saving…" : action}</button>
         <button type="button" className="secondary-button" disabled={busy} onClick={() => { setOpen(false); setError(""); fields.clear(); setRecovery(false); }}>Cancel</button>

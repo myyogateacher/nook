@@ -3,6 +3,7 @@ import { Check, Copy, Rss, Trash2 } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { createFeed, listFeeds, revokeFeed, type CalendarFeed, type CalendarSummary, type FeedDetail } from "./calendarApi";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 export const MAX_FEEDS = 5;
 
@@ -104,7 +105,7 @@ export function FeedDialog({ calendar, onClose, flash }: FeedDialogProps) {
           <button className="icon-button danger" onClick={() => { void revoke(feed); }} disabled={busy} aria-label={`Revoke link ${feed.prefix}`}><Trash2 /></button>
         </li>)}
       </ul>}
-      {error && <p className="file-dialog-error" role="alert">{error}</p>}
+      <FormError message={error} className="file-dialog-error" />
     </div>
   </ModalDialog>;
 }

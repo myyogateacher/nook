@@ -21,5 +21,5 @@ test("without a TOTP key /api/about says two-factor is not available", () => {
 
 test("Settings → Security shows the explanation instead of the setup form when two-factor is off", async () => {
   const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
-  expect(source).toMatch(/appInfo\.twoFactor === false \? <div className="security-card setup-intro" role="status">[\s\S]*?\{TWO_FACTOR_OFF_TEXT\}[\s\S]*?: !secret \? <form className="security-card setup-intro" onSubmit=\{beginSetup\}>/);
+  expect(source).toMatch(/appInfo\.twoFactor === false \? <div className="security-card setup-intro" role="status">[\s\S]*?\{TWO_FACTOR_OFF_TEXT\}[\s\S]*?: !secret \? <form className="security-card setup-intro" onSubmit=\{beginSetup\} noValidate/);
 });

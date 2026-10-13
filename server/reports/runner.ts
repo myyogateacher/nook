@@ -18,7 +18,7 @@ import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, cla
  * TABLE lines. A failed check answers with a generic message, never ClickHouse's text; a failed run
  * shows ClickHouse's text only when every table or database it names is on the allowlist (review M2).
  *
- * Queries are limited per person and per server (T358): two at a time per person, eight in all.
+ * Queries are limited per person and per server (T359): two at a time per person, eight in all.
  */
 
 export type RunOptions = {

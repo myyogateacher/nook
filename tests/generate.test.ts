@@ -15,7 +15,7 @@ const { resetToolServersForTests } = await import("../server/agents/toolServers"
 const { AgentError } = await import("../server/agents/status");
 
 /**
- * Wave 46 generation end to end (D424–D427, T367): the doc read through a real Streamable HTTP MCP
+ * Wave 46 generation end to end (D424–D427, T368): the doc read through a real Streamable HTTP MCP
  * server (scripts/fakeDocMcp.ts, bearer auth) before any model call, a scripted provider
  * (scripts/fakeReportProvider.ts) driving the run, and the fake ClickHouse answering the guarded
  * queries. Covers the forced submit, a refused spec and its retry, three refusals, the budget refusal,

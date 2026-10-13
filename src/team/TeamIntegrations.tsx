@@ -9,6 +9,7 @@ import { createIntegration, INTEGRATION_ROLE_OPTIONS, lastUsedText, listIntegrat
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /** The help line under Team → Integrations (Wave 36, D287, T212): what an integration can and cannot reach. */
 export const INTEGRATIONS_HELP = "Accounts for AI clients and scripts. An integration never signs in: it acts only through the API keys you create for it here. "
@@ -125,7 +126,7 @@ export function IntegrationFormDialog({ title, submitLabel, initial, onClose, on
         <small>Integrations are members or viewers, never admins.</small>
       </div>
       <label className="keys-input">Description (optional)<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} rows={2} disabled={busy} placeholder="What it does and who runs it" /></label>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : submitLabel}</button>

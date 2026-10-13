@@ -14,6 +14,7 @@ import {
 import "../files/files.css";
 import "../ui/attachments/attachments.css";
 import "./profilePicture.css";
+import { FormError } from "../ui/FormError";
 
 const PICTURE_ACCEPT = "image/png,image/jpeg,image/webp";
 
@@ -210,7 +211,7 @@ export function AvatarCropDialog({ picture, busy, error, onCancel, onSave }: { p
         <input id={zoomId} type="range" min={1} max={AVATAR_MAX_ZOOM} step={0.01} value={crop.zoom} disabled={busy} onChange={(event) => { const zoom = Number(event.currentTarget.value); setCrop((current) => zoomCrop(width, height, current, zoom)); }} />
       </label>
       <p className="avatar-crop-hint">The circle shows how people see it. The square is saved.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
     </div>
     <footer className="file-dialog-actions">
       <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>

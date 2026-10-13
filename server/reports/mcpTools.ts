@@ -9,7 +9,7 @@ import { listReports } from "./service";
 /**
  * MCP tools for analytics reports, Wave 45 (plan "MCP, sharing and docs", D420). Minimal and read-only:
  * `list_reports` and `list_report_datasources` (names only) under `reports:read`. There is no ad-hoc
- * SQL over MCP in any wave, so a key never turns Nook into an open ClickHouse proxy (T360); wave 48
+ * SQL over MCP in any wave, so a key never turns Nook into an open ClickHouse proxy (T361); wave 48
  * adds reading one report, refresh, schedules, and instructions. Tools read as the key's owner; guests
  * (who have no Reports module) get nothing.
  */

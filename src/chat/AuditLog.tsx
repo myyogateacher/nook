@@ -8,6 +8,7 @@ import { auditRoute, chatRoute, type ChatRoute } from "../chatRoute";
 import type { AuditFacets, AuditRunDetail, AuditRunSummary, AuditStepView, RunStatus } from "../../shared/agents";
 import { auditExportUrl, auditFacets, getAuditRun, listAudit, messageOf, type AuditFilter } from "./chatApi";
 import { Markdown, type RenderContext } from "./markdown/render";
+import { FormError } from "../ui/FormError";
 
 /**
  * The Audit log (Wave 42 "AC-C", agent chat plan §7.3, §13.3, D366): every API and MCP run of the
@@ -171,7 +172,7 @@ export function AuditLog({ route, role, phone, go, back, context }: AuditLogProp
         <a className="secondary-button" href={auditExportUrl(filter)} download title="Your own runs that match the filters, up to 1,000, as JSON"><Download aria-hidden="true" />Export</a>
       </div>
     </div>
-    {listError && <p className="form-error" role="alert">{listError}</p>}
+    <FormError message={listError} />
     {runs === null ? <p className="chat-muted" role="status">Loading…</p>
       : runs.length === 0 ? <p className="chat-muted">{count ? "No runs match these filters." : "No runs yet. Runs appear here when a key with “Run agents” calls one of your agents."}</p>
       : <ul className="audit-cards">{runs.map((run) => {

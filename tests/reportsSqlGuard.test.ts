@@ -5,7 +5,7 @@ import {
 import { clickhouseRegex, databaseAllowed, normalizeAllowlist, normalizePattern, tableAllowed } from "../server/reports/allowlist";
 
 /**
- * The report SQL guard (Wave 45, D411, D412, T356): one statement, select or metadata class, banned
+ * The report SQL guard (Wave 45, D411, D412, T357): one statement, select or metadata class, banned
  * keywords, functions, and system tables refused however they are spelled, the LIMIT wrap, the
  * allowlist, and the EXPLAIN QUERY TREE check. About sixty bypass attempts, each refused with a code.
  */

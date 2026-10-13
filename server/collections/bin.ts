@@ -4,6 +4,7 @@ import { withResourceLock } from "../storage";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { editableCollectionPredicate, type CollectionVisibility } from "./access";
 import { binUnlinkedAttachments, LIMITS } from "./service";
+import { hostLinksGone } from "../attachments/undoTickets";
 
 /**
  * Collections and rows in the Bin (WAVES_10-12.md D68), registered with
@@ -35,6 +36,8 @@ function purgeCollectionNow(collectionId: string, options: { reason: PurgeReason
       .all(collectionId) as Array<{ document_id: string }>).map((row) => row.document_id);
     const rowCount = (db.query("SELECT COUNT(*) AS count FROM collection_rows WHERE collection_id = ?").get(collectionId) as { count: number }).count;
     // Cascades remove rows, members, views, links, and search rows (and, through the trigger, FTS rows).
+    // Every Undo record on those rows goes with their links (undoTickets.ts).
+    hostLinksGone("row", (db.query("SELECT id FROM collection_rows WHERE collection_id = ?").all(collectionId) as Array<{ id: string }>).map((item) => item.id));
     db.query("DELETE FROM collections WHERE id = ?").run(collectionId);
     const binnedDocuments = binUnlinkedAttachments(documents, options.actorId, binned);
     audit(options.actorId, null, "collection.purge", { collectionId, reason: options.reason, rowCount, binnedDocuments });
@@ -55,6 +58,7 @@ function purgeRowNow(rowId: string, options: { reason: PurgeReason; actorId: str
     if (marked.changes === 0) return "not_found";
     const documents = (db.query("SELECT document_id FROM collection_row_attachments WHERE row_id = ?").all(rowId) as Array<{ document_id: string }>).map((item) => item.document_id);
     db.query("DELETE FROM collection_rows WHERE id = ?").run(rowId);
+    hostLinksGone("row", [rowId]);
     const binnedDocuments = binUnlinkedAttachments(documents, options.actorId, binned);
     audit(options.actorId, null, "collection.row_purge", { collectionId: row.collection_id, rowId, reason: options.reason, binnedDocuments });
     return "purged";

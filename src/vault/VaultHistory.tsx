@@ -9,6 +9,7 @@ import { canWriteEnv, errorCode, messageOf, RevealedText } from "./VaultDialogs"
 import { ReauthCancelled, useVaultReauth } from "./VaultReauth";
 import { listVersions, readVersion, restoreVersion, type VaultEnvironment, type VersionInfo } from "./vaultApi";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * A value's history (D224; Wave 26 UI for the Wave 25 API): the last 20 versions of one secret in one
@@ -81,7 +82,7 @@ export function VersionHistoryDialog({ vaultId, secret, env, ask, flash, onClose
   const writable = canWriteEnv(env);
   return <ModalDialog title={`History · ${secret.name}`} eyebrow={`${env.name}${env.protected ? " · protected" : ""}`} onClose={onClose} busy={busy} variant="sheet" className="vault-dialog vault-history">
     <div className="file-dialog-form vault-form">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {!data && !error && <p className="file-dialog-hint" role="status">Loading…</p>}
       {data && data.versions.length === 0 && <p className="file-dialog-hint">No versions yet in {env.name}.</p>}
       {data && data.versions.length > 0 && <ol className="vault-history-list" aria-label={`Versions of ${secret.name} in ${env.name}`}>

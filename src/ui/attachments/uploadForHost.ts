@@ -87,6 +87,14 @@ export const unlinkFromHost = (kind: HostKind, hostId: string, documentId: strin
   // `documentBinned` is absent when the file's owner withdrew it from a host they can no longer open (review M1).
   api<{ ok: true; documentBinned?: boolean }>(`${path(kind, hostId)}/${encodeURIComponent(documentId)}`, { method: "DELETE", body: "{}" });
 
+/**
+ * Undo of a removal (POST /api/attachments/relink): puts the file back on the same host, in the same
+ * place, and out of the Bin when the removal put it there. The server keeps its own record of the
+ * removal; `partId` (a card comment or a row's file field) is only a fallback for when it has none.
+ */
+export const relinkToHost = (kind: HostKind, hostId: string, documentId: string, options: { partId?: string | null } = {}) =>
+  api<{ relinked: boolean; restored: boolean }>("/attachments/relink", { method: "POST", body: JSON.stringify({ hostKind: kind, hostId, documentId, ...(options.partId ? { partId: options.partId } : {}) }) });
+
 /** `hidden`: places the owner can no longer open, by id only, for "Remove from places you can't open" (review M1). */
 export type FileUsage = { uses: Array<{ hostKind: HostKind; hostId: string; title: string | null }>; hidden: Array<{ hostKind: HostKind; hostId: string }>; hiddenCount: number; total: number };
 

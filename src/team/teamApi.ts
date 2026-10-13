@@ -77,6 +77,9 @@ export const unblockTeamMember = (userId: string) =>
   api<{ ok: true; member: TeamMemberDetail }>(`${memberPath(userId)}/unblock`, { method: "POST", body: "{}" });
 export const revokeTeamSessions = (userId: string) =>
   api<{ sessionsRevoked: number; member: TeamMemberDetail }>(`${memberPath(userId)}/sessions/revoke`, { method: "POST", body: "{}" });
+/** An admin removes someone else's profile picture (T353); they can add one again in Settings. */
+export const removeTeamAvatar = (userId: string) =>
+  api<{ removed: true; member: TeamMemberDetail }>(`${memberPath(userId)}/avatar`, { method: "DELETE", body: "{}" });
 
 export const listTeamInvites = () => api<TeamInviteList>("/team/invites");
 /** The token and link come back from this call only (D161). */

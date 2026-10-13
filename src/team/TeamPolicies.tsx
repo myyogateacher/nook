@@ -13,6 +13,7 @@ import { hubDocumentTitle } from "../router";
 import { useBeforeHubLeave } from "../settings/hubLeave";
 import { whenHistorySettled } from "../historyDialogs";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Team → Policies at /team/policies (Wave 31, access plan D285, §C.6), admins only: key lifetime,
@@ -184,7 +185,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
       <button className="primary-button" onClick={() => { void load(); }}><RotateCcw />Try again</button>
     </div>}
     {!error && !draft && <p className="team-loading" role="status">Loading policies…</p>}
-    {draft && <form className="policies-form" onSubmit={save}>
+    {draft && <form className="policies-form" onSubmit={save} noValidate>
       <fieldset className="policies-section" disabled={busy}>
         <legend>Key lifetime</legend>
         <div className="policies-grid">
@@ -220,7 +221,7 @@ export function TeamPolicies({ onBack, flash }: { onBack: () => void; flash: (me
       </fieldset>
 
       <p className={`policies-impact${impact && impact.blocked && !sharingOnly ? " warn" : ""}`} role="status" aria-live="polite">{invalid ?? sharingOnly ?? impactLine(impact, dirty)}</p>
-      {formError && <p className="form-error" role="alert">{formError}</p>}
+      <FormError message={formError} />
       <div className="policies-actions">
         <button type="button" className="secondary-button" disabled={busy || !dirty} onClick={() => { if (state) setDraft(state.policies); }}>Discard changes</button>
         <button type="submit" className="primary-button" disabled={busy || !dirty || Boolean(invalid)}>{busy ? "Saving…" : "Save policies"}</button>

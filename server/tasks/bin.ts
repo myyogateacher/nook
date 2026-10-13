@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
 import { binUnlinkedAttachments, cardAttachmentIds, notifyBinnedFiles } from "./attachments";
+import { hostLinksGone } from "../attachments/undoTickets";
 import { planInsert } from "./boardOrder";
 import { applyRenumber, LIMITS, liveCardsIn, withBoardLock } from "./service";
 import { liveChildCount } from "./hierarchy";
@@ -211,6 +212,10 @@ export function purgeTaskLocked(type: TaskBinType, id: string, options: { actorI
     const documentIds = type === "card"
       ? [...new Set([id, ...members].flatMap((cardId) => cardAttachmentIds({ cardId })))]
       : cardAttachmentIds({ boardId: id });
+    // The links go with the cards (a cascade), and so does every Undo record on them (undoTickets.ts).
+    hostLinksGone("card", type === "card"
+      ? [id, ...members]
+      : (db.query("SELECT id FROM cards WHERE board_id = ?").all(id) as Array<{ id: string }>).map((row) => row.id));
     const removeMember = db.query("DELETE FROM cards WHERE id = ? AND deleted_at IS NOT NULL");
     // Deepest first, so no delete detaches a card that is about to go too.
     for (const memberId of members) removeMember.run(memberId);

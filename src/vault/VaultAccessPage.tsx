@@ -15,6 +15,7 @@ import { getVault, getVaultAccess, putVaultAccess, type AccessPutBody, type Shee
 import { VaultKeysSection } from "./VaultKeysSection";
 import { appName } from "../appName";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Who has access to one vault, at /vault/:id/access (vault plan §10 Access; D214–D216, V-O3; Wave 26).
@@ -348,7 +349,7 @@ export function VaultAccessPage({ vaultId, onBack, onReady, flash, ask, onOpenAc
     </ul>}
 
     {people.some((person) => person.kind === "service") && owner && <p className="file-dialog-hint vault-access-note"><Bot className="vault-hint-icon" aria-hidden="true" />Integrations cannot be vault members. For machines, make a vault key in Settings → API keys.</p>}
-    {saveError && <p className="form-error" role="alert">{saveError}</p>}
+    <FormError message={saveError} />
     <div className="vault-access-actions">
       {dirty && <button type="button" className="secondary-button" disabled={busy} onClick={() => { setDraft(draftOf(sheet)); setSaveError(null); }}>Discard changes</button>}
       <button type="button" className="secondary-button" onClick={() => onOpenActivity(null)}><History />Activity</button>

@@ -4,7 +4,7 @@ import { registeredMigrationIds, runMigrations } from "../server/migrations";
 import { checkWords, rebuildGrantsForReports, reportsMigration } from "../server/migrations/050_reports";
 
 /**
- * Migration 050 (analytics reports, Wave 45, T365): every table of the module, the schema FTS index
+ * Migration 050 (analytics reports, Wave 45, T366): every table of the module, the schema FTS index
  * kept in step by triggers, one running run per report, and the api_key_grants rebuild that adds
  * `reports` / `report` while keeping every row, index, and trigger (the 039 pattern).
  */
@@ -28,10 +28,10 @@ function seed(db: Database) {
 }
 
 describe("migration 050 reports", () => {
-  test("is registered after 048 (049 is reserved for Messages) and creates every table of the plan", () => {
+  test("is registered after 049 (v0.37.0's attachment Undo records) and creates every table of the plan", () => {
     expect(registeredMigrationIds).toContain(50);
-    expect(registeredMigrationIds).not.toContain(49);
-    expect(registeredMigrationIds.indexOf(50)).toBe(registeredMigrationIds.indexOf(48) + 1);
+    expect(registeredMigrationIds).not.toContain(53);
+    expect(registeredMigrationIds.indexOf(50)).toBe(registeredMigrationIds.indexOf(49) + 1);
     expect(reportsMigration.name).toBe("reports");
     const db = openDb();
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name);

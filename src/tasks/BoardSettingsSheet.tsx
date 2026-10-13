@@ -17,6 +17,7 @@ import {
 } from "../../shared/boardStructure";
 import { structureOf } from "./hierarchyModel";
 import { taskErrorMessage, updateBoardStructure, type BoardSummary } from "./tasksApi";
+import { FormError } from "../ui/FormError";
 
 type BoardSettingsSheetProps = {
   board: BoardSummary;
@@ -182,7 +183,7 @@ export function BoardSettingsSheet({ board, owner, isOwner = owner, showAllLevel
               <span>Plan in sprints<small>“Sprint ›” groups the work in time boxes. After saving, set the sprint defaults below; add and start sprints from the header’s sprint switcher.</small></span>
             </label>
             <p className="task-settings-note" aria-live="polite">{check.ok ? structurePreview(check.structure) : check.error}</p>
-            {error && <p className="file-dialog-error" role="alert">{error}</p>}
+            <FormError message={error} className="file-dialog-error" />
             <span className="task-settings-actions">
               {dirty && <button type="button" className="secondary-button" disabled={busy} onClick={() => update(saved)}>Reset</button>}
               <button type="button" className="primary-button" disabled={busy || !dirty || !check.ok} onClick={() => { void save(); }}>{busy ? "Saving…" : "Save structure"}</button>

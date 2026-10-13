@@ -10,6 +10,7 @@ import type { DocumentSummary, NoteSummary } from "../types";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { listWhiteboards } from "./whiteboardsApi";
 import "../ui/pickerSheet.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * Nook's own pickers on the canvas (Wave 24): pictures from Files (D198) and links to Nook items
@@ -75,7 +76,7 @@ export function ImagePickerSheet({ onPick, onUpload, onClose }: {
       <input ref={input} type="file" accept={IMAGE_ACCEPT} multiple hidden onChange={(event) => take(event.currentTarget)} />
       <p className="nook-picker-hint">New pictures are saved in Files › Attachments, with photo locations removed. Everyone who can open this whiteboard sees the pictures you own on it; a picture someone else owns shows only to people who can open its file.</p>
     </div>}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {!error && !documents && <p className="nook-picker-empty" role="status">Loading your pictures…</p>}
     {documents && visible.length === 0 && <p className="nook-picker-empty">{documents.length ? "No pictures match." : "No pictures in Files yet. Upload one."}</p>}
     {visible.length > 0 && <ul className="nook-picker-images" aria-label="Pictures">
@@ -180,7 +181,7 @@ export function LinkPickerSheet({ currentLink, onPick, onRemove, onClose }: {
         <button type="button" className="secondary-button" onClick={onRemove}><Link2Off />Remove link</button>
       </div>}
     </>}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {!error && items === null && <p className="nook-picker-empty" role="status">Loading…</p>}
     {!error && items !== null && visible.length === 0 && <p className="nook-picker-empty">{kind === "card" && [...needle].length < 2 ? "Type at least two letters of a card's title." : "Nothing matches."}</p>}
     {visible.length > 0 && <ul className="nook-picker-list" aria-label={current.label}>

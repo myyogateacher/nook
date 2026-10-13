@@ -5,7 +5,7 @@ const { agentNet } = await import("../server/agents/egress");
 const { chQuery, ChError, parseChError, parseJsonCompact, queryIdFor, requestUrl } = await import("../server/reports/clickhouse");
 
 /**
- * The ClickHouse client (Wave 45, D414, T357, T358) with a fake network: what leaves Nook (one POST
+ * The ClickHouse client (Wave 45, D414, T358, T359) with a fake network: what leaves Nook (one POST
  * through the egress guard, Basic auth, the per-query settings, the query id, the statement as the
  * body, no cookie), and how answers and failures come back.
  */

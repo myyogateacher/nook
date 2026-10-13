@@ -15,6 +15,7 @@ import {
 } from "./vaultApi";
 import { notify } from "../ui/notify";
 import { notifyBinned } from "../bin/binUndo";
+import { FormError } from "../ui/FormError";
 
 /**
  * The Vault's sheets and dialogs (vault plan §10). Each is one history layer (useHistoryDialogGuard):
@@ -103,7 +104,7 @@ export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; 
 
   const patch = (key: string, change: Partial<EnvDraft>) => setEnvs((current) => current.map((env) => env.key === key ? { ...env, ...change } : env));
   return <ModalDialog title="New vault" eyebrow="Vault" onClose={onCancel} busy={busy} variant="sheet" className="vault-dialog">
-    <form className="file-dialog-form vault-form" onSubmit={submit}>
+    <form className="file-dialog-form vault-form" onSubmit={submit} noValidate>
       <label htmlFor={nameId}>Name</label>
       <input id={nameId} value={name} maxLength={VAULT_BOUNDS.vaultName} autoFocus autoComplete="off" placeholder="Payments" onChange={(event) => { setName(event.target.value); setError(null); }} />
       <label htmlFor={descriptionId}>Description</label>
@@ -119,7 +120,7 @@ export function NewVaultDialog({ onCancel, onCreated }: { onCancel: () => void; 
       {envs.length < VAULT_BOUNDS.environments && <button type="button" className="secondary-button vault-inline-button" onClick={() => setEnvs((current) => [...current, { key: crypto.randomUUID(), slug: "", name: "", protected: false }])}><Plus />Add environment</button>}
       {protectedHint(envs) && <p className="file-dialog-hint">{protectedHint(envs)}</p>}
       <p className="file-dialog-hint">Names and tags are not encrypted. Put anything sensitive in a value or a comment.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create vault"}</button>
@@ -169,7 +170,7 @@ export function NewSecretDialog({ vault, initialEnvId, onCancel, onCreated }: { 
   }
 
   return <><ModalDialog title="New secret" eyebrow={vault.name} onClose={onCancel} busy={busy || generating} variant="sheet" className="vault-dialog">
-    <form className="file-dialog-form vault-form" onSubmit={submit}>
+    <form className="file-dialog-form vault-form" onSubmit={submit} noValidate>
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={VAULT_BOUNDS.secretName} autoFocus autoComplete="off" spellCheck={false} placeholder="DATABASE_URL" onChange={(event) => { setName(event.target.value); setError(null); }} />
       <span id={ids.type} className="vault-field-label">Type</span>
@@ -183,7 +184,7 @@ export function NewSecretDialog({ vault, initialEnvId, onCancel, onCreated }: { 
       <input id={ids.comment} value={comment} maxLength={VAULT_BOUNDS.commentBytes} autoComplete="off" onChange={(event) => setComment(event.target.value)} placeholder="Where it is used, who rotates it" />
       <label htmlFor={ids.tags}>Tags (not encrypted)</label>
       <input id={ids.tags} value={tagText} autoComplete="off" spellCheck={false} placeholder="db, payments" onChange={(event) => setTagText(event.target.value)} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create secret"}</button>
@@ -454,7 +455,7 @@ export function ValueEditorDialog({ vault, secret, env, ask, onCancel, onSaved }
   }
 
   return <><ModalDialog title={`${secret.name} · ${env.name}`} eyebrow={cell?.status === "set" ? `Edit value · version ${expectedVersion}` : "Set value"} onClose={onCancel} busy={busy || generating} variant="sheet" className="vault-dialog">
-    <form className="file-dialog-form vault-form" onSubmit={submit} aria-busy={loading || undefined}>
+    <form className="file-dialog-form vault-form" onSubmit={submit} aria-busy={loading || undefined} noValidate>
       {loading ? <p className="file-dialog-hint" role="status">Loading the current value…</p> : <>
         {fresh && <p className="file-dialog-hint vault-fresh-note" role="note"><ShieldCheck className="vault-hint-icon" aria-hidden="true" />{FRESH_VALUE_NOTE}</p>}
         <ValueFields type={secret.type} value={value} login={login} onValue={setValueText} onLogin={setLogin} valueId={valueId} onGenerate={() => setGenerating(true)} disabled={busy} mask={editorMask} onShowCurrent={fresh ? () => { void showCurrent(); } : undefined} />
@@ -473,7 +474,7 @@ export function ValueEditorDialog({ vault, secret, env, ask, onCancel, onSaved }
         <button type="button" className="secondary-button vault-inline-button" onClick={() => { void loadLatest(); }}><RefreshCw />Load the latest</button>
       </div>}
       {conflict === null && refreshedNote && <p className="file-dialog-hint" role="status">{refreshedNote}</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy || loading || conflict !== null}>{busy ? "Saving…" : "Save"}</button>
@@ -564,7 +565,7 @@ export function SecretMetaDialog({ vault, secret, onCancel, onSaved }: { vault: 
   }
 
   return <ModalDialog title="Edit secret" eyebrow={vault.name} onClose={onCancel} busy={busy} variant="sheet" className="vault-dialog">
-    <form className="file-dialog-form vault-form" onSubmit={submit}>
+    <form className="file-dialog-form vault-form" onSubmit={submit} noValidate>
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={VAULT_BOUNDS.secretName} autoFocus autoComplete="off" spellCheck={false} onChange={(event) => setName(event.target.value)} />
       <span id={ids.type} className="vault-field-label">Type</span>
@@ -574,7 +575,7 @@ export function SecretMetaDialog({ vault, secret, onCancel, onSaved }: { vault: 
       <input id={ids.tags} value={tagText} autoComplete="off" spellCheck={false} onChange={(event) => setTagText(event.target.value)} />
       <label htmlFor={ids.comment}>Comment (encrypted)</label>
       <textarea id={ids.comment} rows={3} value={comment} maxLength={VAULT_BOUNDS.commentBytes} onChange={(event) => setComment(event.target.value)} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
@@ -630,7 +631,7 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
 
   return <ModalDialog title="Vault settings" eyebrow={current.name} onClose={onCancel} busy={busy} variant="sheet" className="vault-dialog vault-settings">
     <div className="file-dialog-form vault-form">
-      <form className="vault-settings-block" onSubmit={(event) => { event.preventDefault(); void run(async () => (await updateVault(vault.id, { name: name.trim(), description: description.trim(), expectedRevision: current.revision })).vault, "Saved"); }}>
+      <form className="vault-settings-block" onSubmit={(event) => { event.preventDefault(); void run(async () => (await updateVault(vault.id, { name: name.trim(), description: description.trim(), expectedRevision: current.revision })).vault, "Saved"); }} noValidate>
         <label htmlFor={ids.name}>Name</label>
         <input id={ids.name} value={name} maxLength={VAULT_BOUNDS.vaultName} disabled={!owner || busy} autoComplete="off" onChange={(event) => setName(event.target.value)} />
         <label htmlFor={ids.description}>Description</label>
@@ -678,12 +679,12 @@ export function VaultSettingsDialog({ vault, onCancel, onChanged, onDeleted, onL
         event.preventDefault();
         if (!newEnv.name.trim() || !SLUG_PATTERN.test(newEnv.slug)) return setError("A new environment needs a name and a short name of lowercase letters, digits, and hyphens.");
         void run(async () => { await createEnvironment(vault.id, { name: newEnv.name.trim(), slug: newEnv.slug }); setNewEnv({ name: "", slug: "" }); return refreshed(); }, "Environment added");
-      }}>
+      }} noValidate>
         <input id={ids.envName} aria-label="New environment name" placeholder="QA" value={newEnv.name} maxLength={VAULT_BOUNDS.envName} autoComplete="off" disabled={busy} onChange={(event) => { const name = event.target.value; setNewEnv((draft) => ({ ...draft, name })); }} />
         <input id={ids.envSlug} aria-label="New environment short name" className="vault-slug-input" placeholder="qa" value={newEnv.slug} maxLength={VAULT_BOUNDS.slug} autoComplete="off" spellCheck={false} disabled={busy} onChange={(event) => { const slug = event.target.value.toLowerCase(); setNewEnv((draft) => ({ ...draft, slug })); }} />
         <button type="submit" className="secondary-button vault-inline-button" disabled={busy}><Plus />Add</button>
       </form>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {owner && <p className="file-dialog-hint"><ShieldCheck className="vault-hint-icon" aria-hidden="true" />A checked shield marks a protected environment: seeing or exporting its values asks you to confirm it's you (valid 15 minutes). Saving and importing values does not.</p>}
       {owner && <div className="vault-settings-block">
         <span className="vault-field-label">Data key</span>

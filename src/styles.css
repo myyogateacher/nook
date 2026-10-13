@@ -311,6 +311,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .view-recovery-form > div, .regenerate-recovery form > div { display: grid; grid-template-columns: minmax(150px, 1fr) 140px auto; gap: 9px; }
 .view-recovery-form input, .regenerate-recovery input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
 .view-recovery-form .secondary-button, .regenerate-recovery .secondary-button, .recovery-codes .secondary-button { min-height: 42px; padding: 0 13px; }
+/* 2026-10-13: the Security forms set noValidate; a form's own error line sits under its fields, across the row,
+   in the error colour (the cards' grey paragraph rule would otherwise win), and an invalid field shows it. */
+:is(.security-card form, form.security-card) > .form-error { grid-column: 1 / -1; margin: 10px 0 0; color: #fda4af; font-size: .84rem; line-height: 1.45; }
+:is(.security-card form, form.security-card) input[aria-invalid="true"] { border-color: #6a3039; }
 .recovery-code-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 13px 0; }
 .recovery-code-grid code { padding: 9px 10px; border: 1px solid #303035; border-radius: 8px; background: #09090b; color: #f1ca73; font-size: .78rem; text-align: center; }
 .regenerate-recovery summary { color: #c7c7cc; font-size: .82rem; cursor: pointer; }

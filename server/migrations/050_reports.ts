@@ -1,8 +1,9 @@
 import type { Migration } from "./types";
 
 /**
- * Analytics reports (Wave 45, docs/plan/WAVES_45-48_REPORTS.md, D410–D429, T355–T366). The plan named
- * this `049_reports`; 049 is reserved for the Messages module, so it is 050, and 051 is reserved for
+ * Analytics reports (Wave 45, docs/plan/WAVES_45-48_REPORTS.md, D410–D429, T356–T367). The plan named
+ * this `049_reports`; 049 was reserved for the Messages module (v0.37.0 then took it for
+ * `attachment_undo_records`), so it is 050; 051 is wave 46's `report_runs_via` and 052 is reserved for
  * wave 48 (`report_instructions`, `report_versions`). One migration creates every table waves 45–47 use,
  * so those waves add behaviour only:
  *

@@ -24,7 +24,7 @@ import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
 
 /**
- * Report generation (plan wave 46, D424–D427, T367): the doc is read first (docSource.ts, no model),
+ * Report generation (plan wave 46, D424–D427, T368): the doc is read first (docSource.ts, no model),
  * then one agent run over the default provider writes ClickHouse SQL against the report's data source
  * and submits a report spec.
  *

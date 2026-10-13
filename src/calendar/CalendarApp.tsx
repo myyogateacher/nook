@@ -38,6 +38,9 @@ import { addEventReminder, EventReminders, reminderLabel, ReminderPicker, remove
 import { EventView } from "./EventView";
 import {
   applySheetAttachments,
+  applySheetAttachmentChanges,
+  notifySheetSaved,
+  savedWithRemovals,
   attachmentRights,
   attachmentRoom,
   canRemoveAttachment,
@@ -402,11 +405,14 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
         setReloadKey((value) => value + 1);
         (failures.length ? notify.warning : notify.success)(failures.length ? `Added “${created.event.title}”, but ${failures.join("; ")}` : `Added “${created.event.title}”`);
       } else if (sheet.event) {
-        await updateEvent(sheet.event.id, { ...result.input, revision: sheet.event.revision });
-        const failures = await applySheetAttachments(sheet.event.id, sheet.attachments);
+        const eventId = sheet.event.id;
+        await updateEvent(eventId, { ...result.input, revision: sheet.event.revision });
+        const { failures, removed } = await applySheetAttachmentChanges(eventId, sheet.attachments);
         closeSheet();
         setReloadKey((value) => value + 1);
-        (failures.length ? notify.warning : notify.success)(failures.length ? `Event saved, but ${failures.join("; ")}` : "Event saved");
+        // One toast; when Save removed files, its Undo puts them all back in their places (the relink route).
+        notifySheetSaved(failures.length ? `Event saved, but ${failures.join("; ")}` : savedWithRemovals("Event saved", removed),
+          { warning: failures.length > 0, eventId, removals: removed, onUndone: () => setReloadKey((value) => value + 1) });
       }
     } catch (reason) {
       if (errorCode(reason) === "EVENT_CHANGED") {
@@ -656,7 +662,13 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
         canRemoveExisting={(item) => canRemoveAttachment(item, { canEdit: canWrite, canManage: sheet.canManage })}
         onAttach={() => setSheetLayer({ kind: "attach" })}
         onOpen={(item) => setSheetLayer({ kind: "preview", documentId: item.documentId, name: item.name })}
-        onRemove={(item) => updateSheetAttachments((state) => ({ ...state, removed: [...state.removed, item.documentId] }))}
+        onRemove={(item) => {
+          updateSheetAttachments((state) => ({ ...state, removed: [...state.removed, item.documentId] }));
+          // Staged until Save: Undo takes the removal back (nothing has changed on the server yet).
+          notify.success(`Removed ${item.removed ? "the removed file" : item.name}. It comes off the event when you save.`, {
+            action: { label: "Undo", onClick: () => updateSheetAttachments((state) => ({ ...state, removed: state.removed.filter((id) => id !== item.documentId) })) }
+          });
+        }}
         onRetry={retrySheetUpload}
         onRemoveStaged={removeSheetStaged}
       />}

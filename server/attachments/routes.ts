@@ -2,7 +2,11 @@ import type { Context, Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { parseJson, uuid } from "../validation";
-import { HOSTS, isHostKind, type HostKind } from "./hosts";
+import { hit } from "../authLimits";
+import { CollectionError } from "../collections/service";
+import { TaskError } from "../tasks/service";
+import { HOSTS, HOST_KINDS, isHostKind, type HostKind } from "./hosts";
+import { relinkAttachment } from "./relink";
 import { AttachmentError, documentUsage, linkAttachment, listAttachments, unlinkAttachment } from "./service";
 
 /**
@@ -13,6 +17,9 @@ import { AttachmentError, documentUsage, linkAttachment, listAttachments, unlink
  * - POST   /api/attachments/:hostKind/:hostId               { documentId, partId?, confirmed? } → 201 { documentId, created }
  * - DELETE /api/attachments/:hostKind/:hostId/:documentId   → { ok, documentBinned? }: the file's owner always (any host
  *   kind, whatever their access to the host now; `{ ok }` only when they cannot read it), others by the host's rule
+ * - POST   /api/attachments/relink                          { hostKind, hostId, documentId, partId? } → { relinked, restored }:
+ *   Undo of a removal (server/attachments/relink.ts): an editor of the host puts the file back where it
+ *   was, out of the Bin when the removal put it there; idempotent; 30 a minute per account
  * - GET    /api/files/:id/usage                             → { uses, hidden, hiddenCount, total } (owner only)
  *
  * Unknown kinds and malformed ids are the same 404 as a missing host (T340). The write routes are
@@ -27,8 +34,17 @@ const linkSchema = z.object({
   confirmed: z.boolean().optional()
 }).strict();
 
+const relinkSchema = z.object({
+  hostKind: z.enum(HOST_KINDS),
+  hostId: uuid,
+  documentId: uuid,
+  // Only used when the server has no record of the removal (a restart): the comment or file field.
+  partId: z.string().min(1).max(64).regex(/^[0-9a-zA-Z_-]+$/).nullable().optional()
+}).strict();
+
 function respond(c: Context<AppEnv>, error: unknown) {
   if (error instanceof AttachmentError) return c.json(error.body, error.status);
+  if (error instanceof TaskError || error instanceof CollectionError) return c.json(error.body(), error.status);
   throw error;
 }
 
@@ -48,6 +64,17 @@ export function registerAttachmentRoutes(app: Hono<AppEnv>) {
       const spec = HOSTS[host.kind];
       c.header("Cache-Control", "no-store");
       return c.json({ attachments: listAttachments(host.kind, host.hostId, c.get("user").id), caps: spec.caps, linking: spec.linking });
+    } catch (error) {
+      return respond(c, error);
+    }
+  });
+
+  app.post("/api/attachments/relink", async (c) => {
+    const userId = c.get("user").id;
+    if (hit("attachments:relink:account", userId)) return c.json({ error: "Too many changes. Try again in a minute.", code: "RATE_LIMITED" }, 429);
+    const body = await parseJson(c.req.raw, relinkSchema);
+    try {
+      return c.json(await relinkAttachment(userId, { hostKind: body.hostKind, hostId: body.hostId, documentId: body.documentId, partId: body.partId ?? null }));
     } catch (error) {
       return respond(c, error);
     }

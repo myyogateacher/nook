@@ -10,7 +10,7 @@ type ToolServerRow = import("../server/agents/toolServers").ToolServerRow;
 type McpTransport = import("../server/agents/mcpClient").McpTransport;
 
 /**
- * Wave 46 docSource (D424, T367): the doc tool's auto-pick and override, Outline's `{resource, id}`
+ * Wave 46 docSource (D424, T368): the doc tool's auto-pick and override, Outline's `{resource, id}`
  * convention, Outline-shaped and markdown results, DOC_FETCH and MCP_AUTH, the 512 KiB cap, snapshots
  * written only when the hash changes, and "Doc changed" / Check doc over HTTP. The MCP side is a fake
  * transport under a real McpSession (initialize, tools/call), so nothing leaves the process.

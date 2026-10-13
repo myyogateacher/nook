@@ -28,6 +28,7 @@ import { RoutinesPane } from "./RoutinesPane";
 import "./inbox.css";
 import { appName } from "../appName";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 type InboxRoute = Extract<Route, { app: "inbox" }>;
 type InboxNavigate = (route: Route, options?: { replace?: boolean }) => void;
@@ -560,11 +561,11 @@ export function RejectDialog({ label, count, effect, onClose, onReject }: { labe
         <h2 id="inbox-reject-title">{count === 1 ? "Reject this proposal?" : `Reject ${count} proposals?`}</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
       </header>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <p className="inbox-dialog-subject">{label}</p>
         <p>{effect}</p>
         <label className="inbox-field">Reason (optional, the agent can read it)<textarea name="reason" maxLength={200} rows={2} autoFocus /></label>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <div className="inbox-dialog-actions">
           <button type="button" className="inbox-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="inbox-action primary danger" disabled={busy}>{busy ? "Rejecting…" : "Reject"}</button>

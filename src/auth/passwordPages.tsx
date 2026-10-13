@@ -6,6 +6,7 @@ import { googleOnlyPasswordText } from "./googleSignIn";
 import { collectProblems, confirmPasswordProblem, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./fieldChecks";
 import "./auth.css";
 import { appName, setAppName } from "../appName";
+import { FormError } from "../ui/FormError";
 
 /**
  * Forgot / reset password (Wave 30, outbound email §A.5, §E.6). Both pages work signed out.
@@ -172,7 +173,7 @@ export function ForgotPasswordPage({ onBack }: { onBack: () => void }) {
       </div>
       <form className="auth-form" onSubmit={submit} noValidate onChange={(event) => { setError(""); fields.clear(fieldName(event.target)); }}>
         <label>Email<input name="email" type="email" autoComplete="email" maxLength={254} disabled={state === "working" || available === null} autoFocus aria-invalid={fields.errors.email ? true : undefined} aria-describedby={fields.errors.email ? "forgot-email-error" : undefined} /><FieldError id="forgot-email-error" message={fields.errors.email} /></label>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <button className="primary-button" disabled={state === "working" || available === null}>{state === "working" ? "Sending…" : "Send reset link"}</button>
       </form>
     </>}
@@ -293,7 +294,7 @@ export function ResetPasswordPage({ token, onSignIn, onForgot, signedIn = false,
         <PasswordInput name="newPassword" label="New password" autoComplete="new-password" disabled={busy} describedBy={hintId} error={fields.errors.newPassword} />
         <PasswordInput name="confirmPassword" label="Confirm new password" autoComplete="new-password" disabled={busy} error={fields.errors.confirmPassword} />
         {state.needsCode && <SecondFactorField recovery={recovery} disabled={busy} error={fields.errors[secondFactorName(recovery)]} onToggle={() => { setRecovery((value) => !value); setError(""); fields.clear(); }} />}
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <button className="primary-button" disabled={busy}>{busy ? "Saving…" : "Change password"}</button>
       </form>
     </>}

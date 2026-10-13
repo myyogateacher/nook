@@ -4,6 +4,7 @@ import { ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { canEnterColumn } from "./taskActions";
 import type { BoardColumn, CardSummary } from "./tasksApi";
+import { FormError } from "../ui/FormError";
 
 export type MovePlace = "top" | "bottom";
 
@@ -117,7 +118,7 @@ export function MoveCardSheet({ card, columns, cards = [], onMove, onCancel, par
       <button role="radio" aria-checked={place === "top"} className={place === "top" ? "active" : ""} onClick={() => setPlace("top")} disabled={busy}><ArrowUpToLine aria-hidden="true" />Top</button>
       <button role="radio" aria-checked={place === "bottom"} className={place === "bottom" ? "active" : ""} onClick={() => setPlace("bottom")} disabled={busy}><ArrowDownToLine aria-hidden="true" />Bottom</button>
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
       <button className="primary-button" onClick={() => { void confirmAction(); }} disabled={!target || busy}>{busy ? "Moving…" : target ? `Move to ${place === "top" ? "top" : "bottom"} of ${target.name}` : "Move"}</button>

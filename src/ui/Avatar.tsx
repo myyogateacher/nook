@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { Bot } from "lucide-react";
 import { useSelfAvatar } from "./selfAvatar";
+import { refreshAvatar, useAvatarUrl } from "./avatarRefresh";
 
 /**
  * The one avatar used wherever a person is drawn (Wave 35, D299): their picture when the server gave
  * an `avatarUrl` (a same-origin /api/users/:id/avatar URL, never Google's), else the letters the app
- * always showed. A picture that fails to load falls back to the letters too.
+ * always showed. A picture that fails to load falls back to the letters too, and its current URL is
+ * looked up once (avatarRefresh): a picture changed since this list loaded shows without a reload.
  */
 
 /** The first letter of a name, upper-cased ("?" for an empty name). */
@@ -44,8 +46,12 @@ export function AvatarView({ name, url, className, fallback, failed, onError, in
 export function Avatar(props: Omit<ViewProps, "failed" | "onError">) {
   // Remembers which URL failed, so a new URL (a changed picture) is tried again.
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const url = props.url ?? null;
-  return <AvatarView {...props} failed={url !== null && failedUrl === url} onError={() => setFailedUrl(url)} />;
+  // The newest URL known for a stale one (T353), shared by every avatar on screen.
+  const url = useAvatarUrl(props.url ?? null);
+  return <AvatarView {...props} url={url} failed={url !== null && failedUrl === url} onError={() => {
+    setFailedUrl(url);
+    if (url && !props.integration) void refreshAvatar(url);
+  }} />;
 }
 
 /**

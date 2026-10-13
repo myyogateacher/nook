@@ -44,6 +44,7 @@ import { signInDevicesMigration } from "./044_sign_in_devices";
 import { attachmentsMigration } from "./046_attachments";
 import { legacyAttachmentsMigration } from "./047_legacy_attachments";
 import { contentReferencesMigration } from "./048_content_references";
+import { attachmentUndoRecordsMigration } from "./049_attachment_undo_records";
 import { reportsMigration } from "./050_reports";
 import { reportRunsViaMigration } from "./051_report_runs_via";
 
@@ -106,15 +107,18 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // uploader's Attachments folder, in place, with their links kept) needs 006, 009, 012, 025, and 046.
   legacyAttachmentsMigration,
   // 048 (v0.35.0 review L2: content_reference_sources and content_references, the orphan sweep's
-  // reference index; a cache, created empty) needs nothing. The Messages migration moves to 049.
+  // reference index; a cache, created empty) needs nothing. The Messages migration moves to 053.
   contentReferencesMigration,
-  // 049 is reserved for the Messages module; runMigrations applies each missing id on its own, so 049
-  // may land after 050. 050 (analytics reports, Wave 45: data sources, the schema catalog and its FTS
-  // index, reports, doc snapshots, queries, runs with one running run per report, results, schedules,
-  // and the api_key_grants rebuild that adds `reports` / `report`) needs 001, 025, 038, and 039.
+  // 049 (v0.37.0: attachment_undo_records, the durable Undo records of POST /api/attachments/relink,
+  // with the triggers that end them on any link change or purge) needs 009, 012, 013, 030, 039, and 046.
+  attachmentUndoRecordsMigration,
+  // 050 (analytics reports, Wave 45: data sources, the schema catalog and its FTS index, reports, doc
+  // snapshots, queries, runs with one running run per report, results, schedules, and the api_key_grants
+  // rebuild that adds `reports` / `report`) needs 001, 025, 038, and 039.
   reportsMigration,
   // 051 (reports wave 46: `agent_runs.via` gains `reports`, rebuilt with its children kept; reports.doc_arg)
-  // needs 039, 040, and 050. 052 is reserved for reports wave 48 (report_instructions, report_versions).
+  // needs 039, 040, and 050. 052 is reserved for reports wave 48 (report_instructions, report_versions);
+  // the Messages module takes 053.
   reportRunsViaMigration
 ];
 

@@ -9,7 +9,7 @@ import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
 
 /**
- * The doc a report is built from (plan wave 46, D424, T367): fetched deterministically through an
+ * The doc a report is built from (plan wave 46, D424, T368): fetched deterministically through an
  * admin-configured tool server **before** any model call, so the model never chooses what is read.
  *
  * - The tool: the person picks a tool server; Nook picks its `fetch`, `get_document`, or

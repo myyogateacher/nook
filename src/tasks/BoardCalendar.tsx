@@ -196,7 +196,7 @@ export function BoardCalendar({ board, cards, layout, month: routeMonth, today, 
         const value = committableDueDate(draft, sheetCard.due_on);
         if (value) onSetDue(sheetCard, value);
         setSheet(null);
-      }}>
+      }} noValidate>
         <label>
           <span><CalendarDays aria-hidden="true" />Due date</span>
           <input type="date" value={draft} autoFocus min="1900-01-01" max="2999-12-31" onChange={(event) => setDraft(event.target.value)} />

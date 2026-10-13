@@ -16,6 +16,7 @@ import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./chat.css";
 import { notify } from "../ui/notify";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
+import { FormError } from "../ui/FormError";
 
 type Navigate = (route: Route, options?: { replace?: boolean }) => void;
 
@@ -69,7 +70,7 @@ export function AgentsSettings({ agentId, navigate, flash, onOpenChat }: { agent
   </li>;
   return <section className="settings-content agents-settings" aria-labelledby={HUB_TITLE_ID}>
     <div className="settings-section-heading"><span className="settings-icon"><Bot /></span><div><p>An agent is a prompt, a model, a step limit, and the tools it may call. Your prompts are not secret: anyone you later share an agent with can read what it says through the model.</p></div></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {status && !status.enabled && <p className="settings-warning">Chat is not configured on this server{status.reason ? " (see Settings → AI)" : ""}.</p>}
     {status?.enabled && !status.canChat && <p className="settings-warning">Chat is off for your role.</p>}
     {own && own.length > 0 && <ul className="agents-list" aria-label="Your agents">{own.map(row)}</ul>}
@@ -238,9 +239,9 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
   return <div className="settings-content settings-team-content agents-editor">
     <button type="button" className="team-back team-back-visible" onClick={() => navigate(toList)}><ChevronLeft />Agents</button>
     <div className="settings-section-heading"><span className="settings-icon"><Bot /></span><div><h3>{creating ? "New agent" : agent?.name ?? "Agent"}</h3><p>{agent && agent.yourLevel === "manage" ? `${agent.ownerName} owns this agent; you manage it. You can edit and share it; only ${agent.ownerName} can move it to the Bin.` : "Basics, instructions, the model, and the tools it may call."}</p></div></div>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {stale && <p className="settings-warning">Changed elsewhere. <button type="button" className="chat-link" onClick={() => { void load(true); }}>Reload</button></p>}
-    {(creating || agent) && <form className="file-dialog-form agents-form" onSubmit={save}>
+    {(creating || agent) && <form className="file-dialog-form agents-form" onSubmit={save} noValidate>
       <h4>Basics</h4>
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={AGENT_BOUNDS.agentName} autoComplete="off" autoFocus={creating} onChange={(event) => setName(event.target.value)} />

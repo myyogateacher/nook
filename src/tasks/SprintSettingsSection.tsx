@@ -4,6 +4,7 @@ import { SPRINT_NAME_MAX, type SprintDefaults } from "../../shared/sprintPlan";
 import { NewSprintForm } from "./NewSprintForm";
 import { activeSprint, sprintDateRange, sprintStateLabel } from "./sprintModel";
 import { listSprints, taskErrorMessage, type SprintFields, type SprintSummary } from "./tasksApi";
+import { FormError } from "../ui/FormError";
 
 type SprintSettingsSectionProps = {
   boardId: string;
@@ -125,6 +126,6 @@ export function SprintSettingsSection({ boardId, sprints, owner, today, plural, 
       <ul className="task-sprint-list">{completed.map(row)}</ul>
       {(older === null || older.cursor) && <button type="button" className="secondary-button task-small-button" onClick={() => { void loadOlder(); }}>Show older</button>}
     </details>}
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
   </section>;
 }

@@ -7,6 +7,7 @@ import { AuthDivider, GoogleButton, googleErrorMessage } from "./googleSignIn";
 import type { RegistrationInfo } from "./registrationPrompt";
 import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, useFieldErrors } from "./fieldChecks";
 import { appName, setAppName } from "../appName";
+import { FormError } from "../ui/FormError";
 
 export type InvitePreview = { role: InviteRole; emailHint: string | null; expiresAt: string; inviterName: string };
 export type InviteRegisterBody = { email: string; displayName: string; password: string; inviteToken: string };
@@ -156,7 +157,7 @@ export function InviteRegister({ token, onRegister, onSignIn, googleError = null
             </span>
             <FieldError id="invite-password-error" message={fields.errors.password} />
           </div>
-          {error && <p className="form-error" role="alert">{error}</p>}
+          <FormError message={error} />
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Create account"}</button>
         </form>}
       </>}

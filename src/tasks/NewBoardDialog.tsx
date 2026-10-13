@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { BOARD_TEMPLATES, structureLabel, TEMPLATES, type BoardTemplateId } from "../../shared/boardStructure";
 import { validateBoardName } from "./taskActions";
+import { FormError } from "../ui/FormError";
 
 type NewBoardDialogProps = {
   onSubmit: (name: string, template: BoardTemplateId) => Promise<void>;
@@ -43,7 +44,7 @@ export function NewBoardDialog({ onSubmit, onCancel }: NewBoardDialogProps) {
       <label htmlFor={inputId}>Board name</label>
       <input id={inputId} value={name} autoFocus autoComplete="off" maxLength={200} aria-invalid={shown ? true : undefined}
         onChange={(event) => { setName(event.target.value); setTouched(true); setError(null); }} />
-      {shown && <p className="file-dialog-error" role="alert">{shown}</p>}
+      <FormError message={shown} className="file-dialog-error" />
       <span className="task-template-label" id={`${inputId}-templates`}>Start from</span>
       <div className="task-template-grid" role="radiogroup" aria-labelledby={`${inputId}-templates`}>
         {BOARD_TEMPLATES.map((id) => {

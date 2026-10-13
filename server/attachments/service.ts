@@ -3,6 +3,7 @@ import { readableDocumentPredicate } from "../documentAccess";
 import { purgeAfterFrom } from "../bin";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { HOSTS, type HostKind, type HostSpec, type LinkRow } from "./hosts";
+import { linkChanged, recordRemovedLink } from "./undoTickets";
 
 /**
  * The attachment service (uploads everywhere plan D390–D396, D408, D409, T340–T342, T351): the
@@ -201,6 +202,7 @@ export function linkAttachment(userId: string, kind: HostKind, hostId: string, i
     if (count.count >= spec.caps.perHost) throw new AttachmentError(409, "LIMIT_REACHED", `A ${spec.noun} can have up to ${spec.caps.perHost} files`, { limit: spec.caps.perHost });
     db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(kind, hostId, document.id, partId, count.last + 1, userId, now());
+    linkChanged(kind, hostId, document.id);
     audit(userId, null, "attachment.link", { hostKind: kind, hostId, documentId: document.id, ...(document.system_kind === ATTACHMENTS_FOLDER_KIND ? {} : { fromFiles: true }) });
     return { documentId: document.id, created: true };
   })();
@@ -230,10 +232,15 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
   const ownerId = (db.query("SELECT owner_id FROM documents WHERE id = ? AND purge_started_at IS NULL").get(documentId) as { owner_id: string } | null)?.owner_id ?? null;
   if (ownerId !== null && ownerId === userId) {
     const outcome = db.transaction(() => {
+      const before = hostLinks(kind, hostId).find((link) => link.document_id === documentId);
       const removed = db.query(DELETE_LINK[spec.store]).run({ kind, hostId, documentId }).changes;
       if (!removed) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
+      linkChanged(kind, hostId, documentId);
       audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId, asOwner: true });
-      return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
+      const documentBinned = binIfOrphanedAttachment(documentId, userId, { notify: false });
+      // The Undo record commits with the removal (undoTickets.ts).
+      if (before) rememberRemoval(userId, before, documentBinned);
+      return { documentBinned };
     })();
     if (outcome.documentBinned) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
     return hostReadable(kind, hostId, userId) ? outcome : {};
@@ -248,11 +255,20 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
     if (!link) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
     if (!spec.canUnlink!(userId, hostId, link, ownerId ?? "")) throw new AttachmentError(403, "READ_ONLY", "You cannot remove this file");
     db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, documentId);
+    linkChanged(kind, hostId, documentId);
     audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId });
-    return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
+    const documentBinned = binIfOrphanedAttachment(documentId, userId, { notify: false });
+    // The Undo record commits with the removal (undoTickets.ts).
+    rememberRemoval(userId, link, documentBinned);
+    return { documentBinned };
   })();
   if (outcome.documentBinned) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
-  return outcome;
+  return { documentBinned: outcome.documentBinned };
+}
+
+/** Keeps the removed link for the remover's Undo (undoTickets.ts, POST /api/attachments/relink). Call inside the removal's transaction. */
+export function rememberRemoval(userId: string, link: LinkRow, binned: boolean) {
+  recordRemovedLink(userId, link.host_kind as HostKind, link.host_id, link.document_id, { partId: link.part_id, position: link.position, linkedBy: link.linked_by, createdAt: link.created_at, binned });
 }
 
 /** A document a derived host could newly link: one of the actor's own live Files documents. */
@@ -341,7 +357,10 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
     const current = new Set(hostLinks(kind, hostId).map((link) => link.document_id));
     const { wanted, skipped, binned, confirm } = planDerivedLinks(kind, hostId, actorId, documentIds, policy);
     const unlinked = [...current].filter((id) => !wanted.includes(id));
-    for (const id of unlinked) db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
+    for (const id of unlinked) {
+      db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
+      linkChanged(kind, hostId, id);
+    }
     const linked: string[] = [];
     const timestamp = now();
     wanted.forEach((id, position) => {
@@ -351,11 +370,100 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
       }
       db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(kind, hostId, id, null, position, actorId, timestamp);
+      linkChanged(kind, hostId, id);
       linked.push(id);
     });
     if (linked.length || unlinked.length) audit(actorId, kind === "note" ? hostId : null, "attachment.sync", { hostKind: kind, hostId, linked: linked.length, unlinked: unlinked.length });
     return { linked, unlinked, skipped, binned, confirm };
   })();
+}
+
+// ------------------------------------------------------------------------------ Undo of a removal
+
+/** A document an Undo would put back (POST /api/attachments/relink). */
+type RelinkCandidate = { id: string; owner_id: string; name: string; purpose: string; deleted_at: string | null; purge_started_at: string | null; system_kind: string | null; whiteboard: number };
+
+export type RelinkDocument = { id: string; name: string; restore: boolean; fromFiles: boolean };
+
+/**
+ * Whether `userId` may put `documentId` back on a host after removing it (the Undo of a removal),
+ * under the same rules as linking it (T341, D395, D396). `removed` is the server's own record of the
+ * removal (undoTickets.ts), never anything the client claims.
+ *
+ * - **Their own file**: a live Files document (not a whiteboard). One in their Attachments folder that
+ *   is in their Bin comes back out of it (`restore`; they may always restore their own file). A Files
+ *   item from elsewhere in their Bin was deleted on purpose (an unlink never bins it): 409 IN_BIN. A
+ *   Files item outside the Attachments folder needs the D396 confirm, which only a removal record
+ *   proves was given: without one, 409 CONFIRM_REQUIRED, as POST /api/attachments answers.
+ * - **Someone else's file**: only when this person removed that exact link moments ago (the record):
+ *   Undo restores the link its owner made and never makes a new one. Without a record it is the
+ *   same 404 as a missing file (nobody probes other people's files). A file in its owner's Bin
+ *   cannot come back (only its owner may restore it): 409 IN_OWNERS_BIN.
+ */
+export function relinkableDocument(documentId: string, userId: string, removed: { binned: boolean } | null): RelinkDocument {
+  const document = db.query(`SELECT d.id, d.owner_id, d.name, d.purpose, d.deleted_at, d.purge_started_at, f.system_kind,
+      EXISTS (SELECT 1 FROM whiteboards w WHERE w.document_id = d.id) AS whiteboard
+    FROM documents d LEFT JOIN folders f ON f.id = d.folder_id WHERE d.id = ?`).get(documentId.toLowerCase()) as RelinkCandidate | null;
+  if (!document || document.purge_started_at !== null || document.purpose !== "file" || document.whiteboard === 1) throw new AttachmentError(404, "NOT_FOUND", "File not found");
+  const attachment = document.system_kind === ATTACHMENTS_FOLDER_KIND;
+  if (document.owner_id !== userId) {
+    if (!removed) throw new AttachmentError(404, "NOT_FOUND", "File not found");
+    if (document.deleted_at !== null) throw new AttachmentError(409, "IN_OWNERS_BIN", "This file is in its owner's Bin. Only they can restore it.");
+    return { id: document.id, name: document.name, restore: false, fromFiles: !attachment };
+  }
+  // In the Bin for another reason than this removal (deleted from Files on purpose): the Bin's to restore.
+  if (document.deleted_at !== null && (!attachment || (removed && !removed.binned))) {
+    throw new AttachmentError(409, "IN_BIN", `${document.name} is in your Bin. Restore it from the Bin first.`, { documentName: document.name });
+  }
+  if (!attachment && !removed) {
+    throw new AttachmentError(409, "CONFIRM_REQUIRED", `Attach ${document.name} again from Files`, { documentName: document.name });
+  }
+  return { id: document.id, name: document.name, restore: document.deleted_at !== null, fromFiles: !attachment };
+}
+
+/**
+ * Takes the caller's own Attachments-folder file out of their Bin for an Undo (inside the caller's
+ * transaction; the Bin's restore rule, owner only, for a file that goes back to its own folder,
+ * restoreKeptFolder). Returns whether it restored; tell knowledge bases after the commit.
+ */
+export function restoreForRelink(documentId: string, userId: string) {
+  const restored = db.query(`UPDATE documents SET deleted_at = NULL, deleted_by = NULL, purge_after = NULL, updated_at = ?
+    WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL
+      AND folder_id IN (SELECT id FROM folders WHERE owner_id = ? AND system_kind = '${ATTACHMENTS_FOLDER_KIND}')`).run(now(), documentId, userId, userId).changes === 1;
+  if (restored) audit(userId, null, "document.restore", { documentId, reason: "attachment_undo" });
+  return restored;
+}
+
+export type RelinkOutcome = { relinked: boolean; restored: boolean };
+export type RemovalRecord = { partId: string | null; position: number; linkedBy: string | null; createdAt: string; binned: boolean };
+
+/**
+ * The Undo of a removal on a declared host (events, chat messages): the host's own link rule
+ * (`canLink`: a stranger gets 404, someone who can only read it 403 READ_ONLY), the document rule
+ * above, the per-host cap, then the link back at its old position (or at the end without a record).
+ * Linking what is already linked changes nothing (idempotent).
+ */
+export function relinkDeclared(userId: string, kind: HostKind, hostId: string, documentId: string, removal: () => RemovalRecord | null): RelinkOutcome {
+  const spec = HOSTS[kind];
+  if (spec.linking !== "declared" || !spec.canLink) throw new AttachmentError(409, "HOST_MANAGED", `Files on a ${spec.noun} cannot be put back this way`);
+  const outcome = db.transaction((): RelinkOutcome => {
+    const refusal = spec.canLink!(userId, hostId, null);
+    if (refusal) throw new AttachmentError(refusal.status, refusal.code, refusal.message);
+    if (db.query("SELECT 1 FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").get(kind, hostId, documentId)) return { relinked: false, restored: false };
+    const removed = removal();
+    const document = relinkableDocument(documentId, userId, removed);
+    const count = db.query("SELECT COUNT(*) AS count, COALESCE(MAX(position), -1) AS last FROM attachment_links WHERE host_kind = ? AND host_id = ?").get(kind, hostId) as { count: number; last: number };
+    if (count.count >= spec.caps.perHost) throw new AttachmentError(409, "LIMIT_REACHED", `A ${spec.noun} can have up to ${spec.caps.perHost} files`, { limit: spec.caps.perHost });
+    const restored = document.restore && restoreForRelink(document.id, userId);
+    if (document.restore && !restored) throw new AttachmentError(409, "PURGING", "This file is being deleted from the Bin");
+    db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(kind, hostId, document.id, removed?.partId ?? null, removed ? removed.position : count.last + 1, removed?.linkedBy ?? userId, removed?.createdAt ?? now());
+    linkChanged(kind, hostId, document.id);
+    audit(userId, null, "attachment.relink", { hostKind: kind, hostId, documentId: document.id, ...(restored ? { restored: true } : {}) });
+    return { relinked: true, restored };
+  })();
+  if (outcome.restored) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
+  return outcome;
 }
 
 // ------------------------------------------------------------------------------ lifecycle

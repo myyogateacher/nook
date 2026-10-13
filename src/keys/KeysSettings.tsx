@@ -20,6 +20,7 @@ import { SettingsTabs, settingsTabIds, type SettingsTab } from "../settings/Sett
 import { focusFromScript } from "../ui/scriptFocus";
 import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./keys.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → API keys (Wave 31, access plan §E; replaces "MCP server"). One list of Nook keys with
@@ -177,7 +178,7 @@ export function KeysSettings({ onPendingChange, onNestedDialogChange, totpEnable
     {tabbed && <SettingsTabs label="Key kinds" idPrefix="keys" tabs={tabs} selected={shownTab} onSelect={(next) => onTab?.(next)} />}
     <div className="keys-tabpanel settings-tab-panel" {...(tabbed ? { role: "tabpanel", id: panelIds.panel, "aria-labelledby": panelIds.tab, tabIndex: 0 } : {})}>
     {tabbed && <p className="keys-tab-intro">{KEYS_TAB_INTROS[shownTab]}</p>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {status && <p className="keys-status" role="status">{status}</p>}
     <div className="mcp-endpoint"><div><span>Transport</span><strong>Streamable HTTP</strong></div><div><span>Endpoint</span><code>{endpoint}</code><button type="button" className="icon-button" onClick={() => copy(endpoint, "endpoint")} aria-label="Copy MCP endpoint"><Copy /></button></div></div>
 
@@ -529,7 +530,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
       <div className="keys-select-field"><span id="keys-expiry-label">Expires</span><Select labelledBy="keys-expiry-label" label="Expires" value={expires} options={kind === "vault" ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{kind === "vault" ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} />
       {reauth.fields(busy)}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy || (kind === "vault" ? !vaultRows.length : !rows.length)}>{busy ? "Creating…" : "Create key"}</button>
@@ -636,7 +637,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
         narrowing={{ mcpValues: Boolean(apiKey.vault?.allowMcpValueReads), protectedAccess: Boolean(apiKey.vault?.protectedAccess) }} />}
       <div className="keys-select-field"><span id="keys-edit-expiry">Expiry</span><Select labelledBy="keys-edit-expiry" label="Expiry" value={expires} options={expiryChoices} onChange={setExpires} disabled={busy} /></div>
       <AllowlistField available={Boolean(policy.ipAllowlistAvailable)} pinned={policy.ipProxyPinned} value={allowlist} onChange={setAllowlist} disabled={busy} mode={apiKey.ipAllowlist?.length ? "narrow" : "create"} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy || (isVault ? !vaultRows.length : !rows.length)}>{busy ? "Saving…" : "Save"}</button>
@@ -706,7 +707,7 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
       <div className="keys-select-field"><span id="keys-grace-label">Old key</span><Select labelledBy="keys-grace-label" label="Old key" value={grace} options={GRACE_OPTIONS.map((option) => ({ ...option }))} onChange={setGrace} disabled={busy} /></div>
       <div className="keys-select-field"><span id="keys-rotate-expiry-label">New key expires</span><Select labelledBy="keys-rotate-expiry-label" label="New key expires" value={expires} options={isVault ? vaultExpiryChoices(policy) : expiryChoices(policy)} onChange={setExpires} disabled={busy} /><small>{isVault ? `A vault key always expires: at most ${Math.min(policy.keyMaxDays, 365)} days.` : expiryNote(policy)}</small></div>
       {reauth.fields(busy)}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Rotating…" : "Rotate key"}</button>
@@ -750,6 +751,6 @@ function RevokeKeyDialog({ apiKey, onClose, onRevoked }: { apiKey: ApiKey; onClo
   const copy = revokeCopy(apiKey);
   return <KeysDialog title={copy.title} description={copy.description} onClose={onClose} busy={busy}
     footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-button danger" onClick={confirmAction} disabled={busy}>{busy ? "Revoking…" : apiKey.state === "grace" ? "Revoke old key" : "Revoke key"}</button></>}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
   </KeysDialog>;
 }

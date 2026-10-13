@@ -16,6 +16,7 @@ import { ROLE_LABELS } from "./teamRoles";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * A member's access at /team/:userId/access (Wave 33, access plan §C.6, §E, D268, D269), admins
@@ -303,7 +304,7 @@ function ActionDialog({ dialog, summary, onClose, onDone, onStale }: { dialog: D
   return <KeysDialog title={title} onClose={result ? () => onDone(`${name}'s access was reset`) : onClose} busy={busy}>
     <div className="keys-form">
       {body}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         {!result && <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>}
         <button type="button" className={`primary-button${danger ? " danger" : ""}`} onClick={() => { void run(action); }} disabled={busy || confirmDisabled}>{busy ? "Working…" : confirmLabel}</button>

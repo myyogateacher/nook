@@ -70,7 +70,7 @@ import { ProfilePictureCard } from "./settings/ProfilePicture";
 import { Avatar, SelfAvatar } from "./ui/Avatar";
 import { usePageScrollKeys, workspaceScroller } from "./ui/pageScrollKeys";
 import { setSelfAvatar } from "./ui/selfAvatar";
-import { AccountAuthContext, GoogleReauthNotice, reauthPassword, ReauthRouteToggle, useAccountAuthLoader, useReauthRoute } from "./auth/accountAuth";
+import { AccountAuthContext, googleConfirmed, GoogleReauthNotice, reauthPassword, ReauthRouteToggle, useAccountAuthLoader, useReauthRoute } from "./auth/accountAuth";
 import { RecoveryCodesDialog } from "./auth/RecoveryCodesDialog";
 import { GoogleAccountCard, googleSettingsNotice, GoogleResetNoticeBanner, PasswordStateCard, type GoogleResetNotice } from "./auth/GoogleAccountCard";
 import { AuthDivider, currentReturnPath, googleOnlyHint, GoogleButton, googleErrorMessage, googleStartUrl, LINK_NOT_AUTHORITATIVE_PASSWORD, linkRequiredText, initialGoogleSettingsResult, initialGoogleSignInResult, initialGoogleTeamResult, type GoogleSettingsResult, type GoogleSignInResult } from "./auth/googleSignIn";
@@ -95,7 +95,8 @@ import { calendarHomeRoute, localDate } from "./calendarRoute";
 import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled, type PopDirection } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
-import { NoteEditor } from "./editor/NoteEditor";
+import { NoteEditor, type NoteUploadControl } from "./editor/NoteEditor";
+import { LEAVE_UPLOADS_CONFIRM } from "./editor/uploadSlots";
 import { BinnedFilesConfirm } from "./editor/BinnedFilesConfirm";
 import { clearCardSummaries, OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
@@ -109,7 +110,8 @@ import { ConfirmDialog } from "./files/Dialog";
 import { useConfirm } from "./ui/useConfirm";
 import { NameDialog } from "./files/RenameDialog";
 import { MoveSheet } from "./files/MoveSheet";
-import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, useFieldErrors } from "./auth/fieldChecks";
+import { collectProblems, emailProblem, FieldError, fieldName, newPasswordProblem, secondFactorProblem, securityFormProblem, useFieldErrors } from "./auth/fieldChecks";
+import { FormError } from "./ui/FormError";
 import { validateFolderName } from "./files/fileActions";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
 import { clearPendingForUser, countPendingForUser } from "./whiteboards/pendingStore";
@@ -133,6 +135,8 @@ import { usePreferences, type PreferencesStatus } from "./usePreferences";
 import { errorText, flash as flashToast, notify } from "./ui/notify";
 
 type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean };
+/** The Security section's forms, so a problem shows in the one that was sent. */
+type SecurityForm = "setup" | "verify" | "view" | "regenerate" | "disable";
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 // `notices` (Wave 35 review N2c) comes with /api/auth/me only.
 type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; reports?: boolean }; app?: { name?: string } };
@@ -288,7 +292,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
             ? <label>Recovery code<input name="recoveryCode" autoComplete="one-time-code" placeholder="ABCDE-FGHIJ-KLMNO" maxLength={32} autoFocus aria-invalid={fields.errors.recoveryCode ? true : undefined} /><small>Enter one complete backup recovery code. Each code works once.</small><FieldError id="google-recovery-error" message={fields.errors.recoveryCode} /></label>
             : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number from your authenticator app.</small><FieldError id="google-code-error" message={fields.errors.totpCode} /></label>}
           <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use an authentication code instead" : "Use a recovery code"}</button>
-          {error && <p className="form-error" role="alert">{error}</p>}
+          <FormError message={error} />
           <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : "Sign in"}</button>
           <button type="button" className="text-button" onClick={() => void cancelGoogleCode()} disabled={busy}>Cancel and use another account</button>
         </form> : !methodsKnown ? <div className="auth-methods-placeholder" aria-busy="true" aria-label="Loading sign-in options" /> : <>
@@ -325,7 +329,7 @@ function AuthScreen({ onAuthenticated, onForgotPassword, googleResult = null }: 
               : <label>Six-digit authentication code<input name="totpCode" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" autoFocus aria-invalid={fields.errors.totpCode ? true : undefined} /><small>Enter the current six-digit number shown in Google Authenticator—not the grouped setup key.</small><FieldError id="auth-code-error" message={fields.errors.totpCode} /></label>)}
             {!registering && needsTotp && <button type="button" className="inline-auth-switch" onClick={() => { setUseRecoveryCode((value) => !value); setError(""); fields.clear(); }}>{useRecoveryCode ? "Use Google Authenticator instead" : "Use a recovery code"}</button>}
             {!registering && passwordResetOffered(registration) && <a className="inline-auth-switch forgot-password-link" href={FORGOT_PATH} onClick={(event) => { event.preventDefault(); onForgotPassword(); }}>Forgot password?</a>}
-            {error && <p className="form-error" role="alert">{error}</p>}
+            <FormError message={error} />
             <button className="primary-button" disabled={busy}>{busy ? "Please wait…" : registering ? "Create account" : "Sign in"}</button>
           </form>}
           {methods.password && (registering || signUpPrompt) && <button className="text-button" onClick={() => { setRegistering(!registering); setNeedsTotp(false); setUseRecoveryCode(false); setPasswordVisible(false); setError(""); fields.clear(); }}>
@@ -387,19 +391,43 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   // 2026-10-12: Google first for an account with Google linked ("Use password instead" when it has one).
   const securityRoute = useReauthRoute(account);
   const routeToggle = <ReauthRouteToggle viaPassword={securityRoute.viaPassword} onToggle={securityRoute.toggle} />;
-  const reauthField = securityRoute.viaPassword ? <><input name="password" type="password" autoComplete="current-password" placeholder="Password" required />{routeToggle}</> : null;
+  // The Security forms set noValidate (2026-10-13): the app says what is missing, in the form that was sent.
+  const [errorAt, setErrorAt] = useState<{ form: SecurityForm; field: string | null } | null>(null);
+  const invalid = (form: SecurityForm, field: string) => errorAt?.form === form && errorAt.field === field ? { "aria-invalid": true as const, "aria-describedby": `security-error-${form}` } : {};
+  const reauthField = (form: SecurityForm) => securityRoute.viaPassword ? <><input name="password" type="password" autoComplete="current-password" placeholder="Password" aria-label="Password" aria-required="true" {...invalid(form, "password")} />{routeToggle}</> : null;
   const reauthNotice = account && !securityRoute.viaPassword ? <><GoogleReauthNotice account={account} returnTo="/settings/security" />{routeToggle}</> : null;
   // The two-factor actions take the authenticator code, or a recovery code when it is lost.
   const [useRecoveryCode, setUseRecoveryCode] = useState(false);
-  const codeField = <>{useRecoveryCode
-    ? <input name="recoveryCode" autoComplete="one-time-code" maxLength={32} placeholder="Recovery code" aria-label="Recovery code" required />
-    : <input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6-digit code" aria-label="Six-digit authentication code" required />}
+  const codeField = (form: SecurityForm) => <>{useRecoveryCode
+    ? <input name="recoveryCode" autoComplete="one-time-code" maxLength={32} placeholder="Recovery code" aria-label="Recovery code" aria-required="true" {...invalid(form, "recoveryCode")} />
+    : <input name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6-digit code" aria-label="Six-digit authentication code" aria-required="true" {...invalid(form, "code")} />}
     <button type="button" className="inline-auth-switch reauth-toggle" onClick={() => setUseRecoveryCode((value) => !value)}>{useRecoveryCode ? "Use an authentication code instead" : "Lost your authenticator? Use a recovery code"}</button></>;
+  /** Shows a problem in the form it belongs to (or above the cards, for `null`), or clears it. */
+  const showError = (text: string, form: SecurityForm | null = null, field: string | null = null) => {
+    setError(text);
+    setErrorAt(text && form ? { form, field } : null);
+  };
+  /** The form's own check before it is sent: what is missing, said in the form, with focus on that field. */
+  const blocked = (form: SecurityForm, element: HTMLFormElement) => {
+    if (!securityRoute.viaPassword && account?.reauth === "google" && !googleConfirmed(account)) {
+      showError(securityRoute.toggle ? "Confirm with Google first. Or use your password instead." : "Confirm with Google first.", form);
+      return true;
+    }
+    const problem = securityFormProblem(element);
+    if (!problem) return false;
+    showError(problem.message, form, problem.field);
+    const field = element.elements.namedItem(problem.field);
+    if (field instanceof HTMLElement) field.focus();
+    return true;
+  };
+  const formError = (form: SecurityForm) => errorAt?.form === form ? <FormError id={`security-error-${form}`} message={error} /> : null;
+  /** Typing in a form clears the problem it showed. */
+  const clearIn = (form: SecurityForm) => { if (errorAt?.form === form) showError(""); };
   const codeBody = (form: FormData) => {
     const recovery = String(form.get("recoveryCode") ?? "").trim();
     return recovery ? { recoveryCode: recovery } : { code: form.get("code") };
   };
-  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.35.0", gitSha: "development" });
+  const [appInfo, setAppInfo] = useState<{ version: string; gitSha: string; twoFactor?: boolean; passwordReset?: boolean }>({ version: "0.37.0", gitSha: "development" });
   const [state, setState] = useState<TotpState>(session.totp);
   const [secret, setSecret] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -551,15 +579,16 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   async function beginSetup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (blocked("setup", event.currentTarget)) return;
     setBusy(true);
-    setError("");
+    showError("");
     try {
       const form = new FormData(event.currentTarget);
       const setup = await api<{ secret: string; uri: string }>("/auth/totp/setup", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")) }) });
       setSecret(setup.secret);
       setQrCode(await QRCode.toDataURL(setup.uri, { width: 220, margin: 2, color: { dark: "#151515", light: "#ffffff" } }));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not start two-factor setup");
+      showError(reason instanceof Error ? reason.message : "Could not start two-factor setup", "setup");
     } finally {
       setBusy(false);
     }
@@ -567,8 +596,9 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   async function enable(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (blocked("verify", event.currentTarget)) return;
     setBusy(true);
-    setError("");
+    showError("");
     try {
       const form = new FormData(event.currentTarget);
       const next = await api<TotpState & { recoveryCodes: string[] }>("/auth/totp/enable", { method: "POST", body: JSON.stringify({ code: form.get("code") }) });
@@ -581,7 +611,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
       if (!next.setupRequired && !setupRequired) onSecurityChanged(next);
       setCodesDialog(true);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication");
+      showError(reason instanceof Error ? reason.message : "Could not enable two-factor authentication", "verify");
     } finally {
       setBusy(false);
     }
@@ -590,16 +620,17 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
   async function disable(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     // Read the form before the confirm: the event's target is gone once it has been answered.
+    if (blocked("disable", event.currentTarget)) return;
     const form = new FormData(event.currentTarget);
     if (!await ask({ title: "Disable two-factor authentication?", message: "Signing in to this account will need only the password.", confirmLabel: "Disable", danger: true })) return;
     setBusy(true);
-    setError("");
+    showError("");
     try {
       const next = await api<TotpState>("/auth/totp", { method: "DELETE", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setState(next);
       onSecurityChanged(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not disable two-factor authentication");
+      showError(reason instanceof Error ? reason.message : "Could not disable two-factor authentication", "disable");
     } finally {
       setBusy(false);
     }
@@ -613,14 +644,15 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   async function revealRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (blocked("view", event.currentTarget)) return;
     setBusy(true);
-    setError("");
+    showError("");
     try {
       const form = new FormData(event.currentTarget);
       const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not reveal recovery codes");
+      showError(reason instanceof Error ? reason.message : "Could not reveal recovery codes", "view");
     } finally {
       setBusy(false);
     }
@@ -628,15 +660,16 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
 
   async function regenerateRecoveryCodes(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (blocked("regenerate", event.currentTarget)) return;
     const form = new FormData(event.currentTarget);
     if (recoveryCodes.length && !await ask({ title: "Generate new recovery codes?", message: "Every previous recovery code will stop working.", confirmLabel: "Generate new codes", danger: true })) return;
     setBusy(true);
-    setError("");
+    showError("");
     try {
       const result = await api<{ recoveryCodes: string[] }>("/auth/totp/recovery-codes/regenerate", { method: "POST", body: JSON.stringify({ ...reauthPassword(form.get("password")), ...codeBody(form) }) });
       setRecoveryCodes(result.recoveryCodes);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not generate recovery codes");
+      showError(reason instanceof Error ? reason.message : "Could not generate recovery codes", "regenerate");
     } finally {
       setBusy(false);
     }
@@ -662,30 +695,32 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     {!state.setupRequired && <RecognisedDevices />}
     <div className="settings-section-heading"><span className="settings-icon"><Smartphone /></span><div><h3 id="security-heading">Two-factor authentication</h3><p>Protect your account with a six-digit code from Google Authenticator or another TOTP app.</p></div></div>
     {state.setupRequired && <div className="settings-warning"><Lock />Two-factor authentication is required before you can use your notes.</div>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    {!errorAt && <FormError message={error} />}
     {state.enabled ? <div className="security-card enabled-card">
       <div className="security-status"><span><Check /></span><div><strong>Authenticator enabled</strong><small>Your account asks for an authentication code at every sign-in, after your password or Google.</small></div></div>
       {reauthNotice}
-      {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes}><h4>View recovery codes</h4><p>{reauthField ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>View codes</button></div></form>}
-      <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes}><p>This invalidates every previous recovery code. Confirm with {reauthField ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>Generate new codes</button></div></form></details>
-      {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable}>
-        <h4>Disable authenticator</h4><p>{reauthField ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
-        <div>{reauthField}{codeField}<button className="secondary-button" disabled={busy}>Disable</button></div>
+      {recoveryCodes.length ? <div className="recovery-codes"><div><h4>Recovery codes</h4><p>Save each complete grouped code somewhere safe. A whole recovery code replaces the six-digit Authenticator number once.</p></div><div className="recovery-code-grid">{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-button" onClick={copyRecoveryCodes}>{copied ? "Copied" : "Copy all codes"}</button></div> : <form className="view-recovery-form" onSubmit={revealRecoveryCodes} noValidate onChange={() => clearIn("view")}><h4>View recovery codes</h4><p>{securityRoute.viaPassword ? "Re-enter your password and a fresh, unused six-digit Authenticator code to reveal the remaining backup codes." : "Enter a fresh, unused six-digit Authenticator code to reveal the remaining backup codes."}</p><div>{reauthField("view")}{codeField("view")}<button className="secondary-button" disabled={busy}>View codes</button></div>{formError("view")}</form>}
+      <details className="regenerate-recovery"><summary>{recoveryCodes.length ? "Replace recovery codes" : "No codes available? Generate recovery codes"}</summary><form onSubmit={regenerateRecoveryCodes} noValidate onChange={() => clearIn("regenerate")}><p>This invalidates every previous recovery code. Confirm with {securityRoute.viaPassword ? "your password and " : ""}a fresh six-digit Authenticator code.</p><div>{reauthField("regenerate")}{codeField("regenerate")}<button className="secondary-button" disabled={busy}>Generate new codes</button></div>{formError("regenerate")}</form></details>
+      {state.required ? <p className="policy-copy">This service requires two-factor authentication, so it cannot be disabled.</p> : <form className="disable-totp-form" onSubmit={disable} noValidate onChange={() => clearIn("disable")}>
+        <h4>Disable authenticator</h4><p>{securityRoute.viaPassword ? "Confirm your password and a current code." : "Confirm with a current code."}</p>
+        <div>{reauthField("disable")}{codeField("disable")}<button className="secondary-button" disabled={busy}>Disable</button></div>
+        {formError("disable")}
       </form>}
     </div> : appInfo.twoFactor === false ? <div className="security-card setup-intro" role="status">
       <strong>Not available on this Nook</strong>
       <p>{TWO_FACTOR_OFF_TEXT}</p>
-    </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup}>
+    </div> : !secret ? <form className="security-card setup-intro" onSubmit={beginSetup} noValidate onChange={() => clearIn("setup")}>
       <strong>Authenticator not configured</strong>
       <p>Use Google Authenticator to scan a QR code, then verify one code to finish setup.</p>
-      {reauthField ? <><label>Confirm your password<input name="password" type="password" autoComplete="current-password" required /></label>{routeToggle}</> : reauthNotice}
+      {securityRoute.viaPassword ? <><label>Confirm your password<input name="password" type="password" autoComplete="current-password" aria-required="true" {...invalid("setup", "password")} /></label>{routeToggle}</> : reauthNotice}
+      {formError("setup")}
       <button className="primary-button" disabled={busy}>{busy ? "Preparing…" : "Set up authenticator"}</button>
     </form> : <div className="security-card enrollment-card">
       <div className="enrollment-grid">
         <div className="qr-frame"><img src={qrCode} alt={`QR code for ${appName()} two-factor authentication`} /></div>
         <div><span className="step-label">1 · Scan the code</span><h4>Add {appName()} to Google Authenticator</h4><p>If you cannot scan it, enter the entire setup key manually in Google Authenticator. The groups of four are only for readability; copying removes all spaces. This key is not entered when signing in.</p><button className="secret-copy" onClick={copySecret}><code>{secret.match(/.{1,4}/g)?.join(" ")}</code><span>{copied ? <><Check />Copied</> : "Copy setup key without spaces"}</span></button></div>
       </div>
-      <form className="verify-totp-form" onSubmit={enable}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="000000" required autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button></form>
+      <form className="verify-totp-form" onSubmit={enable} noValidate onChange={() => clearIn("verify")}><span className="step-label">2 · Verify setup</span><label>Authentication code<input name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" aria-required="true" {...invalid("verify", "code")} autoFocus /></label><button className="primary-button" disabled={busy}>{busy ? "Verifying…" : "Enable two-factor authentication"}</button>{formError("verify")}</form>
     </div>}
   </section>;
 
@@ -959,6 +994,47 @@ export function App() {
   const deleteOpenerRef = useRef<HTMLElement | null>(null);
   // The app's own confirms: signing out with unsaved whiteboard copies, discarding a draft.
   const appConfirm = useConfirm();
+  // U4: uploads in flight in the open note (NoteEditor). Leaving the note asks first, and leaving
+  // cancels them: switching notes or folders, a new note, another section (confirmLeaveUploads),
+  // browser Back or Forward (a leave guard), and closing the tab (the browser's own prompt).
+  const [noteUploads, setNoteUploads] = useState(0);
+  const noteUploadControl = useRef<NoteUploadControl | null>(null);
+  const [uploadLeaveMove, setUploadLeaveMove] = useState<PopDirection | null>(null);
+  async function confirmLeaveUploads() {
+    if (!(noteUploadControl.current?.count() ?? 0)) return true;
+    if (!await appConfirm.ask(LEAVE_UPLOADS_CONFIRM)) return false;
+    noteUploadControl.current?.cancelAll();
+    return true;
+  }
+  useLeaveGuard(noteUploads > 0 && uploadLeaveMove === null, (direction) => {
+    void appConfirm.ask(LEAVE_UPLOADS_CONFIRM).then((confirmed) => {
+      if (!confirmed) return;
+      noteUploadControl.current?.cancelAll();
+      setUploadLeaveMove(direction);
+    });
+  });
+  useEffect(() => {
+    // Once the guard (and its sentinel) is gone, the move Back or Forward is repeated.
+    if (noteUploads > 0 || uploadLeaveMove === null) return undefined;
+    const direction = uploadLeaveMove;
+    let cancel = () => undefined as void;
+    const timer = setTimeout(() => {
+      cancel = whenHistorySettled(() => {
+        setUploadLeaveMove(null);
+        window.history.go(repeatDelta(direction));
+      });
+    }, 0);
+    return () => { clearTimeout(timer); cancel(); };
+  }, [noteUploads, uploadLeaveMove]);
+  useEffect(() => {
+    if (noteUploads === 0) return undefined;
+    const onUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [noteUploads]);
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
@@ -1397,6 +1473,7 @@ export function App() {
 
   async function createNote() {
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1547,6 +1624,7 @@ export function App() {
       return;
     }
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1571,6 +1649,7 @@ export function App() {
       return;
     }
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1725,6 +1804,7 @@ export function App() {
 
   async function leaveNotes() {
     if (switchingRef.current) return false;
+    if (!await confirmLeaveUploads()) return false;
     switchingRef.current = true;
     // Lock the editor so keystrokes cannot land between the save and the post-publish reload.
     setLeavingNotes(true);
@@ -2419,7 +2499,8 @@ export function App() {
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
             <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify}
-              onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }} />
+              onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }}
+              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} />
           </article>
         </>}
       </section>

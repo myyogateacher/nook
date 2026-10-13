@@ -2,23 +2,18 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-13):** production runs **v0.35.0** (uploads everywhere, optional S3 storage, profile pictures, Sonner toasts with Undo, Google re-auth fix). Released migrations are immutable: **001–048** (045 unused).
+**Current state (2026-10-13):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused).
 
 ## In flight
 
-- [ ] Known LOW leftovers below (three agents, 2026-10-13).
-- [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md)): wave 45 implemented on `reports-w45` (migration 050; needs review, then QA with a real ClickHouse via `CLICKHOUSE_TEST_URL`). Waves 46 (doc fetch, generation) and 47 (viewer, refresh, scheduler) next, in parallel; then 48 (instructions, MCP, sharing; migration 051 reserved).
-  - [ ] Wave 46/48: `agent_runs.via` allows only `chat|api|mcp`; add `reports` in migration 051 (039 is released), or run generation as `api` until then.
+- [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md)): waves 45, 46 (doc fetch, generation; migration 051) and 47 (viewer, refresh, scheduler) integrated on `reports-integration` with v0.37.0 merged in; needs QA with a real ClickHouse via `CLICKHOUSE_TEST_URL`. Then wave 48 (instructions, MCP, sharing; migration 052 reserved; the Messages module takes 053).
   - [ ] Wave 45 leftovers: `format()` the string function is refused with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
+- [ ] The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.
 
 ## Known LOW leftovers
 
-- [ ] Security forms in `src/App.tsx` (two-factor off, regenerate recovery codes) still use native `required`; switch to `noValidate` with app messages like the key forms.
-- [ ] Scroll audit not covered: Google/TOTP re-auth dialogs, Vault protect/history/transfer, Collections row panel, Calendar/Vault/Collections dialogs at 1280.
-- [ ] Undo for removing an attachment (needs restore and re-link into Attachments).
-- [ ] Note uploads show progress as toasts, not a progress row; leaving a note mid-upload aborts without asking.
-- [ ] Whiteboard "Save as copy" thumbnail is drawn without pictures.
-- [ ] Admins cannot remove someone else's profile picture; others see a new picture only after reload.
+- [ ] Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.
+- [ ] Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.
 
 ## Standing rules for agent briefs
 

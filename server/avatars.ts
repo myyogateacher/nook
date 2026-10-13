@@ -26,7 +26,8 @@ import { parseJson } from "./validation";
  * - a version-8 UUID (RFC 9562's custom version; random bits otherwise): a picture the person
  *   uploaded. Google sign-ins, Google reporting no picture, and unlinking Google leave it alone.
  * - {@link AVATAR_REMOVED}, a fixed version-8 id that names no file: the person removed their
- *   picture, so Google sign-ins leave the letters until they choose their Google picture again.
+ *   picture, or an admin did (Team → a member → Remove profile picture), so Google sign-ins leave
+ *   the letters until the person uploads a picture or chooses their Google picture again (T353).
  */
 
 export const AVATAR_MAX_BYTES = 1_048_576;
@@ -190,6 +191,11 @@ export async function fetchAvatar(raw: string): Promise<{ ok: true; bytes: Uint8
   } catch {
     return { ok: false, reason: "network" };
   }
+}
+
+/** Deletes a stored picture through the object store (never the marker, never a non-UUID). Never throws. */
+export async function removeAvatarFile(id: string | null) {
+  await removeFile(id);
 }
 
 async function removeFile(id: string | null) {
@@ -380,6 +386,20 @@ export function registerAvatarRoute(app: Hono<AppEnv>) {
     if (!UUID.test(userId) || !UUID.test(version) || version === AVATAR_REMOVED) return notFound();
     const row = db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null;
     if (!row?.avatar_id || row.avatar_id !== version) return notFound();
+    // `no-cache` (T353): the browser keeps the bytes but asks again on every new page load, so a
+    // replaced or removed picture (a new `v`, the old one 404) is gone for other viewers on their
+    // next load. The answer for a current URL is a cheap 304 (one row read, no object read).
+    const etag = `"${version}"`;
+    const cacheHeaders = () => {
+      c.header("Cache-Control", "private, no-cache");
+      c.header("ETag", etag);
+      c.header("X-Content-Type-Options", "nosniff");
+      c.header("Cross-Origin-Resource-Policy", "same-origin");
+    };
+    if (c.req.header("If-None-Match") === etag) {
+      cacheHeaders();
+      return c.body(null, 304);
+    }
     let bytes: Uint8Array;
     try {
       bytes = await (await objectStore().open("avatars", version)).bytes();
@@ -388,12 +408,7 @@ export function registerAvatarRoute(app: Hono<AppEnv>) {
     }
     const type = sniffAvatar(bytes);
     if (!type) return notFound();
-    const etag = `"${version}"`;
-    c.header("Cache-Control", "private, max-age=86400");
-    c.header("ETag", etag);
-    c.header("X-Content-Type-Options", "nosniff");
-    c.header("Cross-Origin-Resource-Policy", "same-origin");
-    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    cacheHeaders();
     c.header("Content-Type", type);
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200);
   });

@@ -22,6 +22,10 @@ import type { Migration } from "./types";
  * module word `reports` and the resource kind `report` added to whatever words the table holds now (a
  * Messages migration that ran first keeps its own).
  *
+ * `agent_runs.via` (039) allows only `chat`, `api`, and `mcp`; a `reports` word for wave 46's
+ * generation runs needs a rebuild of that released table (with its audit triggers and children), so it
+ * is left to 051 (reserved for reports), not done here.
+ *
  * Needs 001, 025, 038, and 039. Transactional and filesystem-free; re-running changes nothing.
  */
 export const reportsMigration: Migration = {
@@ -144,6 +148,8 @@ export const reportsMigration: Migration = {
         agent_run_id TEXT REFERENCES agent_runs(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','succeeded','partial','failed','abandoned')),
         query_keys_json TEXT CHECK (query_keys_json IS NULL OR json_valid(query_keys_json)),
+        -- The doc snapshot a generate or edit run worked from (review M3; the inspect panel's Provenance).
+        doc_snapshot_id TEXT REFERENCES report_doc_snapshots(id) ON DELETE SET NULL,
         lease_until TEXT,
         error TEXT CHECK (error IS NULL OR length(error) <= 1000),
         created_by TEXT REFERENCES users(id) ON DELETE SET NULL,

@@ -8,7 +8,8 @@ import { createDatasource, datasourceChoices, datasourceRow, datasourceSummary, 
 import { asReportError, ReportError } from "./errors";
 import { startSchemaSync, syncSchema } from "./schemaCatalog";
 import { describeTablesTool, listTablesTool, searchSchemaTool } from "./schemaTools";
-import { binReport, createReport, listReports, reportDatasource, reportDetail, runConsole, updateReport } from "./service";
+import { binReport, cancelConsole, createReport, listReports, reportDatasource, reportDetail, runConsole, updateReport } from "./service";
+import { limited } from "./runner";
 import "./bin";
 
 /**
@@ -122,23 +123,30 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   app.post("/api/reports/:reportId/console", handle(async (c) => {
     const reportId = id(c, "reportId");
     const { sql } = await parseJson(c.req.raw, consoleSchema);
-    return { outcome: await runConsole(c.get("user").id, reportId, sql) };
+    return { outcome: await runConsole(c.get("user").id, reportId, sql, c.req.raw.signal) };
+  }));
+  // Cancel: aborts the caller's running console query on this report and sends a best-effort KILL QUERY.
+  app.post("/api/reports/:reportId/console/cancel", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    await parseJson(c.req.raw, emptySchema);
+    return await cancelConsole(c.get("user").id, reportId);
   }));
   app.get("/api/reports/:reportId/schema/search", handle((c) => {
     const row = reportDatasource(id(c, "reportId"), c.get("user").id);
     const limit = Number(c.req.query("limit") ?? REPORT_LIMITS.searchResults);
-    return searchSchemaTool(row, { query: c.req.query("q") ?? "", limit: Number.isFinite(limit) ? limit : REPORT_LIMITS.searchResults });
+    // Review L2: the Schema browser counts against the person's query limit like the console.
+    return limited(c.get("user").id, async () => searchSchemaTool(row, { query: c.req.query("q") ?? "", limit: Number.isFinite(limit) ? limit : REPORT_LIMITS.searchResults }));
   }));
   app.get("/api/reports/:reportId/schema/tables", handle((c) => {
     const row = reportDatasource(id(c, "reportId"), c.get("user").id);
     const page = Number(c.req.query("page") ?? 0);
     const dbName = c.req.query("db");
-    return listTablesTool(row, { db: dbName ? dbName.slice(0, 128) : undefined, like: c.req.query("like")?.slice(0, 100), page: Number.isFinite(page) ? page : 0 });
+    return limited(c.get("user").id, async () => listTablesTool(row, { db: dbName ? dbName.slice(0, 128) : undefined, like: c.req.query("like")?.slice(0, 100), page: Number.isFinite(page) ? page : 0 }));
   }));
   app.get("/api/reports/:reportId/schema/describe", handle(async (c) => {
     const row = reportDatasource(id(c, "reportId"), c.get("user").id);
     const tables = (c.req.query("tables") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
     if (!tables.length) throw new ReportError(400, "INVALID", "Name a table");
-    return describeTablesTool(row, { tables });
+    return describeTablesTool(row, c.get("user").id, { tables });
   }));
 }

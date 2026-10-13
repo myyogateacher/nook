@@ -50,7 +50,14 @@ describe("allowed statements", () => {
     ["EXISTS TABLE analytics.events", "metadata"],
     ["EXPLAIN SELECT count() FROM events", "metadata"],
     ["EXPLAIN ESTIMATE SELECT count() FROM events", "metadata"],
-    ["EXPLAIN SYNTAX SELECT a FROM events", "metadata"]
+    ["EXPLAIN SYNTAX SELECT a FROM events", "metadata"],
+    // Review H1: commas after WHERE and ORDER BY are not tables; ARRAY JOIN names columns; IN (subquery) and IN a CTE.
+    ["SELECT a, b FROM events WHERE a = 1 ORDER BY a, b", "select"],
+    ["SELECT a FROM events ARRAY JOIN arr AS x, other_arr", "select"],
+    ["SELECT * FROM events AS e, analytics.orders AS o WHERE e.id = o.id", "select"],
+    ["SELECT * FROM events WHERE id IN (SELECT id FROM orders)", "select"],
+    ["WITH ids AS (SELECT 1) SELECT * FROM events WHERE id IN ids", "select"],
+    ["SELECT * FROM events WHERE id NOT IN tuple(1, 2)", "select"]
   ])("%s", (sql, expected) => {
     expect(refused(sql)).toBe("ALLOWED");
     expect(classify(sql).class).toBe(expected as "select" | "metadata");
@@ -148,6 +155,28 @@ describe("bypass attempts are refused", () => {
     ["EXPLAIN INSERT INTO t VALUES (1)", "UNSUPPORTED_SYNTAX"],
     ["SHOW TABLES; DROP TABLE x", "MULTI_STATEMENT"],
     ["DESCRIBE events extra", "UNSUPPORTED_SYNTAX"],
+    // Review H1: comma joins and IN <table> are seen too.
+    ["SELECT * FROM events, secret.salaries", "NOT_ALLOWED_TABLE"],
+    ["SELECT * FROM events AS e, secret.salaries AS s", "NOT_ALLOWED_TABLE"],
+    ["SELECT * FROM (SELECT 1) AS a, staging.users", "NOT_ALLOWED_TABLE"],
+    ["SELECT * FROM events WHERE id IN secret.salaries", "NOT_ALLOWED_TABLE"],
+    ["SELECT * FROM events WHERE id GLOBAL NOT IN staging.users", "NOT_ALLOWED_TABLE"],
+    ["SELECT * FROM events WHERE id IN `secret`.`salaries`", "NOT_ALLOWED_TABLE"],
+    // Review H2: escapes in quoted names are refused (ClickHouse would decode \x69 to "i").
+    ["SELECT `jo\\x69nGet`('secret.join_table', 'v', 1)", "UNSUPPORTED_SYNTAX"],
+    ["SELECT \"hostNam\\x65\"()", "UNSUPPORTED_SYNTAX"],
+    ["SELECT * FROM `sys\\x74em`.users", "UNSUPPORTED_SYNTAX"],
+    // Review M1: SHOW CREATE needs TABLE.
+    ["SHOW CREATE USER default", "METADATA_FORBIDDEN"],
+    ["SHOW CREATE QUOTA default", "METADATA_FORBIDDEN"],
+    ["SHOW CREATE ROW POLICY p ON analytics.events", "METADATA_FORBIDDEN"],
+    ["SHOW CREATE DATABASE analytics", "METADATA_FORBIDDEN"],
+    ["SHOW CREATE events", "METADATA_FORBIDDEN"],
+    // Review L4.
+    ["SELECT getServerSetting('max_server_memory_usage')", "BANNED_FUNCTION"],
+    ["SELECT getMergeTreeSetting('index_granularity')", "BANNED_FUNCTION"],
+    ["SELECT serverUUID()", "BANNED_FUNCTION"],
+    ["SELECT tcpPort()", "BANNED_FUNCTION"],
     // The allowlist (what the lexer sees; EXPLAIN QUERY TREE is the authority).
     ["SELECT * FROM secret.salaries", "NOT_ALLOWED_TABLE"],
     ["SELECT * FROM events JOIN secret.salaries USING (id)", "NOT_ALLOWED_TABLE"],
@@ -220,18 +249,25 @@ describe("EXPLAIN QUERY TREE", () => {
   ].join("\n");
 
   test("lists every table and table function the analyzer resolved", () => {
-    expect(queryTreeTables(tree)).toEqual({ tables: [{ db: "analytics", table: "events" }, { db: "secret", table: "salaries" }], functions: ["numbers"] });
+    expect(queryTreeTables(tree)).toEqual({ tables: [{ db: "analytics", table: "events" }, { db: "secret", table: "salaries" }], functions: ["numbers"], calls: [] });
+  });
+
+  test("a banned function the lexer did not see (review H2) is refused from the tree's FUNCTION lines", () => {
+    const calls = queryTreeTables("QUERY id: 0\n  PROJECTION\n    LIST id: 1, nodes: 1\n      FUNCTION id: 2, function_name: joinGet, function_type: ordinary, result_type: String\n      FUNCTION id: 3, function_name: plus, function_type: ordinary");
+    expect(calls.calls).toEqual(["joinGet", "plus"]);
+    expect(() => assertQueryTreeAllowed({ ...calls, tables: [] }, ALLOW, "analytics", "select")).toThrow(/joinGet/);
+    expect(() => assertQueryTreeAllowed({ tables: [], functions: [], calls: ["plus", "sum", "toStartOfDay"] }, ALLOW, "analytics", "select")).not.toThrow();
   });
 
   test("a table off the allowlist, a system table, or an unknown table function is refused", () => {
-    expect(() => assertQueryTreeAllowed(queryTreeTables(tree), ALLOW, "analytics", "select")).toThrow(/secret\.salaries/);
+    expect(() => assertQueryTreeAllowed(queryTreeTables(tree), ALLOW, "analytics", "select")).toThrow(/not on this data source/);
     expect(() => assertQueryTreeAllowed({ tables: [{ db: "analytics", table: "events" }], functions: ["numbers"] }, ALLOW, "analytics", "select")).not.toThrow();
     expect(() => assertQueryTreeAllowed({ tables: [{ db: "system", table: "tables" }], functions: [] }, ALLOW, "analytics", "select")).toThrow(GuardError);
     expect(() => assertQueryTreeAllowed({ tables: [{ db: "system", table: "tables" }], functions: [] }, ALLOW, "analytics", "metadata")).not.toThrow();
     expect(() => assertQueryTreeAllowed({ tables: [{ db: "system", table: "users" }], functions: [] }, ALLOW, "analytics", "metadata")).toThrow(GuardError);
     expect(() => assertQueryTreeAllowed({ tables: [], functions: ["url"] }, ALLOW, "analytics", "select")).toThrow(/url/);
     // A view or an IN table the lexer cannot see is still caught here.
-    expect(() => assertQueryTreeAllowed({ tables: [{ db: "", table: "secret_view" }], functions: [] }, ["analytics.events"], "analytics", "select")).toThrow(/analytics\.secret_view/);
+    expect(() => assertQueryTreeAllowed({ tables: [{ db: "", table: "secret_view" }], functions: [] }, ["analytics.events"], "analytics", "select")).toThrow(/names behind views are not shown/);
   });
 });
 

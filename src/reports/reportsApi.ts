@@ -11,7 +11,8 @@ export const createReport = (title: string, datasourceId: string) => api<{ repor
 export const updateReport = (id: string, patch: { title?: string; datasourceId?: string; expectedRevision: number }) => api<{ report: ReportDetail }>(`/reports/${id}`, json("PATCH", patch));
 export const deleteReport = (id: string) => api<{ ok: true; purgeAfter: string }>(`/reports/${id}`, { method: "DELETE", body: "{}" });
 export const datasourceChoices = () => api<{ datasources: DatasourceChoice[] }>("/reports/datasources");
-export const runConsole = (id: string, sql: string) => api<{ outcome: QueryOutcome }>(`/reports/${id}/console`, json("POST", { sql }));
+export const runConsole = (id: string, sql: string, signal?: AbortSignal) => api<{ outcome: QueryOutcome }>(`/reports/${id}/console`, { ...json("POST", { sql }), signal });
+export const cancelConsole = (id: string) => api<{ cancelled: boolean; queryId: string | null }>(`/reports/${id}/console/cancel`, json("POST", {}));
 
 export type TableListItem = { table: string; comment: string; totalRows: number | null; columns: number; engine: string };
 export const searchSchema = (id: string, q: string) => api<{ results: SchemaSearchHit[] }>(`/reports/${id}/schema/search?q=${encodeURIComponent(q)}`);

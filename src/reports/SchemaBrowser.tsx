@@ -26,6 +26,8 @@ export function SchemaBrowser({ reportId, onClose, onInsert }: { reportId: strin
   const [details, setDetails] = useState<Record<string, CatalogTable | "missing" | "loading">>({});
   const generation = useRef(0);
   useHistoryDialogGuard(true, onClose);
+  // Review L6: an open table is a layer of its own, so Back returns to the list before closing the sheet.
+  useHistoryDialogGuard(open !== null, () => setOpen(null));
 
   useEffect(() => {
     const current = ++generation.current;

@@ -53,6 +53,10 @@ function readQuoted(sql: string, start: number, quote: string): { end: number; v
   while (index < sql.length) {
     const char = sql[index]!;
     if (char === "\\") {
+      // Review H2: ClickHouse decodes \xNN, \a, \e, … inside quoted names, which this lexer would read
+      // as other letters (`jo\x69nGet`). A backslash in a quoted name is refused; strings keep theirs
+      // (their value never names anything here, and an escaped quote ends neither reader's string).
+      if (quote !== "'") throw new GuardError("UNSUPPORTED_SYNTAX", "A backslash is not allowed in a quoted name");
       if (index + 1 >= sql.length) break;
       const next = sql[index + 1]!;
       value += next === "n" ? "\n" : next === "t" ? "\t" : next === "r" ? "\r" : next === "0" ? "\0" : next;
@@ -154,7 +158,9 @@ export const BANNED_FUNCTIONS: ReadonlySet<string> = new Set([
   "url", "urlcluster", "file", "filecluster", "input", "mysql", "postgresql", "jdbc", "odbc", "mongodb", "redis", "sqlite", "hive", "merge",
   "loop", "dictionary", "format", "generaterandom", "gcs", "oss", "cosn", "paimon", "ytsaurus", "fuzzjson", "fuzzquery", "viewifpermitted",
   "viewexplain", "prometheusquery", "prometheusqueryrange", "getmacro", "getsetting", "getserverport", "fqdn", "hostname", "hascolumnintable",
-  "modelevaluate", "getclienthttpheader"
+  "modelevaluate", "getclienthttpheader",
+  // Review L4: server settings and identity.
+  "getserversetting", "getmergetreesetting", "serveruuid", "tcpport"
 ]);
 
 /**
@@ -184,15 +190,34 @@ const isWord = (token: Token | undefined, ...words: string[]) => token !== undef
 export type TableRef = { db: string | null; table: string };
 export type SystemRef = { table: string; start: number; end: number };
 
+/** Words that end a FROM list at their depth (after them, a comma no longer separates tables). */
+const FROM_END: ReadonlySet<string> = new Set(["where", "prewhere", "group", "order", "limit", "having", "union", "except", "intersect", "window", "qualify", "on", "using", "select", "offset"]);
+
+const nameText = (token: Token) => token.kind === "word" ? token.text : token.value;
+
+/** A table name (`db.t` or `t`) starting at `index` that is not a function call; null otherwise. */
+function tableAt(tokens: readonly Token[], index: number): TableRef | null {
+  const first = tokens[index];
+  if (!isName(first) || (first.kind === "word" && (FROM_END.has(first.value) || first.value === "with"))) return null;
+  if (isPunct(tokens[index + 1], ".") && isName(tokens[index + 2])) {
+    return isPunct(tokens[index + 3], "(") ? null : { db: nameText(first), table: nameText(tokens[index + 2]!) };
+  }
+  return isPunct(tokens[index + 1], "(") ? null : { db: null, table: nameText(first) };
+}
+
 /**
  * The select checks over a token slice: banned words, banned functions, `system.*` and
- * `information_schema.*` references (returned, for the caller to allow or refuse), and the tables
- * named after FROM and JOIN (best effort; CTE names are left out).
+ * `information_schema.*` references (returned, for the caller to allow or refuse), and the tables the
+ * lexer can see: after FROM and JOIN, after each comma of a FROM list (`FROM a, db.b`), and after
+ * `[GLOBAL] [NOT] IN` when no "(" follows (review H1). CTE names are left out; ARRAY JOIN names
+ * columns, not tables. EXPLAIN QUERY TREE stays the authority.
  */
 function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; tables: TableRef[] } {
   const systemRefs: SystemRef[] = [];
   const tables: TableRef[] = [];
   const cteNames = new Set<string>();
+  const inFrom = new Set<number>();
+  let depth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]!;
     const next = tokens[index + 1];
@@ -202,19 +227,38 @@ function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; table
       // DESC TABLE as a subquery, never ORDER BY … DESC.
       if (token.value === "desc" && (isWord(next, "table") || isPunct(tokens[index - 1], "("))) throw new GuardError("BANNED_KEYWORD", "DESCRIBE is a metadata statement; run it on its own");
     }
-    if (isName(token) && isPunct(next, "(") && isBannedFunction(token.kind === "word" ? token.text : token.value)) {
-      throw new GuardError("BANNED_FUNCTION", `${token.kind === "word" ? token.text : token.value}() is not allowed in a report query`);
+    if (isName(token) && isPunct(next, "(") && isBannedFunction(nameText(token))) {
+      throw new GuardError("BANNED_FUNCTION", `${nameText(token)}() is not allowed in a report query`);
     }
     // `name AS (` in a WITH list names a CTE.
-    if (isName(token) && isWord(next, "as") && isPunct(tokens[index + 2], "(")) cteNames.add(token.value);
+    if (isName(token) && isWord(next, "as") && isPunct(tokens[index + 2], "(")) cteNames.add(token.value.toLowerCase());
     if (isName(token) && isPunct(next, ".") && isName(tokens[index + 2])) {
-      const db = token.kind === "word" ? token.value : token.value.toLowerCase();
+      const db = token.value.toLowerCase();
       if (db === "system") systemRefs.push({ table: tokens[index + 2]!.value.toLowerCase(), start: token.start, end: tokens[index + 2]!.end });
       if (db === "information_schema") throw new GuardError("BANNED_TABLE", "information_schema is not readable from reports");
     }
-    if (isWord(token, "from", "join") && isName(next) && !isPunct(tokens[index + 2], "(")) {
-      if (isPunct(tokens[index + 2], ".") && isName(tokens[index + 3])) tables.push({ db: next.kind === "word" ? next.text : next.value, table: tokens[index + 3]!.kind === "word" ? tokens[index + 3]!.text : tokens[index + 3]!.value });
-      else tables.push({ db: null, table: next.kind === "word" ? next.text : next.value });
+    if (isPunct(token, "(")) depth += 1;
+    if (isPunct(token, ")")) {
+      depth -= 1;
+      for (const level of inFrom) if (level > depth) inFrom.delete(level);
+    }
+    if (token.kind === "word" && FROM_END.has(token.value)) inFrom.delete(depth);
+    if (isWord(token, "join") && isWord(tokens[index - 1], "array")) {
+      inFrom.delete(depth);
+      continue;
+    }
+    if (isWord(token, "from", "join")) {
+      inFrom.add(depth);
+      const ref = tableAt(tokens, index + 1);
+      if (ref) tables.push(ref);
+    }
+    if (isPunct(token, ",") && inFrom.has(depth)) {
+      const ref = tableAt(tokens, index + 1);
+      if (ref) tables.push(ref);
+    }
+    if (isWord(token, "in")) {
+      const ref = tableAt(tokens, index + 1);
+      if (ref) tables.push(ref);
     }
   }
   return { systemRefs, tables: tables.filter((ref) => ref.db !== null || !cteNames.has(ref.table.toLowerCase())) };
@@ -286,8 +330,10 @@ function classifyMetadata(tokens: Token[], sql: string): Classified {
       return done({ kind: "show_tables", db }, index);
     }
     if (isWord(second, "create")) {
-      const index = isWord(tokens[2], "table") ? 3 : 2;
-      const read = target(index);
+      // Review M1: TABLE is required, so SHOW CREATE USER / ROLE / QUOTA / PROFILE / POLICY / DATABASE /
+      // DICTIONARY / VIEW never get through as a "table" named USER.
+      if (!isWord(tokens[2], "table")) throw new GuardError("METADATA_FORBIDDEN", "Only SHOW CREATE TABLE is allowed");
+      const read = target(3);
       return done({ kind: "show_create", target: read.ref }, read.next);
     }
     throw new GuardError("METADATA_FORBIDDEN", "Only SHOW DATABASES, SHOW TABLES, and SHOW CREATE TABLE are allowed");
@@ -400,9 +446,12 @@ export function assertMetadataAllowed(classified: Classified, allowlist: readonl
  * Tables and table functions in `EXPLAIN QUERY TREE` output (`TABLE id: 3, alias: __table1,
  * table_name: db.t` and `TABLE_FUNCTION id: 4, …, table_function_name: numbers`).
  */
-export function queryTreeTables(text: string): { tables: Array<{ db: string; table: string }>; functions: string[] } {
+export type QueryTree = { tables: Array<{ db: string; table: string }>; functions: string[]; /** Every `FUNCTION … function_name:` the analyzer resolved (review H2). */ calls?: string[] };
+
+export function queryTreeTables(text: string): QueryTree {
   const tables: Array<{ db: string; table: string }> = [];
   const functions: string[] = [];
+  const calls: string[] = [];
   for (const line of text.split("\n")) {
     const table = /^\s*TABLE id: \d+.*?\btable_name: (.+?)(?:, [a-z_]+: |$)/.exec(line);
     if (table) {
@@ -412,8 +461,10 @@ export function queryTreeTables(text: string): { tables: Array<{ db: string; tab
     }
     const fn = /^\s*TABLE_FUNCTION id: \d+.*?\btable_function_name: ([A-Za-z0-9_]+)/.exec(line);
     if (fn) functions.push(fn[1]!);
+    const call = /^\s*FUNCTION id: \d+.*?\bfunction_name: ([^,\s]+)/.exec(line);
+    if (call) calls.push(call[1]!);
   }
-  return { tables, functions };
+  return { tables, functions, calls };
 }
 
 /** Table functions a select may use (anything else seen by EXPLAIN QUERY TREE is refused). */
@@ -423,7 +474,10 @@ export const ALLOWED_TABLE_FUNCTIONS: ReadonlySet<string> = new Set(["numbers", 
  * Checks parsed `EXPLAIN QUERY TREE` output against the allowlist (or, for the metadata class, the
  * allowed system tables). Throws GuardError.
  */
-export function assertQueryTreeAllowed(tree: { tables: Array<{ db: string; table: string }>; functions: string[] }, allowlist: readonly string[], database: string, statementClass: StatementClass) {
+export function assertQueryTreeAllowed(tree: QueryTree, allowlist: readonly string[], database: string, statementClass: StatementClass) {
+  for (const call of tree.calls ?? []) {
+    if (isBannedFunction(call)) throw new GuardError("BANNED_FUNCTION", `${call}() is not allowed in a report query`);
+  }
   for (const fn of tree.functions) {
     if (!ALLOWED_TABLE_FUNCTIONS.has(fn.toLowerCase())) throw new GuardError("BANNED_FUNCTION", `The table function ${fn}() is not allowed in a report query`);
   }
@@ -431,8 +485,8 @@ export function assertQueryTreeAllowed(tree: { tables: Array<{ db: string; table
     const db = ref.db || database;
     if (db.toLowerCase() === "system") {
       if (statementClass === "metadata" && Object.hasOwn(ALLOWED_SYSTEM_TABLES, ref.table)) continue;
-      throw new GuardError("BANNED_TABLE", `system.${ref.table} is not readable from reports`);
+      throw new GuardError("BANNED_TABLE", "This query reads a system table that reports cannot read");
     }
-    if (!tableAllowed(allowlist, db, ref.table)) throw new GuardError("NOT_ALLOWED_TABLE", `${db}.${ref.table} is not on this data source's allowlist`);
+    if (!tableAllowed(allowlist, db, ref.table)) throw new GuardError("NOT_ALLOWED_TABLE", "This query reads a table that is not on this data source's allowlist (names behind views are not shown)");
   }
 }

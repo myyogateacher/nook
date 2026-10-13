@@ -52,6 +52,11 @@ export type ChOptions = {
   maxBytesToRead?: number;
   /** `read_overflow_mode=break` instead of an error when the read limit is hit (sample_rows). */
   breakOnReadLimit?: boolean;
+  /**
+   * `result_overflow_mode=throw`: more rows than `maxResultRows` is an error, not a silent cut (review
+   * H1: the EXPLAIN QUERY TREE check must never see a truncated tree).
+   */
+  throwOnResultOverflow?: boolean;
   /** Response bytes read at most (default REPORT_LIMITS.responseBytes). */
   responseBytes?: number;
   signal?: AbortSignal;
@@ -74,7 +79,7 @@ export function querySettings(target: ChTarget, options: ChOptions): Record<stri
     readonly: "2",
     max_execution_time: String(Math.min(Math.max(1, target.timeoutS), REPORT_LIMITS.timeoutCeilingS)),
     max_result_rows: String(options.maxResultRows ?? target.maxRows + 1),
-    result_overflow_mode: "break",
+    result_overflow_mode: options.throwOnResultOverflow ? "throw" : "break",
     max_memory_usage: String(CH_DEFAULTS.maxMemoryUsage),
     max_rows_to_read: String(options.maxRowsToRead ?? CH_DEFAULTS.maxRowsToRead),
     max_bytes_to_read: String(options.maxBytesToRead ?? CH_DEFAULTS.maxBytesToRead),

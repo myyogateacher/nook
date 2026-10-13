@@ -113,10 +113,14 @@ export function updateDatasource(actorId: string, id: string, patch: DatasourceP
   }
   const allowlist = patch.allowlist === undefined ? null : normalizeAllowlist(patch.allowlist);
   if (allowlist && allowlist.length > REPORT_LIMITS.allowlistPatterns) throw new ReportError(400, "INVALID_ALLOWLIST", `At most ${REPORT_LIMITS.allowlistPatterns} patterns`);
-  const password = patch.removePassword ? null : patch.password ? sealSecret("datasource", id, patch.password) : row.password_ct;
+  // Review L3: a password goes only to the host it was entered for. A new host clears it unless a new
+  // password comes with the change; the admin enters it again.
+  const nextUrl = patch.url === undefined ? row.url : checkUrl(patch.url);
+  const hostChanged = new URL(nextUrl).host !== new URL(row.url).host;
+  const password = patch.removePassword ? null : patch.password ? sealSecret("datasource", id, patch.password) : hostChanged ? null : row.password_ct;
   db.query(`UPDATE report_datasources SET name = ?, url = ?, username = ?, password_ct = ?, database = ?, allowlist_json = ?, max_rows = ?, timeout_s = ?, enabled = ?,
     revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`).run(
-    patch.name ?? row.name, patch.url === undefined ? row.url : checkUrl(patch.url), patch.username ?? row.username, password,
+    patch.name ?? row.name, nextUrl, patch.username ?? row.username, password,
     patch.database === undefined ? row.database : checkDatabase(patch.database), allowlist ? JSON.stringify(allowlist) : row.allowlist_json,
     patch.maxRows === undefined ? row.max_rows : clamp(patch.maxRows, 1, REPORT_LIMITS.maxRowsCeiling),
     patch.timeoutS === undefined ? row.timeout_s : clamp(patch.timeoutS, 1, REPORT_LIMITS.timeoutCeilingS),

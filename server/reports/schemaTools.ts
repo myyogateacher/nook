@@ -2,7 +2,7 @@ import { REPORT_LIMITS, type CatalogTable, type QueryOutcome, type SchemaSearchH
 import { tableAllowed } from "./allowlist";
 import { allowlistOf, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { adHocQueryId, runGuarded } from "./runner";
+import { adHocQueryId, limited, runGuarded } from "./runner";
 import { describeTables, listTables, parseTableName, searchSchema, type TableListItem } from "./schemaCatalog";
 import { classify, GuardError, sqlIdentifier } from "./sqlGuard";
 
@@ -33,9 +33,10 @@ export function listTablesTool(row: DatasourceRow, input: { db?: string; like?: 
   return listTables(row, input);
 }
 
-export async function describeTablesTool(row: DatasourceRow, input: { tables: string[] }): Promise<{ tables: CatalogTable[]; missing: string[] }> {
+/** A lazy miss reads ClickHouse, so describing counts against the person's query limit (review L2). */
+export async function describeTablesTool(row: DatasourceRow, userId: string, input: { tables: string[] }): Promise<{ tables: CatalogTable[]; missing: string[] }> {
   if (input.tables.length > REPORT_LIMITS.describeBatch) throw new ReportError(400, "INVALID", `Describe at most ${REPORT_LIMITS.describeBatch} tables at a time`);
-  return describeTables(row, input.tables);
+  return limited(userId, () => describeTables(row, input.tables));
 }
 
 export async function sampleRowsTool(row: DatasourceRow, userId: string, input: { table: string; n?: number }): Promise<QueryOutcome> {

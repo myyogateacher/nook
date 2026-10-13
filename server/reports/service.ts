@@ -5,7 +5,7 @@ import { EMPTY_SPEC, REPORT_LIMITS, type QueryOutcome, type ReportDetail, type R
 import { readableReport, readableReportSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { adHocQueryId, runGuarded } from "./runner";
+import { adHocQueryId, killQuery, runGuarded } from "./runner";
 
 /**
  * Reports (plan wave 45): list, create a draft (a title and a data source), rename, change the data
@@ -99,18 +99,44 @@ export function reportDatasource(id: string, userId: string): DatasourceRow {
  * data source's max_rows or 1,000 rows shown. Audited with the query id and the statement's SHA-256,
  * never its text (literals in it may be sensitive; ClickHouse's query log has it).
  */
-export async function runConsole(userId: string, reportId: string, sql: string): Promise<QueryOutcome> {
+const consoleRuns = new Map<string, { queryId: string; controller: AbortController; row: DatasourceRow }>();
+const consoleKey = (userId: string, reportId: string) => `${userId}:${reportId}`;
+
+export async function runConsole(userId: string, reportId: string, sql: string, signal?: AbortSignal): Promise<QueryOutcome> {
   const row = reportDatasource(reportId, userId);
   const maxRows = Math.min(row.max_rows, REPORT_LIMITS.consoleRows);
   const queryId = adHocQueryId("console");
   const sha256 = createHash("sha256").update(sql).digest("hex");
+  // The request's own abort (the browser went away) and Cancel both stop it.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const key = consoleKey(userId, reportId);
+  consoleRuns.set(key, { queryId, controller, row });
   try {
-    const result = await runGuarded(row, sql, { classes: ["select", "metadata"], maxRows, queryId, userId });
+    const result = await runGuarded(row, sql, { classes: ["select", "metadata"], maxRows, queryId, userId, signal: controller.signal });
     audit(userId, null, "reports.console.run", { reportId, datasourceId: row.id, class: result.class, queryId, sha256, rows: result.rows.length });
     return result;
   } catch (error) {
+    if (controller.signal.aborted) {
+      audit(userId, null, "reports.console.cancel", { reportId, datasourceId: row.id, queryId, sha256 });
+      throw new ReportError(409, "CANCELLED", "The query was cancelled");
+    }
     audit(userId, null, "reports.console.refused", { reportId, datasourceId: row.id, queryId, sha256, error: error instanceof Error ? error.name : "Error" });
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (consoleRuns.get(key)?.queryId === queryId) consoleRuns.delete(key);
   }
+}
+
+/** Cancel: aborts this person's running console query on the report and sends a best-effort KILL QUERY. */
+export async function cancelConsole(userId: string, reportId: string): Promise<{ cancelled: boolean; queryId: string | null }> {
+  readableReport(reportId, userId);
+  const running = consoleRuns.get(consoleKey(userId, reportId));
+  if (!running) return { cancelled: false, queryId: null };
+  running.controller.abort();
+  await killQuery(running.row, running.queryId);
+  return { cancelled: true, queryId: running.queryId };
 }
 

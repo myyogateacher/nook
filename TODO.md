@@ -8,8 +8,8 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 - [ ] Known LOW leftovers below (three agents, 2026-10-13).
 - [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md)): wave 45 implemented on `reports-w45` (migration 050; needs review, then QA with a real ClickHouse via `CLICKHOUSE_TEST_URL`). Waves 46 (doc fetch, generation) and 47 (viewer, refresh, scheduler) next, in parallel; then 48 (instructions, MCP, sharing; migration 051 reserved).
-  - [ ] Wave 46: `agent_runs.via` allows only `chat|api|mcp`; generation runs need a word of their own (a later migration) or run as `api`.
-  - [ ] Wave 45 leftovers: the console has no per-query Cancel (the request timeout and `cancel_http_readonly_queries_on_client_close` stop it); `format()` the string function is refused with the table function.
+  - [ ] Wave 46/48: `agent_runs.via` allows only `chat|api|mcp`; add `reports` in migration 051 (039 is released), or run generation as `api` until then.
+  - [ ] Wave 45 leftovers: `format()` the string function is refused with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
 
 ## Known LOW leftovers
 

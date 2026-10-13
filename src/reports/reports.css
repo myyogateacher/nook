@@ -53,6 +53,7 @@
 .report-sql:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .report-console-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .report-console-actions .file-dialog-hint { flex: 1 1 260px; margin: 0; }
+.report-run-buttons { display: inline-flex; flex-wrap: wrap; gap: 8px; }
 .report-run-error { margin: 0; overflow-wrap: anywhere; }
 .report-run-error code { margin-right: 4px; }
 .report-result { display: grid; gap: 8px; min-width: 0; }

@@ -85,7 +85,7 @@ export type ValueFormat = typeof VALUE_FORMATS[number];
  * Who made or last changed a block (the inspect panel's Provenance tab, wave 47): the report run that
  * produced it, the instruction that caused it (wave 48), and the spec version it was stamped in.
  */
-export type BlockProvenance = { runId: string | null; instructionId?: string | null; version: number };
+export type BlockProvenance = { runId: string | null; instructionId?: string | null; version: number; /** The doc snapshot the run worked from (report_runs.doc_snapshot_id). */ docSnapshotId?: string | null };
 
 type BlockBase = { id: string; title?: string; provenance?: BlockProvenance };
 
@@ -161,6 +161,8 @@ export type ReportRun = {
   trigger: RunTrigger;
   status: RunStatus;
   agentRunId: string | null;
+  /** The doc snapshot a generate or edit run worked from. */
+  docSnapshotId: string | null;
   /** A per-block refresh names its one query; null is every query. */
   queryKeys: string[] | null;
   startedAt: string;
@@ -280,5 +282,10 @@ export type QueryOutcome = {
   ms: number;
 };
 
-export const REPORT_ERROR_CODES = ["GUARD", "CLICKHOUSE", "TIMEOUT", "TOO_LARGE", "UNREACHABLE", "NOT_CONFIGURED", "RUN_IN_PROGRESS", "DOC_FETCH", "MCP_AUTH"] as const;
+/** Every `code` the reports routes answer with (review L5). */
+export const REPORT_ERROR_CODES = [
+  "GUARD", "CLICKHOUSE", "TIMEOUT", "TOO_LARGE", "UNREACHABLE", "NOT_CONFIGURED", "RUN_IN_PROGRESS", "DOC_FETCH", "MCP_AUTH",
+  "NOT_FOUND", "INVALID", "BUSY", "CANCELLED", "NO_DATASOURCE", "DATASOURCE_DISABLED", "LIMIT_REACHED", "REVISION_CONFLICT", "NAME_TAKEN",
+  "INVALID_URL", "INVALID_DATABASE", "INVALID_ALLOWLIST", "ROLE_READ_ONLY"
+] as const;
 export type ReportErrorCode = typeof REPORT_ERROR_CODES[number];

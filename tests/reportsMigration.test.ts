@@ -40,6 +40,9 @@ describe("migration 050 reports", () => {
     }
     const resultColumns = (db.query("PRAGMA table_info(report_results)").all() as Array<{ name: string }>).map((row) => row.name);
     for (const column of ["sent_sql", "rows_read", "ch_query_id", "truncated", "error_code"]) expect(resultColumns).toContain(column);
+    // Review M3: a run names the doc snapshot it worked from; deleting the snapshot keeps the run.
+    const runColumns = (db.query("PRAGMA foreign_key_list(report_runs)").all() as Array<{ table: string; from: string; on_delete: string }>);
+    expect(runColumns.find((fk) => fk.from === "doc_snapshot_id")).toMatchObject({ table: "report_doc_snapshots", on_delete: "SET NULL" });
     // A second run changes nothing.
     const before = db.query("SELECT name, sql FROM sqlite_master ORDER BY name").all();
     db.transaction(() => reportsMigration.up(db))();

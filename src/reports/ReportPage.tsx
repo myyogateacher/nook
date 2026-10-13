@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronLeft, Database, LoaderCircle, Pencil, Play, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { ChevronLeft, CircleStop, Database, LoaderCircle, Pencil, Play, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -9,7 +9,7 @@ import { notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type QueryOutcome, type ReportDetail } from "../../shared/reports";
-import { cellText, codeOf, countLabel, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
+import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
 import { STATUS_LABELS } from "./ReportsHome";
 import { SchemaBrowser } from "./SchemaBrowser";
 
@@ -43,6 +43,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [loadError, setLoadError] = useState<string | null>(null);
   const [sql, setSql] = useState(() => readDraft(reportId));
   const [running, setRunning] = useState(false);
+  const runAbort = useRef<AbortController | null>(null);
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
   const [runError, setRunError] = useState<{ message: string; code?: string } | null>(null);
   const [schemaOpen, setSchemaOpen] = useState(false);
@@ -69,18 +70,34 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
 
   async function run() {
     if (!sql.trim() || running) return;
+    const controller = new AbortController();
+    runAbort.current = controller;
     setRunning(true);
     setRunError(null);
     try {
-      setOutcome((await runConsole(reportId, sql)).outcome);
+      setOutcome((await runConsole(reportId, sql, controller.signal)).outcome);
     } catch (reason) {
-      const { code, guard } = codeOf(reason);
-      setRunError({ message: messageOf(reason, "The query failed"), code: guard ?? code });
+      if (controller.signal.aborted || codeOf(reason).code === "CANCELLED") setRunError({ message: "Cancelled." });
+      else {
+        const { code, guard } = codeOf(reason);
+        setRunError({ message: messageOf(reason, "The query failed"), code: guard ?? code });
+      }
       setOutcome(null);
     } finally {
+      if (runAbort.current === controller) runAbort.current = null;
       setRunning(false);
     }
   }
+
+  /** Cancel: the server aborts the query and sends KILL QUERY (best effort); then the request is dropped. */
+  async function cancel() {
+    const controller = runAbort.current;
+    if (!controller) return;
+    try { await cancelConsole(reportId); } catch { /* the abort below still stops it */ }
+    controller.abort();
+  }
+  // Leaving the page stops a running query.
+  useEffect(() => () => runAbort.current?.abort(), []);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -144,9 +161,12 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           onChange={(event) => setSql(event.target.value)} onKeyDown={onKeyDown} rows={7} />
         <div className="report-console-actions">
           <p className="file-dialog-hint">One SELECT, or SHOW, DESCRIBE, EXISTS, EXPLAIN. Read-only, at most {REPORT_LIMITS.consoleRows.toLocaleString()} rows; no SETTINGS, FORMAT, or external table functions.</p>
-          {canWrite && <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId}>
-            {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
-          </button>}
+          {canWrite && <span className="report-run-buttons">
+            {running && <button type="button" className="secondary-button" onClick={() => { void cancel(); }}><CircleStop />Cancel</button>}
+            <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId}>
+              {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
+            </button>
+          </span>}
         </div>
         {runError && <p className="form-error report-run-error" role="alert">{runError.code ? <code>{runError.code}</code> : null} {runError.message}</p>}
         {outcome && <ResultView outcome={outcome} />}

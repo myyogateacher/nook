@@ -1,17 +1,22 @@
 import type { QueryOutcome, StatementClass } from "../../shared/reports";
 import { databaseAllowed, tableAllowed } from "./allowlist";
-import { chQuery, queryIdFor, type ChResult } from "./clickhouse";
+import { chQuery, ChError, queryIdFor, type ChResult } from "./clickhouse";
 import { allowlistOf, datasourceTarget, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, queryTreeTables, wrapSelect, type Classified } from "./sqlGuard";
+import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
 
 /**
  * Running a statement through the guard (plan wave 45, D411, D412): classify, check what the lexer
- * sees against the allowlist, ask ClickHouse for `EXPLAIN QUERY TREE` and check every table and table
- * function it resolved, then run the wrapped statement under the per-query settings. The metadata
- * class reads the allowed system tables through allowlist-filtered subqueries, and SHOW DATABASES /
- * SHOW TABLES rows are filtered here. A ClickHouse that cannot explain a query tree (no analyzer)
- * fails closed with its own message.
+ * sees against the allowlist, ask ClickHouse for `EXPLAIN QUERY TREE` and check every table, table
+ * function, and function it resolved, then run the wrapped statement under the per-query settings.
+ * The metadata class reads the allowed system tables through allowlist-filtered subqueries, and SHOW
+ * DATABASES / SHOW TABLES rows are filtered before the row cap. A ClickHouse that cannot explain a
+ * query tree (no analyzer) fails closed.
+ *
+ * The tree check fails closed too (review H1): it runs with `result_overflow_mode=throw`, so a tree
+ * longer than its row cap, or larger than the response cap, refuses the query instead of hiding
+ * TABLE lines. Its errors reach the author only when they name nothing off the allowlist (review M2);
+ * otherwise the answer is the guard's generic NOT_ALLOWED_TABLE.
  *
  * Queries are limited per person and per server (T358): two at a time per person, eight in all.
  */
@@ -32,7 +37,8 @@ const PER_SERVER = 8;
 const running = new Map<string, number>();
 let total = 0;
 
-async function limited<T>(userId: string, work: () => Promise<T>): Promise<T> {
+/** Runs `work` under the per-person and per-server query limits (429 BUSY past them). */
+export async function limited<T>(userId: string, work: () => Promise<T>): Promise<T> {
   const mine = running.get(userId) ?? 0;
   if (mine >= PER_USER || total >= PER_SERVER) throw new ReportError(429, "BUSY", "Too many queries are running; wait for one to finish");
   running.set(userId, mine + 1);
@@ -47,11 +53,42 @@ async function limited<T>(userId: string, work: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Rows the tree check reads at most; reaching it refuses the query. */
+export const TREE_MAX_ROWS = 20_000;
+/** Response bytes the tree check reads at most. */
+export const TREE_MAX_BYTES = 8 * 1024 * 1024;
+
+const NOT_ALLOWED = () => new GuardError("NOT_ALLOWED_TABLE", "This query reads something that is not on this data source's allowlist, or that does not exist");
+
+/** Whether ClickHouse's error text names a table or database off the allowlist (review M2). */
+export function errorNamesOutside(message: string, allowlist: readonly string[], database: string) {
+  for (const match of message.matchAll(/`?([A-Za-z_][A-Za-z0-9_]*)`?\.`?([A-Za-z_][A-Za-z0-9_]*)`?/g)) {
+    if (!tableAllowed(allowlist, match[1]!, match[2]!) && !databaseAllowed(allowlist, match[1]!)) return true;
+  }
+  for (const match of message.matchAll(/[Dd]atabase `?([A-Za-z_][A-Za-z0-9_]*)`?/g)) {
+    if (!databaseAllowed(allowlist, match[1]!) && match[1] !== database) return true;
+  }
+  return false;
+}
+
 /** Runs EXPLAIN QUERY TREE on a select and checks what it resolved. */
 async function checkQueryTree(row: DatasourceRow, select: string, statementClass: StatementClass, queryId: string, signal?: AbortSignal) {
-  const result = await chQuery(datasourceTarget(row), `EXPLAIN QUERY TREE ${select}`, { queryId: `${queryId}-tree`.slice(0, 120), maxResultRows: 100_000, signal });
+  const allowlist = allowlistOf(row);
+  let result: ChResult;
+  try {
+    result = await chQuery(datasourceTarget(row), `EXPLAIN QUERY TREE ${select}`, {
+      queryId: `${queryId}-tree`.slice(0, 120), maxResultRows: TREE_MAX_ROWS, throwOnResultOverflow: true, responseBytes: TREE_MAX_BYTES, signal
+    });
+  } catch (error) {
+    if (!(error instanceof ChError)) throw error;
+    if (error.code === "TOO_LARGE" || error.chName === "TOO_MANY_ROWS_OR_BYTES" || error.chCode === 396) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
+    // Unknown, missing, or forbidden tables and databases, or a message naming one: one generic answer (M2).
+    if ([60, 81, 497, 516].includes(error.chCode ?? -1) || ["UNKNOWN_TABLE", "UNKNOWN_DATABASE", "ACCESS_DENIED"].includes(error.chName ?? "") || errorNamesOutside(error.message, allowlist, row.database)) throw NOT_ALLOWED();
+    throw error;
+  }
+  if (result.rows.length >= TREE_MAX_ROWS) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
   const tree = queryTreeTables(result.rows.map((line) => String(line[0] ?? "")).join("\n"));
-  assertQueryTreeAllowed(tree, allowlistOf(row), row.database, statementClass);
+  assertQueryTreeAllowed(tree, allowlist, row.database, statementClass);
 }
 
 function outcome(classified: Classified, result: ChResult, rows: unknown[][], maxRows: number, sentSql: string, started: number): QueryOutcome {
@@ -60,6 +97,9 @@ function outcome(classified: Classified, result: ChResult, rows: unknown[][], ma
     chQueryId: result.queryId, rowsRead: result.rowsRead, bytesRead: result.bytesRead, ms: Date.now() - started
   };
 }
+
+/** SHOW rows read before the allowlist filter (the cap applies after it, review L1). */
+const SHOW_READ_ROWS = 100_000;
 
 export async function runGuarded(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
   const classified = classify(sql);
@@ -71,7 +111,7 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
   return limited(options.userId, async () => {
     const started = Date.now();
     const target = datasourceTarget(row);
-    const run = (text: string) => chQuery(target, text, { queryId: options.queryId, maxResultRows: maxRows + 1, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal });
+    const run = (text: string, resultRows = maxRows + 1) => chQuery(target, text, { queryId: options.queryId, maxResultRows: resultRows, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal });
     if (classified.class === "select") {
       assertTablesAllowed(classified.tables, allowlist, row.database);
       await checkQueryTree(row, classified.sql, "select", options.queryId, options.signal);
@@ -89,7 +129,8 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
       return outcome(classified, result, result.rows, maxRows, sent, started);
     }
     if (form.kind === "explain") await checkQueryTree(row, form.inner, "select", options.queryId, options.signal);
-    const result = await run(classified.sql);
+    const show = form.kind === "show_databases" || form.kind === "show_tables";
+    const result = await run(classified.sql, show ? SHOW_READ_ROWS : maxRows + 1);
     let rows = result.rows;
     if (form.kind === "show_databases") rows = rows.filter((line) => databaseAllowed(allowlist, String(line[0] ?? "")));
     if (form.kind === "show_tables") rows = rows.filter((line) => tableAllowed(allowlist, form.db ?? row.database, String(line[0] ?? "")));
@@ -99,6 +140,19 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
 
 /** A fresh query id for an ad-hoc statement (the console, a schema tool). */
 export const adHocQueryId = (kind: string) => queryIdFor(kind, crypto.randomUUID().replace(/-/g, "").slice(0, 12));
+
+/**
+ * Best-effort KILL QUERY for a statement and its tree check (the console's Cancel). A fixed
+ * statement with quoted ids; failures are ignored (the aborted request already stops a readonly query).
+ */
+export async function killQuery(row: DatasourceRow, queryId: string) {
+  try {
+    await chQuery(datasourceTarget(row), `KILL QUERY WHERE query_id IN (${sqlString(queryId)}, ${sqlString(`${queryId}-tree`.slice(0, 120))}) ASYNC`, { queryId: queryIdFor("kill", crypto.randomUUID().slice(0, 8)), profileSettings: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Test hook: whether the limiter is idle. */
 export const runningQueries = () => total;

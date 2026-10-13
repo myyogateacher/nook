@@ -67,6 +67,13 @@ describe("admin data sources", () => {
     expect((await send(admin, "PATCH", `/reports/admin/datasources/${datasource.id}`, { expectedRevision: datasource.revision, maxRows: 5 })).status).toBe(409);
     const removed = await send(admin, "PATCH", `/reports/admin/datasources/${datasource.id}`, { expectedRevision: datasource.revision + 1, removePassword: true });
     expect(removed.body.datasource.hasPassword).toBe(false);
+    // Review L3: a new password, then a new host without one, clears it; a new path on the same host keeps it.
+    const withPassword = await send(admin, "PATCH", `/reports/admin/datasources/${datasource.id}`, { expectedRevision: datasource.revision + 2, password: PASSWORD });
+    expect(withPassword.body.datasource.hasPassword).toBe(true);
+    const samePath = await send(admin, "PATCH", `/reports/admin/datasources/${datasource.id}`, { expectedRevision: datasource.revision + 3, url: `${fake.url}proxy` });
+    expect(samePath.body.datasource.hasPassword).toBe(true);
+    const newHost = await send(admin, "PATCH", `/reports/admin/datasources/${datasource.id}`, { expectedRevision: datasource.revision + 4, url: "https://ch.example.test:8443/" });
+    expect(newHost.body.datasource.hasPassword).toBe(false);
     const audits = db.query("SELECT metadata_json FROM audit_log WHERE event_type LIKE 'reports.datasource.%'").all() as Array<{ metadata_json: string }>;
     expect(audits.length).toBeGreaterThanOrEqual(3);
     for (const row of audits) expect(row.metadata_json).not.toContain(PASSWORD);
@@ -184,7 +191,9 @@ describe("reports and the console", () => {
     expect(ran.body.outcome).toMatchObject({ class: "select", columns: [{ name: "n", type: "UInt64" }], truncated: false, sentSql: "SELECT * FROM (\nSELECT count() FROM orders\n) LIMIT 1001", rowsRead: 1234 });
     expect(ran.body.outcome.chQueryId).toMatch(/^nook-console-[0-9a-f]{12}$/);
     expect(fake.requests.map((item) => item.sql)).toEqual(["EXPLAIN QUERY TREE SELECT count() FROM orders", "SELECT * FROM (\nSELECT count() FROM orders\n) LIMIT 1001"]);
-    for (const item of fake.requests) expect(item.params).toMatchObject({ readonly: "2", database: "analytics", result_overflow_mode: "break", max_threads: "4" });
+    for (const item of fake.requests) expect(item.params).toMatchObject({ readonly: "2", database: "analytics", max_threads: "4" });
+    // The tree check throws on overflow (review H1); the statement itself breaks at its cap.
+    expect(fake.requests.map((item) => item.params.result_overflow_mode)).toEqual(["throw", "break"]);
     // Audited by query id and hash, never the text.
     const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.console.run' ORDER BY created_at DESC LIMIT 1").get() as { metadata_json: string };
     expect(JSON.parse(audit.metadata_json)).toMatchObject({ reportId: report.id, class: "select", queryId: ran.body.outcome.chQueryId });
@@ -206,11 +215,12 @@ describe("reports and the console", () => {
     expect(banned.body).toMatchObject({ code: "GUARD", guard: "BANNED_FUNCTION" });
     expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM secret.salaries" })).body.guard).toBe("NOT_ALLOWED_TABLE");
     expect(fake.requests).toHaveLength(0);
-    // A view, or `x IN db.t`, that the analyzer resolves to a table off the allowlist.
+    // A view the analyzer resolves to a table off the allowlist.
     fake.state.queryTree = () => "QUERY id: 0\n  JOIN TREE\n    TABLE id: 3, alias: __table1, table_name: secret.salaries";
-    const tree = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders WHERE id IN secret.salaries" });
+    const tree = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders_view" });
     expect(tree.body).toMatchObject({ code: "GUARD", guard: "NOT_ALLOWED_TABLE" });
-    expect(fake.requests.map((item) => item.sql)).toEqual(["EXPLAIN QUERY TREE SELECT * FROM orders WHERE id IN secret.salaries"]);
+    expect(tree.text).not.toContain("salaries");
+    expect(fake.requests.map((item) => item.sql)).toEqual(["EXPLAIN QUERY TREE SELECT * FROM orders_view"]);
     // A ClickHouse error comes back with its name.
     fake.state.queryTree = null;
     fake.state.select = () => ({ error: "Code: 47. DB::Exception: Missing columns: 'nope'. (UNKNOWN_IDENTIFIER) (version 24.8.1.1)", status: 404 });
@@ -229,6 +239,52 @@ describe("reports and the console", () => {
     expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW TABLES" })).body.outcome.rows).toEqual([["orders"], ["events"]]);
     expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW DATABASES" })).body.outcome.rows).toEqual([["analytics"]]);
     expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW GRANTS" })).body.guard).toBe("METADATA_FORBIDDEN");
+  });
+
+  test("review H1: the tree check throws on overflow and refuses a tree at its cap, so no TABLE line is ever dropped", async () => {
+    const { report } = await ready();
+    fake.state.queryTree = () => ["QUERY id: 0", ...Array.from({ length: 20_000 }, (_, index) => `    CONSTANT id: ${index + 1}, constant_value: 1`), "    TABLE id: 99999, table_name: secret.salaries"].join("\n");
+    const huge = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT count() FROM orders" });
+    expect(huge.body).toMatchObject({ code: "GUARD", guard: "UNSUPPORTED_SYNTAX" });
+    expect(fake.requests[0]!.params).toMatchObject({ result_overflow_mode: "throw", max_result_rows: "20000" });
+    expect(fake.requests.map((item) => item.sql)).toEqual(["EXPLAIN QUERY TREE SELECT count() FROM orders"]);
+  });
+
+  test("review M2: tree errors that name tables off the allowlist are generic; others pass through", async () => {
+    const { report } = await ready();
+    fake.state.queryTree = () => "Code: 60. DB::Exception: Table secret.salaries does not exist. (UNKNOWN_TABLE) (version 24.8.1.1)";
+    const hidden = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders" });
+    expect(hidden.body).toMatchObject({ code: "GUARD", guard: "NOT_ALLOWED_TABLE" });
+    expect(hidden.text).not.toContain("salaries");
+    fake.state.queryTree = () => "Code: 47. DB::Exception: Unknown expression identifier `secret.salaries.pay` in scope SELECT. (UNKNOWN_IDENTIFIER) (version 24.8.1.1)";
+    expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders" })).text).not.toContain("salaries");
+    fake.state.queryTree = () => "Code: 47. DB::Exception: Unknown expression identifier `nope` in scope SELECT nope FROM orders. (UNKNOWN_IDENTIFIER) (version 24.8.1.1)";
+    const plain = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT nope FROM orders" });
+    expect(plain.body).toMatchObject({ code: "CLICKHOUSE", chName: "UNKNOWN_IDENTIFIER" });
+  });
+
+  test("review L1: SHOW TABLES rows are filtered to the allowlist before the row cap", async () => {
+    const { report } = await ready();
+    fake.state.select = (sql) => sql === "SHOW TABLES FROM staging" ? { meta: [{ name: "name", type: "String" }], data: [...Array.from({ length: 1500 }, (_, index) => [`users_${index}`]), ["orders_2026"]] } : { meta: [], data: [] };
+    const shown = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW TABLES FROM staging" });
+    expect(shown.body.outcome.rows).toEqual([["orders_2026"]]);
+    expect(fake.requests.at(-1)!.params.max_result_rows).toBe("100000");
+  });
+
+  test("Cancel aborts the running console query and sends KILL QUERY for it and its tree check", async () => {
+    const { report } = await ready();
+    fake.state.delayMs = 1500;
+    const pending = send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT count() FROM orders" });
+    await Bun.sleep(300);
+    const cancelled = await send(member, "POST", `/reports/${report.id}/console/cancel`);
+    expect(cancelled.body.cancelled).toBe(true);
+    const outcome = await pending;
+    expect(outcome.body).toMatchObject({ code: "CANCELLED" });
+    const kill = fake.requests.find((item) => item.sql.startsWith("KILL QUERY"));
+    expect(kill!.sql).toBe(`KILL QUERY WHERE query_id IN ('${cancelled.body.queryId}', '${cancelled.body.queryId}-tree') ASYNC`);
+    // Nothing running: nothing to cancel; someone else's report is 404.
+    expect((await send(member, "POST", `/reports/${report.id}/console/cancel`)).body).toEqual({ cancelled: false, queryId: null });
+    expect((await send(other, "POST", `/reports/${report.id}/console/cancel`)).status).toBe(404);
   });
 
   test("a disabled data source stops the console", async () => {

@@ -27,7 +27,7 @@ export type FakeClickhouseState = {
   queryTree: ((select: string) => string | null) | null;
   /** Answers every other statement. */
   select: (sql: string, request: FakeRequest) => FakeAnswer;
-  /** Milliseconds to wait before answering. */
+  /** Milliseconds to wait before answering a wrapped select. */
   delayMs: number;
 };
 
@@ -115,6 +115,8 @@ export function startFakeClickhouse(port: number, options: { database?: string }
     if (sql.startsWith("EXPLAIN QUERY TREE ")) {
       const select = sql.slice("EXPLAIN QUERY TREE ".length);
       const tree = state.queryTree?.(select) ?? fakeQueryTree(select, request.params.database ?? database);
+      // A tree override that is ClickHouse error text answers as an error.
+      if (tree.startsWith("Code: ")) return { status: 404, body: tree };
       return { status: 200, body: json([{ name: "explain", type: "String" }], tree.split("\n").map((line) => [line])) };
     }
     if (sql.startsWith("EXPLAIN ESTIMATE ")) {
@@ -135,7 +137,8 @@ export function startFakeClickhouse(port: number, options: { database?: string }
       const colon = decoded.indexOf(":");
       const record: FakeRequest = { params: Object.fromEntries(url.searchParams), user: decoded.slice(0, colon), password: decoded.slice(colon + 1), sql: await request.text() };
       requests.push(record);
-      if (state.delayMs) await Bun.sleep(state.delayMs);
+      // Only the statements themselves are slow (never probes, tree checks, or KILL QUERY).
+      if (state.delayMs && record.sql.startsWith("SELECT * FROM (")) await Bun.sleep(state.delayMs);
       const { status, body, headers } = answer(record);
       return new Response(body, { status, headers: { "Content-Type": status === 200 ? "application/json; charset=UTF-8" : "text/plain; charset=UTF-8", ...(headers ?? {}) } });
     }

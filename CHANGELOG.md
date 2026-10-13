@@ -2,6 +2,13 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.37.0 — 2026-10-13
+
+- **Undo survives a restart**: the records behind Undo after removing an attachment are stored in the database, with the same rules as before (60 seconds, ended by any later change to that attachment, and cleared when the event, card, row, file or person is purged).
+- **Undo after saving an event**: saving an event that removed files shows one toast with Undo that puts them all back in order, or says how many could be restored.
+- **Profile pictures stop showing once removed or replaced**: browsers now check before reusing a picture, so other people stop seeing an old or admin-removed picture on their next page load.
+- Migration 049 runs once on the first boot; back up first. No new settings.
+
 ## v0.36.0 — 2026-10-13
 
 - **Undo after removing an attachment**: on calendar events, task cards and collection rows the file goes back in the same place and order (and out of the Bin if the removal binned it); in notes the file card or picture goes back into the draft. Undo works for 60 seconds and ends as soon as anyone changes that attachment again.

@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.36.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.37.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -421,7 +421,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.36.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.37.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 
 Fixed limits that are not configurable: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds per user, and an hourly sweeper.

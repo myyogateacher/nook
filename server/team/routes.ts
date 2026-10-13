@@ -11,7 +11,7 @@ import { policiesState, policyImpact, PolicyError, previewPoliciesSchema, putPol
 import { registerGroupRoutes } from "./groups";
 import { registerCentralAccessRoutes } from "./centralRoutes";
 import { registerIntegrationRoutes } from "./integrationRoutes";
-import { BLOCK_REASON_MAX, blockUser, listTeam, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
+import { BLOCK_REASON_MAX, blockUser, listTeam, removeMemberAvatar, revokeSessions, setRole, TeamError, teamMember, unblockUser } from "./service";
 
 /**
  * `/api/team` (docs/plan/research/2026-09-26-team-module.md §6.4). Session auth, CSRF, Origin, and
@@ -320,5 +320,15 @@ export function registerTeamRoutes(app: Hono<AppEnv>) {
     await parseJson(c.req.raw, emptySchema);
     const actor = c.get("user");
     return run(c, () => ({ ...revokeSessions(actor, id, { via: "web" }), member: teamMember(actor, id) }));
+  });
+
+  // T353: an admin removes someone else's picture. Same gate, limit, and CSRF as the other writes.
+  app.delete("/api/team/:userId/avatar", async (c) => {
+    const refused = writeGate(c);
+    if (refused) return refused;
+    const id = targetId(c);
+    if (!id) return notFound(c);
+    const actor = c.get("user");
+    return run(c, async () => ({ ...await removeMemberAvatar(actor, id, { via: "web" }), member: teamMember(actor, id) }));
   });
 }

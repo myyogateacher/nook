@@ -26,7 +26,8 @@ import { parseJson } from "./validation";
  * - a version-8 UUID (RFC 9562's custom version; random bits otherwise): a picture the person
  *   uploaded. Google sign-ins, Google reporting no picture, and unlinking Google leave it alone.
  * - {@link AVATAR_REMOVED}, a fixed version-8 id that names no file: the person removed their
- *   picture, so Google sign-ins leave the letters until they choose their Google picture again.
+ *   picture, or an admin did (Team → a member → Remove profile picture), so Google sign-ins leave
+ *   the letters until the person uploads a picture or chooses their Google picture again (T353).
  */
 
 export const AVATAR_MAX_BYTES = 1_048_576;
@@ -190,6 +191,11 @@ export async function fetchAvatar(raw: string): Promise<{ ok: true; bytes: Uint8
   } catch {
     return { ok: false, reason: "network" };
   }
+}
+
+/** Deletes a stored picture through the object store (never the marker, never a non-UUID). Never throws. */
+export async function removeAvatarFile(id: string | null) {
+  await removeFile(id);
 }
 
 async function removeFile(id: string | null) {

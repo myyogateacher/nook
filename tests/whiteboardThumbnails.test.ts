@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, s3Backend, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
-import { thumbnailFiles } from "../src/whiteboards/boardImages";
+import { copyThumbnailFiles, thumbnailFiles } from "../src/whiteboards/boardImages";
 import type { SceneFile } from "../shared/whiteboardScene";
 
 const { resetWhiteboardLimitsForTests } = await import("../server/whiteboards/service");
@@ -127,6 +127,26 @@ describe(`thumbnail pictures (${s3Backend ? "S3" : "local"} storage)`, () => {
     await share(owner, plain.id, [sharee.userId]);
     expect((await api(sharee, "POST", `/whiteboards/${plain.id}/duplicate`, {})).body.whiteboard.hasThumbnail).toBe(true);
   }, 30_000);
+  test("save as copy: the saver owns the copy, so the copy lists only the saver's own pictures", async () => {
+    const owner = await createUser("WBT copy owner");
+    const saver = await createUser("WBT copy saver");
+    const board = await create(owner, "Shared plan");
+    const ownersPicture = await upload(owner, PNG, "owners.png");
+    const saversPicture = await upload(saver, PNG, "savers.png");
+    // The saver may place the owner's picture (shared with them), but it is not theirs to show.
+    await share(owner, ownersPicture.id, [saver.userId]);
+    expect((await save(owner, board.id, 1, sceneWith([ownersPicture.id]))).status).toBe(200);
+    await share(owner, board.id, [saver.userId]);
+
+    // The client's "Save as copy": a new board of the saver's, then the local scene saved into it.
+    const copy = await create(saver, "Shared plan (copy)");
+    expect((await save(saver, copy.id, 1, sceneWith([ownersPicture.id, saversPicture.id]))).status).toBe(200);
+    expect((await pictures(saver, copy.id)).body).toEqual({ revision: 2, documentIds: [saversPicture.id] });
+    // The original board's list is still the owner's alone, and the copy's list is the saver's alone.
+    expect((await pictures(owner, board.id)).body.documentIds).toEqual([ownersPicture.id]);
+    expect((await pictures(owner, copy.id)).status).toBe(404);
+    expect((await putThumb(saver, copy.id, 2)).status).toBe(204);
+  }, 30_000);
 });
 
 describe("thumbnailFiles (client)", () => {
@@ -145,5 +165,31 @@ describe("thumbnailFiles (client)", () => {
     expect(thumbnailFiles(loaded, refs, [])).toEqual({});
     expect(thumbnailFiles(loaded, refs, ["bbbb-other"])).toEqual({ "f-other": "data:other" });
     expect(Object.keys(thumbnailFiles(loaded, refs, ["aaaa-own"]))).not.toContain("f-other");
+  });
+});
+
+describe("copyThumbnailFiles (client, Save as copy)", () => {
+  const scene = {
+    files: {
+      "f-mine": { id: "f-mine", mimeType: "image/png", nookDocumentId: "dddd-mine" },
+      "f-owner": { id: "f-owner", mimeType: "image/png", nookDocumentId: "eeee-owner" }
+    }
+  };
+  const loaded = { "f-mine": "data:mine", "f-owner": "data:owner" };
+
+  test("draws only the pictures the server lists for the new board", async () => {
+    const asked: string[] = [];
+    const listed = (id: string) => async () => { asked.push(id); return { documentIds: ["DDDD-mine"] }; };
+    expect(await copyThumbnailFiles(loaded, scene, listed("copy-id"))).toEqual({ "f-mine": "data:mine" });
+    expect(asked).toEqual(["copy-id"]);
+  });
+
+  test("a failed list, a board without pictures, or nothing loaded draws no pictures", async () => {
+    expect(await copyThumbnailFiles(loaded, scene, async () => { throw new Error("offline"); })).toEqual({});
+    let called = false;
+    const listed = async () => { called = true; return { documentIds: ["dddd-mine"] }; };
+    expect(await copyThumbnailFiles(loaded, { files: {} }, listed)).toEqual({});
+    expect(await copyThumbnailFiles({}, scene, listed)).toEqual({});
+    expect(called).toBe(false);
   });
 });

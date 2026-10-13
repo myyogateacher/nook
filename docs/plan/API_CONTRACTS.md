@@ -2559,6 +2559,42 @@ The run stream's `tool_result` and every stored tool call gain `images?: [{ id, 
 
 **Notifications:** "X shared the knowledge base “…” with you" (`knowledge_base_shared`), opening `/settings/knowledge/:id`, named only while the recipient can open it; no mail. Team → member access lists knowledge bases in the Chat section (`kind: "knowledge_base"`), with the same reductions as agents. Team → Groups (2026-10-08) lists the agents, chats, and knowledge bases shared with a group (see *Groups*).
 
+## Analytics reports (Wave 45)
+
+[WAVES_45-48_REPORTS.md](WAVES_45-48_REPORTS.md), D410–D422, T355–T366. Migration **050** (`reports`). Types are in `shared/reports.ts`. Every route needs a session; mutations need CSRF and a role that writes (viewers and guests get 403 `ROLE_READ_ONLY` from the gate). **Guests get 404 on every route.** Errors are `{ error, code, ...details }`: a guard refusal is **400 `GUARD`** with `guard` (`EMPTY`, `TOO_LONG`, `MULTI_STATEMENT`, `NOT_SELECT`, `BANNED_KEYWORD`, `BANNED_FUNCTION`, `BANNED_TABLE`, `NOT_ALLOWED_TABLE`, `UNSUPPORTED_SYNTAX`, `UNTERMINATED`, `NON_ASCII`, `METADATA_FORBIDDEN`); a ClickHouse failure is **502 `CLICKHOUSE`** (with `chCode`, `chName` when known), `TOO_LARGE`, or `UNREACHABLE`, and **504 `TIMEOUT`**; too many running queries is **429 `BUSY`** (`Retry-After: 5`); a missing or someone else's report is 404 `NOT_FOUND`.
+
+**Admin: data sources** (404 for everyone but admins)
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /api/reports/admin/datasources` | | `{ datasources: [DatasourceSummary] }`: `{ id, name, kind: "clickhouse", url, username, database, allowlist, maxRows, timeoutS, enabled, hasPassword, schema: { syncedAt, tables, error, truncated }, revision, createdAt, updatedAt }`. Never the password. |
+| `POST /api/reports/admin/datasources` | `{ name ≤ 60, url, username, password?, database? (default "default"), allowlist? ≤ 100 patterns, maxRows? 1–100,000 (10,000), timeoutS? 1–120 (20), enabled? }` | 201 `{ datasource }`; a schema sync starts in the background when the allowlist is not empty. 400 `INVALID_URL` (not https, or http/private without AGENT_ALLOWED_PRIVATE_HOSTS, credentials or a query in it), `INVALID_DATABASE` (not `[A-Za-z0-9_]`, or `system`), `INVALID_ALLOWLIST` (bad pattern, or one that could match `system`/`information_schema`); 409 `NAME_TAKEN`; 503 `NOT_CONFIGURED` (a password without AGENT_SECRETS_KEY). |
+| `GET /api/reports/admin/datasources/:id` | | `{ datasource }` |
+| `PATCH /api/reports/admin/datasources/:id` | any create field, `removePassword?`, `expectedRevision` | `{ datasource }`; 409 `REVISION_CONFLICT`. A change of url, username, password, database, or allowlist re-syncs the schema. |
+| `DELETE /api/reports/admin/datasources/:id` | `{}` | `{ ok }`: reports keep their rows with no data source; the cached schema goes. |
+| `POST /api/reports/admin/datasources/:id/test` | `{}` | `{ test: { ok, version, user, readonly, writeGrants: [string], warnings: [string], error, ms } }`. Warnings: the user can change data, a `readonly=0` profile, roles, a `readonly=1` profile (refuses Nook's settings), an empty allowlist. Never throws for ClickHouse errors. |
+| `POST /api/reports/admin/datasources/:id/sync` | `{}` | `{ sync: { tables, columns, mode: "system"\|"show", truncated, ms }, datasource }`: one bulk read of `system.tables` and `system.columns` (or SHOW/DESCRIBE when `system` is refused, at most 500 tables). |
+| `POST /api/reports/admin/datasources/:id/allowlist-preview` | `{ allowlist: [string] }` | `{ preview: { matched, total, databases, sample: [db.table ≤ 20] } }` (ClickHouse's table list, cached a minute) |
+
+**Reports**
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /api/reports/datasources` | | `{ datasources: [{ id, name, database }] }`: enabled data sources, for picking one |
+| `GET /api/reports?q=` | | `{ reports: [ReportSummary] }`: the caller's reports, newest change first, `q` a title substring. `ReportSummary` is `{ id, title, datasourceId, datasourceName, status, isOwner, ownerName, blockCount, lastRunAt, createdAt, updatedAt, revision }`. |
+| `POST /api/reports` | `{ title ≤ 200, datasourceId }` | 201 `{ report: ReportDetail }` (status `draft`, an empty spec). 409 `DATASOURCE_DISABLED`, `LIMIT_REACHED` (500 reports). |
+| `GET /api/reports/:id` | | `{ report: ReportSummary & { spec, doc, lastError } }` |
+| `PATCH /api/reports/:id` | `{ title?, datasourceId?, expectedRevision }` | `{ report }`; 409 `REVISION_CONFLICT` |
+| `DELETE /api/reports/:id` | `{}` | `{ ok, purgeAfter }`: to the Bin (type `report`, folder "Reports"); restore and purge through `/api/bin/report/:id` |
+| `POST /api/reports/:id/console` | `{ sql ≤ 20,000 }` | `{ outcome: { class: "select"\|"metadata", columns: [{ name, type }], rows, truncated, sentSql, chQueryId, rowsRead, bytesRead, ms } }`: one guarded statement on the report's data source, at most min(max_rows, 1,000) rows. 409 `NO_DATASOURCE`, `DATASOURCE_DISABLED`. Audited (`reports.console.run`) with the query id and the SQL's SHA-256, never its text. |
+| `GET /api/reports/:id/schema/search?q=&limit=` | | `{ results: [{ table, comment, totalRows, matchingColumns }] }` (≤ 20; the catalog only) |
+| `GET /api/reports/:id/schema/tables?db=&like=&page=` | | `{ tables: [{ table, comment, totalRows, columns, engine }], page, hasMore, databases }` (50 a page) |
+| `GET /api/reports/:id/schema/describe?tables=a,b` | | `{ tables: [CatalogTable], missing: [string] }` (≤ 10; a table on the allowlist but not cached is read now) |
+
+`GET /api/search?scope=reports&q=` answers `{ results: [{ id, title, updatedAt }], truncated }` (titles only; guests get nothing). `/api/auth/me` and sign-in carry `features.reports` (false for guests; UI only).
+
+**Keys and MCP.** Scopes `reports:read` and `reports:write` (write implies read; viewers hold read only; guests none). Grants: module `reports`, resource kind `report` (a report the holder can open). Tools, both `reports:read`: `list_reports { query?, limit? ≤ 100 }` → `{ reports: [{ id, title, status, datasource, blocks, lastRunAt, updatedAt, url }] }` (narrowed to chosen reports before the limit); `list_report_datasources {}` → `{ datasources: [{ id, name, database }] }` (hidden from keys limited to chosen reports). `reports:write` has no tool until wave 48. No tool runs SQL.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:

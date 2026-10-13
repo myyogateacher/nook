@@ -67,7 +67,7 @@ describe("PUT /api/me/avatar", () => {
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
     expect(image.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(image.headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(image.headers.get("cache-control")).toBe("private, no-cache");
     expect(image.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(Buffer.compare(Buffer.from(await image.arrayBuffer()), Buffer.from(png))).toBe(0);
     // The session's own payloads carry it (header, Settings, the people picker).

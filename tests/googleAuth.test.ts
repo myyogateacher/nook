@@ -1198,7 +1198,7 @@ describe("avatars (D299, T257, T262)", () => {
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
     expect(image.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(image.headers.get("cache-control")).toBe("private, max-age=86400");
+    expect(image.headers.get("cache-control")).toBe("private, no-cache");
     const etag = image.headers.get("etag")!;
     expect(etag).toBeTruthy();
     expect((await fetch(`${origin}${url}`, { headers: { Cookie: signedIn.session!, "If-None-Match": etag } })).status).toBe(304);

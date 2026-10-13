@@ -1,6 +1,6 @@
 /**
  * A fake MCP server over Streamable HTTP (plan §15 item 2; Wave 41 AC-B) on 127.0.0.1, which the
- * harness allows through AGENT_ALLOWED_PRIVATE_HOSTS. Ports 24470–24479 are reserved for it. It
+ * harness allows through AGENT_ALLOWED_PRIVATE_HOSTS, on a free port (pass 0; tests/support/ports.ts). It
  * records every request's headers and JSON-RPC body so tests can prove what left Nook (never a
  * cookie, a CSRF token, or a Nook key) and how often each method was called.
  *

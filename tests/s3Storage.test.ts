@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBlackHole, startFakeS3 } from "./support/fakeS3";
+import { freePort } from "./support/ports";
 
 /**
  * The S3 storage slice end to end, each configuration in its own process (docs/plan/research/
@@ -39,16 +40,9 @@ async function run(args: string[], env: Record<string, string>) {
 const probe = (mode: string, env: Record<string, string>) => run([join("tests", "support", "storageProbe.ts"), mode], env);
 const admin = (args: string[], env: Record<string, string>) => run([join("server", "storage-admin.ts"), ...args], env);
 
-async function freePort() {
-  const server = Bun.serve({ port: 0, fetch: () => new Response() });
-  const port = server.port!;
-  server.stop(true);
-  return port;
-}
-
 describe("file flows on S3", () => {
   test("tests/s3Flows.test.ts passes against the fake S3 in its own process", async () => {
-    const result = await run(["test", join("tests", "s3Flows.test.ts")], { MYNOTES_TEST_STORAGE: "s3", MYNOTES_TEST_PORT: String(await freePort()) });
+    const result = await run(["test", join("tests", "s3Flows.test.ts")], { MYNOTES_TEST_STORAGE: "s3", MYNOTES_TEST_PORT: String(freePort()) });
     const output = result.stdout + result.stderr;
     expect(output).toMatch(/\b\d+ pass\b/);
     expect(output).toContain(" 0 fail");

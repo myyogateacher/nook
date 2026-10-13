@@ -20,8 +20,8 @@ const { STREAM_CAPS } = await import("../server/agents/routes");
 
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
-const fake = startFakeProvider(24583);
-const mcp = startFakeMcpServer(24584);
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0);
 let admin: Session;
 let owner: Session;
 let reader: Session;

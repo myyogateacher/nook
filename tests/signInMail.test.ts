@@ -528,5 +528,5 @@ describe("the welcome survives a restart (separate processes, MAIL_TRANSPORT=fil
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

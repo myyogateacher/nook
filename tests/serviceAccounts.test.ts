@@ -320,20 +320,23 @@ describe("retired integrations (review R3, R7)", () => {
     const stamp = new Date().toISOString();
     const filler: string[] = [];
     try {
-      // Fill every slot, then retire the fillers: a new one fits again.
-      for (let index = live; index < 100; index += 1) {
-        const id = crypto.randomUUID();
-        filler.push(id);
-        db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role, kind) VALUES (?, ?, 'Filler', '!unusable:service', ?, 'viewer', 'service')").run(id, serviceEmailFor(id), stamp);
-      }
+      // Fill every slot, then retire the fillers: a new one fits again. One transaction per batch keeps
+      // this to a few commits instead of hundreds (load-tolerant under Docker verify).
+      db.transaction(() => {
+        for (let index = live; index < 100; index += 1) {
+          const id = crypto.randomUUID();
+          filler.push(id);
+          db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role, kind) VALUES (?, ?, 'Filler', '!unusable:service', ?, 'viewer', 'service')").run(id, serviceEmailFor(id), stamp);
+        }
+      })();
       const full = await send(admin, "POST", "/team/integrations", { name: "One too many", role: "viewer" });
       expect({ status: full.status, code: full.body.code }).toEqual({ status: 409, code: "INTEGRATION_LIMIT" });
-      for (const id of filler) db.query("UPDATE users SET disabled_at = ?, retired_at = ? WHERE id = ?").run(stamp, stamp, id);
+      db.transaction(() => { for (const id of filler) db.query("UPDATE users SET disabled_at = ?, retired_at = ? WHERE id = ?").run(stamp, stamp, id); })();
       const fits = await send(admin, "POST", "/team/integrations", { name: "Fits again", role: "viewer" });
       expect(fits.status).toBe(201);
       filler.push(fits.body.integration.id);
     } finally {
-      for (const id of filler) db.query("DELETE FROM users WHERE id = ?").run(id);
+      db.transaction(() => { for (const id of filler) db.query("DELETE FROM users WHERE id = ?").run(id); })();
     }
   });
 

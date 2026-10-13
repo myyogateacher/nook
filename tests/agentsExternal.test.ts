@@ -37,8 +37,8 @@ type Grant = import("../server/keyGrants").Grant;
 
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
-const fake = startFakeProvider(24506);
-const mcp = startFakeMcpServer(24504, { bearer: "srv-canary-w42-0001" });
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0, { bearer: "srv-canary-w42-0001" });
 const PROVIDER_CANARY = "sk-canary-w42-provider-0000000001";
 let admin: Session;
 let owner: Session;

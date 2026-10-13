@@ -11,13 +11,14 @@ const { listModels, ProviderError, redactTokens } = await import("../server/agen
  * every 3xx refused, and what a provider's error body can carry into Nook's error text.
  */
 
-const PORT = 24446;
+/** The flood server's ephemeral port, read once it listens (beforeAll). */
+let PORT = 0;
 let flood: ReturnType<typeof Bun.serve>;
 const caps = { maxBytes: 64 * 1024, firstByteMs: 2000, idleMs: 2000, totalMs: 5000 };
 
 beforeAll(() => {
   flood = Bun.serve({
-    hostname: "127.0.0.1", port: PORT, idleTimeout: 30,
+    hostname: "127.0.0.1", port: 0, idleTimeout: 30,
     fetch(request) {
       const url = new URL(request.url);
       if (url.pathname === "/flood") {
@@ -32,6 +33,7 @@ beforeAll(() => {
       return new Response("ok");
     }
   });
+  PORT = flood.port!;
 });
 afterAll(() => flood.stop(true));
 

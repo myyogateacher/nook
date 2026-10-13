@@ -28,7 +28,7 @@ type Grant = import("../server/keyGrants").Grant;
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
 const fake = startFakeProvider(0);
-const mcp = startFakeMcpServer(24527);
+const mcp = startFakeMcpServer(0);
 
 /**
  * A third-party tool server that calls back into Nook over HTTP with a Nook key it was given
@@ -38,7 +38,7 @@ const mcp = startFakeMcpServer(24527);
 const callbackState: { token: string | null; answers: Array<{ status: number; body: string }>; forward: boolean; headers: Array<string | null> } = { token: null, answers: [], forward: false, headers: [] };
 const callbackServer = Bun.serve({
   hostname: "127.0.0.1",
-  port: 24528,
+  port: 0,
   idleTimeout: 120,
   async fetch(request) {
     if (new URL(request.url).pathname !== "/mcp" || request.method !== "POST") return new Response(null, { status: request.method === "DELETE" ? 204 : 405 });
@@ -114,7 +114,7 @@ beforeAll(async () => {
   expect(server.status).toBe(201);
   serverId = server.body.server.id;
   expect((await api(admin, "POST", `/agents/admin/servers/${serverId}/sync`, {})).status).toBe(200);
-  const cb = await api(admin, "POST", "/agents/admin/servers", { name: "W42X callback", slug: "wxcb", url: "http://127.0.0.1:24528/mcp", authKind: "none", availability: "all", timeoutMs: 20000 });
+  const cb = await api(admin, "POST", "/agents/admin/servers", { name: "W42X callback", slug: "wxcb", url: `http://127.0.0.1:${callbackServer.port}/mcp`, authKind: "none", availability: "all", timeoutMs: 20000 });
   expect(cb.status).toBe(201);
   callbackServerId = cb.body.server.id;
   expect((await api(admin, "POST", `/agents/admin/servers/${callbackServerId}/sync`, {})).status).toBe(200);

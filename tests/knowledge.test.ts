@@ -20,7 +20,7 @@ const { normalizeVector, blobToVector, vectorToBlob } = await import("../server/
  */
 
 retireUsersAfterFile();
-const fake = startFakeProvider(24623);
+const fake = startFakeProvider(0);
 let admin: Session;
 let owner: Session;
 let friend: Session;

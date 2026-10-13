@@ -25,8 +25,8 @@ const { agentSharingMigration } = await import("../server/migrations/041_agent_s
  */
 
 retireUsersAfterFile();
-const fake = startFakeProvider(24581);
-const mcp = startFakeMcpServer(24582);
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0);
 let admin: Session;
 let owner: Session;
 let reader: Session;

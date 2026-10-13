@@ -29,9 +29,9 @@ const { deleteProvider } = await import("../server/agents/providers");
 retireUsersAfterFile();
 // C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
 withoutNookAutoTools();
-const fake = startFakeProvider(24478);
-const mcp = startFakeMcpServer(24476);
-const mcpSse = startFakeMcpServer(24477, { sse: true, serverRequest: true, dropSessionOnce: true, bearer: "tok-secret-0001" });
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0);
+const mcpSse = startFakeMcpServer(0, { sse: true, serverRequest: true, dropSessionOnce: true, bearer: "tok-secret-0001" });
 let admin: Session;
 let member: Session;
 let other: Session;
@@ -411,7 +411,7 @@ describe("the loop with tools (§2.1, §5.4, D342, D343, D350, D352)", () => {
       confirmationTimeouts.ttlMs = 15 * 60_000;
       (config.agents as { runTimeoutS: number }).runTimeoutS = savedTimeout;
     }
-  });
+  }, 15_000); // waits out the 2 s card by design
 
   test("the step cap: the last step goes out without tools and the run ends step_limit; unknown tools and bad JSON are tool errors", async () => {
     const agent = await newAgent(member, { maxSteps: 3, tools: [serverTool("echo")] });

@@ -17,7 +17,7 @@ const { setAgentsKeyForTests, agentsStatus } = await import("../server/agents/st
 const CANARY = `sk-NOOKCANARY-${crypto.randomUUID().replace(/-/g, "")}`;
 const logged: string[] = [];
 const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info };
-const fake = startFakeProvider(24424);
+const fake = startFakeProvider(0);
 
 beforeAll(() => {
   for (const name of ["log", "warn", "error", "info"] as const) {

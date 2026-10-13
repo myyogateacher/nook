@@ -19,8 +19,8 @@ const { config } = await import("../server/config");
 
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
-const first = startFakeProvider(24774, { models: ["alpha-large", "alpha-small", "text-embedding-3-small"] });
-const second = startFakeProvider(24775, { models: ["beta-1"] });
+const first = startFakeProvider(0, { models: ["alpha-large", "alpha-small", "text-embedding-3-small"] });
+const second = startFakeProvider(0, { models: ["beta-1"] });
 let admin: Session;
 let member: Session;
 let viewer: Session;

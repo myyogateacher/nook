@@ -20,19 +20,20 @@ const { listChats } = await import("../server/agents/chats");
  */
 
 retireUsersAfterFile();
-const fake = startFakeProvider(24447);
+const fake = startFakeProvider(0);
 let admin: Session;
 let owner: Session;
 let member: Session;
 let viewer: Session;
 let providerId: string;
 
-const sseText = async (session: Session, runId: string, after = 0) => {
+const sseText = async (session: Session, runId: string, after = 0, { headersOnly = false } = {}) => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
   try {
     const response = await fetch(`${origin}/api/runs/${runId}/events?after=${after}`, { headers: { Cookie: session.cookie, Origin: origin }, signal: controller.signal });
-    const text = response.ok ? await response.text().catch(() => "") : "";
+    if (headersOnly) controller.abort();
+    const text = response.ok && !headersOnly ? await response.text().catch(() => "") : "";
     return { status: response.status, headers: response.headers, text };
   } finally {
     clearTimeout(timer);
@@ -87,7 +88,8 @@ describe("review: owner privacy on every route (T325, D73)", () => {
       expect((await api(other, "GET", "/agents")).body.agents?.some((item: { id: string }) => item.id === agent.id) ?? false).toBe(false);
     }
     // The owner's own stream carries no-store and the run is still theirs.
-    const mine = await sseText(owner, runId, 0);
+    // Headers only: reading the live stream to its end would wait out the slow run.
+    const mine = await sseText(owner, runId, 0, { headersOnly: true });
     expect(mine.status).toBe(200);
     expect(mine.headers.get("cache-control")).toBe("no-store");
     await api(owner, "POST", `/runs/${runId}/cancel`, {});

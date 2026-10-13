@@ -1035,7 +1035,7 @@ Real-browser pass (Wave 41): the production build on a scratch data directory wi
 
 ### External runs and the Audit log (Wave 42, AC-C)
 
-Plan §15 item 10 and the AC-C parts of items 6 and 13 (`MYNOTES_TEST_PORT=24500 bun test`). No test calls the internet: `tests/agentsExternal.test.ts` runs its own fake provider (127.0.0.1:24506) and fake MCP server (24504, a bearer credential that doubles as a canary).
+Plan §15 item 10 and the AC-C parts of items 6 and 13 (`MYNOTES_TEST_PORT=24500 bun test`). No test calls the internet: `tests/agentsExternal.test.ts` runs its own fake provider and fake MCP server on free 127.0.0.1 ports (the MCP server takes a bearer credential that doubles as a canary).
 
 | File | Covers |
 | --- | --- |
@@ -1049,7 +1049,7 @@ Real-browser pass (Wave 42, headless Chrome through puppeteer-core in a scratch 
 
 ### Sharing and public links (Wave 43, AC-D)
 
-Plan §15 item 9 and the AC-D parts of items 6, 13, and 14 (`MYNOTES_TEST_PORT=24560 bun test`). `tests/agentsSharing.test.ts` runs its own fake provider (127.0.0.1:24563).
+Plan §15 item 9 and the AC-D parts of items 6, 13, and 14 (`MYNOTES_TEST_PORT=24560 bun test`). `tests/agentsSharing.test.ts` runs its own fake provider on a free 127.0.0.1 port.
 
 | File | Covers |
 | --- | --- |
@@ -1060,7 +1060,7 @@ Plan §15 item 9 and the AC-D parts of items 6, 13, and 14 (`MYNOTES_TEST_PORT=2
 
 ### Knowledge bases (Wave 44, AC-E)
 
-Plan §15 item 11 and the AC-E parts of items 3, 6, 10, 13, and 14 (`MYNOTES_TEST_PORT=24620 bun test`). `tests/knowledge.test.ts` and `tests/knowledgeAccess.test.ts` run their own fake providers (127.0.0.1:24623 and 24624); the fake's `POST /v1/embeddings` answers deterministic bag-of-words vectors (each word adds ±2 to the dimension its FNV-1a hash picks, unnormalized), honours `dimensions`, reports `usage`, and fails with 500 for an input containing `fail:embed`.
+Plan §15 item 11 and the AC-E parts of items 3, 6, 10, 13, and 14 (`MYNOTES_TEST_PORT=24620 bun test`). `tests/knowledge.test.ts` and `tests/knowledgeAccess.test.ts` run their own fake providers on free 127.0.0.1 ports; the fake's `POST /v1/embeddings` answers deterministic bag-of-words vectors (each word adds ±2 to the dimension its FNV-1a hash picks, unnormalized), honours `dimensions`, reports `usage`, and fails with 500 for an input containing `fail:embed`.
 
 | File | Covers |
 | --- | --- |

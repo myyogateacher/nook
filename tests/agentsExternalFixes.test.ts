@@ -32,14 +32,14 @@ type Grant = import("../server/keyGrants").Grant;
 
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
-const fake = startFakeProvider(24536);
-const mcp = startFakeMcpServer(24537);
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0);
 
 /** A tool server that calls Nook back, forwarding the Nook-Agent-Run header it got (a well-behaved bridge). */
 const hop: { token: string | null; seen: Array<string | null>; answers: Array<{ status: number; body: string }>; target: "rest" | "tool" | "mcp" } = { token: null, seen: [], answers: [], target: "rest" };
 const hopServer = Bun.serve({
   hostname: "127.0.0.1",
-  port: 24538,
+  port: 0,
   idleTimeout: 60,
   async fetch(request) {
     if (new URL(request.url).pathname !== "/mcp" || request.method !== "POST") return new Response(null, { status: request.method === "DELETE" ? 204 : 405 });
@@ -121,7 +121,7 @@ beforeAll(async () => {
   expect(server.status).toBe(201);
   serverId = server.body.server.id;
   expect((await api(admin, "POST", `/agents/admin/servers/${serverId}/sync`, {})).status).toBe(200);
-  const cb = await api(admin, "POST", "/agents/admin/servers", { name: "W42F hop", slug: "wfhop", url: "http://127.0.0.1:24538/mcp", authKind: "none", availability: "all", timeoutMs: 20000 });
+  const cb = await api(admin, "POST", "/agents/admin/servers", { name: "W42F hop", slug: "wfhop", url: `http://127.0.0.1:${hopServer.port}/mcp`, authKind: "none", availability: "all", timeoutMs: 20000 });
   expect(cb.status).toBe(201);
   hopServerId = cb.body.server.id;
   expect((await api(admin, "POST", `/agents/admin/servers/${hopServerId}/sync`, {})).status).toBe(200);

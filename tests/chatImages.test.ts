@@ -34,7 +34,6 @@ const { toolImageOf } = await import("../server/agents/mcpClient");
 retireUsersAfterFile();
 settleAgentRunsAfterEach();
 
-const IMAGE_PORT = 24795;
 const PNG = makePng(32, 20);
 const BIG = new Uint8Array(IMAGE_PROXY_LIMITS.maxBytes + 1024);
 BIG.set(PNG.subarray(0, 16));
@@ -42,7 +41,7 @@ const received: Array<{ path: string; headers: Record<string, string> }> = [];
 let slowCancelled = false;
 let slowTimer: ReturnType<typeof setTimeout> | undefined;
 const imageHost = Bun.serve({
-  hostname: "127.0.0.1", port: IMAGE_PORT,
+  hostname: "127.0.0.1", port: 0,
   fetch(request) {
     const url = new URL(request.url);
     const headers: Record<string, string> = {};
@@ -73,8 +72,9 @@ const imageHost = Bun.serve({
     }
   }
 });
-const fake = startFakeProvider(24796);
-const mcp = startFakeMcpServer(24797);
+const IMAGE_PORT = imageHost.port!;
+const fake = startFakeProvider(0);
+const mcp = startFakeMcpServer(0);
 let member: Session;
 let admin: Session;
 let reader: Session;

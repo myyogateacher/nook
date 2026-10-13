@@ -12,14 +12,15 @@ const { agentNet, assertEgressAllowed, checkEgressUrl, EgressError, egressFetch,
  */
 
 // The harness allows 127.0.0.1 for the fake provider; each test here sets the allowlist it needs.
-const PORT = 24427;
+/** The fake upstream's ephemeral port, read once it listens (beforeAll). */
+let PORT = 0;
 const received: Array<{ path: string; headers: Record<string, string> }> = [];
 let server: ReturnType<typeof Bun.serve>;
 const caps = { maxBytes: 64 * 1024, firstByteMs: 2000, idleMs: 2000, totalMs: 5000 };
 
 beforeAll(() => {
   server = Bun.serve({
-    hostname: "127.0.0.1", port: PORT,
+    hostname: "127.0.0.1", port: 0,
     fetch(request) {
       const url = new URL(request.url);
       const headers: Record<string, string> = {};
@@ -32,6 +33,7 @@ beforeAll(() => {
       return new Response("ok");
     }
   });
+  PORT = server.port!;
 });
 afterAll(() => server.stop(true));
 

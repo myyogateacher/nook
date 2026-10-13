@@ -22,9 +22,11 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { freePort } from "./ports";
 
 export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
-export const port = Number(process.env.MYNOTES_TEST_PORT ?? 22026);
+// MYNOTES_TEST_PORT pins the shared server's port; without it the run takes a free one, so two runs never collide.
+export const port = process.env.MYNOTES_TEST_PORT ? Number(process.env.MYNOTES_TEST_PORT) : freePort();
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
 /**
@@ -80,6 +82,9 @@ export const serverOptions = serverModule.default;
 // buckets (S7) are covered in tests/authLimits.test.ts and off everywhere else.
 (await import("../../server/authLimits")).setClientLimitsForTests(false);
 export const { db } = await import("../../server/db");
+// The test database is thrown away after the run, so it skips fsync: under host load (Docker verify
+// beside other suites) a commit's fsync on overlayfs stalled ordinary tests past Bun's 5 s timeout.
+db.exec("PRAGMA synchronous = OFF");
 export const server = Bun.serve(serverOptions);
 
 (globalThis as { __mynotesHarnessCleanup?: () => void }).__mynotesHarnessCleanup = () => {

@@ -29,7 +29,7 @@ const { readAgentSettings, writeAgentSettings } = await import("../server/agents
 retireUsersAfterFile();
 // C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
 withoutNookAutoTools();
-const fake = startFakeProvider(24563);
+const fake = startFakeProvider(0);
 let admin: Session;
 let owner: Session;
 let viewer: Session;

@@ -2,11 +2,11 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-13):** production runs **v0.35.0** (uploads everywhere, optional S3 storage, profile pictures, Sonner toasts with Undo, Google re-auth fix). Released migrations are immutable: **001–048** (045 unused).
+**Current state (2026-10-13):** production runs **v0.36.0** (attachment Undo, upload progress, admin avatar removal, app form messages). Released migrations are immutable: **001–048** (045 unused).
 
 ## In flight
 
-- [ ] v0.36.0: the 2026-10-13 leftovers round (forms, scroll audit, attachment Undo, upload progress, copy thumbnail, admin avatar removal) is on main; short review, then release.
+Nothing. Next cycle to be chosen by the operator.
 
 ## Known LOW leftovers
 

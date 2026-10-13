@@ -438,3 +438,38 @@ describe("one theme source", () => {
     expect(view).toContain('matchMedia("(prefers-color-scheme: dark)")');
   });
 });
+
+const { ReportGeneration } = await import("../src/reports/ReportGeneration");
+const { resultsLoadKey } = await import("../src/reports/ReportView");
+
+describe("the report page after waves 46 and 47 merged", () => {
+  test("the generation controls wrap the real viewer (charts, inspect, Refresh all, Schedule); no spec preview", async () => {
+    const markup = await html(<ReportGeneration report={report} canWrite onChanged={() => {}} />);
+    expect(markup).toContain('class="report-generation"');
+    expect(markup).toContain("Check doc");
+    expect(markup).toContain("Regenerate");
+    expect(markup).toContain('class="report-view"');
+    expect(markup).toContain("Refresh all");
+    expect(markup).toContain(">Schedule<");
+    expect(markup.match(/aria-label="How was [^"]+ built"/g)?.length).toBe(5);
+    expect(markup).not.toContain("spec-preview");
+    expect(await Bun.file(new URL("../src/reports/SpecPreview.tsx", import.meta.url)).exists()).toBe(false);
+  });
+
+  test("a finished generation's new revision reloads the viewer's results, with no manual refresh", async () => {
+    // The viewer's load effect is keyed on this: a generation that saved a spec bumps the revision.
+    expect(resultsLoadKey(report)).not.toBe(resultsLoadKey({ ...report, revision: report.revision + 1 }));
+    expect(resultsLoadKey(report)).toBe(resultsLoadKey({ ...report, title: "Renamed" } as typeof report));
+    const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
+    expect(view).toMatch(/const loadKey = resultsLoadKey\(report\);\n\s+useEffect\(\(\) => \{\n\s+if \(initial\) return;\n\s+void loadResults\(\)/);
+    expect(view).toContain("[initial, loadResults, loadRuns, loadKey]");
+    // ReportGeneration reloads the report when the run ends, so the page passes the new revision down.
+    const generation = await Bun.file(new URL("../src/reports/ReportGeneration.tsx", import.meta.url)).text();
+    expect(generation).toMatch(/const finished = [^]*?void load\(\);\s+onChanged\(\);/);
+    // The new spec's first results are drawn as soon as they arrive.
+    drawn.length = 0;
+    const markup = await html(<ReportView report={{ ...report, revision: 2 }} canWrite initial={initial} />);
+    expect(drawn.length).toBe(2);
+    expect(markup).toContain("48,210.50");
+  });
+});

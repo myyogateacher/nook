@@ -64,6 +64,12 @@ function useChartPalette(ref: React.RefObject<HTMLElement | null>): ChartPalette
 
 const isDataBlock = (block: ReportBlock): block is DataBlock => block.type !== "markdown";
 
+/**
+ * When the viewer (re)loads its results and run history: on open, and whenever the report gets a new
+ * revision (a generation saved a new spec), so the new spec's first results show with no manual refresh.
+ */
+export const resultsLoadKey = (report: Pick<ReportDetail, "id" | "revision">) => `${report.id}@${report.revision}`;
+
 type Props = {
   report: ReportDetail;
   canWrite: boolean;
@@ -114,11 +120,12 @@ export function ReportView({ report, canWrite, initial }: Props) {
     } catch { /* the toolbar works without the history */ }
   }, [report.id]);
 
+  const loadKey = resultsLoadKey(report);
   useEffect(() => {
     if (initial) return;
     void loadResults().then((next) => { if (next?.running) setRunning(next.running); });
     void loadRuns();
-  }, [initial, loadResults, loadRuns]);
+  }, [initial, loadResults, loadRuns, loadKey]);
 
   // While a run goes: poll it, then reload the results and say how it went.
   useEffect(() => {

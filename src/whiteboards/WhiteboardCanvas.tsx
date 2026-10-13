@@ -18,7 +18,7 @@ import {
 } from "./autosave";
 import { BoardDialogs, type BoardDialog } from "./BoardDialogs";
 import { changeKey, closedExcalidrawLayers, hasUnsupportedElements, IMAGES_REFUSED_MESSAGE, isDocumentId, isKeptElement, keptLink, linkTarget, openExcalidrawLayer, refusedImagesMessage, refusedLinks, restoreMessage, sceneForLoad, sceneForSave, withoutRefusedImages } from "./historyGuard";
-import { IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize, thumbnailFiles } from "./boardImages";
+import { copyThumbnailFiles, IMAGE_PLACE_MAX_SIDE, loadNookImage, nextPlacement, placedSize, thumbnailFiles } from "./boardImages";
 import { isTouchLike, swallowNextClick } from "./touchClick";
 import { HistorySheet } from "./HistorySheet";
 import { ImagePickerSheet, LinkPickerSheet } from "./NookPickers";
@@ -1043,21 +1043,29 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     try {
       const { whiteboard } = await createWhiteboard(`${whiteboardDisplayName(board.name)} (copy)`, board.folder_id);
       let saved;
+      let savedScene = scene;
       try {
         saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, scene);
       } catch (reason) {
         // A picture whose file this person can no longer open cannot start a new board: the copy keeps the rest.
         const payload = reason instanceof ApiError ? reason.payload as { code?: string; documentIds?: string[] } | null : null;
         if (payload?.code !== "IMAGE_NOT_AVAILABLE" || !payload.documentIds?.length) throw reason;
-        saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, sceneWithoutImages(scene, new Set(payload.documentIds)));
+        savedScene = sceneWithoutImages(scene, new Set(payload.documentIds));
+        saved = await saveWhiteboardScene(whiteboard.id, whiteboard.revision, savedScene);
       }
       // The copy gets its thumbnail right away (QA Q3); nothing else would draw it until it is opened.
+      // Same rule as a normal save, for the new board: the saver owns the copy, so only the pictures
+      // the server lists for the copy are drawn (copyThumbnailFiles); any other stays a placeholder.
+      const loaded = filesRef.current;
       void (async () => {
         try {
-          const elements = scene.elements as never[];
-          const blob = elements.length === 0
-            ? await emptyBoardPng(scene.appState.viewBackgroundColor ?? "#ffffff")
-            : await exportToBlob({ elements, appState: { ...scene.appState, exportBackground: true, exportWithDarkMode: false }, files: {}, maxWidthOrHeight: THUMBNAIL_MAX_SIDE, mimeType: "image/png", exportPadding: 24 });
+          const elements = savedScene.elements as never[];
+          const files = elements.length === 0 ? {} : await copyThumbnailFiles(loaded, savedScene, () => getThumbnailPictures(whiteboard.id)) as BinaryFiles;
+          const appState = { ...savedScene.appState, exportBackground: true, exportWithDarkMode: false };
+          let blob = elements.length === 0
+            ? await emptyBoardPng(savedScene.appState.viewBackgroundColor ?? "#ffffff")
+            : await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE, mimeType: "image/png", exportPadding: 24 });
+          if (blob && blob.size > THUMBNAIL_MAX_BYTES) blob = await exportToBlob({ elements, appState, files, maxWidthOrHeight: THUMBNAIL_MAX_SIDE / 2, mimeType: "image/png", exportPadding: 16 });
           if (blob && blob.size <= THUMBNAIL_MAX_BYTES) await putWhiteboardThumbnail(whiteboard.id, saved.revision, blob);
         } catch {
           // The copy shows a placeholder until it is opened.

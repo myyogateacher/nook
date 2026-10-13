@@ -39,6 +39,8 @@ export const BUCKET_FAMILIES = {
   "totp-setup:account": { scope: "account", limit: 5 },
   // Own profile picture changes (uploads everywhere U7, T353).
   "avatar:account": { scope: "account", limit: 10 },
+  // Undo of an attachment removal (POST /api/attachments/relink): one per removal, so a burst is a script.
+  "attachments:relink:account": { scope: "account", limit: 30 },
   // Team → Google actions, per acting admin.
   "google:admin:admin": { scope: "admin", limit: 10 }
 } as const satisfies Record<string, { scope: BucketScope; limit: number }>;

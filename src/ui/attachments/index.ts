@@ -8,4 +8,5 @@ export { AttachmentPreview } from "./AttachmentPreview";
 export { useFileDrop, dragHasFiles } from "./useFileDrop";
 export { usePasteFiles, pastedFiles } from "./usePasteFiles";
 export { stripImageLocation, stripJpegMetadata, stripPngMetadata, stripWebpMetadata, LocationStripError, STRIP_MAX_BYTES } from "./exif";
-export { uploadForHost, listHostAttachments, linkToHost, unlinkFromHost, fileUsage, usageSummary, type HostKind, type HostAttachment, type FileUsage, type UploadForHostOptions } from "./uploadForHost";
+export { uploadForHost, listHostAttachments, linkToHost, unlinkFromHost, relinkToHost, fileUsage, usageSummary, type HostKind, type HostAttachment, type FileUsage, type UploadForHostOptions } from "./uploadForHost";
+export { notifyRemoved, type RemovalSink } from "./undoRemoval";

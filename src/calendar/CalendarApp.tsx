@@ -656,7 +656,13 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
         canRemoveExisting={(item) => canRemoveAttachment(item, { canEdit: canWrite, canManage: sheet.canManage })}
         onAttach={() => setSheetLayer({ kind: "attach" })}
         onOpen={(item) => setSheetLayer({ kind: "preview", documentId: item.documentId, name: item.name })}
-        onRemove={(item) => updateSheetAttachments((state) => ({ ...state, removed: [...state.removed, item.documentId] }))}
+        onRemove={(item) => {
+          updateSheetAttachments((state) => ({ ...state, removed: [...state.removed, item.documentId] }));
+          // Staged until Save: Undo takes the removal back (nothing has changed on the server yet).
+          notify.success(`Removed ${item.removed ? "the removed file" : item.name}. It comes off the event when you save.`, {
+            action: { label: "Undo", onClick: () => updateSheetAttachments((state) => ({ ...state, removed: state.removed.filter((id) => id !== item.documentId) })) }
+          });
+        }}
         onRetry={retrySheetUpload}
         onRemoveStaged={removeSheetStaged}
       />}

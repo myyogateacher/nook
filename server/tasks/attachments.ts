@@ -1,5 +1,6 @@
 import { audit, db, now } from "../db";
-import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "../attachments/service";
+import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment, relinkableDocument, restoreForRelink, type RemovalRecord } from "../attachments/service";
+import { recordRemovedLink } from "../attachments/undoTickets";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { LIMITS, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 
@@ -178,7 +179,7 @@ export async function detachFromCard(userId: string, cardId: string, documentId:
   const { board } = access();
   return withBoardLock(board.id, () => {
     const { board: current } = access();
-    const link = db.query("SELECT linked_by FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, documentId) as { linked_by: string | null } | null;
+    const link = db.query("SELECT linked_by, comment_id, created_at FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, documentId) as { linked_by: string | null; comment_id: string | null; created_at: string } | null;
     if (!link) throw attachmentNotFound();
     if (!asOwner && link.linked_by !== userId && current.owner_id !== userId) throw new TaskError(403, "Only the person who attached this file or the board owner can remove it", "LINKER_ONLY");
     let binned = 0;
@@ -190,8 +191,49 @@ export async function detachFromCard(userId: string, cardId: string, documentId:
       audit(userId, null, "task.attachment_unlink", { boardId: current.id, cardId, documentId });
     })();
     notifyBinnedFiles(binnedFiles);
+    recordRemovedLink(userId, "card", cardId, documentId, { partId: link.comment_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     return { ok: true as const, movedToBin: binned > 0 };
   });
+}
+
+/**
+ * The Undo of a removal from a card (POST /api/attachments/relink, U2): an editor of the board puts the
+ * file back as it was, through the comment it came with while that comment still exists (409
+ * COMMENT_GONE otherwise), at its old place in the list (its link time). The document rule is the
+ * attachment service's (relinkableDocument); an Attachments-folder file the removal binned comes out
+ * of its owner's Bin when the undoer is that owner. Already linked: nothing changes.
+ */
+export async function relinkToCard(userId: string, cardId: string, documentId: string, removed: RemovalRecord | null, partId: string | null) {
+  const { board } = requireCardAt(cardId, userId, "edit");
+  const id = documentId.toLowerCase();
+  const restoredFiles: string[] = [];
+  const outcome = await withBoardLock(board.id, () => {
+    const { board: current } = requireCardAt(cardId, userId, "edit");
+    if (db.query("SELECT 1 FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, id)) return { relinked: false, restored: false };
+    const commentId = removed ? removed.partId : partId;
+    return db.transaction(() => {
+      const document = relinkableDocument(id, userId, removed);
+      if (commentId && !db.query("SELECT 1 FROM card_comments WHERE id = ? AND card_id = ?").get(commentId, cardId)) {
+        throw new TaskError(409, "The comment this file came with was deleted", "COMMENT_GONE");
+      }
+      const onCard = (db.query("SELECT COUNT(*) AS count FROM card_attachments WHERE card_id = ?").get(cardId) as { count: number }).count;
+      if (onCard >= LIMITS.attachmentsPerCard) throw limitReached(`A card can have up to ${LIMITS.attachmentsPerCard} attachments`);
+      if (commentId) {
+        const onComment = (db.query("SELECT COUNT(*) AS count FROM card_attachments WHERE comment_id = ?").get(commentId) as { count: number }).count;
+        if (onComment >= LIMITS.attachmentsPerComment) throw limitReached(`A comment can have up to ${LIMITS.attachmentsPerComment} attachments`);
+      }
+      const restored = document.restore && restoreForRelink(document.id, userId);
+      if (document.restore && !restored) throw new TaskError(409, "This file is being deleted from the Bin", "PURGING");
+      if (restored) restoredFiles.push(document.id);
+      db.query("INSERT INTO card_attachments (card_id, document_id, comment_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(cardId, document.id, commentId, removed?.linkedBy ?? userId, removed?.createdAt ?? now());
+      db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), cardId);
+      audit(userId, null, "task.attachment_relink", { boardId: current.id, cardId, documentId: document.id, ...(commentId ? { commentId } : {}), ...(restored ? { restored: true } : {}) });
+      return { relinked: true, restored };
+    })();
+  });
+  notifyBinnedFiles(restoredFiles);
+  return outcome;
 }
 
 /** Documents linked through a comment, for binning after the comment (and its links) are deleted. */

@@ -14,7 +14,9 @@ import { SlashCommands } from "./slash";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
 import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
-import { fillSlot, pendingSlotCount, releaseSlot, reserveSlots, storedFileNode, UploadSlots } from "./uploadSlots";
+import { mapDraftRemoval, missingDraftFiles, removalMessage, removedDraftFiles, restoreDraftFiles, type DraftRemoval } from "./draftRemovals";
+import { fillSlot, pendingSlotCount, releaseSlot, reserveSlots, slotProgress, storedFileNode, UPLOAD_SLOT_CANCEL_EVENT, UploadSlots, type UploadSlotCancelDetail } from "./uploadSlots";
+import { deleteFile } from "../files/filesApi";
 import { FILE_CHIP_OPEN_EVENT, type FileChipOpenDetail } from "./fileChip";
 import { NoteAttach, NOTE_FILE_LIMIT_MESSAGE, noteFileRoom } from "./noteAttach";
 import { AttachmentPreview, AttachSheet, FromFilesSheet, uploadForHost } from "../ui/attachments";
@@ -77,19 +79,31 @@ type Props = {
   placeholder?: string;
   /** Puts the caret at the end of the content once the editor is created (entering edit mode). */
   autoFocus?: boolean;
+  /** U4: how many attach uploads are in flight (waiting or sending), whenever it changes; 0 on unmount. */
+  onUploadsChange?: (count: number) => void;
+  /** U4: filled with the editor's upload control, so the host can cancel every upload before leaving. */
+  uploadControl?: { current: NoteUploadControl | null };
 };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, onFileConfirmed, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
+/** What the note's host may do with the editor's uploads (leaving mid-upload). */
+export type NoteUploadControl = { count: () => number; cancelAll: () => void };
+
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, onFileConfirmed, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false, onUploadsChange, uploadControl }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
-  const latest = useRef({ folderId, onNotice, uploadImage, attachHost, onFileConfirmed });
-  latest.current = { folderId, onNotice, uploadImage, attachHost, onFileConfirmed };
+  const latest = useRef({ folderId, onNotice, uploadImage, attachHost, onFileConfirmed, onUploadsChange });
+  latest.current = { folderId, onNotice, uploadImage, attachHost, onFileConfirmed, onUploadsChange };
   // U4: the attach sheet or the From Files picker, for the editor that asked; and the file preview.
   const [attachLayer, setAttachLayer] = useState<{ editor: Editor; what: "sheet" | "files" } | null>(null);
   const [preview, setPreview] = useState<FileChipOpenDetail | null>(null);
-  const uploads = useRef(new Set<AbortController>());
+  // Attach uploads in flight, by slot: waiting for the ones before them, or sending. Each can be
+  // cancelled from its slot's line, and all of them when the person leaves the note.
+  const jobs = useRef(new Map<string, { controller: AbortController; editor: Editor }>());
+  const reportUploads = () => latest.current.onUploadsChange?.(jobs.current.size);
   const surface = useRef<HTMLDivElement | null>(null);
   useEffect(() => () => {
-    for (const controller of uploads.current) controller.abort();
+    for (const job of jobs.current.values()) job.controller.abort();
+    jobs.current.clear();
+    latest.current.onUploadsChange?.(0);
   }, []);
   // Whiteboard cards (D208): the slash item and the paste rule, only while the module is on.
   const whiteboards = isModuleEnabled(useDisabledModules(), "whiteboards");
@@ -102,11 +116,34 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     activeEditor.view.dispatch(tr);
     return true;
   };
-  const reserve = (activeEditor: Editor, names: string[]) => {
-    const { tr, ids } = reserveSlots(activeEditor.state, names);
+  const reserve = (activeEditor: Editor, names: string[], options: { cancelable?: boolean } = {}) => {
+    const { tr, ids } = reserveSlots(activeEditor.state, names, activeEditor.state.selection.to, options);
     dispatchSlot(activeEditor, tr);
     return ids;
   };
+  const progress = (activeEditor: Editor, slot: string, value: number) => {
+    if (!activeEditor.isDestroyed) dispatchSlot(activeEditor, slotProgress(activeEditor.state, slot, value));
+  };
+  /** Cancel on a slot's line, or leaving the note: stops that upload and takes its line away. */
+  const cancelUpload = (slot: string) => {
+    const job = jobs.current.get(slot);
+    if (!job) return;
+    jobs.current.delete(slot);
+    job.controller.abort();
+    if (!job.editor.isDestroyed) dispatchSlot(job.editor, releaseSlot(job.editor.state, slot));
+    reportUploads();
+  };
+  const cancelRef = useRef(cancelUpload);
+  cancelRef.current = cancelUpload;
+  useEffect(() => {
+    if (!uploadControl) return undefined;
+    const control: NoteUploadControl = {
+      count: () => jobs.current.size,
+      cancelAll: () => { for (const slot of [...jobs.current.keys()]) cancelRef.current(slot); }
+    };
+    uploadControl.current = control;
+    return () => { if (uploadControl.current === control) uploadControl.current = null; };
+  }, [uploadControl]);
   const fill = (activeEditor: Editor, slot: string, node: ProseMirrorNode | null) =>
     !activeEditor.isDestroyed && activeEditor.isEditable && node !== null && dispatchSlot(activeEditor, fillSlot(activeEditor.state, slot, node));
   const release = (activeEditor: Editor, slot: string) => {
@@ -158,17 +195,32 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     const chosen = files.slice(0, room);
     if (chosen.length < files.length) notice("warning", NOTE_FILE_LIMIT_MESSAGE);
     if (!chosen.length) return;
-    const slots = reserve(activeEditor, chosen.map((file) => file.name || "file"));
-    for (const [index, file] of chosen.entries()) {
-      const slot = slots[index]!;
-      if (activeEditor.isDestroyed) return;
-      const name = file.name || "file";
+    const slots = reserve(activeEditor, chosen.map((file) => file.name || "file"), { cancelable: true });
+    // Every chosen file is in flight from now (the limit and the leave prompt count it), one upload at a time.
+    const queue = chosen.map((file, index) => {
       const controller = new AbortController();
-      uploads.current.add(controller);
+      jobs.current.set(slots[index]!, { controller, editor: activeEditor });
+      return { file, slot: slots[index]!, controller };
+    });
+    reportUploads();
+    for (const { file, slot, controller } of queue) {
+      if (controller.signal.aborted) continue;
+      if (activeEditor.isDestroyed) {
+        cancelUpload(slot);
+        continue;
+      }
+      const name = file.name || "file";
       const id = `upload:${crypto.randomUUID()}`;
       notice("info", `Uploading ${name}…`, id);
+      progress(activeEditor, slot, 0);
       try {
-        const { document } = await uploadForHost(file, "note", { signal: controller.signal });
+        const { document } = await uploadForHost(file, "note", { signal: controller.signal, onProgress: (loaded, total) => progress(activeEditor, slot, total ? loaded / total : 0) });
+        if (controller.signal.aborted) {
+          // Cancelled as the last bytes arrived: the stored copy goes to the Bin instead of the note.
+          void deleteFile(document.id).catch(() => undefined);
+          notify.dismiss(id);
+          continue;
+        }
         if (!fill(activeEditor, slot, activeEditor.isDestroyed ? null : storedFileNode(activeEditor.schema, document))) {
           notice("warning", "Saved to Files › Attachments, but the note is no longer open for editing", id);
           continue;
@@ -178,10 +230,50 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         if (!controller.signal.aborted) notice("error", reason instanceof Error ? reason.message : "Upload failed", id);
         else notify.dismiss(id);
       } finally {
-        uploads.current.delete(controller);
+        if (jobs.current.get(slot)?.controller === controller) {
+          jobs.current.delete(slot);
+          reportUploads();
+        }
         release(activeEditor, slot);
       }
     }
+  };
+
+  // U4 Undo: a file or image the person takes out of the draft gets a toast with Undo, which puts it
+  // back where it was (links follow the draft on publish, so nothing is unlinked on the server here).
+  const removals = useRef<DraftRemoval[]>([]);
+  const trackRemovals = (activeEditor: Editor, transaction: Transaction, appended: readonly Transaction[]) => {
+    const all = [transaction, ...appended];
+    if (!all.some((tr) => tr.docChanged)) return;
+    // A reload (the note published, a draft discarded) replaces the document: old positions mean nothing.
+    if (transaction.getMeta("preventUpdate")) {
+      removals.current = [];
+      return;
+    }
+    for (const removal of removals.current) mapDraftRemoval(removal, all);
+    if (latest.current.attachHost !== "note" || !activeEditor.isEditable) return;
+    const items = removedDraftFiles(transaction, activeEditor.state.doc, all);
+    if (!items.length) return;
+    const removal: DraftRemoval = { key: crypto.randomUUID(), items };
+    removals.current = [...removals.current.slice(-19), removal];
+    latest.current.onNotice?.success(removalMessage(items), { action: { label: "Undo", onClick: () => undoRemoval(activeEditor, removal.key) } });
+  };
+  const trackRemovalsRef = useRef(trackRemovals);
+  trackRemovalsRef.current = trackRemovals;
+  const undoRemoval = (activeEditor: Editor, key: string) => {
+    const removal = removals.current.find((item) => item.key === key);
+    removals.current = removals.current.filter((item) => item.key !== key);
+    if (!removal) return;
+    if (activeEditor.isDestroyed || !activeEditor.isEditable) {
+      latest.current.onNotice?.warning("The note is no longer open for editing");
+      return;
+    }
+    // Uploads still in flight count against the note's file limit too.
+    if (missingDraftFiles(activeEditor.state, removal.items) > noteFileRoom(activeEditor) - pendingSlotCount(activeEditor.state)) {
+      latest.current.onNotice?.warning(NOTE_FILE_LIMIT_MESSAGE);
+      return;
+    }
+    dispatchSlot(activeEditor, restoreDraftFiles(activeEditor.state, removal.items));
   };
 
   const editor = useEditor({
@@ -202,7 +294,8 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
     editorProps: {
       attributes: { class: "note-prose", spellcheck: "true", "aria-label": label }
     },
-    onUpdate: ({ editor: activeEditor }) => onChange(activeEditor.getMarkdown())
+    onUpdate: ({ editor: activeEditor }) => onChange(activeEditor.getMarkdown()),
+    onTransaction: ({ editor: activeEditor, transaction, appendedTransactions }) => trackRemovalsRef.current(activeEditor, transaction, appendedTransactions)
   });
 
   useEffect(() => {
@@ -232,8 +325,17 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       const detail = (event as CustomEvent<FileChipOpenDetail>).detail;
       if (detail?.id) setPreview({ id: detail.id, name: detail.name });
     };
+    // An upload slot's Cancel (uploadSlots.ts).
+    const onCancel = (event: Event) => {
+      const detail = (event as CustomEvent<UploadSlotCancelDetail>).detail;
+      if (detail?.id) cancelRef.current(detail.id);
+    };
     element.addEventListener(FILE_CHIP_OPEN_EVENT, onOpen);
-    return () => element.removeEventListener(FILE_CHIP_OPEN_EVENT, onOpen);
+    element.addEventListener(UPLOAD_SLOT_CANCEL_EVENT, onCancel);
+    return () => {
+      element.removeEventListener(FILE_CHIP_OPEN_EVENT, onOpen);
+      element.removeEventListener(UPLOAD_SLOT_CANCEL_EVENT, onCancel);
+    };
   }, [editor]);
   const closeAttach = useCallback((target?: Editor) => {
     setAttachLayer(null);

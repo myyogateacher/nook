@@ -28,7 +28,18 @@
   .whiteboard-embed-card { gap: 8px; }
 }
 /* v0.35.0 QA: where a file still uploading will go (uploadSlots.ts); never saved with the note. */
-.note-prose .upload-slot { max-width: 520px; margin: .7em 0; border: 1px dashed #3a3a41; border-radius: 12px; padding: 12px 14px; color: #9a9aa1; font-size: .86rem; overflow-wrap: anywhere; user-select: none; }
+.note-prose .upload-slot { max-width: 520px; margin: .7em 0; border: 1px dashed #3a3a41; border-radius: 12px; padding: 10px 10px 10px 14px; color: #9a9aa1; font-size: .86rem; overflow-wrap: anywhere; user-select: none;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "text percent cancel" "bar bar cancel"; align-items: center; column-gap: 10px; row-gap: 6px; }
+/* The upload's progress (XHR upload progress) and its Cancel; fits a 390 px phone. */
+.note-prose .upload-slot-text { grid-area: text; min-width: 0; }
+.note-prose .upload-slot-percent { grid-area: percent; color: #c9c9ce; font-variant-numeric: tabular-nums; }
+.note-prose .upload-slot-bar { grid-area: bar; width: 100%; height: 6px; appearance: none; border: 0; border-radius: 3px; background: #26262b; overflow: hidden; }
+.note-prose .upload-slot-bar::-webkit-progress-bar { background: #26262b; border-radius: 3px; }
+.note-prose .upload-slot-bar::-webkit-progress-value { background: var(--yellow); border-radius: 3px; }
+.note-prose .upload-slot-bar::-moz-progress-bar { background: var(--yellow); border-radius: 3px; }
+.note-prose .upload-slot-cancel { grid-area: cancel; min-height: 40px; padding: 0 12px; border: 1px solid #3a3a41; border-radius: 10px; background: transparent; color: #ededee; font: 500 .82rem/1 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; cursor: pointer; }
+.note-prose .upload-slot-cancel:hover { background: #1d1d21; }
+.note-prose .upload-slot-cancel:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 /* U4 (D408): a file in a note, as a card that opens its preview; fits a 390 px phone. */
 .note-prose .file-chip { margin: .7em 0; }
 .file-chip-card { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; min-height: 48px; border: 1px solid #2c2c31; border-radius: 12px; padding: 6px 12px 6px 8px; background: #151518; color: #ededee; font: 500 .9rem/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; text-align: left; cursor: pointer; user-select: none; }

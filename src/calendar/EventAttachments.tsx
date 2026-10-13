@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Paperclip, RotateCcw, X } from "lucide-react";
 import { formatBytes, deleteFile } from "../files/filesApi";
-import { AttachmentList, AttachmentPreview, AttachSheet, LocationStripError, linkToHost, unlinkFromHost, uploadForHost, useFileDrop, type HostAttachment } from "../ui/attachments";
+import { AttachmentList, AttachmentPreview, AttachSheet, LocationStripError, linkToHost, notifyRemoved, relinkToHost, unlinkFromHost, uploadForHost, useFileDrop, type HostAttachment } from "../ui/attachments";
 import { useConfirm } from "../ui/useConfirm";
 import type { DocumentSummary } from "../types";
 import type { EventResponse } from "./calendarApi";
@@ -293,7 +293,10 @@ export function EventAttachmentsSection({ data, canEdit, canManage, onChanged, f
     if (!await ask({ title: "Remove from this event?", message: `Remove ${name} from “${data.event.title}”? ${item.removed ? "" : item.inAttachmentsFolder ? "If nothing else uses it, it moves to its owner's Bin." : "It stays in its folder in Files."}`.trim(), confirmLabel: "Remove", danger: true, opener: trigger })) return;
     try {
       const result = await unlinkFromHost("event", eventId, item.documentId);
-      notify.success(result.documentBinned ? `Removed ${name}. The file moved to ${!item.removed && item.isOwner ? "your" : "its owner's"} Bin.` : `Removed ${name}`);
+      // Undo puts it back where it was (and out of the Bin); a file in its owner's Bin only they can restore.
+      const undoable = canEdit && !item.removed && (!result.documentBinned || item.isOwner);
+      notifyRemoved(result.documentBinned ? `Removed ${name}. The file moved to ${!item.removed && item.isOwner ? "your" : "its owner's"} Bin.` : `Removed ${name}`,
+        undoable ? async () => { try { await relinkToHost("event", eventId, item.documentId); } finally { onChanged(); } } : null);
     } catch (reason) {
       notify.error(errorText(reason, "Could not remove the file"));
     }

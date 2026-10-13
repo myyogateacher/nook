@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-Nothing. Next cycle to be chosen by the operator.
+- [ ] v0.37.0: the six v0.36.0 leftovers (three agents, 2026-10-13: test ports and timeouts; durable Undo records in migration 049 plus event Undo after Save; avatar caching plus the Team UI test). Then a short review and the release.
 
 ## Known LOW leftovers
 

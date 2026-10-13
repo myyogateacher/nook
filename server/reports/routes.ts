@@ -11,6 +11,7 @@ import { describeTablesTool, listTablesTool, searchSchemaTool } from "./schemaTo
 import { binReport, cancelConsole, createReport, listReports, reportDatasource, reportDetail, runConsole, updateReport } from "./service";
 import { limited } from "./runner";
 import "./bin";
+import { registerReportViewRoutes } from "./viewRoutes";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -41,7 +42,7 @@ const emptySchema = z.object({}).strict();
 
 const notFound = () => new ReportError(404, "NOT_FOUND", "Not found");
 
-function id(c: Context<AppEnv>, name: string) {
+export function id(c: Context<AppEnv>, name: string) {
   const parsed = uuid.safeParse(c.req.param(name)?.toLowerCase());
   if (!parsed.success) throw notFound();
   return parsed.data;
@@ -57,7 +58,7 @@ function fail(c: Context<AppEnv>, error: unknown) {
 }
 
 type Handler = (c: Context<AppEnv>) => unknown | Promise<unknown>;
-const handle = (handler: Handler) => async (c: Context<AppEnv>) => {
+export const handle = (handler: Handler) => async (c: Context<AppEnv>) => {
   try {
     if (!roleHasReports(c.get("user").role)) throw notFound();
     const result = await handler(c);
@@ -149,4 +150,7 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
     if (!tables.length) throw new ReportError(400, "INVALID", "Name a table");
     return describeTablesTool(row, c.get("user").id, { tables });
   }));
+
+  // Wave 47: results, refresh, runs, provenance, and the schedule (viewRoutes.ts).
+  registerReportViewRoutes(app);
 }

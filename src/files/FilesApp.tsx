@@ -454,12 +454,16 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
       await deleteFile(document.id);
       setDocuments((items) => items.filter((item) => item.id !== document.id));
       setExtraDocument((current) => current?.id === document.id ? null : current);
+      // v0.35.0 QA: the confirm is closed before leaving the binned file. Leaving it may step Back onto
+      // the list (Q2), and a guard still armed for the confirm took that Back for the person's and
+      // undid it, which left /files/<binned id> in the address bar.
+      setDialog(null);
+      dialogOpenRef.current = false;
       if (documentId === document.id) {
         setDocumentId(null);
         setPanel("files");
         navigate(filesRoute(folder, null), { replace: true, removed: true, filesPanel: "files" });
       }
-      setDialog(null);
       returnFocusRef.current = null;
       focusRow(neighbour?.id ?? null);
       // Undo restores it from the Bin (the toast stays long enough to reach it).
@@ -858,11 +862,11 @@ export function FilesApp({ userId, displayName, navigate, flash, onHome, onSetti
           onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolderId((current) => current === item.id ? null : current); }}
           onDrop={(event) => folderDrop(event, item)}
         >
-          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy">{item.name}</span>{isSystemFolder(item) && <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" />}<b>{documents.filter((document) => document.folder_id === item.id).length}</b>
+          {isSystemFolder(item) ? <Paperclip /> : <FolderIcon />}<span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span></span>{isSystemFolder(item) && <Lock className="folder-system-badge" role="img" aria-label="Managed by Nook: files you attach live here" />}<b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
         {shared.length > 0 && <div className="nav-label"><span>Shared folders</span></div>}
         {shared.map((item) => <button key={item.id} className={`folder-link${folder === item.id ? " active" : ""}`} aria-current={folder === item.id ? "page" : undefined} onClick={() => selectFolder(item.id)}>
-          <FolderIcon /><span className="folder-copy">{item.name}<small>{item.owner_name}</small></span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
+          <FolderIcon /><span className="folder-copy" title={item.name}><span className="folder-name">{item.name}</span><small>{item.owner_name}</small></span><b>{documents.filter((document) => document.folder_id === item.id).length}</b>
         </button>)}
       </nav>
       <footer className="sidebar-footer">

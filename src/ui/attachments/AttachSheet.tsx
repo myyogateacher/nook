@@ -104,7 +104,8 @@ export const fromFilesConfirm = (hostNoun: string, name: string) => ({
  */
 export function FromFilesSheet({ hostNoun, onClose, onPick }: { hostNoun: string; onClose: () => void; onPick: (document: DocumentSummary, options: { confirmed: boolean }) => void }) {
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
-  const [attachmentsFolder, setAttachmentsFolder] = useState<string | null>(null);
+  // The system folder's real name: "Attachments", or "Attachments (Nook)" beside a folder of that name.
+  const [attachmentsFolder, setAttachmentsFolder] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const searchId = useId();
@@ -117,7 +118,8 @@ export function FromFilesSheet({ hostNoun, onClose, onPick }: { hostNoun: string
       .then(([files, folders]) => {
         if (!live) return;
         setDocuments(files.documents.filter((document) => document.is_owner === 1 && document.kind !== "whiteboard"));
-        setAttachmentsFolder(folders.folders.find((folder) => folder.is_owner === 1 && folder.system_kind === "attachments")?.id ?? null);
+        const folder = folders.folders.find((item) => item.is_owner === 1 && item.system_kind === "attachments");
+        setAttachmentsFolder(folder ? { id: folder.id, name: folder.name } : null);
       })
       .catch((reason) => { if (live) setError(reason instanceof Error ? reason.message : "Could not load your files"); });
     return () => { live = false; };
@@ -127,7 +129,7 @@ export function FromFilesSheet({ hostNoun, onClose, onPick }: { hostNoun: string
   const visible = useMemo(() => (documents ?? []).filter((document) => !needle || document.name.toLowerCase().includes(needle)).slice(0, 150), [documents, needle]);
 
   async function choose(document: DocumentSummary, trigger: HTMLElement) {
-    if (attachmentsFolder !== null && document.folder_id === attachmentsFolder) {
+    if (attachmentsFolder !== null && document.folder_id === attachmentsFolder.id) {
       onPick(document, { confirmed: false });
       return;
     }
@@ -150,7 +152,7 @@ export function FromFilesSheet({ hostNoun, onClose, onPick }: { hostNoun: string
           {visible.map((document) => <li key={document.id}>
             <button type="button" onClick={(event) => void choose(document, event.currentTarget)}>
               <FileText aria-hidden="true" />
-              <span><strong>{document.name}</strong><small>{formatBytes(document.size_bytes)}{attachmentsFolder !== null && document.folder_id === attachmentsFolder ? " · Attachments" : ""}</small></span>
+              <span><strong>{document.name}</strong><small>{formatBytes(document.size_bytes)}{attachmentsFolder !== null && document.folder_id === attachmentsFolder.id ? ` · ${attachmentsFolder.name}` : ""}</small></span>
             </button>
           </li>)}
         </ul>}

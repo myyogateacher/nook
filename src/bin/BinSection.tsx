@@ -131,7 +131,8 @@ export function BinSection({ flash, onRestored }: BinSectionProps) {
     try {
       const result = await restoreBinItem(item);
       removeItem(item);
-      flash(restoreResultMessage(item, result));
+      // v0.35.0 QA: the same success toast as Undo after a move to the Bin (binUndo.ts).
+      notify.success(restoreResultMessage(item, result));
       onRestored?.(item);
       // Restoring a board brings its binned cards' board back too; refresh so their rows update.
       if (item.type === "board") void load();

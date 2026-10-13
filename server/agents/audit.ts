@@ -101,7 +101,7 @@ function summaryOf(row: RunRow, viewer: AuditViewer): AuditRunSummary {
   const full = row.user_id === viewer.userId;
   const durationMs = row.finished_at ? Math.max(0, Date.parse(row.finished_at) - Date.parse(row.queued_at)) : null;
   return {
-    id: row.id, via: row.via, agentId: row.agent_id, agentName: row.agent_name, key: row.key_id ? { id: row.key_id, name: row.key_name ?? "", prefix: row.key_prefix ?? "" } : null,
+    id: row.id, via: row.via, agentId: row.agent_id, agentName: row.via === "reports" ? "Reports" : row.agent_name, key: row.key_id ? { id: row.key_id, name: row.key_name ?? "", prefix: row.key_prefix ?? "" } : null,
     owner: { id: row.user_id, displayName: row.owner_name }, status: row.status, errorCode: row.error_code, model: row.model,
     steps: row.steps, toolCalls: row.tool_calls, promptTokens: row.prompt_tokens, completionTokens: row.completion_tokens, estimated: row.tokens_estimated === 1,
     queuedAt: row.queued_at, startedAt: row.started_at, firstTokenAt: row.first_token_at, finishedAt: row.finished_at, durationMs,

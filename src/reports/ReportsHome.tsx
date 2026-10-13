@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChartColumn, Database, House, Plus, RotateCcw, Search, Sparkles, TriangleAlert } from "lucide-react";
 import { AccountActions, AppPageName } from "../AppShell";
 import { appName } from "../appName";
 import { onBinRestored } from "../bin/binUndo";
-import { ModalDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
-import { Select } from "../ui/Select";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { REPORT_LIMITS, type DatasourceChoice, type ReportStatus, type ReportSummary } from "../../shared/reports";
-import { createReport, datasourceChoices, listReports, messageOf } from "./reportsApi";
+import type { DatasourceChoice, ReportStatus, ReportSummary } from "../../shared/reports";
+import { NewReportSheet } from "./NewReportSheet";
+import { datasourceChoices, listReports, messageOf } from "./reportsApi";
 
 export const STATUS_LABELS: Record<ReportStatus, string> = { draft: "Draft", ready: "Ready", stale: "Stale", error: "Error" };
 
@@ -89,7 +87,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
         {!query && noSources && (role === "admin"
           ? <><p>Reports query a ClickHouse data source. Add one first.</p><button className="primary-button" onClick={onOpenDatasources}><Database />Add a data source</button></>
           : <p>Reports query a ClickHouse data source, and none is set up yet. Ask an admin to add one.</p>)}
-        {!query && !noSources && <p>Write SQL against your team's warehouse and keep the result as a report.</p>}
+        {!query && !noSources && <p>Paste a doc that describes your metrics and let AI build the report, or write SQL against your team's warehouse yourself.</p>}
         {!query && !noSources && canWrite && <button className="primary-button" onClick={() => setCreating(true)}><Plus />New report</button>}
       </div>}
       {!error && reports && reports.length > 0 && <ul className="reports-list" aria-label="Reports">
@@ -110,44 +108,4 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     </section>
     {creating && sources && <NewReportSheet sources={sources} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onOpen(id); }} />}
   </main>;
-}
-
-/** New report: a title and a data source. Back or Escape closes it (a history layer, D18). */
-export function NewReportSheet({ sources, onCancel, onCreated }: { sources: DatasourceChoice[]; onCancel: () => void; onCreated: (id: string) => void }) {
-  const [title, setTitle] = useState("");
-  const [source, setSource] = useState<string | null>(sources[0]?.id ?? null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const ids = { title: useId(), source: useId() };
-  useHistoryDialogGuard(true, onCancel, { blocked: busy });
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (!title.trim()) return setError("Enter a title.");
-    if (!source) return setError("Choose a data source.");
-    setBusy(true);
-    setError(null);
-    try {
-      const { report } = await createReport(title.trim(), source);
-      onCreated(report.id);
-    } catch (reason) {
-      setError(messageOf(reason, "Could not create the report"));
-      setBusy(false);
-    }
-  }
-
-  return <ModalDialog title="New report" eyebrow="Reports" onClose={onCancel} busy={busy} variant="sheet" className="reports-dialog">
-    <form className="file-dialog-form" onSubmit={submit} noValidate>
-      <label htmlFor={ids.title}>Title</label>
-      <input id={ids.title} value={title} maxLength={REPORT_LIMITS.title} autoFocus autoComplete="off" placeholder="Weekly revenue" onChange={(event) => setTitle(event.target.value)} />
-      <span className="reports-label" id={ids.source}>Data source</span>
-      <Select labelledBy={ids.source} label="Data source" value={source} onChange={setSource} options={sources.map((item) => ({ value: item.id, label: item.name, description: `Default database ${item.database}` }))} />
-      <p className="file-dialog-hint">The report starts as a draft with a SQL console. Queries run on that data source, read-only, on the tables an admin allowed.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
-      <footer className="file-dialog-actions">
-        <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
-        <button type="submit" className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create report"}</button>
-      </footer>
-    </form>
-  </ModalDialog>;
 }

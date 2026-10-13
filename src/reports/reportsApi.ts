@@ -1,5 +1,6 @@
 import { api, ApiError } from "../api";
 import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
+import type { DocServerChoice, DocState, GenerateStarted, GenerationRun, LatestResults } from "../../shared/reportsGenerate";
 
 /** The Reports API (docs/plan/API_CONTRACTS.md § Analytics reports, Wave 45). */
 
@@ -57,3 +58,14 @@ export function countLabel(value: number | null, noun = "rows") {
   if (value >= 1e4) return `${Math.round(value / 1e3)} K ${noun}`;
   return `${value.toLocaleString()} ${value === 1 ? noun.replace(/s$/, "") : noun}`;
 }
+
+// Wave 46: generation from a doc, and the doc's state.
+export const docServers = () => api<{ servers: DocServerChoice[] }>("/reports/doc-servers");
+export type GenerateBody = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId: string; title?: string | null };
+export const generateReport = (body: GenerateBody) => api<GenerateStarted>("/reports/generate", json("POST", body));
+export const regenerateReport = (id: string, body: Partial<Omit<GenerateBody, "title">> = {}) => api<GenerateStarted>(`/reports/${id}/generate`, json("POST", body));
+export const cancelGeneration = (id: string) => api<{ cancelled: boolean }>(`/reports/${id}/generate/cancel`, json("POST", {}));
+export const latestGeneration = (id: string) => api<{ run: GenerationRun | null }>(`/reports/${id}/generation`);
+export const latestResults = (id: string) => api<LatestResults>(`/reports/${id}/generation/results`);
+export const getDocState = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc`);
+export const checkDoc = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc/check`, json("POST", {}));

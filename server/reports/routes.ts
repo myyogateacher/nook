@@ -11,6 +11,7 @@ import { describeTablesTool, listTablesTool, searchSchemaTool } from "./schemaTo
 import { binReport, cancelConsole, createReport, listReports, reportDatasource, reportDetail, runConsole, updateReport } from "./service";
 import { limited } from "./runner";
 import "./bin";
+import { registerGenerateRoutes } from "./generateRoutes";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -41,7 +42,7 @@ const emptySchema = z.object({}).strict();
 
 const notFound = () => new ReportError(404, "NOT_FOUND", "Not found");
 
-function id(c: Context<AppEnv>, name: string) {
+export function id(c: Context<AppEnv>, name: string) {
   const parsed = uuid.safeParse(c.req.param(name)?.toLowerCase());
   if (!parsed.success) throw notFound();
   return parsed.data;
@@ -56,8 +57,8 @@ function fail(c: Context<AppEnv>, error: unknown) {
   return c.json({ error: known.message, code: known.code, ...known.details }, known.status);
 }
 
-type Handler = (c: Context<AppEnv>) => unknown | Promise<unknown>;
-const handle = (handler: Handler) => async (c: Context<AppEnv>) => {
+export type Handler = (c: Context<AppEnv>) => unknown | Promise<unknown>;
+export const handle = (handler: Handler) => async (c: Context<AppEnv>) => {
   try {
     if (!roleHasReports(c.get("user").role)) throw notFound();
     const result = await handler(c);
@@ -109,6 +110,8 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   })));
 
   // --- Authors ---
+  // Wave 46 (generation and the doc) first: its literal paths come before /api/reports/:reportId.
+  registerGenerateRoutes(app);
   app.get("/api/reports/datasources", handle(() => ({ datasources: datasourceChoices() })));
   app.get("/api/reports", handle((c) => ({ reports: listReports(c.get("user").id, { q: c.req.query("q")?.slice(0, 200) }) })));
   app.post("/api/reports", handle(async (c) => c.json({ report: createReport(c.get("user").id, await parseJson(c.req.raw, reportCreate)) }, 201)));

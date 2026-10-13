@@ -11,6 +11,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type QueryOutcome, type ReportDetail } from "../../shared/reports";
 import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
 import { STATUS_LABELS } from "./ReportsHome";
+import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
 
 type PageProps = {
@@ -146,9 +147,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         </div>}
       </div>
 
-      <div className="report-empty">
-        <p>{report.spec.blocks.length === 0 ? "No charts or tables yet. Explore the data with the console below; generating a report from a doc comes in a later release." : `${report.spec.blocks.length} blocks`}</p>
-      </div>
+      {/* Wave 46: generation progress, the doc banner, and the spec preview (wave 47's viewer replaces SpecPreview). */}
+      <ReportGeneration report={report} canWrite={canWrite} onChanged={() => { void load(); }} />
 
       <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
         <div className="report-console-head">

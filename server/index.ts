@@ -48,6 +48,7 @@ import { agentsFeature, chatRoleOff, initAgentsStatus } from "./agents/status";
 import { markInterruptedRuns } from "./agents/runs";
 import { registerKnowledgeRoutes } from "./knowledge/routes";
 import { registerReportRoutes } from "./reports/routes";
+import { abandonGenerateRuns } from "./reports/generate";
 import { roleHasReports } from "./reports/access";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
@@ -1042,6 +1043,12 @@ try {
   markInterruptedRuns();
 } catch (error) {
   console.error("Agent run sweep failed", errorClass(error));
+}
+// Wave 46: report generation runs the previous process left running are abandoned (unlocking their reports).
+try {
+  abandonGenerateRuns();
+} catch (error) {
+  console.error("Report generation sweep failed", errorClass(error));
 }
 // Wave 44 (AC-E): knowledge sources a restart interrupted go back to the queue, and indexing resumes.
 try {

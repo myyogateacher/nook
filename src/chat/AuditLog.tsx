@@ -53,8 +53,8 @@ export function formatDuration(ms: number | null | undefined) {
 export function auditCardMeta(run: AuditRunSummary) {
   const tokens = run.promptTokens + run.completionTokens;
   return [
-    run.key ? `${run.key.name} (${run.key.prefix}…)` : "Key removed",
-    run.via === "mcp" ? "MCP" : "API",
+    run.via === "reports" ? "Report generation" : run.key ? `${run.key.name} (${run.key.prefix}…)` : "Key removed",
+    run.via === "reports" ? null : run.via === "mcp" ? "MCP" : "API",
     `${run.steps} ${run.steps === 1 ? "step" : "steps"}`,
     run.toolCalls ? `${run.toolCalls} ${run.toolCalls === 1 ? "tool call" : "tool calls"}` : null,
     `${tokens.toLocaleString()} tokens${run.estimated ? " (est.)" : ""}`,
@@ -208,7 +208,7 @@ function AuditRunView({ run, phone, onBack, context }: { run: AuditRunDetail; ph
       {run.full && <a className="secondary-button audit-export-one" href={auditExportUrl({}, run.id)} download><Download aria-hidden="true" />Export</a>}
     </header>
     <dl className="audit-facts">
-      <div><dt>Key</dt><dd><KeyRound aria-hidden="true" />{run.key ? `${run.key.name} (${run.key.prefix}…)` : "Key removed"} · {run.via === "mcp" ? "MCP" : "REST API"}</dd></div>
+      {run.via === "reports" ? <div><dt>Source</dt><dd>Report generation (no key)</dd></div> : <div><dt>Key</dt><dd><KeyRound aria-hidden="true" />{run.key ? `${run.key.name} (${run.key.prefix}…)` : "Key removed"} · {run.via === "mcp" ? "MCP" : "REST API"}</dd></div>}
       {!run.full && <div><dt>Owner</dt><dd>{run.owner.displayName ?? "Removed account"}</dd></div>}
       <div><dt>Started</dt><dd>{formatWhen(run.queuedAt)}</dd></div>
       <div><dt>Model</dt><dd><code>{run.model}</code></dd></div>

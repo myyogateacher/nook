@@ -6,7 +6,8 @@ import { startFakeDocMcp } from "../scripts/fakeDocMcp";
 import { qaScript, qaSpec, startScriptedProvider, type Script } from "../scripts/fakeReportProvider";
 import { DEFAULT_COMPAT } from "../shared/agents";
 
-const { generateDeps, liveGenerations, GENERATE_LIMITS } = await import("../server/reports/generate");
+const { generateDeps, liveGenerations, startingGenerations, GENERATE_LIMITS } = await import("../server/reports/generate");
+const { persistGenerated, PersistRefused } = await import("../server/reports/specValidate");
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { readAgentSettings } = await import("../server/agents/settings");
 const { dayOf } = await import("../server/agents/runs");
@@ -323,5 +324,73 @@ describe("generate", () => {
     db.query("DELETE FROM agent_tool_servers WHERE id = ?").run(wrong.body.server.id);
     // A missing doc is DOC_FETCH.
     expect((await generate(member, { docRef: "https://docs.example.test/doc/nope-000" })).body.code).toBe("DOC_FETCH");
+  });
+
+  test("review M2: a destructive tool named as the doc tool is refused and never called", async () => {
+    const before = docs.calls.filter((call) => call.method === "tools/call" && (call.params as Json).name === "delete_document").length;
+    const refused = await generate(member, { tool: "delete_document", arg: "id" });
+    expect(refused.status).toBe(400);
+    expect(refused.body.code).toBe("DOC_TOOL_REFUSED");
+    expect(docs.calls.filter((call) => call.method === "tools/call" && (call.params as Json).name === "delete_document").length).toBe(before);
+    const servers = (await send(member, "GET", "/reports/doc-servers")).body.servers as Json[];
+    expect(servers.find((item) => item.id === serverId)!.tools.map((item: Json) => item.name)).not.toContain("delete_document");
+  });
+
+  test("review M3: regenerate, stop, Check doc, and the doc state are the owner's", async () => {
+    const started = await generate(member);
+    await waitForRun(started.body.run.id);
+    const reportId = started.body.report.id;
+    const other = await createUser("Generate stranger");
+    for (const [method, path] of [["POST", `/reports/${reportId}/generate`], ["POST", `/reports/${reportId}/generate/cancel`], ["POST", `/reports/${reportId}/doc/check`], ["GET", `/reports/${reportId}/doc`]] as const) {
+      expect({ path, status: (await send(other, method, path, method === "POST" ? {} : undefined)).status }).toEqual({ path, status: 404 });
+    }
+  });
+
+  test("review L1: an accepted spec is not saved for a run that stopped running or a binned report (rolled back)", async () => {
+    const started = await generate(member);
+    await waitForRun(started.body.run.id);
+    const reportId = started.body.report.id;
+    const before = db.query("SELECT spec_json, revision FROM reports WHERE id = ?").get(reportId);
+    const spec = { version: 1 as const, queries: [{ key: "totals", sql: "SELECT 1", purpose: "", createdBy: "agent" as const }], blocks: [{ id: "k", type: "kpi" as const, queryKey: "totals", column: "n" }] };
+    const results = new Map([["totals", { class: "select" as const, columns: [{ name: "n", type: "UInt64" }], rows: [["1"]], truncated: false, sentSql: "x", chQueryId: "q", rowsRead: 1, bytesRead: 1, ms: 1 }]]);
+    // The run already finished: refused.
+    expect(() => persistGenerated({ reportId, runId: started.body.run.id, docSnapshotId: null, docHash: null, spec, results })).toThrow(PersistRefused);
+    // A running run of a binned report: refused, and the run stays running (nothing was written).
+    const runId = crypto.randomUUID();
+    db.query("INSERT INTO report_runs (id, report_id, kind, trigger, status, started_at) VALUES (?, ?, 'generate', 'user', 'running', ?)").run(runId, reportId, new Date().toISOString());
+    db.query("UPDATE reports SET deleted_at = ?, purge_after = ? WHERE id = ?").run(new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString(), reportId);
+    try {
+      expect(() => persistGenerated({ reportId, runId, docSnapshotId: null, docHash: null, spec, results })).toThrow("moved to the Bin");
+      expect(db.query("SELECT status FROM report_runs WHERE id = ?").get(runId)).toEqual({ status: "running" });
+      expect(db.query("SELECT COUNT(*) AS count FROM report_results WHERE run_id = ?").get(runId)).toEqual({ count: 0 });
+    } finally {
+      db.query("UPDATE reports SET deleted_at = NULL, purge_after = NULL WHERE id = ?").run(reportId);
+      db.query("DELETE FROM report_runs WHERE id = ?").run(runId);
+    }
+    expect(db.query("SELECT spec_json, revision FROM reports WHERE id = ?").get(reportId)).toEqual(before);
+  });
+
+  test("review L3: the person's slot is held while the doc is read and released on every path", async () => {
+    docs.delay.ms = 400;
+    try {
+      const first = generate(member);
+      await Bun.sleep(100);
+      expect(startingGenerations()).toBe(1);
+      const second = await send(member, "POST", "/reports/generate", { docRef: DOC, serverId, datasourceId });
+      expect(second.status).toBe(429);
+      expect(second.body.code).toBe("BUSY");
+      const started = await first;
+      expect(started.status).toBe(202);
+      expect(startingGenerations()).toBe(0);
+      await waitForRun(started.body.run.id);
+    } finally {
+      docs.delay.ms = 0;
+    }
+    // A failed doc read releases the slot too.
+    expect((await generate(member, { docRef: "https://docs.example.test/doc/nope-000" })).body.code).toBe("DOC_FETCH");
+    expect(startingGenerations()).toBe(0);
+    const again = await generate(member);
+    expect(again.status).toBe(202);
+    await waitForRun(again.body.run.id);
   });
 });

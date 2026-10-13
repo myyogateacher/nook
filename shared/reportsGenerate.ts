@@ -29,7 +29,14 @@ export type GenerationRun = { id: string; agentRunId: string | null; status: Run
 export type LatestResults = { results: ReportResult[] };
 
 /** Generation error codes the UI explains: MCP_AUTH means an admin must reconnect the tool server. */
+/**
+ * Codes wave 46 adds to shared/reports.ts's REPORT_ERROR_CODES (frozen): DOC_TOOL_REFUSED is a doc tool
+ * that is not read-only (its effective policy is not `auto`), named as an override.
+ */
+export const GENERATE_ERROR_CODES = ["DOC_TOOL_REFUSED"] as const;
+
 export const GENERATE_ERROR_HINTS: Record<string, string> = {
+  DOC_TOOL_REFUSED: "That tool is not read-only, so Nook will not call it to read a doc; choose a read-only tool.",
   MCP_AUTH: "The doc server refused Nook's credential. An admin needs to reconnect it in Settings → AI → Tool servers.",
   DOC_FETCH: "Nook could not read the doc through that tool server.",
   LIMIT_REACHED: "Today's AI budget is used up; it resets at midnight UTC.",

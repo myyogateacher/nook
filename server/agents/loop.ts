@@ -197,6 +197,18 @@ type StreamChunk = {
  * One streamed Chat Completions call. `onDelta` receives content as it arrives. Tool calls are
  * accumulated by index (for AC-B) and returned; the request itself sends no `tools` in AC-A.
  */
+/**
+ * The wire `tool_choice` for a choice (Wave 46): a named choice is `{type:"function", function:{name}}`,
+ * or `required` when the provider lacks named choice (`namedToolChoice: false`); `required` becomes `auto`
+ * when the provider lacks it (`requiredToolChoice: false`). Under a named choice only that tool is offered.
+ */
+export function toolChoiceFor(compat: ProviderCompat, choice: ToolChoice): "auto" | "required" | { type: "function"; function: { name: string } } {
+  const required = compat.requiredToolChoice === false ? "auto" : "required";
+  if (choice === "auto") return "auto";
+  if (choice === "required") return required;
+  return compat.namedToolChoice === false ? required : { type: "function", function: { name: choice.name } };
+}
+
 export async function completeStreaming(connection: ProviderConnection, request: CompletionRequest, signal: AbortSignal, onDelta: (text: string) => void, progress: StreamProgress = newProgress(request.messages)): Promise<CompletionResult> {
   const body: Record<string, unknown> = {
     model: request.model ?? connection.model,
@@ -211,14 +223,23 @@ export async function completeStreaming(connection: ProviderConnection, request:
     const named = typeof choice === "object" ? choice.name : null;
     const offered = named !== null ? request.tools.filter((tool) => tool.name === named) : request.tools;
     body.tools = offered.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
-    body.tool_choice = named === null ? choice : connection.compat.namedToolChoice === false ? "required" : { type: "function", function: { name: named } };
+    body.tool_choice = toolChoiceFor(connection.compat, choice);
   }
-  let response: Awaited<ReturnType<typeof egressFetch>>;
-  try {
-    response = await egressFetch(`${connection.baseUrl}/chat/completions`, { method: "POST", headers: headersFor(connection, "text/event-stream"), body: JSON.stringify(body), signal },
-      { maxBytes: MODEL_STREAM_MAX_BYTES, firstByteMs: modelTimeouts.firstByteMs, idleMs: modelTimeouts.idleMs, totalMs: modelTimeouts.totalMs });
-  } catch (error) {
-    rethrow(error);
+  const send = async () => {
+    try {
+      return await egressFetch(`${connection.baseUrl}/chat/completions`, { method: "POST", headers: headersFor(connection, "text/event-stream"), body: JSON.stringify(body), signal },
+        { maxBytes: MODEL_STREAM_MAX_BYTES, firstByteMs: modelTimeouts.firstByteMs, idleMs: modelTimeouts.idleMs, totalMs: modelTimeouts.totalMs });
+    } catch (error) {
+      rethrow(error);
+    }
+  };
+  let response = await send();
+  // Review L2 (Wave 46): a provider that refuses `required` or a named choice with a 400 is asked once
+  // more with `auto` (under a named choice only that tool is still offered, so it is the only call to make).
+  if (response.status === 400 && body.tool_choice !== undefined && body.tool_choice !== "auto") {
+    response.cancel();
+    body.tool_choice = "auto";
+    response = await send();
   }
   if (response.status < 200 || response.status >= 300) await failedResponse(response);
   progress.started = true;
@@ -342,7 +363,7 @@ export type LoopInput = {
    * offers only that tool, also on the last step (which otherwise goes out without tools), so a run
    * can be made to end with one call (report generation forces `submit_report`).
    */
-  toolChoice?: (step: number, last: boolean) => ToolChoice | undefined;
+  toolChoice?: (step: number, last: boolean, state: { toolCalls: number; perRun: number; perStep: number }) => ToolChoice | undefined;
 };
 export type LoopResult = { status: "stop" | "step_limit"; content: string; steps: number; usage: TokenUsage; model: string | null; toolCalls: number; droppedToolCalls: number };
 
@@ -422,7 +443,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   for (let step = 1; step <= input.maxSteps; step += 1) {
     const last = step === input.maxSteps;
     input.beforeStep?.(step);
-    const choice = input.toolChoice?.(step, last);
+    const choice = input.toolChoice?.(step, last, { toolCalls, perRun, perStep });
     const named = typeof choice === "object" ? choice.name : null;
     const offer = !!input.tools && input.connection.compat.supportsTools && (named !== null || (!last && toolCalls < perRun));
     const offeredTools = offer ? await input.tools!(step) : [];
@@ -437,7 +458,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     const wantedCalls = tools.length > 0 && execute ? reply.toolCalls.filter((call) => call.name && (named === null || call.name === named)) : [];
     // Per step and per run (review L4): calls past either cap are dropped here, never executed, with
     // no event or audit row each; the run's finish row counts them, and the model is told once.
-    const room = Math.max(0, Math.min(perStep, perRun - toolCalls));
+    // Review M1 (Wave 46): a named, forced tool is exempt from the per-run cap, so it always gets its call.
+    const room = named !== null ? perStep : Math.max(0, Math.min(perStep, perRun - toolCalls));
     // Call ids are Nook's, never the model's (review M1): `call_<step>_<index>`, unique in the run.
     const calls = wantedCalls.slice(0, room).map((call, index) => ({ ...call, id: `call_${step}_${index}` }));
     const dropped = wantedCalls.length - calls.length;

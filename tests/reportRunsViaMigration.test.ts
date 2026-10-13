@@ -108,4 +108,15 @@ describe("migration 051 report_runs_via", () => {
     db.transaction(() => reportRunsViaMigration.up(db))();
     expect(db.query("SELECT name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
   });
+
+  test("review L4: a broken reference in the family stops the migration with a clear message, changing nothing", () => {
+    const db = openDb(50);
+    seed(db);
+    db.exec("PRAGMA foreign_keys = OFF");
+    db.query("INSERT INTO agent_audit_entries (run_id, input_text) VALUES ('missing-run', 'orphan')").run();
+    db.exec("PRAGMA foreign_keys = ON");
+    const before = db.query("SELECT name, sql FROM sqlite_master ORDER BY name").all();
+    expect(() => db.transaction(() => reportRunsViaMigration.up(db))()).toThrow("Migration 051 cannot rebuild agent_audit_entries: 1 row(s) reference a missing agent_runs row");
+    expect(db.query("SELECT name, sql FROM sqlite_master ORDER BY name").all()).toEqual(before);
+  });
 });

@@ -189,6 +189,14 @@ export function storedRows(rows: unknown[][]): { json: string; count: number; cu
   return { json, count: kept.length, cut: kept.length < rows.length };
 }
 
+/** Why an accepted spec was not saved (review L1); the transaction rolled back. */
+export class PersistRefused extends Error {
+  constructor(readonly reason: "REPORT_GONE" | "RUN_NOT_RUNNING") {
+    super(reason === "REPORT_GONE" ? "The report was moved to the Bin or deleted during generation" : "The run is no longer running (it was stopped or reclaimed)");
+    this.name = "PersistRefused";
+  }
+}
+
 /** The spec version a new generation stamps: one more than any block's provenance in the current spec. */
 export function nextSpecVersion(currentSpecJson: string): number {
   return Math.max(0, ...parseSpec(currentSpecJson).blocks.map((block) => block.provenance?.version ?? 0)) + 1;
@@ -200,8 +208,11 @@ export function nextSpecVersion(currentSpecJson: string): number {
  */
 export function persistGenerated(input: { reportId: string; runId: string; docSnapshotId: string | null; docHash: string | null; spec: ReportSpec; results: ReadonlyMap<string, QueryOutcome> }): ReportSpec {
   return db.transaction(() => {
-    const current = db.query("SELECT spec_json FROM reports WHERE id = ?").get(input.reportId) as { spec_json: string } | null;
-    if (!current) throw new Error("The report is gone");
+    // Review L1: a binned or purged report, or a run that is no longer running (abandoned, reclaimed by
+    // wave 47's lease sweep), saves nothing: the transaction rolls back.
+    const current = db.query("SELECT spec_json FROM reports WHERE id = ? AND deleted_at IS NULL").get(input.reportId) as { spec_json: string } | null;
+    if (!current) throw new PersistRefused("REPORT_GONE");
+    if (!db.query("SELECT 1 FROM report_runs WHERE id = ? AND report_id = ? AND status = 'running'").get(input.runId, input.reportId)) throw new PersistRefused("RUN_NOT_RUNNING");
     const version = nextSpecVersion(current.spec_json);
     const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId };
     const spec: ReportSpec = { version: 1, queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
@@ -220,9 +231,11 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
       insertResult.run(crypto.randomUUID(), input.runId, input.reportId, query.key, query.sql, result.sentSql, JSON.stringify(result.columns), rows.json, rows.count,
         result.truncated || rows.cut ? 1 : 0, result.rowsRead, result.bytesRead, result.chQueryId.slice(0, 128), result.ms, at);
     }
-    db.query(`UPDATE reports SET spec_json = ?, status = 'ready', doc_hash = COALESCE(?, doc_hash), last_run_at = ?, last_error = NULL, revision = revision + 1, updated_at = ? WHERE id = ?`)
+    const ran = db.query("UPDATE report_runs SET status = 'succeeded', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ? AND status = 'running'").run(at, input.runId);
+    if (ran.changes !== 1) throw new PersistRefused("RUN_NOT_RUNNING");
+    const saved = db.query(`UPDATE reports SET spec_json = ?, status = 'ready', doc_hash = COALESCE(?, doc_hash), last_run_at = ?, last_error = NULL, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL`)
       .run(specJson, input.docHash, at, at, input.reportId);
-    db.query("UPDATE report_runs SET status = 'succeeded', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ?").run(at, input.runId);
+    if (saved.changes !== 1) throw new PersistRefused("REPORT_GONE");
     return spec;
   })();
 }

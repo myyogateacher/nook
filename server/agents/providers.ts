@@ -28,6 +28,7 @@ export function parseCompat(json: string | null): ProviderCompat {
     streamUsage: value.streamUsage !== false,
     supportsTools: value.supportsTools !== false,
     ...(value.namedToolChoice === false ? { namedToolChoice: false } : {}),
+    ...(value.requiredToolChoice === false ? { requiredToolChoice: false } : {}),
     contextTokens: typeof value.contextTokens === "number" && value.contextTokens >= 1024 && value.contextTokens <= 10_000_000 ? Math.floor(value.contextTokens) : DEFAULT_COMPAT.contextTokens
   };
 }

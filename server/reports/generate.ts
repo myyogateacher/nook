@@ -11,7 +11,7 @@ import { assertBudget, capResultText, chargeUsage } from "../agents/runs";
 import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
 import { openChannel, type RunChannel } from "../agents/stream";
-import { readableReport } from "./access";
+import { ownedReport } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { cutBytes, docServerFor, docToolOf, fetchDoc, recordSnapshot, snapshotOf } from "./docSource";
 import { ReportError } from "./errors";
@@ -20,7 +20,7 @@ import { tablesNamedIn } from "./schemaCatalog";
 import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, sampleRowsTool, searchSchemaTool } from "./schemaTools";
 import { createReport, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
-import { persistGenerated, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
+import { persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
 
 /**
  * Report generation (plan wave 46, D424–D427, T367): the doc is read first (docSource.ts, no model),
@@ -80,6 +80,9 @@ export type GenerateInput = { docRef: string; serverId: string; tool?: string | 
 type Live = { controller: AbortController; userId: string; reportId: string; runId: string; agentRunId: string };
 const live = new Map<string, Live>();
 export const liveGenerations = () => [...live.values()];
+/** Slots reserved by generations that are still reading their doc (review L3). */
+const starting = new Map<string, number>();
+export const startingGenerations = () => [...starting.values()].reduce((sum, count) => sum + count, 0);
 /** Generations one person may have running at once. */
 export const GENERATIONS_PER_USER = 1;
 
@@ -158,8 +161,13 @@ export const GENERATE_TOOLS: ModelTool[] = [
   { name: "submit_report", description: "Submits the report spec (queries and blocks). Nook checks and runs every query; errors come back for another try.", parameters: SPEC_JSON_SCHEMA }
 ];
 
-/** Each step's tool choice: a tool on every step; the last three force submit_report (room for two retries). */
-export const generateToolChoice = (maxSteps: number) => (step: number): ToolChoice => step > maxSteps - GENERATE_LIMITS.submits ? { name: "submit_report" } : "required";
+/**
+ * Each step's tool choice: a tool on every step; submit_report alone, forced, on the last three steps
+ * (room for two retries) and once the run's tool calls left are fewer than a step may make (review M1:
+ * a chatty model never starves the submit; the loop exempts the forced tool from the per-run cap).
+ */
+export const generateToolChoice = (maxSteps: number) => (step: number, _last = false, state: { toolCalls: number; perRun: number; perStep: number } = { toolCalls: 0, perRun: Infinity, perStep: 0 }): ToolChoice =>
+  step > maxSteps - GENERATE_LIMITS.submits || state.perRun - state.toolCalls < state.perStep ? { name: "submit_report" } : "required";
 
 const asObject = (raw: string): Record<string, unknown> => {
   const parsed: unknown = JSON.parse(raw || "{}");
@@ -200,8 +208,22 @@ export async function startGenerate(actor: Actor, input: GenerateInput, reportId
   } catch (error) {
     refuseAgentError(error);
   }
-  if (liveGenerations().filter((item) => item.userId === actor.userId).length >= GENERATIONS_PER_USER) throw new ReportError(429, "BUSY", "You are already generating a report; wait for it to finish");
-  const existing = reportId ? readableReport(reportId, actor.userId) : null;
+  // Review L3: the person's slot is reserved before the doc is read (two requests at once cannot both
+  // pass) and released on every path; once the run is live, `live` holds it.
+  const busy = liveGenerations().filter((item) => item.userId === actor.userId).length + (starting.get(actor.userId) ?? 0);
+  if (busy >= GENERATIONS_PER_USER) throw new ReportError(429, "BUSY", "You are already generating a report; wait for it to finish");
+  starting.set(actor.userId, (starting.get(actor.userId) ?? 0) + 1);
+  try {
+    return await startReserved(actor, input, reportId, connection!, signal);
+  } finally {
+    const left = (starting.get(actor.userId) ?? 1) - 1;
+    if (left > 0) starting.set(actor.userId, left);
+    else starting.delete(actor.userId);
+  }
+}
+
+async function startReserved(actor: Actor, input: GenerateInput, reportId: string | null, connection: ProviderConnection, signal?: AbortSignal): Promise<GenerateStarted> {
+  const existing = reportId ? ownedReport(reportId, actor.userId) : null;
   // The lock is taken atomically below; this early answer only spares a doc read that could not be used.
   if (existing && db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(existing.id)) throw runInProgress();
   const datasource = usableDatasource(input.datasourceId ?? existing?.datasource_id ?? null);
@@ -211,7 +233,7 @@ export async function startGenerate(actor: Actor, input: GenerateInput, reportId
 
   const report = existing ?? (() => {
     const title = oneLine(input.title ?? "", REPORT_LIMITS.title) || oneLine(doc.title ?? "", REPORT_LIMITS.title) || "Untitled report";
-    return readableReport(createReport(actor.userId, { title, datasourceId: datasource.id }).id, actor.userId);
+    return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id }).id, actor.userId);
   })();
   db.query("UPDATE reports SET datasource_id = ?, doc_server_id = ?, doc_tool = ?, doc_arg = ?, doc_ref = ?, updated_at = ? WHERE id = ?")
     .run(datasource.id, server.id, choice.tool, input.arg?.trim() ? choice.arg : null, input.docRef, now(), report.id);
@@ -262,7 +284,7 @@ export async function startGenerate(actor: Actor, input: GenerateInput, reportId
 
 /** Regenerate from the report's saved doc (or a new link). */
 export async function regenerate(actor: Actor, reportId: string, input: Partial<GenerateInput>, signal?: AbortSignal): Promise<GenerateStarted> {
-  const row = readableReport(reportId, actor.userId);
+  const row = ownedReport(reportId, actor.userId);
   const doc = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref FROM reports WHERE id = ?").get(reportId) as { doc_server_id: string | null; doc_tool: string | null; doc_arg: string | null; doc_ref: string | null };
   const serverId = input.serverId ?? doc.doc_server_id;
   const docRef = input.docRef ?? doc.doc_ref;
@@ -277,7 +299,7 @@ export async function regenerate(actor: Actor, reportId: string, input: Partial<
 
 /** Stop: aborts the person's running generation of a report. */
 export function cancelGenerate(userId: string, reportId: string): { cancelled: boolean } {
-  readableReport(reportId, userId);
+  ownedReport(reportId, userId);
   const entry = [...live.values()].find((item) => item.reportId === reportId && item.userId === userId);
   if (!entry) return { cancelled: false };
   entry.controller.abort("stop");
@@ -305,6 +327,7 @@ async function executeGeneration(run: Execution) {
   let submits = 0;
   let accepted = false;
   let lastErrors: string[] = [];
+  let persistRefused: string | null = null;
   let steps = 0;
   let toolCallCount = 0;
   let firstToken = false;
@@ -366,6 +389,11 @@ async function executeGeneration(run: Execution) {
         try {
           persistGenerated({ reportId, runId, docSnapshotId: run.docSnapshotId, docHash: run.docHash, spec: check.spec, results: check.results });
         } catch (error) {
+          if (error instanceof PersistRefused) {
+            lastErrors = [error.message];
+            persistRefused = error.message;
+            return { text: `The spec was not saved: ${error.message}.`, ok: false, stop: true };
+          }
           if (error instanceof Error && error.message === "SPEC_TOO_LARGE") {
             lastErrors = ["The spec is larger than 512 KiB"];
             return { text: "The spec was not saved: it is larger than 512 KiB; shorten the markdown.", ok: false, stop: GENERATE_LIMITS.submits - submits <= 0 };
@@ -436,7 +464,7 @@ async function executeGeneration(run: Execution) {
     if (!accepted) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_REPORT";
-      errorMessage = lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}` : "The model finished without submitting a report";
+      errorMessage = persistRefused ? `Nothing was saved: ${persistRefused}` : lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}` : "The model finished without submitting a report";
     }
   } catch (error) {
     const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;

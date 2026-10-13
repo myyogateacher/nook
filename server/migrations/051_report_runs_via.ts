@@ -81,6 +81,12 @@ export const reportRunsViaMigration: Migration = {
     if (!VIA_CHECK.test(current)) throw new Error("agent_runs.via is not 039's CHECK; migration 051 cannot widen it");
 
     const family = agentRunsFamily(db);
+    // Review L4: the copies are made with foreign keys on, so a reference that is already broken would
+    // fail midway with SQLite's terse error; refuse first, naming the table.
+    for (const name of family) {
+      const broken = db.query(`PRAGMA foreign_key_check(${name})`).all() as Array<{ table: string; parent: string }>;
+      if (broken.length) throw new Error(`Migration 051 cannot rebuild ${name}: ${broken.length} row(s) reference a missing ${broken[0]!.parent} row (PRAGMA foreign_key_check). Repair or restore the database before upgrading; nothing was changed.`);
+    }
     const placeholders = family.map(() => "?").join(",");
     const extras = db.query(`SELECT type, name, sql FROM sqlite_master WHERE type IN ('index','trigger') AND sql IS NOT NULL AND tbl_name IN (${placeholders}) ORDER BY type, name`).all(...family) as Array<{ type: string; name: string; sql: string }>;
     const repoint = (sql: string) => family.reduce((text, name) => text.replace(new RegExp(`REFERENCES\\s+"?${quoteRe(name)}"?\\s*\\(`, "g"), `REFERENCES ${name}${SUFFIX}(`), sql);

@@ -3,7 +3,7 @@ import { createUser, db, request, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
 
 const { McpClientError, McpSession } = await import("../server/agents/mcpClient");
-const { cutBytes, docFromText, docSessions, docState, docToolArgs, fetchDoc, pickDocTool, recordSnapshot, SNAPSHOTS_KEPT } = await import("../server/reports/docSource");
+const { cutBytes, docFromText, docServerChoices, docSessions, docState, docToolArgs, docToolOf, fetchDoc, pickDocTool, recordSnapshot, SNAPSHOTS_KEPT } = await import("../server/reports/docSource");
 const { REPORT_LIMITS } = await import("../shared/reports");
 type StoredTool = import("../server/agents/toolServers").StoredTool;
 type ToolServerRow = import("../server/agents/toolServers").ToolServerRow;
@@ -128,6 +128,32 @@ describe("the doc tool", () => {
     expect(doc.bytes).toBeLessThanOrEqual(REPORT_LIMITS.docBytes);
     expect(doc.markdown.endsWith("�")).toBe(false);
     expect(cutBytes("abc", 10)).toEqual({ text: "abc", truncated: false });
+  });
+});
+
+describe("review M2: only read-only doc tools", () => {
+  test("a delete_document override is refused (DOC_TOOL_REFUSED) and never called; the auto-pick and the picker skip tools that are not auto", async () => {
+    const destructive: StoredTool = { ...tool("delete_document", { id: {} }), readOnly: false, destructive: true };
+    const unsafeFetch: StoredTool = { ...tool("fetch", { id: {} }), readOnly: false };
+    db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([destructive, unsafeFetch, tool("get_document", { url: {} })]), server.id);
+    try {
+      const row = db.query("SELECT * FROM agent_tool_servers WHERE id = ?").get(server.id) as ToolServerRow;
+      transport = new FakeTransport(() => ({ content: [{ type: "text", text: "Deleted" }] }));
+      expect(() => docToolOf(row, { tool: "delete_document", arg: "id" })).toThrow(expect.objectContaining({ code: "DOC_TOOL_REFUSED", status: 400 }));
+      // A fetch the server does not mark read-only defaults to confirm: skipped for get_document.
+      expect(docToolOf(row, {})).toEqual({ tool: "get_document", arg: "url", outline: false });
+      expect(() => docToolOf(row, { tool: "fetch" })).toThrow(expect.objectContaining({ code: "DOC_TOOL_REFUSED" }));
+      // An admin's explicit auto makes a tool usable; an admin's confirm on a read-only tool takes it away.
+      db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'auto'), (?, 'get_document', 'confirm')").run(server.id, server.id);
+      expect(docToolOf(row, {})).toEqual({ tool: "fetch", arg: "id", outline: false });
+      expect(() => docToolOf(row, { tool: "get_document" })).toThrow(expect.objectContaining({ code: "DOC_TOOL_REFUSED" }));
+      const listed = docServerChoices("member").find((item) => item.id === server.id)!;
+      expect(listed.tools.map((item) => item.name)).toEqual(["fetch"]);
+      expect(transport.calls.filter((call) => call.method === "tools/call")).toEqual([]);
+    } finally {
+      db.query("DELETE FROM agent_tool_policies WHERE server_id = ?").run(server.id);
+      db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), server.id);
+    }
   });
 });
 

@@ -41,6 +41,7 @@ const compat = z.object({
   streamUsage: z.boolean().optional(),
   supportsTools: z.boolean().optional(),
   namedToolChoice: z.boolean().optional(),
+  requiredToolChoice: z.boolean().optional(),
   contextTokens: z.number().int().min(1024).max(10_000_000).optional()
 }).strict();
 // 2026-10-08: the knowledge base policy. `models: null` is "Any"; a list has 1 to 20 model ids; `maxDims: null` is 3,072.

@@ -4,8 +4,8 @@ import { REPORT_LIMITS } from "../../shared/reports";
 import type { DocServerChoice, DocState, DocToolChoice } from "../../shared/reportsGenerate";
 import { describeMcpError, McpClientError, type McpSession } from "../agents/mcpClient";
 import { AgentError } from "../agents/status";
-import { parseTools, serverAvailableTo, serverPolicies, serverRowOrNull, sessionFor, type StoredTool, type ToolServerRow } from "../agents/toolServers";
-import { readableReport } from "./access";
+import { serverAvailableTo, serverRowOrNull, sessionFor, toolsWithPolicies, type StoredTool, type ToolServerRow } from "../agents/toolServers";
+import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
 
 /**
@@ -74,8 +74,7 @@ export const docToolArgs = (choice: DocToolChoice, ref: string): Record<string, 
 export function docServerChoices(role: string): DocServerChoice[] {
   const rows = db.query("SELECT * FROM agent_tool_servers WHERE enabled = 1 ORDER BY name COLLATE NOCASE").all() as ToolServerRow[];
   return rows.filter((row) => serverAvailableTo(row, role)).map((row) => {
-    const policies = serverPolicies(row.id);
-    const tools = parseTools(row.tools_json).filter((tool) => policies.get(tool.name) !== "off");
+    const tools = readOnlyTools(row);
     return { id: row.id, name: row.name, status: row.status, tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools) };
   });
 }
@@ -90,14 +89,25 @@ export function docServerFor(serverId: string, role: string): ToolServerRow {
   return row;
 }
 
-/** The tool to call on a server, or DOC_FETCH naming what is missing. */
+/** The tools a doc may be read with: those whose effective policy is `auto` (never `confirm` or `off`). */
+export function readOnlyTools(row: ToolServerRow, all = toolsWithPolicies(row)): StoredTool[] {
+  return all.filter((tool) => tool.policy === "auto").map(({ policy: _policy, ...tool }) => tool);
+}
+
+/** The tool to call on a server, or DOC_FETCH naming what is missing (DOC_TOOL_REFUSED for a tool that is not read-only). */
 export function docToolOf(row: ToolServerRow, override: { tool?: string | null; arg?: string | null }): DocToolChoice {
-  const tools = parseTools(row.tools_json);
+  // Review M2: only tools whose effective policy is `auto` (read-only by the server's word, or an
+  // admin's explicit auto) may read a doc; an override naming any other tool is refused, never called.
+  const all = toolsWithPolicies(row);
+  if (override.tool?.trim()) {
+    const named = all.find((tool) => tool.name === override.tool!.trim());
+    if (named && named.policy !== "auto") throw new ReportError(400, "DOC_TOOL_REFUSED", `${named.name} on ${row.name} is not a read-only tool Nook may call without asking; choose a read-only tool`);
+  }
+  const tools = readOnlyTools(row, all);
   const choice = pickDocTool(tools, override);
   if (!choice) {
     throw fetchError(override.tool ? `${row.name} has no tool named ${override.tool.slice(0, 128)}` : `${row.name} has no fetch, get_document, or read_document tool that takes an id or url; name the tool to use`);
   }
-  if (serverPolicies(row.id).get(choice.tool) === "off") throw fetchError(`An admin turned off ${choice.tool} on ${row.name}`);
   return choice;
 }
 
@@ -202,7 +212,8 @@ export function docState(reportId: string, userId: string): DocState {
 
 /** "Check doc": fetches the report's doc again and stores a snapshot when it changed. */
 export async function checkDoc(actor: { userId: string; role: string }, reportId: string, signal?: AbortSignal): Promise<DocState> {
-  readableReport(reportId, actor.userId);
+  // Review M3: Check doc writes a snapshot, so it is the owner's (wave 48's viewers only read the state).
+  ownedReport(reportId, actor.userId);
   const row = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref, doc_hash FROM reports WHERE id = ?").get(reportId) as DocRow;
   if (!row.doc_server_id || !row.doc_ref) throw new ReportError(400, "INVALID", "This report has no doc to check");
   const server = docServerFor(row.doc_server_id, actor.role);

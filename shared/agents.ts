@@ -66,6 +66,8 @@ export type ProviderCompat = {
    * Absent or true: it does; false: Nook sends `required` with only that tool offered.
    */
   namedToolChoice?: boolean;
+  /** Wave 46 review L2: whether the server takes `tool_choice: "required"`. Absent or true: it does; false: Nook sends `auto` instead. */
+  requiredToolChoice?: boolean;
   /** The context window, in (estimated) tokens, for the message window. */
   contextTokens: number;
 };

@@ -6,18 +6,16 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-Nothing. Next cycle to be chosen by the operator.
+- [ ] Known LOW leftovers below (three agents, 2026-10-13).
 
 ## Known LOW leftovers
 
-- [ ] Operator: try Take photo on a real iOS/Android phone (event, card, profile picture).
 - [ ] Security forms in `src/App.tsx` (two-factor off, regenerate recovery codes) still use native `required`; switch to `noValidate` with app messages like the key forms.
 - [ ] Scroll audit not covered: Google/TOTP re-auth dialogs, Vault protect/history/transfer, Collections row panel, Calendar/Vault/Collections dialogs at 1280.
 - [ ] Undo for removing an attachment (needs restore and re-link into Attachments).
 - [ ] Note uploads show progress as toasts, not a progress row; leaving a note mid-upload aborts without asking.
 - [ ] Whiteboard "Save as copy" thumbnail is drawn without pictures.
 - [ ] Admins cannot remove someone else's profile picture; others see a new picture only after reload.
-- [ ] Google re-auth not yet tried against real Google (production runs `AUTH_METHODS=password`).
 
 ## Standing rules for agent briefs
 

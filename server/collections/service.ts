@@ -39,8 +39,9 @@ import { canWriteContent } from "../team/userRole";
 import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
-import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "../attachments/service";
+import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment, relinkableDocument, restoreForRelink, type RemovalRecord } from "../attachments/service";
 import { linkedElsewhere } from "../attachments/keyLinks";
+import { recordRemovedLink } from "../attachments/undoTickets";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 
 /**
@@ -981,7 +982,7 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
   const { collection: initial } = requireEditableRow(rowId, userId);
   return withCollectionLock(initial.id, () => {
     const { collection } = requireEditableRow(rowId, userId);
-    const link = db.query("SELECT linked_by FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, documentId) as { linked_by: string | null } | null;
+    const link = db.query("SELECT linked_by, field_id, created_at FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, documentId) as { linked_by: string | null; field_id: string; created_at: string } | null;
     if (!link) throw new CollectionError(404, "Attachment not found");
     const fileOwner = (db.query("SELECT owner_id FROM documents WHERE id = ?").get(documentId) as { owner_id: string } | null)?.owner_id;
     if (link.linked_by !== userId && fileOwner !== userId && collection.owner_id !== userId) throw new CollectionError(403, "Only the person who attached this file, its owner, or the collection owner can remove it", "NOT_LINKER");
@@ -995,8 +996,46 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
       audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
     })();
     sourceAccessChangedHook({ kind: "document", ids: changed });
+    recordRemovedLink(userId, "row", rowId, documentId, { partId: link.field_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     return { row: rowDetail(rowId, schemaOf(collection), userId)!, documentBinned: binned > 0 };
   });
+}
+
+/**
+ * The Undo of a removal from a row (POST /api/attachments/relink, U3): an editor of the collection puts
+ * the file back in the same file field, at its old place (its link time), as a row write (revision,
+ * the row's own Undo step). The field must still be a file field (409 FIELD_GONE). The document rule is
+ * the attachment service's (relinkableDocument); an Attachments-folder file the removal binned comes
+ * out of its owner's Bin when the undoer is that owner. Already linked: nothing changes.
+ */
+export async function relinkRowDocument(userId: string, rowId: string, documentId: string, removed: RemovalRecord | null, partId: string | null) {
+  const { collection: initial } = requireEditableRow(rowId, userId);
+  const id = documentId.toLowerCase();
+  const changed: string[] = [];
+  const outcome = await withCollectionLock(initial.id, () => {
+    const { collection } = requireEditableRow(rowId, userId);
+    if (db.query("SELECT 1 FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, id)) return { relinked: false, restored: false };
+    const fieldId = removed ? removed.partId : partId;
+    return db.transaction(() => {
+      const document = relinkableDocument(id, userId, removed);
+      const field = schemaOf(collection).fields.find((item) => item.id === fieldId);
+      if (!fieldId || !field || field.type !== "file") throw new CollectionError(409, "The file field this file was in no longer exists", "FIELD_GONE");
+      const count = (db.query("SELECT COUNT(*) AS count FROM collection_row_attachments WHERE row_id = ?").get(rowId) as { count: number }).count;
+      if (count >= LIMITS.attachmentsPerRow) throw new CollectionError(409, `A row can have up to ${LIMITS.attachmentsPerRow} attachments`, "LIMIT_REACHED", { limit: LIMITS.attachmentsPerRow });
+      const restored = document.restore && restoreForRelink(document.id, userId);
+      if (document.restore && !restored) throw new CollectionError(409, "This file is being deleted from the Bin", "PURGING");
+      if (restored) changed.push(document.id);
+      const timestamp = now();
+      const before = rowLinks(rowId);
+      db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(rowId, document.id, fieldId, removed?.linkedBy ?? userId, removed?.createdAt ?? timestamp);
+      recordLinkChange(rowId, collection, userId, before, timestamp);
+      audit(userId, null, "collection.row_relink", { collectionId: collection.id, rowId, documentId: document.id, ...(restored ? { restored: true } : {}) });
+      return { relinked: true, restored };
+    })();
+  });
+  if (changed.length) sourceAccessChangedHook({ kind: "document", ids: changed });
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------

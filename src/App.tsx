@@ -92,7 +92,8 @@ import { calendarHomeRoute, localDate } from "./calendarRoute";
 import { dialogPopDirection, popStateClosedDialog, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled, type PopDirection } from "./historyDialogs";
 import { createFilesHistoryState, readFilesHistorySnapshot, sameFilesSnapshot, type FilesPanel } from "./filesNavigation";
 import { resolveFilesPanel } from "./filesRoute";
-import { NoteEditor } from "./editor/NoteEditor";
+import { NoteEditor, type NoteUploadControl } from "./editor/NoteEditor";
+import { LEAVE_UPLOADS_CONFIRM } from "./editor/uploadSlots";
 import { BinnedFilesConfirm } from "./editor/BinnedFilesConfirm";
 import { clearCardSummaries, OPEN_PATH_EVENT } from "./editor/whiteboardEmbed";
 import { createHistoryState, isMobileViewport, readHistorySnapshot, sameSnapshot, type FolderSelection, type MobileNavigationSnapshot, type MobilePanel } from "./mobileNavigation";
@@ -989,6 +990,47 @@ export function App() {
   const deleteOpenerRef = useRef<HTMLElement | null>(null);
   // The app's own confirms: signing out with unsaved whiteboard copies, discarding a draft.
   const appConfirm = useConfirm();
+  // U4: uploads in flight in the open note (NoteEditor). Leaving the note asks first, and leaving
+  // cancels them: switching notes or folders, a new note, another section (confirmLeaveUploads),
+  // browser Back or Forward (a leave guard), and closing the tab (the browser's own prompt).
+  const [noteUploads, setNoteUploads] = useState(0);
+  const noteUploadControl = useRef<NoteUploadControl | null>(null);
+  const [uploadLeaveMove, setUploadLeaveMove] = useState<PopDirection | null>(null);
+  async function confirmLeaveUploads() {
+    if (!(noteUploadControl.current?.count() ?? 0)) return true;
+    if (!await appConfirm.ask(LEAVE_UPLOADS_CONFIRM)) return false;
+    noteUploadControl.current?.cancelAll();
+    return true;
+  }
+  useLeaveGuard(noteUploads > 0 && uploadLeaveMove === null, (direction) => {
+    void appConfirm.ask(LEAVE_UPLOADS_CONFIRM).then((confirmed) => {
+      if (!confirmed) return;
+      noteUploadControl.current?.cancelAll();
+      setUploadLeaveMove(direction);
+    });
+  });
+  useEffect(() => {
+    // Once the guard (and its sentinel) is gone, the move Back or Forward is repeated.
+    if (noteUploads > 0 || uploadLeaveMove === null) return undefined;
+    const direction = uploadLeaveMove;
+    let cancel = () => undefined as void;
+    const timer = setTimeout(() => {
+      cancel = whenHistorySettled(() => {
+        setUploadLeaveMove(null);
+        window.history.go(repeatDelta(direction));
+      });
+    }, 0);
+    return () => { clearTimeout(timer); cancel(); };
+  }, [noteUploads, uploadLeaveMove]);
+  useEffect(() => {
+    if (noteUploads === 0) return undefined;
+    const onUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [noteUploads]);
   const [noteSort, setNoteSort] = useState<NoteSort>("updated-desc");
   const [sortOpen, setSortOpen] = useState(false);
   // Notes → New folder (D91): the Files name dialog, a history layer; focus goes back to the button.
@@ -1427,6 +1469,7 @@ export function App() {
 
   async function createNote() {
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1577,6 +1620,7 @@ export function App() {
       return;
     }
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1601,6 +1645,7 @@ export function App() {
       return;
     }
     if (switchingRef.current) return;
+    if (!await confirmLeaveUploads()) return;
     switchingRef.current = true;
     setSwitchingNote(true);
     try {
@@ -1754,6 +1799,7 @@ export function App() {
 
   async function leaveNotes() {
     if (switchingRef.current) return false;
+    if (!await confirmLeaveUploads()) return false;
     switchingRef.current = true;
     // Lock the editor so keystrokes cannot land between the save and the post-publish reload.
     setLeavingNotes(true);
@@ -2447,7 +2493,8 @@ export function App() {
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
             <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify}
-              onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }} />
+              onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }}
+              onUploadsChange={setNoteUploads} uploadControl={noteUploadControl} />
           </article>
         </>}
       </section>

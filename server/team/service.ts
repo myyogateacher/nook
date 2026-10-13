@@ -16,7 +16,8 @@ import { userRole } from "./userRole";
 import { readPolicies } from "./policies";
 import { pauseRoutinesOf } from "../inbox/routineHooks";
 import { mailAccountEvent, mailRoleChanged } from "../mail/triggers";
-import { avatarUrlFor } from "../avatars";
+import { AVATAR_REMOVED, avatarSourceOf, avatarUrlFor, removeAvatarFile } from "../avatars";
+import { notifyAccess } from "../access/notices";
 import { rotateOnLostReach, snapshotVaultReach } from "../vault/members";
 import { userUnblockedHook } from "../knowledge/hooks";
 
@@ -33,7 +34,9 @@ export type TeamErrorCode =
   | "ALREADY_BLOCKED"
   | "NOT_BLOCKED"
   | "GUEST_SHARE_DISABLED"
-  | "SERVICE_ROLE";
+  | "SERVICE_ROLE"
+  | "INTEGRATION"
+  | "NO_AVATAR";
 
 export class TeamError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, readonly code: TeamErrorCode, message: string, readonly details?: Record<string, unknown>) {
@@ -345,3 +348,30 @@ export function revokeSessions(actor: TeamActor, targetId: string, options: { vi
     return { sessionsRevoked: sessions };
   });
 }
+
+/**
+ * Removes someone else's profile picture (T353): the account gets the "removed" marker, so Google
+ * sign-ins leave the letters, and the stored file is deleted through the object store. The member
+ * hears it in the bell and can upload again, or choose their Google picture, in Settings. Integrations
+ * never have a picture, and admins change their own in Settings. The audit row carries ids only.
+ */
+export async function removeMemberAvatar(actor: TeamActor, targetId: string, options: { via: TeamVia }) {
+  requireManager(actor);
+  const previous = write(() => {
+    const target = db.query("SELECT id, kind, avatar_id FROM users WHERE id = ?").get(targetId) as { id: string; kind: AccountKind; avatar_id: string | null } | null;
+    if (!target) throw notFound();
+    if (target.kind !== "person") throw new TeamError(400, "INTEGRATION", "Integrations have no profile picture");
+    if (actor && actor.id === target.id) throw new TeamError(409, "SELF_ACTION", "Change your own picture in Settings");
+    const source = avatarSourceOf(target.avatar_id);
+    if (source === "none") throw new TeamError(409, "NO_AVATAR", "This person has no profile picture");
+    const result = db.query("UPDATE users SET avatar_id = ? WHERE id = ? AND avatar_id = ?").run(AVATAR_REMOVED, target.id, target.avatar_id);
+    if (result.changes !== 1) throw new TeamError(409, "NO_AVATAR", "This picture changed while you were removing it. Review it and try again.");
+    notifyAccess({ userId: target.id, kind: "avatar_removed", actorId: actor?.id ?? null });
+    audit(actor?.id ?? null, null, "account.avatar_removed_by_admin", auditMeta(options.via, { targetId: target.id, previousSource: source }));
+    return target.avatar_id;
+  });
+  // After the pointer moved: the old URL is already 404, and the hourly sweep retries a failed delete.
+  await removeAvatarFile(previous);
+  return { removed: true as const };
+}
+

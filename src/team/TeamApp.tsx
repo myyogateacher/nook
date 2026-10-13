@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, TriangleAlert, UserCheck, UserX, Users, X, ChevronRight } from "lucide-react";
+import { ChevronLeft, ImageOff, LogOut, RotateCcw, Search, ShieldAlert, ShieldCheck, TriangleAlert, UserCheck, UserX, Users, X, ChevronRight } from "lucide-react";
 import { ApiError } from "../api";
 import { readHistoryDepth } from "../appShellNavigation";
 import { formatBytes } from "../files/filesApi";
@@ -9,8 +9,9 @@ import { Select } from "../ui/Select";
 import { Avatar } from "../ui/Avatar";
 import { TeamGoogleCard } from "./TeamGoogle";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useConfirm } from "../ui/useConfirm";
 import { blockedCountOf, claimBlockedCount, reportBlockedCount } from "./blockedCount";
-import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
+import { blockTeamMember, getTeamMember, listTeam, listTeamInvites, removeTeamAvatar, revokeTeamSessions, setTeamRole, unblockTeamMember, type TeamInviteList, type TeamMember, type TeamMemberDetail } from "./teamApi";
 import { TeamInvites } from "./TeamInvites";
 import { TeamEmailLog } from "./TeamEmailLog";
 import { TeamKeys } from "./TeamKeys";
@@ -250,6 +251,30 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
     void loadList();
   }, [flash, loadList]);
 
+  // T353: the app's own confirm (a history layer: Back cancels), then the admin-only route.
+  const { ask, confirmElement } = useConfirm();
+  const removePicture = useCallback(async (member: TeamMemberDetail) => {
+    const confirmed = await ask({
+      title: `Remove ${member.displayName}'s profile picture?`,
+      message: "Everyone sees their initials instead. The picture is deleted, and they get a notice. They can add a picture again in Settings.",
+      confirmLabel: "Remove picture",
+      danger: true
+    });
+    if (!confirmed) return;
+    try {
+      const result = await removeTeamAvatar(member.id);
+      setDetail((current) => current?.id === member.id ? result.member : current);
+      notify.success(`${member.displayName}'s profile picture was removed`);
+      void loadList();
+    } catch (reason) {
+      notify.error(messageOf(reason, "Could not remove the picture"));
+      if (errorCode(reason) === "NO_AVATAR") {
+        void loadList();
+        getTeamMember(member.id).then(({ member: fresh }) => setDetail((current) => current?.id === fresh.id ? fresh : current), () => undefined);
+      }
+    }
+  }, [ask, loadList]);
+
   const all = members ?? [];
   const visible = useMemo(() => filterTeam(all, filter, query), [all, filter, query]);
   const chips = useMemo(() => teamFilters(all, admin), [all, admin]);
@@ -355,16 +380,17 @@ export function TeamSection({ route, role, totpEnabled = false, navigate, flash,
 
     <section ref={detailPaneRef} className="team-detail-pane split-pane" aria-label="Team member">
       {routeUserId && detail?.id === routeUserId
-        ? <MemberDetail member={detail} members={all} admin={admin} onBack={back} onAction={setDialog} onRoleChosen={(to) => setDialog({ kind: "role", to })} onOpenAccess={() => openAccess(detail.id)} />
+        ? <MemberDetail member={detail} members={all} admin={admin} onBack={back} onAction={setDialog} onRoleChosen={(to) => setDialog({ kind: "role", to })} onOpenAccess={() => openAccess(detail.id)} onRemovePicture={() => void removePicture(detail)} />
         : routeUserId
           ? <p className="team-loading" role="status">Loading…</p>
           : <div className="team-placeholder"><Users aria-hidden="true" /><p>Choose someone to see their team role{admin ? ", account details, and activity" : ""}.</p></div>}
     </section>
     {dialogs}
+    {confirmElement}
   </div>;
 }
 
-function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, onOpenAccess }: {
+function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, onOpenAccess, onRemovePicture }: {
   member: TeamMemberDetail;
   members: readonly TeamMember[];
   admin: boolean;
@@ -372,6 +398,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
   onAction: (dialog: Dialog) => void;
   onRoleChosen: (role: Role) => void;
   onOpenAccess?: () => void;
+  onRemovePicture?: () => void;
 }) {
   const lockedByLastAdmin = lastAdminReason(member, members);
   const roleOptions = teamRoleOptions();
@@ -414,6 +441,7 @@ function MemberDetail({ member, members, admin, onBack, onAction, onRoleChosen, 
       {blocked
         ? <button type="button" className="team-action" onClick={() => onAction({ kind: "unblock" })}><UserCheck />Unblock</button>
         : <button type="button" className="team-action danger" onClick={() => onAction({ kind: "block" })} disabled={Boolean(lockedByLastAdmin)}><UserX />Block</button>}
+      {member.avatarUrl && onRemovePicture && <button type="button" className="team-action" onClick={onRemovePicture}><ImageOff />Remove profile picture</button>}
     </section>}
     {admin && onOpenAccess && <button type="button" className="team-invites-row team-access-row" onClick={onOpenAccess}>
       <span className="team-invites-icon" aria-hidden="true"><ShieldCheck /></span>

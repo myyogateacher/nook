@@ -10,8 +10,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## Known LOW leftovers
 
-- [ ] Avatar: an old picture URL already in the browser cache (1 day) keeps showing until evicted; the 404 refresh only helps when the URL is requested again.
-- [ ] Team: no rendered UI test for "Remove profile picture" (Team client tests can't load member details).
 - [ ] Attachment Undo records live in memory (60 s, cleared by any later change to the link): after a restart only the owner can Undo, the file goes back at the end, and a Files item from outside Attachments needs re-attaching.
 - [ ] Event sheet: removals staged before Save can be un-staged, but there is no Undo after Save.
 - [ ] Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.

@@ -394,3 +394,74 @@ describe("generate", () => {
     await waitForRun(again.body.run.id);
   });
 });
+
+describe("generation and wave 47's refresh (merged)", () => {
+  test("generate in progress → refresh is 409; generate finishes → the viewer has its results and refresh succeeds", async () => {
+    // Every guarded select waits, so the generation is still running when the refresh asks.
+    fake.state.delayMs = 300;
+    let reportId = "";
+    let runId = "";
+    try {
+      const started = await generate(member, { title: "Merged lock" });
+      expect(started.status).toBe(202);
+      reportId = started.body.report.id;
+      runId = started.body.run.id;
+      const lease = db.query("SELECT kind, status, lease_until FROM report_runs WHERE id = ?").get(runId) as { kind: string; status: string; lease_until: string | null };
+      expect(lease).toMatchObject({ kind: "generate", status: "running" });
+      expect(Date.parse(lease.lease_until!)).toBeGreaterThan(Date.now());
+
+      const locked = await send(member, "POST", `/reports/${reportId}/refresh`, {});
+      expect(locked.status).toBe(409);
+      expect(locked.body).toMatchObject({ code: "RUN_IN_PROGRESS", runId });
+      expect((await send(member, "POST", `/reports/${reportId}/refresh`, { queryKey: "daily_revenue" })).status).toBe(409);
+      // The viewer sees the generation as the report's running run.
+      expect((await send(member, "GET", `/reports/${reportId}/results`)).body.running).toMatchObject({ id: runId, kind: "generate" });
+      // Wave 47's sweep leaves a live generation alone (its lease has not run out).
+      const { abandonExpiredReportRuns } = await import("../server/reports/refresh");
+      expect(abandonExpiredReportRuns(Date.now(), reportId)).toBe(0);
+
+      expect((await waitForRun(runId)).status).toBe("succeeded");
+    } finally {
+      fake.state.delayMs = 0;
+    }
+    expect(db.query("SELECT lease_until FROM report_runs WHERE id = ?").get(runId)).toEqual({ lease_until: null });
+
+    // The new spec's first results are what the viewer reads, with no refresh.
+    const spec = (await send(member, "GET", `/reports/${reportId}`)).body.report.spec as { queries: Array<{ key: string }> };
+    const view = await send(member, "GET", `/reports/${reportId}/results`);
+    expect(view.body.running).toBeNull();
+    expect(view.body.results.map((item: Json) => item.queryKey)).toEqual(spec.queries.map((query) => query.key));
+    expect(view.body.results.every((item: Json) => item.result?.runId === runId && !item.stale)).toBe(true);
+
+    const refreshed = await send(member, "POST", `/reports/${reportId}/refresh`, {});
+    expect(refreshed.status).toBe(202);
+    const until = Date.now() + 10_000;
+    let run: Json = refreshed.body.run;
+    while (run.status === "running") {
+      if (Date.now() > until) throw new Error("the refresh did not finish");
+      await Bun.sleep(20);
+      run = (await send(member, "GET", `/reports/${reportId}/runs/${run.id}`)).body.run;
+    }
+    expect(run.status).toBe("succeeded");
+    // Both runs are in the history: the generation was not pruned or abandoned.
+    const runs = (await send(member, "GET", `/reports/${reportId}/runs`)).body.runs as Json[];
+    expect(runs.map((item) => [item.kind, item.status])).toEqual([["refresh", "succeeded"], ["generate", "succeeded"]]);
+  });
+
+  test("a generation whose lease ran out is abandoned by wave 47's sweep and its live copy stops", async () => {
+    fake.state.delayMs = 300;
+    try {
+      const started = await generate(member, { title: "Lease lost" });
+      expect(started.status).toBe(202);
+      const { id: runId } = started.body.run;
+      db.query("UPDATE report_runs SET lease_until = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), runId);
+      const { abandonExpiredReportRuns } = await import("../server/reports/refresh");
+      expect(abandonExpiredReportRuns(Date.now(), started.body.report.id)).toBe(1);
+      const finished = await waitForRun(runId);
+      expect(finished.status).toBe("abandoned");
+      expect(liveGenerations().some((item) => item.runId === runId)).toBe(false);
+    } finally {
+      fake.state.delayMs = 0;
+    }
+  });
+});

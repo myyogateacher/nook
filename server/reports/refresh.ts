@@ -118,6 +118,13 @@ async function killRunQueries(datasourceId: string | null, runId: string, keys: 
   await Promise.all(keys.map((key) => killQuery(row, runQueryId(runId, key))));
 }
 
+const abandonHooks = new Set<(runId: string, kind: RunRow["kind"]) => void>();
+/** Other run kinds (generation) stop their in-process copy when the sweep abandons their run. */
+export function onRunAbandoned(hook: (runId: string, kind: RunRow["kind"]) => void) {
+  abandonHooks.add(hook);
+  return () => { abandonHooks.delete(hook); };
+}
+
 /** A running row without a lease (a run kind that never set one) is abandoned this long after it started. */
 export const NO_LEASE_GRACE_MS = 15 * 60_000;
 
@@ -142,6 +149,7 @@ export function abandonExpiredReportRuns(nowMs = Date.now(), reportId?: string, 
     count += 1;
     // The process holding it (if any) stops at its next heartbeat; this one aborts its own copy now.
     active.get(run.id)?.controller.abort();
+    for (const hook of abandonHooks) { try { hook(run.id, run.kind); } catch { /* best effort */ } }
     const keys = parseKeys(run.query_keys_json) ?? parseSpec(run.spec_json).queries.map((query) => query.key);
     void killRunQueries(run.datasource_id, run.id, keys);
     audit(run.created_by, null, "reports.run.abandoned", { reportId: run.report_id, runId: run.id, kind: run.kind });
@@ -333,6 +341,10 @@ export type RefreshStart = { run: ReportRun; done: Promise<ReportRun> };
 export function startRefresh(userId: string, reportId: string, options: { trigger: RunTrigger; queryKey?: string | null; nowMs?: number }): RefreshStart {
   const report = readableReport(reportId, userId);
   const datasource = usableDatasource(report.datasource_id);
+  // A run in progress answers first: a report's first generation holds the lock before it has queries.
+  abandonExpiredReportRuns(options.nowMs ?? Date.now(), reportId);
+  const holder = runningRun(reportId);
+  if (holder) throw new ReportError(409, "RUN_IN_PROGRESS", "This report is already running; wait for it to finish", { runId: holder.id });
   const spec = parseSpec(report.spec_json);
   if (!spec.queries.length) throw new ReportError(409, "INVALID", "This report has no saved queries to refresh yet");
   const queries = options.queryKey ? spec.queries.filter((query) => query.key === options.queryKey) : spec.queries;

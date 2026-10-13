@@ -18,7 +18,8 @@ import { ReportError } from "./errors";
 import { adHocQueryId, runGuarded } from "./runner";
 import { tablesNamedIn } from "./schemaCatalog";
 import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, sampleRowsTool, searchSchemaTool } from "./schemaTools";
-import { createReport, reportDetail } from "./service";
+import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns } from "./refresh";
+import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
 
@@ -224,6 +225,9 @@ export async function startGenerate(actor: Actor, input: GenerateInput, reportId
 
 async function startReserved(actor: Actor, input: GenerateInput, reportId: string | null, connection: ProviderConnection, signal?: AbortSignal): Promise<GenerateStarted> {
   const existing = reportId ? ownedReport(reportId, actor.userId) : null;
+  // Wave 47's lease rules: a run whose lease ran out is abandoned before the lock is checked, so a
+  // stuck refresh (or generation) does not refuse this one until the next scheduler tick.
+  if (existing) abandonExpiredReportRuns(Date.now(), existing.id);
   // The lock is taken atomically below; this early answer only spares a doc read that could not be used.
   if (existing && db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(existing.id)) throw runInProgress();
   const datasource = usableDatasource(input.datasourceId ?? existing?.datasource_id ?? null);
@@ -493,12 +497,28 @@ async function executeGeneration(run: Execution) {
     const code: RunErrorCode = errorCode === "BUDGET_EXCEEDED" || errorCode === "PROVIDER_ERROR" || errorCode === "MODEL_TIMEOUT" || errorCode === "EGRESS_REFUSED" || errorCode === "TOO_LARGE" ? errorCode : "INTERNAL";
     if (status !== "cancelled") channel.emit({ type: "error", data: { code, message } });
   }
+  if (accepted) {
+    // Wave 47's retention: the generate run joins the report's run history, pruned like a refresh's.
+    try {
+      const row = db.query("SELECT spec_json FROM reports WHERE id = ?").get(reportId) as { spec_json: string } | null;
+      if (row) pruneRuns(reportId, parseSpec(row.spec_json));
+    } catch { /* retention is best effort */ }
+  }
   audit(userId, null, "reports.generate.finish", { reportId, runId, agentRunId, status, ok: accepted, steps, toolCalls: toolCallCount, submits, queries: sqlRuns, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens });
   channel.emit({ type: "done", data: { status, messageId: runId } });
   channel.close();
 }
 
-/** Boot: generation runs the previous process left running are abandoned (their agent_runs rows are marked interrupted by the agents module). */
+// Wave 47's lease sweep may abandon a generation whose lease ran out: this process stops its copy.
+onRunAbandoned((runId) => live.get(runId)?.controller.abort("abandoned"));
+
+/**
+ * Boot: generation runs the previous process left running are abandoned (their agent_runs rows are
+ * marked interrupted by the agents module). It runs before wave 47's abandonRunsAtBoot, which then
+ * finds only refresh runs still running; both update only `status = 'running'` rows, so either order
+ * and a second pass are no-ops. Wave 47's KILL QUERY targets refresh query ids, which a generation's
+ * ad-hoc `run_sql` ids never match, so skipping it here loses nothing.
+ */
 export function abandonGenerateRuns(): number {
   return db.query("UPDATE report_runs SET status = 'abandoned', error = 'The server restarted during generation', finished_at = ?, lease_until = NULL WHERE status = 'running' AND kind = 'generate'").run(now()).changes;
 }

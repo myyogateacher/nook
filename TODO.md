@@ -2,15 +2,22 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-08):** production runs **v0.34.0** (admin limits on knowledge-base embedding models and sizes). Released migrations are immutable: **001–044**.
+**Current state (2026-10-13):** production runs **v0.35.0** (uploads everywhere, optional S3 storage, profile pictures, Sonner toasts with Undo, Google re-auth fix). Released migrations are immutable: **001–048** (045 unused).
 
 ## In flight
 
-- [ ] **v0.35.0 — uploads everywhere + S3 storage.** All features on main (f42081e). Review and QA done; release blocked on fixes (both agents stopped at the usage limit on 2026-10-12; resume them or relaunch from their briefs): (1) branch `v035-fixes`: review MEDIUM 1 (editor-planted file refs in notes link on owner publish, plus the boot backfill), MEDIUM 2 (notes-only MCP key reads and shares any file; calendar/tasks MCP re-link), LOW restore unlinked attachment into Attachments, LOW sweep race and cost; migration 048 if needed. (2) branch `v035-client-fixes`: HIGH Files CSS order in the production build (binUndo chunk CSS before index CSS), HIGH multi-file paste or drop into a note keeps only the last, LOWs (picker folder name, Bin restore toast type, stale /files URL after binning, pinned footer in event editor at 390, native validation bubble on New API key), finish the scroll audit (Team, Vault, Collections, Settings). Then release, deploy, GitHub release. Operator to try Take photo on a real phone (QA instance).
+Nothing. Next cycle to be chosen by the operator.
 
 ## Known LOW leftovers
 
-None open.
+- [ ] Operator: try Take photo on a real iOS/Android phone (event, card, profile picture).
+- [ ] Security forms in `src/App.tsx` (two-factor off, regenerate recovery codes) still use native `required`; switch to `noValidate` with app messages like the key forms.
+- [ ] Scroll audit not covered: Google/TOTP re-auth dialogs, Vault protect/history/transfer, Collections row panel, Calendar/Vault/Collections dialogs at 1280.
+- [ ] Undo for removing an attachment (needs restore and re-link into Attachments).
+- [ ] Note uploads show progress as toasts, not a progress row; leaving a note mid-upload aborts without asking.
+- [ ] Whiteboard "Save as copy" thumbnail is drawn without pictures.
+- [ ] Admins cannot remove someone else's profile picture; others see a new picture only after reload.
+- [ ] Google re-auth not yet tried against real Google (production runs `AUTH_METHODS=password`).
 
 ## Standing rules for agent briefs
 

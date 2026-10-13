@@ -151,11 +151,14 @@
 .report-overflow-menu .report-overflow-danger { color: #fca5a5; }
 .report-overflow-menu .report-overflow-danger:hover, .report-overflow-menu .report-overflow-danger:focus-visible { background: #3a1d1d; color: #fecaca; }
 .report-overflow-menu .report-narrow-only { display: none; }
+.report-narrow-only-menu { display: none; }
 .report-menu-comment { display: flex; align-items: center; gap: 8px; }
 @media (max-width: 640px) {
   .report-header-actions .report-wide-only { display: none; }
   .report-overflow-menu .report-narrow-only { display: flex; }
-  .report-header-actions button { flex: 1 1 auto; justify-content: center; }
+  .report-narrow-only-menu { display: block; }
+  .report-header-actions > button { flex: 1 1 auto; justify-content: center; }
+  .report-header-actions .report-overflow-menu button { flex: none; justify-content: flex-start; }
   .report-header-actions .report-overflow { flex: none; }
   .report-header-actions .report-overflow-button { flex: none; }
 }

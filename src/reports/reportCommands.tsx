@@ -66,6 +66,7 @@ export function ReportOverflowMenu({ items, label = "More actions" }: { items: M
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  const visibleItems = () => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not([disabled])") ?? [])].filter((item) => item.getClientRects().length > 0);
   const close = (focusButton = true) => {
     setOpen(false);
     if (focusButton) buttonRef.current?.focus();
@@ -77,13 +78,11 @@ export function ReportOverflowMenu({ items, label = "More actions" }: { items: M
     if (!open) return undefined;
     const onClick = (event: MouseEvent) => { if (!(event.target instanceof Node && rootRef.current?.contains(event.target))) closeRef.current(false); };
     window.addEventListener("click", onClick);
-    // Focus the first item when the menu opens.
-    const first = rootRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]:not([disabled])");
-    first?.focus();
+    // Focus the first item shown (the phone-only ones are hidden on wider screens) when the menu opens.
+    visibleItems()[0]?.focus();
     return () => window.removeEventListener("click", onClick);
   }, [open]);
 
-  const visibleItems = () => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not([disabled])") ?? [])].filter((item) => item.offsetParent !== null || item.getClientRects().length > 0);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const list = visibleItems();
     const at = list.indexOf(document.activeElement as HTMLButtonElement);
@@ -96,10 +95,17 @@ export function ReportOverflowMenu({ items, label = "More actions" }: { items: M
     else if (event.key === "Tab") setOpen(false);
   };
   if (!items.length) return null;
-  return <div className="report-overflow" ref={rootRef}>
+  // Only phone-only items (a reader's Schedule): wider screens show them in the header, so no menu there.
+  const narrowOnly = items.every((item) => item.narrowOnly);
+  return <div className={`report-overflow${narrowOnly ? " report-narrow-only-menu" : ""}`} ref={rootRef}>
     <button ref={buttonRef} type="button" className="secondary-button report-overflow-button" aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label} title={label}
       onClick={() => setOpen((value) => !value)}
-      onKeyDown={(event) => { if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !open) { event.preventDefault(); setOpen(true); } }}>
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        event.preventDefault();
+        if (!open) setOpen(true);
+        else (event.key === "ArrowDown" ? visibleItems()[0] : visibleItems().at(-1))?.focus();
+      }}>
       <MoreHorizontal aria-hidden="true" />
     </button>
     {open && <div id={menuId} className="report-overflow-menu" role="menu" aria-label={label} onKeyDown={onKeyDown}>

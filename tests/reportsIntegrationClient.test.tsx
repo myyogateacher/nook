@@ -59,6 +59,10 @@ describe("the report header's overflow menu", () => {
     expect(markup).toContain('aria-label="More report actions"');
     expect(markup).not.toContain('role="menu"');
     expect(renderToStaticMarkup(<ReportOverflowMenu items={[]} />)).toBe("");
+    // The owner's menu shows everywhere; a reader's (phone-only Schedule) only on a phone.
+    expect(markup).not.toContain("report-narrow-only-menu");
+    const reader = renderToStaticMarkup(<ReportOverflowMenu items={overflowItems({ ownerWrite: false, commands, ...handlers })} />);
+    expect(reader).toContain('class="report-overflow report-narrow-only-menu"');
   });
 
   test("inside the page's commands provider the viewer hides its own Refresh all and Schedule", async () => {

@@ -39,7 +39,8 @@
 .report-changes-toggle { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .report-changes-toggle input { width: 20px; height: 20px; }
 .report-changes-empty, .report-changes-readonly { margin: 0; color: var(--report-muted); }
-.report-changes svg, .report-edit-sheet svg { width: 16px; height: 16px; flex: none; }
+/* Icons only: a chart (ECharts draws SVG) or a KPI sparkline in a proposal keeps its own size. */
+.report-changes svg:not(.report-chart-canvas svg, .report-kpi-spark), .report-edit-sheet svg:not(.report-chart-canvas svg, .report-kpi-spark) { width: 16px; height: 16px; flex: none; }
 
 .report-changes-thread, .report-versions, .report-arrange, .report-share-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .report-instruction { border: 1px solid var(--report-border); border-radius: 12px; padding: 10px 12px; background: var(--report-surface); display: grid; gap: 6px; min-width: 0; }
@@ -96,6 +97,8 @@
 .report-share-option span { display: grid; }
 .report-share-option small { color: var(--report-muted); }
 .report-share-list li { display: flex; align-items: center; gap: 8px; }
+/* The access picker keeps a fixed width so the name never collapses to a letter a line. */
+.report-share-list li > :not(.report-share-name):not(.icon-button) { flex: 0 0 auto; width: 170px; max-width: 45%; }
 .report-share-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
 .report-comment-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
 .report-comment-button svg { width: 15px; height: 15px; }

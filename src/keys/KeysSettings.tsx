@@ -417,7 +417,10 @@ function useKeyReauth(totpEnabled: boolean) {
   return {
     body: () => ({ ...(route.viaPassword ? reauthPassword(password) : {}), ...(withCode ? { totpCode: code } : {}) }),
     /** Why the request cannot be sent yet, or null. */
-    blocked: () => !route.viaPassword && account && !googleConfirmed(account) ? "Confirm with Google first. Or use your password instead." : null,
+    // v0.35.0 QA: the forms set noValidate, so the app says what is missing instead of the browser's bubble.
+    blocked: () => !route.viaPassword && account && !googleConfirmed(account) ? "Confirm with Google first. Or use your password instead."
+      : route.viaPassword && !password ? "Enter your password to confirm."
+      : withCode && !/^[0-9]{6}$/.test(code) ? "Enter the six-digit code from your authenticator app." : null,
     failed: (reason: unknown) => { if (isGoogleReauthRequired(reason)) setExpired(true); },
     fields: (disabled: boolean) => <ReauthFields account={account} viaPassword={route.viaPassword} toggle={route.toggle} withCode={withCode} expired={expired} password={password} code={code} onPassword={setPassword} onCode={setCode} disabled={disabled} />
   };
@@ -495,7 +498,7 @@ function CreateKeyDialog({ policy, role, totpEnabled, allowVault, preset: preset
   }
 
   return <KeysDialog title="New API key" description="Choose what this key may do. You can narrow it later without a password; adding access needs a new key." onClose={onClose} busy={busy} wide>
-    <form className="keys-form" onSubmit={submit}>
+    <form className="keys-form" onSubmit={submit} noValidate>
       {allowVault && <div className="keys-select-field"><span id="keys-kind-label">Kind</span><Select<"general" | "vault"> labelledBy="keys-kind-label" label="Kind" value={kind} disabled={busy}
         options={[
           { value: "general", label: "General key", description: "Notes, Files, Tasks, and the other modules" },
@@ -592,6 +595,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
     event.preventDefault();
     const { grants, error: grantError } = isVault ? vaultRowsToGrants(vaultRows) : rowsToGrants(rows);
     if (grantError) return setError(grantError);
+    if (!name.trim()) return setError("Give the key a name.");
     if (isVault && !vaultRowsNarrow(vaultCeiling, vaultRows, Boolean(apiKey.vault?.protectedAccess))) return setError("Editing can only remove access. Create a new key or rotate this one to add access.");
     const body: NarrowBody = {};
     if (isVault && mcpValues !== Boolean(apiKey.vault?.allowMcpValueReads)) body.allowMcpValueReads = mcpValues;
@@ -622,7 +626,7 @@ function EditKeyDialog({ apiKey, policy, role, onClose, onSaved }: { apiKey: Api
 
   const hasSelectors = ceiling.some((row) => SELECTOR_KINDS[row.module]);
   return <KeysDialog title={`Edit ${apiKey.name}`} description={`Editing can only remove access, bring the expiry closer, or rename. Rotate the key to add access, surfaces, or addresses.${hasSelectors ? " You can narrow “all” to chosen items." : ""}`} onClose={onClose} busy={busy} wide>
-    <form className="keys-form" onSubmit={submit}>
+    <form className="keys-form" onSubmit={submit} noValidate>
       <label className="keys-input">Name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} required disabled={busy} autoComplete="off" /></label>
       <label className="keys-input">Description (optional)<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} disabled={busy} autoComplete="off" /></label>
       {apiKey.surfaces === "both" && <div className="keys-select-field"><span id="keys-edit-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-edit-surface" label="Where it is used" value={surfaces} options={surfaceChoices} onChange={setSurfaces} disabled={busy} /></div>}
@@ -693,7 +697,7 @@ function RotateKeyDialog({ apiKey, policy, role, totpEnabled, onClose, onRotated
   }
 
   return <KeysDialog title={`Rotate ${apiKey.name}?`} description="You get a new secret and a fresh lifetime. You may also change what the new key can do, including adding access, surfaces, or addresses. Routines that use this key move to the new one. Update your clients before the old key stops." onClose={onClose} busy={busy} wide>
-    <form className="keys-form" onSubmit={submit}>
+    <form className="keys-form" onSubmit={submit} noValidate>
       <div className="keys-select-field"><span id="keys-rotate-surface">Where it is used</span><Select<KeySurfaces> labelledBy="keys-rotate-surface" label="Where it is used" value={surfaces} options={surfaceChoices(policy)} onChange={setSurfaces} disabled={busy} /></div>
       {!isVault && <fieldset className="keys-fieldset"><legend>Access</legend><GrantBuilder rows={rows} onChange={setRows} role={role} policy={policy} disabled={busy} /></fieldset>}
       {isVault && <fieldset className="keys-fieldset"><legend>Vault access</legend><VaultGrantBuilder rows={vaultRows} onChange={setVaultRows} vaults={vaults} role={role} protectedAccess={protectedAccess} disabled={busy} /></fieldset>}

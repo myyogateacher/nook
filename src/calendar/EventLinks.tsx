@@ -80,7 +80,7 @@ export function NoteLinkPicker({ linkedIds, onPick, onClose }: NotePickerProps) 
   }
 
   return <ModalDialog title="Link a note" eyebrow="Event" onClose={onClose} variant="sheet" busy={busy}>
-    <div className="calendar-form">
+    <div className="calendar-form file-dialog-body">
       <label className="calendar-field"><span>Find</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Note title" autoFocus /></label>
     </div>
     <div className="move-list" role="list" aria-label="Notes">

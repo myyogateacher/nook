@@ -52,7 +52,7 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
   usePasteFiles(formRef, (files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
   const drop = useFileDrop((files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
   return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy} className="calendar-event-dialog">
-    <form ref={formRef} className={`calendar-form calendar-event-form${drop.dragging ? " dragging" : ""}`} onSubmit={(event) => { event.preventDefault(); if (!uploading) onSave(); }} {...drop.bind}>
+    <form ref={formRef} className={`calendar-form calendar-event-form file-dialog-body${drop.dragging ? " dragging" : ""}`} onSubmit={(event) => { event.preventDefault(); if (!uploading) onSave(); }} {...drop.bind}>
       {drop.dragging && <div className="calendar-drop-overlay" aria-hidden="true"><Paperclip />Drop to attach to this event</div>}
       <div className="calendar-event-when">
       <label className="calendar-field calendar-event-title">
@@ -155,7 +155,7 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
 
   const unit = { daily: "days", weekly: "weeks", monthly: "months", yearly: "years", none: "" }[freq];
   return <ModalDialog title="Repeat" eyebrow="Event" onClose={onCancel} variant="sheet">
-    <div className="calendar-form">
+    <div className="calendar-form file-dialog-body">
       <div className="calendar-field">
         <span id={repeatsLabelId}>Repeats</span>
         <Select value={freq} onChange={setFreq} label="Repeats" labelledBy={repeatsLabelId} autoFocus options={[

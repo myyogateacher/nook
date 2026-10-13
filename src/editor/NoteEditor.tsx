@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { ChainedCommands, Editor } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Transaction } from "@tiptap/pm/state";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -11,7 +13,8 @@ import {
 import { SlashCommands } from "./slash";
 import { markdownOptions, noteContentExtensions } from "./extensions";
 import { ImageInsert } from "./imageInsert";
-import { IMAGE_REJECTED_MESSAGE, imageAltText, imageContentUrl, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import { IMAGE_REJECTED_MESSAGE, isInsertableImageType, uploadNoteImage } from "./imageUpload";
+import { fillSlot, pendingSlotCount, releaseSlot, reserveSlots, storedFileNode, UploadSlots } from "./uploadSlots";
 import { FILE_CHIP_OPEN_EVENT, type FileChipOpenDetail } from "./fileChip";
 import { NoteAttach, NOTE_FILE_LIMIT_MESSAGE, noteFileRoom } from "./noteAttach";
 import { AttachmentPreview, AttachSheet, FromFilesSheet, uploadForHost } from "../ui/attachments";
@@ -92,50 +95,73 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
   const whiteboards = isModuleEnabled(useDisabledModules(), "whiteboards");
   const [boardPicker, setBoardPicker] = useState<Editor | null>(null);
 
+  // v0.35.0 QA: each file gets an upload slot when chosen (uploadSlots.ts) and is inserted there,
+  // after the one before it, so several pasted or dropped files no longer replace each other.
+  const dispatchSlot = (activeEditor: Editor, tr: Transaction | null) => {
+    if (!tr || activeEditor.isDestroyed) return false;
+    activeEditor.view.dispatch(tr);
+    return true;
+  };
+  const reserve = (activeEditor: Editor, names: string[]) => {
+    const { tr, ids } = reserveSlots(activeEditor.state, names);
+    dispatchSlot(activeEditor, tr);
+    return ids;
+  };
+  const fill = (activeEditor: Editor, slot: string, node: ProseMirrorNode | null) =>
+    !activeEditor.isDestroyed && activeEditor.isEditable && node !== null && dispatchSlot(activeEditor, fillSlot(activeEditor.state, slot, node));
+  const release = (activeEditor: Editor, slot: string) => {
+    if (!activeEditor.isDestroyed) dispatchSlot(activeEditor, releaseSlot(activeEditor.state, slot));
+  };
+
   const insertImages = async (activeEditor: Editor, files: File[]) => {
     const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
-    for (const file of files) {
-      if (!isInsertableImageType(file.type)) {
-        notice("warning", IMAGE_REJECTED_MESSAGE);
-        continue;
-      }
+    const images = files.filter((file) => isInsertableImageType(file.type));
+    if (images.length < files.length) notice("warning", IMAGE_REJECTED_MESSAGE);
+    if (activeEditor.isDestroyed || !images.length) return;
+    const slots = reserve(activeEditor, images.map((file) => file.name || "image"));
+    for (const [index, file] of images.entries()) {
+      const slot = slots[index]!;
       // One toast per upload: "Uploading…" turns into the outcome.
       const id = `upload:${crypto.randomUUID()}`;
       notice("info", `Uploading ${file.name || "image"}…`, id);
       try {
         const image = latest.current.uploadImage ? await latest.current.uploadImage(file) : await uploadNoteImage(file, latest.current.folderId);
-        if (activeEditor.isDestroyed || !activeEditor.isEditable) {
+        if (!fill(activeEditor, slot, activeEditor.isDestroyed ? null : activeEditor.schema.nodes.image?.create(image) ?? null)) {
           notice("warning", "Image saved to Files, but the note is no longer open for editing", id);
           continue;
         }
-        activeEditor.chain().focus().setImage(image).run();
         notice("success", "Image added", id);
       } catch (reason) {
         notice("error", reason instanceof Error ? reason.message : "Image upload failed", id);
+      } finally {
+        release(activeEditor, slot);
       }
     }
   };
 
-  /** Inserts a stored document: an image when the server says it is one, otherwise a file card. */
+  /** Inserts a stored document after the selection: an image when the server says it is one, otherwise a file card. */
   const insertDocument = (activeEditor: Editor, document: Pick<DocumentSummary, "id" | "name" | "mime_type" | "preview_kind">) => {
     if (activeEditor.isDestroyed || !activeEditor.isEditable) return false;
-    if (document.preview_kind === "image" && isInsertableImageType(document.mime_type)) {
-      activeEditor.chain().focus().setImage({ src: imageContentUrl(document.id), alt: imageAltText(document.name) }).run();
-    } else {
-      activeEditor.chain().focus().insertFileChip({ id: document.id, name: document.name }).run();
-    }
-    return true;
+    const [slot] = reserve(activeEditor, [document.name]);
+    const added = fill(activeEditor, slot!, storedFileNode(activeEditor.schema, document));
+    release(activeEditor, slot!);
+    if (added) activeEditor.commands.focus();
+    return added;
   };
 
   /** U4: uploads any files to the Attachments folder (`?attachTo=note`) and inserts each once stored. */
   const attachFiles = async (activeEditor: Editor, files: File[]) => {
     const notice = (kind: NotifyKind, message: string, id?: string) => latest.current.onNotice?.[kind](message, id ? { id } : undefined);
-    for (const file of files) {
+    if (activeEditor.isDestroyed) return;
+    // Uploads still in flight count against the note's file limit too.
+    const room = Math.max(0, noteFileRoom(activeEditor) - pendingSlotCount(activeEditor.state));
+    const chosen = files.slice(0, room);
+    if (chosen.length < files.length) notice("warning", NOTE_FILE_LIMIT_MESSAGE);
+    if (!chosen.length) return;
+    const slots = reserve(activeEditor, chosen.map((file) => file.name || "file"));
+    for (const [index, file] of chosen.entries()) {
+      const slot = slots[index]!;
       if (activeEditor.isDestroyed) return;
-      if (noteFileRoom(activeEditor) <= 0) {
-        notice("warning", NOTE_FILE_LIMIT_MESSAGE);
-        return;
-      }
       const name = file.name || "file";
       const controller = new AbortController();
       uploads.current.add(controller);
@@ -143,7 +169,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       notice("info", `Uploading ${name}…`, id);
       try {
         const { document } = await uploadForHost(file, "note", { signal: controller.signal });
-        if (!insertDocument(activeEditor, document)) {
+        if (!fill(activeEditor, slot, activeEditor.isDestroyed ? null : storedFileNode(activeEditor.schema, document))) {
           notice("warning", "Saved to Files › Attachments, but the note is no longer open for editing", id);
           continue;
         }
@@ -153,6 +179,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         else notify.dismiss(id);
       } finally {
         uploads.current.delete(controller);
+        release(activeEditor, slot);
       }
     }
   };
@@ -162,6 +189,7 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
       ...noteContentExtensions(),
       Placeholder.configure({ placeholder }),
       Markdown.configure({ markedOptions: markdownOptions }),
+      UploadSlots,
       ImageInsert.configure({ onFiles: (activeEditor, files) => { void (latest.current.attachHost ? attachFiles(activeEditor, files) : insertImages(activeEditor, files)); } }),
       ...(attachHost ? [NoteAttach.configure({ onOpen: (activeEditor: Editor, what: "sheet" | "files") => setAttachLayer({ editor: activeEditor, what }) })] : []),
       ...(whiteboards ? [WhiteboardEmbedPicker.configure({ onOpenPicker: (activeEditor: Editor) => setBoardPicker(activeEditor) })] : []),

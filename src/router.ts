@@ -46,6 +46,9 @@ export type Route =
   // Wave 42 (AC-C, plan §13.3): the Audit log at /chat/audit, and one run at /chat/audit/:runId.
   // Its filters ride in the query (QA L4): ?key=&agent=&status=&from=&to=, on the list and on a run opened from it.
   | { app: "chat"; chatId: string | null; newChat?: true; agentId?: string; audit?: true; runId?: string; auditFilter?: AuditQuery }
+  // Analytics reports (Wave 45): the list at /reports and one report at /reports/:reportId. Its sheets
+  // (the Schema browser, a new report) are history layers on that entry, not URLs.
+  | { app: "reports"; reportId: string | null }
   // The Settings hub (Wave 37): a page at /settings (the section list on phones), and one account
   // section at /settings/:section. Team sections are `team` routes under /settings/team/… (above).
   // Wave 40: Settings → Agents has an editor below it at /settings/agents/:agentId (or /settings/agents/new).
@@ -200,6 +203,10 @@ export function parseRoute(pathname: string, search = ""): Route {
   }
   if (app === "vault") return parseVault(rest);
   if (app === "chat") return parseChat(rest, search);
+  if (app === "reports") {
+    const [reportId] = rest;
+    return rest.length === 1 && reportId !== undefined && isRouteId(reportId) ? { app: "reports", reportId: reportId.toLowerCase() } : { app: "reports", reportId: null };
+  }
   return { app: "home" };
 }
 
@@ -344,6 +351,7 @@ export function formatRoute(route: Route): string {
     return "/chat";
   }
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
+  if (route.app === "reports") return route.reportId && isRouteId(route.reportId) ? `/reports/${route.reportId.toLowerCase()}` : "/reports";
   if (route.app === "vault") {
     if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";
     const vault = `/vault/${route.vaultId.toLowerCase()}`;
@@ -389,7 +397,8 @@ function formatTasksHome(home: TasksHome) {
 // `access` (Wave 33): Settings → My access, read-only, every role but guest.
 // `agents` and `ai` (Wave 40): Settings → Agents (every role that chats) and Settings → AI (admins: providers and policy).
 // `knowledge` (Wave 44, AC-E): Settings → Knowledge (every role that chats).
-export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notifications", "agents", "knowledge", "ai", "about"] as const;
+// `datasources` (Wave 45): Settings → Report data sources (admins).
+export const SETTINGS_SECTIONS = ["security", "modules", "mcp", "access", "notifications", "agents", "knowledge", "ai", "datasources", "about"] as const;
 export type SettingsSection = typeof SETTINGS_SECTIONS[number];
 
 /** Settings → AI's tabs, in tab order; each is its own URL under /settings/ai. */
@@ -405,7 +414,7 @@ export const aiTabPath = (tab: AiTab) => `${settingsPath("ai")}/${tab}`;
  * The URL slug of each section. API keys (section id "mcp" since Wave 8) lives at `/settings/keys`
  * (C3); the old `/settings/mcp` still opens it and is rewritten in place (no extra history entry).
  */
-const SETTINGS_SLUGS: Record<SettingsSection, string> = { security: "security", modules: "modules", mcp: "keys", access: "access", notifications: "notifications", agents: "agents", knowledge: "knowledge", ai: "ai", about: "about" };
+const SETTINGS_SLUGS: Record<SettingsSection, string> = { security: "security", modules: "modules", mcp: "keys", access: "access", notifications: "notifications", agents: "agents", knowledge: "knowledge", ai: "ai", datasources: "datasources", about: "about" };
 const LEGACY_SETTINGS_SLUGS: Record<string, SettingsSection> = { mcp: "mcp" };
 
 function settingsSectionForSlug(slug: string): SettingsSection | null {
@@ -426,7 +435,7 @@ export function isLegacySettingsPath(pathname: string) {
   return section !== null && pathname !== settingsPath(section);
 }
 
-export const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", agents: "Agents", knowledge: "Knowledge", ai: "AI", about: "About" };
+export const SETTINGS_SECTION_NAMES: Record<SettingsSection, string> = { security: "Security", modules: "Modules", mcp: "API keys", access: "My access", notifications: "Notifications", agents: "Agents", knowledge: "Knowledge", ai: "AI", datasources: "Report data sources", about: "About" };
 
 /**
  * The tabs of Settings → API keys: general keys, vault keys (`nkv_`), and keys that only run agents.

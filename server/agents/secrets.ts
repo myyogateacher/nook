@@ -16,7 +16,8 @@ import { db } from "../db";
 
 const FORMAT = "v1";
 const B64URL = /^[A-Za-z0-9_-]*$/;
-export type SecretOwner = "provider" | "server";
+// `datasource` (analytics reports, Wave 45, D415): a report data source's ClickHouse password.
+export type SecretOwner = "provider" | "server" | "datasource";
 
 export const aadFor = (owner: SecretOwner, rowId: string) => `nook:agent-secret:v1:${owner}:${rowId}`;
 
@@ -79,7 +80,7 @@ export function secretHint(plaintext: string) {
  * rotate-key`, review M3). Each new envelope is opened once before it is written. Plaintext lives
  * only inside the loop. Counts only.
  */
-export function rotateSecretsKey(oldKey: Buffer, newKey: Buffer): { providers: number; servers: number } {
+export function rotateSecretsKey(oldKey: Buffer, newKey: Buffer): { providers: number; servers: number; datasources: number } {
   return db.transaction(() => {
     const providers = db.query("SELECT id, api_key_ct FROM agent_providers WHERE api_key_ct IS NOT NULL").all() as Array<{ id: string; api_key_ct: string }>;
     for (const row of providers) {
@@ -93,7 +94,14 @@ export function rotateSecretsKey(oldKey: Buffer, newKey: Buffer): { providers: n
       openSecret("server", row.id, resealed, newKey);
       db.query("UPDATE agent_tool_servers SET secret_ct = ? WHERE id = ?").run(resealed, row.id);
     }
-    return { providers: providers.length, servers: servers.length };
+    // Analytics reports (Wave 45): data source passwords, under the same key.
+    const datasources = db.query("SELECT id, password_ct FROM report_datasources WHERE password_ct IS NOT NULL").all() as Array<{ id: string; password_ct: string }>;
+    for (const row of datasources) {
+      const resealed = sealSecret("datasource", row.id, openSecret("datasource", row.id, row.password_ct, oldKey), newKey);
+      openSecret("datasource", row.id, resealed, newKey);
+      db.query("UPDATE report_datasources SET password_ct = ? WHERE id = ?").run(resealed, row.id);
+    }
+    return { providers: providers.length, servers: servers.length, datasources: datasources.length };
   }).immediate();
 }
 
@@ -101,7 +109,8 @@ export function rotateSecretsKey(oldKey: Buffer, newKey: Buffer): { providers: n
 export function verifySecrets(key: Buffer): { total: number; failed: number } {
   const rows = [
     ...(db.query("SELECT id, api_key_ct AS ct FROM agent_providers WHERE api_key_ct IS NOT NULL").all() as Array<{ id: string; ct: string }>).map((row) => ({ owner: "provider" as const, ...row })),
-    ...(db.query("SELECT id, secret_ct AS ct FROM agent_tool_servers WHERE secret_ct IS NOT NULL").all() as Array<{ id: string; ct: string }>).map((row) => ({ owner: "server" as const, ...row }))
+    ...(db.query("SELECT id, secret_ct AS ct FROM agent_tool_servers WHERE secret_ct IS NOT NULL").all() as Array<{ id: string; ct: string }>).map((row) => ({ owner: "server" as const, ...row })),
+    ...(db.query("SELECT id, password_ct AS ct FROM report_datasources WHERE password_ct IS NOT NULL").all() as Array<{ id: string; ct: string }>).map((row) => ({ owner: "datasource" as const, ...row }))
   ];
   let failed = 0;
   for (const row of rows) {

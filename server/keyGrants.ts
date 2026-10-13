@@ -11,14 +11,15 @@
  */
 import { MCP_SCOPES, normalizeScopes, type McpScope } from "./mcpScopes";
 
-export const GRANT_MODULES = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards", "vault", "agents"] as const;
+// `reports` (Wave 45): the table accepts it since 050.
+export const GRANT_MODULES = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards", "vault", "agents", "reports"] as const;
 export type GrantModule = typeof GRANT_MODULES[number];
 
 // `run` (agent chat, D364): the `agents:run` scope since Wave 42 (AC-C); the table accepts it since 039.
 export const KEY_PERMISSIONS = ["read", "comment", "write", "draft", "publish", "create", "run"] as const;
 export type KeyPermission = typeof KEY_PERMISSIONS[number];
 
-export const RESOURCE_KINDS = ["folder", "note", "document", "board", "task_view", "collection", "calendar", "routine", "whiteboard", "vault", "agent", "knowledge_base"] as const;
+export const RESOURCE_KINDS = ["folder", "note", "document", "board", "task_view", "collection", "calendar", "routine", "whiteboard", "vault", "agent", "knowledge_base", "report"] as const;
 export type ResourceKind = typeof RESOURCE_KINDS[number];
 
 export type KeyKind = "general" | "vault";
@@ -60,7 +61,9 @@ export const SCOPE_GRANTS: Record<McpScope, { module: GrantModule; permission: K
   "whiteboards:read": { module: "whiteboards", permission: "read" },
   "whiteboards:write": { module: "whiteboards", permission: "write" },
   "agents:read": { module: "agents", permission: "read" },
-  "agents:run": { module: "agents", permission: "run" }
+  "agents:run": { module: "agents", permission: "run" },
+  "reports:read": { module: "reports", permission: "read" },
+  "reports:write": { module: "reports", permission: "write" }
 };
 
 export const scopeToGrant = (scope: McpScope) => SCOPE_GRANTS[scope];
@@ -99,7 +102,9 @@ export const SELECTOR_KINDS: Partial<Record<GrantModule, readonly ResourceKind[]
   whiteboards: ["whiteboard"],
   // Wave 42 (AC-C, D364): running chosen agents. Wave 44 (AC-E): reading may name chosen knowledge
   // bases (PERMISSION_KINDS); reading agents and chats always covers every one.
-  agents: ["agent", "knowledge_base"]
+  agents: ["agent", "knowledge_base"],
+  // Wave 45: chosen reports (list_reports narrows to them).
+  reports: ["report"]
 };
 
 /**

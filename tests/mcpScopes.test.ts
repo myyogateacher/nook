@@ -35,7 +35,7 @@ test("mcpScopesForRole: admins all, members all but team:read, viewers read scop
   expect(mcpScopesForRole("admin")).toEqual([...MCP_SCOPES]);
   expect(mcpScopesForRole("member")).toEqual(MCP_SCOPES.filter((scope) => scope !== "team:read"));
   // Viewers get no inbox scopes (D152), not even inbox:read.
-  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read", "whiteboards:read", "agents:read"]);
+  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read", "whiteboards:read", "agents:read", "reports:read"]);
   expect(normalizeScopes(["inbox:write"])).toEqual(["inbox:read", "inbox:write"]);
   expect(hasScope(["inbox:write"], "inbox:read")).toBe(true);
   expect(hasScope(["inbox:read"], "inbox:write")).toBe(false);
@@ -68,9 +68,23 @@ test("alsoRequires is all-of: bin:write alone satisfies nothing that also needs 
 
 test("viewers can hold none of the Wave 19 scopes (snapshot, T144)", async () => {
   const { effectiveMcpScopes, mcpScopesForRole } = await import("../server/team/roles");
-  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read", "whiteboards:read", "agents:read"]);
+  expect(mcpScopesForRole("viewer")).toEqual(["notes:read", "files:read", "tasks:read", "today:read", "calendar:read", "collections:read", "whiteboards:read", "agents:read", "reports:read"]);
   expect(effectiveMcpScopes(["notes:publish", "files:write", "bin:write", "notes:read"], "viewer")).toEqual(["notes:read"]);
   expect(mcpScopesForRole("member")).toContain("bin:write");
 });
 
 type McpScopeName = import("../server/mcpScopes").McpScope;
+
+test("reports:read and reports:write are a pair: write implies read and is a write scope; viewers get read only, guests nothing (Wave 45)", async () => {
+  const { isWriteScope, MCP_READ_SCOPES } = await import("../server/mcpScopes");
+  const { mcpScopesForRole } = await import("../server/team/roles");
+  expect(normalizeScopes(["reports:write"])).toEqual(["reports:read", "reports:write"]);
+  expect(hasScope(["reports:write"], "reports:read")).toBe(true);
+  expect(hasScope(["reports:read"], "reports:write")).toBe(false);
+  expect(isWriteScope("reports:write")).toBe(true);
+  expect(MCP_READ_SCOPES).toContain("reports:read");
+  expect(mcpScopesForRole("viewer")).toContain("reports:read");
+  expect(mcpScopesForRole("viewer")).not.toContain("reports:write");
+  expect(mcpScopesForRole("member")).toContain("reports:write");
+  expect(mcpScopesForRole("guest")).toEqual([]);
+});

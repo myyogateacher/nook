@@ -5,7 +5,7 @@
  */
 export type McpScope = "notes:read" | "notes:write-draft" | "notes:publish" | "files:read" | "files:write" | "tasks:read" | "tasks:write" | "today:read"
   | "calendar:read" | "calendar:write" | "collections:read" | "collections:write" | "bin:write" | "team:read"
-  | "inbox:read" | "inbox:write" | "whiteboards:read" | "whiteboards:write" | "agents:read" | "agents:run";
+  | "inbox:read" | "inbox:write" | "whiteboards:read" | "whiteboards:write" | "agents:read" | "agents:run" | "reports:read" | "reports:write";
 
 /** `warning` is an extra line Settings shows under the help, for permissions with a wider reach. */
 export type McpPermission = { scope: McpScope; label: string; help: string; implies?: McpScope; warning?: string };
@@ -32,7 +32,10 @@ export const MCP_PERMISSIONS: readonly McpPermission[] = [
   { scope: "whiteboards:write", label: "Create whiteboards", help: "Create empty, private whiteboards in your folders; never draws, shares, or deletes.", implies: "whiteboards:read" },
   { scope: "agents:read", label: "Read agents, chats, and knowledge", help: "Your agents (name, description, model; never the prompt), the chats you can open, read-only, and searching the knowledge bases you can open. Limited to chosen knowledge bases, it searches only those and reads no agents or chats." },
   { scope: "agents:run", label: "Run agents", help: "Run your agents over the REST API (POST /api/v1/agents/:id/runs) and MCP (run_agent). Only tools that need no confirmation run; Nook changes become Inbox proposals. Every run is in your Audit log; none creates a chat.",
-    warning: "Each run spends this Nook's model budget and may call the agent's tools; set it to chosen agents where you can." }
+    warning: "Each run spends this Nook's model budget and may call the agent's tools; set it to chosen agents where you can." },
+  // Analytics reports (Wave 45). No permission ever runs SQL through a key.
+  { scope: "reports:read", label: "Read reports", help: "Your reports' titles, status, and data source names, and the names of the data sources reports can use; never runs SQL." },
+  { scope: "reports:write", label: "Change reports", help: "Reserved for refreshing and changing your reports from a key in a later release; today it reads like Read reports. Never runs SQL.", implies: "reports:read" }
 ];
 
 /** The permissions offered when creating a key: every scope that has tools. */
@@ -59,7 +62,7 @@ export function offeredMcpPermissions(role: string | undefined) {
  * Explicit: `bin:write` implies no read scope and is still a write scope, so viewers are never offered it.
  */
 export const MCP_WRITE_SCOPES: readonly McpScope[] = [
-  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write"
+  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write", "reports:write"
 ];
 
 export const isWriteScope = (scope: McpScope) => MCP_WRITE_SCOPES.includes(scope);

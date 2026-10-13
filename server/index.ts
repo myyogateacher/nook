@@ -47,6 +47,8 @@ import { publicShareHeaders, registerPublicChatShareApi } from "./agents/publicR
 import { agentsFeature, chatRoleOff, initAgentsStatus } from "./agents/status";
 import { markInterruptedRuns } from "./agents/runs";
 import { registerKnowledgeRoutes } from "./knowledge/routes";
+import { registerReportRoutes } from "./reports/routes";
+import { roleHasReports } from "./reports/access";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
@@ -281,7 +283,7 @@ app.post("/api/auth/register", async (c) => {
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
-    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role) },
+    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role), reports: roleHasReports(role) },
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
@@ -329,7 +331,7 @@ app.post("/api/auth/login", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role) },
     totp: totpState(user)
   });
 });
@@ -350,7 +352,7 @@ app.get("/api/auth/me", (c) => {
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
     notices: { googleReset: googleResetNotice(user.id) },
     // Wave 25: whether this person sees the Vault module (server/vault/status.ts); Wave 40: the Chat module. UI only (T97).
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role) },
     // Wave 39: APP_NAME, as /api/about has it.
     app: { name: config.appName }
   });
@@ -962,6 +964,8 @@ registerVaultRoutes(app);
 registerAgentRoutes(app);
 // Knowledge bases (Wave 44, AC-E): CRUD, sources, Re-index, Try it, and the Access sheet.
 registerKnowledgeRoutes(app);
+// Analytics reports (Wave 45): data sources (admin), the schema catalog, reports, and the SQL console.
+registerReportRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerMailRoutes(app);

@@ -20,6 +20,7 @@ import { sweepAgentAudit } from "./agents/audit";
 import { sweepAgentRateLimits } from "./agents/limits";
 import { sweepSessions } from "./agents/toolServers";
 import { sweepKnowledge } from "./knowledge/index";
+import { sweepSchemaSync } from "./reports/schemaCatalog";
 
 const SWEEP_INTERVAL_MS = 3_600_000;
 export type SweepResult = SweepCounts & { bin: BinSweepCounts };
@@ -167,6 +168,13 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         if (knowledge.unavailable || knowledge.changed) console.info(`Knowledge sweep: ${knowledge.unavailable} sources unavailable, ${knowledge.changed} changed, ${knowledge.queued} bases queued`);
       } catch (error) {
         console.error("Knowledge sweep failed", error instanceof Error ? error.name : "Unknown error");
+      }
+      try {
+        // Analytics reports (Wave 45): re-read the schema of data sources whose cache is a day old (in the background).
+        const schemas = sweepSchemaSync(options.nowMs);
+        if (schemas) console.info(`Report schema sweep: ${schemas} data sources re-syncing`);
+      } catch (error) {
+        console.error("Report schema sweep failed", error instanceof Error ? error.name : "Unknown error");
       }
       try {
         // Mail history (outbound email §B.3): delivered rows after 30 days, failures after 90.

@@ -23,6 +23,7 @@ import { editableBoardPredicate, readableBoardPredicate } from "./tasks/access";
 import { editableCollectionPredicate, readableCollectionPredicate } from "./collections/access";
 import { readableDocumentPredicate } from "./documentAccess";
 import { whiteboardDisplayName } from "../shared/whiteboardScene";
+import { readableReportSql } from "./reports/access";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
 import { environmentOfVault, isVaultNarrowing, validateVaultGrants, vaultEffectiveGrants, vaultGrantInactive, vaultGrantInput, vaultGrantNames, VaultKeyError, type VaultGrantInput } from "./vault/keys";
 import { shareReadableSql } from "./agents/sharing";
@@ -422,6 +423,8 @@ export function resourceReachable(userId: string, kind: ResourceKind, id: string
     case "agent": return Boolean(db.query(`SELECT 1 FROM agents a WHERE a.id = $id AND ${shareReadableSql("agent", "a")}`).get({ id, userId }));
     // Wave 44 (AC-E): a knowledge base the holder can open now (`search_knowledge` reads it, never writes).
     case "knowledge_base": return !write && Boolean(db.query(`SELECT 1 FROM knowledge_bases k WHERE k.id = $id AND ${shareReadableSql("knowledge_base", "k")}`).get({ id, userId }));
+    // Wave 45: a report the holder can open now (their own, live).
+    case "report": return Boolean(db.query(`SELECT 1 FROM reports r WHERE r.id = $id AND ${readableReportSql("r")}`).get({ id, userId }));
     default: return false;
   }
 }
@@ -443,6 +446,7 @@ function resourceName(userId: string, kind: ResourceKind, id: string): string | 
     case "routine": return (db.query("SELECT name FROM routines WHERE id = ? AND owner_id = ?").get(id, userId) as { name: string } | null)?.name ?? null;
     case "agent": return (db.query(`SELECT a.name FROM agents a WHERE a.id = $id AND ${shareReadableSql("agent", "a")}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
     case "knowledge_base": return (db.query(`SELECT k.name FROM knowledge_bases k WHERE k.id = $id AND ${shareReadableSql("knowledge_base", "k")}`).get({ id, userId }) as { name: string } | null)?.name ?? null;
+    case "report": return (db.query(`SELECT r.title FROM reports r WHERE r.id = $id AND ${readableReportSql("r")}`).get({ id, userId }) as { title: string } | null)?.title ?? null;
     default: return null;
   }
 }

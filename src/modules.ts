@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { Archive, Bell, CalendarDays, FileText, Inbox, KanbanSquare, KeyRound, MessagesSquare, PenTool, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
+import { Archive, Bell, CalendarDays, ChartColumn, FileText, Inbox, KanbanSquare, KeyRound, MessagesSquare, PenTool, Search, Table2, Trash2, Users, type LucideIcon } from "lucide-react";
 import type { AppSection } from "./appShellNavigation";
 
 /**
@@ -12,11 +12,11 @@ import type { AppSection } from "./appShellNavigation";
  */
 
 /** Every module id, in Settings order. Keep in step with `MODULE_IDS` in server/moduleIds.ts. */
-export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "agents", "search", "bin", "notifications", "team", "inbox"] as const;
+export const MODULE_IDS = ["notes", "files", "tasks", "collections", "calendar", "whiteboards", "vault", "agents", "reports", "search", "bin", "notifications", "team", "inbox"] as const;
 export type ModuleId = (typeof MODULE_IDS)[number];
 
 /** The apps with a Today launcher tile. */
-export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards" | "vault" | "chat";
+export type LauncherSection = "notes" | "files" | "tasks" | "collections" | "calendar" | "whiteboards" | "vault" | "chat" | "reports";
 
 export type ModuleDef = {
   id: ModuleId;
@@ -51,6 +51,10 @@ export const MODULES: readonly ModuleDef[] = [
   // Agent chat (Wave 40, D92): the Chat module, id `agents`. Off hides the launcher and routes only; the
   // server keeps enforcing roles and budgets, and without AGENT_SECRETS_KEY it is hidden from everyone but admins (T97).
   { id: "agents", label: "Chat", description: "Chats with agents that call the model endpoint an admin configured. Every message you send leaves this Nook for that endpoint.", icon: MessagesSquare, routeApps: ["chat"], launcher: { section: "chat", href: "/chat" }, todaySections: [] },
+  // Analytics reports (Wave 45, D418): reports on the ClickHouse data sources an admin configured. Off
+  // hides the launcher and routes only; guests never have it (`features.reports`), and the server
+  // keeps enforcing the allowlist, the guard, and ClickHouse's own grants (T97).
+  { id: "reports", label: "Reports", description: "Analytics reports: SQL and charts over the warehouse tables an admin allowed. Queries run on that warehouse, never on your notes.", icon: ChartColumn, routeApps: ["reports"], launcher: { section: "reports", href: "/reports" }, todaySections: [] },
   { id: "search", label: "Search", description: "The search box in Notes, Ctrl+K, and the text filter on boards. The Notes list and the other board filters stay.", icon: Search, routeApps: [], todaySections: [], headerItem: "search" },
   { id: "bin", label: "Bin", description: "Hides Settings → Bin and Leaving the Bin soon. Deleting still moves items to the Bin, and they are still deleted forever after 30 days.", icon: Trash2, routeApps: ["bin"], todaySections: ["binSoon"], headerItem: "bin" },
   { id: "notifications", label: "Notifications", description: "Hides the bell and the Notifications page. Reminders and push notifications still arrive.", icon: Bell, routeApps: ["notifications"], todaySections: [], headerItem: "bell" },
@@ -73,7 +77,8 @@ export const SETTINGS_MODULES = MODULES.filter((module) => !module.planned);
  */
 export function settingsModulesFor(role: string | undefined, unavailable: readonly ModuleId[] = []): readonly ModuleDef[] {
   // Guests have no inbox either (D152): they cannot hold keys or apply proposals; nor a vault (V-O3).
-  const shown = role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team" && module.id !== "inbox" && module.id !== "vault" && module.id !== "agents") : SETTINGS_MODULES;
+  // Nor analytics reports (Wave 45).
+  const shown = role === "guest" ? SETTINGS_MODULES.filter((module) => module.id !== "team" && module.id !== "inbox" && module.id !== "vault" && module.id !== "agents" && module.id !== "reports") : SETTINGS_MODULES;
   return unavailable.length ? shown.filter((module) => !unavailable.includes(module.id)) : shown;
 }
 
@@ -82,8 +87,8 @@ export function settingsModulesFor(role: string | undefined, unavailable: readon
  * for everyone but admins, and always for guests (`/api/auth/me` `features`). They are hidden like a
  * module that is turned off, but Settings has no switch for them and the hint says why.
  */
-export function unavailableModules(features: { vault?: boolean; agents?: boolean } | undefined): ModuleId[] {
-  return [...(features?.vault === false ? ["vault" as const] : []), ...(features?.agents === false ? ["agents" as const] : [])];
+export function unavailableModules(features: { vault?: boolean; agents?: boolean; reports?: boolean } | undefined): ModuleId[] {
+  return [...(features?.vault === false ? ["vault" as const] : []), ...(features?.agents === false ? ["agents" as const] : []), ...(features?.reports === false ? ["reports" as const] : [])];
 }
 
 /**

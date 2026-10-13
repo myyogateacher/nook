@@ -7,15 +7,15 @@ import { MCP_PERMISSIONS, offeredMcpPermissions, type McpScope } from "../mcpPer
  * builder's rules and summaries are unit-tested.
  */
 
-export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin" | "whiteboards" | "agents";
+export type GrantModule = "notes" | "files" | "tasks" | "today" | "calendar" | "collections" | "team" | "inbox" | "bin" | "whiteboards" | "agents" | "reports";
 export type KeyPermission = "read" | "comment" | "write" | "draft" | "publish" | "create" | "run";
-export type ResourceKind = "folder" | "note" | "document" | "board" | "task_view" | "collection" | "calendar" | "routine" | "whiteboard" | "agent" | "knowledge_base";
+export type ResourceKind = "folder" | "note" | "document" | "board" | "task_view" | "collection" | "calendar" | "routine" | "whiteboard" | "agent" | "knowledge_base" | "report";
 export type KeySurfaces = "mcp" | "rest" | "both";
 
-export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards", "agents"];
+export const GRANT_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "bin", "whiteboards", "agents", "reports"];
 
 export const MODULE_LABELS: Record<GrantModule, string> = {
-  notes: "Notes", files: "Files", tasks: "Tasks", today: "Today", calendar: "Calendar", collections: "Collections", team: "Team", inbox: "Inbox", bin: "Bin", whiteboards: "Whiteboards", agents: "Chat"
+  notes: "Notes", files: "Files", tasks: "Tasks", today: "Today", calendar: "Calendar", collections: "Collections", team: "Team", inbox: "Inbox", bin: "Bin", whiteboards: "Whiteboards", agents: "Chat", reports: "Reports"
 };
 
 /** Every `{module, permission}` pair a key can hold, and the MCP scope it is. */
@@ -31,7 +31,9 @@ export const GRANT_SCOPES: Record<GrantModule, Partial<Record<KeyPermission, Mcp
   bin: { write: "bin:write" },
   whiteboards: { read: "whiteboards:read", write: "whiteboards:write" },
   // Wave 42 (AC-C): run agents over REST and MCP.
-  agents: { read: "agents:read", run: "agents:run" }
+  agents: { read: "agents:read", run: "agents:run" },
+  // Wave 45: analytics reports.
+  reports: { read: "reports:read", write: "reports:write" }
 };
 
 export const scopeFor = (module: GrantModule, permission: KeyPermission) => GRANT_SCOPES[module][permission] ?? null;
@@ -54,7 +56,8 @@ export const SELECTOR_KINDS: Partial<Record<GrantModule, { kinds: readonly Resou
   whiteboards: { kinds: ["whiteboard"], one: "whiteboard", many: "whiteboards" },
   // Wave 42 (AC-C): run all your agents or chosen ones. Wave 44 (AC-E): reading may name chosen
   // knowledge bases (PERMISSION_SELECTORS below decides per permission).
-  agents: { kinds: ["agent", "knowledge_base"], one: "agent or knowledge base", many: "agents and knowledge bases" }
+  agents: { kinds: ["agent", "knowledge_base"], one: "agent or knowledge base", many: "agents and knowledge bases" },
+  reports: { kinds: ["report"], one: "report", many: "reports" }
 };
 
 /**
@@ -68,7 +71,7 @@ export const PERMISSION_SELECTORS: Readonly<Record<string, { kinds: readonly Res
 };
 
 export const KIND_LABELS: Record<ResourceKind, string> = {
-  folder: "Folder", note: "Note", document: "File", board: "Board", task_view: "View", collection: "Collection", calendar: "Calendar", routine: "Routine", whiteboard: "Whiteboard", agent: "Agent", knowledge_base: "Knowledge base"
+  folder: "Folder", note: "Note", document: "File", board: "Board", task_view: "View", collection: "Collection", calendar: "Calendar", routine: "Routine", whiteboard: "Whiteboard", agent: "Agent", knowledge_base: "Knowledge base", report: "Report"
 };
 
 /**
@@ -262,7 +265,7 @@ export function grantChips(grants: readonly KeyGrantView[]) {
 const KIND_NOUNS: Record<ResourceKind, readonly [string, string]> = {
   folder: ["folder", "folders"], note: ["note", "notes"], document: ["file", "files"], board: ["board", "boards"], task_view: ["view", "views"],
   collection: ["collection", "collections"], calendar: ["calendar", "calendars"], routine: ["routine", "routines"], whiteboard: ["whiteboard", "whiteboards"],
-  agent: ["agent", "agents"], knowledge_base: ["knowledge base", "knowledge bases"]
+  agent: ["agent", "agents"], knowledge_base: ["knowledge base", "knowledge bases"], report: ["report", "reports"]
 };
 
 /** One sentence under the builder: what the key can do, and what no key ever does (D265). */

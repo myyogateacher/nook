@@ -77,10 +77,10 @@ if (before.failed > 0) fail(`The current key does not open ${before.failed} of $
 const rotated = rotateSecretsKey(current, next);
 const after = verifySecrets(next);
 if (after.failed > 0) fail(`After re-sealing, the new key does not open ${after.failed} secrets. Restore from the backup taken before this run.`);
-audit(null, null, "agents.key_rotated", { providers: rotated.providers, servers: rotated.servers });
+audit(null, null, "agents.key_rotated", { providers: rotated.providers, servers: rotated.servers, datasources: rotated.datasources });
 const kept = parsed.source === "file" ? "the file named by AGENT_SECRETS_KEY_NEW_FILE" : "the copy you saved (you ran with --key-saved)";
 console.log([
-  `Re-sealed ${rotated.providers} provider ${rotated.providers === 1 ? "secret" : "secrets"}${rotated.servers ? ` and ${rotated.servers} tool-server ${rotated.servers === 1 ? "secret" : "secrets"}` : ""}. From now on only the new key (fingerprint ${fingerprint(next)}) opens them; it is in ${kept}.`,
+  `Re-sealed ${rotated.providers} provider ${rotated.providers === 1 ? "secret" : "secrets"}${rotated.servers ? `, ${rotated.servers} tool-server ${rotated.servers === 1 ? "secret" : "secrets"}` : ""}${rotated.datasources ? `, ${rotated.datasources} report data source ${rotated.datasources === 1 ? "password" : "passwords"}` : ""}. From now on only the new key (fingerprint ${fingerprint(next)}) opens them; it is in ${kept}.`,
   "Next steps:",
   "  1. Replace the configured key with the new one: set AGENT_SECRETS_KEY in .env to the new key's contents, or point",
   "     AGENT_SECRETS_KEY_FILE at the new key file. Do not start the server with the old key: the Chat module stays off.",

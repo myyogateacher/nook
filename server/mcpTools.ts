@@ -28,6 +28,7 @@ import { collectionTools } from "./collections/mcpTools";
 import { teamTools } from "./team/mcpTools";
 import { inboxTools } from "./inbox/mcpTools";
 import { whiteboardTools } from "./whiteboards/mcpTools";
+import { reportTools } from "./reports/mcpTools";
 import { agentTools } from "./agents/mcpTools";
 import { knowledgeTools } from "./knowledge/mcpTools";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
@@ -99,7 +100,7 @@ function toolFits(spec: McpToolSpec, reach: ToolReach) {
 
 const ITEM_LABELS: Record<ItemKind, string> = {
   note: "Note", folder: "Folder", document: "File", whiteboard: "Whiteboard", board: "Board", card: "Card", column: "Column", sprint: "Sprint",
-  task_view: "View", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", routine: "Routine", run: "Run", vault: "Vault", agent: "Agent", knowledge_base: "Knowledge base"
+  task_view: "View", collection: "Collection", row: "Row", calendar: "Calendar", event: "Event", routine: "Routine", run: "Run", vault: "Vault", agent: "Agent", knowledge_base: "Knowledge base", report: "Report"
 };
 
 /**
@@ -475,6 +476,8 @@ export const mcpToolSpecs: readonly McpToolSpec[] = [
   ...whiteboardTools,
   ...agentTools,
   ...knowledgeTools,
+  // Analytics reports (Wave 45): list reports and data source names; never SQL.
+  ...reportTools,
   // Uploads everywhere (U0, D402): list and read attachments, gated by each host module's read scope.
   ...attachmentTools
 ];

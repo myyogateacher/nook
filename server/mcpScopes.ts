@@ -29,7 +29,10 @@ export const MCP_SCOPES = [
   // Agent chat (Wave 42 "AC-C", plan §7.1, D364): run the key owner's agents over REST and MCP
   // (`run_agent`), every run in the Audit log. Member-only (server/team/roles.ts MEMBER_ONLY_SCOPES).
   // It implies no read scope: a run key never reads the owner's chats.
-  "agents:run"
+  "agents:run",
+  // Analytics reports (Wave 45, D420): list reports and data source names. reports:write is the pair's
+  // write half (wave 48 gives it tools: create, refresh, schedule, instructions); no scope runs ad-hoc SQL.
+  "reports:read", "reports:write"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];
 
@@ -44,7 +47,8 @@ export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
   "calendar:write": "calendar:read",
   "collections:write": "collections:read",
   "inbox:write": "inbox:read",
-  "whiteboards:write": "whiteboards:read"
+  "whiteboards:write": "whiteboards:read",
+  "reports:write": "reports:read"
 };
 
 /**
@@ -54,7 +58,7 @@ export const IMPLIED_READ_SCOPE: Partial<Record<McpScope, McpScope>> = {
  * classified exactly once.
  */
 export const MCP_WRITE_SCOPES: readonly McpScope[] = [
-  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write"
+  "notes:write-draft", "notes:publish", "files:write", "tasks:write", "calendar:write", "collections:write", "bin:write", "inbox:write", "whiteboards:write", "reports:write"
 ];
 
 export const isWriteScope = (scope: McpScope) => MCP_WRITE_SCOPES.includes(scope);

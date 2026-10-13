@@ -20,8 +20,9 @@ type TeamRoute = Extract<Route, { app: "team" }>;
 const team = (flags: Partial<TeamRoute> = {}): TeamRoute => ({ app: "team", userId: null, ...flags });
 
 /** Account entries, in nav order. My access, Agents, and Knowledge are for every role but guest; AI is for admins. */
-const ACCOUNT_ORDER: readonly SettingsSection[] = ["security", "notifications", "access", "mcp", "agents", "knowledge", "ai", "modules", "about"];
-const ADMIN_ONLY_SECTIONS: readonly SettingsSection[] = ["ai"];
+const ACCOUNT_ORDER: readonly SettingsSection[] = ["security", "notifications", "access", "mcp", "agents", "knowledge", "ai", "datasources", "modules", "about"];
+// Report data sources (Wave 45) are for admins too.
+const ADMIN_ONLY_SECTIONS: readonly SettingsSection[] = ["ai", "datasources"];
 
 /** Team entries, in nav order. Only Members is for every role that sees Team; the rest are admins only. */
 const TEAM_ENTRIES: ReadonlyArray<{ id: TeamEntryId; label: string; route: TeamRoute; adminOnly: boolean }> = [

@@ -15,7 +15,7 @@ import { ReportError, reportNotFound } from "./errors";
  */
 
 export type ReportRow = {
-  id: string; owner_id: string; title: string; datasource_id: string | null; doc_server_id: string | null; doc_tool: string | null; doc_ref: string | null;
+  id: string; owner_id: string; title: string; datasource_id: string | null; doc_server_id: string | null; doc_tool: string | null; doc_ref: string | null; doc_arg?: string | null;
   doc_hash: string | null; spec_json: string; status: "draft" | "ready" | "stale" | "error"; last_run_at: string | null; last_error: string | null;
   visibility: "private" | "selected" | "all_users"; revision: number; created_at: string; updated_at: string; deleted_at: string | null;
   deleted_by: string | null; purge_after: string | null; purge_started_at: string | null; auto_apply?: number;

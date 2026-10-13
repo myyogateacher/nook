@@ -70,6 +70,8 @@ db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
 const owner = await createUser("Review owner");
 const commenter = await createUser("Review commenter");
 const reader = await createUser("Review reader");
+// Final review M1/L5: a reader of its own, so the access-page counts of `reader` stay as M4 expects.
+const onlooker = await createUser("Review onlooker");
 
 async function newDatasource() {
   const created = await send(admin, "POST", "/reports/admin/datasources", { name: `Review DS ${crypto.randomUUID().slice(0, 6)}`, url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
@@ -229,11 +231,17 @@ describe("H2: Apply and restore re-check the data source", () => {
 });
 
 describe("M1: a commenter never sees the doc through the edit agent", () => {
-  test("no live run or summary for a non-owner author, no auto-apply, and new markdown hidden until applied", async () => {
+  test("no live run or summary for a non-owner author, no auto-apply; the author sees status only, other readers nothing, until applied", async () => {
     const reportId = await seededReport("Commenter");
-    await send(owner, "PUT", `/reports/${reportId}/sharing`, { visibility: "selected", shares: [{ kind: "user", id: commenter.userId, level: "comment" }] });
+    await send(owner, "PUT", `/reports/${reportId}/sharing`, { visibility: "selected", shares: [{ kind: "user", id: commenter.userId, level: "comment" }, { kind: "user", id: onlooker.userId, level: "view" }] });
     await send(owner, "PUT", `/reports/${reportId}/auto-apply`, { autoApply: true });
-    provider.setScript(() => ({ toolCalls: [{ name: "submit_patch", arguments: { summary: "Quote the doc: SECRET-SUMMARY", ops: [{ op: "update_block", id: "intro", set: { markdown: "SECRET-DOC-TEXT from the metrics doc" } }] } }] }));
+    // Every kind of new text: markdown, a title, a label, a compareLabel, a section title, and new SQL with its rows.
+    provider.setScript(() => ({ toolCalls: [{ name: "submit_patch", arguments: { summary: "Quote the doc: SECRET-SUMMARY", ops: [
+      { op: "update_block", id: "intro", set: { markdown: "SECRET-DOC-TEXT from the metrics doc" } },
+      { op: "update_block", id: "kpi-revenue", set: { title: "SECRET-TITLE", label: "SECRET-LABEL", compareLabel: "vs SECRET-COMPARE" } },
+      { op: "add_section", section: { id: "secret", title: "SECRET-SECTION" } },
+      { op: "update_query", key: "by_country", sql: "SELECT country, sum(revenue) AS revenue FROM analytics.orders WHERE country != 'SECRET-SQL' GROUP BY country ORDER BY revenue DESC LIMIT 8" }
+    ] } }] }));
     const id = await ask(commenter, reportId, "explain net revenue in the intro");
     await waitStatus(id, ["proposed"]);
     const agentRun = (db.query("SELECT agent_run_id FROM report_instructions WHERE id = ?").get(id) as { agent_run_id: string }).agent_run_id;
@@ -241,12 +249,40 @@ describe("M1: a commenter never sees the doc through the edit agent", () => {
     expect((await send(commenter, "GET", `/runs/${agentRun}/events`)).status).toBe(404);
     const theirs = (await send(commenter, "GET", `/reports/${reportId}/instructions`)).body.instructions.find((item: Json) => item.id === id);
     expect(theirs).toMatchObject({ agentRunId: null, summary: null, status: "proposed" });
+    // The author: status only (how much changes), no text, SQL, or rows.
     const hidden = await send(commenter, "GET", `/reports/${reportId}/instructions/${id}/proposal`);
-    expect(hidden.body.proposal.blocks[0]).toMatchObject({ blockId: "intro", change: "updated", textHidden: true });
+    expect(hidden.status).toBe(200);
+    expect(hidden.body.proposal).toMatchObject({ blocks: [], queries: [], results: [], currentResults: [], summary: null, redacted: { blocks: 3, queries: 1 } });
     expect(JSON.stringify(hidden.body)).not.toContain("SECRET");
+    // Another reader: no pending proposal at all (REST and MCP).
+    expect((await send(onlooker, "GET", `/reports/${reportId}/instructions/${id}/proposal`)).status).toBe(404);
+    const { reportTools } = await import("../server/reports/mcpTools");
+    const onlookerSeen = await reportTools.find((tool) => tool.name === "get_report_instruction")!.handler({ reportId, instructionId: id }, { keyId: "k-onlooker", userId: onlooker.userId, name: "k", scopes: ["reports:read"] });
+    expect(JSON.stringify(onlookerSeen)).not.toContain("SECRET");
+    expect((onlookerSeen as Json).proposal).toBeUndefined();
+    const authorSeen = await reportTools.find((tool) => tool.name === "get_report_instruction")!.handler({ reportId, instructionId: id }, { keyId: "k-commenter", userId: commenter.userId, name: "k", scopes: ["reports:read"] });
+    expect(JSON.stringify(authorSeen)).not.toContain("SECRET");
+    expect((authorSeen as Json).proposal.redacted).toEqual({ blocks: 3, queries: 1 });
+    // The owner sees everything.
     const shown = await send(owner, "GET", `/reports/${reportId}/instructions/${id}/proposal`);
-    expect(JSON.stringify(shown.body)).toContain("SECRET-DOC-TEXT");
+    for (const secret of ["SECRET-DOC-TEXT", "SECRET-TITLE", "SECRET-LABEL", "SECRET-COMPARE", "SECRET-SECTION", "SECRET-SQL", "SECRET-SUMMARY"]) expect(JSON.stringify(shown.body)).toContain(secret);
     expect((await send(owner, "POST", `/reports/${reportId}/instructions/${id}/apply`, {})).status).toBe(200);
+  });
+
+  test("L5: a version's note (the agent's summary) is the owner's only", async () => {
+    const reportId = await seededReport("Version note");
+    await send(owner, "PUT", `/reports/${reportId}/sharing`, { visibility: "selected", shares: [{ kind: "user", id: onlooker.userId, level: "view" }] });
+    provider.setScript(() => ({ toolCalls: [{ name: "submit_patch", arguments: { summary: "SECRET-NOTE from the doc", ops: [{ op: "update_block", id: "country-bar", set: { kind: "stacked_bar" } }] } }] }));
+    const id = await ask(owner, reportId, "make it a stacked bar");
+    await waitStatus(id, ["proposed"]);
+    expect((await send(owner, "POST", `/reports/${reportId}/instructions/${id}/apply`, {})).status).toBe(200);
+    const mine = (await send(owner, "GET", `/reports/${reportId}/versions`)).body.versions as Json[];
+    expect(mine[0].note).toContain("SECRET-NOTE");
+    const theirs = (await send(onlooker, "GET", `/reports/${reportId}/versions`)).body.versions as Json[];
+    expect(theirs[0].note).toBeNull();
+    expect(JSON.stringify(theirs)).not.toContain("SECRET");
+    const one = await send(onlooker, "GET", `/reports/${reportId}/versions/${theirs[0].version}`);
+    expect(JSON.stringify(one.body.version)).not.toContain("SECRET-NOTE");
   });
 });
 

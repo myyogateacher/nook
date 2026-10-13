@@ -465,3 +465,52 @@ describe("generation and wave 47's refresh (merged)", () => {
     }
   });
 });
+
+describe("final review M2 and L6: regenerate takes the run lock before it changes the report", () => {
+  test("a refresh that takes the lock while the doc is read: 409, and the report, its doc, and its snapshots are unchanged", async () => {
+    const started = await generate(member);
+    await waitForRun(started.body.run.id);
+    const reportId = started.body.report.id as string;
+    const before = db.query("SELECT datasource_id, doc_server_id, doc_tool, doc_arg, doc_ref, updated_at, revision FROM reports WHERE id = ?").get(reportId);
+    const snapshots = () => db.query("SELECT id FROM report_doc_snapshots WHERE report_id = ? ORDER BY id").all(reportId);
+    const kept = snapshots();
+    // A changed doc (a new snapshot would be written) and another data source (the report row would change).
+    await fetch(`http://127.0.0.1:${docs.port}/qa/edit`, { method: "POST", body: JSON.stringify({ id: "revenue-AbC123", append: "5. **Refunds per week**." }) });
+    const other = await send(admin, "POST", "/reports/admin/datasources", { name: `Gen DS other ${crypto.randomUUID().slice(0, 6)}`, url: fake.url, username: "nook_ro", password: "pw", database: "analytics", allowlist: ["analytics"] });
+    docs.delay.ms = 400;
+    try {
+      const pending = send(member, "POST", `/reports/${reportId}/generate`, { datasourceId: other.body.datasource.id });
+      // The refresh takes the lock after the early check, while the doc is being read.
+      await Bun.sleep(150);
+      db.query("INSERT INTO report_runs (id, report_id, kind, trigger, status, started_at) VALUES (?, ?, 'refresh', 'user', 'running', ?)").run(`m2-lock-${reportId}`, reportId, new Date().toISOString());
+      const locked = await pending;
+      expect([locked.status, locked.body.code]).toEqual([409, "RUN_IN_PROGRESS"]);
+    } finally {
+      docs.delay.ms = 0;
+      db.query("DELETE FROM report_runs WHERE id = ?").run(`m2-lock-${reportId}`);
+    }
+    expect(db.query("SELECT datasource_id, doc_server_id, doc_tool, doc_arg, doc_ref, updated_at, revision FROM reports WHERE id = ?").get(reportId)).toEqual(before);
+    expect(snapshots()).toEqual(kept);
+    expect(db.query("SELECT COUNT(*) AS count FROM report_runs WHERE report_id = ? AND kind = 'generate'").get(reportId)).toEqual({ count: 1 });
+
+    // Without the lock the same regenerate goes through, and the data source change is in the audit log.
+    const again = await send(member, "POST", `/reports/${reportId}/generate`, { datasourceId: other.body.datasource.id });
+    expect(again.status).toBe(202);
+    await waitForRun(again.body.run.id);
+    const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.report.update' AND metadata_json LIKE ? ORDER BY rowid DESC LIMIT 1").get(`%${reportId}%`) as { metadata_json: string } | null;
+    expect(JSON.parse(audit!.metadata_json)).toMatchObject({ id: reportId, fields: ["datasourceId"], datasourceId: other.body.datasource.id, via: "regenerate" });
+  });
+
+  test("L6: a reader who is not the owner sees a generic message for a failed generation", async () => {
+    const { GENERIC_GENERATION_ERROR } = await import("../server/reports/generateRoutes");
+    const started = await generate(member);
+    await waitForRun(started.body.run.id);
+    const reportId = started.body.report.id as string;
+    db.query("UPDATE report_runs SET status = 'failed', error = ? WHERE id = ?").run("ClickHouse said: SECRET-ERROR from analytics.orders", started.body.run.id);
+    const reader = await createUser("Generate reader");
+    await send(member, "PUT", `/reports/${reportId}/sharing`, { visibility: "selected", shares: [{ kind: "user", id: reader.userId, level: "view" }] });
+    expect((await send(member, "GET", `/reports/${reportId}/generation`)).body.run.error).toContain("SECRET-ERROR");
+    const seen = (await send(reader, "GET", `/reports/${reportId}/generation`)).body.run;
+    expect(seen).toMatchObject({ status: "failed", error: GENERIC_GENERATION_ERROR, agentRunId: null, docSnapshotId: null });
+  });
+});

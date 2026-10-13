@@ -257,3 +257,42 @@ describe("editing an old (v1) report", () => {
     expect(block.block).toMatchObject({ id: "country-bar", intent: "compare", width: "half" });
   });
 });
+
+describe("final review L3 and M3", () => {
+  test("L3: changing a report's data source is refused while a run holds the report; the title alone is not", async () => {
+    const reportId = await v1Report("Datasource while running");
+    const other = await send(admin, "POST", "/reports/admin/datasources", { name: `Integration other ${crypto.randomUUID().slice(0, 6)}`, url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
+    const revision = () => (db.query("SELECT revision FROM reports WHERE id = ?").get(reportId) as { revision: number }).revision;
+    db.query("INSERT INTO report_runs (id, report_id, kind, trigger, status, lease_until, started_at) VALUES (?, ?, 'refresh', 'user', 'running', ?, ?)")
+      .run(`l3-${reportId}`, reportId, new Date(Date.now() + 60_000).toISOString(), new Date().toISOString());
+    try {
+      const refused = await send(owner, "PATCH", `/reports/${reportId}`, { datasourceId: other.body.datasource.id, expectedRevision: revision() });
+      expect([refused.status, refused.body.code]).toEqual([409, "RUN_IN_PROGRESS"]);
+      expect((db.query("SELECT datasource_id FROM reports WHERE id = ?").get(reportId) as { datasource_id: string }).datasource_id).toBe(datasourceId);
+      const renamed = await send(owner, "PATCH", `/reports/${reportId}`, { title: "Renamed while running", expectedRevision: revision() });
+      expect(renamed.status).toBe(200);
+    } finally {
+      db.query("DELETE FROM report_runs WHERE id = ?").run(`l3-${reportId}`);
+    }
+    const moved = await send(owner, "PATCH", `/reports/${reportId}`, { datasourceId: other.body.datasource.id, expectedRevision: revision() });
+    expect(moved.status).toBe(200);
+  });
+
+  test("M3: docs/OPERATIONS.md has the next release's reports upgrade section: 050–053, backup, disk, and the foreign-key refusal", async () => {
+    const text = await Bun.file(new URL("../docs/OPERATIONS.md", import.meta.url)).text();
+    const start = text.indexOf("### Upgrading to the next release (analytics reports, migrations 050–053)");
+    expect(start).toBeGreaterThan(0);
+    const section = text.slice(start, text.indexOf("\n**Upgrading to 0.37.0", start));
+    for (const word of ["**050**", "api_key_grants", "**051**", "2× the size", "slow first boot", "**052**", "**053**", "agent_settings", "Back up first", "./scripts/backup.sh --force", "Check free disk", "PRAGMA foreign_key_check", "If a migration refuses"]) expect([word, section.includes(word)]).toEqual([word, true]);
+    // The refusals it quotes are the migrations' own.
+    const m051 = await Bun.file(new URL("../server/migrations/051_report_runs_via.ts", import.meta.url)).text();
+    const m053 = await Bun.file(new URL("../server/migrations/053_report_model.ts", import.meta.url)).text();
+    expect(m051).toContain("Migration 051 cannot rebuild ${name}");
+    expect(m053).toContain("Migration 053 cannot rebuild agent_settings");
+    expect(section).toContain("Migration 053 cannot rebuild agent_settings");
+    // No released version number yet.
+    expect(section).not.toMatch(/\b0\.3[89]\.\d/);
+    const { registeredMigrationIds } = await import("../server/migrations");
+    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53]);
+  });
+});

@@ -107,6 +107,12 @@ export type ProposalView = {
   /** Out of date (the spec, the data source, or its allowlist changed): Apply answers 409 STALE_PROPOSAL and rejects it. */
   outOfDate: boolean;
   staleReason?: string;
+  /**
+   * Review M1: the instruction's author who is not the owner sees status only until the owner applies
+   * it: no new or changed text, SQL, or rows (blocks, queries, and results are empty; `spec` is the
+   * current one), just how many blocks and queries it changes.
+   */
+  redacted?: { blocks: number; queries: number };
 };
 
 /** GET /api/reports/:id/instructions: the thread, the caller's rights, and the auto-apply switch. */

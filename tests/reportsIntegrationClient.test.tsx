@@ -114,3 +114,35 @@ describe("a proposal's blocks", () => {
     expect(without).not.toContain("report-kpi-spark");
   });
 });
+
+describe("final review: M1 proposals, L1 badge, L2 generating", () => {
+  test("M1: a pending proposal reads as waiting for the owner to anyone but the owner; the author's sheet says how much changes", async () => {
+    const { instructionStatusText } = await import("../src/reports/ChangesPanel");
+    const { proposalWaitingText } = await import("../src/reports/ProposalSheet");
+    expect(instructionStatusText({ status: "proposed" }, true)).toBe("Ready to review");
+    expect(instructionStatusText({ status: "proposed" }, false)).toBe("Ready, waiting for the owner");
+    expect(instructionStatusText({ status: "applied" }, false)).toBe("Applied");
+    expect(proposalWaitingText({ blocks: 1, queries: 2 })).toBe("Ready, waiting for the owner. It changes 1 block and 2 queries; you see the new version once the owner applies it.");
+  });
+
+  test("L1: the Current badge in Versions keeps its own width", async () => {
+    const css = await Bun.file(new URL("../src/reports/reportEdit.css", import.meta.url)).text();
+    expect(css).toContain(".report-version > div > .reports-status { justify-self: start; }");
+  });
+
+  test("L2: while a generation starts or runs, Refresh all is disabled and the notice says Generating…", async () => {
+    const { ReportView } = await import("../src/reports/ReportView");
+    const { sampleSpec } = await import("./support/reportSeed");
+    const report = { id: "r1", title: "R", spec: sampleSpec(), revision: 1, lastRunAt: null } as never;
+    const initial = { results: { results: [], running: null } as never, schedule: null, runs: [] };
+    const idle = renderToStaticMarkup(<ReportView report={report} canWrite initial={initial} />);
+    expect(idle).not.toContain("Generating…");
+    expect(idle).toMatch(/<button type="button" class="primary-button">.*Refresh all/);
+    const generating = renderToStaticMarkup(<ReportView report={report} canWrite generating initial={initial} />);
+    expect(generating).toContain("Generating…");
+    expect(generating).toMatch(/<button type="button" class="primary-button" disabled="">.*Refresh all/);
+    // In the page (the commands provider) the notice shows too; the header's button reads the same `busy` flag.
+    const inPage = renderToStaticMarkup(<ReportCommandsContext.Provider value={{ set: () => undefined }}><ReportView report={report} canWrite generating initial={initial} /></ReportCommandsContext.Provider>);
+    expect(inPage).toContain("Generating…");
+  });
+});

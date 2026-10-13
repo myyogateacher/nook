@@ -263,18 +263,27 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
     const title = oneLine(input.title ?? "", REPORT_LIMITS.title) || oneLine(doc.title ?? "", REPORT_LIMITS.title) || "Untitled report";
     return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id }).id, actor.userId);
   })();
-  db.query("UPDATE reports SET datasource_id = ?, doc_server_id = ?, doc_tool = ?, doc_arg = ?, doc_ref = ?, updated_at = ? WHERE id = ?")
-    .run(datasource.id, server.id, choice.tool, input.arg?.trim() ? choice.arg : null, input.docRef, now(), report.id);
-  const snapshot = recordSnapshot(report.id, doc);
-  audit(actor.userId, null, "reports.doc.fetch", { reportId: report.id, serverId: server.id, tool: choice.tool, sha256: doc.sha256, bytes: doc.bytes, truncated: doc.truncated, changed: snapshot.changed });
-
   const runId = crypto.randomUUID();
   const agentRunId = crypto.randomUUID();
   const prompt = systemPrompt(datasource, doc);
   const timeoutS = config.agents.runTimeoutS || CHAT_RUN_TIMEOUT_S;
   const startedAt = now();
+  const docArg = input.arg?.trim() ? choice.arg : null;
+  // What a regeneration changes on the report (audited below): its data source and its doc.
+  const changed = existing ? [
+    ...(existing.datasource_id !== datasource.id ? ["datasourceId"] : []),
+    ...(existing.doc_server_id !== server.id || existing.doc_tool !== choice.tool || (existing.doc_arg ?? null) !== docArg || existing.doc_ref !== input.docRef ? ["doc"] : [])
+  ] : [];
+  let snapshot: { id: string; sha256: string; changed: boolean };
   try {
-    db.transaction(() => {
+    // Review M2: the run lock (the running report_runs row), the report's data source and doc, and the
+    // doc snapshot are written in one transaction, so a 409 (a refresh or another run holds the report)
+    // changes nothing.
+    snapshot = db.transaction(() => {
+      if (db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(report.id)) throw runInProgress();
+      db.query("UPDATE reports SET datasource_id = ?, doc_server_id = ?, doc_tool = ?, doc_arg = ?, doc_ref = ?, updated_at = ? WHERE id = ?")
+        .run(datasource.id, server.id, choice.tool, docArg, input.docRef, now(), report.id);
+      const recorded = recordSnapshot(report.id, doc);
       const purgeAfter = new Date(Date.parse(startedAt) + readAgentSettings().auditRetentionDays * 86_400_000).toISOString();
       db.query(`INSERT INTO agent_runs (id, via, agent_id, agent_revision, prompt_sha256, preamble_version, chat_id, user_id, key_id, provider_id, model, status, client_address, label, queued_at, purge_after)
         VALUES (?, 'reports', ?, 1, ?, ?, NULL, ?, NULL, ?, ?, 'queued', NULL, ?, ?, ?)`)
@@ -282,12 +291,15 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
       db.query("INSERT INTO agent_audit_entries (run_id, input_text, output_text) VALUES (?, ?, NULL)")
         .run(agentRunId, JSON.stringify({ reportId: report.id, docRef: input.docRef.slice(0, 2048), docSha256: doc.sha256, serverId: server.id, tool: choice.tool, datasourceId: datasource.id, seededTables: prompt.seeded }));
       db.query(`INSERT INTO report_runs (id, report_id, kind, trigger, agent_run_id, status, doc_snapshot_id, lease_until, created_by, started_at)
-        VALUES (?, ?, 'generate', 'user', ?, 'running', ?, ?, ?, ?)`).run(runId, report.id, agentRunId, snapshot.id, new Date(Date.now() + (timeoutS + 60) * 1000).toISOString(), actor.userId, startedAt);
+        VALUES (?, ?, 'generate', 'user', ?, 'running', ?, ?, ?, ?)`).run(runId, report.id, agentRunId, recorded.id, new Date(Date.now() + (timeoutS + 60) * 1000).toISOString(), actor.userId, startedAt);
+      return recorded;
     })();
   } catch (error) {
     if (error instanceof Error && /UNIQUE|constraint/i.test(error.message) && /report_runs/.test(error.message)) throw runInProgress();
     throw error;
   }
+  audit(actor.userId, null, "reports.doc.fetch", { reportId: report.id, serverId: server.id, tool: choice.tool, sha256: doc.sha256, bytes: doc.bytes, truncated: doc.truncated, changed: snapshot.changed });
+  if (changed.length) audit(actor.userId, null, "reports.report.update", { id: report.id, fields: changed, datasourceId: datasource.id, serverId: server.id, via: "regenerate" });
   audit(actor.userId, null, "reports.generate.start", { reportId: report.id, runId, agentRunId, docSnapshotId: snapshot.id, datasourceId: datasource.id, seededTables: prompt.seeded.length });
 
   const channel = openChannel(agentRunId);

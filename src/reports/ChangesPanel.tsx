@@ -192,11 +192,17 @@ type ItemProps = {
   onFinished: () => void;
 };
 
+/** The status line: a proposal waits for the owner, as its author (not the owner) or another reader sees it. */
+export function instructionStatusText(item: Pick<ReportInstruction, "status">, canApply: boolean): string {
+  if (item.status === "proposed" && !canApply) return "Ready, waiting for the owner";
+  return INSTRUCTION_STATUS_TEXT[item.status];
+}
+
 function InstructionItem({ report, item, canApply, queuedIndex, queuedCount, onMove, onCancel, onReview, onFinished }: ItemProps) {
   const mayCancel = canApply || item.isMine;
   return <li className={`report-instruction report-instruction-${item.status}`}>
     <div className="report-instruction-head">
-      <span className={`reports-status report-instruction-status-${item.status}`}>{item.status === "running" && <LoaderCircle className="spin" aria-hidden="true" />}{INSTRUCTION_STATUS_TEXT[item.status]}</span>
+      <span className={`reports-status report-instruction-status-${item.status}`}>{item.status === "running" && <LoaderCircle className="spin" aria-hidden="true" />}{instructionStatusText(item, canApply)}</span>
       <span className="report-instruction-target">{blockLabel(report, item.blockId)}</span>
       <span className="report-instruction-meta">{item.isMine ? "You" : item.authorName ?? "Someone"}{item.via === "mcp" ? " via MCP" : ""} · {timeAgo(item.createdAt)}</span>
     </div>
@@ -211,7 +217,8 @@ function InstructionItem({ report, item, canApply, queuedIndex, queuedCount, onM
         <button type="button" className="icon-button" onClick={() => onMove(1)} disabled={queuedIndex >= queuedCount - 1} aria-label="Run later"><ArrowDown /></button>
       </>}
       {(item.status === "queued" || item.status === "running") && mayCancel && <button type="button" className="secondary-button" onClick={onCancel}>{item.status === "running" ? <CircleStop /> : <X />}Cancel</button>}
-      {item.status === "proposed" && <button type="button" className="primary-button" onClick={onReview}>Review</button>}
+      {/* Review M1: a pending proposal is the owner's and its author's only (the author sees its status). */}
+      {item.status === "proposed" && (canApply || item.isMine) && <button type="button" className={canApply ? "primary-button" : "secondary-button"} onClick={onReview}>{canApply ? "Review" : "Details"}</button>}
     </div>
   </li>;
 }

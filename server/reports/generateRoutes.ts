@@ -29,6 +29,9 @@ const modelInput = z.object({ override: z.object({ providerId: uuid.nullable(), 
 
 type RunRow = { id: string; agent_run_id: string | null; status: GenerationRun["status"]; error: string | null; doc_snapshot_id: string | null; started_at: string; finished_at: string | null };
 
+/** What a reader who is not the owner sees for a failed generation (review L6). */
+export const GENERIC_GENERATION_ERROR = "The last generation did not finish; the owner can see why.";
+
 export function registerGenerateRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/doc-servers", handle((c) => ({ servers: docServerChoices(c.get("user").role) })));
   app.post("/api/reports/generate", handle(async (c) => {
@@ -53,8 +56,10 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
     const report = readableReport(reportId, c.get("user").id);
     const owner = report.owner_id === c.get("user").id;
     const row = db.query("SELECT id, agent_run_id, status, error, doc_snapshot_id, started_at, finished_at FROM report_runs WHERE report_id = ? AND kind = 'generate' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as RunRow | null;
-    // Review L2: a reader of a shared report sees the status, never the agent run or the doc snapshot.
-    const run: GenerationRun | null = row ? { id: row.id, agentRunId: owner ? row.agent_run_id : null, status: row.status, error: row.error, docSnapshotId: owner ? row.doc_snapshot_id : null, startedAt: row.started_at, finishedAt: row.finished_at } : null;
+    // Review L2: a reader of a shared report sees the status, never the agent run or the doc snapshot;
+    // review L6: nor the error's text (it can quote the doc, the SQL, or the provider), only that it failed.
+    const error = owner ? row?.error ?? null : row?.error ? GENERIC_GENERATION_ERROR : null;
+    const run: GenerationRun | null = row ? { id: row.id, agentRunId: owner ? row.agent_run_id : null, status: row.status, error, docSnapshotId: owner ? row.doc_snapshot_id : null, startedAt: row.started_at, finishedAt: row.finished_at } : null;
     return { run };
   }));
   // Wave 48b (D435): the report's own generation model (the owner's override of the admin setting).

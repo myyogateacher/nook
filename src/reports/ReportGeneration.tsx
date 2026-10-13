@@ -93,7 +93,7 @@ export function ReportGeneration({ report, canWrite, onChanged }: { report: Repo
     </div>}
     {docActions && inHeader && busy === "check" && <p className="report-doc-source" role="status"><RefreshCw className="spin" aria-hidden="true" />Checking the doc…</p>}
     {docActions && inHeader && busy !== "check" && doc?.doc?.serverName && <p className="report-doc-source">From {doc.latest?.title ?? "a doc"} via {doc.doc.serverName}</p>}
-    {blocks > 0 ? <ReportView report={report} canWrite={canWrite} />
+    {blocks > 0 ? <ReportView report={report} canWrite={canWrite} generating={running || busy === "regenerate"} />
       : !running && <div className="report-empty"><p>{hasDoc ? "No charts or tables yet. Regenerate from the doc, or explore the data with the console below." : "No charts or tables yet. Explore the data with the console below, or start a new report from a doc."}</p></div>}
     {confirm.confirmElement}
   </div>;

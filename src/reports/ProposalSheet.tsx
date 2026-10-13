@@ -14,6 +14,10 @@ import { reportCssVariables } from "../../shared/reportTheme";
 import type { ResultLookup } from "./KpiTile";
 import type { ChartPalette } from "./chartOption";
 
+const countText = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+/** What the instruction's author (not the owner) sees of a pending proposal (review M1): its status and size only. */
+export const proposalWaitingText = (redacted: { blocks: number; queries: number }) =>
+  `Ready, waiting for the owner. It changes ${countText(redacted.blocks, "block")} and ${countText(redacted.queries, "query", "queries")}; you see the new version once the owner applies it.`;
 const CHANGE_TEXT: Record<BlockChange["change"], string> = { added: "Added", updated: "Changed", removed: "Removed", moved: "Moved" };
 const noop = () => undefined;
 const markdownContext: RenderContext = { onExternalLink: noop, onNookLink: noop, images: { mode: "public" } };
@@ -84,6 +88,7 @@ export function ProposalSheet({ report, instructionId, instruction, canApply, on
       {error && <p className="form-error" role="alert">{error}</p>}
       {!proposal && !error && <p className="reports-loading" role="status">Loading the proposal…</p>}
       {proposal && <>
+        {proposal.redacted && <p className="report-proposal-waiting" role="status">{proposalWaitingText(proposal.redacted)}</p>}
         {proposal.summary && <p className="report-proposal-summary">{proposal.summary}</p>}
         {proposal.outOfDate && <p className="report-proposal-stale" role="note"><TriangleAlert aria-hidden="true" />{proposal.staleReason ?? "The report changed since this was proposed"}. It is rejected when the queue moves on; ask again.</p>}
         {proposal.blocks.map((change) => <section key={change.blockId} className={`report-diff-block report-diff-${change.change}`} aria-label={`${CHANGE_TEXT[change.change]}: ${change.after?.title ?? change.before?.title ?? change.blockId}`}>

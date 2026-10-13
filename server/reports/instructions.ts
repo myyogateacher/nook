@@ -178,19 +178,27 @@ export function rejectStaleProposals(reportId: string): number {
 const redactedMarkdown = (block: ReportBlock | null): ReportBlock | null => block && block.type === "markdown" ? { ...block, markdown: "" } : block;
 
 /**
- * The proposal as the review shows it (anyone who can read the report). For anyone but the owner
- * (review M1c), new or changed markdown is left out (`textHidden`) and the agent's summary is not
- * shown: the agent read the doc, which only the owner sees, until the owner applies it. A proposal
- * that is out of date shows no stored rows.
+ * The proposal as the review shows it: only to the owner and the instruction's author (review M1);
+ * other readers get 404. The author who is not the owner sees status only (`redacted`): the edit agent
+ * read the doc, which only the owner sees, so every new or changed text field (titles, labels,
+ * compareLabel, markdown, section titles), any new or changed SQL, and the proposal's rows stay hidden
+ * until the owner applies it. A proposal that is out of date shows no stored rows.
  */
 export function proposalView(reportId: string, instructionId: string, userId: string): ProposalView {
   const report = readableReport(reportId, userId);
   const owner = report.owner_id === userId;
   const row = proposedRow(reportId, instructionId);
+  if (!owner && row.author_id !== userId) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
   const proposal = storedProposal(row);
   const current = parseSpec(report.spec_json);
   const stale = proposalStaleReason(row, report);
   const diff = diffSpecs(current, proposal.spec);
+  if (!owner) {
+    return {
+      instructionId, spec: current, blocks: [], queries: [], results: [], currentResults: [], summary: null, outOfDate: stale !== null, ...(stale ? { staleReason: stale } : {}),
+      redacted: { blocks: diff.blocks.length, queries: diff.queries.length }
+    };
+  }
   const currentBlocks = new Map(current.blocks.map((block) => [block.id, block]));
   const hide = (block: ReportBlock) => {
     const before = currentBlocks.get(block.id);

@@ -75,6 +75,8 @@ export const resultsLoadKey = (report: Pick<ReportDetail, "id" | "revision">) =>
 type Props = {
   report: ReportDetail;
   canWrite: boolean;
+  /** Review L2: a generation is starting or running (ReportGeneration knows before the run row shows here). */
+  generating?: boolean;
   /** Tests and server-side rendering: the results to show without a request. */
   initial?: { results: ReportResultsView; schedule?: ScheduleView | null; runs?: ReportRun[] };
 };
@@ -86,7 +88,7 @@ type Props = {
  * this built") and a menu with "Re-run this query"; the toolbar has "Refresh all" and the schedule.
  * A refresh is a run: the page polls it and reloads the results when it ends.
  */
-export function ReportView({ report, canWrite, initial }: Props) {
+export function ReportView({ report, canWrite, generating = false, initial }: Props) {
   const [view, setView] = useState<ReportResultsView | null>(initial?.results ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [running, setRunning] = useState<ReportRun | null>(initial?.results.running ?? null);
@@ -159,7 +161,7 @@ export function ReportView({ report, canWrite, initial }: Props) {
   }, [initial, loadResults, loadRuns, report.id, running]);
 
   async function startRefresh(queryKey?: string) {
-    if (running) return;
+    if (running || generating) return;
     try {
       const { run } = await refreshReport(report.id, queryKey);
       setRunning(run);
@@ -186,10 +188,12 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const lookup = useCallback<ResultLookup>((key) => results.get(key)?.result ?? null, [results]);
   const markdownContext = useMemo<RenderContext>(() => ({ onExternalLink: setExternalLink, onNookLink: (path) => window.location.assign(path), images: { mode: "public" } }), []);
 
+  // A refresh, a re-run, or a generation (starting or running) holds the report: nothing else starts.
+  const busy = Boolean(running) || generating;
   // On the report page, Refresh all and Schedule live in the page header (reportCommands.tsx).
   const inHeader = useHeaderActions();
   useRegisterReportCommands({
-    refreshAll: canWrite ? { run: () => { void startRefresh(); }, busy: Boolean(running), disabled: Boolean(running) || !report.spec.queries.length } : null,
+    refreshAll: canWrite ? { run: () => { void startRefresh(); }, busy: busy, disabled: busy || !report.spec.queries.length } : null,
     schedule: { open: () => setScheduleOpen(true), badge: badge?.text ?? null }
   }, ["refreshAll", "schedule"]);
 
@@ -201,15 +205,15 @@ export function ReportView({ report, canWrite, initial }: Props) {
   return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
     <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
-        {running ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
+        {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
           : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}
       </p>
       {!inHeader && <div className="report-view-actions">
         <button type="button" className="secondary-button" onClick={() => setScheduleOpen(true)}><CalendarClock aria-hidden="true" />Schedule</button>
-        {canWrite && <button type="button" className="primary-button" onClick={() => { void startRefresh(); }} disabled={Boolean(running) || !report.spec.queries.length}>
-          {running ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
+        {canWrite && <button type="button" className="primary-button" onClick={() => { void startRefresh(); }} disabled={busy || !report.spec.queries.length}>
+          {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
         </button>}
       </div>}
     </div>
@@ -235,12 +239,12 @@ export function ReportView({ report, canWrite, initial }: Props) {
           : card(block))}
       </div>
     </section>)}
-    {menuTarget && isDataBlock(menuTarget) && <BlockMenu block={menuTarget} canWrite={canWrite} busy={Boolean(running)}
+    {menuTarget && isDataBlock(menuTarget) && <BlockMenu block={menuTarget} canWrite={canWrite} busy={busy}
       onClose={() => setMenuBlock(null)}
       onInspect={(tab) => { setMenuBlock(null); setInspect({ blockId: menuTarget.id, tab }); }}
       onRerun={() => { setMenuBlock(null); void startRefresh(menuTarget.queryKey); }} />}
     {inspected && isDataBlock(inspected) && <InspectSheet report={report} block={inspected} query={queries.get(inspected.queryKey)} view={results.get(inspected.queryKey)}
-      palette={palette} canRerun={canWrite} busy={Boolean(running)} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} />}
+      palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} />}
     {scheduleOpen && <ScheduleSheet reportId={report.id} schedule={schedule} runs={runs} canWrite={canWrite}
       onSaved={(next) => { setSchedule(next); setScheduleOpen(false); notify.success(next.enabled ? "Schedule saved" : "Schedule off"); }} onClose={() => setScheduleOpen(false)} />}
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}

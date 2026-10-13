@@ -109,10 +109,12 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
   })();
 }
 
-function versionView(row: VersionRow, currentJson: string, latest: number): ReportVersion {
+function versionView(row: VersionRow, currentJson: string, latest: number, owner: boolean): ReportVersion {
   const spec = parseSpec(row.spec_json);
   return {
-    version: row.version, source: row.source, instructionId: row.instruction_id, restoredFrom: row.restored_from, note: row.note, createdByName: row.author,
+    version: row.version, source: row.source, instructionId: row.instruction_id, restoredFrom: row.restored_from,
+    // Review L5: the note is the edit agent's summary, which may quote the doc: the owner's only.
+    note: owner ? row.note : null, createdByName: row.author,
     createdAt: row.created_at, blocks: spec.blocks.length, queries: spec.queries.length, current: row.version === latest && row.spec_json === currentJson
   };
 }
@@ -124,7 +126,7 @@ export function listVersions(reportId: string, userId: string): ReportVersion[] 
   const report = readableReport(reportId, userId);
   const rows = db.query(`${VERSION_SELECT} WHERE v.report_id = ? ORDER BY v.version DESC`).all(reportId) as VersionRow[];
   const latest = rows[0]?.version ?? 0;
-  return rows.map((row) => versionView(row, report.spec_json, latest));
+  return rows.map((row) => versionView(row, report.spec_json, latest, report.owner_id === userId));
 }
 
 /** One version with its spec, for a preview. */
@@ -133,7 +135,7 @@ export function getVersion(reportId: string, version: number, userId: string): {
   const row = db.query(`${VERSION_SELECT} WHERE v.report_id = ? AND v.version = ?`).get(reportId, version) as VersionRow | null;
   if (!row) throw new ReportError(404, "NOT_FOUND", "Version not found");
   const latest = (db.query("SELECT max(version) AS version FROM report_versions WHERE report_id = ?").get(reportId) as { version: number }).version;
-  return { version: versionView(row, report.spec_json, latest), spec: parseSpec(row.spec_json) };
+  return { version: versionView(row, report.spec_json, latest, report.owner_id === userId), spec: parseSpec(row.spec_json) };
 }
 
 /** Refuses while a run holds the report (a refresh, a generation, an edit): a spec change waits for it. */

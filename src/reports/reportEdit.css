@@ -79,6 +79,8 @@
 .report-version { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--report-border); border-radius: 12px; padding: 10px 12px; }
 .report-version > div { min-width: 0; display: grid; gap: 2px; }
 .report-version strong { margin-right: 8px; }
+/* Review L1: the Current badge keeps its own width in the grid (it stretched across the row). */
+.report-version > div > .reports-status { justify-self: start; }
 .report-version p { margin: 0; font-size: .84rem; color: var(--report-soft); overflow-wrap: anywhere; }
 .report-version .report-version-size { color: var(--report-muted); }
 

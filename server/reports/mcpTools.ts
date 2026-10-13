@@ -35,8 +35,8 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *
  * Writes are non-destructive (a version, a run, a queued instruction), audited with `via: "mcp"` and the
  * key, and counted against `report_write` (100 a day per key). Nothing is deleted over MCP but through
- * the Bin's tools. **There is no ad-hoc SQL over MCP in any wave** (T361): a key can only change a
- * saved query of a report it may change, and that query runs only under the guard. Tools act as the
+ * the Bin's tools. SQL over MCP (T361, T383): `update_report_query` runs guarded SELECTs, saved as a
+ * version, on a report the key's owner owns; nothing else takes SQL, and no tool returns a free query's rows. Tools act as the
  * key's owner: changing tools need the owner of the report, adding an instruction the comment level.
  * Guests (no Reports module) get nothing. None of these is offered to chat agents (NOOK_NEVER_TOOLS).
  */
@@ -102,7 +102,7 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "list_report_datasources",
     title: "List report data sources",
-    description: "List the analytics data sources an admin configured that reports can use: id, name, and default database. Never the URL, the user, or the allowlist; there is no tool that runs ad-hoc SQL.",
+    description: "List the analytics data sources an admin configured that reports can use: id, name, and default database. Never the URL, the user, or the allowlist. SQL runs only through update_report_query, as guarded SELECTs saved as a version (T383).",
     scopes: ["reports:read"],
     access: { mode: "global" },
     write: false,
@@ -182,11 +182,13 @@ export const reportTools: McpToolSpec[] = [
     handler: ({ reportId: id, instructionId }, key) => asOwner(key, () => {
       const instruction = getInstruction(id, instructionId, key.userId);
       if (instruction.status !== "proposed") return { instruction };
+      // Review M1: a pending proposal is the owner's and its author's only.
+      if (!instruction.isMine && readableReport(id, key.userId).owner_id !== key.userId) return { instruction };
       const proposal = proposalView(id, instructionId, key.userId);
       return {
         instruction,
         proposal: {
-          summary: proposal.summary, outOfDate: proposal.outOfDate,
+          summary: proposal.summary, outOfDate: proposal.outOfDate, ...(proposal.redacted ? { redacted: proposal.redacted, waitingFor: "the owner" } : {}),
           blocks: proposal.blocks.map((change) => ({ blockId: change.blockId, change: change.change, after: change.after ? withoutProvenance(change.after) : null })),
           queries: proposal.queries
         }

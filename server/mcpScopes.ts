@@ -31,7 +31,8 @@ export const MCP_SCOPES = [
   // It implies no read scope: a run key never reads the owner's chats.
   "agents:run",
   // Analytics reports (Wave 45, D420): list reports and data source names. reports:write is the pair's
-  // write half (wave 48 gives it tools: create, refresh, schedule, instructions); no scope runs ad-hoc SQL.
+  // write half (wave 48 gives it tools: create, refresh, schedule, instructions). SQL over MCP:
+  // update_report_query runs guarded SELECTs, saved as a version (T383).
   "reports:read", "reports:write"
 ] as const;
 export type McpScope = typeof MCP_SCOPES[number];

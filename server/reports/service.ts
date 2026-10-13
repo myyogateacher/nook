@@ -72,7 +72,13 @@ export function createReport(userId: string, input: { title: string; datasourceI
 export function updateReport(userId: string, id: string, patch: { title?: string; datasourceId?: string; expectedRevision: number }): ReportDetail {
   const row = ownedReport(id, userId);
   if (row.revision !== patch.expectedRevision) throw new ReportError(409, "REVISION_CONFLICT", "This report changed; reload it", { revision: row.revision });
-  if (patch.datasourceId !== undefined && patch.datasourceId !== row.datasource_id) usableDatasource(patch.datasourceId);
+  if (patch.datasourceId !== undefined && patch.datasourceId !== row.datasource_id) {
+    // Review L3: a run in progress reads the data source; it cannot change under it.
+    // (Inline, as versions.ts refuseWhileRunning: importing it here would close an import cycle.)
+    const holder = db.query("SELECT id FROM report_runs WHERE report_id = ? AND status = 'running' AND (lease_until IS NULL OR lease_until > ?)").get(id, now()) as { id: string } | null;
+    if (holder) throw new ReportError(409, "RUN_IN_PROGRESS", "This report is running; wait for it to finish", { runId: holder.id });
+    usableDatasource(patch.datasourceId);
+  }
   db.query("UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?")
     .run(patch.title ?? row.title, patch.datasourceId ?? row.datasource_id, now(), id, row.revision);
   audit(userId, null, "reports.report.update", { id, fields: Object.keys(patch).filter((field) => field !== "expectedRevision") });

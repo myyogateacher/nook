@@ -1,6 +1,7 @@
 import { audit, db, now } from "../db";
 import { readableBoardPredicate } from "./access";
 import { binUnlinkedAttachments, commentAttachmentIds, linkAttachments, notifyBinnedFiles } from "./attachments";
+import { linksChanged } from "../attachments/undoTickets";
 import { LIMITS, limitReached, requireBoardAt, requireCardAt, TaskError, withBoardLock } from "./service";
 import { withReactions } from "../reactions/service";
 import { mailComment } from "../mail/triggers";
@@ -181,6 +182,7 @@ export async function deleteComment(userId: string, commentId: string) {
       // (task attachments and Attachments-folder files; a Files item linked from elsewhere stays, D395).
       const documentIds = commentAttachmentIds(commentId);
       db.query("DELETE FROM card_comments WHERE id = ?").run(commentId);
+      linksChanged("card", current.card_id, documentIds);
       binUnlinkedAttachments(documentIds, userId, binnedFiles);
       audit(userId, null, "task.comment_delete", { boardId: current.board_id, cardId: current.card_id, commentId });
     })();

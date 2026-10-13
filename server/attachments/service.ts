@@ -3,7 +3,7 @@ import { readableDocumentPredicate } from "../documentAccess";
 import { purgeAfterFrom } from "../bin";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { HOSTS, type HostKind, type HostSpec, type LinkRow } from "./hosts";
-import { recordRemovedLink } from "./undoTickets";
+import { linkChanged, recordRemovedLink } from "./undoTickets";
 
 /**
  * The attachment service (uploads everywhere plan D390–D396, D408, D409, T340–T342, T351): the
@@ -202,6 +202,7 @@ export function linkAttachment(userId: string, kind: HostKind, hostId: string, i
     if (count.count >= spec.caps.perHost) throw new AttachmentError(409, "LIMIT_REACHED", `A ${spec.noun} can have up to ${spec.caps.perHost} files`, { limit: spec.caps.perHost });
     db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(kind, hostId, document.id, partId, count.last + 1, userId, now());
+    linkChanged(kind, hostId, document.id);
     audit(userId, null, "attachment.link", { hostKind: kind, hostId, documentId: document.id, ...(document.system_kind === ATTACHMENTS_FOLDER_KIND ? {} : { fromFiles: true }) });
     return { documentId: document.id, created: true };
   })();
@@ -235,6 +236,7 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
       before = hostLinks(kind, hostId).find((link) => link.document_id === documentId);
       const removed = db.query(DELETE_LINK[spec.store]).run({ kind, hostId, documentId }).changes;
       if (!removed) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
+      linkChanged(kind, hostId, documentId);
       audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId, asOwner: true });
       return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
     })();
@@ -252,6 +254,7 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
     if (!link) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
     if (!spec.canUnlink!(userId, hostId, link, ownerId ?? "")) throw new AttachmentError(403, "READ_ONLY", "You cannot remove this file");
     db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, documentId);
+    linkChanged(kind, hostId, documentId);
     audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId });
     return { link, documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
   })();
@@ -351,7 +354,10 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
     const current = new Set(hostLinks(kind, hostId).map((link) => link.document_id));
     const { wanted, skipped, binned, confirm } = planDerivedLinks(kind, hostId, actorId, documentIds, policy);
     const unlinked = [...current].filter((id) => !wanted.includes(id));
-    for (const id of unlinked) db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
+    for (const id of unlinked) {
+      db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
+      linkChanged(kind, hostId, id);
+    }
     const linked: string[] = [];
     const timestamp = now();
     wanted.forEach((id, position) => {
@@ -361,6 +367,7 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
       }
       db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(kind, hostId, id, null, position, actorId, timestamp);
+      linkChanged(kind, hostId, id);
       linked.push(id);
     });
     if (linked.length || unlinked.length) audit(actorId, kind === "note" ? hostId : null, "attachment.sync", { hostKind: kind, hostId, linked: linked.length, unlinked: unlinked.length });
@@ -433,13 +440,14 @@ export type RemovalRecord = { partId: string | null; position: number; linkedBy:
  * above, the per-host cap, then the link back at its old position (or at the end without a record).
  * Linking what is already linked changes nothing (idempotent).
  */
-export function relinkDeclared(userId: string, kind: HostKind, hostId: string, documentId: string, removed: RemovalRecord | null): RelinkOutcome {
+export function relinkDeclared(userId: string, kind: HostKind, hostId: string, documentId: string, removal: () => RemovalRecord | null): RelinkOutcome {
   const spec = HOSTS[kind];
   if (spec.linking !== "declared" || !spec.canLink) throw new AttachmentError(409, "HOST_MANAGED", `Files on a ${spec.noun} cannot be put back this way`);
   const outcome = db.transaction((): RelinkOutcome => {
     const refusal = spec.canLink!(userId, hostId, null);
     if (refusal) throw new AttachmentError(refusal.status, refusal.code, refusal.message);
     if (db.query("SELECT 1 FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").get(kind, hostId, documentId)) return { relinked: false, restored: false };
+    const removed = removal();
     const document = relinkableDocument(documentId, userId, removed);
     const count = db.query("SELECT COUNT(*) AS count, COALESCE(MAX(position), -1) AS last FROM attachment_links WHERE host_kind = ? AND host_id = ?").get(kind, hostId) as { count: number; last: number };
     if (count.count >= spec.caps.perHost) throw new AttachmentError(409, "LIMIT_REACHED", `A ${spec.noun} can have up to ${spec.caps.perHost} files`, { limit: spec.caps.perHost });
@@ -447,6 +455,7 @@ export function relinkDeclared(userId: string, kind: HostKind, hostId: string, d
     if (document.restore && !restored) throw new AttachmentError(409, "PURGING", "This file is being deleted from the Bin");
     db.query("INSERT INTO attachment_links (host_kind, host_id, document_id, part_id, position, linked_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(kind, hostId, document.id, removed?.partId ?? null, removed ? removed.position : count.last + 1, removed?.linkedBy ?? userId, removed?.createdAt ?? now());
+    linkChanged(kind, hostId, document.id);
     audit(userId, null, "attachment.relink", { hostKind: kind, hostId, documentId: document.id, ...(restored ? { restored: true } : {}) });
     return { relinked: true, restored };
   })();

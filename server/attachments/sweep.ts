@@ -2,6 +2,8 @@ import { db } from "../db";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "./service";
 import { isReferencedNow, refreshReferenceIndex, registeredReferences } from "./references";
+import type { HostKind } from "./hosts";
+import { linkChanged } from "./undoTickets";
 
 /**
  * The attachment sweeper steps (uploads everywhere plan D395, T347, T348), run hourly by
@@ -31,7 +33,10 @@ export function sweepStaleAttachmentLinks() {
   let removed = 0;
   for (const [kind, exists] of Object.entries(HOST_EXISTS)) {
     const stale = db.query(`SELECT l.host_id, l.document_id FROM attachment_links l WHERE l.host_kind = ? AND NOT ${exists} LIMIT ${SWEEP_LIMIT}`).all(kind) as Array<{ host_id: string; document_id: string }>;
-    for (const link of stale) removed += db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, link.host_id, link.document_id).changes;
+    for (const link of stale) {
+      removed += db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, link.host_id, link.document_id).changes;
+      linkChanged(kind as HostKind, link.host_id, link.document_id);
+    }
   }
   return removed;
 }

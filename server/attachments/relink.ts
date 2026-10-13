@@ -2,7 +2,7 @@ import { relinkRowDocument } from "../collections/service";
 import { relinkToCard } from "../tasks/attachments";
 import { HOSTS, type HostKind } from "./hosts";
 import { AttachmentError, relinkDeclared, type RelinkOutcome } from "./service";
-import { forgetRemovedLink, removedLink } from "./undoTickets";
+import { forgetRemovedLink, linkChanged, removedLink } from "./undoTickets";
 
 /**
  * Undo for removing an attachment (POST /api/attachments/relink): one server path for events and chat
@@ -29,13 +29,17 @@ export async function relinkAttachment(userId: string, input: RelinkInput): Prom
   if (spec.linking === "derived") {
     throw new AttachmentError(409, "LINKS_DERIVED", `A ${spec.noun}'s attachments follow its content; add the file to the ${spec.noun} instead`);
   }
-  const removed = removedLink(userId, spec.kind, hostId, documentId);
+  // Read the record where the link is checked (inside the host's lock), so a link change while this
+  // request waited for the lock is seen: a changed link has no record (undoTickets.ts, review M1).
+  const removal = () => removedLink(userId, spec.kind, hostId, documentId);
   const partId = input.partId ?? null;
   const outcome = spec.kind === "card"
-    ? await relinkToCard(userId, hostId, documentId, removed, partId)
+    ? await relinkToCard(userId, hostId, documentId, removal, partId)
     : spec.kind === "row"
-      ? await relinkRowDocument(userId, hostId, documentId, removed, partId)
-      : relinkDeclared(userId, spec.kind, hostId, documentId, removed);
-  forgetRemovedLink(userId, spec.kind, hostId, documentId);
+      ? await relinkRowDocument(userId, hostId, documentId, removal, partId)
+      : relinkDeclared(userId, spec.kind, hostId, documentId, removal);
+  // A link made again ends every record for it (anyone's); otherwise only the caller's goes.
+  if (outcome.relinked) linkChanged(spec.kind, hostId, documentId);
+  else forgetRemovedLink(userId, spec.kind, hostId, documentId);
   return outcome;
 }

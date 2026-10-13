@@ -1,6 +1,6 @@
 import { audit, db, now } from "../db";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment, relinkableDocument, restoreForRelink, type RemovalRecord } from "../attachments/service";
-import { recordRemovedLink } from "../attachments/undoTickets";
+import { linkChanged, recordRemovedLink } from "../attachments/undoTickets";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { LIMITS, limitReached, requireCardAt, requireReadableCard, TaskError, withBoardLock } from "./service";
 
@@ -113,7 +113,10 @@ export function linkAttachments(input: { userId: string; cardId: string; documen
   }
   const insert = db.query("INSERT INTO card_attachments (card_id, document_id, comment_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)");
   const timestamp = now();
-  for (const document of fresh) insert.run(input.cardId, document.id, input.commentId, input.userId, timestamp);
+  for (const document of fresh) {
+    insert.run(input.cardId, document.id, input.commentId, input.userId, timestamp);
+    linkChanged("card", input.cardId, document.id);
+  }
   return fresh.map((document) => document.id);
 }
 
@@ -186,6 +189,7 @@ export async function detachFromCard(userId: string, cardId: string, documentId:
     const binnedFiles: string[] = [];
     db.transaction(() => {
       db.query("DELETE FROM card_attachments WHERE card_id = ? AND document_id = ?").run(cardId, documentId);
+      linkChanged("card", cardId, documentId);
       binned = binUnlinkedAttachments([documentId], userId, binnedFiles);
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), cardId);
       audit(userId, null, "task.attachment_unlink", { boardId: current.id, cardId, documentId });
@@ -202,15 +206,23 @@ export async function detachFromCard(userId: string, cardId: string, documentId:
  * COMMENT_GONE otherwise), at its old place in the list (its link time). The document rule is the
  * attachment service's (relinkableDocument); an Attachments-folder file the removal binned comes out
  * of its owner's Bin when the undoer is that owner. Already linked: nothing changes.
+ *
+ * Without a removal record the client's `partId` is held to the ordinary link rule (linkAttachments):
+ * it must be the caller's own comment on this card, or it is the same 404 (v0.36.0 review L1).
+ * `removal` reads the server's record inside the board lock (undoTickets.ts).
  */
-export async function relinkToCard(userId: string, cardId: string, documentId: string, removed: RemovalRecord | null, partId: string | null) {
+export async function relinkToCard(userId: string, cardId: string, documentId: string, removal: () => RemovalRecord | null, partId: string | null) {
   const { board } = requireCardAt(cardId, userId, "edit");
   const id = documentId.toLowerCase();
   const restoredFiles: string[] = [];
   const outcome = await withBoardLock(board.id, () => {
     const { board: current } = requireCardAt(cardId, userId, "edit");
     if (db.query("SELECT 1 FROM card_attachments WHERE card_id = ? AND document_id = ?").get(cardId, id)) return { relinked: false, restored: false };
+    const removed = removal();
     const commentId = removed ? removed.partId : partId;
+    if (!removed && commentId && !db.query("SELECT 1 FROM card_comments WHERE id = ? AND card_id = ? AND author_id = ?").get(commentId, cardId, userId)) {
+      throw new TaskError(404, "Comment not found");
+    }
     return db.transaction(() => {
       const document = relinkableDocument(id, userId, removed);
       if (commentId && !db.query("SELECT 1 FROM card_comments WHERE id = ? AND card_id = ?").get(commentId, cardId)) {
@@ -227,6 +239,7 @@ export async function relinkToCard(userId: string, cardId: string, documentId: s
       if (restored) restoredFiles.push(document.id);
       db.query("INSERT INTO card_attachments (card_id, document_id, comment_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(cardId, document.id, commentId, removed?.linkedBy ?? userId, removed?.createdAt ?? now());
+      linkChanged("card", cardId, document.id);
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), cardId);
       audit(userId, null, "task.attachment_relink", { boardId: current.id, cardId, documentId: document.id, ...(commentId ? { commentId } : {}), ...(restored ? { restored: true } : {}) });
       return { relinked: true, restored };

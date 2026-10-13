@@ -41,7 +41,7 @@ import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, write
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment, relinkableDocument, restoreForRelink, type RemovalRecord } from "../attachments/service";
 import { linkedElsewhere } from "../attachments/keyLinks";
-import { recordRemovedLink } from "../attachments/undoTickets";
+import { linkChanged, recordRemovedLink } from "../attachments/undoTickets";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 
 /**
@@ -881,7 +881,10 @@ function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string, cha
   const wanted = new Set(target.map((link) => link[0]));
   const present = new Set(current.map((link) => link[0]));
   const unlinked = current.filter((link) => !wanted.has(link[0])).map((link) => link[0]);
-  for (const documentId of unlinked) db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
+  for (const documentId of unlinked) {
+    db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
+    linkChanged("row", rowId, documentId);
+  }
   let relinked = 0;
   for (const [documentId, fieldId, , createdAt] of target) {
     if (present.has(documentId)) continue;
@@ -895,6 +898,7 @@ function restoreLinks(rowId: string, target: LinkSnapshot[], userId: string, cha
       changedDocuments.push(documentId);
     }
     db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)").run(rowId, documentId, fieldId, userId, createdAt);
+    linkChanged("row", rowId, documentId);
     relinked += 1;
   }
   const binned = binUnlinkedAttachments(unlinked, userId, changedDocuments);
@@ -956,6 +960,7 @@ export async function attachDocument(userId: string, rowId: string, input: Attac
       const before = rowLinks(rowId);
       db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(rowId, input.documentId, input.fieldId, userId, timestamp);
+      linkChanged("row", rowId, input.documentId);
       recordLinkChange(rowId, collection, userId, before, timestamp, options.keyId ?? null);
       audit(userId, null, "collection.row_attach", { collectionId: collection.id, rowId, documentId: input.documentId, ...(isAttachmentUpload(document) ? {} : { fromFiles: true }) });
     })();
@@ -991,6 +996,7 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
     db.transaction(() => {
       const before = rowLinks(rowId);
       db.query("DELETE FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").run(rowId, documentId);
+      linkChanged("row", rowId, documentId);
       binned = binUnlinkedAttachments([documentId], userId, changed);
       recordLinkChange(rowId, collection, userId, before, now());
       audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
@@ -1007,14 +1013,19 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
  * the row's own Undo step). The field must still be a file field (409 FIELD_GONE). The document rule is
  * the attachment service's (relinkableDocument); an Attachments-folder file the removal binned comes
  * out of its owner's Bin when the undoer is that owner. Already linked: nothing changes.
+ *
+ * Without a removal record the client's `partId` is held to the ordinary attach rule (attachDocument):
+ * a file field of this collection, on a row the caller may edit; there is no other field-level rule.
+ * `removal` reads the server's record inside the collection lock (undoTickets.ts).
  */
-export async function relinkRowDocument(userId: string, rowId: string, documentId: string, removed: RemovalRecord | null, partId: string | null) {
+export async function relinkRowDocument(userId: string, rowId: string, documentId: string, removal: () => RemovalRecord | null, partId: string | null) {
   const { collection: initial } = requireEditableRow(rowId, userId);
   const id = documentId.toLowerCase();
   const changed: string[] = [];
   const outcome = await withCollectionLock(initial.id, () => {
     const { collection } = requireEditableRow(rowId, userId);
     if (db.query("SELECT 1 FROM collection_row_attachments WHERE row_id = ? AND document_id = ?").get(rowId, id)) return { relinked: false, restored: false };
+    const removed = removal();
     const fieldId = removed ? removed.partId : partId;
     return db.transaction(() => {
       const document = relinkableDocument(id, userId, removed);
@@ -1029,6 +1040,7 @@ export async function relinkRowDocument(userId: string, rowId: string, documentI
       const before = rowLinks(rowId);
       db.query("INSERT INTO collection_row_attachments (row_id, document_id, field_id, linked_by, created_at) VALUES (?, ?, ?, ?, ?)")
         .run(rowId, document.id, fieldId, removed?.linkedBy ?? userId, removed?.createdAt ?? timestamp);
+      linkChanged("row", rowId, document.id);
       recordLinkChange(rowId, collection, userId, before, timestamp);
       audit(userId, null, "collection.row_relink", { collectionId: collection.id, rowId, documentId: document.id, ...(restored ? { restored: true } : {}) });
       return { relinked: true, restored };

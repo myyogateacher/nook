@@ -2616,6 +2616,32 @@ D424–D428, T368–T370. Migration **051** (`report_runs_via`: `agent_runs.via`
 
 **The run.** `agent_runs` row `via: "reports"`, `agent_id: "reports"`, no key or chat (the Audit log shows it to its owner as "Report generation"; admins see its metadata); a `report_runs` row `kind: "generate"` with `agent_run_id` and `doc_snapshot_id`. Events: `delta` (the model's notes), `tool_call` (`tool`, `argsPreview`: the SQL for `run_sql`), `tool_result` (`ok`, `resultPreview`: the guard's or the checker's refusal), `usage`, `error`, `done` (`messageId` is the report run's id). Tools: `search_schema`, `list_tables`, `describe_tables`, `sample_rows`, `run_schema_query`, `estimate`, `run_sql { sql, purpose }` (a guarded SELECT; columns, ≤ 20 rows, `rowCount`, `ms`; ≤ 12 per run; audited `reports.generate.run_sql` with the query id and SHA-256), and `submit_report` (the ReportSpec). At most 12 steps; every step must call a tool and the last three must call `submit_report`. An accepted spec saves the queries, the run's results, and the spec (each block's `provenance: { runId, version, docSnapshotId }`) in one transaction and the report becomes `ready`; three refusals fail the run (`report_runs.error`, `reports.last_error`; a report with no spec becomes `error`). A run left running by a restart is `abandoned` at boot. The run holds a lease and shares wave 47's run lock (D429): `POST /api/reports/:id/refresh` answers 409 `RUN_IN_PROGRESS` while it runs, and the viewer's `GET /api/reports/:id/results` shows its results once it saves (wave 46's `GET /api/reports/:id/generation/results` was folded into it).
 
+## Analytics reports (Wave 48): instructions, versions, sharing
+
+Same rules as the earlier report routes: a session; CSRF and a writing role for mutations; guests get 404; a report the caller cannot read is 404. Owner-only routes answer 404 to readers of a shared report. Wire types: `shared/reportsEdit.ts`.
+
+| Route | Who | What |
+| --- | --- | --- |
+| `GET /api/reports/:id/instructions` | readers | `{instructions, level, canComment, canApply, autoApply}`: the thread, oldest first with the queue last in its order. `agentRunId` is set only for the caller's own runs (`/api/runs/:id/events`). |
+| `POST /api/reports/:id/instructions` `{text ≤ 2000, blockId?}` | owner, `comment` level (not Team viewers) | 201 `{instruction}` queued at the end; the queue starts it when nothing runs or waits for review. 403 `ROLE_READ_ONLY` for view-only readers; 429 `LIMIT_REACHED` past 20 queued. |
+| `POST /api/reports/:id/instructions/reorder` `{ids}` | owner | The queued ones in the given order (others keep theirs after them). |
+| `POST /api/reports/:id/instructions/:iid/cancel` `{}` | owner or author | A queued one is `cancelled`; a running one is stopped (`cancelled`). 409 for a proposed or finished one. |
+| `GET /api/reports/:id/instructions/:iid/proposal` | readers | `{proposal}`: the proposed spec, `blocks` (added, updated, removed, moved; before and after), `queries` (SQL before and after), `results` for the proposed spec (the proposal's own for added or changed queries), `currentResults`, `summary`, `outOfDate`. |
+| `POST /api/reports/:id/instructions/:iid/apply` `{}` | owner | A new version (`edit`), touched blocks stamped `{runId, instructionId, version}`, new results saved under the edit run; the queue moves on. 409 `REVISION_CONFLICT` when the report changed since the agent started; 409 `RUN_IN_PROGRESS` while a run holds the report. |
+| `POST /api/reports/:id/instructions/:iid/reject` `{}` | owner or author | The spec stays; the queue moves on. |
+| `PUT /api/reports/:id/auto-apply` `{autoApply}` | owner | The owner's own instructions apply themselves when proposed. |
+| `GET /api/reports/:id/versions` | readers | `{versions}` newest first: `version, source (initial, generate, edit, restore, manual), instructionId, restoredFrom, note, createdByName, createdAt, blocks, queries, current`. |
+| `GET /api/reports/:id/versions/:n` | readers | `{version, spec}`. |
+| `POST /api/reports/:id/versions/:n/restore` `{}` | owner | A new `restore` version with that spec; `{version, refreshRunId}` (queries whose last result is of other SQL are refreshed). 409 `RUN_IN_PROGRESS` while a run holds the report. |
+| `POST /api/reports/:id/spec/edit` `{ops, summary?, expectedRevision}` | owner | A manual edit (patch ops; queries no block uses are dropped). New or changed SQL takes the run lock and is checked like a spec (guard, run, columns): 400 `INVALID` with `details`. `{version, revision}`. |
+| `GET /api/reports/:id/sharing`, `PUT …` `{visibility, shares: [{kind: user\|group, id, level: view\|comment}]}` | owner | View-only sharing; people (not guests or integrations) and groups; saving replaces the list. |
+
+Changed in wave 48: refresh, the schedule's PUT, regenerate, stop, Check doc, `GET /doc`, the console and the Schema browser, rename, and the Bin are owner-only (404 to readers); `GET /api/reports/:id` answers `doc: null` to readers; `/api/reports` lists shared reports too (`isOwner: false`).
+
+Patch ops (`submit_patch` and `spec/edit`): `add_block {block, after?}`, `update_block {id, set?, unset?}` (a new `type` replaces the block), `remove_block {id}`, `move_block {id, after}`, `add_query {query: {key, sql, purpose?}}`, `update_query {key, sql?, purpose?}`, `remove_query {key}`. Blocks are open objects: unknown fields pass through; `id` and `provenance` cannot be set or cleared.
+
+MCP: `reports:read` adds `get_report`, `get_report_block` (the inspect data, 50 rows), `get_report_run`, `get_report_instruction`; `reports:write` has `create_report`, `refresh_report`, `set_report_schedule`, `add_report_instruction`, `apply_report_proposal`, `reject_report_proposal`, `update_report_query`, each counted against `report_write` (100 a day per key, 200 per person) and audited with `via: "mcp"` and the key. No tool runs ad-hoc SQL; nothing is deleted but through the Bin.
+
 ## Changes to existing note endpoints (Wave 4)
 
 - `DELETE /api/notes/:id`:

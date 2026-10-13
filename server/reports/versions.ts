@@ -44,9 +44,10 @@ export function ensureVersionRecorded(reportId: string) {
   if (latest?.spec_json === report.spec_json) return;
   // Numbered from the spec's own stamp (a generation stamps its blocks), and always past every row.
   const version = Math.max((latest?.version ?? 0) + 1, maxProvenanceVersion(spec), 1);
-  const run = latest ? db.query("SELECT id FROM report_runs WHERE report_id = ? AND kind = 'generate' AND status = 'succeeded' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as { id: string } | null : null;
+  const run = db.query("SELECT id FROM report_runs WHERE report_id = ? AND kind = 'generate' AND status = 'succeeded' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as { id: string } | null;
+  // A spec nothing else wrote is a generation's (or, with no generation, the report's first seed).
   db.query("INSERT INTO report_versions (report_id, version, spec_json, source, run_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(reportId, version, report.spec_json, latest ? "generate" : "initial", run?.id ?? null, report.owner_id, report.updated_at);
+    .run(reportId, version, report.spec_json, latest || run ? "generate" : "initial", run?.id ?? null, report.owner_id, report.updated_at);
 }
 
 export function pruneVersions(reportId: string) {

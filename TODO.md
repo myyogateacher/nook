@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md)): waves 45, 46 (doc fetch, generation; migration 051) and 47 (viewer, refresh, scheduler) integrated on `reports-integration` with v0.37.0 merged in; needs QA with a real ClickHouse via `CLICKHOUSE_TEST_URL`. Then wave 48 (instructions, MCP, sharing; migration 052 reserved; the Messages module takes 053).
+- [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md)): waves 45, 46 (doc fetch, generation; migration 051) and 47 (viewer, refresh, scheduler) integrated on `reports-integration` with v0.37.0 merged in; needs QA with a real ClickHouse via `CLICKHOUSE_TEST_URL`. Wave 48 (instructions, edit agent, versions, MCP, sharing; migration 052) built on `reports-w48`, to merge with 48b (switch `editModel` in `server/reports/edit.ts` to `reportModelFor`). The Messages module takes 053.
   - [ ] Wave 45 leftovers: `format()` the string function is refused with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
 - [ ] The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.
 

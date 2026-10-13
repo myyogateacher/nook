@@ -50,9 +50,11 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
   // The latest generation run, so a reloaded page can follow a running one (or show why the last failed).
   app.get("/api/reports/:reportId/generation", handle((c) => {
     const reportId = id(c, "reportId");
-    readableReport(reportId, c.get("user").id);
+    const report = readableReport(reportId, c.get("user").id);
+    const owner = report.owner_id === c.get("user").id;
     const row = db.query("SELECT id, agent_run_id, status, error, doc_snapshot_id, started_at, finished_at FROM report_runs WHERE report_id = ? AND kind = 'generate' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as RunRow | null;
-    const run: GenerationRun | null = row ? { id: row.id, agentRunId: row.agent_run_id, status: row.status, error: row.error, docSnapshotId: row.doc_snapshot_id, startedAt: row.started_at, finishedAt: row.finished_at } : null;
+    // Review L2: a reader of a shared report sees the status, never the agent run or the doc snapshot.
+    const run: GenerationRun | null = row ? { id: row.id, agentRunId: owner ? row.agent_run_id : null, status: row.status, error: row.error, docSnapshotId: owner ? row.doc_snapshot_id : null, startedAt: row.started_at, finishedAt: row.finished_at } : null;
     return { run };
   }));
   // Wave 48b (D435): the report's own generation model (the owner's override of the admin setting).

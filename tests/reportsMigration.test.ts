@@ -142,6 +142,8 @@ describe("migration 050 reports", () => {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
     db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (50, 'skipped', ?)").run(at);
+    // 052 (wave 48) builds on 050's tables, so it waits with it.
+    db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (52, 'skipped', ?)").run(at);
     runMigrations(db);
     db.query("DELETE FROM schema_migrations WHERE id = 50").run();
     const before = { triggers: schemaOf(db, "trigger"), indexes: schemaOf(db, "index"), columns: db.query("PRAGMA table_info(api_key_grants)").all() };

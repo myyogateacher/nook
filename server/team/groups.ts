@@ -46,13 +46,14 @@ const changed = (revision: number) => new GroupError(409, "GROUP_CHANGED", "Some
 type GroupRow = { id: string; name: string; description: string | null; created_at: string; updated_at: string; revision: number; member_count: number; guest_count: number; grant_count: number; shared_count: number };
 
 /**
- * The live (not binned) agents, chats, and knowledge bases shared with the group aliased `alias`
- * (2026-10-08). Shared by the group pages and the member access page's groups, so both counts agree.
+ * The live (not binned) agents, chats, knowledge bases (2026-10-08), and reports (reports wave 48,
+ * D459) shared with the group aliased `alias`. Shared by the group pages and the member access page's groups, so both counts agree.
  */
 export const groupSharedCountSql = (alias: string) => `(SELECT COUNT(*) FROM agent_access aa WHERE aa.group_id = ${alias}.id AND (
       (aa.resource_kind = 'agent' AND EXISTS (SELECT 1 FROM agents x WHERE x.id = aa.resource_id AND x.deleted_at IS NULL))
       OR (aa.resource_kind = 'chat' AND EXISTS (SELECT 1 FROM chats x WHERE x.id = aa.resource_id AND x.deleted_at IS NULL))
-      OR (aa.resource_kind = 'knowledge_base' AND EXISTS (SELECT 1 FROM knowledge_bases x WHERE x.id = aa.resource_id AND x.deleted_at IS NULL))))`;
+      OR (aa.resource_kind = 'knowledge_base' AND EXISTS (SELECT 1 FROM knowledge_bases x WHERE x.id = aa.resource_id AND x.deleted_at IS NULL))))
+    + (SELECT COUNT(*) FROM report_group_shares rg JOIN reports r ON r.id = rg.report_id WHERE rg.group_id = ${alias}.id AND r.deleted_at IS NULL)`;
 
 const groupSelect = `SELECT g.id, g.name, g.description, g.created_at, g.updated_at, g.revision,
     (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
@@ -280,7 +281,8 @@ export function putGroupMembers(actorId: string, groupId: string, input: { userI
  */
 export function guestJoinRefused(groupId: string, userIds: readonly string[]) {
   if (!userIds.length || readPolicies().shareWithGuests) return false;
-  if (!db.query("SELECT 1 FROM group_grants WHERE group_id = ? LIMIT 1").get(groupId)) return false;
+  // Reports shared with the group count too (reports wave 48, D459): guests have no Reports module.
+  if (!db.query("SELECT 1 FROM group_grants WHERE group_id = ? UNION ALL SELECT 1 FROM report_group_shares WHERE group_id = ? LIMIT 1").get(groupId, groupId)) return false;
   return Boolean(db.query(`SELECT 1 FROM users WHERE role = 'guest' AND id IN (${userIds.map(() => "?").join(",")}) LIMIT 1`).get(...userIds));
 }
 
@@ -292,7 +294,7 @@ export function guestRefusedGroups(groupIds: readonly string[]): Array<{ id: str
   if (!groupIds.length || readPolicies().shareWithGuests) return [];
   const placeholders = groupIds.map(() => "?").join(",");
   return db.query(`SELECT g.id, g.name FROM user_groups g WHERE g.id IN (${placeholders})
-    AND EXISTS (SELECT 1 FROM group_grants gg WHERE gg.group_id = g.id) ORDER BY g.name COLLATE NOCASE`).all(...groupIds) as Array<{ id: string; name: string }>;
+    AND (EXISTS (SELECT 1 FROM group_grants gg WHERE gg.group_id = g.id) OR EXISTS (SELECT 1 FROM report_group_shares rg WHERE rg.group_id = g.id)) ORDER BY g.name COLLATE NOCASE`).all(...groupIds) as Array<{ id: string; name: string }>;
 }
 
 /** Whether a group has a guest in it (the `share_with_guests` policy, D.2). */

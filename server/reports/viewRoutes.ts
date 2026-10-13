@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
 import { parseJson, uuid } from "../validation";
-import { QUERY_KEY } from "../../shared/reports";
+import { QUERY_KEY, type ReportRun } from "../../shared/reports";
 import type { DocSnapshotInfo, ProvenanceView } from "../../shared/reportsView";
 import { readableReport } from "./access";
 import { listRuns, reportResults, reportRun, runRow, runView, startRefresh } from "./refresh";
@@ -36,11 +36,17 @@ function snapshotInfo(reportId: string, snapshotId: string | null | undefined): 
 
 /** A block's provenance: the run that made or last changed it and the doc snapshot it worked from (never the doc's text). */
 export function provenance(reportId: string, userId: string, input: { runId?: string | null; snapshotId?: string | null }): ProvenanceView {
-  readableReport(reportId, userId);
+  const report = readableReport(reportId, userId);
   const run = input.runId ? runRow(input.runId) : null;
   const ownRun = run && run.report_id === reportId ? run : null;
+  // Review L2: the doc (its snapshots' titles and hashes) and the agent run are the owner's.
+  if (report.owner_id !== userId) return { run: ownRun ? forReader(runView(ownRun)) : null, snapshot: null };
   return { run: ownRun ? runView(ownRun) : null, snapshot: snapshotInfo(reportId, input.snapshotId ?? ownRun?.doc_snapshot_id) };
 }
+
+/** A run as a reader of a shared report sees it: no doc snapshot, no agent run (wave 48 review L2). */
+export const forReader = (run: ReportRun): ReportRun => ({ ...run, docSnapshotId: null, agentRunId: null });
+const isOwner = (reportId: string, userId: string) => readableReport(reportId, userId).owner_id === userId;
 
 const optionalUuid = (value: string | undefined) => {
   const parsed = uuid.safeParse(value?.toLowerCase());
@@ -48,7 +54,12 @@ const optionalUuid = (value: string | undefined) => {
 };
 
 export function registerReportViewRoutes(app: Hono<AppEnv>) {
-  app.get("/api/reports/:reportId/results", handle((c) => reportResults(id(c, "reportId"), c.get("user").id)));
+  app.get("/api/reports/:reportId/results", handle((c) => {
+    const reportId = id(c, "reportId");
+    const userId = c.get("user").id;
+    const view = reportResults(reportId, userId);
+    return isOwner(reportId, userId) || !view.running ? view : { ...view, running: forReader(view.running) };
+  }));
   app.post("/api/reports/:reportId/refresh", handle(async (c) => {
     const reportId = id(c, "reportId");
     const { queryKey } = await parseJson(c.req.raw, refreshSchema);
@@ -58,9 +69,15 @@ export function registerReportViewRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/:reportId/runs", handle((c) => {
     const reportId = id(c, "reportId");
     const userId = c.get("user").id;
-    return { runs: listRuns(reportId, userId), schedule: getSchedule(reportId, userId) };
+    const runs = listRuns(reportId, userId);
+    return { runs: isOwner(reportId, userId) ? runs : runs.map(forReader), schedule: getSchedule(reportId, userId) };
   }));
-  app.get("/api/reports/:reportId/runs/:runId", handle((c) => ({ run: reportRun(id(c, "reportId"), id(c, "runId"), c.get("user").id) })));
+  app.get("/api/reports/:reportId/runs/:runId", handle((c) => {
+    const reportId = id(c, "reportId");
+    const userId = c.get("user").id;
+    const run = reportRun(reportId, id(c, "runId"), userId);
+    return { run: isOwner(reportId, userId) ? run : forReader(run) };
+  }));
   app.get("/api/reports/:reportId/provenance", handle((c) => provenance(id(c, "reportId"), c.get("user").id, {
     runId: optionalUuid(c.req.query("runId")), snapshotId: optionalUuid(c.req.query("snapshotId"))
   })));

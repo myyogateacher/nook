@@ -40,7 +40,7 @@ export function readChartPalette(): ChartPalette {
 }
 
 /** Re-reads the theme whenever it can have changed: the root's attributes or style, the OS scheme, or forced colours. */
-function useChartPalette(): ChartPalette {
+export function useChartPalette(): ChartPalette {
   const [palette, setPalette] = useState<ChartPalette>(() => readChartPalette());
   useEffect(() => {
     if (typeof window === "undefined") return undefined;

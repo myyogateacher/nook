@@ -230,7 +230,7 @@ describe("migration 053 (report_model)", () => {
     const { runMigrations, registeredMigrationIds } = await import("../server/migrations");
     const { addReportSettingKeys, reportModelMigration } = await import("../server/migrations/053_report_model");
     expect(reportModelMigration).toMatchObject({ id: 53, name: "report_model" });
-    expect(registeredMigrationIds.indexOf(53)).toBe(registeredMigrationIds.indexOf(51) + 1);
+    expect(registeredMigrationIds.indexOf(53)).toBe(registeredMigrationIds.indexOf(52) + 1);
     // The 039 shape with a stored row.
     const old = new Database(":memory:", { strict: true });
     old.exec(`CREATE TABLE agent_settings (key TEXT PRIMARY KEY CHECK (key IN ('enabled','default_provider_id','kbs_per_user')), value_json TEXT NOT NULL CHECK (json_valid(value_json)), revision INTEGER NOT NULL DEFAULT 1, updated_by TEXT, updated_at TEXT NOT NULL) STRICT`);

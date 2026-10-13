@@ -57,7 +57,10 @@ describe("inbox MCP tools", () => {
     // Wave 19 adds exactly one publishing tool, publish_note_draft, under its own opt-in notes:publish
     // scope (D170, T143); no inbox scope reaches it, and nothing approves or applies proposals.
     for (const spec of mcpToolSpecs) {
-      const approveLike = /approve|apply/i.test(spec.name) || (/publish/i.test(spec.name) && !(spec.name === "publish_note_draft" && spec.scopes.join() === "notes:publish"));
+      // Reports wave 48 (D457): apply_report_proposal applies the report's own edit-agent proposal, as the
+      // report's owner under reports:write (no inbox proposal is ever approved by it).
+      const reportApply = spec.name === "apply_report_proposal" && spec.scopes.join() === "reports:write";
+      const approveLike = (/approve|apply/i.test(spec.name) && !reportApply) || (/publish/i.test(spec.name) && !(spec.name === "publish_note_draft" && spec.scopes.join() === "notes:publish"));
       expect({ name: spec.name, approveLike }).toEqual({ name: spec.name, approveLike: false });
     }
   });

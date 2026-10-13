@@ -13,6 +13,7 @@ import { limited } from "./runner";
 import "./bin";
 import { registerGenerateRoutes } from "./generateRoutes";
 import { registerReportViewRoutes } from "./viewRoutes";
+import { registerReportEditRoutes } from "./editRoutes";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -156,4 +157,6 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
 
   // Wave 47: results, refresh, runs, provenance, and the schedule (viewRoutes.ts).
   registerReportViewRoutes(app);
+  // Wave 48: instructions, proposals, versions, manual edits, and sharing (editRoutes.ts).
+  registerReportEditRoutes(app);
 }

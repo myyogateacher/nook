@@ -10,6 +10,8 @@ import type { DatasourceRow } from "./datasources";
 import { asReportError, ReportError } from "./errors";
 import { runGuarded } from "./runner";
 import { parseSpec } from "./service";
+import { backfillVersion } from "./versionBackfill";
+import { nextVersion } from "./versionNumbers";
 
 /**
  * Checking a spec the generation agent (or wave 48's edit agent) submits, before anything is saved
@@ -57,6 +59,8 @@ const base = {
 /** KPI comparison text: one plain line, no markup. */
 const compareLabel = z.string().trim().min(1).max(COMPARE_LABEL_MAX).refine((value) => !/[<>{}\u0000-\u001f\u007f]/.test(value), "must be plain text on one line (no markup)");
 
+// Strict (wave 48 review H1): a field the vocabulary does not name (html, style, a formatter, a note)
+// is refused, never stripped and never saved.
 const blockSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("markdown"), markdown: z.string().min(1).max(REPORT_LIMITS.markdown) }).strict(),
   z.object({
@@ -476,7 +480,11 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     const current = db.query("SELECT spec_json FROM reports WHERE id = ? AND deleted_at IS NULL").get(input.reportId) as { spec_json: string } | null;
     if (!current) throw new PersistRefused("REPORT_GONE");
     if (!db.query("SELECT 1 FROM report_runs WHERE id = ? AND report_id = ? AND status = 'running'").get(input.runId, input.reportId)) throw new PersistRefused("RUN_NOT_RUNNING");
-    const version = nextSpecVersion(current.spec_json);
+    // Wave 48 (review M2): the version comes from report_versions, and the generated spec is recorded
+    // as a `generate` version in this same transaction, so versions and block provenance agree. A spec
+    // saved before wave 48 is recorded first (the idempotent backfill), so regenerating never loses it.
+    backfillVersion(input.reportId);
+    const version = nextVersion(input.reportId, parseSpec(current.spec_json));
     const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId };
     const spec: ReportSpec = { version: 1, specVersion: 2, sections: input.spec.sections, queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
     const specJson = JSON.stringify(spec);
@@ -496,6 +504,8 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     }
     const ran = db.query("UPDATE report_runs SET status = 'succeeded', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ? AND status = 'running'").run(at, input.runId);
     if (ran.changes !== 1) throw new PersistRefused("RUN_NOT_RUNNING");
+    db.query("INSERT INTO report_versions (report_id, version, spec_json, source, run_id, created_by, created_at) VALUES (?, ?, ?, 'generate', ?, (SELECT owner_id FROM reports WHERE id = ?), ?)")
+      .run(input.reportId, version, specJson, input.runId, input.reportId, at);
     const saved = db.query(`UPDATE reports SET spec_json = ?, status = 'ready', doc_hash = COALESCE(?, doc_hash), last_run_at = ?, last_error = NULL, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL`)
       .run(specJson, input.docHash, at, at, input.reportId);
     if (saved.changes !== 1) throw new PersistRefused("REPORT_GONE");

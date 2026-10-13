@@ -115,6 +115,7 @@ const probeReply: ScriptReply = { toolCalls: [{ name: PROBE_TOOL, arguments: { o
 /** The showcase sequence: search, describe, one run_sql, a submit refused by design rules 2 and 8, then the fixed spec. */
 export const showcaseScript: Script = (context) => {
   if (context.tools.includes(PROBE_TOOL)) return probeReply;
+  if (context.tools.includes("submit_patch")) return qaEditScript(context);
   const submits = context.body.messages?.filter((turn) => turn.role === "assistant" && turn.tool_calls?.some((call) => call.function?.name === "submit_report")).length ?? 0;
   if (context.forced === "submit_report" || context.lastTool?.name === "submit_report" || context.step >= 4) {
     return { content: submits ? "Fixing the design: a ranked bar for 24 countries, and a title." : "Submitting the report.", toolCalls: [{ name: "submit_report", arguments: showcaseSpec({ bad: submits === 0 }) }] };
@@ -124,9 +125,40 @@ export const showcaseScript: Script = (context) => {
   return { toolCalls: [{ name: "run_sql", arguments: { sql: SHOWCASE_QUERIES.revenue_trend, purpose: "Check revenue per day by channel" } }] };
 };
 
+/** Wave 48: the edit agent's QA query (revenue per country, net of refunds). */
+export const QA_EDIT_SQL = "SELECT country, sum(amount) AS net_revenue\nFROM analytics.orders\nWHERE amount > 0\nGROUP BY country\nORDER BY net_revenue DESC";
+
+/**
+ * Wave 48's edit agent (its tools include submit_patch). Two QA instructions: "add revenue by country"
+ * checks the SQL with run_sql, then adds a query and a bar chart after the countries chart; "make it a
+ * stacked bar" changes the block the instruction is about (or that chart) to a stacked bar. Anything
+ * else retitles the block (or the report's first block).
+ */
+export const qaEditScript: Script = (context) => {
+  const turn = context.body.messages?.find((item) => item.role === "user");
+  const instruction = (text(turn?.content).match(/<instruction>\n([\s\S]*?)\n<\/instruction>/)?.[1] ?? "").toLowerCase();
+  const target = /The instruction is about block `([^`]+)`/.exec(context.system)?.[1] ?? null;
+  const patch = () => {
+    if (instruction.includes("stacked")) return { summary: "Show it as a stacked bar", ops: [{ op: "update_block", id: target ?? "country_revenue", set: { kind: "stacked_bar" } }] };
+    if (instruction.includes("revenue by country")) {
+      return {
+        summary: "Add net revenue by country",
+        ops: [
+          { op: "add_query", query: { key: "revenue_by_country", sql: QA_EDIT_SQL, purpose: "Net revenue per country (refunds excluded)" } },
+          { op: "add_block", after: /"id":\s*"(countries|country-bar)"/.exec(context.system)?.[1] ?? null, block: { id: "country_revenue", type: "chart", title: "Revenue by country", queryKey: "revenue_by_country", kind: "bar", x: "country", y: ["net_revenue"], format: "currency:USD" } }
+        ]
+      };
+    }
+    return { summary: "Retitle a block", ops: [{ op: "update_block", id: target ?? /"id":\s*"([^"]+)"/.exec(context.system)?.[1] ?? "daily", set: { title: instruction.slice(0, 60) || "Edited" } }] };
+  };
+  if (context.forced === "submit_patch" || context.lastTool?.name === "run_sql" || !instruction.includes("revenue by country")) return { content: "Proposing the change.", toolCalls: [{ name: "submit_patch", arguments: patch() }] };
+  return { content: "Checking the SQL first.", toolCalls: [{ name: "run_sql", arguments: { sql: QA_EDIT_SQL, purpose: "Net revenue per country" } }] };
+};
+
 /** The QA instance's fixed sequence (see the file comment). */
 export const qaScript: Script = (context) => {
   if (context.tools.includes(PROBE_TOOL)) return probeReply;
+  if (context.tools.includes("submit_patch")) return qaEditScript(context);
   const evil = context.system.includes("SYSTEM OVERRIDE");
   const submits = context.body.messages?.filter((turn) => turn.role === "assistant" && turn.tool_calls?.some((call) => call.function?.name === "submit_report")).length ?? 0;
   if (context.forced === "submit_report" || context.lastTool?.name === "submit_report" || (context.step >= 5 && !evil)) {

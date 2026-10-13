@@ -5,7 +5,7 @@ import type { DocServerChoice, DocState, DocToolChoice } from "../../shared/repo
 import { describeMcpError, McpClientError, type McpSession } from "../agents/mcpClient";
 import { AgentError } from "../agents/status";
 import { serverAvailableTo, serverRowOrNull, sessionFor, toolsWithPolicies, type StoredTool, type ToolServerRow } from "../agents/toolServers";
-import { ownedReport, readableReport } from "./access";
+import { ownedReport } from "./access";
 import { ReportError } from "./errors";
 
 /**
@@ -198,7 +198,8 @@ type DocRow = { doc_server_id: string | null; doc_tool: string | null; doc_arg: 
 
 /** The report's doc, its newest snapshot, and whether the doc changed since the report was generated. */
 export function docState(reportId: string, userId: string): DocState {
-  readableReport(reportId, userId);
+  // The doc (its link, server, and snapshots) is the owner's; readers of a shared report never see it (wave 48, D456).
+  ownedReport(reportId, userId);
   const row = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref, doc_hash FROM reports WHERE id = ?").get(reportId) as DocRow;
   const latest = db.query("SELECT id, sha256, title, length(CAST(markdown AS BLOB)) AS bytes, fetched_at FROM report_doc_snapshots WHERE report_id = ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1")
     .get(reportId) as { id: string; sha256: string; title: string | null; bytes: number; fetched_at: string } | null;

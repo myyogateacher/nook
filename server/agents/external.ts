@@ -44,7 +44,7 @@ import { runKnowledgeTool } from "../knowledge/tool";
  * (`agents.run.start`, `agents.run.finish`, `agents.tool.call`) carry ids, names, and counts only.
  */
 
-export type ExternalCaller = { keyId: string; surface: "mcp" | "rest"; via: AuditVia; clientIp: string | null };
+export type ExternalCaller = { keyId: string; surface: "mcp" | "rest"; via: Exclude<AuditVia, "reports">; clientIp: string | null };
 export type ExternalMessage = { role: "user" | "assistant"; content: string };
 export type ExternalRequest = { agentId: string; input?: string; messages?: ExternalMessage[]; label?: string | null };
 

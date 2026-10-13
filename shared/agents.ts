@@ -61,6 +61,11 @@ export type ProviderCompat = {
   /** Whether the server sends a final `usage` chunk with `stream_options.include_usage`; off, tokens are estimated. */
   streamUsage: boolean;
   supportsTools: boolean;
+  /**
+   * Wave 46: whether the server takes a named `tool_choice` (`{type:"function", function:{name}}`).
+   * Absent or true: it does; false: Nook sends `required` with only that tool offered.
+   */
+  namedToolChoice?: boolean;
   /** The context window, in (estimated) tokens, for the message window. */
   contextTokens: number;
 };
@@ -401,7 +406,8 @@ export const EXTERNAL_BOUNDS = {
   exportMax: 1000
 } as const;
 
-export const AUDIT_VIAS = ["api", "mcp"] as const;
+/** `reports` (Wave 46): a report generation run, the report owner's, with no key. */
+export const AUDIT_VIAS = ["api", "mcp", "reports"] as const;
 export type AuditVia = typeof AUDIT_VIAS[number];
 
 /**

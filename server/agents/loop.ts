@@ -28,7 +28,13 @@ export type ChatTurn =
   | { role: "tool"; tool_call_id: string; content: string };
 /** A tool as offered to the model (`tools: [{type: "function", function}]`). */
 export type ModelTool = { name: string; description: string; parameters: Record<string, unknown> };
-export type CompletionRequest = { messages: ChatTurn[]; model?: string; temperature?: number | null; maxOutputTokens?: number; tools?: ModelTool[] };
+/**
+ * Which tool the model must call (Wave 46): `auto` (the default; it may answer in text), `required`
+ * (some tool), or `{ name }` (that tool). A provider without named choice (`compat.namedToolChoice`
+ * false) gets `required` with only the named tool offered, which asks for the same call.
+ */
+export type ToolChoice = "auto" | "required" | { name: string };
+export type CompletionRequest = { messages: ChatTurn[]; model?: string; temperature?: number | null; maxOutputTokens?: number; tools?: ModelTool[]; toolChoice?: ToolChoice };
 export type CompletionResult = { content: string; finishReason: string | null; usage: TokenUsage; model: string | null; toolCalls: ModelToolCall[] };
 /**
  * What a streaming call has produced so far (Wave 42 QA M2): whether the provider answered (a 2xx
@@ -201,8 +207,11 @@ export async function completeStreaming(connection: ProviderConnection, request:
   };
   if (typeof request.temperature === "number") body.temperature = request.temperature;
   if (request.tools && request.tools.length > 0) {
-    body.tools = request.tools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
-    body.tool_choice = "auto";
+    const choice = request.toolChoice ?? "auto";
+    const named = typeof choice === "object" ? choice.name : null;
+    const offered = named !== null ? request.tools.filter((tool) => tool.name === named) : request.tools;
+    body.tools = offered.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
+    body.tool_choice = named === null ? choice : connection.compat.namedToolChoice === false ? "required" : { type: "function", function: { name: named } };
   }
   let response: Awaited<ReturnType<typeof egressFetch>>;
   try {
@@ -295,8 +304,11 @@ export type LoopSink = {
    */
   interrupted?: (step: LoopStep) => void;
 };
-/** What a tool call produced: the text the model sees (already capped and marked by the executor). */
-export type ToolExecution = { content: string };
+/**
+ * What a tool call produced: the text the model sees (already capped and marked by the executor).
+ * `stop` (Wave 46: an accepted `submit_report`) ends the run after this call; the step's later calls are not run.
+ */
+export type ToolExecution = { content: string; stop?: boolean };
 export type LoopInput = {
   connection: ProviderConnection;
   messages: ChatTurn[];
@@ -325,6 +337,12 @@ export type LoopInput = {
   noToolsReason?: () => string | null;
   /** Calls run per step and per run (defaults: AGENT_BOUNDS); calls past either are dropped, not executed. */
   limits?: { perStep: number; perRun: number };
+  /**
+   * Wave 46: the tool choice of each step (default `auto`; chat runs never set it). A named choice
+   * offers only that tool, also on the last step (which otherwise goes out without tools), so a run
+   * can be made to end with one call (report generation forces `submit_report`).
+   */
+  toolChoice?: (step: number, last: boolean) => ToolChoice | undefined;
 };
 export type LoopResult = { status: "stop" | "step_limit"; content: string; steps: number; usage: TokenUsage; model: string | null; toolCalls: number; droppedToolCalls: number };
 
@@ -353,7 +371,7 @@ export const runWatch = { intervalMs: 2000 };
  * streams (the error is then the run's). A call that ends early after the provider answered is
  * reported to `sink.interrupted` with what it streamed and its usage (Wave 42 QA M1, M2).
  */
-async function watchedCall(input: LoopInput, step: number, stepStarted: number, tools: ModelTool[], delta: (text: string) => void, textRoom: number): Promise<CompletionResult> {
+async function watchedCall(input: LoopInput, step: number, stepStarted: number, tools: ModelTool[], delta: (text: string) => void, textRoom: number, toolChoice?: ToolChoice): Promise<CompletionResult> {
   const progress = newProgress(input.messages);
   const controller = new AbortController();
   const forward = () => controller.abort(input.signal.reason);
@@ -370,7 +388,7 @@ async function watchedCall(input: LoopInput, step: number, stepStarted: number, 
     }
   }, runWatch.intervalMs) : null;
   try {
-    return await completeStreaming(input.connection, { messages: input.messages, temperature: input.temperature, maxOutputTokens: input.maxOutputTokens ?? undefined, tools }, controller.signal, delta, progress);
+    return await completeStreaming(input.connection, { messages: input.messages, temperature: input.temperature, maxOutputTokens: input.maxOutputTokens ?? undefined, tools, ...(toolChoice !== undefined ? { toolChoice } : {}) }, controller.signal, delta, progress);
   } catch (error) {
     if (progress.started) input.sink.interrupted?.({ step, content: progress.content, toolCalls: [], usage: keptUsage(partialUsage(progress), progress.content, textRoom), model: progress.model, durationMs: Date.now() - stepStarted });
     throw lost ? (lost as { error: unknown }).error : error;
@@ -404,14 +422,19 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   for (let step = 1; step <= input.maxSteps; step += 1) {
     const last = step === input.maxSteps;
     input.beforeStep?.(step);
-    const tools = last || !input.tools || !input.connection.compat.supportsTools || toolCalls >= perRun ? [] : await input.tools(step);
+    const choice = input.toolChoice?.(step, last);
+    const named = typeof choice === "object" ? choice.name : null;
+    const offer = !!input.tools && input.connection.compat.supportsTools && (named !== null || (!last && toolCalls < perRun));
+    const offeredTools = offer ? await input.tools!(step) : [];
+    const tools = named !== null ? offeredTools.filter((tool) => tool.name === named) : offeredTools;
     offeredAny ||= tools.length > 0;
     windowToolResults(input.messages, AGENT_BOUNDS.toolResultsWindow);
     const stepStarted = Date.now();
     const textRoom = storedRoom(streamed);
-    const reply = await watchedCall(input, step, stepStarted, tools, delta, textRoom);
+    const reply = await watchedCall(input, step, stepStarted, tools, delta, textRoom, tools.length > 0 ? choice : undefined);
     const execute = input.execute;
-    const wantedCalls = tools.length > 0 && execute ? reply.toolCalls.filter((call) => call.name) : [];
+    // Under a named choice only that tool was offered: a call to any other is not run (Wave 46).
+    const wantedCalls = tools.length > 0 && execute ? reply.toolCalls.filter((call) => call.name && (named === null || call.name === named)) : [];
     // Per step and per run (review L4): calls past either cap are dropped here, never executed, with
     // no event or audit row each; the run's finish row counts them, and the model is told once.
     const room = Math.max(0, Math.min(perStep, perRun - toolCalls));
@@ -454,6 +477,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
       const outcome = await execute(call, step);
       const note = dropped > 0 && index === calls.length - 1 ? `\n[${dropped} more tool ${dropped === 1 ? "call" : "calls"} in this step ${dropped === 1 ? "was" : "were"} dropped: at most ${perStep} calls run per step and ${perRun} per answer.]` : "";
       input.messages.push({ role: "tool", tool_call_id: call.id, content: outcome.content + note });
+      if (outcome.stop) return { status: "stop", content, steps: step, usage: total, model, toolCalls, droppedToolCalls };
     }
   }
   return { status: "step_limit", content, steps: input.maxSteps, usage: total, model, toolCalls, droppedToolCalls };

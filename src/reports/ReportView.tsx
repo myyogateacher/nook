@@ -135,10 +135,17 @@ export function ReportView({ report, canWrite, initial }: Props) {
       try {
         const { run } = await getRun(report.id, running.id);
         if (!alive.current) return;
-        if (run.status === "running") { timer = setTimeout(() => { void tick(); }, POLL_MS); return; }
+        if (run.status === "running") {
+          // A 409 names only the holder's id: once the server says it is a generation, show it as one.
+          if (run.kind !== running.kind) { setRunning(run); return; }
+          timer = setTimeout(() => { void tick(); }, POLL_MS);
+          return;
+        }
         setRunning(null);
         await loadResults();
         void loadRuns();
+        // A generation's end is told by ReportGeneration (its progress and toast).
+        if (run.kind === "generate") return;
         if (run.status === "succeeded") notify.success(run.queryKeys?.length ? "Query re-ran" : "Report refreshed");
         else if (run.status === "partial") notify.warning(`Refreshed with errors: ${run.error ?? "some queries failed"}. Their blocks keep the last good result.`);
         else notify.error(`The refresh ${run.status === "abandoned" ? "stopped" : "failed"}${run.error ? `: ${run.error}` : ""}`);
@@ -179,7 +186,7 @@ export function ReportView({ report, canWrite, initial }: Props) {
   return <section ref={viewRef} className="report-view" aria-label="Report">
     <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
-        {running ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
+        {running ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
           : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}

@@ -18,7 +18,9 @@ export const saveSchedule = (id: string, input: ScheduleInput) => api<{ schedule
 
 /** A run as one line: "Refreshed by you · succeeded", "Scheduled · 1 of 4 queries failed". */
 export function runLabel(run: Pick<ReportRun, "kind" | "trigger" | "queryKeys">) {
-  const kind = run.kind === "generate" ? "Generated" : run.kind === "edit" ? "Edited" : run.queryKeys?.length ? `Re-ran ${run.queryKeys.join(", ")}` : "Refreshed";
+  // A generation is the AI reading the doc (wave 46), never "by hand".
+  if (run.kind === "generate") return run.trigger === "mcp" ? "Generated from the doc over MCP" : "Generated from the doc";
+  const kind = run.kind === "edit" ? "Edited" : run.queryKeys?.length ? `Re-ran ${run.queryKeys.join(", ")}` : "Refreshed";
   const by = run.trigger === "schedule" ? "on schedule" : run.trigger === "mcp" ? "over MCP" : "by hand";
   return `${kind} ${by}`;
 }

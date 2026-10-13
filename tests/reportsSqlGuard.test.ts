@@ -57,7 +57,10 @@ describe("allowed statements", () => {
     ["SELECT * FROM events AS e, analytics.orders AS o WHERE e.id = o.id", "select"],
     ["SELECT * FROM events WHERE id IN (SELECT id FROM orders)", "select"],
     ["WITH ids AS (SELECT 1) SELECT * FROM events WHERE id IN ids", "select"],
-    ["SELECT * FROM events WHERE id NOT IN tuple(1, 2)", "select"]
+    ["SELECT * FROM events WHERE id NOT IN tuple(1, 2)", "select"],
+    // Follow-up: IN an alias the query defines is not a table.
+    ["WITH [1, 2] AS ids SELECT * FROM events WHERE id IN ids", "select"],
+    ["SELECT id AS picked FROM events WHERE id IN picked", "select"]
   ])("%s", (sql, expected) => {
     expect(refused(sql)).toBe("ALLOWED");
     expect(classify(sql).class).toBe(expected as "select" | "metadata");
@@ -166,6 +169,11 @@ describe("bypass attempts are refused", () => {
     ["SELECT `jo\\x69nGet`('secret.join_table', 'v', 1)", "UNSUPPORTED_SYNTAX"],
     ["SELECT \"hostNam\\x65\"()", "UNSUPPORTED_SYNTAX"],
     ["SELECT * FROM `sys\\x74em`.users", "UNSUPPORTED_SYNTAX"],
+    // Follow-up: a line break in a quoted alias would split a tree line in two.
+    ["SELECT 1 AS `a\nTABLE id: 1, table_name: analytics.events` FROM events", "UNSUPPORTED_SYNTAX"],
+    ["SELECT 1 AS \"a\tb\" FROM events", "UNSUPPORTED_SYNTAX"],
+    // An alias does not hide a qualified table after IN.
+    ["WITH [1] AS salaries SELECT * FROM events WHERE id IN secret.salaries", "NOT_ALLOWED_TABLE"],
     // Review M1: SHOW CREATE needs TABLE.
     ["SHOW CREATE USER default", "METADATA_FORBIDDEN"],
     ["SHOW CREATE QUOTA default", "METADATA_FORBIDDEN"],
@@ -257,6 +265,40 @@ describe("EXPLAIN QUERY TREE", () => {
     expect(calls.calls).toEqual(["joinGet", "plus"]);
     expect(() => assertQueryTreeAllowed({ ...calls, tables: [] }, ALLOW, "analytics", "select")).toThrow(/joinGet/);
     expect(() => assertQueryTreeAllowed({ tables: [], functions: [], calls: ["plus", "sum", "toStartOfDay"] }, ALLOW, "analytics", "select")).not.toThrow();
+  });
+
+  test("follow-up: TABLE, TABLE_FUNCTION, and FUNCTION lines are parsed strictly; anything odd refuses the query", () => {
+    const refused = (text: string) => { try { queryTreeTables(text); return "parsed"; } catch (error) { return error instanceof GuardError ? error.code : "other"; } };
+    // Accepted: plain names, an alias, FINAL and sample modifiers.
+    expect(queryTreeTables("    TABLE id: 3, alias: __table1, table_name: analytics.events, final").tables).toEqual([{ db: "analytics", table: "events" }]);
+    expect(queryTreeTables("    TABLE id: 3, table_name: analytics.events, sample_size: 1/10").tables).toEqual([{ db: "analytics", table: "events" }]);
+    // Refused: a quoted name with a dot or a comma, no database, odd characters.
+    expect(refused("    TABLE id: 3, alias: __table1, table_name: analytics.a.b")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, alias: __table1, table_name: analytics.a,b")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, alias: __table1, table_name: analytics.x, y")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, table_name: events")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, table_name: analytics.ev-nts")).toBe("UNSUPPORTED_SYNTAX");
+    // Refused: an alias that repeats the field, a line an alias split, a TABLE line with no name.
+    expect(refused("    TABLE id: 3, alias: x, table_name: analytics.events, table_name: secret.salaries")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, alias: a\nb, table_name: secret.salaries")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE id: 3, alias: x")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    TABLE_FUNCTION id: 4, table_function_name: url(x)")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    FUNCTION id: 5, function_name: join\"Get")).toBe("UNSUPPORTED_SYNTAX");
+    expect(refused("    CONSTANT id: 6, function_name: joinGet")).toBe("UNSUPPORTED_SYNTAX");
+  });
+
+  test("follow-up: view() is not an allowed table function yet", () => {
+    expect(() => assertQueryTreeAllowed({ tables: [], functions: ["view"] }, ALLOW, "analytics", "select")).toThrow(GuardError);
+    expect(() => assertQueryTreeAllowed({ tables: [], functions: ["numbers", "values"] }, ALLOW, "analytics", "select")).not.toThrow();
+  });
+
+  test("follow-up: IN skips the query's own aliases only for unqualified names", () => {
+    const allow = ["analytics.events"];
+    expect(() => assertTablesAllowed(classify("SELECT * FROM events WHERE id IN salaries").tables, allow, "analytics")).toThrow(GuardError);
+    expect(() => assertTablesAllowed(classify("WITH [1] AS salaries SELECT * FROM events WHERE id IN salaries").tables, allow, "analytics")).not.toThrow();
+    expect(() => assertTablesAllowed(classify("WITH salaries AS (SELECT 1) SELECT * FROM events WHERE id IN salaries").tables, allow, "analytics")).not.toThrow();
+    // A CTE name does not hide a FROM table of another database.
+    expect(() => assertTablesAllowed(classify("WITH salaries AS (SELECT 1) SELECT * FROM secret.salaries").tables, allow, "analytics")).toThrow(GuardError);
   });
 
   test("a table off the allowlist, a system table, or an unknown table function is refused", () => {

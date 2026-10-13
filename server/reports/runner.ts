@@ -15,8 +15,8 @@ import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, cla
  *
  * The tree check fails closed too (review H1): it runs with `result_overflow_mode=throw`, so a tree
  * longer than its row cap, or larger than the response cap, refuses the query instead of hiding
- * TABLE lines. Its errors reach the author only when they name nothing off the allowlist (review M2);
- * otherwise the answer is the guard's generic NOT_ALLOWED_TABLE.
+ * TABLE lines. A failed check answers with a generic message, never ClickHouse's text; a failed run
+ * shows ClickHouse's text only when every table or database it names is on the allowlist (review M2).
  *
  * Queries are limited per person and per server (T358): two at a time per person, eight in all.
  */
@@ -58,7 +58,17 @@ export const TREE_MAX_ROWS = 20_000;
 /** Response bytes the tree check reads at most. */
 export const TREE_MAX_BYTES = 8 * 1024 * 1024;
 
-const NOT_ALLOWED = () => new GuardError("NOT_ALLOWED_TABLE", "This query reads something that is not on this data source's allowlist, or that does not exist");
+const CHECK_FAILED = () => new GuardError("UNSUPPORTED_SYNTAX", "ClickHouse could not check this query: a syntax error, an unknown table or column, or a table that is not on this data source's allowlist");
+
+/**
+ * A ClickHouse error from running a checked statement: its text reaches the author only when every
+ * table or database it names is on the allowlist (review M2); otherwise a generic one.
+ */
+function shownError(error: unknown, allowlist: readonly string[], database: string): unknown {
+  if (!(error instanceof ChError) || error.code !== "CLICKHOUSE") return error;
+  if (!errorNamesOutside(error.message, allowlist, database)) return error;
+  return new ChError("CLICKHOUSE", "The query failed in ClickHouse; its message named something that is not on this data source's allowlist, so it is not shown");
+}
 
 /** Whether ClickHouse's error text names a table or database off the allowlist (review M2). */
 export function errorNamesOutside(message: string, allowlist: readonly string[], database: string) {
@@ -82,18 +92,19 @@ async function checkQueryTree(row: DatasourceRow, select: string, statementClass
   } catch (error) {
     if (!(error instanceof ChError)) throw error;
     if (error.code === "TOO_LARGE" || error.chName === "TOO_MANY_ROWS_OR_BYTES" || error.chCode === 396) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
-    // Unknown, missing, or forbidden tables and databases, or a message naming one: one generic answer (M2).
-    if ([60, 81, 497, 516].includes(error.chCode ?? -1) || ["UNKNOWN_TABLE", "UNKNOWN_DATABASE", "ACCESS_DENIED"].includes(error.chName ?? "") || errorNamesOutside(error.message, allowlist, row.database)) throw NOT_ALLOWED();
-    throw error;
+    // The network's own failures carry Nook's text, never ClickHouse's.
+    if (error.code === "TIMEOUT" || error.code === "UNREACHABLE") throw error;
+    // Review M2: a failed check never shows ClickHouse's text (it may name what is off the allowlist).
+    throw CHECK_FAILED();
   }
   if (result.rows.length >= TREE_MAX_ROWS) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
   const tree = queryTreeTables(result.rows.map((line) => String(line[0] ?? "")).join("\n"));
   assertQueryTreeAllowed(tree, allowlist, row.database, statementClass);
 }
 
-function outcome(classified: Classified, result: ChResult, rows: unknown[][], maxRows: number, sentSql: string, started: number): QueryOutcome {
+function outcome(classified: Classified, result: ChResult, rows: unknown[][], maxRows: number, sentSql: string, started: number, cutShort = false): QueryOutcome {
   return {
-    class: classified.class, columns: result.columns, rows: rows.slice(0, maxRows), truncated: rows.length > maxRows, sentSql,
+    class: classified.class, columns: result.columns, rows: rows.slice(0, maxRows), truncated: cutShort || rows.length > maxRows, sentSql,
     chQueryId: result.queryId, rowsRead: result.rowsRead, bytesRead: result.bytesRead, ms: Date.now() - started
   };
 }
@@ -111,7 +122,13 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
   return limited(options.userId, async () => {
     const started = Date.now();
     const target = datasourceTarget(row);
-    const run = (text: string, resultRows = maxRows + 1) => chQuery(target, text, { queryId: options.queryId, maxResultRows: resultRows, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal });
+    const run = async (text: string, resultRows = maxRows + 1) => {
+      try {
+        return await chQuery(target, text, { queryId: options.queryId, maxResultRows: resultRows, maxRowsToRead: options.maxRowsToRead, breakOnReadLimit: options.breakOnReadLimit, signal: options.signal });
+      } catch (error) {
+        throw shownError(error, allowlist, row.database);
+      }
+    };
     if (classified.class === "select") {
       assertTablesAllowed(classified.tables, allowlist, row.database);
       await checkQueryTree(row, classified.sql, "select", options.queryId, options.signal);
@@ -134,7 +151,8 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
     let rows = result.rows;
     if (form.kind === "show_databases") rows = rows.filter((line) => databaseAllowed(allowlist, String(line[0] ?? "")));
     if (form.kind === "show_tables") rows = rows.filter((line) => tableAllowed(allowlist, form.db ?? row.database, String(line[0] ?? "")));
-    return outcome(classified, result, rows, maxRows, classified.sql, started);
+    // A SHOW list that reached its read cap is cut short even when the allowlisted rows fit (the console says so).
+    return outcome(classified, result, rows, maxRows, classified.sql, started, show && result.rows.length >= SHOW_READ_ROWS);
   });
 }
 

@@ -250,17 +250,33 @@ describe("reports and the console", () => {
     expect(fake.requests.map((item) => item.sql)).toEqual(["EXPLAIN QUERY TREE SELECT count() FROM orders"]);
   });
 
-  test("review M2: tree errors that name tables off the allowlist are generic; others pass through", async () => {
+  test("review M2: a failed tree check is always generic", async () => {
     const { report } = await ready();
     fake.state.queryTree = () => "Code: 60. DB::Exception: Table secret.salaries does not exist. (UNKNOWN_TABLE) (version 24.8.1.1)";
     const hidden = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders" });
-    expect(hidden.body).toMatchObject({ code: "GUARD", guard: "NOT_ALLOWED_TABLE" });
+    expect(hidden.body).toMatchObject({ code: "GUARD", guard: "UNSUPPORTED_SYNTAX" });
     expect(hidden.text).not.toContain("salaries");
     fake.state.queryTree = () => "Code: 47. DB::Exception: Unknown expression identifier `secret.salaries.pay` in scope SELECT. (UNKNOWN_IDENTIFIER) (version 24.8.1.1)";
     expect((await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT * FROM orders" })).text).not.toContain("salaries");
     fake.state.queryTree = () => "Code: 47. DB::Exception: Unknown expression identifier `nope` in scope SELECT nope FROM orders. (UNKNOWN_IDENTIFIER) (version 24.8.1.1)";
+    // Follow-up: a failed check never shows ClickHouse's text, even when it names nothing sensitive.
     const plain = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT nope FROM orders" });
-    expect(plain.body).toMatchObject({ code: "CLICKHOUSE", chName: "UNKNOWN_IDENTIFIER" });
+    expect(plain.body).toMatchObject({ code: "GUARD", guard: "UNSUPPORTED_SYNTAX" });
+    expect(plain.text).not.toContain("Code: 47");
+    expect(plain.text).not.toContain("UNKNOWN_IDENTIFIER");
+  });
+
+  test("follow-up M2: a run's ClickHouse text is shown only when every name in it is on the allowlist", async () => {
+    const { report } = await ready();
+    fake.state.select = () => ({ error: "Code: 241. DB::Exception: Memory limit exceeded while reading secret.salaries. (MEMORY_LIMIT_EXCEEDED) (version 24.8.1.1)", status: 500 });
+    const hidden = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT count() FROM orders" });
+    expect(hidden.body.code).toBe("CLICKHOUSE");
+    expect(hidden.text).not.toContain("salaries");
+    expect(hidden.body.chName).toBeUndefined();
+    fake.state.select = () => ({ error: "Code: 241. DB::Exception: Memory limit exceeded while reading analytics.orders. (MEMORY_LIMIT_EXCEEDED) (version 24.8.1.1)", status: 500 });
+    const shown = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT count() FROM orders" });
+    expect(shown.body).toMatchObject({ code: "CLICKHOUSE", chName: "MEMORY_LIMIT_EXCEEDED" });
+    expect(shown.text).toContain("analytics.orders");
   });
 
   test("review L1: SHOW TABLES rows are filtered to the allowlist before the row cap", async () => {
@@ -269,6 +285,11 @@ describe("reports and the console", () => {
     const shown = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW TABLES FROM staging" });
     expect(shown.body.outcome.rows).toEqual([["orders_2026"]]);
     expect(fake.requests.at(-1)!.params.max_result_rows).toBe("100000");
+    expect(shown.body.outcome.truncated).toBe(false);
+    // Follow-up: a list that reached the read cap says it was cut short, even when the allowed rows fit.
+    fake.state.select = (sql) => sql === "SHOW TABLES FROM staging" ? { meta: [{ name: "name", type: "String" }], data: [["orders_2026"], ...Array.from({ length: 99_999 }, (_, index) => [`users_${index}`])] } : { meta: [], data: [] };
+    const cut = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SHOW TABLES FROM staging" });
+    expect(cut.body.outcome).toMatchObject({ rows: [["orders_2026"]], truncated: true });
   });
 
   test("Cancel aborts the running console query and sends KILL QUERY for it and its tree check", async () => {

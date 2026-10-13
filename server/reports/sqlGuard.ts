@@ -63,6 +63,8 @@ function readQuoted(sql: string, start: number, quote: string): { end: number; v
       index += 2;
       continue;
     }
+    // A line break in a quoted name (an alias) would split a line of EXPLAIN QUERY TREE output in two.
+    if (quote !== "'" && (char === "\n" || char === "\r" || char === "\t")) throw new GuardError("UNSUPPORTED_SYNTAX", "A quoted name cannot contain a line break or a tab");
     if (char === quote) {
       if (sql[index + 1] === quote) {
         value += quote;
@@ -216,6 +218,9 @@ function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; table
   const systemRefs: SystemRef[] = [];
   const tables: TableRef[] = [];
   const cteNames = new Set<string>();
+  // Names this query defines (`name AS (` and `… AS name`): `IN name` may be one of them, never a table.
+  const aliases = new Set<string>();
+  const inTables: TableRef[] = [];
   const inFrom = new Set<number>();
   let depth = 0;
   for (let index = 0; index < tokens.length; index += 1) {
@@ -232,6 +237,7 @@ function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; table
     }
     // `name AS (` in a WITH list names a CTE.
     if (isName(token) && isWord(next, "as") && isPunct(tokens[index + 2], "(")) cteNames.add(token.value.toLowerCase());
+    if (isWord(token, "as") && isName(next) && !isPunct(tokens[index + 2], "(")) aliases.add(next.value.toLowerCase());
     if (isName(token) && isPunct(next, ".") && isName(tokens[index + 2])) {
       const db = token.value.toLowerCase();
       if (db === "system") systemRefs.push({ table: tokens[index + 2]!.value.toLowerCase(), start: token.start, end: tokens[index + 2]!.end });
@@ -258,9 +264,10 @@ function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; table
     }
     if (isWord(token, "in")) {
       const ref = tableAt(tokens, index + 1);
-      if (ref) tables.push(ref);
+      if (ref) inTables.push(ref);
     }
   }
+  for (const ref of inTables) if (ref.db !== null || !(cteNames.has(ref.table.toLowerCase()) || aliases.has(ref.table.toLowerCase()))) tables.push(ref);
   return { systemRefs, tables: tables.filter((ref) => ref.db !== null || !cteNames.has(ref.table.toLowerCase())) };
 }
 
@@ -448,27 +455,54 @@ export function assertMetadataAllowed(classified: Classified, allowlist: readonl
  */
 export type QueryTree = { tables: Array<{ db: string; table: string }>; functions: string[]; /** Every `FUNCTION … function_name:` the analyzer resolved (review H2). */ calls?: string[] };
 
+const TREE_NAME = /^[A-Za-z0-9_]+$/;
+const treeRefused = () => new GuardError("UNSUPPORTED_SYNTAX", "Nook could not check which tables this query reads; plain names (letters, digits, _) and simple aliases are required");
+
+/**
+ * Parses the tree strictly and fails closed (review follow-up): every line that carries
+ * `table_name:`, `table_function_name:`, or `function_name:` must be a well-formed TABLE,
+ * TABLE_FUNCTION, or FUNCTION line with exactly one such field, and the names must be plain
+ * (`db.table` with letters, digits, and _). A quoted name with a dot or a comma, an alias that
+ * repeats a field, or a line an alias split in two refuses the query instead of being guessed at.
+ */
 export function queryTreeTables(text: string): QueryTree {
   const tables: Array<{ db: string; table: string }> = [];
   const functions: string[] = [];
   const calls: string[] = [];
+  const count = (line: string, field: string) => line.split(field).length - 1;
   for (const line of text.split("\n")) {
-    const table = /^\s*TABLE id: \d+.*?\btable_name: (.+?)(?:, [a-z_]+: |$)/.exec(line);
-    if (table) {
-      const name = table[1]!.trim();
-      const dot = name.indexOf(".");
-      tables.push(dot === -1 ? { db: "", table: name } : { db: name.slice(0, dot), table: name.slice(dot + 1) });
+    const tableFields = count(line, "table_name: ");
+    const tableFunctionFields = count(line, "table_function_name: ");
+    const functionFields = count(line, "function_name: ") - tableFunctionFields;
+    if (!tableFields && !tableFunctionFields && !functionFields) {
+      if (/^\s*(TABLE|TABLE_FUNCTION|FUNCTION) id:/.test(line)) throw treeRefused();
+      continue;
     }
-    const fn = /^\s*TABLE_FUNCTION id: \d+.*?\btable_function_name: ([A-Za-z0-9_]+)/.exec(line);
-    if (fn) functions.push(fn[1]!);
-    const call = /^\s*FUNCTION id: \d+.*?\bfunction_name: ([^,\s]+)/.exec(line);
-    if (call) calls.push(call[1]!);
+    if (tableFields + tableFunctionFields + functionFields !== 1) throw treeRefused();
+    if (tableFields) {
+      if (!/^\s*TABLE id: \d+, /.test(line)) throw treeRefused();
+      const rest = line.slice(line.indexOf("table_name: ") + "table_name: ".length);
+      const match = /^([^.,\s]+)\.([^.,\s]+)((?:, (?:final|sample_size: [0-9./ ]+|sample_offset: [0-9./ ]+))*)\s*$/.exec(rest);
+      if (!match || !TREE_NAME.test(match[1]!) || !TREE_NAME.test(match[2]!)) throw treeRefused();
+      tables.push({ db: match[1]!, table: match[2]! });
+    } else if (tableFunctionFields) {
+      if (!/^\s*TABLE_FUNCTION id: \d+, /.test(line)) throw treeRefused();
+      const match = /table_function_name: ([A-Za-z0-9_]+)(?:,|\s*$)/.exec(line);
+      if (!match) throw treeRefused();
+      functions.push(match[1]!);
+    } else {
+      if (!/^\s*FUNCTION id: \d+, /.test(line)) throw treeRefused();
+      const match = /function_name: ([A-Za-z0-9_]+)(?:,|\s*$)/.exec(line);
+      if (!match) throw treeRefused();
+      calls.push(match[1]!);
+    }
   }
   return { tables, functions, calls };
 }
 
 /** Table functions a select may use (anything else seen by EXPLAIN QUERY TREE is refused). */
-export const ALLOWED_TABLE_FUNCTIONS: ReadonlySet<string> = new Set(["numbers", "numbers_mt", "zeros", "zeros_mt", "values", "view", "null", "generate_series", "generateseries"]);
+// `view()` is left out until a real ClickHouse confirms its inner tables show up as TABLE nodes.
+export const ALLOWED_TABLE_FUNCTIONS: ReadonlySet<string> = new Set(["numbers", "numbers_mt", "zeros", "zeros_mt", "values", "null", "generate_series", "generateseries"]);
 
 /**
  * Checks parsed `EXPLAIN QUERY TREE` output against the allowlist (or, for the metadata class, the

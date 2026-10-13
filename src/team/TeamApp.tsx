@@ -26,6 +26,7 @@ import { eventLabel, filterTeam, joinedLabel, isNewAccount, lastAdminReason, sta
 import { canManageTeam, canSeeTeam, ROLE_DESCRIPTIONS, ROLE_LABELS, roleOptions as teamRoleOptions, type Role } from "./teamRoles";
 import "./team.css";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /** The history-free navigation the Settings hub hands Team: it moves the hub's route and the URL together. */
 type TeamNavigate = (route: Route, options?: { replace?: boolean }) => void;
@@ -521,10 +522,10 @@ function TeamDialog({ dialog, member, onClose, onDone, onStale }: {
         <h2 id={titleId}>{copy.title}</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
       </header>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <p>{copy.body}</p>
         {dialog.kind === "block" && <label className="team-field">Reason (optional, only admins see it)<textarea name="reason" maxLength={200} rows={2} autoFocus /></label>}
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className={`team-action primary${dialog.kind === "block" ? " danger" : ""}`} disabled={busy} autoFocus={dialog.kind !== "block"}>{busy ? "Working…" : copy.confirm}</button>

@@ -25,7 +25,7 @@ describe("v0.30 layout fixes", () => {
     const html = sheet();
     // The dialog's only child after its header is the shared .file-dialog-form (files.css scrolls it
     // and pins a footer that is its last child); the footer holds Done.
-    expect(html).toMatch(/<\/header><form class="file-dialog-form knowledge-add-body">/);
+    expect(html).toMatch(/<\/header><form class="file-dialog-form knowledge-add-body" noValidate="">/);
     expect(html).toMatch(/<footer class="file-dialog-actions"><button type="button" class="action-button secondary">Done<\/button><\/footer><\/form><\/section>/);
     const files = await read("files/files.css");
     expect(rule(files, ".file-dialog > .file-dialog-form")).toContain("overflow-y: auto");

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { ModalDialog } from "../files/Dialog";
 import type { NoteSummary } from "../types";
 import type { EventLink, EventResponse } from "./calendarApi";
+import { FormError } from "../ui/FormError";
 
 const typeLabels: Record<EventLink["targetType"], string> = { note: "Note", card: "Task", collection_row: "Collection item" };
 const typeIcons = { note: NotebookText, card: KanbanSquare, collection_row: Table2 } as const;
@@ -91,6 +92,6 @@ export function NoteLinkPicker({ linkedIds, onPick, onClose }: NotePickerProps) 
         <span>{note.title || "Untitled"}{note.is_owner ? null : <small>{note.owner_name}</small>}</span>
       </button>)}
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
   </ModalDialog>;
 }

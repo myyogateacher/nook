@@ -6,6 +6,7 @@ import { createGroup, guestCountLabel, listGroups, memberCountLabel, type GroupS
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Team → Groups at /team/groups (Wave 32, access plan §C.6, D267), admins only: every group with
@@ -105,7 +106,7 @@ export function GroupFormDialog({ title, submitLabel, initial, onClose, onSubmit
         aria-invalid={fields.errors.name ? true : undefined} aria-describedby={fields.errors.name ? "group-name-error" : undefined} />
         <FieldError id="group-name-error" message={fields.errors.name} /></label>
       <label className="keys-input">Description (optional)<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={200} rows={2} disabled={busy} /></label>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : submitLabel}</button>

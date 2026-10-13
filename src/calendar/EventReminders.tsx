@@ -6,6 +6,7 @@ import { Select } from "../ui/Select";
 import { getEmailSettings, type EmailSettings } from "../notifications/emailApi";
 import { nextOccurrence, type SeriesInput } from "../../shared/calendarRecurrence";
 import type { EventDetail } from "./calendarApi";
+import { FormError } from "../ui/FormError";
 
 /** Where a reminder goes besides the bell (Wave 29): push, email, or both. */
 export type ReminderChannels = "push" | "email" | "push_email";
@@ -82,7 +83,7 @@ export function EventReminders({ eventId, allDay, reloadKey, onAdd, onRemove }: 
   const existing = (reminders ?? []).map((reminder) => reminder.offsetMinutes ?? 0);
   return <section className="calendar-event-section" aria-labelledby="calendar-reminders-title">
     <h2 id="calendar-reminders-title"><Bell />My reminders</h2>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
     {reminders && !reminders.length && <p className="calendar-note">Only you see your reminders. They appear under the bell when they are due.</p>}
     {reminders && reminders.length > 0 && <ul className="calendar-links">
       {reminders.map((reminder) => {
@@ -204,6 +205,6 @@ export function ReminderPicker({ allDay, existing, onPick, onClose, event = null
         </button></li>;
       })}
     </ul>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
   </ModalDialog>;
 }

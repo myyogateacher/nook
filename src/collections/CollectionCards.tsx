@@ -55,7 +55,7 @@ export function CollectionCards({ fields, rows, editable, conflicts, onOpenRow, 
   }
 
   return <>
-    {editable && onAdd && fields[0] && <form className="collection-quick-add collection-card-add" onSubmit={(event) => { void add(event); }}>
+    {editable && onAdd && fields[0] && <form className="collection-quick-add collection-card-add" onSubmit={(event) => { void add(event); }} noValidate>
       <Plus aria-hidden="true" />
       <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${fields[0].name}`} aria-label={`New row ${fields[0].name}`} maxLength={4000} onKeyDown={submitOnEnter} readOnly={adding} aria-busy={adding || undefined} />
       <button className="secondary-button" type="submit" disabled={adding || !draft.trim()}>{adding ? "Adding…" : "Add"}</button>

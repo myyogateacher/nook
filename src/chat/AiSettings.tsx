@@ -15,6 +15,7 @@ import { ProviderVisionFields, visionDraft, visionFromDraft, visionSummary } fro
 import { HUB_TITLE_ID } from "../settings/hubModel";
 import "./chat.css";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → AI (admins; agent chat plan §4.1, §13.4): providers (name, base URL, a write-only API
@@ -170,7 +171,7 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     }
   }
   const roleBoxes = (field: "createRoles" | "chatRoles") => <div className="ai-roles">{AGENT_ROLE_OPTIONS.map((role) => <label key={role}><input type="checkbox" checked={draft[field].includes(role)} onChange={() => toggleRole(field, role)} />{ROLE_LABELS[role]}</label>)}</div>;
-  return <form className="security-card ai-policy" onSubmit={save} aria-labelledby="ai-policy-heading">
+  return <form className="security-card ai-policy" onSubmit={save} aria-labelledby="ai-policy-heading" noValidate>
     <p>Guests never see Chat. Budgets reset at midnight UTC; a run is refused before it starts once the budget is used up.</p>
     <div className="ai-policy-grid">
       <div><span className="ai-label">Who can create agents</span>{roleBoxes("createRoles")}</div>
@@ -227,7 +228,7 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
     }
   }
   return <ModalDialog title={provider ? "Edit provider" : "Add provider"} eyebrow="AI" onClose={onCancel} busy={busy} variant="sheet" className="chat-dialog">
-    <form className="file-dialog-form ai-provider-form" onSubmit={submit}>
+    <form className="file-dialog-form ai-provider-form" onSubmit={submit} noValidate>
       <label htmlFor={ids.name}>Name</label>
       <input id={ids.name} value={name} maxLength={AGENT_BOUNDS.providerName} autoFocus autoComplete="off" placeholder="OpenAI" onChange={(event) => setName(event.target.value)} />
       <label htmlFor={ids.url}>Base URL</label>
@@ -246,7 +247,7 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
       <label className="ai-check"><input type="checkbox" checked={streamUsage} onChange={(event) => setStreamUsage(event.target.checked)} />The server reports token usage while streaming (off: tokens are estimated)</label>
       <ProviderVisionFields providerId={provider?.id ?? null} defaultModel={defaultModel.trim() || DEFAULT_MODEL} draft={vision} onChange={setVision} disabled={busy} />
       <ProviderKnowledgeFields providerId={provider?.id ?? null} draft={knowledge} onChange={setKnowledge} disabled={busy} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : provider ? "Save" : "Add provider"}</button>

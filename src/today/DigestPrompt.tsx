@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Mail, X } from "lucide-react";
 import { api } from "../api";
 import { viewerTimeZone } from "./todayApi";
+import { FormError } from "../ui/FormError";
 
 /**
  * The one-time Today prompt for the email digest (D248, outbound email §B.1). The server decides
@@ -25,7 +26,7 @@ export function DigestPromptCard({ busy, error, onChoose }: { busy: boolean; err
     <div className="today-digest-copy">
       <h2 id="today-digest-title">{DIGEST_PROMPT_TITLE}</h2>
       <p>One short email in the morning with your cards due soon, your next events, suggestions awaiting you, and what was shared with you. Days with nothing new send nothing.</p>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <div className="today-digest-actions">
         <button type="button" className="primary-button" onClick={() => onChoose("daily")} disabled={busy}>Every morning</button>
         <button type="button" className="secondary-button" onClick={() => onChoose("weekly")} disabled={busy}>Mondays only</button>

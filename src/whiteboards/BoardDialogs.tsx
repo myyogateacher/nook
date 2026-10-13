@@ -14,6 +14,7 @@ import { whiteboardDisplayName, whiteboardFileName } from "../../shared/whiteboa
 import { createWhiteboard, downloadUrl, type WhiteboardSummary } from "./whiteboardsApi";
 import { notifyBinned } from "../bin/binUndo";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * The board sheets and dialogs shared by the list and the canvas (whiteboard plan §10.2–§10.4).
@@ -220,12 +221,12 @@ export function NewBoardDialog({ folders, initialFolderId, onCreated, onCancel }
   }
 
   return <ModalDialog title="New whiteboard" eyebrow="Whiteboards" onClose={onCancel} busy={busy}>
-    <form className="file-dialog-form whiteboard-new-form" onSubmit={submit}>
+    <form className="file-dialog-form whiteboard-new-form" onSubmit={submit} noValidate>
       <label htmlFor={nameId}>Name</label>
       <input id={nameId} value={name} maxLength={200} autoFocus autoComplete="off" placeholder="Floor plan" onChange={(event) => { setName(event.target.value); setError(null); }} aria-invalid={error ? true : undefined} />
       <span id={folderLabelId} className="whiteboard-field-label">Folder</span>
       <Select labelledBy={folderLabelId} value={folderId} onChange={setFolderId} options={owned.map((folder) => ({ value: folder.id, label: folder.name }))} disabled={busy} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Creating…" : "Create"}</button>

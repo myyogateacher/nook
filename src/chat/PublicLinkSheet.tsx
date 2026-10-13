@@ -4,6 +4,7 @@ import { ModalDialog } from "../files/Dialog";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { PublicLinkState } from "../../shared/agents";
 import { errorCode, getPublicLink, messageOf, putPublicLink, revokePublicLink } from "./chatApi";
+import { FormError } from "../ui/FormError";
 
 /** The warning the sheet always shows (plan §6.2, T315, T316). */
 export const PUBLIC_LINK_WARNING = "Anyone with the link can read this snapshot, without signing in. It shows the chat as it is now; later messages appear only after Update link. Tool results stay hidden unless you include them.";
@@ -102,7 +103,7 @@ export function PublicLinkSheet({ chatId, title, onClose, onChanged }: { chatId:
       </div>}
       {link && !url && <p className="file-dialog-hint">Lost the link? New link makes another one; the old one stops working.</p>}
     </>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {confirmRevoke ? <footer className="file-dialog-actions chat-public-confirm" role="group" aria-label="Revoke the link?">
       <span>Revoke the link? It stops working at once.</span>
       <button type="button" className="secondary-button" onClick={cancelRevoke} disabled={busy}>Keep it</button>

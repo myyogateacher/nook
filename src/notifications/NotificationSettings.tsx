@@ -16,6 +16,7 @@ import {
   type PushConfig,
   type PushDevice
 } from "./pushClient";
+import { FormError } from "../ui/FormError";
 
 /** Wave 39: the copy names the app by its runtime name (APP_NAME), so it is built when asked. */
 export const pushUnavailableCopy = () => `Push needs the HTTPS address, such as your Tailscale URL; reminders still appear in ${appName()}.`;
@@ -118,7 +119,7 @@ export function NotificationSettings() {
       {config?.enabled && <button className="secondary-button notification-settings-button" onClick={() => { void test(); }} disabled={busy}><Send />Send test</button>}
     </>}
     {message && <p className="notification-settings-message" role="status">{message}</p>}
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
     <ProposalPushSetting />
     <EmailSettings />
   </section>;
@@ -157,6 +158,6 @@ function ProposalPushSetting() {
         <span className="modules-switch-state" aria-hidden="true">{push ? "On" : "Off"}</span>
       </button>
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
   </>;
 }

@@ -101,6 +101,8 @@
 .file-dialog-form input { min-height: 42px; border: 1px solid #333338; border-radius: 10px; padding: 0 12px; background: #0b0b0d; color: #ededee; font-size: .92rem; outline: 0; }
 .file-dialog-form input:focus { border-color: #6b582f; }
 .file-dialog-form input[aria-invalid="true"] { border-color: #6a3039; }
+/* A field's own error line (noValidate forms) inside a dialog label reads as a sentence, not as the label's caps. */
+.file-dialog-form label .field-error { display: block; color: #fda4af; font-size: .78rem; font-weight: 500; letter-spacing: normal; line-height: 1.45; text-transform: none; }
 .file-dialog-hint, .file-dialog-error { margin: 0; font-size: .76rem; line-height: 1.45; overflow-wrap: anywhere; }
 .file-dialog-hint { color: #77777e; }
 /* A hint's leading icon sits inline at the start of its first line (the base styles make every svg a block). */
@@ -139,6 +141,9 @@
 .file-row-item { position: relative; }
 .file-row-more, .file-preview-more { display: none; }
 .file-sheet { position: fixed; z-index: 41; left: 0; right: 0; bottom: 0; display: grid; gap: 4px; border: 1px solid #35353a; border-bottom: 0; border-radius: 18px 18px 0 0; padding: 10px calc(12px + env(safe-area-inset-right)) calc(14px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left)); background: #1b1b1f; box-shadow: 0 -18px 50px rgb(0 0 0 / 55%); }
+/* Scroll audit 2026-10-13: one column no wider than the sheet, so a long title ellipsises instead of pushing
+   the header (and its close button) past the edge of a centred sheet (the Collections row actions at 1280 px). */
+.file-sheet { grid-template-columns: minmax(0, 1fr); }
 .file-sheet header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 8px 8px; }
 .file-sheet header strong { min-width: 0; overflow: hidden; color: #ededee; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .file-sheet header .icon-button { width: 44px; height: 44px; }

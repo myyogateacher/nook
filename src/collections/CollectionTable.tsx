@@ -60,7 +60,7 @@ export function CollectionTable({ fields, rows, editable, conflicts, activeRowId
         })}
       </tbody>
     </table>
-    {editable && onAdd && primary && <form className="collection-quick-add" onSubmit={(event) => { void add(event); }}>
+    {editable && onAdd && primary && <form className="collection-quick-add" onSubmit={(event) => { void add(event); }} noValidate>
       <Plus aria-hidden="true" />
       <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`New row: ${primary.name}`} aria-label={`New row ${primary.name}`} maxLength={4000} onKeyDown={submitOnEnter} readOnly={adding} aria-busy={adding || undefined} />
       <button className="secondary-button" type="submit" disabled={adding || !draft.trim()}>{adding ? "Adding…" : "Add row"}</button>

@@ -4,6 +4,7 @@ import { Select } from "../ui/Select";
 import type { SprintDefaults } from "../../shared/sprintPlan";
 import { carryOverSprint, plannedSprints, sprintDateRange, sprintProgress } from "./sprintModel";
 import { taskErrorMessage, type BoardColumn, type CardSummary, type SprintCarryTo, type SprintFields, type SprintSummary } from "./tasksApi";
+import { FormError } from "../ui/FormError";
 
 type SprintCompleteDialogProps = {
   sprint: SprintSummary;
@@ -70,7 +71,7 @@ export function SprintCompleteDialog({ sprint, sprints, cards, columns, workLeve
         </div>
         : <p className="task-settings-note">{progress.total ? `Every ${noun(1)} in it is done.` : `This sprint has no ${plural.toLowerCase()}.`}</p>}
       <p className="task-settings-note">{childPlural ? `${childPlural} follow their ${plural.toLowerCase()}. ` : ""}Done {plural.toLowerCase()} stay in {sprint.name}.</p>
-      {error && <p className="file-dialog-error" role="alert">{error}</p>}
+      <FormError message={error} className="file-dialog-error" />
     </div>
     <footer className="file-dialog-actions">
       {/* Focus starts on Cancel (QA 0.9.0): Enter on open never completes the sprint by accident. */}

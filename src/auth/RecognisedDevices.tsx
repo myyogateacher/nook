@@ -3,6 +3,7 @@ import { Laptop, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useConfirm } from "../ui/useConfirm";
 import "./auth.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → Security → Recognised devices (migration 044; outbound email plan #9 as built). The
@@ -126,7 +127,7 @@ export function RecognisedDevicesView({ devices, max, busy, message, error, onFo
       </li>)}
     </ul>}
     {message && <p className="password-change-done" role="status">{message}</p>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {confirmElement}
   </section>;
 }

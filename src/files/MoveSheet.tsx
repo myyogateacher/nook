@@ -3,6 +3,7 @@ import { Check, Folder as FolderIcon } from "lucide-react";
 import type { DocumentSummary, Folder } from "../types";
 import { ModalDialog } from "./Dialog";
 import { moveTargets } from "./fileActions";
+import { FormError } from "../ui/FormError";
 
 type MoveSheetProps = {
   /** A file, or (Notes → Move to folder…) the open note. */
@@ -51,7 +52,7 @@ export function MoveSheet({ document, itemLabel = "file", folders, onMove, onCan
       </button>)}
       {!targets.length && <p className="file-dialog-copy">You have no folders yet. Create one in the folder list first.</p>}
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
     <footer className="file-dialog-actions">
       <button className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
       <button className="primary-button" onClick={() => { void confirmAction(); }} disabled={!folder || busy}>{busy ? "Moving…" : folder ? `Move to ${folder.name}` : "Move"}</button>

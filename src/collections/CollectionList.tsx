@@ -13,6 +13,7 @@ import { NewCollectionDialog } from "./NewCollectionDialog";
 import { collectionBinMessage, ownerSharingLabel, roleLabel, rowCountLabel, validateCollectionName } from "./values";
 import { useRole } from "../team/roleAccess";
 import { notifyBinned, onBinRestored } from "../bin/binUndo";
+import { FormError } from "../ui/FormError";
 
 type CollectionListProps = {
   userId?: string;
@@ -156,7 +157,7 @@ export function CollectionList({ userId = "", onOpen, onOpenRow, notify, onCreat
       <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rows in all collections" aria-label="Search rows in all collections" maxLength={200} />
     </div>}
     {query.trim().length >= 2 && <section className="collections-results" aria-label="Matching rows" aria-live="polite">
-      {searchError && <p className="file-dialog-error" role="alert">{searchError}</p>}
+      <FormError message={searchError} className="file-dialog-error" />
       {!searchError && hits === null && <p className="bin-loading" role="status">Searching…</p>}
       {!searchError && hits?.length === 0 && <p className="collection-empty">No rows match “{query.trim()}”.</p>}
       {hits && hits.length > 0 && <ul className="collection-list">

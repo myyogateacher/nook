@@ -7,6 +7,7 @@ import { useFieldErrors } from "../auth/fieldChecks";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { reauth, reauthStatus, type ReauthStatus } from "./vaultApi";
 import { errorCode, messageOf } from "./VaultDialogs";
+import { FormError } from "../ui/FormError";
 
 /**
  * Protected environments (D226, V-O2; Wave 26): the server refuses reading (reveal, copy, a version,
@@ -95,7 +96,7 @@ export function ReauthDialog({ onDone, onCancel }: { onDone: () => void; onCance
       <p className="file-dialog-hint"><ShieldCheck className="vault-hint-icon" aria-hidden="true" />This environment is protected. Confirm it's you to open its values here for the next 15 minutes.</p>
       {account ? <ReauthFields account={account} totpEnabled={twoFactor} errors={fields.errors} idPrefix="vault-reauth" returnTo={typeof window === "undefined" ? "/vault" : window.location.pathname} disabled={busy} expired={expired} />
         : <p className="file-dialog-hint" role="status">Loading…</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy || !account || account.reauth === "none"}>{busy ? "Checking…" : "Confirm"}</button>

@@ -9,6 +9,7 @@ import { createServer, deleteServer, errorCode, listServers, messageOf, setServe
 import { POLICY_BADGES } from "./toolPicker";
 import "./chat.css";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → AI → Tool servers (agent chat plan §4.1, §13.4, D349, D354; Wave 41 AC-B): the list
@@ -91,7 +92,7 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
   return <section className="ai-servers" aria-labelledby="ai-servers-heading">
     <div className="settings-section-heading"><span className="settings-icon"><Plug /></span><div><h3 id="ai-servers-heading">Tool servers</h3><p>MCP servers over Streamable HTTP that agents may call. The server calls them with the credential below and sends tool arguments the model wrote; results come back as untrusted text, capped per server. At most {AGENT_BOUNDS.toolServers}.</p></div></div>
     {list?.stdio.enabled && <p className="settings-warning ai-stdio-warning" role="note"><ShieldAlert aria-hidden="true" /><span><strong>AGENT_MCP_STDIO is on.</strong> A stdio server runs as Nook's own user with full trust: it can read Nook's keys, database, and vault, and nothing Nook does contains it. Use an HTTP bridge in its own container instead (docs/OPERATIONS.md).</span></p>}
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {list && list.servers.length === 0 && <p className="chat-muted">No tool servers yet. Agents can still use Nook's own tools through a linked key.</p>}
     <ul className="ai-providers">
       {list?.servers.map((server) => <li key={server.id} className={`security-card ai-provider ai-server${server.enabled ? "" : " ai-server-disabled"}`}>
@@ -213,7 +214,7 @@ function ServerDialog({ server, adopt, onCancel, onSaved }: { server: ToolServer
       <input id={ids.cap} type="number" min={AGENT_BOUNDS.resultCapBytes.min / 1024} max={AGENT_BOUNDS.resultCapBytes.max / 1024} value={capKib} onChange={(event) => setCapKib(event.target.value)} />
       <span className="ai-label" id={ids.availability}>Who may attach its tools</span>
       <Select<ServerAvailability> labelledBy={ids.availability} label="Who may attach its tools" value={availability} onChange={setAvailability} options={[{ value: "admins", label: AVAILABILITY_LABELS.admins }, { value: "all", label: AVAILABILITY_LABELS.all, description: "Members and viewers who can chat" }]} />
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : server ? "Save" : "Add tool server"}</button>

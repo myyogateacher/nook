@@ -79,3 +79,24 @@ export function fieldName(target: EventTarget | null) {
 export function FieldError({ id, message }: { id: string; message?: string }) {
   return message ? <small id={id} className="form-error field-error" role="alert">{message}</small> : null;
 }
+
+export const CONFIRM_PASSWORD_TEXT = "Enter your password to confirm.";
+export const SIX_DIGIT_CODE_TEXT = "Enter the six-digit code from your authenticator app.";
+export const RECOVERY_CODE_TEXT = "Enter one complete recovery code.";
+
+/**
+ * The Security forms' own check (2026-10-13; they set `noValidate` like the API key forms): the
+ * first missing or malformed field of a form, with what to say. Only the fields the form shows are
+ * checked; a field the form does not have is absent from `form`.
+ */
+export function securityFormProblem(form: HTMLFormElement | FormData): { field: string; message: string } | null {
+  const data = form instanceof FormData ? form : new FormData(form);
+  const value = (name: string) => { const raw = data.get(name); return raw === null ? null : String(raw); };
+  const password = value("password");
+  if (password !== null && !password) return { field: "password", message: CONFIRM_PASSWORD_TEXT };
+  const recovery = value("recoveryCode");
+  if (recovery !== null && recovery.trim().length < 10) return { field: "recoveryCode", message: RECOVERY_CODE_TEXT };
+  const code = value("code");
+  if (code !== null && !/^\d{6}$/.test(code.trim())) return { field: "code", message: SIX_DIGIT_CODE_TEXT };
+  return null;
+}

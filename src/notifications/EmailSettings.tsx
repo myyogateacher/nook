@@ -6,6 +6,7 @@ import { useRole } from "../team/roleAccess";
 import { Select } from "../ui/Select";
 import { EmailMutesList } from "./emailMutes";
 import { clearSuppression, deviceTimeZone, getEmailSettings, HALF_HOURS, insideQuietHours, prefsInput, putEmailSettings, sendTestEmail, sendVerificationEmail, type EmailCategory, type EmailPrefsInput, type EmailSettings as Settings } from "./emailApi";
+import { FormError } from "../ui/FormError";
 
 /**
  * Settings → Notifications → Email (Wave 28, outbound email §E.2–E.3). Preferences gate sending
@@ -190,7 +191,7 @@ export function EmailSettings() {
     </div>
     {settings.verified && <button type="button" className="secondary-button email-settings-button email-test-button" disabled={cooling || settings.suppressed} onClick={() => { void sendOne("test"); }}><Send aria-hidden="true" />Send me a test email</button>}
     {message && <p className="notification-settings-message" role="status">{message}</p>}
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
 
     <h4 className="notification-settings-subheading">What to email</h4>
     <ul className="modules-list email-list">

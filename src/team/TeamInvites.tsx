@@ -23,6 +23,7 @@ import { DEFAULT_EXPIRY, DEFAULT_INVITE_ROLE, EMAIL_NOT_CONFIGURED, expiryOption
 import { createTeamInvite, emailTeamInvite, revokeTeamInvite, type InviteRole, type MailOutcome, type TeamInvite, type TeamInviteList } from "./teamApi";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "./teamRoles";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 type Props = {
   data: TeamInviteList | null;
@@ -243,7 +244,7 @@ function InviteCreateDialog({ emailEnabled, onClose, onCreated }: { emailEnabled
         <label className="team-field">Label (optional, only admins see it)
           <input name="note" maxLength={80} placeholder="For the design contractor" disabled={busy} />
         </label>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="team-action primary" disabled={busy}>{busy ? "Creating…" : "Create link"}</button>
@@ -279,9 +280,9 @@ function InviteRevokeDialog({ invite, onClose, onDone }: { invite: TeamInvite; o
         <h2 id="team-revoke-dialog-title">Revoke this {ROLE_LABELS[invite.role]} invite?</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
       </header>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <p>The link stops working at once{invite.email ? ` for ${invite.email}` : ""}. Nobody has used it yet. You can create a new one at any time.</p>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="team-action primary danger" disabled={busy} autoFocus>{busy ? "Working…" : "Revoke"}</button>
@@ -321,9 +322,9 @@ function InviteEmailDialog({ invite, onClose, onDone }: { invite: TeamInvite; on
         <h2 id="team-email-dialog-title">Email a new link to {invite.email}?</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
       </header>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <p>{appName()} emails a fresh {ROLE_LABELS[invite.role]} link to this address only. Once it is sent, the link you copied earlier stops working. The expiry stays the same.</p>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         <div className="team-dialog-actions">
           <button type="button" className="team-action" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="submit" className="team-action primary" disabled={busy} autoFocus>{busy ? "Sending…" : "Send email"}</button>

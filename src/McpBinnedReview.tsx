@@ -5,6 +5,7 @@ import { notifyBinChanged } from "./bin/binApi";
 import { formatDateTime, relativeTime } from "./files/format";
 import { Select, type Option } from "./ui/Select";
 import { useHistoryDialogGuard } from "./ui/useHistoryDialogGuard";
+import { FormError } from "./ui/FormError";
 
 /**
  * Settings → API keys → a key's "Review" (docs/plan/WAVES_18-20_SMALL.md D175, T142): what the key
@@ -101,7 +102,7 @@ export function McpBinnedReview({ keyId, keyName, onClose, onRevoke }: { keyId: 
       <div className="mcp-review-window"><span id="mcp-review-window-label">Window</span>
         <Select<BinnedWindow> value={range} onChange={setRange} options={BINNED_WINDOW_OPTIONS} labelledBy="mcp-review-window-label" disabled={busy} />
       </div>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {message && <p className="mcp-review-message" role="status">{message}</p>}
       {items === null && !error ? <p className="mcp-review-empty">Loading…</p>
         : items && items.length === 0 ? <p className="mcp-review-empty">Nothing this key moved to the Bin in this window is still there.</p>

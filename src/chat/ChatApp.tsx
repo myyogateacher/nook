@@ -654,7 +654,7 @@ export function ChatApp({ displayName, role, navigate, flash, onHome, onSettings
   const budget = usage && usage.budget > 0 ? Math.min(100, Math.round(((usage.promptTokens + usage.completionTokens) / usage.budget) * 100)) : null;
 
   const imagesBlocked = composerImages.items.length > 0 && !composerVision;
-  const composer = <form className="chat-composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(draft); }}>
+  const composer = <form className="chat-composer" onSubmit={(event: FormEvent) => { event.preventDefault(); void submit(draft); }} noValidate>
     <ComposerImageStrip items={composerImages.items} onRemove={composerImages.remove} disabled={busy} />
     {imagesBlocked && <p className="chat-composer-note" role="alert">{visionMissingMessage(composerAgentName)} Remove the images to send.</p>}
     <button type="button" className="icon-button chat-attach" onClick={() => setAttaching(true)} disabled={busy || (route.newChat && !newAgentId)} aria-label="Attach images" aria-haspopup="dialog" title={composerVision ? "Attach images" : "This agent's model can't see images"}><Paperclip /></button>
@@ -818,7 +818,7 @@ function MessageView({ shown, context, streaming, live, busy, editing, deciding,
   };
   if (user) {
     return <li className="chat-message chat-user">
-      {editing !== null ? <form className="chat-edit" onSubmit={(event) => { event.preventDefault(); onSubmitEdit(editing); }}>
+      {editing !== null ? <form className="chat-edit" onSubmit={(event) => { event.preventDefault(); onSubmitEdit(editing); }} noValidate>
         <textarea value={editing} rows={3} aria-label="Edit message" autoFocus onChange={(event) => onEdit(event.target.value)} />
         <div className="chat-edit-actions"><button type="button" className="secondary-button" onClick={onCancelEdit}>Cancel</button><button type="submit" className="primary-button" disabled={busy || (!editing.trim() && !(message.attachments ?? []).some((item) => !item.removed))}>Save &amp; submit</button></div>
       </form> : <div className="chat-bubble">
@@ -875,7 +875,7 @@ function RenameDialog({ title, onCancel, onSave }: { title: string; onCancel: ()
   const [value, setValue] = useState(title);
   useHistoryDialogGuard(true, onCancel);
   return <ModalDialog title="Rename chat" eyebrow="Chat" onClose={onCancel} className="chat-dialog">
-    <form className="file-dialog-form" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim()); }}>
+    <form className="file-dialog-form" onSubmit={(event) => { event.preventDefault(); if (value.trim()) onSave(value.trim()); }} noValidate>
       <label htmlFor="chat-rename">Title</label>
       <input id="chat-rename" value={value} maxLength={120} autoFocus onChange={(event) => setValue(event.target.value)} />
       <footer className="file-dialog-actions"><button type="button" className="secondary-button" onClick={onCancel}>Cancel</button><button type="submit" className="primary-button" disabled={!value.trim()}>Save</button></footer>

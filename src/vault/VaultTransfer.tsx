@@ -9,6 +9,7 @@ import { canWriteEnv, errorCode, messageOf } from "./VaultDialogs";
 import { useVaultReauth } from "./VaultReauth";
 import { exportEnvironment, importEntries, type ImportResult, type ImportStatus, type VaultSummary } from "./vaultApi";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Import and Export (vault plan §6.4; Wave 26). Both are sheets and history layers: Back closes them
@@ -129,7 +130,7 @@ export function ImportDialog({ vault, initialEnvId, onClose, onImported }: { vau
         </section>}
       </>}
       {env?.protected && <p className="file-dialog-hint"><TriangleAlert className="vault-hint-icon" aria-hidden="true" />{env.name} is protected. Importing does not ask you to confirm it's you, so unless you did in the last 15 minutes the preview does not compare with the current values: a name that already has a value is replaced or kept as chosen above.</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         {!preview
@@ -186,7 +187,7 @@ export function ExportDialog({ vault, initialEnvId, onClose, flash }: { vault: V
         <p>Exports are recorded in the vault's Activity, and you can export 10 times an hour.</p>
       </div>
       {env?.protected && <p className="file-dialog-hint">{env.name} is protected: you will be asked to confirm it's you.</p>}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="button" className="primary-button" onClick={() => { void download(); }} disabled={busy || !envId}><Download />{busy ? "Exporting…" : "Download"}</button>

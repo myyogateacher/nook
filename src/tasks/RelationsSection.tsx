@@ -21,6 +21,7 @@ import {
 } from "./relationsModel";
 import { createRelation, deleteRelation, searchCards, taskErrorCode, taskErrorMessage, type CardRelation, type CardSearchResult, type RelationType } from "./tasksApi";
 import { ApiError } from "../api";
+import { FormError } from "../ui/FormError";
 
 export type RelatedCardTarget = NonNullable<RelationRow["card"]>;
 
@@ -123,7 +124,7 @@ export function RelationAdder({ idPrefix, boardId, excludeCardId, excluded, disa
         loadOptions={loadOptions} disabled={disabled || busy} onChange={(ids) => { void pick(ids); }} />
       <button type="button" className="secondary-button task-small-button" onClick={onDone}>Done</button>
     </div>
-    {error && <p className="file-dialog-error" role="alert">{error}</p>}
+    <FormError message={error} className="file-dialog-error" />
   </div>;
 }
 

@@ -8,6 +8,7 @@ import { useConfirm } from "../useConfirm";
 import { useHistoryDialogGuard } from "../useHistoryDialogGuard";
 import "../pickerSheet.css";
 import "./attachments.css";
+import { FormError } from "../FormError";
 
 /**
  * The one attach sheet every module uses (uploads everywhere plan D398, §4.3). A bottom sheet at
@@ -145,7 +146,7 @@ export function FromFilesSheet({ hostNoun, onClose, onPick }: { hostNoun: string
       </label>
       <div className="nook-picker-actions"><p className="nook-picker-hint">Only files you own are listed. People who can open this {hostNoun} will be able to open the file you pick.</p></div>
       <div className="nook-picker-body">
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         {!error && !documents && <p className="nook-picker-empty" role="status">Loading your files…</p>}
         {documents && visible.length === 0 && <p className="nook-picker-empty">{documents.length ? "No files match." : "You have no files in Files yet."}</p>}
         {visible.length > 0 && <ul className="nook-picker-list" aria-label="Your files">

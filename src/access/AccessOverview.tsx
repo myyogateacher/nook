@@ -4,6 +4,7 @@ import { Select, type Option } from "../ui/Select";
 import { KIND_LABELS } from "../team/groupsApi";
 import { kindBreakdown, kindCount, LEVEL_WORDS, MODULE_TITLES, viaLabel, type AccessKind, type AccessLevel, type AccessPage, type AccessRow, type AccessSource, type AccessSummary, type KindCount, type VaultAccessRow } from "./memberAccessApi";
 import "./memberAccess.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * What one person can reach, per module (Wave 33, access plan §C.6, §E): the member access page
@@ -129,7 +130,7 @@ function KindSection({ counts, loadPage, actions, reloadKey, busy }: { counts: K
       : null}
     {counts.audience > 0 && <p className="ma-audience">{kindCount(counts.kind, counts.audience)} shared with everyone signed in</p>}
     {open && <div id={id} className="ma-kind-rows">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {!rows && loading && <p className="team-loading" role="status">Loading…</p>}
       {rows && <ul className="group-item-list" aria-label={`${KIND_LABELS[counts.kind]} access`}>
         {rows.map((row, index) => <AccessRowItem key={row.sources[0]?.handle ?? `${row.id ?? index}`} row={row} actions={actions} busy={busy} />)}

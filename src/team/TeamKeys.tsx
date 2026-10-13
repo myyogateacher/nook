@@ -10,6 +10,7 @@ import { listIntegrations, type Integration } from "./integrationsApi";
 import "../keys/keys.css";
 import { hubDocumentTitle } from "../router";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Team → Keys at /team/keys (Wave 31, access plan §C.6, §E), admins only: every live key across
@@ -146,9 +147,9 @@ function AdminRevokeDialog({ apiKey, onClose, onDone }: { apiKey: InventoryKey; 
     }
   }
   return <KeysDialog title={`Revoke ${apiKey.owner.displayName}'s key “${apiKey.name}”?`} description="It stops working at once and its pending Inbox suggestions are withdrawn. The owner sees that an admin revoked it, and your reason." onClose={onClose} busy={busy}>
-    <form className="keys-form" onSubmit={submit}>
-      <label className="keys-input">Reason (the owner sees it)<textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} rows={2} required disabled={busy} /></label>
-      {error && <p className="form-error" role="alert">{error}</p>}
+    <form className="keys-form" onSubmit={submit} noValidate>
+      <label className="keys-input">Reason (the owner sees it)<textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={200} rows={2} aria-required="true" disabled={busy} /></label>
+      <FormError message={error} />
       <div className="keys-dialog-actions inline">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button danger" disabled={busy}>{busy ? "Revoking…" : "Revoke key"}</button>

@@ -10,6 +10,7 @@ import { deleteGroup, deleteGroupMessage, getGroup, groupEventLabel, guestCountL
 import { ROLE_LABELS, type Role } from "./teamRoles";
 import { hubDocumentTitle } from "../router";
 import { errorText, notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 type TeamPerson = { id: string; displayName: string; role: Role; status: "active" | "blocked"; isYou: boolean };
 
@@ -190,7 +191,7 @@ function DeleteGroupDialog({ group, onClose, onDeleted, onStale }: { group: Grou
     }
   }
   return <KeysDialog title={`Delete ${group.name}?`} description={deleteGroupMessage(group.memberCount, group.grantCount)} onClose={onClose} busy={busy}>
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     <div className="keys-dialog-actions inline">
       <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
       <button type="button" className="primary-button danger" onClick={() => { void confirmAction(); }} disabled={busy}>{busy ? "Deleting…" : "Delete group"}</button>

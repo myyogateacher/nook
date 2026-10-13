@@ -7,6 +7,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { CalendarSummary, RepeatRule, Weekday } from "./calendarApi";
 import { repeatSummary, WEEKDAYS, weekdayNames, weekdayOf, type EventForm } from "./calendarFormat";
 import { onCheckedChange } from "../ui/checkedChange";
+import { FormError, useRevealError } from "../ui/FormError";
 
 type EventSheetProps = {
   mode: "create" | "edit";
@@ -51,13 +52,14 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
   const formRef = useRef<HTMLFormElement>(null);
   usePasteFiles(formRef, (files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
   const drop = useFileDrop((files) => onFiles?.(files), { enabled: Boolean(onFiles) && !busy });
+  const errorRef = useRevealError<HTMLParagraphElement>(error);
   return <ModalDialog title={mode === "create" ? "New event" : "Edit event"} eyebrow="Calendar" onClose={onClose} variant="sheet" busy={busy} className="calendar-event-dialog">
-    <form ref={formRef} className={`calendar-form calendar-event-form file-dialog-body${drop.dragging ? " dragging" : ""}`} onSubmit={(event) => { event.preventDefault(); if (!uploading) onSave(); }} {...drop.bind}>
+    <form ref={formRef} className={`calendar-form calendar-event-form file-dialog-body${drop.dragging ? " dragging" : ""}`} onSubmit={(event) => { event.preventDefault(); if (!uploading) onSave(); }} {...drop.bind} noValidate>
       {drop.dragging && <div className="calendar-drop-overlay" aria-hidden="true"><Paperclip />Drop to attach to this event</div>}
       <div className="calendar-event-when">
       <label className="calendar-field calendar-event-title">
         <span>Title</span>
-        <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus required aria-label="Event title" />
+        <input value={form.title} maxLength={200} onChange={(event) => set("title", event.target.value)} autoFocus aria-required="true" aria-label="Event title" />
       </label>
       <label className="calendar-toggle">
         <input type="checkbox" checked={form.allDay} onChange={(event) => set("allDay", event.target.checked)} aria-label="All day" />
@@ -71,12 +73,12 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
           const shift = Math.round((Date.parse(`${start}T00:00Z`) - Date.parse(`${form.startDate}T00:00Z`)) / 86_400_000);
           const end = Number.isFinite(shift) ? new Date(Date.parse(`${form.endDate}T00:00Z`) + shift * 86_400_000).toISOString().slice(0, 10) : start;
           onChange({ ...form, startDate: start, endDate: end < start ? start : end });
-        }} required /></label>
-        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="Start time" value={form.startTime} onChange={(event) => set("startTime", event.target.value)} required /></label>}
+        }} aria-required="true" /></label>
+        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="Start time" value={form.startTime} onChange={(event) => set("startTime", event.target.value)} aria-required="true" /></label>}
       </div>
       <div className="calendar-field-row">
-        <label className="calendar-field"><span>Ends</span><input type="date" aria-label="End date" value={form.endDate} min={form.startDate} onChange={(event) => set("endDate", event.target.value)} required /></label>
-        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="End time" value={form.endTime} onChange={(event) => set("endTime", event.target.value)} required /></label>}
+        <label className="calendar-field"><span>Ends</span><input type="date" aria-label="End date" value={form.endDate} min={form.startDate} onChange={(event) => set("endDate", event.target.value)} aria-required="true" /></label>
+        {!form.allDay && <label className="calendar-field"><span>Time</span><input type="time" aria-label="End time" value={form.endTime} onChange={(event) => set("endTime", event.target.value)} aria-required="true" /></label>}
       </div>
       {!form.allDay && <p className="calendar-hint">Time zone: {form.tz}</p>}
       <button type="button" className="calendar-repeat-button" onClick={onRepeat}>
@@ -99,7 +101,7 @@ export function EventSheet({ mode, form, calendars, calendarId, busy, error, con
       </label>
       {attachments}
       </div>
-      {error && <p className="file-dialog-error" role="alert">{error}{conflict && <> <button type="button" className="calendar-link-button" onClick={onReload}>Load their changes</button></>}</p>}
+      {error && <p ref={errorRef} className="file-dialog-error" role="alert">{error}{conflict && <> <button type="button" className="calendar-link-button" onClick={onReload}>Load their changes</button></>}</p>}
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="submit" className="primary-button" disabled={busy || uploading}>{busy ? "Saving…" : uploading ? "Uploading…" : mode === "create" ? "Add event" : "Save"}</button>
@@ -190,7 +192,7 @@ export function RepeatSheet({ rule, startDate, onDone, onCancel }: RepeatSheetPr
             <input type="number" inputMode="numeric" min={1} max={730} value={count} disabled={ends !== "count"} onChange={(event) => setCount(event.target.value)} aria-label="Number of times" /><em>times</em></label>
         </fieldset>
       </>}
-      {error && <p className="file-dialog-error" role="alert">{error}</p>}
+      <FormError message={error} className="file-dialog-error" />
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel}>Back</button>
         <button type="button" className="primary-button" onClick={done}>Done</button>

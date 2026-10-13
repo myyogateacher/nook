@@ -161,7 +161,7 @@ test("Enter in the New row input submits its form, except while composing", () =
   expect(press("a")).toBe(false);
   expect(submitted).toBe(1);
   const markup = renderToStaticMarkup(<CollectionCards fields={fields} rows={[]} editable conflicts={{}} onOpenRow={() => undefined} onRowActions={() => undefined} onReloadRow={() => undefined} onAdd={async () => true} />);
-  expect(markup).toContain('<form class="collection-quick-add collection-card-add">');
+  expect(markup).toContain('<form class="collection-quick-add collection-card-add" noValidate="">');
   expect(markup).not.toMatch(/New row Name"[^>]*disabled/);
 });
 

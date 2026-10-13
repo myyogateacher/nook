@@ -6,6 +6,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { whiteboardDisplayName } from "../../shared/whiteboardScene";
 import { createWhiteboard, listWhiteboards, thumbnailUrl, type WhiteboardSummary } from "../whiteboards/whiteboardsApi";
 import "../ui/pickerSheet.css";
+import { FormError } from "../ui/FormError";
 
 /**
  * "Embed a whiteboard" in a note (whiteboard plan §10.5, D208): the boards the writer can read,
@@ -61,7 +62,7 @@ export default function WhiteboardPicker({ folderId, onPick, onClose }: {
   const needle = query.trim().toLowerCase();
   const visible = (boards ?? []).filter((board) => !needle || whiteboardDisplayName(board.name).toLowerCase().includes(needle)).slice(0, 150);
   return <ModalDialog title="Embed a whiteboard" eyebrow="Note" onClose={onClose} variant="sheet" className="nook-picker" busy={busy}>
-    <form className="nook-picker-new" onSubmit={create}>
+    <form className="nook-picker-new" onSubmit={create} noValidate>
       <label className="sr-only" htmlFor={nameId}>New whiteboard name</label>
       <input id={nameId} value={name} maxLength={200} placeholder="New whiteboard name" autoComplete="off" onChange={(event) => { setName(event.target.value); setError(null); }} disabled={busy} />
       <button type="submit" className="primary-button" disabled={busy}><Plus />{busy ? "Creating…" : "New whiteboard"}</button>
@@ -71,7 +72,7 @@ export default function WhiteboardPicker({ folderId, onPick, onClose }: {
       <input id={searchId} type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your whiteboards" autoComplete="off" spellCheck={false} enterKeyHint="search" />
     </label>
     <div className="nook-picker-body">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {!error && !boards && <p className="nook-picker-empty" role="status">Loading your whiteboards…</p>}
       {boards && visible.length === 0 && <p className="nook-picker-empty">{boards.length ? "No whiteboards match." : "No whiteboards yet. Name one above to create it."}</p>}
       {visible.length > 0 && <ul className="nook-picker-list" aria-label="Whiteboards">

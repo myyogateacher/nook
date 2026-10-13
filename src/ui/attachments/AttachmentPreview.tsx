@@ -6,6 +6,7 @@ import { contentUrl, getFile } from "../../files/filesApi";
 import type { DocumentSummary } from "../../types";
 import { useHistoryDialogGuard } from "../useHistoryDialogGuard";
 import "./attachments.css";
+import { FormError } from "../FormError";
 
 /**
  * Opens one attachment in a sheet instead of a new tab (D398, §4.3): the Files preview stage (image,
@@ -29,7 +30,7 @@ export function AttachmentPreview({ documentId, name, onClose }: { documentId: s
       <a className="action-button secondary" href={contentUrl(documentId, "attachment")} download><Download aria-hidden="true" />Download</a>
     </div>
     <div className="attachment-preview-body">
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       {!error && !document && <p className="nook-picker-empty" role="status">Loading…</p>}
       {document && <PreviewBody key={document.id} document={document} />}
     </div>

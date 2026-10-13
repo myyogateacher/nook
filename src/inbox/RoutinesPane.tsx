@@ -25,6 +25,7 @@ import {
 } from "./inboxApi";
 import { dueText, KIND_OPTIONS, runMetrics, runStatusLabel } from "./inboxFormat";
 import { notify } from "../ui/notify";
+import { FormError } from "../ui/FormError";
 
 /**
  * Routines (agent inbox Wave 22, §5, §9.2 C): the owner's stored prompts for outside agents. The
@@ -181,6 +182,21 @@ function formOf(routine: Routine | null): Form {
   };
 }
 
+/**
+ * The routine form's own check (2026-10-13; the form sets noValidate, so no browser bubble): the
+ * first problem and the field it is in, or null. The server checks everything again.
+ */
+export function routineProblem(form: Pick<Form, "name" | "instructions" | "outputKinds" | "cadence" | "time" | "maxProposals" | "expireDays">): { field: string; message: string } | null {
+  const whole = (text: string, max: number) => /^\d+$/.test(text.trim()) && Number(text) >= 1 && Number(text) <= max;
+  if (!form.name.trim()) return { field: "name", message: "Give the routine a name." };
+  if (!form.instructions.trim()) return { field: "instructions", message: "Write the instructions your agent runs." };
+  if (form.outputKinds.length === 0) return { field: "kinds", message: "Choose at least one kind of change." };
+  if (form.cadence !== "manual" && form.cadence !== "hourly" && !/^\d{2}:\d{2}$/.test(form.time)) return { field: "time", message: "Choose the time it runs at." };
+  if (!whole(form.maxProposals, 100)) return { field: "maxProposals", message: "Max proposals per run is a whole number from 1 to 100." };
+  if (!whole(form.expireDays, 30)) return { field: "expireDays", message: "Expire after is a whole number of days from 1 to 30." };
+  return null;
+}
+
 function inputOf(form: Form): RoutineInput {
   const targets: RoutineTargets = {};
   for (const pin of form.pins) {
@@ -293,7 +309,13 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (readOnly) return;
-    if (form.outputKinds.length === 0) { setError("Choose at least one kind of change"); return; }
+    const problem = routineProblem(form);
+    if (problem) {
+      setError(problem.message);
+      const field = event.currentTarget.elements.namedItem(problem.field);
+      if (field instanceof HTMLElement) field.focus();
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -331,10 +353,10 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
         <h2 id="routine-sheet-title">{routine ? routine.name : "New routine"}</h2>
         <button type="button" className="icon-button" onClick={onClose} disabled={busy} aria-label="Close"><X /></button>
       </header>
-      <form onSubmit={submit}>
+      <form onSubmit={submit} noValidate>
         <fieldset disabled={readOnly || busy} className="routine-fields">
-          <label className="inbox-field">Name<input value={form.name} onChange={(event) => set("name", event.target.value)} maxLength={80} required /></label>
-          <label className="inbox-field">Instructions (the prompt your agent runs)<textarea value={form.instructions} onChange={(event) => set("instructions", event.target.value)} rows={6} required /></label>
+          <label className="inbox-field">Name<input name="name" value={form.name} onChange={(event) => set("name", event.target.value)} maxLength={80} aria-required="true" /></label>
+          <label className="inbox-field">Instructions (the prompt your agent runs)<textarea name="instructions" value={form.instructions} onChange={(event) => set("instructions", event.target.value)} rows={6} aria-required="true" /></label>
           <div className="inbox-field"><span id="routine-kinds-label">Can suggest</span>
             <Combobox multiple label="Can suggest" placeholder="Choose kinds of change…" value={form.outputKinds} onChange={(value) => set("outputKinds", value)} options={KIND_OPTIONS} />
           </div>
@@ -353,7 +375,7 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
             {form.cadence === "hourly" && <div className="inbox-field"><span id="routine-minute-label">At</span>
               <Select labelledBy="routine-minute-label" label="At" value={form.minute} onChange={(value) => set("minute", value)} options={MINUTE_OPTIONS} disabled={readOnly || busy} />
             </div>}
-            {form.cadence !== "manual" && form.cadence !== "hourly" && <label className="inbox-field">At<input type="time" value={form.time} onChange={(event) => set("time", event.target.value)} required /></label>}
+            {form.cadence !== "manual" && form.cadence !== "hourly" && <label className="inbox-field">At<input name="time" type="time" value={form.time} onChange={(event) => set("time", event.target.value)} aria-required="true" /></label>}
           </div>
           {form.cadence !== "manual" && <p className="inbox-muted routine-zone">Times are in {form.tz}.{form.tz !== zone && <> <button type="button" className="inbox-link-button" onClick={() => set("tz", zone)}>Use {zone}</button></>}</p>}
           <label className="inbox-field">Schedule note (optional, shown to the agent)<input value={form.scheduleNote} onChange={(event) => set("scheduleNote", event.target.value)} maxLength={120} placeholder="After the Monday stand-up" /></label>
@@ -361,12 +383,12 @@ function RoutineSheet({ routine, canWrite, onClose, onSaved, onDeleted, flash }:
             <Select labelledBy="routine-key-label" label="Key" value={form.keyId} onChange={(value) => set("keyId", value)} options={keyOptions} disabled={readOnly || busy} />
           </div>
           <div className="routine-row">
-            <label className="inbox-field">Max proposals per run<input type="number" inputMode="numeric" min={1} max={100} value={form.maxProposals} onChange={(event) => set("maxProposals", event.target.value)} required /></label>
-            <label className="inbox-field">Expire after (days)<input type="number" inputMode="numeric" min={1} max={30} value={form.expireDays} onChange={(event) => set("expireDays", event.target.value)} required /></label>
+            <label className="inbox-field">Max proposals per run<input name="maxProposals" type="number" inputMode="numeric" min={1} max={100} value={form.maxProposals} onChange={(event) => set("maxProposals", event.target.value)} aria-required="true" /></label>
+            <label className="inbox-field">Expire after (days)<input name="expireDays" type="number" inputMode="numeric" min={1} max={30} value={form.expireDays} onChange={(event) => set("expireDays", event.target.value)} aria-required="true" /></label>
           </div>
           <label className="routine-check"><input type="checkbox" checked={form.enabled} onChange={(event) => set("enabled", event.target.checked)} />Enabled (a paused routine is never due)</label>
         </fieldset>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        <FormError message={error} />
         {!readOnly && <div className="inbox-dialog-actions">
           {routine && <button type="button" className="inbox-action danger-text" onClick={() => setConfirmDelete(true)} disabled={busy}><Trash2 />Delete</button>}
           <button type="button" className="inbox-action" onClick={onClose} disabled={busy}>Cancel</button>

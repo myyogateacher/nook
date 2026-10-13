@@ -5,6 +5,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { KNOWLEDGE_BOUNDS, MODEL_CHANGE_EFFECT, takesDimensions, type KnowledgeChunkPreview, type KnowledgeDetail, type KnowledgeEmbeddingChoice } from "../../shared/knowledge";
 import { messageOf } from "./chatApi";
 import { changeEmbeddingModel, embeddingOptions, previewRange, sourceChunks } from "./knowledgeApi";
+import { FormError } from "../ui/FormError";
 
 /**
  * Change embedding model (2026-10-08, the base's owner): a provider (pills, no native select), a
@@ -71,7 +72,7 @@ export function ModelSheet({ kb, onClose, onChanged }: { kb: KnowledgeDetail; on
   }
   return <ModalDialog title="Change embedding model" eyebrow={kb.name} onClose={onClose} busy={busy} variant="sheet" className="chat-dialog knowledge-sheet knowledge-model">
     <form className="file-dialog-form" onSubmit={submit} noValidate>
-      {error && <p className="form-error" role="alert">{error}</p>}
+      <FormError message={error} />
       <p className="file-dialog-hint">Now: {kb.providerName ?? "a removed provider"} · {kb.embeddingModel}, {kb.dims} dimensions.</p>
       <span className="knowledge-field-label" id={`${ids.model}-providers`}>Provider</span>
       {providers === null ? <p className="chat-muted" role="status">Loading…</p>
@@ -147,7 +148,7 @@ export function SourceChunks({ kbId, sourceId, label }: { kbId: string; sourceId
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(0); }, [kbId, sourceId]);
   return <div className="knowledge-chunks" aria-label={`Passages of ${label}`} role="region">
-    {error && <p className="form-error" role="alert">{error}</p>}
+    <FormError message={error} />
     {total === null ? !error && <p className="chat-muted" role="status">Loading…</p> : <>
       <p className="chat-muted knowledge-chunks-count">{previewRange({ offset: 0, total }, chunks.length)}</p>
       {chunks.length > 0 && <ol className="knowledge-chunk-list">

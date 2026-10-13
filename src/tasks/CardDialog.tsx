@@ -52,6 +52,7 @@ import type { TaskNotify } from "./taskActions";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { levelAtLeast, type ItemLevel } from "../access/accessLevels";
 import { appName } from "../appName";
+import { FormError } from "../ui/FormError";
 
 type CardDialogProps = {
   userId: string;
@@ -635,7 +636,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
               maxLength={200}
             />
             : <h2 id={titleId}>Loading…</h2>}
-          {titleError && <p className="file-dialog-error" role="alert">{titleError}</p>}
+          <FormError message={titleError} className="file-dialog-error" />
         </div>
         {card && <CopyCardLinkButton boardId={card.board_id} cardId={card.id} notify={notify} />}
         {card && !readOnly && <button className="icon-button" onClick={() => onMove(card)} aria-haspopup="dialog" aria-label="Move card" title="Move to…"><ArrowRightLeft /></button>}
@@ -659,7 +660,7 @@ export function CardDialog({ userId, cardId, columns, columnId, boardOwner, boar
           <CardFields card={card} userId={userId} idPrefix={titleId} done={column?.is_done === 1} saving={savingDetails} onSave={saveDetails} tags={tags} owner={boardOwner} onTagsChange={onTagsChange} readOnly={readOnly} />
           {hierarchy && <div className="task-card-details"><CardParentFields card={card} context={hierarchy} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} readOnly={readOnly} />
             {sprints && <CardSprintField card={card} structure={hierarchy.structure} cards={hierarchy.cards} sprints={sprints} idPrefix={titleId} saving={savingDetails} onSave={saveDetails} readOnly={readOnly} />}</div>}
-          {detailsConflict && <p className="file-dialog-error" role="alert">{detailsConflict}</p>}
+          <FormError message={detailsConflict} className="file-dialog-error" />
 
           <RelationsSection cardId={card.id} boardId={card.board_id} idPrefix={titleId} relations={relations} notify={notify} readOnly={readOnly}
             onOpen={(target) => onOpenRelated?.(target)}

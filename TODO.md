@@ -2,11 +2,11 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-13):** production runs **v0.36.0** (attachment Undo, upload progress, admin avatar removal, app form messages). Released migrations are immutable: **001–048** (045 unused).
+**Current state (2026-10-13):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused).
 
 ## In flight
 
-- [ ] v0.37.0: the six v0.36.0 leftovers (three agents, 2026-10-13: test ports and timeouts; durable Undo records in migration 049 plus event Undo after Save; avatar caching plus the Team UI test). Then a short review and the release.
+Nothing. Next cycle to be chosen by the operator. The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.
 
 ## Known LOW leftovers
 

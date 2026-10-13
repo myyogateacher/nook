@@ -121,6 +121,11 @@ type BlockBase = {
   section?: string;
   /** v2: set by Nook, never by the model. */
   autoFixes?: AutoFix[];
+  /**
+   * Set by the v1 → v2 upgrade (never by the model): the block predates the design rules, so it is
+   * exempt from the per-block rules until it is edited, and its bars keep the order of its rows.
+   */
+  legacy?: boolean;
 };
 
 /** A query and column (KPI comparisons and sparklines may read another query). */
@@ -138,6 +143,8 @@ export type KpiBlock = BlockBase & {
   compareTo?: ColumnRef;
   /** Whether a rise is good (default true): the delta's colour. */
   upIsGood?: boolean;
+  /** What the delta compares against, as plain text ("vs prior 2 weeks"); default "vs previous period", never a column name. */
+  compareLabel?: string;
   unit?: string;
   /** The one hero figure of the report (≥ 48 px). */
   hero?: boolean;
@@ -234,7 +241,7 @@ export function upgradeSpec(raw: unknown): ReportSpec {
   if (raw.specVersion === SPEC_VERSION) return { version: 1, specVersion: 2, sections, blocks: raw.blocks as ReportBlock[], queries: raw.queries as ReportQuery[] };
   const blocks = (raw.blocks as ReportBlock[]).filter(isObject).map((block): ReportBlock => {
     const intent = block.intent ?? defaultIntent(block);
-    const upgraded = { ...block, ...(intent ? { intent } : {}), width: block.width ?? defaultWidth(block) } as ReportBlock;
+    const upgraded = { ...block, ...(intent ? { intent } : {}), width: block.width ?? defaultWidth(block), ...(block.type === "markdown" ? {} : { legacy: true }) } as ReportBlock;
     if (upgraded.type === "kpi" && upgraded.compareColumn && !upgraded.compareTo) {
       const { compareColumn, ...rest } = upgraded;
       return { ...rest, compareTo: { column: compareColumn } };
@@ -345,11 +352,25 @@ export function baseType(type: string): string {
 export const isNumericType = (type: string) => /^(?:U?Int(?:8|16|32|64|128|256)|Float(?:32|64)|BFloat16|Decimal(?:32|64|128|256)?(?:\(.*\))?)$/.test(baseType(type));
 /** Whether a ClickHouse type is a date or time (Date, Date32, DateTime, DateTime64, with or without a zone). */
 export const isTimeType = (type: string) => /^(?:Date|Date32|DateTime|DateTime64)(?:\(.*\))?$/.test(baseType(type));
-/** Whether a chart's x is ordinal or time (never re-sorted, never folded): a trend or distribution, or a date or number column. */
-export function ordinalX(block: { x: string; intent?: BlockIntent }, columns: readonly ResultColumn[]): boolean {
-  if (block.intent === "distribution" || block.intent === "trend") return true;
-  const type = columns.find((column) => column.name === block.x)?.type ?? "";
-  return isTimeType(type) || isNumericType(type);
+/** KPI comparison text: plain, one line, at most 60 characters. */
+export const COMPARE_LABEL_MAX = 60;
+
+/** Category labels that are periods in order: 2026-10, 2026-10-13, 2026-W41, 2026-Q4, Q4, Q4 2026, Jan–Dec. */
+const PERIOD_LABEL = /^(?:\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?(?:[ T]\d{2}:\d{2}(?::\d{2})?)?|\d{4}-?W\d{2}|(?:\d{4}[- ]?)?Q[1-4](?:[- ]?\d{4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?: \d{4})?)$/i;
+
+/**
+ * Whether a chart's x is ordinal or time (never re-sorted, never folded): a trend or distribution, a
+ * date or number column, a block from a v1 spec (`legacy`, its rows' order is the author's), or
+ * (given the rows) a string column whose every value reads as a period (YYYY-MM, YYYY-MM-DD, YYYY-Www,
+ * quarters, month names).
+ */
+export function ordinalX(block: { x: string; intent?: BlockIntent; legacy?: boolean }, columns: readonly ResultColumn[], rows?: readonly (readonly unknown[])[]): boolean {
+  if (block.legacy || block.intent === "distribution" || block.intent === "trend") return true;
+  const index = columns.findIndex((column) => column.name === block.x);
+  const type = columns[index]?.type ?? "";
+  if (isTimeType(type) || isNumericType(type)) return true;
+  if (!rows || index < 0 || !rows.length) return false;
+  return rows.every((row) => typeof row[index] === "string" && PERIOD_LABEL.test((row[index] as string).trim()));
 }
 
 /**

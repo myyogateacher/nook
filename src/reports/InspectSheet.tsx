@@ -204,22 +204,20 @@ function MappingTab({ block, view, palette }: { block: DataBlock; view: QueryRes
 }
 
 /**
- * "Auto-fixed: …" (wave 48b, design rules 3 and 5, sorting, compaction): what Nook fixed when the spec
- * was saved (recorded on the block) and what this build of the chart fixed for the current result.
+ * "Auto-fixed: …" (wave 48b, design rules 3 and 5, sorting, compaction): what this build of the chart
+ * fixed for the current result, then any rule recorded when the spec was saved that no longer applies,
+ * marked "at save" (review).
  */
 export function AutoFixes({ recorded, live }: { recorded: readonly AutoFix[]; live: readonly AutoFix[] }) {
-  const seen = new Set<string>();
-  const all = [...recorded, ...live].filter((fix) => {
-    // One line per rule: what was recorded at save, else what this build applied to the current result.
-    const key = fix.rule;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const liveRules = new Set(live.map((fix) => fix.rule));
+  const all = [...live.map((fix) => ({ fix, atSave: false })), ...recorded.filter((fix) => !liveRules.has(fix.rule)).map((fix) => ({ fix, atSave: true }))];
   if (!all.length) return null;
+  const names = [...new Set(all.map(({ fix }) => AUTO_FIX_TEXT[fix.rule] ?? fix.rule))];
   return <div className="report-inspect-autofix">
-    <p className="report-inspect-hint">Auto-fixed: {all.map((fix) => AUTO_FIX_TEXT[fix.rule] ?? fix.rule).filter((text, at, list) => list.indexOf(text) === at).join(", ")}</p>
-    <ul className="report-autofix-list" aria-label="Auto-fixes">{all.map((fix) => <li key={`${fix.rule}:${fix.detail}`}><strong>{AUTO_FIX_TEXT[fix.rule] ?? fix.rule}:</strong> {fix.detail}</li>)}</ul>
+    <p className="report-inspect-hint">Auto-fixed: {names.join(", ")}</p>
+    <ul className="report-autofix-list" aria-label="Auto-fixes">{all.map(({ fix, atSave }) => <li key={`${atSave ? "s" : "l"}:${fix.rule}:${fix.detail}`}>
+      <strong>{AUTO_FIX_TEXT[fix.rule] ?? fix.rule}:</strong> {fix.detail}{atSave && <em className="report-autofix-at-save"> · at save</em>}
+    </li>)}</ul>
   </div>;
 }
 

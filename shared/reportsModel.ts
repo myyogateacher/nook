@@ -13,7 +13,10 @@ export type ReportModelSource = "report" | "setting" | "default";
 export type ReportModelView = {
   override: ReportModelChoice | null;
   effective: { source: ReportModelSource; providerId: string | null; providerName: string | null; model: string | null };
-  providers: Array<{ id: string; name: string; defaultModel: string; models: string[] | null }>;
+  /** Only for someone who may edit; `models` are the names they may pick (review M1). */
+  providers: Array<{ id: string; name: string; defaultModel: string; models: string[] }>;
+  /** The admin lets owners type any model name. */
+  freeText: boolean;
   canEdit: boolean;
 };
 
@@ -21,10 +24,16 @@ export type ReportModelView = {
 export type ReportModelInput = { override: ReportModelChoice | null };
 
 /** What "Test tool calling" found (Settings → AI → a provider), stored in the provider's compat flags. */
+export type ProbeOutcome = "supported" | "unsupported" | "inconclusive";
+/**
+ * Each choice: `unsupported` only after a 400 or a 2xx without the probe call; `inconclusive` (a
+ * timeout, network error, 429, 5xx, or auth error) leaves the stored flag as it was. `compat` is what is stored now.
+ */
 export type ToolCallingProbe = {
-  required: { ok: boolean; status: number | null; error: string | null };
-  named: { ok: boolean; status: number | null; error: string | null };
+  required: { ok: boolean; outcome: ProbeOutcome; status: number | null; error: string | null };
+  named: { ok: boolean; outcome: ProbeOutcome; status: number | null; error: string | null };
   compat: { requiredToolChoice: boolean; namedToolChoice: boolean };
+  inconclusive: boolean;
   model: string;
   ms: number;
 };

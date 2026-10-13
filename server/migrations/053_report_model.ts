@@ -18,7 +18,7 @@ import { addColumn, type Migration } from "./types";
  * Needs 039 and 050. Transactional and filesystem-free; re-running changes nothing.
  */
 
-const NEW_KEYS = ["report_provider_id", "report_model"];
+const NEW_KEYS = ["report_provider_id", "report_model", "report_model_free_text"];
 
 /** agent_settings with the report model keys in its CHECK (a no-op when they are there or the table is missing). */
 export function addReportSettingKeys(db: import("bun:sqlite").Database) {
@@ -30,6 +30,10 @@ export function addReportSettingKeys(db: import("bun:sqlite").Database) {
   if (!check) throw new Error("Migration 053 cannot read agent_settings' key CHECK");
   const words = `${check[1]!.trimEnd()},${missing.map((key) => `'${key}'`).join(",")}`;
   const rebuilt = current.replace(check[0], `key TEXT PRIMARY KEY CHECK (key IN (${words}))`).replace(/CREATE TABLE (?:IF NOT EXISTS )?"?agent_settings"?/, "CREATE TABLE agent_settings_r053");
+  // Review: copying rows that already break a foreign key would carry the damage into the new table
+  // unnoticed; refuse with a message that says what to fix.
+  const broken = db.query("PRAGMA foreign_key_check(agent_settings)").all() as Array<{ parent: string }>;
+  if (broken.length) throw new Error(`Migration 053 cannot rebuild agent_settings: ${broken.length} row(s) reference a missing ${broken[0]!.parent} row (updated_by); clear those references and restart`);
   const columns = (db.query("PRAGMA table_info(agent_settings)").all() as Array<{ name: string }>).map((column) => `"${column.name}"`).join(", ");
   db.exec(rebuilt);
   db.exec(`INSERT INTO agent_settings_r053 (${columns}) SELECT ${columns} FROM agent_settings`);

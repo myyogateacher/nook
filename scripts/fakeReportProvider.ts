@@ -92,9 +92,9 @@ export function showcaseSpec(options: { bad?: boolean } = {}) {
     queries,
     blocks: [
       { id: "intro", type: "markdown", markdown: "Net revenue excludes refunds, as the metrics doc defines it. Figures compare the last two weeks with the two before." },
-      { id: "revenue", type: "kpi", title: "Net revenue", intent: "headline", queryKey: "kpis", column: "revenue", format: "currency:USD", compareTo: { column: "revenue_prev" }, hero: true, sparkline: { queryKey: "revenue_trend", x: "day", y: "web" } },
-      { id: "orders", type: "kpi", title: "Orders", intent: "delta", queryKey: "kpis", column: "orders", format: "number", unit: "orders", compareTo: { column: "orders_prev" } },
-      { id: "refund_rate", type: "kpi", title: "Refund rate", intent: "delta", queryKey: "kpis", column: "refund_rate", format: "percent", compareTo: { column: "refund_rate_prev" }, upIsGood: false },
+      { id: "revenue", type: "kpi", title: "Net revenue", intent: "headline", queryKey: "kpis", column: "revenue", format: "currency:USD", compareTo: { column: "revenue_prev" }, compareLabel: "vs prior 2 weeks", hero: true, sparkline: { queryKey: "revenue_trend", x: "day", y: "web" } },
+      { id: "orders", type: "kpi", title: "Orders", intent: "delta", queryKey: "kpis", column: "orders", format: "number", unit: "orders", compareTo: { column: "orders_prev" }, compareLabel: "vs prior 2 weeks" },
+      { id: "refund_rate", type: "kpi", title: "Refund rate", intent: "delta", queryKey: "kpis", column: "refund_rate", format: "percent", compareTo: { column: "refund_rate_prev" }, compareLabel: "vs prior 2 weeks", upIsGood: false },
       { id: "trend", type: "chart", title: "Revenue per day by channel", intent: "trend", width: "full", section: "trend", queryKey: "revenue_trend", kind: "line", x: "day", y: ["web", "app"], format: "currency:USD" },
       options.bad
         ? { id: "countries", type: "chart", intent: "share", width: "half", section: "mix", queryKey: "orders_by_country", kind: "pie", x: "country", y: ["country_orders"], format: "number" }

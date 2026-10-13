@@ -298,7 +298,7 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
   const bars = BAR_KINDS.includes(kind);
   // Bars: sorted descending by their total unless x is ordinal or time; past 20 categories the top 15 and "Other".
   let foldedCategories = 0;
-  if (bars && !ordinalX(block, data.columns) && categories.length > 1) {
+  if (bars && !ordinalX(block, data.columns, rows) && categories.length > 1) {
     const totals = categories.map((_, at) => series.reduce((sum, item) => sum + (item.values[at] ?? 0), 0));
     const order = categories.map((_, at) => at).sort((left, right) => totals[right]! - totals[left]!);
     if (order.some((at, position) => at !== position)) autoFixes.push({ rule: "sort", detail: "Bars sorted descending" });

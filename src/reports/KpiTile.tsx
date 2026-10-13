@@ -13,6 +13,9 @@ export const kpiCompare = (block: KpiBlock) => block.compareTo ?? (block.compare
 
 export type KpiChange = { ratio: number; text: string; direction: "up" | "down" | "flat"; tone: "good" | "bad" | "neutral"; against: string };
 
+/** The words after a delta: the block's plain-text compareLabel, else "vs previous period" (never a column name). */
+export const compareText = (block: Pick<KpiBlock, "compareLabel">) => block.compareLabel?.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 60) || "vs previous period";
+
 /**
  * What a KPI tile shows: the first row's `column` (compacted: 1,284 / 12.9K / $4.2M, the full value
  * in its title), and its change against `compareTo` (a column of the same row, or the first row of
@@ -36,7 +39,7 @@ export function kpiValue(block: KpiBlock, result: Rows, lookup: ResultLookup = (
       const direction = Math.abs(ratio) < 0.0005 ? "flat" : ratio > 0 ? "up" : "down";
       const upIsGood = block.upIsGood !== false;
       const tone = direction === "flat" ? "neutral" : (direction === "up") === upIsGood ? "good" : "bad";
-      change = { ratio, direction, tone, against: compare.column, text: `${ratio > 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%` };
+      change = { ratio, direction, tone, against: compareText(block), text: `${ratio > 0 ? "+" : ""}${(ratio * 100).toFixed(1)}%` };
     }
   }
   const number = toNumber(value);
@@ -72,7 +75,7 @@ export function KpiTile({ block, result, lookup = () => null }: { block: KpiBloc
     <strong className="report-kpi-value" title={full !== text ? full : undefined}>{text}{block.unit && block.format !== "percent" ? <span className="report-kpi-unit">{block.unit}</span> : null}</strong>
     {change && <span className={`report-kpi-change report-kpi-${change.direction} report-kpi-${change.tone}`}>
       <Icon aria-hidden="true" /><span className="report-kpi-delta">{change.text}</span>
-      <span className="report-kpi-vs"> vs {change.against}</span>
+      <span className="report-kpi-vs">{change.against}</span>
       <span className="sr-only">{change.tone === "good" ? " (better)" : change.tone === "bad" ? " (worse)" : ""}</span>
     </span>}
     {path && <svg className="report-kpi-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d={path} /></svg>}

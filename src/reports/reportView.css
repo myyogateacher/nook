@@ -44,14 +44,14 @@
 .report-view-actions svg { width: 16px; height: 16px; }
 
 /* Page order: the narrative, the KPI strip, then sections. */
-.report-narrative { color: var(--rt-ink-2); max-width: 72ch; }
+.report-narrative { color: var(--rt-ink-2); max-width: 70ch; }
 .report-narrative-title { margin: 0 0 6px; color: var(--rt-ink); font-size: var(--rt-title-size); font-weight: 600; }
 .report-kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--rt-kpi-min), 1fr)); gap: var(--rt-gutter); }
 .report-kpi-area { display: grid; gap: var(--rt-gutter); min-width: 0; }
 .report-kpi-unit { margin-left: 6px; color: var(--rt-ink-2); font-size: var(--rt-body-size); font-weight: 500; letter-spacing: 0; }
 .report-section { display: grid; gap: 8px; min-width: 0; }
 .report-section-title { margin: 6px 0 0; color: var(--rt-ink); font-size: var(--rt-block-title-size); font-weight: 600; letter-spacing: .01em; }
-.report-section-summary { margin: 0; color: var(--rt-ink-2); max-width: 72ch; }
+.report-section-summary { margin: 0; color: var(--rt-ink-2); max-width: 70ch; }
 
 /* The grid: 1 column below 768 px, 6 at 768–1023 px, 12 from 1024 px (the view's own width). */
 .report-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--rt-gutter); }
@@ -90,7 +90,10 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-markdown > :last-child { margin-bottom: 0; }
 
 /* KPI tiles: proportional figures (tabular only in tables and on axes); one hero figure at most. */
-.report-block-kpi { gap: 4px; }
+.report-block-kpi { gap: 4px; container: report-kpi / inline-size; }
+/* KPI titles wrap to two lines instead of truncating; the delta sits on its own line under the value. */
+.report-block-kpi .report-block-title { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
+@container report-kpi (max-width: 240px) { .report-kpi-vs { flex-basis: 100%; } }
 .report-kpi { display: grid; gap: 4px; padding: 2px 0; }
 .report-kpi-label { color: var(--report-muted); font-size: .8rem; }
 .report-kpi-value { color: var(--rt-ink); font-size: var(--rt-kpi-size); font-weight: 600; font-variant-numeric: proportional-nums; letter-spacing: -.01em; line-height: 1.15; overflow-wrap: anywhere; }
@@ -204,3 +207,7 @@ ul.report-block-problem { display: block; padding-left: 18px; }
   .report-block { padding: 10px var(--rt-pad-narrow) var(--rt-pad-narrow); }
 }
 .report-model-sheet .report-field { color: var(--muted); }
+
+/* The report page uses the content width up to 1280 px, centred (the 12-column grid needs the room). */
+.reports-body.report-body { width: min(1280px, 100%); }
+.report-autofix-at-save { color: var(--report-muted); font-style: normal; }

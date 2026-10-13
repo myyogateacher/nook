@@ -84,6 +84,7 @@ const settingsSchema = z.object({
   // Wave 48b: the report generation model (null: chat's default).
   reportProviderId: uuid.nullable().optional(),
   reportModel: line(AGENT_BOUNDS.model).nullable().optional(),
+  reportModelFreeText: z.boolean().optional(),
   expectedRevision: z.number().int().min(0)
 }).strict();
 const starters = z.array(z.string().trim().min(1).max(AGENT_BOUNDS.starterLength)).max(AGENT_BOUNDS.starters);

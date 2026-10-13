@@ -56,11 +56,11 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
     return { run };
   }));
   // Wave 48b (D435): the report's own generation model (the owner's override of the admin setting).
-  app.get("/api/reports/:reportId/model", handle((c) => ({ model: reportModelView(id(c, "reportId"), c.get("user").id) })));
+  app.get("/api/reports/:reportId/model", handle((c) => ({ model: reportModelView(id(c, "reportId"), c.get("user")) })));
   app.put("/api/reports/:reportId/model", handle(async (c) => {
     const reportId = id(c, "reportId");
     const body = await parseJson(c.req.raw, modelInput);
-    return { model: setReportModel(reportId, c.get("user").id, body.override) };
+    return { model: setReportModel(reportId, c.get("user"), body.override) };
   }));
   app.get("/api/reports/:reportId/doc", handle((c) => ({ doc: docState(id(c, "reportId"), c.get("user").id) })));
   app.post("/api/reports/:reportId/doc/check", handle(async (c) => {

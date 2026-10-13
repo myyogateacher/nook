@@ -275,16 +275,22 @@ describe("the inspect sheet", () => {
     expect(blockMapping({ ...(spec.blocks.find((item) => item.id === "recent-table") as TableBlock), columns: ["country"] })).toEqual({ country: "shown" });
   });
 
-  test("Mapping lists the auto-fixes: recorded at save, then this build's, one line per rule (wave 48b)", () => {
+  test("Mapping lists this build's auto-fixes, and recorded ones that no longer apply marked at save (wave 48b)", () => {
     const folded = { ...block, kind: "bar" as const, x: "country", y: ["revenue"], queryKey: "by_country", autoFixes: [{ rule: "fold_categories" as const, detail: "9 of 24 categories folded into \"Other\" (top 15 kept)" }] };
     const markup = renderToStaticMarkup(<InspectSheet {...props} block={folded} query={spec.queries.find((item) => item.key === "by_country")} view={views[2]} initialTab="mapping" />);
-    expect(markup).toContain("Auto-fixed: Categories folded");
+    expect(markup).toContain("Auto-fixed: Compacted, Categories folded");
+    expect(markup).toContain("(top 15 kept)<em class=\"report-autofix-at-save\"> · at save</em>");
     expect(markup).toContain("9 of 24 categories folded into &quot;Other&quot; (top 15 kept)");
     expect(markup).toContain("intent · width");
     const both = renderToStaticMarkup(<AutoFixes recorded={[{ rule: "sort", detail: "saved" }]} live={[{ rule: "sort", detail: "live" }, { rule: "compact", detail: "Numbers compacted" }]} />);
     expect(both).toContain("Auto-fixed: Sorted, Compacted");
     expect(both.match(/Sorted:/g)?.length).toBe(1);
-    expect(both).toContain("saved");
+    // Live fixes for the current result first; a recorded rule that no longer applies is marked "at save".
+    expect(both).toContain("live");
+    expect(both).not.toContain("saved");
+    const stale = renderToStaticMarkup(<AutoFixes recorded={[{ rule: "fold_categories", detail: "9 of 24 folded" }]} live={[{ rule: "sort", detail: "Bars sorted descending" }]} />);
+    expect(stale).toContain("Auto-fixed: Sorted, Categories folded");
+    expect(stale).toContain("9 of 24 folded<em class=\"report-autofix-at-save\"> · at save</em>");
     expect(renderToStaticMarkup(<AutoFixes recorded={[]} live={[]} />)).toBe("");
   });
 

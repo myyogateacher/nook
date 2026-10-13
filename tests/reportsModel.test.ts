@@ -105,9 +105,27 @@ describe("the report generation model", () => {
     // Other reports still use the setting.
     expect(reportModelFor(null)).toMatchObject({ id: providers.noRequired });
 
+    // Review M1: only listed models (the provider's default, the admin's report model, models an admin's
+    // Test saw) unless the admin allows any name; a role that may not create agents cannot choose.
+    expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: null, model: "glm-5.3-air" } })).body).toMatchObject({ code: "INVALID", field: "model" });
+    expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: providers.noNamed, model: "glm-5.3" } })).status).toBe(400);
+    expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: null, model: "glm-5.3" } })).status).toBe(200);
+    expect(view.body.model.freeText).toBe(false);
+    expect(view.body.model.providers.find((provider: Json) => provider.id === providers.noRequired).models).toEqual(["glm-5.3"]);
+    expect(view.body.model.providers.find((provider: Json) => provider.id === providers.noNamed).models).toEqual(["named-less"]);
+    db.query("UPDATE users SET role = 'viewer' WHERE id = ?").run(owner.userId);
+    try {
+      expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: providers.noNamed, model: null } })).status).toBe(403);
+      // Clearing is always allowed; a viewer sees no provider list.
+      expect((await send(owner, "GET", `/reports/${reportId}/model`)).body.model).toMatchObject({ canEdit: false, providers: [] });
+    } finally {
+      db.query("UPDATE users SET role = 'member' WHERE id = ?").run(owner.userId);
+    }
+    await setSettings({ reportModelFreeText: true });
     // A model alone names a model of the next level's provider.
-    await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: null, model: "glm-5.3-air" } });
+    expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: null, model: "glm-5.3-air" } })).status).toBe(200);
     expect(resolveReportModel(reportId)).toMatchObject({ source: "report", providerId: providers.noRequired, model: "glm-5.3-air" });
+    await setSettings({ reportModelFreeText: false });
 
     // Refusals: a provider that does not exist, a model that is not one line, extra fields.
     expect((await send(owner, "PUT", `/reports/${reportId}/model`, { override: { providerId: crypto.randomUUID(), model: null } })).status).toBe(400);
@@ -178,6 +196,32 @@ describe("Test tool calling", () => {
   test("admins only (others get 404, like every admin route)", async () => {
     expect((await send(owner, "POST", `/agents/admin/providers/${providers.normal}/test-tools`)).status).toBe(404);
   });
+
+  test("review M2: 5xx and 429 are inconclusive and leave the stored flags; an unknown provider is 404, never the default", async () => {
+    // A stored false stays when the provider is down or rate limiting.
+    const stored = (db.query("SELECT compat_json FROM agent_providers WHERE id = ?").get(providers.normal) as { compat_json: string }).compat_json;
+    db.query("UPDATE agent_providers SET compat_json = ? WHERE id = ?").run(JSON.stringify({ ...JSON.parse(stored), requiredToolChoice: false, namedToolChoice: false }), providers.normal);
+    for (const status of [503, 429]) {
+      normal.setScript(() => ({ status, content: "busy" }));
+      const probed = await send(admin, "POST", `/agents/admin/providers/${providers.normal}/test-tools`);
+      expect(probed.body.probe).toMatchObject({ inconclusive: true, required: { ok: false, outcome: "inconclusive", status }, named: { outcome: "inconclusive" }, compat: { requiredToolChoice: false, namedToolChoice: false } });
+      expect(compatOf(providers.normal)).toMatchObject({ requiredToolChoice: false, namedToolChoice: false });
+    }
+    db.query("UPDATE agent_providers SET compat_json = ? WHERE id = ?").run(stored, providers.normal);
+    // And a stored true stays true.
+    normal.setScript(() => ({ status: 500, content: "down" }));
+    try {
+      const probed = await send(admin, "POST", `/agents/admin/providers/${providers.normal}/test-tools`);
+      expect(probed.body.probe).toMatchObject({ inconclusive: true, compat: { requiredToolChoice: true, namedToolChoice: true } });
+      expect(compatOf(providers.normal)).not.toHaveProperty("requiredToolChoice");
+    } finally {
+      normal.setScript(probeScript);
+      neither.setScript(probeScript);
+    }
+    normal.calls.length = 0;
+    expect((await send(admin, "POST", `/agents/admin/providers/${crypto.randomUUID()}/test-tools`)).status).toBe(404);
+    expect(normal.calls.length).toBe(0);
+  });
 });
 
 describe("migration 053 (report_model)", () => {
@@ -209,5 +253,14 @@ describe("migration 053 (report_model)", () => {
     expect(columns).toContain("model_provider_id");
     expect(columns).toContain("model");
     fresh.query("INSERT INTO agent_settings (key, value_json, updated_at) VALUES ('report_provider_id', 'null', 'now')").run();
+    fresh.query("INSERT INTO agent_settings (key, value_json, updated_at) VALUES ('report_model_free_text', 'true', 'now')").run();
+
+    // A row whose updated_by names a missing user is refused with a clear message, before any copy.
+    const damaged = new Database(":memory:", { strict: true });
+    damaged.exec("CREATE TABLE users (id TEXT PRIMARY KEY)");
+    damaged.exec(`CREATE TABLE agent_settings (key TEXT PRIMARY KEY CHECK (key IN ('enabled','kbs_per_user')), value_json TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, updated_by TEXT REFERENCES users(id) ON DELETE SET NULL, updated_at TEXT NOT NULL) STRICT`);
+    damaged.query("INSERT INTO agent_settings (key, value_json, updated_by, updated_at) VALUES ('kbs_per_user', '7', 'gone', 'now')").run();
+    expect(() => addReportSettingKeys(damaged)).toThrow("Migration 053 cannot rebuild agent_settings: 1 row(s) reference a missing users row (updated_by)");
+    expect((damaged.query("SELECT sql FROM sqlite_master WHERE name = 'agent_settings'").get() as { sql: string }).sql).not.toContain("report_model");
   });
 });

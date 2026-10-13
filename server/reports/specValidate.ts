@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db, now } from "../db";
 import {
-  BLOCK_ID, BLOCK_INTENTS, BLOCK_WIDTHS, blockKeys, CHART_KINDS, defaultIntent, defaultWidth, isNumericType, isTimeType, ordinalX, QUERY_KEY, REPORT_LIMITS, reportLayout, SECTION_LIMITS,
+  BLOCK_ID, BLOCK_INTENTS, COMPARE_LABEL_MAX, BLOCK_WIDTHS, blockKeys, CHART_KINDS, defaultIntent, defaultWidth, isNumericType, isTimeType, ordinalX, QUERY_KEY, REPORT_LIMITS, reportLayout, SECTION_LIMITS,
   SPEC_FORMAT, UNIT, VALUE_FORMATS, type AutoFix, type ChartBlock, type QueryOutcome, type ReportBlock, type ReportSpec, type ResultColumn
 } from "../../shared/reports";
 import { MAX_SCATTER_SERIES, MAX_SERIES } from "../../shared/reportTheme";
@@ -50,14 +50,18 @@ const base = {
   section: sectionId.optional(),
   // Nook's own fields: provenance is re-stamped on save and auto-fixes recomputed, whatever is sent.
   provenance: provenance.optional(),
-  autoFixes: z.array(z.object({ rule: z.string().max(40), detail: z.string().max(300) }).strict()).max(10).optional()
+  autoFixes: z.array(z.object({ rule: z.string().max(40), detail: z.string().max(300) }).strict()).max(10).optional(),
+  // The v1 upgrade's marker: kept only on blocks an edit leaves unchanged (checkDesign drops it otherwise).
+  legacy: z.boolean().optional()
 };
+/** KPI comparison text: one plain line, no markup. */
+const compareLabel = z.string().trim().min(1).max(COMPARE_LABEL_MAX).refine((value) => !/[<>{}\u0000-\u001f\u007f]/.test(value), "must be plain text on one line (no markup)");
 
 const blockSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("markdown"), markdown: z.string().min(1).max(REPORT_LIMITS.markdown) }).strict(),
   z.object({
     ...base, type: z.literal("kpi"), queryKey, column, format: format.optional(), unit: unit.optional(), label: z.string().max(REPORT_LIMITS.blockTitle).optional(),
-    compareColumn: column.optional(), compareTo: columnRef.optional(), upIsGood: z.boolean().optional(), hero: z.boolean().optional(),
+    compareColumn: column.optional(), compareTo: columnRef.optional(), compareLabel: compareLabel.optional(), upIsGood: z.boolean().optional(), hero: z.boolean().optional(),
     sparkline: z.object({ queryKey, x: column, y: column }).strict().optional()
   }).strict(),
   z.object({
@@ -115,7 +119,7 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
             type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "column"],
             properties: {
               ...blockBase, type: { const: "kpi" }, queryKey: { type: "string" }, column: columnProp, format: formatProp, unit: unitProp, label: { type: "string", maxLength: REPORT_LIMITS.blockTitle },
-              compareTo: refProp, upIsGood: { type: "boolean" }, hero: { type: "boolean", description: "At most one KPI per report" },
+              compareTo: refProp, compareLabel: { type: "string", maxLength: COMPARE_LABEL_MAX, description: "What the delta compares against, plain text: vs prior 2 weeks, vs last year" }, upIsGood: { type: "boolean" }, hero: { type: "boolean", description: "At most one KPI per report" },
               sparkline: { type: "object", additionalProperties: false, required: ["queryKey", "x", "y"], properties: { queryKey: { type: "string" }, x: columnProp, y: columnProp } }
             }
           },
@@ -304,18 +308,30 @@ function categoryTotals(block: ChartBlock, result: Rows): Array<{ name: string; 
   return [...totals.entries()].map(([name, total]) => ({ name, total }));
 }
 
+/** Options of the design check: an edit names the blocks it adds or changes (wave 48's edit agent). */
+export type DesignOptions = { changedBlockIds?: Iterable<string> | null };
+
 /**
  * Step 5: the design rules over the spec and its results (pure). Violations are errors for the model;
  * the auto-fixes (fold series to the top 7 + Other, fold bar categories to the top 15 + Other, sort bars
  * descending, compact large numbers) are recorded on each block's `autoFixes` in the returned spec.
+ *
+ * Review H1: with `changedBlockIds` (an edit), the per-block rules (1, 2, 4, 6, 7, 8, 10, emphasis)
+ * apply only to the blocks it names, so an edit never fails on an old block it did not touch; those
+ * keep their `legacy` marker. Rule 9's totals and the auto-fixes cover every block. Without it (a full
+ * generation) every rule applies to every block and no block stays `legacy`.
  */
-export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>): { errors: string[]; spec: ReportSpec } {
+export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>, options: DesignOptions = {}): { errors: string[]; spec: ReportSpec } {
   const errors: string[] = [];
-  const blocks = spec.blocks.map((block): ReportBlock => {
+  const changed = options.changedBlockIds ? new Set(options.changedBlockIds) : null;
+  const blocks = spec.blocks.map((original): ReportBlock => {
+    const checked = changed === null || changed.has(original.id);
+    const { legacy: _legacy, ...fresh } = original;
+    const block = (checked ? fresh : original) as ReportBlock;
     if (block.type === "markdown") return block;
     const fixes: AutoFix[] = [];
     const result = results.get(block.queryKey);
-    const say = (rule: number, text: string) => errors.push(`block ${block.id}: rule ${rule}: ${text}`);
+    const say = (rule: number, text: string) => { if (checked) errors.push(`block ${block.id}: rule ${rule}: ${text}`); };
     // Rule 8: a title, and a unit or format on every numeric measure.
     if (!block.title?.trim()) say(8, "give the block a title");
     if (block.type === "kpi" && result && isNumericType(typeOf(result.columns, block.column)) && !block.format && !block.unit) say(8, `the measure ${block.column} needs a format (number, percent, duration, currency:<ISO>) or a unit`);
@@ -335,6 +351,7 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
     const intent = block.intent ?? defaultIntent(block);
     // Rule 10: no chart over an empty result.
     if (result.rows.length === 0) { say(10, "the query returned no rows; a chart needs data (filter less, or use a table or markdown note)"); return block; }
+    const positive = categoryTotals(block, result).filter((item) => item.total > 0).length;
     // Rule 6: one value is a KPI, not a chart.
     if (result.rows.length === 1 && block.y.length === 1 && !block.series) say(6, "the result is a single value; make it a kpi block");
     // Rule 1: a trend runs over time.
@@ -347,7 +364,7 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
       // Rule 10: no negative slices.
       const yi = result.columns.findIndex((item) => item.name === block.y[0]);
       if (result.rows.some((row) => (numberOf(row[yi]) ?? 0) < 0)) say(10, "a pie cannot show negative values; use a bar");
-      if (totals.filter((item) => item.total > 0).length > DESIGN_LIMITS.pieSlices) say(2, `a pie may have at most ${DESIGN_LIMITS.pieSlices} slices (this has ${totals.length}); use a stacked_bar, or group the rest as Other in SQL`);
+      if (positive > DESIGN_LIMITS.pieSlices) say(2, `a pie may have at most ${DESIGN_LIMITS.pieSlices} slices (this has ${positive} with a positive value); use a stacked_bar, or group the rest as Other in SQL`);
       if (block.y.length > 1 || block.series) say(2, "a pie shows one measure over one category column");
     }
     const names = seriesNames(block, result);
@@ -364,7 +381,7 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
       }).filter((peak) => peak > 0);
       if (peaks.length >= 2 && Math.max(...peaks) / Math.min(...peaks) >= DESIGN_LIMITS.scaleRatio) say(7, `${measures.join(" and ")} differ in scale by ${Math.round(Math.max(...peaks) / Math.min(...peaks))}×; split them into two charts (there is no second axis)`);
     }
-    if (BAR_KINDS.has(kind) && !ordinalX(block, result.columns) && totals.length > 1) {
+    if (BAR_KINDS.has(kind) && !ordinalX(block, result.columns, result.rows) && totals.length > 1) {
       // Sorting (auto): bars descending unless x is ordinal or time.
       if (totals.some((item, at) => at > 0 && item.total > totals[at - 1]!.total)) fixes.push({ rule: "sort", detail: "Bars sorted descending by value" });
       // Rule 5 (auto): more than 20 categories keep the top 15 + Other.
@@ -377,7 +394,7 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
     }));
     if (peak >= DESIGN_LIMITS.compactFrom) fixes.push({ rule: "compact", detail: "Axis and labels compacted (12.9K, $4.2M); tooltips show full values" });
     // Emphasis must name something the chart draws.
-    if (block.emphasis !== undefined && !names.includes(block.emphasis) && !(names.length === 1 && totals.some((item) => item.name === block.emphasis))) {
+    if (checked && block.emphasis !== undefined && !names.includes(block.emphasis) && !(names.length === 1 && totals.some((item) => item.name === block.emphasis))) {
       errors.push(`block ${block.id}: emphasis ${block.emphasis.slice(0, 60)} is not a series or category of the chart (series: ${names.slice(0, 10).join(", ")})`);
     }
     return fixes.length ? { ...block, autoFixes: fixes } : block;
@@ -395,7 +412,7 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
  * The whole check: shape, references, each query run through the guard (selects only), columns, and
  * the design rules. A spec that passes comes back with its auto-fixes recorded.
  */
-export async function validateSpec(row: DatasourceRow, raw: unknown, context: { userId: string; runId: string; signal?: AbortSignal }): Promise<SpecCheck> {
+export async function validateSpec(row: DatasourceRow, raw: unknown, context: { userId: string; runId: string; signal?: AbortSignal } & DesignOptions): Promise<SpecCheck> {
   const shape = checkSpecShape(raw);
   if (!shape.ok) return shape;
   const spec = shape.spec;
@@ -419,7 +436,7 @@ export async function validateSpec(row: DatasourceRow, raw: unknown, context: { 
   }
   errors.push(...checkColumns(spec, results));
   if (errors.length) return { ok: false, errors: errors.slice(0, MAX_ERRORS) };
-  const design = checkDesign(spec, results);
+  const design = checkDesign(spec, results, { changedBlockIds: context.changedBlockIds });
   if (design.errors.length) return { ok: false, errors: design.errors };
   return { ok: true, spec: design.spec, results };
 }

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import "./support/harness";
-import type { ReportBlock, ReportSpec } from "../shared/reports";
+import { ordinalX, upgradeSpec, type ReportBlock, type ReportSpec } from "../shared/reports";
+import { buildChartOption, chartTheme } from "../src/reports/chartOption";
+import { kpiValue } from "../src/reports/KpiTile";
 
 const { checkDesign, checkSpecShape, checkColumns, SPEC_JSON_SCHEMA, DESIGN_LIMITS } = await import("../server/reports/specValidate");
 const { systemPrompt } = await import("../server/reports/generate");
@@ -171,5 +173,103 @@ describe("design rules", () => {
     const out = checkDesign(shape.spec as ReportSpec, new Map([["q", countries(24)]]));
     expect(JSON.stringify(shape.spec)).toBe(before);
     expect(out.spec.blocks[0]!.autoFixes?.length).toBe(2);
+  });
+
+  test("rule 2 counts the slices with a positive value", () => {
+    const rows = countries(9, (index) => index < 7 ? index + 1 : 0);
+    expect(errorsOf(spec([chart({ intent: "share", kind: "pie" })]), { q: rows }).join()).toContain("(this has 7 with a positive value)");
+  });
+});
+
+describe("review H1: an edit of an old report is checked on the blocks it changes", () => {
+  // A v1 spec as wave 45–47 stored it: an untitled KPI with no format, a chart over an empty result, and
+  // a line over a String x (upgraded to intent trend), none of which pass the design rules.
+  const v1 = {
+    version: 1,
+    queries: [q("kpis"), q("empty"), q("months"), q("bars")],
+    blocks: [
+      { id: "k", type: "kpi", queryKey: "kpis", column: "orders" },
+      { id: "e", type: "chart", title: "Nothing yet", queryKey: "empty", kind: "bar", x: "country", y: ["orders"], format: "integer" },
+      { id: "m", type: "chart", title: "By month", queryKey: "months", kind: "line", x: "label", y: ["orders"], format: "integer" },
+      { id: "b", type: "chart", title: "Unsorted on purpose", queryKey: "bars", kind: "bar", x: "country", y: ["orders"], format: "integer" }
+    ]
+  };
+  const results = {
+    kpis: countries(1),
+    empty: countries(0),
+    months: { columns: [{ name: "label", type: "String" }, { name: "orders", type: "UInt64" }], rows: [["first", "3"], ["second", "4"]] },
+    bars: countries(4),
+    fresh: countries(3)
+  };
+  const upgradedWith = (extra: unknown[]) => {
+    const upgraded = upgradeSpec(v1);
+    return { ...upgraded, queries: [...upgraded.queries, q("fresh")], blocks: [...upgraded.blocks, ...extra] };
+  };
+
+  test("upgraded blocks are marked legacy; an edit that adds a block passes, and the old blocks keep their marker", () => {
+    expect(upgradeSpec(v1).blocks.every((block) => block.legacy === true)).toBe(true);
+    const raw = upgradedWith([chart({ id: "new", queryKey: "fresh" })]);
+    const edit = design(raw, results);
+    expect(edit.errors.length).toBeGreaterThan(0);
+    const shape = checkSpecShape(raw);
+    if (!shape.ok) throw new Error(shape.errors.join());
+    const checked = checkDesign(shape.spec, new Map(Object.entries(results)), { changedBlockIds: ["new"] });
+    expect(checked.errors).toEqual([]);
+    expect(checked.spec.blocks.filter((block) => block.legacy).map((block) => block.id)).toEqual(["k", "e", "m", "b"]);
+    // Auto-fixes still cover every block: the new one is sorted; a legacy bar keeps its rows' order.
+    expect(checked.spec.blocks.find((block) => block.id === "new")!.autoFixes?.map((fix) => fix.rule)).toEqual(["sort"]);
+    expect(checked.spec.blocks.find((block) => block.id === "b")!.autoFixes).toBeUndefined();
+  });
+
+  test("a changed old block is checked and loses its marker; rule 9 counts every block", () => {
+    const raw = upgradedWith([chart({ id: "new", queryKey: "fresh" })]);
+    const shape = checkSpecShape(raw);
+    if (!shape.ok) throw new Error("shape");
+    const map = new Map(Object.entries(results));
+    const changed = checkDesign(shape.spec, map, { changedBlockIds: ["m"] });
+    expect(changed.errors.join()).toContain("block m: rule 1: intent trend needs x to be a Date");
+    expect(changed.spec.blocks.find((block) => block.id === "m")!.legacy).toBeUndefined();
+    const heroes = checkSpecShape({ ...raw, blocks: [...raw.blocks, { id: "h1", type: "kpi", title: "A", queryKey: "fresh", column: "orders", format: "number", hero: true }, { id: "h2", type: "kpi", title: "B", queryKey: "fresh", column: "orders", format: "number", hero: true }] });
+    if (!heroes.ok) throw new Error("shape");
+    expect(checkDesign(heroes.spec, map, { changedBlockIds: ["new"] }).errors.join()).toContain("rule 9: at most 1 hero");
+  });
+
+  test("a full generation (no changedBlockIds) checks every block, and a model cannot claim legacy", () => {
+    const raw = { ...spec([chart({ legacy: true, title: undefined })]) };
+    const shape = checkSpecShape(raw);
+    if (!shape.ok) throw new Error("shape");
+    const out = checkDesign(shape.spec, new Map([["q", countries(3)]]));
+    expect(out.errors.join()).toContain("rule 8: give the block a title");
+    expect(out.spec.blocks[0]!.legacy).toBeUndefined();
+  });
+});
+
+describe("review M3: period labels are ordinal", () => {
+  test("YYYY-MM, YYYY-MM-DD, YYYY-Www, quarters, and month names keep their order; other strings sort", () => {
+    const strings = (values: string[]) => ({ columns: [{ name: "x", type: "String" }, { name: "orders", type: "UInt64" }], rows: values.map((value, index) => [value, String(index % 2 ? 50 : 5)]) });
+    for (const values of [["2026-01", "2026-02", "2026-03"], ["2026-10-01", "2026-10-02"], ["2026-W40", "2026-W41"], ["Q1", "Q2", "Q3"], ["2026-Q1", "2026-Q2"], ["Jan", "Feb", "Mar"], ["September 2026", "October 2026"]]) {
+      const data = strings(values);
+      expect({ values, ordinal: ordinalX({ x: "x" }, data.columns, data.rows) }).toEqual({ values, ordinal: true });
+      expect((buildChartOption({ ...chart({ x: "x" }), id: "c" } as never, data, chartTheme("dark")).option!.xAxis as { data: string[] }).data).toEqual(values);
+    }
+    const names = strings(["DE", "US", "IN"]);
+    expect(ordinalX({ x: "x" }, names.columns, names.rows)).toBe(false);
+    expect(ordinalX({ x: "x", legacy: true }, names.columns, names.rows)).toBe(true);
+    expect(fixesOf(spec([chart({ x: "x" })]), { q: strings(["2026-01", "2026-02", "2026-03"]) as Rows })).toEqual([]);
+  });
+});
+
+describe("KPI compareLabel", () => {
+  test("plain text, capped, in the JSON Schema; markup refused; the tile never shows a column name", () => {
+    const kpi = (compareLabel: unknown) => spec([{ id: "k", type: "kpi", title: "K", queryKey: "q", column: "orders", format: "number", compareTo: { column: "orders" }, compareLabel }]);
+    expect(checkSpecShape(kpi("vs prior 2 weeks")).ok).toBe(true);
+    for (const bad of ["<b>vs</b>", "x".repeat(61), "vs\nlast", "{{x}}"]) expect({ bad, ok: checkSpecShape(kpi(bad)).ok }).toEqual({ bad, ok: false });
+    expect(JSON.stringify(SPEC_JSON_SCHEMA)).toContain("\"compareLabel\"");
+    const result = { columns: [{ name: "v", type: "Float64" }, { name: "revenue_prev", type: "Float64" }], rows: [[110, 100]] };
+    const block = { id: "k", type: "kpi", queryKey: "q", column: "v", format: "number", compareTo: { column: "revenue_prev" } } as const;
+    expect(kpiValue(block, result).change!.against).toBe("vs previous period");
+    expect(kpiValue({ ...block, compareLabel: "vs prior 2 weeks" }, result).change!.against).toBe("vs prior 2 weeks");
+    // A v1 KPI (compareColumn) does not show its column name either.
+    expect(kpiValue({ id: "k", type: "kpi", queryKey: "q", column: "v", compareColumn: "revenue_prev" }, result).change!.against).toBe("vs previous period");
   });
 });

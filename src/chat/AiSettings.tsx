@@ -153,7 +153,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
             {result.models.ok ? `Models: ${result.models.count} in ${result.models.latencyMs} ms.` : `Models: ${result.models.error ?? "failed"}.`} {result.completion.ok ? `Completion: ok (${result.completion.model}) in ${result.completion.latencyMs} ms.` : `Completion: ${result.completion.error ?? "failed"}.`}
           </p>}
           {probe && probe !== "running" && <p className={`ai-test ${probe.compat.requiredToolChoice && probe.compat.namedToolChoice ? "ok" : "failed"}`} role="status">
-            Tool calling ({probe.model}): required {probe.required.ok ? "works" : `not supported${probe.required.error ? ` (${probe.required.error})` : ""}`}; a named tool {probe.named.ok ? "works" : `not supported${probe.named.error ? ` (${probe.named.error})` : ""}`}. Saved to the provider; Nook {probe.compat.namedToolChoice ? "names the tool it needs" : probe.compat.requiredToolChoice ? "sends required with only that tool" : "asks with auto and only that tool"}.
+            Tool calling ({probe.model}): required {probeText(probe.required)}; a named tool {probeText(probe.named)}. {probe.inconclusive ? "Inconclusive results leave the saved setting as it was; " : "Saved to the provider; "}Nook {probe.compat.namedToolChoice ? "names the tool it needs" : probe.compat.requiredToolChoice ? "sends required with only that tool" : "asks with auto and only that tool"}.
           </p>}
         </li>;
       })}
@@ -182,7 +182,7 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     setBusy(true);
     try {
       const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks,
-        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, expectedRevision: settings.revision });
+        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, reportModelFreeText: draft.reportModelFreeText, expectedRevision: settings.revision });
       onSaved(next);
       notify.success("Policy saved");
     } catch (reason) {
@@ -209,6 +209,8 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
         <div><span className="ai-label" id="ai-report-provider">Provider</span><Select<string> labelledBy="ai-report-provider" label="Report generation provider" value={draft.reportProviderId ?? ""} onChange={(value) => setDraft({ ...draft, reportProviderId: value || null })} options={[{ value: "", label: "Chat's default provider" }, ...providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.defaultModel }))]} disabled={providers.length === 0} /></div>
         <label>Model<input value={draft.reportModel ?? ""} maxLength={AGENT_BOUNDS.model} placeholder="The provider's default model" autoComplete="off" onChange={(event) => setDraft({ ...draft, reportModel: event.target.value || null })} /><small>For example glm-5.3; empty uses the provider's default</small></label>
       </div>
+      <label className="ai-check"><input type="checkbox" checked={draft.reportModelFreeText} onChange={(event) => setDraft({ ...draft, reportModelFreeText: event.target.checked })} />Report owners may type any model name</label>
+      <p className="chat-muted">Off: an owner picks from the provider's listed models (seen by Test or the model list), its default, or the report model above.</p>
     </fieldset>
     <label className="ai-check"><input type="checkbox" checked={draft.publicChatLinks} onChange={(event) => setDraft({ ...draft, publicChatLinks: event.target.checked })} />Allow public chat links</label>
     <p className="chat-muted">{PUBLIC_LINKS_POLICY_TEXT}</p>
@@ -283,6 +285,12 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
       </footer>
     </form>
   </ModalDialog>;
+}
+
+/** One probed choice as words: works, not supported (and why), or inconclusive (the flag is unchanged). */
+export function probeText(result: ToolCallingProbe["required"]): string {
+  const why = result.error ? ` (${result.error})` : "";
+  return result.outcome === "supported" ? "works" : result.outcome === "unsupported" ? `not supported${why}` : `inconclusive${why}`;
 }
 
 /** A provider's tool-choice flags (wave 46's compat, set by "Test tool calling", wave 48b). */

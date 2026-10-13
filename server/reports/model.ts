@@ -3,7 +3,7 @@ import { AGENT_BOUNDS } from "../../shared/agents";
 import type { ReportModelChoice, ReportModelView } from "../../shared/reportsModel";
 import type { ProviderConnection } from "../agents/loop";
 import { connectionFor, defaultProvider, providerChoices } from "../agents/providers";
-import { readAgentSettings } from "../agents/settings";
+import { readAgentSettings, roleMayChat, roleMayCreate } from "../agents/settings";
 import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
 
@@ -68,26 +68,62 @@ export function reportModelFor(reportId: string | null): ProviderConnection {
   return connectionFor(effective.providerId, effective.model);
 }
 
-/** `GET /api/reports/:id/model`: anyone who can read the report sees it; only the owner may change it. */
-export function reportModelView(reportId: string, userId: string): ReportModelView {
-  const row = readableReport(reportId, userId);
+type Actor = { id: string; role: string };
+
+/** Whether a person may choose a report's model: their role may create agents and chat (review M1). */
+const mayChoose = (role: string) => {
+  const settings = readAgentSettings();
+  return roleMayCreate(role, settings) && roleMayChat(role, settings);
+};
+
+/**
+ * The models a report owner may pick on a provider (review M1): the models an admin's Test or model
+ * list last saw, the provider's default, and the admin's report model when it names this provider. With
+ * the admin's "any model name" switch (`reportModelFreeText`) any one-line name is allowed.
+ */
+export function allowedReportModels(providerId: string): string[] {
+  const choice = providerChoices().find((provider) => provider.id === providerId);
+  if (!choice) return [];
+  const settings = readAgentSettings();
+  const setting = settings.reportModel && (settings.reportProviderId === providerId || (!settings.reportProviderId && defaultProvider()?.id === providerId)) ? [settings.reportModel] : [];
+  return [...new Set([choice.defaultModel, ...setting, ...(choice.models ?? [])])].slice(0, 200);
+}
+
+/** `GET /api/reports/:id/model`: anyone who can read the report sees it; only the owner, in a role that may create agents and chat, may change it. */
+export function reportModelView(reportId: string, actor: Actor): ReportModelView {
+  const row = readableReport(reportId, actor.id);
   const own = db.query("SELECT model_provider_id, model FROM reports WHERE id = ?").get(reportId) as { model_provider_id: string | null; model: string | null };
+  const canEdit = row.owner_id === actor.id && mayChoose(actor.role);
   return {
     override: own.model_provider_id || own.model ? { providerId: own.model_provider_id, model: own.model } : null,
     effective: resolveReportModel(reportId),
-    providers: providerChoices().map((provider) => ({ id: provider.id, name: provider.name, defaultModel: provider.defaultModel, models: provider.models })),
-    canEdit: row.owner_id === userId
+    providers: canEdit ? providerChoices().map((provider) => ({ id: provider.id, name: provider.name, defaultModel: provider.defaultModel, models: allowedReportModels(provider.id) })) : [],
+    freeText: readAgentSettings().reportModelFreeText,
+    canEdit
   };
 }
 
-/** `PUT /api/reports/:id/model`: the owner sets or clears the override (a provider must exist; a model is one line). */
-export function setReportModel(reportId: string, userId: string, override: ReportModelChoice | null): ReportModelView {
-  ownedReport(reportId, userId);
+/**
+ * `PUT /api/reports/:id/model` (review M1): the owner sets or clears the override. Setting one needs a
+ * role that may create agents and chat (403 `ROLE_READ_ONLY`); the provider must be one of
+ * `providerChoices()`, and the model one of `allowedReportModels` for the provider it will run on
+ * unless the admin allows any name. Clearing is always allowed.
+ */
+export function setReportModel(reportId: string, actor: Actor, override: ReportModelChoice | null): ReportModelView {
+  ownedReport(reportId, actor.id);
   const providerId = override?.providerId ?? null;
   const model = override?.model?.trim() || null;
-  if (providerId && !providerExists(providerId)) throw new ReportError(400, "INVALID", "That provider does not exist", { field: "providerId" });
-  if (model && (model.length > AGENT_BOUNDS.model || /[\u0000-\u001f\u007f]/.test(model))) throw new ReportError(400, "INVALID", "The model must be one line", { field: "model" });
+  if (providerId || model) {
+    if (!mayChoose(actor.role)) throw new ReportError(403, "ROLE_READ_ONLY", "Your role cannot choose the model that writes reports");
+    if (providerId && !providerChoices().some((provider) => provider.id === providerId)) throw new ReportError(400, "INVALID", "That provider is not one you can choose", { field: "providerId" });
+    if (model && (model.length > AGENT_BOUNDS.model || /[\u0000-\u001f\u007f]/.test(model))) throw new ReportError(400, "INVALID", "The model must be one line", { field: "model" });
+    if (model && !readAgentSettings().reportModelFreeText) {
+      // The provider the model will run on: this override's, else the next level's.
+      const target = providerId ?? (reportModelSetting()?.providerId ?? defaultProvider()?.id ?? null);
+      if (!target || !allowedReportModels(target).includes(model)) throw new ReportError(400, "INVALID", "Choose one of the provider's listed models", { field: "model" });
+    }
+  }
   db.query("UPDATE reports SET model_provider_id = ?, model = ?, updated_at = ? WHERE id = ?").run(providerId, model, now(), reportId);
-  audit(userId, null, "reports.model.set", { reportId, providerId, model, cleared: !providerId && !model });
-  return reportModelView(reportId, userId);
+  audit(actor.id, null, "reports.model.set", { reportId, providerId, model, cleared: !providerId && !model });
+  return reportModelView(reportId, actor);
 }

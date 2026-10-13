@@ -99,6 +99,11 @@ describe("layout", () => {
     expect(css).toContain(".report-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }");
     expect(css).toContain(".report-grid > .report-w-third { grid-column: span 4; }");
     expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(var(--rt-kpi-min), 1fr))");
+    // Review polish: the page uses up to 1280 px, prose stays at a readable measure, KPI titles wrap to two lines.
+    expect(css).toContain(".reports-body.report-body { width: min(1280px, 100%); }");
+    expect(css).toContain(".report-narrative { color: var(--rt-ink-2); max-width: 70ch; }");
+    expect(css).toContain("-webkit-line-clamp: 2");
+    expect(css).toContain("@container report-kpi (max-width: 240px) { .report-kpi-vs { flex-basis: 100%; } }");
   });
 
   test("chart heights are fixed by kind; horizontal bars grow 28 px per category from 160", () => {

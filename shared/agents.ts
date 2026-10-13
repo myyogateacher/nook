@@ -161,6 +161,8 @@ export type AgentSettings = {
    */
   reportProviderId: string | null;
   reportModel: string | null;
+  /** Wave 48b review M1: report owners may type any model name (else only the provider's listed models). */
+  reportModelFreeText: boolean;
 };
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   createRoles: ["admin", "member"],
@@ -174,7 +176,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   kbsPerUser: 10,
   defaultProviderId: null,
   reportProviderId: null,
-  reportModel: null
+  reportModel: null,
+  reportModelFreeText: false
 };
 
 /** Concurrency (plan §2.2): per instance (env `AGENT_MAX_CONCURRENT_RUNS`), per user, per key, per chat. */

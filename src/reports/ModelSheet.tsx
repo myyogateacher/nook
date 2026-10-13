@@ -33,6 +33,7 @@ export function ModelSheet({ reportId, onClose }: { reportId: string; onClose: (
   const [busy, setBusy] = useState(false);
   const modelId = useId();
   const providerLabel = useId();
+  const modelLabel = useId();
 
   useEffect(() => {
     let live = true;
@@ -61,7 +62,8 @@ export function ModelSheet({ reportId, onClose }: { reportId: string; onClose: (
     }
   }
 
-  const chosen = view?.providers.find((provider) => provider.id === providerId);
+  // The provider the model runs on: the one picked here, else the one the report model resolves to.
+  const target = view?.providers.find((provider) => provider.id === (providerId || view.effective.providerId));
   return <ModalDialog title="Generation model" eyebrow="Report" onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-model-sheet">
     <form className="file-dialog-form" onSubmit={(event) => { void save(event); }} noValidate>
       {!view && !error && <p className="file-dialog-hint" role="status">Loading…</p>}
@@ -72,11 +74,16 @@ export function ModelSheet({ reportId, onClose }: { reportId: string; onClose: (
             onChange={(value) => setProviderId(value)}
             options={[{ value: "", label: "The report model (admin's choice)" }, ...view.providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.defaultModel }))]} />
         </div>
-        <label className="report-field" htmlFor={modelId}>Model
+        {view.freeText ? <label className="report-field" htmlFor={modelId}>Model
           <input id={modelId} value={model} maxLength={200} autoComplete="off" disabled={!view.canEdit} list={`${modelId}-models`}
-            placeholder={chosen ? chosen.defaultModel : "The provider's default model"} onChange={(event) => setModel(event.target.value)} />
-          {chosen?.models && <datalist id={`${modelId}-models`}>{chosen.models.slice(0, 100).map((item) => <option key={item} value={item} />)}</datalist>}
+            placeholder={target ? target.defaultModel : "The provider's default model"} onChange={(event) => setModel(event.target.value)} />
+          {target && <datalist id={`${modelId}-models`}>{target.models.slice(0, 100).map((item) => <option key={item} value={item} />)}</datalist>}
         </label>
+          : view.canEdit && <div className="report-field"><span id={modelLabel}>Model</span>
+            {/* Review M1: without the admin's "any model name" switch, only the provider's listed models. */}
+            <Select<string> labelledBy={modelLabel} label="Model" value={model} onChange={(value) => setModel(value)}
+              options={[{ value: "", label: "The provider's default model", description: target?.defaultModel }, ...(target?.models ?? []).map((item) => ({ value: item, label: item }))]} />
+          </div>}
       </>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">

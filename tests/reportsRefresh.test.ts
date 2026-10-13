@@ -32,7 +32,7 @@ db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
 const owner = await createUser("Refresh owner");
 const stranger = await createUser("Refresh stranger");
 
-const created = await send(admin, "POST", "/reports/admin/datasources", { name: "Refresh warehouse", url: fake.url, username: "nook_ro", password: "pw", database: "analytics", allowlist: ["analytics"] });
+const created = await send(admin, "POST", "/reports/admin/datasources", { name: "Refresh warehouse", url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
 const datasourceId = created.body.datasource.id as string;
 await syncSchema(datasourceId).catch(() => undefined);
 

@@ -12,6 +12,7 @@ import { REPORT_LIMITS, type QueryOutcome, type ReportDetail } from "../../share
 import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
 import { STATUS_LABELS } from "./ReportsHome";
 import { SchemaBrowser } from "./SchemaBrowser";
+import { ReportView } from "./ReportView";
 
 type PageProps = {
   reportId: string;
@@ -146,9 +147,11 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         </div>}
       </div>
 
-      <div className="report-empty">
-        <p>{report.spec.blocks.length === 0 ? "No charts or tables yet. Explore the data with the console below; generating a report from a doc comes in a later release." : `${report.spec.blocks.length} blocks`}</p>
-      </div>
+      {report.spec.blocks.length === 0 && <div className="report-empty">
+        <p>No charts or tables yet. Explore the data with the console below; generating a report from a doc comes in a later release.</p>
+      </div>}
+      {/* Wave 47: the blocks over their latest results, refresh, schedule, and the inspect panel. */}
+      <ReportView report={report} canWrite={canWrite} />
 
       <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
         <div className="report-console-head">

@@ -33,7 +33,7 @@ async function send(session: Session, method: string, path: string, body?: unkno
 const admin = await createUser("Schedule admin");
 db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
 const owner = await createUser("Schedule owner");
-const created = await send(admin, "POST", "/reports/admin/datasources", { name: "Schedule warehouse", url: fake.url, username: "nook_ro", password: "pw", database: "analytics", allowlist: ["analytics"] });
+const created = await send(admin, "POST", "/reports/admin/datasources", { name: "Schedule warehouse", url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
 const datasourceId = created.body.datasource.id as string;
 await syncSchema(datasourceId).catch(() => undefined);
 

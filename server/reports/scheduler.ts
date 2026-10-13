@@ -8,7 +8,7 @@ import { ReportError } from "./errors";
 import { abandonExpiredReportRuns, startRefresh } from "./refresh";
 
 /**
- * Report schedules (plan wave 47, D427, D428): an optional cadence per report, off by default. The
+ * Report schedules (plan wave 47): an optional cadence per report, off by default. The
  * cadences, time of day, weekday, and zone are the routines' (shared/routineSchedule.ts: `hourly` at
  * minute MM, `daily`, `weekdays`, `weekly` at HH:MM in the report's zone, DST handled there).
  *

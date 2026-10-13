@@ -9,7 +9,7 @@ import { killQuery, runGuarded } from "./runner";
 import { parseSpec } from "./service";
 
 /**
- * Refresh (plan wave 47, D424–D426): re-run a report's saved queries without the AI. Every query goes
+ * Refresh (plan wave 47): re-run a report's saved queries without the AI. Every query goes
  * through the guard and runner again (EXPLAIN QUERY TREE, the allowlist, the per-query settings), two
  * at a time, and each outcome is a `report_results` row of the run with the SQL as saved, the wrapped
  * SQL as sent, ClickHouse's rows read and query id, timings, and any error.

@@ -61,7 +61,10 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   // U1: attaching needs an upload made for attaching, and uploads are never offered to agents.
   "attach_file_to_event",
   // Uploads everywhere U3: attaching shares the file with the row's readers, and has no proposal kind yet.
-  "attach_file_to_row"
+  "attach_file_to_row",
+  // Analytics reports (Wave 45): chat agents get nothing of the warehouse through a key; the report
+  // generation agent (wave 46) has its own schema tools.
+  "list_reports", "list_report_datasources"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

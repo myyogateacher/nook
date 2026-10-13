@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronLeft, CircleStop, Cpu, Database, LoaderCircle, MessageSquare, Pencil, Play, Share2, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, LoaderCircle, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -17,6 +17,7 @@ import { ModelSheet } from "./ModelSheet";
 import { ChangesPanel, useReportRights } from "./ChangesPanel";
 import { ReportCommentContext } from "./reportComment";
 import { ShareSheet } from "./ShareSheet";
+import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
 
 type PageProps = {
   reportId: string;
@@ -62,6 +63,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [sharing, setSharing] = useState(false);
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
+  // The header's actions that live in the viewer and the generation part (reportCommands.tsx).
+  const [commands, setCommands] = useState<ReportCommands>({});
+  const registry = useMemo(() => ({ set: (part: Partial<ReportCommands>) => setCommands((current) => ({ ...current, ...part })) }), []);
 
   const load = useCallback(async () => {
     try {
@@ -155,19 +159,25 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           <span className={`reports-status reports-status-${report.status}`}>{STATUS_LABELS[report.status]}</span>
           <span><Database aria-hidden="true" />{report.datasourceName ?? "No data source"}</span>
         </p>
-        <div className="report-actions">
-          <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare />Changes</button>
-          {ownerWrite && <button type="button" className="secondary-button" onClick={() => setSharing(true)}><Share2 />Share</button>}
-          {ownerWrite && <button type="button" className="secondary-button" onClick={() => setRenaming(true)}><Pencil />Rename</button>}
-          {ownerWrite && <button type="button" className="secondary-button" onClick={() => setModelOpen(true)}><Cpu />Model</button>}
-          {ownerWrite && <button type="button" className="secondary-button" onClick={() => { void remove(); }}><Trash2 />Move to Bin</button>}
+        {/* The header: Refresh all first; Changes, Share, and Schedule beside it (on a phone only Changes);
+            everything else in the overflow menu, Move to Bin last. Owner-only actions are hidden from readers. */}
+        <div className="report-actions report-header-actions">
+          {ownerWrite && commands.refreshAll && <button type="button" className="primary-button" onClick={commands.refreshAll.run} disabled={commands.refreshAll.disabled}>
+            {commands.refreshAll.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
+          </button>}
+          <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare aria-hidden="true" />Changes</button>
+          {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={() => setSharing(true)}><Share2 aria-hidden="true" />Share</button>}
+          {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, commands, share: () => setSharing(true), rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
         </div>
       </div>
 
       {/* Wave 46: generation progress, the doc banner, and the actions; inside it, wave 47's viewer (blocks, refresh, schedule, inspect). */}
-      <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
-        <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
-      </ReportCommentContext.Provider>
+      <ReportCommandsContext.Provider value={registry}>
+        <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
+          <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+        </ReportCommentContext.Provider>
+      </ReportCommandsContext.Provider>
 
       {report.isOwner && <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
         <div className="report-console-head">
@@ -199,6 +209,23 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {renaming && report && <RenameSheet report={report} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;
+}
+
+/**
+ * The overflow menu's items: on a phone Share and Schedule first (the header hides them there), then
+ * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
+ */
+export function overflowItems({ ownerWrite, commands, share, rename, model, remove }: { ownerWrite: boolean; commands: ReportCommands; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
+  const items: MenuItem[] = [];
+  if (ownerWrite) items.push({ id: "share", label: "Share", icon: <Share2 aria-hidden="true" />, onSelect: share, narrowOnly: true });
+  if (commands.schedule) items.push({ id: "schedule", label: commands.schedule.badge ? `Schedule (${commands.schedule.badge})` : "Schedule", icon: <CalendarClock aria-hidden="true" />, onSelect: commands.schedule.open, narrowOnly: true });
+  if (!ownerWrite) return items;
+  items.push({ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: rename });
+  items.push({ id: "model", label: "Model", icon: <Cpu aria-hidden="true" />, onSelect: model });
+  if (commands.checkDoc) items.push({ id: "check-doc", label: commands.checkDoc.busy ? "Checking the doc…" : "Check doc", icon: <FileSearch aria-hidden="true" />, onSelect: commands.checkDoc.run, disabled: commands.checkDoc.busy || Boolean(commands.regenerate?.busy) });
+  if (commands.regenerate) items.push({ id: "regenerate", label: commands.regenerate.busy ? "Starting…" : "Regenerate", icon: <Sparkles aria-hidden="true" />, onSelect: commands.regenerate.run, disabled: commands.regenerate.busy || Boolean(commands.checkDoc?.busy) });
+  items.push({ id: "bin", label: "Move to Bin", icon: <Trash2 aria-hidden="true" />, onSelect: remove, danger: true });
+  return items;
 }
 
 /** The console's result: what ran, and the rows in a table that scrolls sideways on a phone. */

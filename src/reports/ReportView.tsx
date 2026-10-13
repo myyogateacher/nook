@@ -15,6 +15,8 @@ import { ResultTable } from "./ResultTable";
 import { getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
 import { codeOf, messageOf } from "./reportsApi";
 import { scheduleBadge, ScheduleSheet } from "./ScheduleSheet";
+import { CommentOnBlockButton } from "./reportComment";
+import { useHeaderActions, useRegisterReportCommands } from "./reportCommands";
 import "./reportView.css";
 
 /** ECharts and its option renderer load only when a report with a chart opens (charts.tsx). */
@@ -184,6 +186,13 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const lookup = useCallback<ResultLookup>((key) => results.get(key)?.result ?? null, [results]);
   const markdownContext = useMemo<RenderContext>(() => ({ onExternalLink: setExternalLink, onNookLink: (path) => window.location.assign(path), images: { mode: "public" } }), []);
 
+  // On the report page, Refresh all and Schedule live in the page header (reportCommands.tsx).
+  const inHeader = useHeaderActions();
+  useRegisterReportCommands({
+    refreshAll: canWrite ? { run: () => { void startRefresh(); }, busy: Boolean(running), disabled: Boolean(running) || !report.spec.queries.length } : null,
+    schedule: { open: () => setScheduleOpen(true), badge: badge?.text ?? null }
+  }, ["refreshAll", "schedule"]);
+
   const card = (block: DataBlock) => <DataBlockCard key={block.id} block={block} view={results.get(block.queryKey)} hasQuery={queries.has(block.queryKey)} palette={palette}
     running={running} loaded={view !== null} lookup={lookup}
     onInspect={() => setInspect({ blockId: block.id, tab: "query" })} onMenu={() => setMenuBlock(block.id)} />;
@@ -197,12 +206,12 @@ export function ReportView({ report, canWrite, initial }: Props) {
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}
       </p>
-      <div className="report-view-actions">
+      {!inHeader && <div className="report-view-actions">
         <button type="button" className="secondary-button" onClick={() => setScheduleOpen(true)}><CalendarClock aria-hidden="true" />Schedule</button>
         {canWrite && <button type="button" className="primary-button" onClick={() => { void startRefresh(); }} disabled={Boolean(running) || !report.spec.queries.length}>
           {running ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
         </button>}
-      </div>
+      </div>}
     </div>
     {loadError && <p className="form-error" role="alert">{loadError} <button type="button" className="secondary-button" onClick={() => { void loadResults(); }}>Try again</button></p>}
     {layout.narrative.map((block) => <div key={block.id} className="report-narrative">
@@ -297,7 +306,7 @@ function ChartBody({ block, result, palette }: { block: ChartBlock; result: Repo
   </div>;
 }
 
-function BlockMenu({ block, canWrite, busy, onClose, onInspect, onRerun }: { block: DataBlock; canWrite: boolean; busy: boolean; onClose: () => void; onInspect: (tab: InspectTab) => void; onRerun: () => void }) {
+export function BlockMenu({ block, canWrite, busy, onClose, onInspect, onRerun }: { block: DataBlock; canWrite: boolean; busy: boolean; onClose: () => void; onInspect: (tab: InspectTab) => void; onRerun: () => void }) {
   useHistoryDialogGuard(true, onClose);
   const title = block.title ?? block.queryKey;
   return <ModalDialog title={title} eyebrow="Block" onClose={onClose} variant="sheet" className="reports-dialog report-block-menu">
@@ -305,6 +314,8 @@ function BlockMenu({ block, canWrite, busy, onClose, onInspect, onRerun }: { blo
       <button type="button" role="menuitem" onClick={() => onInspect("query")}><ScanSearch aria-hidden="true" />How was this built</button>
       <button type="button" role="menuitem" onClick={() => onInspect("data")}><ScanSearch aria-hidden="true" />View data</button>
       {canWrite && <button type="button" role="menuitem" onClick={onRerun} disabled={busy}><RefreshCw aria-hidden="true" />{busy ? "A run is in progress" : "Re-run this query"}</button>}
+      {/* Wave 48: a comment on this block opens the Changes panel aimed at it (only for those who may comment). */}
+      <CommentOnBlockButton blockId={block.id} className="report-menu-comment" onBefore={onClose} />
     </div>
   </ModalDialog>;
 }

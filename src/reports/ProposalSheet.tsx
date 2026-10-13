@@ -19,7 +19,7 @@ const noop = () => undefined;
 const markdownContext: RenderContext = { onExternalLink: noop, onNookLink: noop, images: { mode: "public" } };
 
 /** One side of a block's diff, drawn by the viewer's own block card (read-only: its buttons are hidden). */
-function BlockPreview({ block, results, palette, lookup }: { block: ReportBlock; results: ReadonlyMap<string, QueryResultView>; palette: ChartPalette; lookup: ResultLookup }) {
+export function BlockPreview({ block, results, palette, lookup }: { block: ReportBlock; results: ReadonlyMap<string, QueryResultView>; palette: ChartPalette; lookup: ResultLookup }) {
   if (block.type === "markdown") {
     return <article className="report-block report-block-markdown">
       {block.title && <h3 className="report-block-title">{block.title}</h3>}

@@ -11,7 +11,7 @@ export const ReportCommentContext = createContext<((blockId: string | null) => v
 export function CommentOnBlockButton({ blockId, className = "secondary-button report-comment-button", onBefore }: { blockId: string; className?: string; onBefore?: () => void }) {
   const comment = useContext(ReportCommentContext);
   if (!comment) return null;
-  return <button type="button" className={className} onClick={() => { onBefore?.(); comment(blockId); }}>
+  return <button type="button" className={className} role={className === "report-menu-comment" ? "menuitem" : undefined} onClick={() => { onBefore?.(); comment(blockId); }}>
     <MessageSquarePlus aria-hidden="true" />Ask for a change
   </button>;
 }

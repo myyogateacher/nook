@@ -30,7 +30,8 @@ function seed(db: Database) {
 describe("migration 050 reports", () => {
   test("is registered after 049 (v0.37.0's attachment Undo records) and creates every table of the plan", () => {
     expect(registeredMigrationIds).toContain(50);
-    expect(registeredMigrationIds).not.toContain(53);
+    // 053 is reports wave 48b (report_model); the Messages module moved to 054.
+    expect(registeredMigrationIds).not.toContain(54);
     expect(registeredMigrationIds.indexOf(50)).toBe(registeredMigrationIds.indexOf(49) + 1);
     expect(reportsMigration.name).toBe("reports");
     const db = openDb();

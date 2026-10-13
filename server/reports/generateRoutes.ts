@@ -9,6 +9,7 @@ import { db } from "../db";
 import { readableReport } from "./access";
 import { checkDoc, docServerChoices, docState } from "./docSource";
 import { cancelGenerate, regenerate, startGenerate } from "./generate";
+import { reportModelView, setReportModel } from "./model";
 import { handle, id } from "./routes";
 
 /**
@@ -24,6 +25,7 @@ const argName = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/, "must
 const generateCreate = z.object({ docRef, serverId: uuid, tool: toolName, arg: argName, datasourceId: uuid, title: oneLine(REPORT_LIMITS.title).nullish() }).strict();
 const generateAgain = z.object({ docRef: docRef.optional(), serverId: uuid.optional(), tool: toolName, arg: argName, datasourceId: uuid.optional() }).strict();
 const emptySchema = z.object({}).strict();
+const modelInput = z.object({ override: z.object({ providerId: uuid.nullable(), model: oneLine(200).nullable() }).strict().nullable() }).strict();
 
 type RunRow = { id: string; agent_run_id: string | null; status: GenerationRun["status"]; error: string | null; doc_snapshot_id: string | null; started_at: string; finished_at: string | null };
 
@@ -52,6 +54,13 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
     const row = db.query("SELECT id, agent_run_id, status, error, doc_snapshot_id, started_at, finished_at FROM report_runs WHERE report_id = ? AND kind = 'generate' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as RunRow | null;
     const run: GenerationRun | null = row ? { id: row.id, agentRunId: row.agent_run_id, status: row.status, error: row.error, docSnapshotId: row.doc_snapshot_id, startedAt: row.started_at, finishedAt: row.finished_at } : null;
     return { run };
+  }));
+  // Wave 48b (D435): the report's own generation model (the owner's override of the admin setting).
+  app.get("/api/reports/:reportId/model", handle((c) => ({ model: reportModelView(id(c, "reportId"), c.get("user")) })));
+  app.put("/api/reports/:reportId/model", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    const body = await parseJson(c.req.raw, modelInput);
+    return { model: setReportModel(reportId, c.get("user"), body.override) };
   }));
   app.get("/api/reports/:reportId/doc", handle((c) => ({ doc: docState(id(c, "reportId"), c.get("user").id) })));
   app.post("/api/reports/:reportId/doc/check", handle(async (c) => {

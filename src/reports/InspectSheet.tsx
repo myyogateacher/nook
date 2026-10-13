@@ -3,9 +3,10 @@ import { ChevronLeft, Copy, Download, LoaderCircle, RefreshCw } from "lucide-rea
 import { ModalDialog } from "../files/Dialog";
 import { registerHistoryDialogGuard } from "../historyDialogs";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import type { ChartBlock, KpiBlock, ReportBlock, ReportDetail, ReportQuery, ReportResult, TableBlock } from "../../shared/reports";
+import type { AutoFix, ChartBlock, KpiBlock, ReportBlock, ReportDetail, ReportQuery, ReportResult, TableBlock } from "../../shared/reports";
 import type { ProvenanceView, QueryResultView } from "../../shared/reportsView";
-import { buildChartOption, chartMapping, optionJson, type ChartPalette } from "./chartOption";
+import { AUTO_FIX_TEXT, buildChartOption, chartMapping, optionJson, type ChartPalette } from "./chartOption";
+import { kpiCompare } from "./KpiTile";
 import { createInspectTabHistory, INSPECT_TAB_LABELS, INSPECT_TABS, type InspectTab } from "./inspectHistory";
 import { ResultTable } from "./ResultTable";
 import { getProvenance, RUN_STATUS_TEXT, runLabel, timeAgo, toCsv } from "./reportViewApi";
@@ -32,7 +33,10 @@ type Props = {
 /** The columns a block maps, by role (highlighted in the Data tab). */
 export function blockMapping(block: DataBlock): Record<string, string> {
   if (block.type === "chart") return chartMapping(block);
-  if (block.type === "kpi") return { [block.column]: "value", ...(block.compareColumn ? { [block.compareColumn]: "compare" } : {}) };
+  if (block.type === "kpi") {
+    const compare = kpiCompare(block);
+    return { [block.column]: "value", ...(compare && !compare.queryKey ? { [compare.column]: "compare" } : {}) };
+  }
   return Object.fromEntries((block.columns ?? []).map((name) => [name, "shown"]));
 }
 
@@ -179,11 +183,15 @@ function MappingTab({ block, view, palette }: { block: DataBlock; view: QueryRes
       </>}
       {block.type === "kpi" && <>
         <Fact term="value →"><code className="report-mapped">{block.column}</code></Fact>
-        <Fact term="compare →">{block.compareColumn ? <code className="report-mapped">{block.compareColumn}</code> : "—"}</Fact>
+        <Fact term="compare →">{kpiCompare(block) ? <code className="report-mapped">{kpiCompare(block)!.queryKey ? `${kpiCompare(block)!.queryKey}.` : ""}{kpiCompare(block)!.column}</code> : "—"}</Fact>
+        {block.sparkline && <Fact term="sparkline →"><code>{block.sparkline.queryKey}</code> {block.sparkline.y} by {block.sparkline.x}</Fact>}
       </>}
       {block.type === "table" && <Fact term="columns →">{block.columns?.length ? block.columns.map((name) => <code key={name} className="report-mapped">{name}</code>) : "every column"}</Fact>}
+      <Fact term="intent · width">{block.intent ?? "—"} · {block.width ?? "default"}{block.section ? <> · section <code>{block.section}</code></> : null}</Fact>
+      {block.type !== "table" && (block.unit || (block.type === "chart" && block.emphasis !== undefined)) && <Fact term="unit · emphasis">{block.unit ?? "—"} · {block.type === "chart" && block.emphasis !== undefined ? block.emphasis : "—"}</Fact>}
       <Fact term="format">{block.type === "table" ? (block.formats && Object.keys(block.formats).length ? Object.entries(block.formats).map(([name, format]) => `${name}: ${format}`).join(", ") : "—") : block.format ?? "—"}</Fact>
     </dl>
+    <AutoFixes recorded={block.autoFixes ?? []} live={built?.autoFixes ?? []} />
     {Object.keys(mapping).length > 0 && <p className="report-inspect-hint">The Data tab highlights {Object.keys(mapping).length === 1 ? "this column" : "these columns"}.</p>}
     {block.type === "chart" && <>
       <div className="report-inspect-head"><h3>ECharts option</h3>{built?.option && <CopyButton text={optionJson(built.option)} label="Copy" />}</div>
@@ -193,6 +201,24 @@ function MappingTab({ block, view, palette }: { block: DataBlock; view: QueryRes
     </>}
     {block.type !== "chart" && <p className="report-inspect-hint">{block.type === "kpi" ? "A KPI tile is drawn by Nook directly, without ECharts." : "A table is drawn by Nook directly, without ECharts."}</p>}
   </section>;
+}
+
+/**
+ * "Auto-fixed: …" (wave 48b, design rules 3 and 5, sorting, compaction): what this build of the chart
+ * fixed for the current result, then any rule recorded when the spec was saved that no longer applies,
+ * marked "at save" (review).
+ */
+export function AutoFixes({ recorded, live }: { recorded: readonly AutoFix[]; live: readonly AutoFix[] }) {
+  const liveRules = new Set(live.map((fix) => fix.rule));
+  const all = [...live.map((fix) => ({ fix, atSave: false })), ...recorded.filter((fix) => !liveRules.has(fix.rule)).map((fix) => ({ fix, atSave: true }))];
+  if (!all.length) return null;
+  const names = [...new Set(all.map(({ fix }) => AUTO_FIX_TEXT[fix.rule] ?? fix.rule))];
+  return <div className="report-inspect-autofix">
+    <p className="report-inspect-hint">Auto-fixed: {names.join(", ")}</p>
+    <ul className="report-autofix-list" aria-label="Auto-fixes">{all.map(({ fix, atSave }) => <li key={`${atSave ? "s" : "l"}:${fix.rule}:${fix.detail}`}>
+      <strong>{AUTO_FIX_TEXT[fix.rule] ?? fix.rule}:</strong> {fix.detail}{atSave && <em className="report-autofix-at-save"> · at save</em>}
+    </li>)}</ul>
+  </div>;
 }
 
 function ProvenanceTab({ report, block, given }: { report: Pick<ReportDetail, "id" | "doc">; block: ReportBlock; given?: ProvenanceView }) {

@@ -47,6 +47,7 @@ import { contentReferencesMigration } from "./048_content_references";
 import { attachmentUndoRecordsMigration } from "./049_attachment_undo_records";
 import { reportsMigration } from "./050_reports";
 import { reportRunsViaMigration } from "./051_report_runs_via";
+import { reportModelMigration } from "./053_report_model";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -117,9 +118,11 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // rebuild that adds `reports` / `report`) needs 001, 025, 038, and 039.
   reportsMigration,
   // 051 (reports wave 46: `agent_runs.via` gains `reports`, rebuilt with its children kept; reports.doc_arg)
-  // needs 039, 040, and 050. 052 is reserved for reports wave 48 (report_instructions, report_versions);
-  // the Messages module takes 053.
-  reportRunsViaMigration
+  // needs 039, 040, and 050. 052 is reserved for reports wave 48 (report_instructions, report_versions).
+  reportRunsViaMigration,
+  // 053 (reports wave 48b: reports.model_provider_id and reports.model, a report's own generation model)
+  // needs 050; it may land before 052. The Messages module moves to 054.
+  reportModelMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

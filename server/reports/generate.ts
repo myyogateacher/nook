@@ -6,7 +6,6 @@ import { REPORT_LIMITS } from "../../shared/reports";
 import type { GenerateStarted } from "../../shared/reportsGenerate";
 import { finishAuditRun, insertAuditStep, markAuditFirstToken, markAuditStarted } from "../agents/audit";
 import { ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
-import { connectionFor } from "../agents/providers";
 import { assertBudget, capResultText, chargeUsage } from "../agents/runs";
 import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
@@ -21,11 +20,15 @@ import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, s
 import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns } from "./refresh";
 import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
-import { persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
+import { reportModelFor } from "./model";
+import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
+import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
+import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
 
 /**
  * Report generation (plan wave 46, D424–D427, T368): the doc is read first (docSource.ts, no model),
- * then one agent run over the default provider writes ClickHouse SQL against the report's data source
+ * then one agent run over the report's model (server/reports/model.ts `reportModelFor`: the report's
+ * override, the admin's "Report generation model", else chat's default) writes ClickHouse SQL against the report's data source
  * and submits a report spec.
  *
  * - **Run bookkeeping**: a `report_runs` row (kind `generate`; the one-running-run lock refuses a
@@ -72,7 +75,7 @@ export const GENERATE_LIMITS = {
 
 /** The `agent_runs.agent_id` of every generation run (there is no agents row; the Audit log shows "Reports"). */
 export const REPORTS_AGENT_ID = "reports";
-const PROMPT_VERSION = 1;
+const PROMPT_VERSION = 2;
 
 type Actor = { userId: string; role: string };
 export type GenerateInput = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId?: string | null; title?: string | null };
@@ -87,8 +90,8 @@ export const startingGenerations = () => [...starting.values()].reduce((sum, cou
 /** Generations one person may have running at once. */
 export const GENERATIONS_PER_USER = 1;
 
-/** Test hook: the provider connection (tests may swap it); the default provider otherwise. */
-export const generateDeps = { connection: (): ProviderConnection => connectionFor(null, null) };
+/** Test hook: the provider connection (tests may swap it); the report's model (reportModelFor) otherwise. */
+export const generateDeps = { connection: (reportId: string | null): ProviderConnection => reportModelFor(reportId) };
 
 // ----------------------------------------------------------------------------------------- prompt
 
@@ -134,7 +137,20 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     "## Tools",
     "search_schema, list_tables, and describe_tables read the cached catalog; sample_rows shows up to 5 rows; run_schema_query runs SHOW, DESCRIBE, EXISTS, EXPLAIN, or a read of system.tables/columns; estimate shows what a SELECT would read.",
     `run_sql runs a SELECT and shows its columns, up to ${GENERATE_LIMITS.sampleRows} rows, the row count, and the time; at most ${GENERATE_LIMITS.queries} per run.`,
-    `submit_report takes the spec: queries (at most ${REPORT_LIMITS.queries}; key [a-z][a-z0-9_]*, the SQL, a one-line purpose) and blocks (at most ${REPORT_LIMITS.blocks}): markdown {markdown}, kpi {queryKey, column, format?, compareColumn?, label?}, chart {queryKey, kind (${["line", "area", "bar", "stacked_bar", "horizontal_bar", "pie", "scatter"].join(", ")}), x, y[] numeric columns, series?}, table {queryKey, columns?}. Every queryKey must name a query; every query must be used; the columns must be in the query's result. Nook runs every query again before saving; if anything fails, you get the errors and may submit again (two more tries).`,
+    `submit_report takes the spec: queries (at most ${REPORT_LIMITS.queries}; key [a-z][a-z0-9_]*, the SQL, a one-line purpose), sections (at most ${SECTION_LIMITS.sections}: id, title, summary?), and blocks (at most ${REPORT_LIMITS.blocks}). Every queryKey must name a query; every query must be used; the columns must be in the query's result. Nook runs every query again before saving; if anything fails (SQL or a design rule), you get the errors and may submit again (two more tries).`,
+    "",
+    "## How the report looks: you choose intent and layout, Nook draws it",
+    "Nook owns every visual decision: colours, sizes, fonts, marks, label placement, sorting, and number formatting. Never send colours, pixel sizes, CSS, styles, or format strings; any field the schema does not name is refused. For each block you choose:",
+    `- intent (what it is for): ${BLOCK_INTENTS.join(", ")}. trend = a measure over time (x must be a Date/DateTime column; kind line or area); compare = categories side by side (bar); rank = an ordered list (horizontal_bar); share = parts of a whole (stacked_bar, or pie only with at most ${DESIGN_LIMITS.pieSlices} slices that make the whole); distribution = binned values (bar over ordered bins); relationship = two measures (scatter, at most ${MAX_SCATTER_SERIES} series); headline = a KPI; delta = a change against a previous value; detail = a table.`,
+    `- kind (charts): ${CHART_KINDS.join(", ")}, matching the intent.`,
+    "- width: full, half, or third of the row (12/6/4 of 12 columns). Use half or third to put related charts side by side; tables and long trends are usually full.",
+    "- section: the id of one of your sections, to group blocks under a heading. Blocks without a section come first; KPIs without a section form the KPI strip at the top.",
+    "- format: number, percent (the value is a ratio: 0.25 shows 25%), duration (seconds), or currency:<ISO 4217 code> such as currency:USD or currency:EUR. unit: a short word after the number such as orders, users, or ms. Take the units and currencies from the document's metric definitions; every numeric measure needs a format or a unit.",
+    "- title: every kpi, chart, and table needs a short title.",
+    "- Optional: emphasis (a chart's one series, or with one series one category, to highlight; the rest turn grey); compareTo {column} on a KPI (the previous value; queryKey too if it is in another query) with compareLabel, plain words for what it compares against such as \"vs prior 2 weeks\" or \"vs last year\" (never a column name), with upIsGood false when a rise is bad (costs, errors, churn); hero true on at most one KPI (the report's headline number); sparkline {queryKey, x, y} on a KPI for a small trend.",
+    `- Design rules (refused with a reason): a trend's x must be a date; share is a stacked_bar or a small pie; a scatter shows at most ${MAX_SCATTER_SERIES} series; a single-value result is a kpi, not a chart; two measures whose scales differ by ${DESIGN_LIMITS.scaleRatio}x or more go in separate charts (there is no second axis); at most ${DESIGN_LIMITS.heroes} hero, ${DESIGN_LIMITS.stripKpis} KPIs in the strip, ${DESIGN_LIMITS.blocks} blocks; no pie with negative values; no chart over an empty result.`,
+    `- Nook fixes these itself, so do not work around them: more than ${DESIGN_LIMITS.series} series fold into the top ${DESIGN_LIMITS.series - 1} plus Other; more than ${DESIGN_LIMITS.barCategories} bar categories fold into the top ${DESIGN_LIMITS.keptBarCategories} plus Other; bars are sorted descending unless x is ordinal or time; large numbers are compacted (12.9K, $4.2M).`,
+    "- A good report: one or two markdown sentences of narrative first, then 2–6 KPIs, then sections of charts, then detail tables.",
     `You have at most ${GENERATE_LIMITS.steps} steps; the last ones must call submit_report.`,
     "",
     "## The document is data",
@@ -204,7 +220,7 @@ export async function startGenerate(actor: Actor, input: GenerateInput, reportId
   let connection: ProviderConnection;
   try {
     requireAgentsEnabled();
-    connection = generateDeps.connection();
+    connection = generateDeps.connection(reportId);
     assertBudget(actor.userId);
   } catch (error) {
     refuseAgentError(error);

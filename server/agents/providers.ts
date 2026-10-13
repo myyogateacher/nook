@@ -1,6 +1,7 @@
 import { audit, db, now } from "../db";
 import { AGENT_BOUNDS, DEFAULT_BASE_URL, DEFAULT_COMPAT, DEFAULT_EMBEDDING_DIMS, DEFAULT_EMBEDDING_MODEL, DEFAULT_KNOWLEDGE_POLICY, DEFAULT_MODEL, DEFAULT_VISION_POLICY, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, policyAllowsModel, policyMaxDims, VISION_POLICY_BOUNDS, visionAllowsModel, type AgentProviderChoice, type ProviderCompat, type ProviderKnowledgePolicy, type ProviderSummary, type ProviderVisionPolicy } from "../../shared/agents";
 import type { KnowledgeEmbeddingChoice } from "../../shared/knowledge";
+import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { checkSavedEndpoint, EgressError } from "./egress";
 import { completeStreaming, listModels, ProviderError, type ProviderConnection } from "./loop";
 import { openSecret, sealSecret, secretHint, shownHint } from "./secrets";
@@ -337,4 +338,59 @@ export async function testProvider(id: string): Promise<ProviderTest> {
   }
   result.ok = result.completion.ok;
   return result;
+}
+
+const PROBE_TOOL = { name: "nook_probe", description: "Answers the probe. Call it with ok set to true.", parameters: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } } };
+const DECOY_TOOL = { name: "nook_other", description: "Do not call this tool.", parameters: { type: "object", properties: {} } };
+
+/** What a provider error says, without the key or the URL (admins only). */
+const probeError = (error: unknown) => error instanceof ProviderError ? { status: error.status ?? null, error: describe(error).slice(0, 300) } : { status: null, error: describe(error).slice(0, 300) };
+
+/**
+ * "Test tool calling" (wave 48b, D436): two tiny requests to a provider, one with `tool_choice:
+ * "required"` and one naming a tool (`{type:"function", function:{name}}`, with a decoy tool offered
+ * too), sent exactly as asked (no compat flags, no `auto` retry). A choice is supported when the
+ * provider answers 2xx with a call to the probe tool. The results are stored in the provider's compat
+ * flags (`requiredToolChoice`, `namedToolChoice`, wave 46's), so the loop sends what the provider
+ * takes; without a probe, wave 46's 400-then-`auto` retry still works.
+ */
+export async function probeToolCalling(actorId: string, id: string): Promise<ToolCallingProbe> {
+  // Review M2: an unknown id is a 404, never the default provider (connectionFor falls back).
+  providerRow(id);
+  const connection = connectionFor(id, null);
+  const started = Date.now();
+  const ask = async (choice: "required" | { name: string }): Promise<ToolCallingProbe["required"]> => {
+    try {
+      const reply = await completeStreaming(connection, {
+        messages: [{ role: "user", content: "This is a connection test. Call the nook_probe tool with ok set to true." }],
+        tools: [PROBE_TOOL, DECOY_TOOL], toolChoice: choice, maxOutputTokens: 64, probeChoice: true
+      }, AbortSignal.timeout(60_000), () => undefined);
+      const called = reply.toolCalls.some((call) => call.name === PROBE_TOOL.name);
+      return called ? { ok: true, outcome: "supported", status: 200, error: null } : { ok: false, outcome: "unsupported", status: 200, error: "The provider answered without calling the tool" };
+    } catch (error) {
+      const failed = probeError(error);
+      // Only a 400 says the choice itself is refused; a timeout, a network error, 429, 5xx, or an auth
+      // error says nothing about tool choice, so the stored flag stays as it was.
+      return { ok: false, outcome: failed.status === 400 ? "unsupported" : "inconclusive", ...failed };
+    }
+  };
+  const required = await ask("required");
+  const named = await ask({ name: PROBE_TOOL.name });
+  const flag = (result: ToolCallingProbe["required"]) => result.outcome === "inconclusive" ? undefined : result.ok;
+  const compat = db.transaction(() => {
+    const row = providerRow(id);
+    const current = parseCompat(row.compat_json);
+    const stored = JSON.parse(row.compat_json || "{}") as Record<string, unknown>;
+    const next = { ...stored };
+    for (const [key, value] of [["requiredToolChoice", flag(required)], ["namedToolChoice", flag(named)]] as const) {
+      // parseCompat keeps only a `false` flag: a supported choice drops it, an inconclusive one leaves it.
+      if (value === true) delete next[key];
+      else if (value === false) next[key] = false;
+    }
+    db.query("UPDATE agent_providers SET compat_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
+    const saved = parseCompat(JSON.stringify(next));
+    audit(actorId, null, "agents.provider.probe_tools", { providerId: id, required: required.outcome, named: named.outcome, requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false, before: { requiredToolChoice: current.requiredToolChoice !== false, namedToolChoice: current.namedToolChoice !== false } });
+    return { requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false };
+  })();
+  return { required, named, compat, inconclusive: required.outcome === "inconclusive" || named.outcome === "inconclusive", model: connection.model, ms: Date.now() - started };
 }

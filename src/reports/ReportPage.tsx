@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronLeft, CircleStop, Database, LoaderCircle, Pencil, Play, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, CircleStop, Cpu, Database, LoaderCircle, Pencil, Play, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -13,6 +13,7 @@ import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, m
 import { STATUS_LABELS } from "./ReportsHome";
 import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
+import { ModelSheet } from "./ModelSheet";
 
 type PageProps = {
   reportId: string;
@@ -47,6 +48,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const runAbort = useRef<AbortController | null>(null);
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
   const [runError, setRunError] = useState<{ message: string; code?: string } | null>(null);
+  const [modelOpen, setModelOpen] = useState(false);
   const [schemaOpen, setSchemaOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const confirm = useConfirm();
@@ -143,6 +145,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         </p>
         {canWrite && <div className="report-actions">
           <button type="button" className="secondary-button" onClick={() => setRenaming(true)}><Pencil />Rename</button>
+          <button type="button" className="secondary-button" onClick={() => setModelOpen(true)}><Cpu />Model</button>
           <button type="button" className="secondary-button" onClick={() => { void remove(); }}><Trash2 />Move to Bin</button>
         </div>}
       </div>
@@ -173,6 +176,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
       </section>
     </section>}
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
+    {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} />}
     {renaming && report && <RenameSheet report={report} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;

@@ -13,7 +13,8 @@ import { knowledgeProviderHook } from "../knowledge/hooks";
 const KEYS: Record<keyof AgentSettings, string> = {
   createRoles: "create_roles", chatRoles: "chat_roles", dailyTokensUser: "daily_tokens_user", dailyTokensKey: "daily_tokens_key",
   dailyTokensInstance: "daily_tokens_instance", publicChatLinks: "public_chat_links", auditRetentionDays: "audit_retention_days",
-  agentsPerUser: "agents_per_user", kbsPerUser: "kbs_per_user", defaultProviderId: "default_provider_id"
+  agentsPerUser: "agents_per_user", kbsPerUser: "kbs_per_user", defaultProviderId: "default_provider_id",
+  reportProviderId: "report_provider_id", reportModel: "report_model", reportModelFreeText: "report_model_free_text"
 };
 
 const roles = (value: unknown): AgentRole[] | null => Array.isArray(value) && value.every((item) => (AGENT_ROLE_OPTIONS as readonly string[]).includes(item)) ? value as AgentRole[] : null;
@@ -39,6 +40,9 @@ export function readAgentSettings(): AgentSettings & { revision: number } {
       case "agents_per_user": settings.agentsPerUser = integer(value, 1, 500) ?? settings.agentsPerUser; break;
       case "kbs_per_user": settings.kbsPerUser = integer(value, 1, 100) ?? settings.kbsPerUser; break;
       case "default_provider_id": settings.defaultProviderId = typeof value === "string" ? value : null; break;
+      case "report_provider_id": settings.reportProviderId = typeof value === "string" ? value : null; break;
+      case "report_model_free_text": settings.reportModelFreeText = value === true; break;
+      case "report_model": settings.reportModel = typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null; break;
       default: break;
     }
   }

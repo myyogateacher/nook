@@ -2,6 +2,19 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.35.0 — 2026-10-13
+
+- **Attach files almost everywhere**: calendar events, task cards and comments, collection rows, notes (`/file`, `/from files`, paste, drop; non-images become file cards), whiteboards, and chat (pictures go to vision models). Take photo on phones, Choose files, or From Files (with a confirm naming who will see it). Photo locations are removed from JPEG, PNG and WebP before upload.
+- **Files › Attachments**: every attachment is an ordinary file in your own private Attachments folder, so it counts toward your storage, shows in Files, and goes to the Bin like anything else. Card and row attachments from earlier versions move there on upgrade, with the same people able to open them.
+- **Shared notes show their pictures**: people a note is shared with directly can now open its pictures and files. Publishing a note that would share a file from elsewhere in Files asks you first; an editor can never share your files for you.
+- **Profile pictures**: upload, take a photo, or drag one in; crop it square; remove it, or go back to your Google picture. Saved at most 512 px with no location data.
+- **S3 storage (optional)**: `STORAGE_BACKEND=s3` keeps file bytes in an S3 or S3-compatible bucket through Bun's built-in client, with `storage-admin migrate`, `verify --hash` and `reclaim`. SQLite stays on disk.
+- **Toasts**: notices now use Sonner, typed as success, info, warning or error. Errors stay until closed. **Undo** after moving something to the Bin in every module that uses the Bin, and the Bin's restore label always names where an item really goes.
+- **Whiteboard thumbnails show pictures** the board's owner placed.
+- **Confirming with Google works**: Google never re-asks for a password, so the old check always failed. A Google round trip for your linked account now confirms API keys, the vault, and password changes. Turning two-factor off, recovery codes, and unlinking Google also need your authenticator or a recovery code; a recovery code now works where the authenticator code did.
+- **Keys stay inside their grants**: an MCP or API key can only link files its grants already cover.
+- Migrations 046, 047 and 048 run on the first boot; back up first. See [Upgrading to 0.35.0](docs/OPERATIONS.md#upgrades).
+
 ## v0.34.0 — 2026-10-08
 
 - **Admin limits for knowledge-base embeddings**: in **Settings → AI → Model providers**, each provider has a **Knowledge bases** section. An admin chooses whether knowledge bases may use the provider, allows any embedding model or only listed ones, and sets the largest size (64 to 3,072 dimensions).

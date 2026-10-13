@@ -74,8 +74,10 @@ describe("editor wiring", () => {
     // ImageInsert's paste and drop handlers feed one handler; with attachHost it is attachFiles.
     expect(editor).toContain("latest.current.attachHost ? attachFiles(activeEditor, files) : insertImages(activeEditor, files)");
     expect(editor).toContain('uploadForHost(file, "note"');
-    expect(editor).toMatch(/preview_kind === "image" && isInsertableImageType\(document\.mime_type\)/);
-    expect(editor).toContain("insertFileChip");
+    // v0.35.0 QA: the node is built by uploadSlots.ts and inserted at the file's upload slot.
+    expect(editor).toContain("storedFileNode(activeEditor.schema, document)");
+    expect(source("editor/uploadSlots.ts")).toMatch(/preview_kind === "image" && isInsertableImageType\(document\.mime_type\)/);
+    expect(source("editor/uploadSlots.ts")).toContain("schema.nodes.fileChip");
     expect(source("editor/imageInsert.ts")).toMatch(/handlePaste[\s\S]*handleDrop/);
   });
 

@@ -27,6 +27,8 @@
   .whiteboard-embed-thumb { width: 72px; height: 48px; }
   .whiteboard-embed-card { gap: 8px; }
 }
+/* v0.35.0 QA: where a file still uploading will go (uploadSlots.ts); never saved with the note. */
+.note-prose .upload-slot { max-width: 520px; margin: .7em 0; border: 1px dashed #3a3a41; border-radius: 12px; padding: 12px 14px; color: #9a9aa1; font-size: .86rem; overflow-wrap: anywhere; user-select: none; }
 /* U4 (D408): a file in a note, as a card that opens its preview; fits a 390 px phone. */
 .note-prose .file-chip { margin: .7em 0; }
 .file-chip-card { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; min-height: 48px; border: 1px solid #2c2c31; border-radius: 12px; padding: 6px 12px 6px 8px; background: #151518; color: #ededee; font: 500 .9rem/1.35 Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; text-align: left; cursor: pointer; user-select: none; }

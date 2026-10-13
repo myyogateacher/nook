@@ -6,18 +6,17 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] Known LOW leftovers below (three agents, 2026-10-13).
+- [ ] v0.36.0: the 2026-10-13 leftovers round (forms, scroll audit, attachment Undo, upload progress, copy thumbnail, admin avatar removal) is on main; short review, then release.
 
 ## Known LOW leftovers
 
-- [ ] Security forms in `src/App.tsx` (two-factor off, regenerate recovery codes) still use native `required`; switch to `noValidate` with app messages like the key forms.
-- [ ] Scroll audit not covered: Google/TOTP re-auth dialogs, Vault protect/history/transfer, Collections row panel, Calendar/Vault/Collections dialogs at 1280.
 
 - [ ] Avatar: an old picture URL already in the browser cache (1 day) keeps showing until evicted; the 404 refresh only helps when the URL is requested again.
 - [ ] Team: no rendered UI test for "Remove profile picture" (Team client tests can't load member details).
 - [ ] Attachment Undo records live in memory (10 min): after a restart only the owner can Undo, the file goes back at the end, and a Files item from outside Attachments needs re-attaching.
 - [ ] Event sheet: removals staged before Save can be un-staged, but there is no Undo after Save.
 - [ ] Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.
+- [ ] Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.
 
 ## Standing rules for agent briefs
 

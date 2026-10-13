@@ -13,6 +13,9 @@ import { limited } from "./runner";
 import "./bin";
 import { registerGenerateRoutes } from "./generateRoutes";
 import { registerReportViewRoutes } from "./viewRoutes";
+import { registerReportEditRoutes } from "./editRoutes";
+import { ensureVersionRecorded } from "./versions";
+import { db } from "../db";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -111,6 +114,18 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   })));
 
   // --- Authors ---
+  // Wave 48: a regeneration replaces the spec, so the one it replaces is recorded as a version first.
+  app.use("/api/reports/:reportId/generate", async (c, next) => {
+    if (c.req.method === "POST") {
+      try {
+        const reportId = uuid.safeParse(c.req.param("reportId")?.toLowerCase());
+        if (reportId.success && db.query("SELECT 1 FROM reports WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").get(reportId.data, c.get("user").id)) ensureVersionRecorded(reportId.data);
+      } catch (error) {
+        console.error("Reports: could not record the spec before regenerating", error instanceof Error ? error.name : "Error");
+      }
+    }
+    await next();
+  });
   // Wave 46 (generation and the doc) first: its literal paths come before /api/reports/:reportId.
   registerGenerateRoutes(app);
   app.get("/api/reports/datasources", handle(() => ({ datasources: datasourceChoices() })));
@@ -156,4 +171,6 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
 
   // Wave 47: results, refresh, runs, provenance, and the schedule (viewRoutes.ts).
   registerReportViewRoutes(app);
+  // Wave 48: instructions, proposals, versions, manual edits, and sharing (editRoutes.ts).
+  registerReportEditRoutes(app);
 }

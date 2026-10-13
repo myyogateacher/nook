@@ -47,9 +47,9 @@ function seed(db: Database) {
 }
 
 describe("migration 051 report_runs_via", () => {
-  test("registered after 050; 052 stays reserved for wave 48", () => {
+  test("registered after 050; 052 (wave 48) follows it", () => {
     expect(registeredMigrationIds.indexOf(51)).toBe(registeredMigrationIds.indexOf(50) + 1);
-    expect(registeredMigrationIds).not.toContain(52);
+    expect(registeredMigrationIds.indexOf(52)).toBe(registeredMigrationIds.indexOf(51) + 1);
     expect(reportRunsViaMigration.name).toBe("report_runs_via");
   });
 

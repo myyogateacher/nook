@@ -64,7 +64,10 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   "attach_file_to_row",
   // Analytics reports (Wave 45): chat agents get nothing of the warehouse through a key; the report
   // generation agent (wave 46) has its own schema tools.
-  "list_reports", "list_report_datasources"
+  "list_reports", "list_report_datasources",
+  // Wave 48: the rest of the reports tools; a report's own edit agent works through its instructions.
+  "get_report", "get_report_block", "get_report_run", "get_report_instruction", "create_report", "refresh_report", "set_report_schedule",
+  "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

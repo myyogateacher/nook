@@ -52,6 +52,7 @@ import { abandonGenerateRuns } from "./reports/generate";
 import { roleHasReports } from "./reports/access";
 import { abandonRunsAtBoot } from "./reports/refresh";
 import { startReportScheduler } from "./reports/scheduler";
+import { failInstructionsAtBoot, startInstructionSweep } from "./reports/instructions";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
@@ -1139,6 +1140,9 @@ startSweeper();
 // Analytics reports (Wave 47): runs a stopped server left behind are abandoned; scheduled refreshes tick once a minute.
 abandonRunsAtBoot();
 startReportScheduler();
+// Wave 48: instructions a stopped server left running fail; queued ones start when their report is free.
+try { failInstructionsAtBoot(); } catch (error) { console.error("Report instruction boot check failed", errorClass(error)); }
+startInstructionSweep();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
 startServerHeartbeat();
 // Nook key usage counts (D283) are kept in memory and written once a minute.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ChevronLeft, CircleStop, Database, LoaderCircle, Pencil, Play, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronLeft, CircleStop, Database, LoaderCircle, MessageSquare, Pencil, Play, Share2, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -13,6 +13,9 @@ import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, m
 import { STATUS_LABELS } from "./ReportsHome";
 import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
+import { ChangesPanel, useReportRights } from "./ChangesPanel";
+import { ReportCommentContext } from "./reportComment";
+import { ShareSheet } from "./ShareSheet";
 
 type PageProps = {
   reportId: string;
@@ -51,6 +54,12 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [renaming, setRenaming] = useState(false);
   const confirm = useConfirm();
   const consoleId = useId();
+  // Wave 48: the Changes panel (instructions, proposals, versions), aimed at a block or the whole report, and Share.
+  const [changes, setChanges] = useState<{ blockId: string | null } | null>(null);
+  const lastChanges = useRef<{ blockId: string | null }>({ blockId: null });
+  const [sharing, setSharing] = useState(false);
+  const rights = useReportRights(reportId);
+  const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +75,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     }
   }, [onGone, reportId]);
   useEffect(() => { void load(); }, [load]);
+  const reloadReport = useCallback(() => { void load(); }, [load]);
+  // Changing the report (refresh, schedule, regenerate, apply, edits, the console) is its owner's (D455).
+  const ownerWrite = canWrite && Boolean(report?.isOwner);
   useEffect(() => { if (report) document.title = `${report.title} · Reports · ${appName()}`; }, [report]);
   useEffect(() => { saveDraft(reportId, sql); }, [reportId, sql]);
 
@@ -141,16 +153,20 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           <span className={`reports-status reports-status-${report.status}`}>{STATUS_LABELS[report.status]}</span>
           <span><Database aria-hidden="true" />{report.datasourceName ?? "No data source"}</span>
         </p>
-        {canWrite && <div className="report-actions">
-          <button type="button" className="secondary-button" onClick={() => setRenaming(true)}><Pencil />Rename</button>
-          <button type="button" className="secondary-button" onClick={() => { void remove(); }}><Trash2 />Move to Bin</button>
-        </div>}
+        <div className="report-actions">
+          <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare />Changes</button>
+          {ownerWrite && <button type="button" className="secondary-button" onClick={() => setSharing(true)}><Share2 />Share</button>}
+          {ownerWrite && <button type="button" className="secondary-button" onClick={() => setRenaming(true)}><Pencil />Rename</button>}
+          {ownerWrite && <button type="button" className="secondary-button" onClick={() => { void remove(); }}><Trash2 />Move to Bin</button>}
+        </div>
       </div>
 
       {/* Wave 46: generation progress, the doc banner, and the actions; inside it, wave 47's viewer (blocks, refresh, schedule, inspect). */}
-      <ReportGeneration report={report} canWrite={canWrite} onChanged={() => { void load(); }} />
+      <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
+        <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+      </ReportCommentContext.Provider>
 
-      <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
+      {report.isOwner && <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
         <div className="report-console-head">
           <h2 id={`${consoleId}-heading`}>SQL console</h2>
           <button type="button" className="secondary-button" onClick={() => setSchemaOpen(true)} disabled={!report.datasourceId}><TableProperties />Schema</button>
@@ -170,9 +186,12 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         </div>
         {runError && <p className="form-error report-run-error" role="alert">{runError.code ? <code>{runError.code}</code> : null} {runError.message}</p>}
         {outcome && <ResultView outcome={outcome} />}
-      </section>
+      </section>}
     </section>}
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
+    {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} onClose={() => setChanges(null)}
+      reopen={() => setChanges(lastChanges.current)} onReportChanged={reloadReport} />}
+    {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(false)} reopen={() => setSharing(true)} />}
     {renaming && report && <RenameSheet report={report} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;

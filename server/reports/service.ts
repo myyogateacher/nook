@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
 import { EMPTY_SPEC, REPORT_LIMITS, type QueryOutcome, type ReportDetail, type ReportSpec, type ReportSummary } from "../../shared/reports";
-import { readableReport, readableReportSql, type ReportRow } from "./access";
+import { ownedReport, readableReport, readableReportSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
@@ -51,7 +51,8 @@ export function reportDetail(id: string, userId: string): ReportDetail {
   return {
     ...summaryOf(row, userId),
     spec: parseSpec(row.spec_json),
-    doc: row.doc_ref || row.doc_server_id ? { serverId: row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
+    // Wave 48 (D456): the doc a report came from is the owner's; readers of a shared report never see its link.
+    doc: row.owner_id === userId && (row.doc_ref || row.doc_server_id) ? { serverId: row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
     lastError: row.last_error
   };
 }
@@ -69,7 +70,7 @@ export function createReport(userId: string, input: { title: string; datasourceI
 }
 
 export function updateReport(userId: string, id: string, patch: { title?: string; datasourceId?: string; expectedRevision: number }): ReportDetail {
-  const row = readableReport(id, userId);
+  const row = ownedReport(id, userId);
   if (row.revision !== patch.expectedRevision) throw new ReportError(409, "REVISION_CONFLICT", "This report changed; reload it", { revision: row.revision });
   if (patch.datasourceId !== undefined && patch.datasourceId !== row.datasource_id) usableDatasource(patch.datasourceId);
   db.query("UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?")
@@ -80,7 +81,7 @@ export function updateReport(userId: string, id: string, patch: { title?: string
 
 /** Moves a report to the Bin for 30 days (server/reports/bin.ts restores and purges it). */
 export function binReport(userId: string, id: string) {
-  readableReport(id, userId);
+  ownedReport(id, userId);
   const at = new Date();
   db.query("UPDATE reports SET deleted_at = ?, deleted_by = ?, purge_after = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .run(at.toISOString(), userId, purgeAfterFrom(at), at.toISOString(), id);
@@ -90,7 +91,8 @@ export function binReport(userId: string, id: string) {
 
 /** The data source a report uses, for its console and schema browser (409 when it has none or it is off). */
 export function reportDatasource(id: string, userId: string): DatasourceRow {
-  const report = readableReport(id, userId);
+  // The console and the Schema browser run queries: the owner's (wave 48, D455).
+  const report = ownedReport(id, userId);
   return usableDatasource(report.datasource_id);
 }
 
@@ -132,7 +134,7 @@ export async function runConsole(userId: string, reportId: string, sql: string, 
 
 /** Cancel: aborts this person's running console query on the report and sends a best-effort KILL QUERY. */
 export async function cancelConsole(userId: string, reportId: string): Promise<{ cancelled: boolean; queryId: string | null }> {
-  readableReport(reportId, userId);
+  ownedReport(reportId, userId);
   const running = consoleRuns.get(consoleKey(userId, reportId));
   if (!running) return { cancelled: false, queryId: null };
   running.controller.abort();

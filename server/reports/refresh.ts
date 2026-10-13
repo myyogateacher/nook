@@ -1,7 +1,7 @@
 import { audit, db, now } from "../db";
 import { REPORT_LIMITS, type ReportQuery, type ReportResult, type ReportRun, type ReportSpec, type ResultColumn, type RunTrigger } from "../../shared/reports";
 import type { QueryResultView, ReportResultsView } from "../../shared/reportsView";
-import { readableReport, type ReportRow } from "./access";
+import { ownedReport, readableReport, type ReportRow } from "./access";
 import { queryIdFor } from "./clickhouse";
 import { datasourceRow, usableDatasource, type DatasourceRow } from "./datasources";
 import { asReportError, ReportError } from "./errors";
@@ -339,7 +339,8 @@ export type RefreshStart = { run: ReportRun; done: Promise<ReportRun> };
  * once with the running run; `done` settles when it finishes (it never rejects).
  */
 export function startRefresh(userId: string, reportId: string, options: { trigger: RunTrigger; queryKey?: string | null; nowMs?: number }): RefreshStart {
-  const report = readableReport(reportId, userId);
+  // Owner only (wave 48 sharing, D455): readers of a shared report see its results, never start runs.
+  const report = ownedReport(reportId, userId);
   const datasource = usableDatasource(report.datasource_id);
   // A run in progress answers first: a report's first generation holds the lock before it has queries.
   abandonExpiredReportRuns(options.nowMs ?? Date.now(), reportId);

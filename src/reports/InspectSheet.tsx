@@ -8,6 +8,7 @@ import type { ProvenanceView, QueryResultView } from "../../shared/reportsView";
 import { buildChartOption, chartMapping, optionJson, type ChartPalette } from "./chartOption";
 import { createInspectTabHistory, INSPECT_TAB_LABELS, INSPECT_TABS, type InspectTab } from "./inspectHistory";
 import { ResultTable } from "./ResultTable";
+import { CommentOnBlockButton } from "./reportComment";
 import { getProvenance, RUN_STATUS_TEXT, runLabel, timeAgo, toCsv } from "./reportViewApi";
 import { countLabel, messageOf } from "./reportsApi";
 
@@ -120,6 +121,8 @@ export function InspectSheet({ report, block, query, view, palette, canRerun, bu
     </div>
     <div className="report-inspect-body" role="tabpanel" id="inspect-panel" aria-labelledby={`inspect-tab-${tab}`}>
       {tab === "query" && <QueryTab block={block} query={query} result={result} failed={failed} canRerun={canRerun} busy={busy} onRerun={onRerun} />}
+      {/* Wave 48: ask the edit agent to change this block (the report page decides whether the caller may). */}
+      {tab === "query" && <div className="report-inspect-actions report-inspect-comment"><CommentOnBlockButton blockId={block.id} /></div>}
       {tab === "data" && (shown && shown.columns.length ? <section className="report-inspect-section">
         <p className="report-inspect-facts">
           <span>{countLabel(shown.rowCount)}{shown.truncated ? " (cut off at the stored limit)" : ""}</span>

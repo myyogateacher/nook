@@ -17,6 +17,9 @@ export function setSelfAvatar(url: string | null | undefined) {
   for (const listener of listeners) listener();
 }
 
+/** The picture URL the shell last set (null before it did, or with no picture). */
+export const selfAvatarNow = () => current;
+
 /** The picture URL; `fallback` (the session's) until the shell has set one, so the first paint shows it. */
 export function useSelfAvatar(fallback?: string | null) {
   const value = useSyncExternalStore((listener) => {

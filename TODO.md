@@ -14,8 +14,9 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [ ] Scroll audit not covered: Google/TOTP re-auth dialogs, Vault protect/history/transfer, Collections row panel, Calendar/Vault/Collections dialogs at 1280.
 - [ ] Undo for removing an attachment (needs restore and re-link into Attachments).
 - [ ] Note uploads show progress as toasts, not a progress row; leaving a note mid-upload aborts without asking.
-- [ ] Whiteboard "Save as copy" thumbnail is drawn without pictures.
-- [ ] Admins cannot remove someone else's profile picture; others see a new picture only after reload.
+
+- [ ] Avatar: an old picture URL already in the browser cache (1 day) keeps showing until evicted; the 404 refresh only helps when the URL is requested again.
+- [ ] Team: no rendered UI test for "Remove profile picture" (Team client tests can't load member details).
 
 ## Standing rules for agent briefs
 

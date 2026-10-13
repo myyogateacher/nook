@@ -104,3 +104,25 @@ export function thumbnailFiles<T>(loaded: Readonly<Record<string, T>>, refs: Rea
   }
   return files;
 }
+
+/**
+ * The pictures a "Save as copy" thumbnail draws: the same rule as a normal save, for the NEW board.
+ * The person saving owns the copy, so only the pictures the server lists for the copy (`listed`, its
+ * GET …/thumbnail-pictures) are drawn, from what this canvas already loaded; the original owner's or
+ * anyone else's picture stays a placeholder. A failed list means no pictures rather than a wrong one.
+ */
+export async function copyThumbnailFiles<T>(
+  loaded: Readonly<Record<string, T>>,
+  scene: { files: Readonly<Record<string, SceneFile>> },
+  listed: () => Promise<{ documentIds: string[] }>
+): Promise<Record<string, T>> {
+  const refs = new Map(Object.entries(scene.files));
+  if (!refs.size || !Object.keys(loaded).length) return {};
+  let allowed: string[] = [];
+  try {
+    allowed = (await listed()).documentIds;
+  } catch {
+    // Not known now: no pictures in this thumbnail.
+  }
+  return thumbnailFiles(loaded, refs, allowed);
+}

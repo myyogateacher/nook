@@ -47,7 +47,9 @@ export type AccessNoticeKind = "share_removed" | "share_lowered" | "access_reset
   // Bell deep links (v0.32): an admin revoked one of your calendar feed links (the resource is the
   // calendar, named only while you can open it) or paused one of your routines (the resource is the
   // routine; its name is yours). From Settings → Team → a member's access page (D268).
-  | "feed_revoked" | "routine_paused";
+  | "feed_revoked" | "routine_paused"
+  // T353: an admin removed your profile picture (Team → a member). Opens Settings → Security, where the picture card is.
+  | "avatar_removed";
 
 export type AccessNotice = {
   userId: string;
@@ -153,6 +155,7 @@ export function accessNoticeHref(row: { kind: string; resource_kind: string | nu
       return paths.routines();
     // Settings → Security: recognised devices, Google sign-in, and two-factor.
     case "new_sign_in":
+    case "avatar_removed":
     case "google_allowed":
     case "google_relink_allowed":
     case "google_reset":
@@ -247,6 +250,7 @@ function line(row: NoticeRow, recipientId: string) {
       return `${actor} reset your account for Google sign-in${parts.length ? `: ${listWords(parts)}` : ""}`;
     }
     case "google_unlinked": return `${actor} unlinked Google from your account`;
+    case "avatar_removed": return `${actor} removed your profile picture. You can add a new one in Settings → Security.`;
     case "google_relinked": {
       const parts = googleResetParts(row.count ?? 0);
       return `A new Google account was linked to your account${parts.length ? `; removed ${listWords(parts)}` : ""}`;

@@ -63,5 +63,16 @@ describe("console helpers and the result view", () => {
     expect(markup).toContain("LIMIT 1001");
     expect(markup).toContain('class="report-table-scroll" tabindex="0" role="region" aria-label="Query result"');
     expect(markup).toContain('<td class="report-null">NULL</td>');
+    expect(markup).not.toContain("List cut short");
+  });
+
+  test("a SHOW list the server cut short at its read cap says so, even when few rows passed the allowlist", () => {
+    const outcome = { class: "metadata" as const, columns: [{ name: "name", type: "String" }], rows: [["orders"], ["signups"]], sentSql: "SHOW TABLES FROM analytics", chQueryId: "nook-console-def", rowsRead: null, bytesRead: null, ms: 9 };
+    const cut = renderToStaticMarkup(<ResultView outcome={{ ...outcome, truncated: true }} />);
+    expect(cut).toContain("List cut short");
+    expect(cut).toContain("2 rows<");
+    expect(cut).not.toContain("more were cut off");
+    const whole = renderToStaticMarkup(<ResultView outcome={{ ...outcome, truncated: false }} />);
+    expect(whole).not.toContain("List cut short");
   });
 });

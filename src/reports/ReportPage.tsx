@@ -183,10 +183,14 @@ export function ResultView({ outcome }: { outcome: QueryOutcome }) {
   return <div className="report-result">
     <p className="report-result-facts" role="status">
       <span className="reports-status">{outcome.class === "select" ? "Select" : "Metadata"}</span>
-      <span>{countLabel(outcome.rows.length)}{outcome.truncated ? " (more were cut off)" : ""}</span>
+      <span>{countLabel(outcome.rows.length)}{outcome.truncated && outcome.class === "select" ? " (more were cut off)" : ""}</span>
       {outcome.rowsRead !== null && <span>{countLabel(outcome.rowsRead)} read</span>}
       <span>{outcome.ms} ms</span>
     </p>
+    {/* A SHOW list that reached its read cap is cut short even when few rows pass the allowlist (wave 45). */}
+    {outcome.truncated && outcome.class === "metadata" && <p className="file-dialog-hint report-list-cut" role="note">
+      List cut short: ClickHouse returned more than Nook reads, so some names may be missing. Narrow it with <code>LIKE</code> or a database name.
+    </p>}
     <details className="report-sent">
       <summary>SQL as sent</summary>
       <pre><code>{outcome.sentSql}</code></pre>

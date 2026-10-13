@@ -246,7 +246,8 @@ const noteReadTools: McpToolSpec[] = [
       if (!note || note.current_version < 1) throw new McpToolError("NOT_FOUND", "Note not found or not published");
       const { title, markdown } = await readPublishedMarkdown(noteId, note.current_version);
       // U4 (D408): the files the published text links, as this reader may open them through the note.
-      return { id: note.id, title, version: note.current_version, markdown, attachments: noteAttachmentsFor(note.id, key.userId) };
+      // T354: the owner's own files this key may not see are left out.
+      return { id: note.id, title, version: note.current_version, markdown, attachments: noteAttachmentsFor(note.id, key.userId, key) };
     }
   }),
   defineTool({

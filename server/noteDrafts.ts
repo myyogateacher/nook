@@ -8,7 +8,11 @@ import { notePublishedHook, sourceAccessChangedHook } from "./knowledge/hooks";
 import { checksum, storage, withNoteLock } from "./storage";
 import { deriveNoteTitle } from "./validation";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
-import { syncNoteLinks } from "./noteAttachments";
+import { noteLinksNeedingConfirm, syncNoteLinks } from "./noteAttachments";
+import { personLinkPolicy, type LinkPolicy } from "./attachments/service";
+import { keyLinkPolicy } from "./attachments/keyLinks";
+import { recordDraftReferences, recordVersionReferences } from "./attachments/references";
+import type { McpKeyContext } from "./mcpToolKit";
 
 /**
  * Draft writes shared by the HTTP routes and the MCP tools, so both keep the
@@ -55,6 +59,8 @@ export async function writeDraftLocked(note: NoteRow, userId: string, input: str
         .run(title, nextRevision, draftChecksum, mcpKeyId, savedAt, note.id, note.owner_id, note.draft_revision);
     if (result.changes !== 1) return false;
     indexNote(note.id, "draft", title, markdown, draftChecksum);
+    // Review L2: the orphan sweep's reference index learns this draft as it commits.
+    recordDraftReferences(note.id, draftChecksum, markdown);
     // An agent's draft is its pending note_draft proposal in the inbox (D149); human saves leave it.
     if (mcpKeyId !== undefined) proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: note.id, keyId: mcpKeyId, revision: nextRevision, created: note.current_version === 0, title, base: base! });
     return true;
@@ -99,6 +105,7 @@ export async function createDraftNote(userId: string, folderId: string | null, i
     db.query("INSERT INTO notes (id, owner_id, folder_id, title, draft_revision, draft_checksum, draft_mcp_key_id, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)")
       .run(id, userId, targetFolderId, title, draftChecksum, mcp?.keyId ?? null, timestamp, timestamp);
     if (markdown !== "") indexNote(id, "draft", title, markdown, draftChecksum);
+    recordDraftReferences(id, draftChecksum, markdown);
     if (mcp) {
       audit(userId, id, "mcp.note_create", { via: "mcp", keyId: mcp.keyId });
       proposalId = recordNoteDraftProposal({ ownerId: userId, noteId: id, keyId: mcp.keyId, revision: 1, created: true, title, base: { state: "none" } });
@@ -166,6 +173,37 @@ export class DraftActionError extends Error {
   }
 }
 
+export type PublishOptions = {
+  verify?: (note: NoteRow) => void;
+  allowEditors?: boolean;
+  /**
+   * The publisher's own Files items (outside their Attachments folder) they confirmed the note's
+   * audience may open (v0.35.0 review M1). Any other such file the published text would newly link
+   * makes the publish answer 409 CONFIRM_REQUIRED, and nothing is published.
+   */
+  confirmAttachments?: readonly string[];
+  /** A key publishing (MCP): it is never asked to confirm; it links only what its grants reach (T354). */
+  key?: McpKeyContext;
+};
+
+/**
+ * Who can open a note now, for the confirm (review M1): its effective visibility (the note's own
+ * when it overrides its folder), and for `selected`, how many people and groups it is shared with.
+ */
+export function noteAudience(noteId: string) {
+  const row = db.query(`SELECT n.sharing_override, n.visibility AS own, n.folder_id, COALESCE(f.visibility, 'private') AS inherited
+    FROM notes n LEFT JOIN folders f ON f.id = n.folder_id WHERE n.id = ?`).get(noteId) as { sharing_override: number; own: string; folder_id: string | null; inherited: string } | null;
+  if (!row) return { visibility: "private" as const, people: 0, groups: 0 };
+  const own = row.sharing_override === 1;
+  const visibility = (own ? row.own : row.inherited) as "private" | "selected" | "all_users";
+  if (visibility !== "selected") return { visibility, people: 0, groups: 0 };
+  const people = own
+    ? (db.query("SELECT COUNT(*) AS count FROM note_shares WHERE note_id = ?").get(noteId) as { count: number }).count
+    : (db.query("SELECT COUNT(*) AS count FROM folder_shares WHERE folder_id = ?").get(row.folder_id) as { count: number }).count;
+  const groups = (db.query("SELECT COUNT(*) AS count FROM group_grants WHERE resource_kind = ? AND resource_id = ?").get(own ? "note" : "folder", own ? noteId : row.folder_id) as { count: number }).count;
+  return { visibility, people, groups };
+}
+
 /**
  * Publishes the owner's draft of `noteId` as the next version (docs/plan/WAVES_7-9.md §2.2). The
  * caller publishes the draft revision it last saw (T38): without `revision`, an older client may
@@ -174,7 +212,7 @@ export class DraftActionError extends Error {
  * publish_note_draft (Wave 19), whose `verify` checks the key's seen-revision ledger under the note
  * lock, after the draft exists and before the revision compare (D173).
  */
-export async function publishDraft(userId: string, noteId: string, revision: number | undefined, options: { verify?: (note: NoteRow) => void; allowEditors?: boolean } = {}) {
+export async function publishDraft(userId: string, noteId: string, revision: number | undefined, options: PublishOptions = {}) {
   return withNoteLock(noteId, async () => {
     // POST /api/notes/:id/publish lets editors publish too (D274); the version is authored by them.
     const note = options.allowEditors ? editableNote(noteId, userId) : ownedNote(noteId, userId);
@@ -190,13 +228,26 @@ export async function publishDraft(userId: string, noteId: string, revision: num
     const markdown = await storage.readDraft(noteId);
     if (!note.draft_checksum || checksum(markdown) !== note.draft_checksum) throw new Error("Draft content failed integrity verification");
     if (!hasDraftDelta(note, note.draft_checksum)) throw new DraftActionError(409, "Draft matches the published version", { error: "Draft matches the published version", code: "NO_CHANGES" });
+    // Review M1 (T350) and M2 (T354): which of the publisher's own files may join the note. A person
+    // confirms their Files items first; a key never links one, nor an attachment outside its reach.
+    const policy: LinkPolicy = options.key ? keyLinkPolicy(options.key, { kind: "note", hostId: noteId }) : personLinkPolicy(options.confirmAttachments ?? []);
+    const unconfirmed = noteLinksNeedingConfirm(noteId, userId, markdown, policy);
+    if (unconfirmed.length) {
+      const names = unconfirmed.map((file) => file.name);
+      const message = `People who can open this note will be able to open ${names.length === 1 ? names[0] : `${names.length} files from your Files`}`;
+      throw new DraftActionError(409, message, {
+        error: message, code: "CONFIRM_REQUIRED",
+        files: unconfirmed.map((file) => ({ id: file.documentId, name: file.name })),
+        audience: noteAudience(noteId)
+      });
+    }
     const nextVersion = note.current_version + 1;
     const stagedMetadata = db.query("SELECT id FROM note_versions WHERE note_id = ? AND version_number = ?").get(noteId, nextVersion);
     if (stagedMetadata) throw new Error("Next version is already committed");
     await storage.stageVersion(noteId, nextVersion, markdown, true);
     const timestamp = now();
     const versionId = crypto.randomUUID();
-    let links: ReturnType<typeof syncNoteLinks> = { linked: [], unlinked: [], skipped: [], binned: [] };
+    let links: ReturnType<typeof syncNoteLinks> = { linked: [], unlinked: [], skipped: [], binned: [], confirm: [] };
     db.transaction(() => {
       db.query("INSERT INTO note_versions (id, note_id, version_number, title, checksum, author_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .run(versionId, noteId, nextVersion, note.title, checksum(markdown), userId, timestamp);
@@ -204,11 +255,13 @@ export async function publishDraft(userId: string, noteId: string, revision: num
         .run(nextVersion, timestamp, noteId, note.owner_id, note.current_version, note.draft_revision);
       if (updated.changes !== 1) throw new Error("Concurrent note update detected");
       indexNote(noteId, "published", note.title, markdown, note.draft_checksum!);
+      recordVersionReferences(noteId, nextVersion, markdown);
       unindexNote(noteId, "draft");
       resolveNoteDraftProposals(noteId, { kind: "published", revision: note.draft_revision!, userId });
       // D408 (U4, G1): the published text's files are linked, so the note's readers can open them.
-      // Only the publisher's own documents are added; links already there stay (T350).
-      links = syncNoteLinks(noteId, userId, markdown);
+      // Only the publisher's own documents the policy allows are added; links already there stay
+      // (T350). A file that became unconfirmed since the check above is skipped, never linked.
+      links = syncNoteLinks(noteId, userId, markdown, policy);
     })();
     await storage.finalizePublished(noteId, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${noteId}`, errorClass(error)));
     audit(userId, noteId, "note.publish", { version: nextVersion, ...(note.owner_id !== userId ? { editor: true } : {}) });

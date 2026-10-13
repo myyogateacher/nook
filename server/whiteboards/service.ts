@@ -1,4 +1,7 @@
-import { isSystemFolder, syncDerivedLinks, SYSTEM_FOLDER_MESSAGE } from "../attachments/service";
+import { attachmentsOnlyPolicy, isSystemFolder, linkOwnedPolicy, noNewLinksPolicy, syncDerivedLinks, SYSTEM_FOLDER_MESSAGE, type LinkPolicy } from "../attachments/service";
+import { keyLinkPolicy } from "../attachments/keyLinks";
+import { recordObjectReferences } from "../attachments/references";
+import type { McpKeyContext } from "../mcpToolKit";
 import { createHash } from "node:crypto";
 import { statfs } from "node:fs/promises";
 import { config } from "../config";
@@ -268,9 +271,17 @@ const imagesUnavailable = (documentIds: Iterable<string>) => new WhiteboardError
  * owner (the only one who saves) owns, plus those already linked (server/attachments/service.ts
  * `syncDerivedLinks`, T350); anyone who can open the board then opens those pictures through it. A
  * picture someone else owns stays per viewer, as before. Call inside the save's transaction.
+ *
+ * The v0.35.0 review (M1, M2; T350, T354) adds who put the picture there, as `policy`:
+ * - the owner saving or importing in Nook (`linkOwnedPolicy`): every picture of theirs links, since
+ *   only the owner edits a board, so they placed each one themselves;
+ * - anyone else saving (`noNewLinksPolicy`, a guard: saveScene refuses non-owners today): nothing new;
+ * - a copy of someone else's board (`attachmentsOnlyPolicy`): the copier's own Attachments-folder
+ *   pictures only, never a Files item someone else placed there;
+ * - a key (`keyLinkPolicy`, create_whiteboard): Attachments-folder pictures its grants reach only.
  */
-function syncPictureLinks(documentId: string, ownerId: string, scene: Pick<CanonicalScene, "files">) {
-  return syncDerivedLinks("whiteboard", documentId, ownerId, [...sceneImageDocumentIds(scene)]);
+function syncPictureLinks(documentId: string, ownerId: string, scene: Pick<CanonicalScene, "files">, policy: LinkPolicy) {
+  return syncDerivedLinks("whiteboard", documentId, ownerId, [...sceneImageDocumentIds(scene)], policy);
 }
 
 /**
@@ -348,7 +359,7 @@ function replay(userId: string, uploadKey: string) {
  * POST /api/whiteboards and MCP create_whiteboard: an empty board in an owned folder (Default when
  * none is given). `uploadKey` makes a retry return the same board.
  */
-export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string }; scene?: CanonicalScene; thumbnail?: { png: Uint8Array; sha256: string } | null; audit?: { action: string; details: Record<string, unknown> }; charged?: boolean }) {
+export async function createWhiteboard(userId: string, input: { name: string; folderId?: string | null; uploadKey?: string | null; via?: { keyId: string }; key?: McpKeyContext; pictureLinks?: LinkPolicy; scene?: CanonicalScene; thumbnail?: { png: Uint8Array; sha256: string } | null; audit?: { action: string; details: Record<string, unknown> }; charged?: boolean }) {
   const name = whiteboardStoredName(input.name);
   const uploadKey = input.uploadKey ?? null;
   if (uploadKey) {
@@ -390,7 +401,9 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
       db.query("INSERT INTO whiteboards (document_id, revision, object_id, element_count, text_bytes, thumb_png, thumb_revision, thumb_sha256, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)")
         .run(documentId, objectId, prepared.stats.elementCount, prepared.stats.textBytes, input.thumbnail?.png ?? null, input.thumbnail ? 1 : null, input.thumbnail?.sha256 ?? null, timestamp, timestamp);
       indexWhiteboard(documentId, name, prepared.scene, prepared.sha256);
-      syncPictureLinks(documentId, userId, prepared.scene);
+      // Review L2: the orphan sweep's reference index learns this scene as it commits.
+      recordObjectReferences(objectId, prepared.bytes);
+      syncPictureLinks(documentId, userId, prepared.scene, input.key ? keyLinkPolicy(input.key, { kind: "whiteboard", hostId: documentId }) : input.pictureLinks ?? linkOwnedPolicy);
       if (input.audit) audit(userId, null, input.audit.action, { documentId, folderId, ...input.audit.details });
       else if (input.via) audit(userId, null, "mcp.whiteboard_create", { via: "mcp", keyId: input.via.keyId, documentId, folderId });
       else audit(userId, null, "whiteboard.create", { documentId, folderId });
@@ -535,8 +548,10 @@ export async function saveScene(documentId: string, userId: string, baseRevision
         db.query("UPDATE documents SET size_bytes = ?, sha256 = ?, updated_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL")
           .run(prepared.bytes.byteLength, prepared.sha256, savedAt, documentId, userId);
         indexWhiteboard(documentId, board.name, prepared.scene, prepared.sha256);
-        // L4: always the board OWNER (only the owner saves today; editors never auto-link their pictures).
-        syncPictureLinks(documentId, board.owner_id, prepared.scene);
+        recordObjectReferences(objectId, prepared.bytes);
+        // L4: always the board OWNER as the linker; only the owner saves today, and a non-owner save (a
+        // guard, review M1) never links the owner's files: only the person who placed a picture links it.
+        syncPictureLinks(documentId, board.owner_id, prepared.scene, userId === board.owner_id ? linkOwnedPolicy : noNewLinksPolicy);
         if (keep) {
           db.query(`INSERT INTO whiteboard_snapshots (id, document_id, revision, object_id, size_bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (document_id, revision) DO NOTHING`)
@@ -707,6 +722,7 @@ export async function duplicateWhiteboard(documentId: string, userId: string, in
   const { whiteboard } = await createWhiteboard(userId, {
     name: copyName(userId, folderId, source.name), folderId, scene: copy,
     thumbnail: thumb ? { png: thumb.thumb_png, sha256: thumb.thumb_sha256 } : null,
+    pictureLinks: source.owner_id === userId ? linkOwnedPolicy : attachmentsOnlyPolicy,
     audit: { action: "whiteboard.duplicate", details: { sourceId: documentId, fromRevision, imagesLeftOut: unavailable.size } }
   });
   return { whiteboard, imagesLeftOut: copy === scene ? 0 : Object.keys(scene.files).length - Object.keys(copy.files).length };

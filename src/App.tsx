@@ -115,6 +115,7 @@ import { AccessSheet } from "./access/AccessSheet";
 import { notifyBinChanged } from "./bin/binApi";
 import { notifyBinned } from "./bin/binUndo";
 import { canPublish, DRAFT_CHANGED_MESSAGE, finalizeOpenNote, isDraftChangedError, mcpDraftBadge, shouldAutoPublish } from "./noteFinalization";
+import { confirmLaterMessage, confirmRequiredOf, publishFilesConfirm } from "./publishFilesConfirm";
 import { formatRoute, hubDocumentTitle, keysTabRoute, locationUrl, parseRoute, routeFromLocation, SETTINGS_SECTION_NAMES, settingsDocumentTitle, settingsPath, type KeysTab, type Route, type SettingsSection } from "./router";
 import { noteInFolder, notesRoute, resolveNotesPanel, resolveNotesRoute, type NotesRoute } from "./notesRoute";
 import type { BinItem, Folder, NoteDetail, NoteSummary, User, Version } from "./types";
@@ -1007,6 +1008,8 @@ export function App() {
   const sessionUserRef = useRef<string | null>(null);
   const noteLoadGenerationRef = useRef(0);
   const revisionRef = useRef<number | null>(null);
+  // Review M1: per note, the Files items the person confirmed sharing (From Files, or the publish confirm).
+  const confirmedFilesRef = useRef(new Map<string, Set<string>>());
   const loadedRef = useRef("");
   const savingPromiseRef = useRef<Promise<boolean> | null>(null);
   const switchingRef = useRef(false);
@@ -1476,14 +1479,40 @@ export function App() {
     }
   }
 
-  async function publish(reloadCurrent = true) {
+  /**
+   * `interactive`: the person pressed Publish, so a publish that would share their own Files items
+   * asks first (review M1: 409 CONFIRM_REQUIRED, the app's confirm, then again with the ids). Leaving a
+   * note never asks: it stays a draft and says why. Files they confirmed in the From Files picker for
+   * this note are sent up front, so they are not asked twice.
+   */
+  async function publish(reloadCurrent = true, interactive = false) {
     if (!note) return false;
     const hasDelta = await saveDraft();
     if (!hasDelta) return false;
     let skipped = 0;
     let binned: string[] = [];
+    const noteId = note.id;
+    const confirmedFiles = confirmedFilesRef.current.get(noteId) ?? new Set<string>();
+    const send = () => api<{ skippedAttachments?: number; binnedAttachments?: string[] }>(`/notes/${noteId}/publish`, { method: "POST", body: JSON.stringify({
+      ...(revisionRef.current === null ? {} : { revision: revisionRef.current }),
+      ...(confirmedFiles.size ? { confirmAttachments: [...confirmedFiles] } : {})
+    }) });
     try {
-      const published = await api<{ skippedAttachments?: number; binnedAttachments?: string[] }>(`/notes/${note.id}/publish`, { method: "POST", body: JSON.stringify(revisionRef.current === null ? {} : { revision: revisionRef.current }) });
+      let published: Awaited<ReturnType<typeof send>>;
+      try {
+        published = await send();
+      } catch (reason) {
+        const required = reason instanceof ApiError ? confirmRequiredOf(reason.status, reason.payload) : null;
+        if (!required) throw reason;
+        if (!interactive) {
+          notify.warning(confirmLaterMessage(required));
+          return false;
+        }
+        if (!await appConfirm.ask(publishFilesConfirm(required))) return false;
+        for (const file of required.files) confirmedFiles.add(file.id);
+        confirmedFilesRef.current.set(noteId, confirmedFiles);
+        published = await send();
+      }
       skipped = published.skippedAttachments ?? 0;
       binned = published.binnedAttachments ?? [];
     } catch (reason) {
@@ -2369,7 +2398,7 @@ export function App() {
               {note.isOwner && canWrite && <button className="icon-button" disabled={editorLocked} onClick={(event) => openMoveNote(event.currentTarget)} aria-label="Move to folder…" title="Move to folder"><FolderInput /></button>}
               {note.isOwner && canWrite && <button className="icon-button" onClick={() => setPanel("share")} aria-label="Share note"><Share2 /></button>}
               {note.isOwner && canWrite && note.hasDraft && <button className="text-action" disabled={editorLocked} onClick={() => { void discard(); }}>Discard</button>}
-              {hasPublishableDelta && canWrite && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(); }}>Publish version</button>}
+              {hasPublishableDelta && canWrite && <button className="publish-button" disabled={editorLocked} onClick={() => { void publish(true, true); }}>Publish version</button>}
               <button className="icon-button mobile-more" disabled={editorLocked} onClick={() => setMobileActions((open) => !open)} aria-label="More actions"><MoreHorizontal /></button>
             </div>
             {mobileActions && <div className="mobile-actions-menu">
@@ -2378,12 +2407,13 @@ export function App() {
               {note.isOwner && canWrite && <button disabled={editorLocked} onClick={() => openMoveNote(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more"))}><FolderInput />Move to folder…</button>}
               {note.isOwner && canWrite && <button onClick={() => { setPanel("share"); setMobileActions(false); }}><Share2 />Share note</button>}
               {note.isOwner && canWrite && note.hasDraft && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void discard(document.querySelector<HTMLElement>(".toolbar-actions .mobile-more")); }}><X />Discard draft</button>}
-              {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(); }}><Sparkles />Publish version</button>}
+              {hasPublishableDelta && canWrite && <button disabled={editorLocked} onClick={() => { setMobileActions(false); void publish(true, true); }}><Sparkles />Publish version</button>}
             </div>}
           </header>
           <article className="document-shell">
             <div className="document-meta"><span>{note.isOwner ? "Private workspace" : note.canEdit ? `Shared by ${note.owner_name} · you can edit` : `Shared by ${note.owner_name}`}</span><i /> <span>{markdown.trim().split(/\s+/).filter(Boolean).length} words</span></div>
-            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify} />
+            <NoteEditor key={note.id} markdown={markdown} editable={(note.isOwner || note.canEdit === true) && canWrite && !editorLocked} onChange={(value) => { sessionEditedRef.current = note.id; setMarkdown(value); }} folderId={note.folder_id} attachHost="note" onNotice={notify}
+              onFileConfirmed={(documentId) => { const files = confirmedFilesRef.current.get(note.id) ?? new Set<string>(); files.add(documentId); confirmedFilesRef.current.set(note.id, files); }} />
           </article>
         </>}
       </section>

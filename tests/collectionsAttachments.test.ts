@@ -71,11 +71,10 @@ describe("row attachments", () => {
     const document = db.query("SELECT deleted_at, deleted_by, purpose, folder_id FROM documents WHERE id = ?").get(documentId) as { deleted_at: string | null; deleted_by: string; purpose: string; folder_id: string | null };
     expect(document).toMatchObject({ deleted_by: owner.userId, purpose: "file", folder_id: await attachmentsFolder(owner.userId) });
     expect(document.deleted_at).not.toBeNull();
-    // Restoring an attachment no row links any more makes it a Files item in the uploader's
-    // Default folder, never a hidden orphan; nobody else gains access.
+    // Restoring an attachment no row links any more puts it back in the uploader's Attachments
+    // folder (never a possibly shared Default, review L1), never a hidden orphan; nobody else gains access.
     expect((await request(`/bin/document/${documentId}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
-    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(owner.userId) as { id: string }).id;
-    expect(db.query("SELECT purpose, folder_id FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "file", folder_id: defaultFolder });
+    expect(db.query("SELECT purpose, folder_id FROM documents WHERE id = ?").get(documentId)).toEqual({ purpose: "file", folder_id: await attachmentsFolder(owner.userId) });
     expect(await filesList(owner)).toContain(documentId);
     expect(await content(member, documentId)).toBe(404);
   });

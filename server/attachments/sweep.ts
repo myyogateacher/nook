@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "./service";
-import { referencedDocuments } from "./references";
+import { isReferencedNow, refreshReferenceIndex, registeredReferences } from "./references";
 
 /**
  * The attachment sweeper steps (uploads everywhere plan D395, T347, T348), run hourly by
@@ -39,20 +39,39 @@ export function sweepStaleAttachmentLinks() {
 export async function sweepOrphanedAttachments(options: { nowMs?: number } = {}) {
   const nowMs = options.nowMs ?? Date.now();
   const cutoff = new Date(nowMs - UNLINKED_GRACE_MS).toISOString();
-  const rows = db.query(`SELECT d.id FROM documents d JOIN folders f ON f.id = d.folder_id AND f.system_kind = '${ATTACHMENTS_FOLDER_KIND}'
+  const unlinked = `FROM documents d JOIN folders f ON f.id = d.folder_id AND f.system_kind = '${ATTACHMENTS_FOLDER_KIND}'
     WHERE d.deleted_at IS NULL AND d.purge_started_at IS NULL AND d.created_at < ? AND d.updated_at < ?
       AND NOT EXISTS (SELECT 1 FROM attachment_links l WHERE l.document_id = d.id)
       AND NOT EXISTS (SELECT 1 FROM card_attachments c WHERE c.document_id = d.id)
-      AND NOT EXISTS (SELECT 1 FROM collection_row_attachments r WHERE r.document_id = d.id)
-    ORDER BY d.created_at LIMIT ${SWEEP_LIMIT * 5}`).all(cutoff, cutoff) as Array<{ id: string }>;
+      AND NOT EXISTS (SELECT 1 FROM collection_row_attachments r WHERE r.document_id = d.id)`;
+  // Review L2: nothing to do, nothing read (no content scan, no S3 GET) on most runs.
+  if (!db.query(`SELECT 1 ${unlinked} LIMIT 1`).get(cutoff, cutoff)) return 0;
   // Review M3: a file a note draft, a stored note version, or a whiteboard still references is kept,
-  // even with no link (links are derived only on publish or save). Files found referenced are
-  // remembered for a day, so they never crowd the batch out.
-  const referenced = await referencedDocuments(rows.map((row) => row.id), nowMs);
+  // even with no link (links are derived only on publish or save). The reference index (048) is
+  // brought up to date first, reading only content it has not seen; a doubt bins nothing (L2).
+  let unrecorded: Set<string>;
+  try {
+    unrecorded = await refreshReferenceIndex();
+  } catch {
+    return 0;
+  }
+  // With the index current, referenced files are left out in SQL, so they never crowd the batch out.
+  const rows = (db.query(`SELECT d.id, d.updated_at ${unlinked} AND NOT EXISTS (SELECT 1 FROM content_references x WHERE x.document_id = d.id)
+    ORDER BY d.created_at LIMIT ${SWEEP_LIMIT * 5}`).all(cutoff, cutoff) as Array<{ id: string; updated_at: string }>)
+    .filter((row) => !unrecorded.has(row.id));
+  const referenced = await registeredReferences(rows.map((row) => row.id));
   const candidates = rows.filter((row) => !referenced.has(row.id)).slice(0, SWEEP_LIMIT);
   const binned: string[] = [];
+  // Review L2: the scan above awaited content reads, so each bin re-checks, in its own transaction,
+  // that the row is unchanged (a restore or rename sets updated_at), and that no draft saved or board
+  // saved since references it (writers record their references as they commit), before binning.
+  const unchanged = db.query("SELECT 1 FROM documents WHERE id = ? AND updated_at = ? AND deleted_at IS NULL AND purge_started_at IS NULL");
   for (const candidate of candidates) {
-    if (db.transaction(() => binIfOrphanedAttachment(candidate.id, null, { notify: false }))()) binned.push(candidate.id);
+    const done = db.transaction(() => {
+      if (!unchanged.get(candidate.id, candidate.updated_at) || isReferencedNow(candidate.id)) return false;
+      return binIfOrphanedAttachment(candidate.id, null, { notify: false });
+    })();
+    if (done) binned.push(candidate.id);
   }
   if (binned.length) sourceAccessChangedHook({ kind: "document", ids: binned });
   return binned.length;

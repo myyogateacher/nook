@@ -206,7 +206,7 @@ describe("cards and boards in the Bin", () => {
 });
 
 describe("restoring attachments", () => {
-  test("a still-linked attachment restores into the Attachments folder; an unlinked one restores into Default", async () => {
+  test("an attachment restores into the Attachments folder, linked or not (review L1)", async () => {
     const { owner, member, addCard } = await setup("Restore attachment");
     const card = await addCard("Keeps its file");
     const linked = await attach(owner, card.id, "linked.txt");
@@ -225,12 +225,12 @@ describe("restoring attachments", () => {
     const memberFiles = (await (await request("/files", {}, member)).json()) as { documents: Array<{ id: string }> };
     expect(memberFiles.documents.some((item) => item.id === linked)).toBe(false);
 
-    // Unlinked: back in Files, in Default.
+    // Unlinked: back in Attachments too (never a possibly shared Default, review L1).
     await tasks(owner, "DELETE", `/cards/${card.id}/attachments/${linked}`);
     expect(documentRow(linked)!.deleted_at).toBeTruthy();
     expect((await binItems(owner)).find((item) => item.id === linked)).toMatchObject({ attachment: false, attachment_of: null });
     const back = await call(owner, "POST", `/bin/document/${linked}/restore`);
-    expect(back.body.folderName).toBe("Default");
+    expect(back.body.folderName).toBe("Attachments");
     expect(documentRow(linked)).toMatchObject({ deleted_at: null, purpose: "file" });
     expect(documentRow(linked)!.folder_id).toBeTruthy();
   });

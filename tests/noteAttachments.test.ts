@@ -47,9 +47,9 @@ async function writeDraft(session: Session, noteId: string, markdown: string) {
   return saved.body.revision as number;
 }
 
-async function publish(session: Session, noteId: string, markdown: string) {
+async function publish(session: Session, noteId: string, markdown: string, confirmAttachments?: string[]) {
   const revision = await writeDraft(session, noteId, markdown);
-  const published = await api(session, "POST", `/notes/${noteId}/publish`, { revision });
+  const published = await api(session, "POST", `/notes/${noteId}/publish`, { revision, ...(confirmAttachments ? { confirmAttachments } : {}) });
   expect(published.status).toBe(200);
   return published.body as Json;
 }
@@ -179,7 +179,8 @@ describe("notes (U4, G1)", () => {
     // An image stored the old way (an ordinary Files item in the note's folder) and someone else's.
     const old = (await upload(owner, "old.png", PNG)).id;
     const others = (await upload(other, "others.png", PNG)).id;
-    await publish(owner, noteId, `${image(old)}\n\n${image(others)}`);
+    // The owner confirms their Files item (review M1); the version is theirs, so the backfill may link it.
+    await publish(owner, noteId, `${image(old)}\n\n${image(others)}`, [old]);
     // As before U4: no links.
     db.query("DELETE FROM attachment_links WHERE host_kind = 'note' AND host_id = ?").run(noteId);
     expect(await contentStatus(recipient, old)).toBe(404);

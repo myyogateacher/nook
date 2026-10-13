@@ -77,10 +77,13 @@ const NAMED_FAILURES = 3;
 export function bulkSummary(results: readonly BulkResult[], titleOf?: (id: string) => string | undefined) {
   const applied = results.filter((result) => result.status === "applied").length;
   const rejected = results.filter((result) => result.status === "rejected").length;
-  const failed = results.filter((result) => result.status !== "applied" && result.status !== "rejected");
+  // Review M1: a note draft that would share the owner's Files items stays pending until approved on its own.
+  const waiting = results.filter((result) => result.code === "CONFIRM_REQUIRED").length;
+  const failed = results.filter((result) => result.status !== "applied" && result.status !== "rejected" && result.code !== "CONFIRM_REQUIRED");
   const parts: string[] = [];
   if (applied) parts.push(`${applied} applied`);
   if (rejected) parts.push(`${rejected} rejected`);
+  if (waiting) parts.push(`${waiting} left pending: ${waiting === 1 ? "it shares" : "they share"} files from your Files, so approve ${waiting === 1 ? "it" : "each"} on its own`);
   const named = titleOf ? failed.map((result) => ({ title: titleOf(result.id), code: result.code })).filter((item): item is { title: string; code: string | undefined } => Boolean(item.title)) : [];
   if (failed.length && named.length === failed.length) {
     const shown = named.slice(0, NAMED_FAILURES).map((item) => `${item.title}${item.code ? ` (${shortFailure(item.code)})` : ""}`);

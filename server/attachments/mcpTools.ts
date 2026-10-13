@@ -5,6 +5,7 @@ import type { McpScope } from "../mcpScopes";
 import type { ResourceKind } from "../keyGrants";
 import { HOST_KINDS, HOSTS, type HostKind } from "./hosts";
 import { AttachmentError, listAttachments, readableAttachment } from "./service";
+import { keyMaySeeAttachmentId } from "./keyLinks";
 
 /**
  * Generic attachment tools (uploads everywhere plan D402, D70, T345), on MCP and REST
@@ -12,7 +13,9 @@ import { AttachmentError, listAttachments, readableAttachment } from "./service"
  * grant on the host (a key over chosen calendars reaches events on those calendars only), never by
  * `files:read`: a Files-only key reaches no attachment it could not already list in Files. Chat
  * messages are whole-module (like the chat tools), so only a key whose agents:read covers everything
- * reaches them. Everything a key may not see is the same NOT_FOUND.
+ * reaches them. Everything a key may not see is the same NOT_FOUND. The key owner's OWN files show
+ * only on the terms they could have been linked by the key (server/attachments/keyLinks.ts, T354):
+ * covered by its `files:read`, or an Attachments-folder file linked nowhere the key cannot reach.
  */
 
 const READ_SCOPES = [...new Set(HOST_KINDS.map((kind) => HOSTS[kind].readScope))] as McpScope[];
@@ -51,7 +54,7 @@ export const attachmentTools: McpToolSpec[] = [
       const id = hostId.toLowerCase();
       const spec = requireKeyReach(key, hostKind, id);
       try {
-        const attachments = listAttachments(hostKind, id, key.userId).map((item) => item.removed
+        const attachments = listAttachments(hostKind, id, key.userId).filter((item) => keyMaySeeAttachmentId(key, { kind: hostKind, hostId: id }, item.documentId)).map((item) => item.removed
           ? { id: item.documentId, removed: true, partId: item.partId }
           : { id: item.documentId, name: item.name, mimeType: item.mimeType, previewKind: item.previewKind, sizeBytes: item.sizeBytes, partId: item.partId, linkedAt: item.linkedAt });
         return { hostKind, hostId: id, attachments, limit: spec.caps.perHost };
@@ -72,7 +75,7 @@ export const attachmentTools: McpToolSpec[] = [
       const id = hostId.toLowerCase();
       requireKeyReach(key, hostKind, id);
       const document = readableAttachment(hostKind, id, documentId.toLowerCase(), key.userId);
-      if (!document) throw new McpToolError("NOT_FOUND", "Attachment not found");
+      if (!document || !keyMaySeeAttachmentId(key, { kind: hostKind, hostId: id }, document.id)) throw new McpToolError("NOT_FOUND", "Attachment not found");
       // Loaded at call time: server/mcpTools.ts registers these tools, so a static import would be a cycle.
       const { readDocumentText } = await import("../mcpTools");
       const text = await readDocumentText(document);

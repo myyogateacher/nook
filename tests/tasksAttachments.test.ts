@@ -299,7 +299,7 @@ describe("Files routes and attachments", () => {
     expect(deletedAt(loose.id)).toBeTruthy();
   });
 
-  test("discarding a composer upload bins it for its uploader only, and it restores into Files (T100)", async () => {
+  test("discarding a composer upload bins it for its uploader only, and it restores into Files › Attachments (T100, review L1)", async () => {
     const { owner, member, stranger } = await setup("Discard");
     const discarded = await uploadAttachment(member, "draft.png");
     // Nobody else can discard (or probe) someone's upload: 404 like a missing id.
@@ -319,9 +319,9 @@ describe("Files routes and attachments", () => {
     expect(((await (await request(`/files/${discarded.id}`, { method: "DELETE", body: "{}" }, member)).json()) as { alreadyDeleted?: boolean }).alreadyDeleted).toBe(true);
     const bin = (await (await request("/bin", {}, member)).json()) as { items: Array<{ id: string; attachment: boolean; folder_name: string | null }> };
     expect(bin.items.find((item) => item.id === discarded.id)).toMatchObject({ attachment: false, folder_name: "Attachments" });
-    // Restoring an unlinked upload makes it an ordinary Files item in Default.
+    // Restoring an unlinked upload puts it back in Attachments (review L1: never a possibly shared Default).
     expect((await request(`/bin/document/${discarded.id}/restore`, { method: "POST", body: "{}" }, member)).status).toBe(200);
-    const defaultFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND is_default = 1").get(member.userId) as { id: string }).id;
-    expect(db.query("SELECT purpose, deleted_at, folder_id FROM documents WHERE id = ?").get(discarded.id)).toEqual({ purpose: "file", deleted_at: null, folder_id: defaultFolder });
+    const attachmentsFolder = (db.query("SELECT id FROM folders WHERE owner_id = ? AND system_kind = 'attachments'").get(member.userId) as { id: string }).id;
+    expect(db.query("SELECT purpose, deleted_at, folder_id FROM documents WHERE id = ?").get(discarded.id)).toEqual({ purpose: "file", deleted_at: null, folder_id: attachmentsFolder });
   });
 });

@@ -15,6 +15,7 @@ import { eventCreateSchema, eventPatchSchema } from "./routes";
 import { CalendarError, createEvent, deleteEvent, eventAttachments, getEvent, listCalendars, listOccurrences, patchEvent, type EventInput, type EventPatch } from "./service";
 import { MAX_ATTACHMENTS_PER_EVENT } from "./attachments";
 import { AttachmentError, linkAttachment } from "../attachments/service";
+import { keyMayLinkAttachment } from "../attachments/keyLinks";
 
 /**
  * MCP tools for Calendar (docs/plan/WAVES_10-12.md §4.5, D70, T72–T75).
@@ -284,6 +285,9 @@ export const calendarTools: McpToolSpec[] = [
     inputSchema: z.object({ eventId: uuid, documentId: uuid.describe("The file's id, from create_text_file or finish_upload") }).strict(),
     handler: async ({ eventId, documentId }, key) => service(key, () => {
       const id = eventId.toLowerCase();
+      // T354: never an upload already attached somewhere this key cannot read (a chat picture, a
+      // private card's file), unless the key may read it through Files; the same NOT_FOUND as missing.
+      if (!keyMayLinkAttachment(key, documentId.toLowerCase(), { kind: "event", hostId: id })) throw new McpToolError("NOT_FOUND", "File not found");
       try {
         // Never `confirmed`: an agent cannot share an ordinary Files item by side effect (D396).
         const result = linkAttachment(key.userId, "event", id, { documentId: documentId.toLowerCase() });

@@ -51,9 +51,10 @@ describe("lifecycle (D395)", () => {
     expect((await unlink(owner, "event", eventId, attachment)).body).toEqual({ ok: true, documentBinned: false });
     expect((await unlink(owner, "event", second.eventId, attachment)).body).toEqual({ ok: true, documentBinned: true });
     expect(documentRow(attachment)!.deleted_at).not.toBeNull();
-    // Restored with nothing linking it, it becomes an ordinary file in Default (never re-swept).
+    // Restored with nothing linking it, it goes back to Attachments (never a possibly shared Default,
+    // review L1); the sweep leaves it alone for a day (tests/attachmentsSweepReview.test.ts).
     expect((await request(`/bin/document/${attachment}/restore`, { method: "POST", body: "{}" }, owner)).status).toBe(200);
-    expect(documentRow(attachment)).toMatchObject({ folder_id: defaultFolderOf(owner.userId), deleted_at: null, purpose: "file" });
+    expect(documentRow(attachment)).toMatchObject({ folder_id: attachmentsFolderOf(owner.userId), deleted_at: null, purpose: "file" });
 
     const filesItem = (await upload(owner, "kept.txt", "kept")).id;
     await link(owner, "event", eventId, { documentId: filesItem, confirmed: true });

@@ -40,6 +40,7 @@ import { mailShared, shareMembers } from "../mail/triggers";
 import { GUEST_SHARE_DISABLED, legacyGuestShareBlocked, legacyShareLevels, writeDirectShares } from "../access/shares";
 import { atLeast, shareRoleToLevel, type ItemLevel } from "../access/levels";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "../attachments/service";
+import { linkedElsewhere } from "../attachments/keyLinks";
 import { sourceAccessChangedHook } from "../knowledge/hooks";
 
 /**
@@ -961,12 +962,14 @@ export async function attachDocument(userId: string, rowId: string, input: Attac
   });
 }
 
-/** Whether anything outside `collectionId` links the document (another collection's row, or any other host). */
+/**
+ * Whether anything outside `collectionId` links the document (another collection's row, or any other
+ * host): the shared "attached somewhere else" helper (server/attachments/keyLinks.ts, T354), with this
+ * collection as the only place an MCP link may already be (stricter than a key's reach).
+ */
 function linkedOutsideCollection(documentId: string, collectionId: string) {
-  return Boolean(db.query(`SELECT 1 AS linked WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
-    OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id)
-    OR EXISTS (SELECT 1 FROM collection_row_attachments a JOIN collection_rows r ON r.id = a.row_id WHERE a.document_id = $id AND r.collection_id != $collectionId)`)
-    .get({ id: documentId, collectionId }));
+  const rowCollection = db.query("SELECT collection_id FROM collection_rows WHERE id = ?");
+  return linkedElsewhere(documentId, (host) => host.kind === "row" && (rowCollection.get(host.hostId) as { collection_id: string } | null)?.collection_id === collectionId);
 }
 
 /**

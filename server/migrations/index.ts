@@ -43,6 +43,7 @@ import { chatToolImagesMigration } from "./043_chat_tool_images";
 import { signInDevicesMigration } from "./044_sign_in_devices";
 import { attachmentsMigration } from "./046_attachments";
 import { legacyAttachmentsMigration } from "./047_legacy_attachments";
+import { contentReferencesMigration } from "./048_content_references";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -101,7 +102,10 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   attachmentsMigration,
   // 047 (uploads everywhere, U8: legacy task and row attachments become Files documents in each
   // uploader's Attachments folder, in place, with their links kept) needs 006, 009, 012, 025, and 046.
-  legacyAttachmentsMigration
+  legacyAttachmentsMigration,
+  // 048 (v0.35.0 review L2: content_reference_sources and content_references, the orphan sweep's
+  // reference index; a cache, created empty) needs nothing. The Messages migration moves to 049.
+  contentReferencesMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

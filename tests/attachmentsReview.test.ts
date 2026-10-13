@@ -154,7 +154,7 @@ describe("M3: the orphan sweep keeps referenced files", () => {
     const live = await uploadAttachment(owner, "live.png", "x", "note");
     const binned = await uploadAttachment(owner, "binned.png", "x", "note");
     expect((await api(owner, "DELETE", `/files/${binned}`)).status).toBe(200);
-    expect(syncDerivedLinks("note", noteId, owner.userId, [live, binned])).toEqual({ linked: [live], unlinked: [], skipped: [binned], binned: [binned] });
+    expect(syncDerivedLinks("note", noteId, owner.userId, [live, binned])).toEqual({ linked: [live], unlinked: [], skipped: [binned], binned: [binned], confirm: [] });
   });
 });
 

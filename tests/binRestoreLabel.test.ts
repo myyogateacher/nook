@@ -51,28 +51,31 @@ describe("Bin restore label matches the restore (Task 1)", () => {
     expect(restoredTo).toBe("Attachments");
   });
 
-  test("an Attachments-folder file nothing links any more restores to Default, and says so", async () => {
+  test("an Attachments-folder file nothing links any more restores to Attachments too, never a shared Default (review L1)", async () => {
     const owner = await createUser("Label unlinked");
+    const reader = await createUser("Label unlinked reader");
+    // A Default folder shared with someone: restoring there would widen the file's audience.
+    expect((await api(owner, "PUT", `/folders/${defaultFolderOf(owner.userId)}/sharing`, { visibility: "selected", userIds: [reader.userId] })).status).toBe(200);
     const { eventId } = await calendarWithEvent(owner);
     const attachment = await uploadAttachment(owner);
     await link(owner, "event", eventId, { documentId: attachment });
     expect((await unlink(owner, "event", eventId, attachment)).body.documentBinned).toBe(true);
     const { label, restoredTo, item } = await labelThenRestore(owner, "document", attachment);
-    // The folder it sat in is still Attachments, but the restore goes to Default.
     expect(item.folder_name).toBe("Attachments");
-    expect(item.restore_folder_name).toBe("Default");
-    expect(label).toBe("Default");
-    expect(restoredTo).toBe("Default");
+    expect(item.restore_folder_name).toBe("Attachments");
+    expect(label).toBe("Attachments");
+    expect(restoredTo).toBe("Attachments");
+    expect((await api(reader, "GET", `/files/${attachment}`)).status).toBe(404);
   });
 
   test("a renamed Default folder is named by its real name", async () => {
     const owner = await createUser("Label renamed default");
     db.query("UPDATE folders SET name = 'Inbox' WHERE id = ?").run(defaultFolderOf(owner.userId));
-    const { eventId } = await calendarWithEvent(owner);
-    const attachment = await uploadAttachment(owner);
-    await link(owner, "event", eventId, { documentId: attachment });
-    await unlink(owner, "event", eventId, attachment);
-    const { label, restoredTo } = await labelThenRestore(owner, "document", attachment);
+    const folder = (await api(owner, "POST", "/folders", { name: "Short-lived", parentId: null })).body.folder.id as string;
+    const file = (await upload(owner, "loose.txt", "x", { folderId: folder })).id;
+    expect((await api(owner, "DELETE", `/files/${file}`)).status).toBe(200);
+    expect((await api(owner, "DELETE", `/folders/${folder}`)).status).toBe(200);
+    const { label, restoredTo } = await labelThenRestore(owner, "document", file);
     expect(label).toBe("Inbox");
     expect(restoredTo).toBe("Inbox");
   });
@@ -107,7 +110,7 @@ describe("Bin restore label matches the restore (Task 1)", () => {
     }
   });
 
-  test("a Tasks card attachment converted by 047 restores to Attachments while linked, else Default", async () => {
+  test("a Tasks card attachment converted by 047 restores to Attachments, linked or not", async () => {
     const owner = await createUser("Label card");
     const board = await api(owner, "POST", "/tasks/boards", { name: "Board" });
     const card = (await api(owner, "POST", `/tasks/boards/${board.body.board.id}/cards`, { columnId: board.body.columns[0].id, title: "Card" })).body.card.id as string;
@@ -121,11 +124,11 @@ describe("Bin restore label matches the restore (Task 1)", () => {
     expect(kept.label).toBe("Attachments");
     expect(kept.restoredTo).toBe("Attachments");
     const orphan = await labelThenRestore(owner, "document", loose);
-    expect(orphan.label).toBe("Default");
-    expect(orphan.restoredTo).toBe("Default");
+    expect(orphan.label).toBe("Attachments");
+    expect(orphan.restoredTo).toBe("Attachments");
   });
 
-  test("a Collections row attachment converted by 047 restores to Attachments while linked, else Default", async () => {
+  test("a Collections row attachment converted by 047 restores to Attachments, linked or not", async () => {
     const owner = await createUser("Label row");
     const collection = await newCollection(owner, { name: "Receipts", fields: [{ name: "Name", type: "text" }, { name: "Receipt", type: "file" }] });
     const row = await addRow(owner, collection.id, {});
@@ -138,8 +141,8 @@ describe("Bin restore label matches the restore (Task 1)", () => {
     expect(kept.label).toBe("Attachments");
     expect(kept.restoredTo).toBe("Attachments");
     const orphan = await labelThenRestore(owner, "document", loose);
-    expect(orphan.label).toBe("Default");
-    expect(orphan.restoredTo).toBe("Default");
+    expect(orphan.label).toBe("Attachments");
+    expect(orphan.restoredTo).toBe("Attachments");
   });
 
   test("the client label prefers restore_folder_name, and falls back for older servers", () => {

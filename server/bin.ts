@@ -166,21 +166,15 @@ const ownedFolder = (folderId: string | null, ownerId: string) => folderId === n
 
 /**
  * Where a restore puts a binned note or document, short of Default (null means the owner's Default
- * folder). Uploads everywhere (D395, §4.4): a file from the Attachments folder that something still
- * links returns there; one that nothing links any more returns to Default as an ordinary file, so the
- * orphan sweep never bins it again (server/attachments/sweep.ts). Since 047 (U8) this covers the older
- * card and row attachments too: they are Attachments-folder files. Any other item returns to its
- * folder while the owner still has it. restoreItem and the Bin list (restore_folder_name) both call
- * this, so the Bin's "Restore to …" always names where the restore really goes.
+ * folder): its own folder while the owner still has it. Uploads everywhere (D395, §4.4; v0.35.0
+ * review L1): a file from the Attachments folder returns there whether or not anything still links
+ * it, never to Default, where a shared Default folder would widen its audience. The restore sets
+ * `updated_at`, so the orphan sweep leaves an unlinked one alone for a day (UNLINKED_GRACE_MS,
+ * server/attachments/sweep.ts) before it may bin it again. Since 047 (U8) this covers the older card
+ * and row attachments too. restoreItem and the Bin list (restore_folder_name) both call this, so the
+ * Bin's "Restore to …" always names where the restore really goes.
  */
-export function restoreKeptFolder(type: CoreBinType, id: string, folderId: string | null, ownerId: string): FolderRow | null {
-  const fromAttachments = type === "document" && folderId !== null
-    && Boolean(db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ? AND system_kind IS NOT NULL").get(folderId, ownerId));
-  if (fromAttachments) {
-    const stillLinked = Boolean(db.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM attachment_links WHERE document_id = $id)
-      OR EXISTS (SELECT 1 FROM card_attachments WHERE document_id = $id) OR EXISTS (SELECT 1 FROM collection_row_attachments WHERE document_id = $id)`).get({ id }));
-    if (!stillLinked) return null;
-  }
+export function restoreKeptFolder(_type: CoreBinType, _id: string, folderId: string | null, ownerId: string): FolderRow | null {
   return ownedFolder(folderId, ownerId);
 }
 

@@ -32,6 +32,13 @@ function seed(db: Database) {
   db.query("INSERT INTO reports (id, owner_id, title, created_at, updated_at) VALUES ('r2', 'u1', 'Empty', ?, ?)").run(at, at);
 }
 
+/** Rows a 049 database has: two people and a stored agent setting (053 rebuilds agent_settings). */
+function seed49(db: Database) {
+  db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES ('u1', 'a@example.test', 'A', 'x', ?, 'member')").run(at);
+  db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES ('u2', 'b@example.test', 'B', 'x', ?, 'member')").run(at);
+  db.query("INSERT INTO agent_settings (key, value_json, revision, updated_at) VALUES ('kbs_per_user', '7', 3, ?)").run(at);
+}
+
 describe("migration 052 report_instructions", () => {
   test("registered after 051", () => {
     expect(registeredMigrationIds.indexOf(52)).toBe(registeredMigrationIds.indexOf(51) + 1);
@@ -78,6 +85,38 @@ describe("migration 052 report_instructions", () => {
     for (const table of ["report_instructions", "report_versions", "report_members", "report_group_shares"]) {
       expect([table, db.query(`SELECT COUNT(*) AS count FROM ${table}`).get()]).toEqual([table, { count: 0 }]);
     }
+  });
+
+  test("integration: a database built through 049, then 050, 051, 052, and 053 in order, keeps its rows; 051's and 053's rebuilds work after 052", () => {
+    const db = openDb(49);
+    seed49(db);
+    const apply = (id: number) => {
+      const migration = registeredMigrations.find((item) => item.id === id)!;
+      db.transaction(() => {
+        migration.up(db);
+        db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, at);
+      })();
+    };
+    apply(50);
+    db.query("INSERT INTO reports (id, owner_id, title, spec_json, created_at, updated_at) VALUES ('r1', 'u1', 'Revenue', ?, ?, ?)").run(SPEC(2), at, at);
+    apply(51);
+    apply(52);
+    apply(53);
+    // 052's backfill and columns, then 053's columns on the same reports table.
+    expect(db.query("SELECT report_id, version, source FROM report_versions").all()).toEqual([{ report_id: "r1", version: 2, source: "initial" }]);
+    expect(db.query("SELECT auto_apply, model_provider_id, model FROM reports WHERE id = 'r1'").get()).toEqual({ auto_apply: 0, model_provider_id: null, model: null });
+    // 053 rebuilt agent_settings with its rows kept and the report-model keys allowed.
+    expect(db.query("SELECT key, value_json, revision FROM agent_settings ORDER BY key").all()).toEqual([{ key: "kbs_per_user", value_json: "7", revision: 3 }]);
+    db.query("INSERT INTO agent_settings (key, value_json, updated_at) VALUES ('report_model', '\"glm-5.3\"', ?)").run(at);
+    // 051's rebuilt agent_runs accepts reports runs.
+    expect(String((db.query("SELECT sql FROM sqlite_master WHERE name = 'agent_runs'").get() as { sql: string }).sql)).toContain("'reports'");
+    expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(db.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    // Everything is applied: a later run changes nothing.
+    const schema = db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all();
+    runMigrations(db);
+    expect(db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all()).toEqual(schema);
+    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 49 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([49, 50, 51, 52, 53]);
   });
 
   test("a full migration run from scratch includes 052", () => {

@@ -98,6 +98,33 @@ const blockBase = {
   section: { type: "string", pattern: BLOCK_ID.source, description: "The id of one of the spec's sections" }
 };
 
+/** One v2 block as JSON Schema (submit_report's blocks, submit_patch's add_block). */
+export const BLOCK_JSON_SCHEMA: Record<string, unknown> = {
+  anyOf: [
+    { type: "object", additionalProperties: false, required: ["id", "type", "markdown"], properties: { ...blockBase, type: { const: "markdown" }, markdown: { type: "string", maxLength: REPORT_LIMITS.markdown } } },
+    {
+      type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "column"],
+      properties: {
+        ...blockBase, type: { const: "kpi" }, queryKey: { type: "string" }, column: columnProp, format: formatProp, unit: unitProp, label: { type: "string", maxLength: REPORT_LIMITS.blockTitle },
+        compareTo: refProp, compareLabel: { type: "string", maxLength: COMPARE_LABEL_MAX, description: "What the delta compares against, plain text: vs prior 2 weeks, vs last year" }, upIsGood: { type: "boolean" }, hero: { type: "boolean", description: "At most one KPI per report" },
+        sparkline: { type: "object", additionalProperties: false, required: ["queryKey", "x", "y"], properties: { queryKey: { type: "string" }, x: columnProp, y: columnProp } }
+      }
+    },
+    {
+      type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "kind", "x", "y"],
+      properties: {
+        ...blockBase, type: { const: "chart" }, queryKey: { type: "string" }, kind: { enum: [...CHART_KINDS] }, x: columnProp,
+        y: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.chartSeries, items: columnProp }, series: columnProp, format: formatProp, unit: unitProp,
+        emphasis: { type: "string", maxLength: 200, description: "A series name or (one series) a category value to highlight" }, upIsGood: { type: "boolean" }, compareTo: refProp
+      }
+    },
+    { type: "object", additionalProperties: false, required: ["id", "type", "title", "queryKey"], properties: { ...blockBase, type: { const: "table" }, queryKey: { type: "string" }, columns: { type: "array", maxItems: REPORT_LIMITS.tableColumns, items: columnProp }, formats: { type: "object", additionalProperties: formatProp } } }
+  ]
+};
+
+/** One section as JSON Schema. */
+export const SECTION_JSON_SCHEMA: Record<string, unknown> = { type: "object", additionalProperties: false, required: ["id", "title"], properties: { id: { type: "string", pattern: BLOCK_ID.source }, title: { type: "string", maxLength: SECTION_LIMITS.title }, summary: { type: "string", maxLength: SECTION_LIMITS.summary } } };
+
 /** submit_report's parameters: spec v2 of shared/reports.ts as JSON Schema (the model fills it; no colours, sizes, CSS, or formatters). */
 export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -106,39 +133,12 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     version: { type: "integer", enum: [1] },
     specVersion: { type: "integer", enum: [2] },
-    sections: {
-      type: "array", maxItems: SECTION_LIMITS.sections,
-      items: { type: "object", additionalProperties: false, required: ["id", "title"], properties: { id: { type: "string", pattern: BLOCK_ID.source }, title: { type: "string", maxLength: SECTION_LIMITS.title }, summary: { type: "string", maxLength: SECTION_LIMITS.summary } } }
-    },
+    sections: { type: "array", maxItems: SECTION_LIMITS.sections, items: SECTION_JSON_SCHEMA },
     queries: {
       type: "array", maxItems: REPORT_LIMITS.queries,
       items: { type: "object", additionalProperties: false, required: ["key", "sql", "purpose"], properties: { key: { type: "string", pattern: QUERY_KEY.source }, sql: { type: "string", maxLength: REPORT_LIMITS.sqlChars }, purpose: { type: "string", maxLength: REPORT_LIMITS.purpose } } }
     },
-    blocks: {
-      type: "array", minItems: 1, maxItems: REPORT_LIMITS.blocks,
-      items: {
-        anyOf: [
-          { type: "object", additionalProperties: false, required: ["id", "type", "markdown"], properties: { ...blockBase, type: { const: "markdown" }, markdown: { type: "string", maxLength: REPORT_LIMITS.markdown } } },
-          {
-            type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "column"],
-            properties: {
-              ...blockBase, type: { const: "kpi" }, queryKey: { type: "string" }, column: columnProp, format: formatProp, unit: unitProp, label: { type: "string", maxLength: REPORT_LIMITS.blockTitle },
-              compareTo: refProp, compareLabel: { type: "string", maxLength: COMPARE_LABEL_MAX, description: "What the delta compares against, plain text: vs prior 2 weeks, vs last year" }, upIsGood: { type: "boolean" }, hero: { type: "boolean", description: "At most one KPI per report" },
-              sparkline: { type: "object", additionalProperties: false, required: ["queryKey", "x", "y"], properties: { queryKey: { type: "string" }, x: columnProp, y: columnProp } }
-            }
-          },
-          {
-            type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "kind", "x", "y"],
-            properties: {
-              ...blockBase, type: { const: "chart" }, queryKey: { type: "string" }, kind: { enum: [...CHART_KINDS] }, x: columnProp,
-              y: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.chartSeries, items: columnProp }, series: columnProp, format: formatProp, unit: unitProp,
-              emphasis: { type: "string", maxLength: 200, description: "A series name or (one series) a category value to highlight" }, upIsGood: { type: "boolean" }, compareTo: refProp
-            }
-          },
-          { type: "object", additionalProperties: false, required: ["id", "type", "title", "queryKey"], properties: { ...blockBase, type: { const: "table" }, queryKey: { type: "string" }, columns: { type: "array", maxItems: REPORT_LIMITS.tableColumns, items: columnProp }, formats: { type: "object", additionalProperties: formatProp } } }
-        ]
-      }
-    }
+    blocks: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.blocks, items: BLOCK_JSON_SCHEMA }
   }
 };
 

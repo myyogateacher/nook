@@ -60,6 +60,8 @@ Reports look the same whatever model wrote them: the model chooses only intents 
 
 **For wave 48:** the edit agent resolves its model with `reportModelFor(reportId)` and checks a patched spec with `validateSpec(row, raw, { userId, runId, signal, changedBlockIds })` (the ids it added or changed, D437) (or `checkSpecShape` / `checkColumns` / `checkDesign` without ClickHouse); a spec it saves should be `{ version: 1, specVersion: 2, sections, blocks, queries }` (read stored specs through `parseSpec`, which upgrades).
 
+**Integrated (branch `reports-integration`, waves 48 and 48b):** migrations in order 051, 052, 053 (Messages takes 054). The edit agent runs on `reportModelFor(reportId)`; its prompt shares generation's v2 rules (`SPEC_V2_RULES`) and `submit_patch` takes v2 blocks (`BLOCK_JSON_SCHEMA`, strict) plus `add_section`, `update_section`, `remove_section`, and `move_block {section}`; edits and manual edits pass `changedBlockIds` (added or changed blocks), so an old v1 report can still be edited. Every spec written is v2 (`commitSpec`, `persistGenerated`, stored proposals read through `upgradeSpec`); `get_report` answers `specVersion` and `sections`. Diffs ignore Nook's own block fields (provenance, `autoFixes`, `legacy`). UI: proposals draw in the theme with the lookup (KPI comparisons, sparklines); a block's menu has "Ask for a change"; the report header is Refresh all, Changes, Share, Schedule (a phone: Refresh all, Changes) and a "⋯" menu (Rename, Model, Check doc, Regenerate, Move to Bin).
+
 ## Decisions (D410–D429; wave 48: D450–D461)
 
 | ID | Decision |

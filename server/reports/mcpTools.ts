@@ -112,7 +112,7 @@ export const reportTools: McpToolSpec[] = [
   defineTool({
     name: "get_report",
     title: "Get a report",
-    description: `One report: title, status, the caller's level (owner, comment, view), auto-apply, the blocks (markdown, KPI, chart, table and their mapping), and the saved queries with their SQL. Results are read per block with get_report_block. ${UNTRUSTED}`,
+    description: `One report: title, status, the caller's level (owner, comment, view), auto-apply, spec v2's sections and blocks (markdown, KPI, chart, table: intent, width, section, and their mapping), and the saved queries with their SQL. Results are read per block with get_report_block. ${UNTRUSTED}`,
     scopes: ["reports:read"],
     access: { mode: "items", items: reportItem },
     write: false,
@@ -123,6 +123,8 @@ export const reportTools: McpToolSpec[] = [
       return {
         id: report.id, title: report.title, status: report.status, level: reportLevel(report, key.userId), autoApply: report.auto_apply === 1,
         lastRunAt: report.last_run_at, lastError: report.last_error, revision: report.revision, url: reportUrl(report.id),
+        // Spec v2 (wave 48b): a stored v1 spec reads upgraded (intents, widths, no sections).
+        specVersion: spec.specVersion, sections: spec.sections,
         blocks: spec.blocks.map(withoutProvenance), queries: spec.queries.map(({ key: queryKey, sql, purpose, createdBy }) => ({ key: queryKey, sql, purpose, createdBy }))
       };
     })

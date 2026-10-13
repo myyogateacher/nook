@@ -121,6 +121,23 @@ export function seededTables(row: DatasourceRow, markdown: string): { text: stri
   return { text: parts.join("\n\n"), tables: names };
 }
 
+/**
+ * Spec v2's vocabulary and design rules as the model reads them (wave 48b), shared by the generation
+ * prompt and wave 48's edit prompt so both agents build the same kind of block.
+ */
+export const SPEC_V2_RULES = (): string[] => [
+  "Nook owns every visual decision: colours, sizes, fonts, marks, label placement, sorting, and number formatting. Never send colours, pixel sizes, CSS, styles, or format strings; any field the schema does not name is refused. For each block you choose:",
+  `- intent (what it is for): ${BLOCK_INTENTS.join(", ")}. trend = a measure over time (x must be a Date/DateTime column; kind line or area); compare = categories side by side (bar); rank = an ordered list (horizontal_bar); share = parts of a whole (stacked_bar, or pie only with at most ${DESIGN_LIMITS.pieSlices} slices that make the whole); distribution = binned values (bar over ordered bins); relationship = two measures (scatter, at most ${MAX_SCATTER_SERIES} series); headline = a KPI; delta = a change against a previous value; detail = a table.`,
+  `- kind (charts): ${CHART_KINDS.join(", ")}, matching the intent.`,
+  "- width: full, half, or third of the row (12/6/4 of 12 columns). Use half or third to put related charts side by side; tables and long trends are usually full.",
+  "- section: the id of one of your sections, to group blocks under a heading. Blocks without a section come first; KPIs without a section form the KPI strip at the top.",
+  "- format: number, percent (the value is a ratio: 0.25 shows 25%), duration (seconds), or currency:<ISO 4217 code> such as currency:USD or currency:EUR. unit: a short word after the number such as orders, users, or ms. Take the units and currencies from the document's metric definitions; every numeric measure needs a format or a unit.",
+  "- title: every kpi, chart, and table needs a short title.",
+  "- Optional: emphasis (a chart's one series, or with one series one category, to highlight; the rest turn grey); compareTo {column} on a KPI (the previous value; queryKey too if it is in another query) with compareLabel, plain words for what it compares against such as \"vs prior 2 weeks\" or \"vs last year\" (never a column name), with upIsGood false when a rise is bad (costs, errors, churn); hero true on at most one KPI (the report's headline number); sparkline {queryKey, x, y} on a KPI for a small trend.",
+  `- Design rules (refused with a reason): a trend's x must be a date; share is a stacked_bar or a small pie; a scatter shows at most ${MAX_SCATTER_SERIES} series; a single-value result is a kpi, not a chart; two measures whose scales differ by ${DESIGN_LIMITS.scaleRatio}x or more go in separate charts (there is no second axis); at most ${DESIGN_LIMITS.heroes} hero, ${DESIGN_LIMITS.stripKpis} KPIs in the strip, ${DESIGN_LIMITS.blocks} blocks; no pie with negative values; no chart over an empty result.`,
+  `- Nook fixes these itself, so do not work around them: more than ${DESIGN_LIMITS.series} series fold into the top ${DESIGN_LIMITS.series - 1} plus Other; more than ${DESIGN_LIMITS.barCategories} bar categories fold into the top ${DESIGN_LIMITS.keptBarCategories} plus Other; bars are sorted descending unless x is ordinal or time; large numbers are compacted (12.9K, $4.2M).`,
+];
+
 export function systemPrompt(row: DatasourceRow, doc: { title: string | null; markdown: string }): { text: string; seeded: string[] } {
   const seeded = seededTables(row, doc.markdown);
   const banned = [...BANNED_FUNCTIONS].slice(0, 20).join(", ");
@@ -140,16 +157,7 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     `submit_report takes the spec: queries (at most ${REPORT_LIMITS.queries}; key [a-z][a-z0-9_]*, the SQL, a one-line purpose), sections (at most ${SECTION_LIMITS.sections}: id, title, summary?), and blocks (at most ${REPORT_LIMITS.blocks}). Every queryKey must name a query; every query must be used; the columns must be in the query's result. Nook runs every query again before saving; if anything fails (SQL or a design rule), you get the errors and may submit again (two more tries).`,
     "",
     "## How the report looks: you choose intent and layout, Nook draws it",
-    "Nook owns every visual decision: colours, sizes, fonts, marks, label placement, sorting, and number formatting. Never send colours, pixel sizes, CSS, styles, or format strings; any field the schema does not name is refused. For each block you choose:",
-    `- intent (what it is for): ${BLOCK_INTENTS.join(", ")}. trend = a measure over time (x must be a Date/DateTime column; kind line or area); compare = categories side by side (bar); rank = an ordered list (horizontal_bar); share = parts of a whole (stacked_bar, or pie only with at most ${DESIGN_LIMITS.pieSlices} slices that make the whole); distribution = binned values (bar over ordered bins); relationship = two measures (scatter, at most ${MAX_SCATTER_SERIES} series); headline = a KPI; delta = a change against a previous value; detail = a table.`,
-    `- kind (charts): ${CHART_KINDS.join(", ")}, matching the intent.`,
-    "- width: full, half, or third of the row (12/6/4 of 12 columns). Use half or third to put related charts side by side; tables and long trends are usually full.",
-    "- section: the id of one of your sections, to group blocks under a heading. Blocks without a section come first; KPIs without a section form the KPI strip at the top.",
-    "- format: number, percent (the value is a ratio: 0.25 shows 25%), duration (seconds), or currency:<ISO 4217 code> such as currency:USD or currency:EUR. unit: a short word after the number such as orders, users, or ms. Take the units and currencies from the document's metric definitions; every numeric measure needs a format or a unit.",
-    "- title: every kpi, chart, and table needs a short title.",
-    "- Optional: emphasis (a chart's one series, or with one series one category, to highlight; the rest turn grey); compareTo {column} on a KPI (the previous value; queryKey too if it is in another query) with compareLabel, plain words for what it compares against such as \"vs prior 2 weeks\" or \"vs last year\" (never a column name), with upIsGood false when a rise is bad (costs, errors, churn); hero true on at most one KPI (the report's headline number); sparkline {queryKey, x, y} on a KPI for a small trend.",
-    `- Design rules (refused with a reason): a trend's x must be a date; share is a stacked_bar or a small pie; a scatter shows at most ${MAX_SCATTER_SERIES} series; a single-value result is a kpi, not a chart; two measures whose scales differ by ${DESIGN_LIMITS.scaleRatio}x or more go in separate charts (there is no second axis); at most ${DESIGN_LIMITS.heroes} hero, ${DESIGN_LIMITS.stripKpis} KPIs in the strip, ${DESIGN_LIMITS.blocks} blocks; no pie with negative values; no chart over an empty result.`,
-    `- Nook fixes these itself, so do not work around them: more than ${DESIGN_LIMITS.series} series fold into the top ${DESIGN_LIMITS.series - 1} plus Other; more than ${DESIGN_LIMITS.barCategories} bar categories fold into the top ${DESIGN_LIMITS.keptBarCategories} plus Other; bars are sorted descending unless x is ordinal or time; large numbers are compacted (12.9K, $4.2M).`,
+    ...SPEC_V2_RULES(),
     "- A good report: one or two markdown sentences of narrative first, then 2–6 KPIs, then sections of charts, then detail tables.",
     `You have at most ${GENERATE_LIMITS.steps} steps; the last ones must call submit_report.`,
     "",

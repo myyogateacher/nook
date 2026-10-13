@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import type { RunStatus, TokenUsage } from "../../shared/agents";
-import { REPORT_LIMITS, type ReportBlock, type ReportSpec } from "../../shared/reports";
+import { REPORT_LIMITS, SECTION_LIMITS, type ReportBlock, type ReportSpec } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type ReportPatch } from "../../shared/reportsEdit";
 import { finishAuditRun, insertAuditStep, markAuditFirstToken, markAuditStarted } from "../agents/audit";
 import { ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
-import { connectionFor } from "../agents/providers";
 import { assertBudget, capResultText, chargeUsage } from "../agents/runs";
 import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
@@ -13,8 +12,9 @@ import { openChannel, type RunChannel } from "../agents/stream";
 import { readableReport, reportLevel, type ReportRow } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { documentBlock, GENERATE_TOOLS, REPORTS_AGENT_ID } from "./generate";
-import { applyPatch, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA } from "./patch";
+import { documentBlock, GENERATE_TOOLS, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
+import { reportModelFor } from "./model";
+import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA, sectionsChanged } from "./patch";
 import { HEARTBEAT_MS, LEASE_MS, onRunAbandoned, queryResults, takeRunLock } from "./refresh";
 import { adHocQueryId, runGuarded } from "./runner";
 import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, sampleRowsTool, searchSchemaTool } from "./schemaTools";
@@ -63,11 +63,11 @@ export const EDIT_LIMITS = {
 const PROMPT_VERSION = 1;
 
 /**
- * The edit agent's model. Today it is the default provider, as generation's; wave 48b's
- * `reportModelFor(reportId)` replaces this one function at merge.
+ * The edit agent's model: the report's own model, as generation's (wave 48b, `reportModelFor`: the
+ * report's override, else the admin's report model, else chat's default provider).
  */
-function editModel(_reportId: string): ProviderConnection {
-  return connectionFor(null, null);
+function editModel(reportId: string): ProviderConnection {
+  return reportModelFor(reportId);
 }
 /** Test hook: the provider connection (tests swap it). */
 export const editDeps = { connection: (reportId: string): ProviderConnection => editModel(reportId) };
@@ -91,10 +91,12 @@ export const liveEdits = () => [...live.values()];
 
 const defuse = (text: string, tag: string) => text.replace(new RegExp(`<(/?)(${tag})`, "gi"), "<$1$2​");
 const specForPrompt = (spec: ReportSpec) => JSON.stringify({
+  sections: spec.sections ?? [],
   queries: spec.queries.map(({ key, sql, purpose }) => ({ key, sql, purpose })),
-  // Only the fields the vocabulary names (a spec saved before the schema was strict may hold others).
+  // Only the fields the vocabulary names (a spec saved before the schema was strict may hold others),
+  // without Nook's own (provenance, auto-fixes, the v1 marker).
   blocks: knownSpec(spec).blocks.map((block) => {
-    const { provenance: _provenance, ...rest } = block as ReportBlock & Record<string, unknown>;
+    const { provenance: _provenance, autoFixes: _autoFixes, legacy: _legacy, ...rest } = block as ReportBlock & Record<string, unknown>;
     return rest;
   })
 }, null, 1);
@@ -104,7 +106,7 @@ function targetBlockText(reportId: string, spec: ReportSpec, blockId: string | n
   const block = spec.blocks.find((item) => item.id === blockId);
   if (!block) return `The instruction was about block ${blockId}, which is no longer in the report; apply it to the page as a whole if it still makes sense.`;
   const known = knownSpec({ ...spec, blocks: [block] }).blocks[0]!;
-  const { provenance: _provenance, ...shown } = known as ReportBlock & Record<string, unknown>;
+  const { provenance: _provenance, autoFixes: _autoFixes, legacy: _legacy, ...shown } = known as ReportBlock & Record<string, unknown>;
   const lines = [`The instruction is about block \`${block.id}\`:`, JSON.stringify(shown)];
   if ("queryKey" in block) {
     const view = queryResults(reportId, spec).find((item) => item.queryKey === block.queryKey);
@@ -133,10 +135,15 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     "submit_patch takes ops, applied in order to the current spec:",
     "- add_block {block, after}: a whole new block (a unique id, its type and fields) after the block `after` (null: at the top).",
     "- update_block {id, set, unset?}: merges `set` into the block; a different `type` replaces the block; `unset` removes fields.",
-    "- remove_block {id}; move_block {id, after}.",
+    "- remove_block {id}; move_block {id, after, section?}: moves the block after `after` (null: to the top) and, with section, into that section (null: out of any section).",
     "- add_query {query: {key, sql, purpose}}; update_query {key, sql?, purpose?}; remove_query {key}.",
-    "Block types: markdown {markdown}, kpi {queryKey, column, format?, compareColumn?, label?}, chart {queryKey, kind (line, area, bar, stacked_bar, horizontal_bar, pie, scatter), x, y[] numeric columns, series?}, table {queryKey, columns?}. Keep the fields a block already has unless the instruction changes them.",
-    `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails you get the errors and may submit again (two more tries).`,
+    `- add_section {section: {id, title, summary?}, after?}; update_section {id, set: {title?, summary?}}; remove_section {id} (its blocks stay, out of any section). At most ${SECTION_LIMITS.sections} sections; a block joins one with its section field.`,
+    "Block types: markdown {markdown}; kpi {title, intent, queryKey, column, format or unit, label?, compareTo?, compareLabel?, upIsGood?, hero?, sparkline?}; chart {title, intent, queryKey, kind, x, y[] numeric columns, series?, format or unit, emphasis?, upIsGood?}; table {title, queryKey, columns?, formats?}. Every block may have width and section. Keep the fields a block already has unless the instruction changes them; a block you add or change must meet the rules below (old blocks you leave alone are not re-checked).",
+    "",
+    "## How the report looks: you choose intent and layout, Nook draws it",
+    ...SPEC_V2_RULES(),
+    "",
+    `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), every section a block names exists, and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails (SQL or a design rule) you get the errors and may submit again (two more tries).`,
     `You have at most ${EDIT_LIMITS.steps} steps; the last ones must call submit_patch.`,
     "",
     "## The current report",
@@ -347,14 +354,17 @@ async function executeEdit(run: Execution) {
     if (!parsed.ok) return refuse(parsed.errors);
     const applied = applyPatch(run.spec, parsed.patch, "agent");
     if (!applied.ok) return refuse(applied.errors);
-    if (!diffSpecs(run.spec, applied.spec).blocks.length && !diffSpecs(run.spec, applied.spec).queries.length) return refuse(["The patch changes nothing"]);
+    const touched = diffSpecs(run.spec, applied.spec);
+    if (!touched.blocks.length && !touched.queries.length && !sectionsChanged(run.spec, applied.spec)) return refuse(["The patch changes nothing"]);
     // Review H1: the validator sees the spec without Nook's provenance and refuses unknown fields; what
-    // is proposed (and later saved) is the validated spec, with provenance and authors put back.
-    const check = await validateSpec(datasource, forValidation(applied.spec), { userId, runId, signal: controller.signal });
+    // is proposed (and later saved) is the validated spec, with provenance and authors put back. The
+    // design rules apply to the blocks the patch adds or changes (wave 48b D437), so an old (v1) block
+    // the instruction leaves alone never fails the edit.
+    const check = await validateSpec(datasource, forValidation(applied.spec), { userId, runId, signal: controller.signal, changedBlockIds: changedBlockIds(touched) });
     if (!check.ok) return refuse(check.errors);
     const validated = reattach(check.spec, applied.spec);
     const diff = diffSpecs(run.spec, validated);
-    if (!diff.blocks.length && !diff.queries.length) return refuse(["The patch changes nothing"]);
+    if (!diff.blocks.length && !diff.queries.length && !sectionsChanged(run.spec, validated)) return refuse(["The patch changes nothing"]);
     const proposal: StoredProposal = { spec: validated, summary: parsed.patch.summary ? oneLine(parsed.patch.summary, INSTRUCTION_LIMITS.summary) : null, results: proposalResults(check.results, changedQueryKeys(diff)), docSnapshotId: run.docSnapshotId };
     const at = now();
     const saved = db.transaction(() => {

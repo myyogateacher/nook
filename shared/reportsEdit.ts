@@ -46,13 +46,18 @@ export type PatchOp =
   /** Merges `set` into the block (a new `type` replaces it), then removes the `unset` fields. */
   | { op: "update_block"; id: string; set?: Record<string, unknown>; unset?: string[] }
   | { op: "remove_block"; id: string }
-  /** Moves the block after `after` (null: to the top). */
-  | { op: "move_block"; id: string; after: string | null }
+  /** Moves the block after `after` (null: to the top); `section` puts it in a section (null: out of any). */
+  | { op: "move_block"; id: string; after: string | null; section?: string | null }
   | { op: "add_query"; query: { key: string; sql: string; purpose?: string } }
   | { op: "update_query"; key: string; sql?: string; purpose?: string }
-  | { op: "remove_query"; key: string };
+  | { op: "remove_query"; key: string }
+  /** Spec v2 sections (wave 48b): inserted after the section `after` (null or absent: first). */
+  | { op: "add_section"; section: { id: string; title: string; summary?: string }; after?: string | null }
+  | { op: "update_section"; id: string; set: { title?: string; summary?: string | null } }
+  /** Removes the section; its blocks stay, out of any section. */
+  | { op: "remove_section"; id: string };
 export type PatchOpName = PatchOp["op"];
-export const PATCH_OPS: readonly PatchOpName[] = ["add_block", "update_block", "remove_block", "move_block", "add_query", "update_query", "remove_query"];
+export const PATCH_OPS: readonly PatchOpName[] = ["add_block", "update_block", "remove_block", "move_block", "add_query", "update_query", "remove_query", "add_section", "update_section", "remove_section"];
 
 export type ReportPatch = { ops: PatchOp[]; summary?: string };
 

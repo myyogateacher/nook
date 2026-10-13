@@ -135,7 +135,7 @@ describe("H1: only validated specs are saved", () => {
     const id = await ask(owner, reportId, "make the chart fancy");
     await waitStatus(id, ["failed"]);
     const refusal = String(provider.calls[0]!.messages!.length ? provider.calls.at(-1)!.messages!.filter((turn) => turn.role === "tool").at(-1)!.content : "");
-    expect(refusal).toMatch(/[Uu]nrecognized key/);
+    expect(refusal).toMatch(/not part of the spec/);
     for (const text of HIDDEN) expect(specJson(reportId)).not.toContain(text);
 
     // A manual edit is refused the same way.

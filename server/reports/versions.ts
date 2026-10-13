@@ -74,6 +74,8 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
     const spec: ReportSpec = {
       ...input.spec,
       version: 1,
+      specVersion: 2,
+      sections: input.spec.sections ?? [],
       blocks: input.spec.blocks.map((block) => input.stamp?.has(block.id) ? { ...block, provenance } : block)
     };
     const specJson = JSON.stringify(spec);

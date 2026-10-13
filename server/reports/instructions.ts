@@ -1,4 +1,5 @@
 import { audit, db, now } from "../db";
+import { upgradeSpec } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type InstructionsView, type ProposalView, type ReportInstruction } from "../../shared/reportsEdit";
 import type { QueryResultView } from "../../shared/reportsView";
 import { commentableReport, ownedReport, readableReport, reportLevel } from "./access";
@@ -127,7 +128,9 @@ export function cancelInstruction(userId: string, reportId: string, instructionI
 
 function storedProposal(row: InstructionRow): StoredProposal {
   if (row.status !== "proposed" || !row.proposal_json) throw new ReportError(409, "INVALID", "This instruction has no proposal to review");
-  return JSON.parse(row.proposal_json) as StoredProposal;
+  const stored = JSON.parse(row.proposal_json) as StoredProposal;
+  // A proposal stored before spec v2 holds a v1 spec: read it upgraded, as every stored spec.
+  return { ...stored, spec: upgradeSpec(stored.spec) };
 }
 
 function proposedRow(reportId: string, instructionId: string): InstructionRow {

@@ -221,7 +221,7 @@ describe("the queue and the edit agent", () => {
       const y = submits === 1 ? "no_such_column" : "net_revenue";
       return { toolCalls: [{ name: "submit_patch", arguments: { summary: "Add revenue by country", ops: [
         { op: "add_query", query: { key: "revenue_by_country", sql: QA_EDIT_SQL, purpose: "p" } },
-        { op: "add_block", after: null, block: { id: "country_revenue", type: "chart", queryKey: "revenue_by_country", kind: "bar", x: "country", y: [y] } }
+        { op: "add_block", after: null, block: { id: "country_revenue", type: "chart", title: "Revenue by country", intent: "compare", queryKey: "revenue_by_country", kind: "bar", x: "country", y: [y], format: "currency:USD" } }
       ] } }] };
     });
     const id = (await send(owner, "POST", `/reports/${reportId}/instructions`, { text: "add revenue by country" })).body.instruction.id as string;

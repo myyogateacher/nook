@@ -3,7 +3,7 @@ import type { ReportPatch } from "../../shared/reportsEdit";
 import { ownedReport } from "./access";
 import { usableDatasource } from "./datasources";
 import { ReportError } from "./errors";
-import { applyPatch, changedQueryKeys, diffSpecs, opsSummary, parsePatch, withoutUnusedQueries } from "./patch";
+import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, sectionsChanged, withoutUnusedQueries } from "./patch";
 import { takeRunLock } from "./refresh";
 import { parseSpec } from "./service";
 import { checkSpecShape, validateSpec } from "./specValidate";
@@ -27,7 +27,7 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
   if (!applied.ok) throw new ReportError(400, "INVALID", applied.errors[0] ?? "The change is not valid", { details: applied.errors });
   const spec = withoutUnusedQueries(applied.spec);
   const diff = diffSpecs(current, spec);
-  if (!diff.blocks.length && !diff.queries.length) throw new ReportError(400, "INVALID", "That changes nothing");
+  if (!diff.blocks.length && !diff.queries.length && !sectionsChanged(current, spec)) throw new ReportError(400, "INVALID", "That changes nothing");
   const changed = changedQueryKeys(diff);
   const keyMeta = via.keyId ? { via: "mcp", keyId: via.keyId } : {};
 
@@ -47,7 +47,8 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
   const finish = (status: "succeeded" | "failed", error: string | null) =>
     db.query("UPDATE report_runs SET status = ?, error = ?, finished_at = ?, lease_until = NULL WHERE id = ? AND status = 'running'").run(status, error?.slice(0, 1000) ?? null, now(), run.id);
   try {
-    const check = await validateSpec(datasource, forValidation(spec), { userId, runId: run.id, signal: via.signal });
+    // Design rules on the blocks this edit adds or changes only (D437): an old block stays as it was.
+    const check = await validateSpec(datasource, forValidation(spec), { userId, runId: run.id, signal: via.signal, changedBlockIds: changedBlockIds(diff) });
     if (!check.ok) {
       finish("failed", check.errors[0] ?? "The change did not pass the checks");
       throw new ReportError(400, "INVALID", check.errors[0] ?? "The change did not pass the checks", { details: check.errors });

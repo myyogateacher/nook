@@ -9,11 +9,9 @@ import type { Migration } from "./types";
  *   the queue waits while a proposal is reviewed and two edits never overlap. The proposal (the
  *   proposed spec and the results of its added or changed queries) is kept in `proposal_json`.
  * - `report_versions`: every spec a report has had, numbered per report. Wave 48's own writes (apply,
- *   restore, manual edits) insert their row in the transaction that changes `reports.spec_json`; a
- *   generation's spec is recorded (as `generate`) before the next change and before a regeneration
- *   starts (server/reports/versions.ts ensureVersionRecorded), so regenerating never loses the spec it
- *   replaces. No trigger: the spec's writers count changed rows. Existing reports with blocks get an
- *   `initial` version here.
+ *   restore, manual edits) and generation's save insert their row in the transaction that changes
+ *   `reports.spec_json`. No trigger: the spec's writers count changed rows. Existing reports with
+ *   blocks get an `initial` version here (and server/reports/versionBackfill.ts at boot).
  * - `reports.auto_apply`: the owner's "apply edits without review" switch (their own instructions only).
  * - `report_members` and `report_group_shares`: view-only sharing, `view` or `comment`, read under
  *   `reports.visibility = 'selected'` (050 added the column). They are the report's own tables rather
@@ -39,6 +37,10 @@ export const reportInstructionsMigration: Migration = {
         run_id TEXT REFERENCES report_runs(id) ON DELETE SET NULL,
         agent_run_id TEXT CHECK (agent_run_id IS NULL OR length(agent_run_id) <= 64),
         base_revision INTEGER,
+        -- The SHA-256 of the spec the agent worked on, and the data source revision it ran against (review M3, H2).
+        base_spec_sha256 TEXT CHECK (base_spec_sha256 IS NULL OR length(base_spec_sha256) = 64),
+        base_datasource_id TEXT,
+        base_datasource_revision INTEGER,
         proposal_json TEXT CHECK (proposal_json IS NULL OR (json_valid(proposal_json) AND length(proposal_json) <= 16777216)),
         summary TEXT CHECK (summary IS NULL OR length(summary) <= 500),
         error TEXT CHECK (error IS NULL OR length(error) <= 1000),

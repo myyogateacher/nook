@@ -6,8 +6,12 @@ import { cancelLiveEdit, instructionRow, liveEdits, startEdit, type InstructionR
 import { ReportError } from "./errors";
 import { changedQueryKeys, diffSpecs } from "./patch";
 import { queryResults, runRow } from "./refresh";
-import { parseSpec } from "./service";
+import { onReportBinned, parseSpec } from "./service";
 import { commitSpec, refuseWhileRunning } from "./versions";
+import { datasourceRow } from "./datasources";
+import { assertRunnableNow, specHash } from "./specCheck";
+import { liveGenerations } from "./generate";
+import type { ReportBlock } from "../../shared/reports";
 
 /**
  * Instructions to the edit agent (plan wave 48, D450, D453): a comment on the page or a block becomes a
@@ -24,13 +28,17 @@ type Row = InstructionRow & { author_name: string | null };
 
 const SELECT = "SELECT i.*, u.display_name AS author_name FROM report_instructions i LEFT JOIN users u ON u.id = i.author_id";
 
-function view(row: Row, userId: string): ReportInstruction {
+const ownerOf = (reportId: string) => (db.query("SELECT owner_id FROM reports WHERE id = ?").get(reportId) as { owner_id: string } | null)?.owner_id ?? null;
+
+function view(row: Row, userId: string, ownerId: string | null): ReportInstruction {
+  const owner = ownerId === userId;
   return {
     id: row.id, reportId: row.report_id, blockId: row.block_id, text: row.text, status: row.status as ReportInstruction["status"], position: row.position,
     authorName: row.author_name, isMine: row.author_id === userId, via: row.via, runId: row.run_id,
-    // The run's live events are its author's (the SSE route checks it too).
-    agentRunId: row.author_id === userId ? row.agent_run_id : null,
-    summary: row.summary, error: row.error, appliedVersion: row.applied_version, autoApplied: row.auto_applied === 1,
+    // The run, its live events, and its steps are the owner's (review M1a: the prompt carries the doc);
+    // the agent's own summary too, which may quote it. Others see the status and the outcome.
+    agentRunId: owner ? row.agent_run_id : null,
+    summary: owner ? row.summary : null, error: row.error, appliedVersion: row.applied_version, autoApplied: row.auto_applied === 1,
     createdAt: row.created_at, startedAt: row.started_at, finishedAt: row.finished_at, decidedAt: row.decided_at
   };
 }
@@ -43,7 +51,7 @@ export function listInstructions(reportId: string, userId: string, role: string)
   const level = reportLevel(report, userId);
   const rows = db.query(`${SELECT} WHERE i.report_id = ? ${ORDER} LIMIT 200`).all(reportId) as Row[];
   return {
-    instructions: rows.map((row) => view(row, userId)),
+    instructions: rows.map((row) => view(row, userId, report.owner_id)),
     level,
     canComment: (level === "owner" || level === "comment") && role !== "viewer" && role !== "guest",
     canApply: level === "owner",
@@ -52,10 +60,10 @@ export function listInstructions(reportId: string, userId: string, role: string)
 }
 
 export function getInstruction(reportId: string, instructionId: string, userId: string): ReportInstruction {
-  readableReport(reportId, userId);
+  const report = readableReport(reportId, userId);
   const row = db.query(`${SELECT} WHERE i.id = ? AND i.report_id = ?`).get(instructionId, reportId) as Row | null;
   if (!row) throw new ReportError(404, "NOT_FOUND", "Instruction not found");
-  return view(row, userId);
+  return view(row, userId, report.owner_id);
 }
 
 /** Adds an instruction at the end of the queue and kicks the queue. */
@@ -128,17 +136,72 @@ function proposedRow(reportId: string, instructionId: string): InstructionRow {
   return row;
 }
 
-/** The proposal as the review shows it (anyone who can read the report). */
+/**
+ * Why a proposal can no longer be applied (review H2, M3), or null: the spec it was made from changed
+ * (by its SHA-256, so a rename does not strand it), or the report's data source is another one, was
+ * changed (its allowlist among others), or is off.
+ */
+export function proposalStaleReason(row: Pick<InstructionRow, "base_spec_sha256" | "base_datasource_id" | "base_datasource_revision">, report: { spec_json: string; datasource_id: string | null }): string | null {
+  if (row.base_spec_sha256 && row.base_spec_sha256 !== specHash(report.spec_json)) return "The report changed since this was proposed";
+  if (!report.datasource_id || report.datasource_id !== row.base_datasource_id) return "The report's data source changed since this was proposed";
+  let source;
+  try { source = datasourceRow(report.datasource_id); } catch { return "The report's data source is gone"; }
+  if (source.enabled !== 1) return "An admin turned the report's data source off";
+  if (source.revision !== row.base_datasource_revision) return "The data source changed (its allowlist or settings) since this was proposed";
+  return null;
+}
+
+/** Rejects a proposal that is out of date, with its reason, so the queue moves on. True when it did. */
+function rejectStale(row: InstructionRow, reason: string): boolean {
+  const at = now();
+  const changed = db.query("UPDATE report_instructions SET status = 'rejected', error = ?, decided_at = ?, updated_at = ? WHERE id = ? AND status = 'proposed'")
+    .run(reason.slice(0, 1000), at, at, row.id).changes;
+  if (changed) audit(null, null, "reports.instruction.stale", { reportId: row.report_id, instructionId: row.id });
+  return changed === 1;
+}
+
+/** Every proposal of a report that is out of date is rejected (the kick and the sweep run this). */
+export function rejectStaleProposals(reportId: string): number {
+  const report = db.query("SELECT spec_json, datasource_id FROM reports WHERE id = ?").get(reportId) as { spec_json: string; datasource_id: string | null } | null;
+  if (!report) return 0;
+  let count = 0;
+  for (const row of db.query("SELECT * FROM report_instructions WHERE report_id = ? AND status = 'proposed'").all(reportId) as InstructionRow[]) {
+    const reason = proposalStaleReason(row, report);
+    if (reason && rejectStale(row, reason)) count += 1;
+  }
+  return count;
+}
+
+const redactedMarkdown = (block: ReportBlock | null): ReportBlock | null => block && block.type === "markdown" ? { ...block, markdown: "" } : block;
+
+/**
+ * The proposal as the review shows it (anyone who can read the report). For anyone but the owner
+ * (review M1c), new or changed markdown is left out (`textHidden`) and the agent's summary is not
+ * shown: the agent read the doc, which only the owner sees, until the owner applies it. A proposal
+ * that is out of date shows no stored rows.
+ */
 export function proposalView(reportId: string, instructionId: string, userId: string): ProposalView {
   const report = readableReport(reportId, userId);
+  const owner = report.owner_id === userId;
   const row = proposedRow(reportId, instructionId);
   const proposal = storedProposal(row);
   const current = parseSpec(report.spec_json);
+  const stale = proposalStaleReason(row, report);
   const diff = diffSpecs(current, proposal.spec);
+  const currentBlocks = new Map(current.blocks.map((block) => [block.id, block]));
+  const hide = (block: ReportBlock) => {
+    const before = currentBlocks.get(block.id);
+    return !owner && block.type === "markdown" && (before?.type !== "markdown" || before.markdown !== block.markdown);
+  };
+  const spec = owner ? proposal.spec : { ...proposal.spec, blocks: proposal.spec.blocks.map((block) => hide(block) ? redactedMarkdown(block)! : block) };
+  const blocks = diff.blocks.map((change) => {
+    if (owner || !change.after || !hide(change.after)) return change;
+    return { ...change, after: redactedMarkdown(change.after), textHidden: true };
+  });
   const currentResults = queryResults(reportId, current);
   const byKey = new Map(currentResults.map((item) => [item.queryKey, item]));
   const results: QueryResultView[] = proposal.spec.queries.map((query) => {
-    const fresh = proposal.results[query.key];
+    const fresh = stale ? null : proposal.results[query.key];
     if (fresh) {
       return {
         queryKey: query.key, failed: null, stale: false,
@@ -147,20 +210,36 @@ export function proposalView(reportId: string, instructionId: string, userId: st
     }
     return byKey.get(query.key) ?? { queryKey: query.key, result: null, failed: null, stale: false };
   });
-  return { instructionId, spec: proposal.spec, blocks: diff.blocks, queries: diff.queries, results, currentResults, summary: proposal.summary, outOfDate: row.base_revision !== report.revision };
+  return { instructionId, spec, blocks, queries: diff.queries, results, currentResults, summary: owner ? proposal.summary : null, outOfDate: stale !== null, ...(stale ? { staleReason: stale } : {}) };
 }
 
 /**
- * Apply (the owner; also auto-apply): the proposed spec becomes a new version, its touched blocks
- * stamped `{runId, instructionId, version}`, its new results saved under the edit run. A report that
- * changed since the agent started answers 409 REVISION_CONFLICT (reject it, or ask again).
+ * Apply (the owner; also auto-apply): re-checked first (review H2, TOCTOU): the spec it was made from
+ * (by hash), the data source (the same one, on, unchanged), and every query statically through the
+ * guard and today's allowlist. Anything changed rejects it with its reason and answers 409
+ * `STALE_PROPOSAL`: its stored rows are never published. Otherwise the proposed spec becomes a new
+ * version, its touched blocks stamped `{runId, instructionId, version}`, its new results saved under
+ * the edit run.
  */
 export function applyProposal(userId: string, reportId: string, instructionId: string, options: { auto?: boolean; keyId?: string } = {}): ReportInstruction {
-  ownedReport(reportId, userId);
+  const report = ownedReport(reportId, userId);
   const row = proposedRow(reportId, instructionId);
   const proposal = storedProposal(row);
   refuseWhileRunning(reportId);
-  const current = parseSpec((db.query("SELECT spec_json FROM reports WHERE id = ?").get(reportId) as { spec_json: string }).spec_json);
+  const stale = (reason: string): never => {
+    rejectStale(row, reason);
+    kick(reportId);
+    throw new ReportError(409, "STALE_PROPOSAL", `${reason}; it was rejected. Ask again.`);
+  };
+  const reason = proposalStaleReason(row, report);
+  if (reason) stale(reason);
+  try {
+    assertRunnableNow(datasourceRow(report.datasource_id!), proposal.spec, "STALE_PROPOSAL");
+  } catch (error) {
+    if (error instanceof ReportError && error.code === "STALE_PROPOSAL") stale(error.message);
+    throw error;
+  }
+  const current = parseSpec(report.spec_json);
   const diff = diffSpecs(current, proposal.spec);
   const stamp = new Set(diff.blocks.filter((change) => change.change === "added" || change.change === "updated").map((change) => change.blockId));
   const changed = changedQueryKeys(diff);
@@ -173,8 +252,10 @@ export function applyProposal(userId: string, reportId: string, instructionId: s
   }
   const results = new Map(Object.entries(proposal.results).filter(([key]) => changed.has(key)));
   const saved = db.transaction(() => {
+    const live = db.query("SELECT spec_json FROM reports WHERE id = ?").get(reportId) as { spec_json: string };
+    if (row.base_spec_sha256 && specHash(live.spec_json) !== row.base_spec_sha256) throw new ReportError(409, "STALE_PROPOSAL", "The report changed since this was proposed");
     const committed = commitSpec({
-      reportId, userId, spec: proposal.spec, source: "edit", expectedRevision: row.base_revision ?? undefined, instructionId, stamp, runId,
+      reportId, userId, spec: proposal.spec, source: "edit", instructionId, stamp, runId,
       docSnapshotId: proposal.docSnapshotId, results, note: row.summary
     });
     const at = now();
@@ -244,6 +325,8 @@ export function kick(reportId: string) {
     for (let guard = 0; guard < INSTRUCTION_LIMITS.queued + 1; guard += 1) {
       const live = db.query("SELECT 1 FROM reports WHERE id = ? AND deleted_at IS NULL").get(reportId);
       if (!live) return;
+      // A proposal that is out of date never blocks the queue (review M3).
+      rejectStaleProposals(reportId);
       if (db.query("SELECT 1 FROM report_instructions WHERE report_id = ? AND status IN ('running','proposed')").get(reportId)) return;
       const head = db.query("SELECT id FROM report_instructions WHERE report_id = ? AND status = 'queued' ORDER BY position, rowid LIMIT 1").get(reportId) as { id: string } | null;
       if (!head) return;
@@ -269,6 +352,9 @@ export function sweepInstructions(): number {
     if (liveIds.has(row.id)) continue;
     db.query("UPDATE report_instructions SET status = 'failed', error = 'The edit stopped before it finished', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'").run(at, at, row.id);
   }
+  for (const { report_id } of db.query("SELECT DISTINCT report_id FROM report_instructions WHERE status = 'proposed'").all() as Array<{ report_id: string }>) {
+    try { rejectStaleProposals(report_id); } catch (error) { console.error("Reports: a stale proposal check failed", error instanceof Error ? error.name : "Error"); }
+  }
   const waiting = db.query(`SELECT DISTINCT i.report_id FROM report_instructions i JOIN reports r ON r.id = i.report_id AND r.deleted_at IS NULL
     WHERE i.status = 'queued' AND NOT EXISTS (SELECT 1 FROM report_instructions a WHERE a.report_id = i.report_id AND a.status IN ('running','proposed'))`).all() as Array<{ report_id: string }>;
   for (const { report_id } of waiting) {
@@ -282,6 +368,17 @@ export function failInstructionsAtBoot(): number {
   const at = now();
   return db.query("UPDATE report_instructions SET status = 'failed', error = 'The server restarted during the edit', finished_at = ?, updated_at = ? WHERE status = 'running'").run(at, at).changes;
 }
+
+/**
+ * Moving a report to the Bin stops its work (review L4): queued instructions are cancelled, a running
+ * edit and a running generation are stopped.
+ */
+onReportBinned((reportId) => {
+  const at = now();
+  db.query("UPDATE report_instructions SET status = 'cancelled', error = 'The report was moved to the Bin', finished_at = ?, updated_at = ? WHERE report_id = ? AND status = 'queued'").run(at, at, reportId);
+  for (const entry of liveEdits()) if (entry.reportId === reportId) cancelLiveEdit(entry.instructionId);
+  for (const entry of liveGenerations()) if (entry.reportId === reportId) entry.controller.abort("stop");
+});
 
 export const INSTRUCTION_SWEEP_MS = 5_000;
 let timer: ReturnType<typeof setInterval> | null = null;

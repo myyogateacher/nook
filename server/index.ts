@@ -53,6 +53,7 @@ import { roleHasReports } from "./reports/access";
 import { abandonRunsAtBoot } from "./reports/refresh";
 import { startReportScheduler } from "./reports/scheduler";
 import { failInstructionsAtBoot, startInstructionSweep } from "./reports/instructions";
+import { backfillVersions } from "./reports/versionBackfill";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
@@ -1142,6 +1143,8 @@ abandonRunsAtBoot();
 startReportScheduler();
 // Wave 48: instructions a stopped server left running fail; queued ones start when their report is free.
 try { failInstructionsAtBoot(); } catch (error) { console.error("Report instruction boot check failed", errorClass(error)); }
+// Reports generated before wave 48 recorded generations: their current spec becomes a version (idempotent).
+try { backfillVersions(); } catch (error) { console.error("Report version backfill failed", errorClass(error)); }
 startInstructionSweep();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
 startServerHeartbeat();

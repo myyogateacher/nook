@@ -6,6 +6,8 @@ import type { DatasourceRow } from "./datasources";
 import { asReportError, ReportError } from "./errors";
 import { runGuarded } from "./runner";
 import { parseSpec } from "./service";
+import { backfillVersion } from "./versionBackfill";
+import { nextVersion } from "./versionNumbers";
 
 /**
  * Checking a spec the generation agent submits (plan wave 46, D425), before anything is saved:
@@ -27,11 +29,13 @@ const format = z.enum(VALUE_FORMATS);
 const base = { id: z.string().regex(BLOCK_ID, "must match [a-z0-9][a-z0-9_-]{0,39}"), title: z.string().max(REPORT_LIMITS.blockTitle).optional() };
 const queryKey = z.string().regex(QUERY_KEY, "must match [a-z][a-z0-9_]{0,39}");
 
+// Strict (wave 48 review H1): a field the vocabulary does not name (html, style, a formatter, a note)
+// is refused, never stripped and never saved.
 const blockSchema = z.discriminatedUnion("type", [
-  z.object({ ...base, type: z.literal("markdown"), markdown: z.string().min(1).max(REPORT_LIMITS.markdown) }),
-  z.object({ ...base, type: z.literal("kpi"), queryKey, column, format: format.optional(), compareColumn: column.optional(), label: z.string().max(REPORT_LIMITS.blockTitle).optional() }),
-  z.object({ ...base, type: z.literal("chart"), queryKey, kind: z.enum(CHART_KINDS), x: column, y: z.array(column).min(1).max(REPORT_LIMITS.chartSeries), series: column.optional(), format: format.optional() }),
-  z.object({ ...base, type: z.literal("table"), queryKey, columns: z.array(column).max(REPORT_LIMITS.tableColumns).optional(), formats: z.record(z.string(), format).optional() })
+  z.object({ ...base, type: z.literal("markdown"), markdown: z.string().min(1).max(REPORT_LIMITS.markdown) }).strict(),
+  z.object({ ...base, type: z.literal("kpi"), queryKey, column, format: format.optional(), compareColumn: column.optional(), label: z.string().max(REPORT_LIMITS.blockTitle).optional() }).strict(),
+  z.object({ ...base, type: z.literal("chart"), queryKey, kind: z.enum(CHART_KINDS), x: column, y: z.array(column).min(1).max(REPORT_LIMITS.chartSeries), series: column.optional(), format: format.optional() }).strict(),
+  z.object({ ...base, type: z.literal("table"), queryKey, columns: z.array(column).max(REPORT_LIMITS.tableColumns).optional(), formats: z.record(z.string(), format).optional() }).strict()
 ]);
 const querySchema = z.object({ key: queryKey, sql: z.string().trim().min(1).max(REPORT_LIMITS.sqlChars), purpose: z.string().max(REPORT_LIMITS.purpose).default("") });
 export const specSchema = z.object({
@@ -213,7 +217,11 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     const current = db.query("SELECT spec_json FROM reports WHERE id = ? AND deleted_at IS NULL").get(input.reportId) as { spec_json: string } | null;
     if (!current) throw new PersistRefused("REPORT_GONE");
     if (!db.query("SELECT 1 FROM report_runs WHERE id = ? AND report_id = ? AND status = 'running'").get(input.runId, input.reportId)) throw new PersistRefused("RUN_NOT_RUNNING");
-    const version = nextSpecVersion(current.spec_json);
+    // Wave 48 (review M2): the version comes from report_versions, and the generated spec is recorded
+    // as a `generate` version in this same transaction, so versions and block provenance agree. A spec
+    // saved before wave 48 is recorded first (the idempotent backfill), so regenerating never loses it.
+    backfillVersion(input.reportId);
+    const version = nextVersion(input.reportId, parseSpec(current.spec_json));
     const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId };
     const spec: ReportSpec = { version: 1, queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
     const specJson = JSON.stringify(spec);
@@ -233,6 +241,8 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     }
     const ran = db.query("UPDATE report_runs SET status = 'succeeded', finished_at = ?, lease_until = NULL, error = NULL WHERE id = ? AND status = 'running'").run(at, input.runId);
     if (ran.changes !== 1) throw new PersistRefused("RUN_NOT_RUNNING");
+    db.query("INSERT INTO report_versions (report_id, version, spec_json, source, run_id, created_by, created_at) VALUES (?, ?, ?, 'generate', ?, (SELECT owner_id FROM reports WHERE id = ?), ?)")
+      .run(input.reportId, version, specJson, input.runId, input.reportId, at);
     const saved = db.query(`UPDATE reports SET spec_json = ?, status = 'ready', doc_hash = COALESCE(?, doc_hash), last_run_at = ?, last_error = NULL, revision = revision + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL`)
       .run(specJson, input.docHash, at, at, input.reportId);
     if (saved.changes !== 1) throw new PersistRefused("REPORT_GONE");

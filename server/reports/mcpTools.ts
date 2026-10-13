@@ -14,7 +14,12 @@ import { addInstruction, applyProposal, getInstruction, proposalView, rejectProp
 import { manualEdit } from "./manualEdit";
 import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
-import { listReports, parseSpec } from "./service";
+import { listReports, parseSpec as parseStoredSpec } from "./service";
+import { knownSpec } from "./specCheck";
+import type { ReportSpec } from "../../shared/reports";
+
+/** The spec as tools show it: only the fields the vocabulary names (review H1). */
+const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json));
 
 /**
  * MCP tools for analytics reports (plan "MCP, sharing and docs"; D420 wave 45, D457 wave 48).
@@ -159,7 +164,10 @@ export const reportTools: McpToolSpec[] = [
     access: { mode: "items", items: reportItem, related: ["runId"] },
     write: false,
     inputSchema: z.object({ reportId, runId: z.string().uuid().describe("The run id (from refresh_report or create_report)") }),
-    handler: ({ reportId: id, runId }, key) => asOwner(key, () => ({ run: reportRun(id, runId, key.userId) }))
+    handler: ({ reportId: id, runId }, key) => asOwner(key, () => {
+      const run = reportRun(id, runId, key.userId);
+      return { run: readableReport(id, key.userId).owner_id === key.userId ? run : { ...run, docSnapshotId: null, agentRunId: null } };
+    })
   }),
   defineTool({
     name: "get_report_instruction",

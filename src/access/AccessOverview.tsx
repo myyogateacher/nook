@@ -72,6 +72,13 @@ export function AccessOverview({ summary, loadPage, actions, reloadKey = 0, busy
     })}
     {summary.vaults && summary.vaults.length > 0 && <VaultSection rows={summary.vaults} actions={actions} busy={busy} />}
     {summary.chat && summary.chat.length > 0 && <ChatSection rows={summary.chat} actions={actions} busy={busy} />}
+    {summary.reports && summary.reports.length > 0 && <section className="team-card ma-module" aria-labelledby="ma-module-reports">
+      <h3 id="ma-module-reports">Reports</h3>
+      <p className="team-muted">The owner changes who sees a report from its Share sheet.</p>
+      <ul className="group-item-list" aria-label="Report access">
+        {summary.reports.map((row, index) => <AccessRowItem key={`${row.id ?? "hidden"}-${index}`} row={row} busy={busy} />)}
+      </ul>
+    </section>}
   </div>;
 }
 

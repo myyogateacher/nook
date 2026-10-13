@@ -5,10 +5,11 @@ import { INSTRUCTION_LIMITS, type BlockChange, type PatchOp, type QueryChange, t
 /**
  * Patches to a report spec (plan wave 48, D451): the edit agent's `submit_patch` and the owner's manual
  * edits. Ops work on whole block objects: `add_block` inserts the object as given, `update_block` merges
- * a partial into the block, so block fields this file does not know (a later spec version's) pass
- * through untouched. A patch is applied to a copy; the whole result is then checked like a submitted
- * spec (specValidate.ts: shape, references, guard, execution, columns) before anything is proposed or
- * saved. Provenance is Nook's: a patch can neither set nor clear it.
+ * a partial into the block; this file names no block fields, so it follows the vocabulary as it grows.
+ * A patch is applied to a copy; the whole result is then checked like a submitted spec (specValidate.ts:
+ * a strict shape, references, guard, execution, columns), and only the validated spec is proposed or
+ * saved (review H1: a field the vocabulary does not name is refused). Provenance is Nook's: a patch can
+ * neither set nor clear it.
  */
 
 const objectArg = z.record(z.string(), z.unknown());
@@ -168,9 +169,16 @@ function unmovedIds(before: string[], after: string[]): Set<string> {
   return kept;
 }
 
+/** JSON with object keys sorted, so a validated copy (keys in the schema's order) compares equal to its source. */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).filter((key) => (value as Record<string, unknown>)[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
 const withoutProvenance = (block: ReportBlock) => {
   const { provenance: _provenance, ...rest } = block as ReportBlock & Record<string, unknown>;
-  return JSON.stringify(rest);
+  return stableJson(rest);
 };
 
 /** What a patch changed: blocks added, updated (content or the SQL of their query), removed, or moved; queries added, updated, removed. */

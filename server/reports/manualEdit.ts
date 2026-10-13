@@ -7,6 +7,7 @@ import { applyPatch, changedQueryKeys, diffSpecs, opsSummary, parsePatch, withou
 import { takeRunLock } from "./refresh";
 import { parseSpec } from "./service";
 import { checkSpecShape, validateSpec } from "./specValidate";
+import { forValidation, reattach } from "./specCheck";
 import { commitSpec, refuseWhileRunning } from "./versions";
 
 /**
@@ -32,9 +33,10 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
 
   if (!changed.size) {
     refuseWhileRunning(reportId);
-    const shape = checkSpecShape(spec);
+    const shape = checkSpecShape(forValidation(spec));
     if (!shape.ok) throw new ReportError(400, "INVALID", shape.errors[0] ?? "The change is not valid", { details: shape.errors });
-    const saved = commitSpec({ reportId, userId, spec, source: "manual", expectedRevision: input.expectedRevision });
+    // Review H1: only the validated spec is saved (provenance and authors put back by id and key).
+    const saved = commitSpec({ reportId, userId, spec: reattach(shape.spec, spec), source: "manual", expectedRevision: input.expectedRevision });
     audit(userId, null, "reports.spec.manual", { reportId, version: saved.version, ops: opsSummary(parsed.patch.ops), ...keyMeta });
     return { version: saved.version, revision: saved.revision };
   }
@@ -45,7 +47,7 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
   const finish = (status: "succeeded" | "failed", error: string | null) =>
     db.query("UPDATE report_runs SET status = ?, error = ?, finished_at = ?, lease_until = NULL WHERE id = ? AND status = 'running'").run(status, error?.slice(0, 1000) ?? null, now(), run.id);
   try {
-    const check = await validateSpec(datasource, spec, { userId, runId: run.id, signal: via.signal });
+    const check = await validateSpec(datasource, forValidation(spec), { userId, runId: run.id, signal: via.signal });
     if (!check.ok) {
       finish("failed", check.errors[0] ?? "The change did not pass the checks");
       throw new ReportError(400, "INVALID", check.errors[0] ?? "The change did not pass the checks", { details: check.errors });
@@ -53,7 +55,7 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
     const results = new Map([...check.results].filter(([key]) => changed.has(key)));
     const stamp = new Set(diff.blocks.filter((change) => change.change === "added" || change.change === "updated").map((change) => change.blockId));
     const saved = db.transaction(() => {
-      const committed = commitSpec({ reportId, userId, spec, source: "manual", expectedRevision: input.expectedRevision, runId: run.id, stamp, results });
+      const committed = commitSpec({ reportId, userId, spec: reattach(check.spec, spec), source: "manual", expectedRevision: input.expectedRevision, runId: run.id, stamp, results });
       finish("succeeded", null);
       return committed;
     })();

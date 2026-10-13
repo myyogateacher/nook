@@ -4,8 +4,9 @@
  * owned by the spec waves, so these live here; they compose its types and never change them.
  *
  * Patches work on whole block objects (or a partial of one), never on a fixed list of block fields, so
- * a block field a later spec version adds passes through an edit untouched. Pure: no server or client
- * imports.
+ * they follow the spec vocabulary as it grows; the patched spec is then validated with a strict block
+ * schema, so a field the vocabulary does not name is refused, never saved (review H1). Pure: no server
+ * or client imports.
  */
 import type { ReportBlock, ReportSpec } from "./reports";
 import type { QueryResultView } from "./reportsView";
@@ -83,7 +84,8 @@ export type ReportInstruction = {
 };
 
 export type BlockChangeKind = "added" | "updated" | "removed" | "moved";
-export type BlockChange = { blockId: string; change: BlockChangeKind; before: ReportBlock | null; after: ReportBlock | null };
+/** `textHidden`: new or changed markdown the caller (not the owner) cannot see until it is applied. */
+export type BlockChange = { blockId: string; change: BlockChangeKind; before: ReportBlock | null; after: ReportBlock | null; textHidden?: boolean };
 export type QueryChange = { key: string; change: "added" | "updated" | "removed"; before: string | null; after: string | null };
 
 /** A proposal as the review shows it: the proposed spec, what changed, and the results to draw it with. */
@@ -97,8 +99,9 @@ export type ProposalView = {
   /** The current results (the "before" side). */
   currentResults: QueryResultView[];
   summary: string | null;
-  /** The report changed since the agent started: Apply answers 409 REVISION_CONFLICT. */
+  /** Out of date (the spec, the data source, or its allowlist changed): Apply answers 409 STALE_PROPOSAL and rejects it. */
   outOfDate: boolean;
+  staleReason?: string;
 };
 
 /** GET /api/reports/:id/instructions: the thread, the caller's rights, and the auto-apply switch. */

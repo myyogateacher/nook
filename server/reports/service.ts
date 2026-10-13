@@ -79,6 +79,13 @@ export function updateReport(userId: string, id: string, patch: { title?: string
   return reportDetail(id, userId);
 }
 
+const binnedHooks = new Set<(reportId: string) => void>();
+/** Wave 48 (review L4): work on a report stops when it is binned (instructions.ts registers the edit and generation stops). */
+export function onReportBinned(hook: (reportId: string) => void) {
+  binnedHooks.add(hook);
+  return () => { binnedHooks.delete(hook); };
+}
+
 /** Moves a report to the Bin for 30 days (server/reports/bin.ts restores and purges it). */
 export function binReport(userId: string, id: string) {
   ownedReport(id, userId);
@@ -86,6 +93,7 @@ export function binReport(userId: string, id: string) {
   db.query("UPDATE reports SET deleted_at = ?, deleted_by = ?, purge_after = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .run(at.toISOString(), userId, purgeAfterFrom(at), at.toISOString(), id);
   audit(userId, null, "reports.report.bin", { id });
+  for (const hook of binnedHooks) { try { hook(id); } catch (error) { console.error("Reports: a Bin hook failed", error instanceof Error ? error.name : "Error"); } }
   return { ok: true as const, purgeAfter: purgeAfterFrom(at) };
 }
 

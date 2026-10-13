@@ -68,6 +68,7 @@
 .report-diff-side { display: grid; gap: 4px; min-width: 0; }
 .report-diff-label { font-size: .74rem; font-weight: 650; color: var(--report-muted); text-transform: uppercase; letter-spacing: .04em; }
 .report-diff-removed .report-diff-side { opacity: .7; }
+.report-diff-hidden { margin: 0; border: 1px dashed var(--report-border); border-radius: 12px; padding: 12px; color: var(--report-muted); }
 @media (min-width: 761px) { .report-diff-two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .report-diff-query { display: grid; gap: 6px; }
 .report-diff-query p { margin: 0; display: flex; align-items: center; gap: 8px; }

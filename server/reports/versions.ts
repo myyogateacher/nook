@@ -3,16 +3,21 @@ import type { ReportSpec, ResultColumn } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type ReportVersion, type VersionSource } from "../../shared/reportsEdit";
 import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
-import { capRows, queryResults, runningRun, startRefresh, abandonExpiredReportRuns } from "./refresh";
+import { capRows, runningRun, startRefresh, abandonExpiredReportRuns } from "./refresh";
 import { parseSpec } from "./service";
+import { usableDatasource } from "./datasources";
+import { assertRunnableNow } from "./specCheck";
+import { backfillVersion } from "./versionBackfill";
+import { nextVersion } from "./versionNumbers";
 
 /**
  * Spec versions (plan wave 48, D452): every spec a report has had is a `report_versions` row, numbered
  * per report. Apply, restore, and manual edits write their row here, in the same transaction that
- * changes `reports.spec_json`. A generation's spec (generate.ts writes it) is recorded by
- * ensureVersionRecorded: before any of those writes, before a regeneration starts (routes.ts), and
- * when the list is read. Restoring a version makes a new version with that spec (nothing is rewritten), then refreshes
- * the queries whose last result is not of the restored SQL. At most 100 versions are kept per report.
+ * changes `reports.spec_json`; a generation's is written by persistGenerated in its own save
+ * (review M2). Specs saved before wave 48 are recorded by the idempotent backfill (versionBackfill.ts:
+ * at boot, and inside each write). Restoring a version re-checks it against the data source as it is
+ * now, makes a new version with that spec (nothing is rewritten), and re-runs every restored query.
+ * At most 100 versions are kept per report.
  */
 
 /** A query result to save with a spec (a validated run's outcome, or a proposal's stored copy). */
@@ -23,32 +28,7 @@ export type SavedOutcome = {
 
 type VersionRow = { report_id: string; version: number; spec_json: string; source: VersionSource; instruction_id: string | null; restored_from: number | null; run_id: string | null; note: string | null; created_by: string | null; created_at: string; author: string | null };
 
-export const maxProvenanceVersion = (spec: ReportSpec) => Math.max(0, ...spec.blocks.map((block) => block.provenance?.version ?? 0));
-
-/** The next version number: past every version row and every block's stamped version. */
-export function nextVersion(reportId: string, current: ReportSpec): number {
-  const row = db.query("SELECT max(version) AS version FROM report_versions WHERE report_id = ?").get(reportId) as { version: number | null };
-  return Math.max(row.version ?? 0, maxProvenanceVersion(current)) + 1;
-}
-
-const latestVersion = (reportId: string) => db.query("SELECT version, spec_json FROM report_versions WHERE report_id = ? ORDER BY version DESC LIMIT 1").get(reportId) as { version: number; spec_json: string } | null;
-
-
-/** Records the current spec as a version when no version holds it (a report from before 052's backfill, or a missed write). */
-export function ensureVersionRecorded(reportId: string) {
-  const report = db.query("SELECT spec_json, owner_id, updated_at FROM reports WHERE id = ?").get(reportId) as { spec_json: string; owner_id: string; updated_at: string } | null;
-  if (!report) return;
-  const spec = parseSpec(report.spec_json);
-  if (!spec.blocks.length) return;
-  const latest = latestVersion(reportId);
-  if (latest?.spec_json === report.spec_json) return;
-  // Numbered from the spec's own stamp (a generation stamps its blocks), and always past every row.
-  const version = Math.max((latest?.version ?? 0) + 1, maxProvenanceVersion(spec), 1);
-  const run = db.query("SELECT id FROM report_runs WHERE report_id = ? AND kind = 'generate' AND status = 'succeeded' ORDER BY started_at DESC, rowid DESC LIMIT 1").get(reportId) as { id: string } | null;
-  // A spec nothing else wrote is a generation's (or, with no generation, the report's first seed).
-  db.query("INSERT INTO report_versions (report_id, version, spec_json, source, run_id, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(reportId, version, report.spec_json, latest || run ? "generate" : "initial", run?.id ?? null, report.owner_id, report.updated_at);
-}
+export { maxProvenanceVersion, nextVersion } from "./versionNumbers";
 
 export function pruneVersions(reportId: string) {
   db.query(`DELETE FROM report_versions WHERE report_id = ? AND version NOT IN (
@@ -87,7 +67,7 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
     const report = db.query("SELECT spec_json, revision, status FROM reports WHERE id = ? AND deleted_at IS NULL").get(input.reportId) as { spec_json: string; revision: number; status: string } | null;
     if (!report) throw new ReportError(404, "NOT_FOUND", "Report not found");
     if (input.expectedRevision !== undefined && report.revision !== input.expectedRevision) throw new ReportError(409, "REVISION_CONFLICT", "This report changed since; reload it", { revision: report.revision });
-    ensureVersionRecorded(input.reportId);
+    backfillVersion(input.reportId);
     const version = nextVersion(input.reportId, parseSpec(report.spec_json));
     const at = now();
     const provenance = { runId: input.runId ?? null, instructionId: input.instructionId ?? null, version, docSnapshotId: input.docSnapshotId ?? null };
@@ -140,7 +120,6 @@ const VERSION_SELECT = "SELECT v.*, u.display_name AS author FROM report_version
 /** The report's versions, newest first (anyone who can read the report). */
 export function listVersions(reportId: string, userId: string): ReportVersion[] {
   const report = readableReport(reportId, userId);
-  if (report.owner_id === userId) ensureVersionRecorded(reportId);
   const rows = db.query(`${VERSION_SELECT} WHERE v.report_id = ? ORDER BY v.version DESC`).all(reportId) as VersionRow[];
   const latest = rows[0]?.version ?? 0;
   return rows.map((row) => versionView(row, report.spec_json, latest));
@@ -163,20 +142,24 @@ export function refuseWhileRunning(reportId: string) {
 }
 
 /**
- * Restore (the owner): the version's spec becomes a new version (`restore`, naming the one it came
- * from). Queries whose last result is not of the restored SQL are refreshed right after (best effort).
+ * Restore (the owner): the version is checked against the data source as it is now (review H2: on,
+ * its shape, every query a SELECT on the current allowlist; 409 `STALE_VERSION` otherwise), becomes a
+ * new version (`restore`, naming the one it came from), and every restored query runs again at once:
+ * old rows are never taken as the restored version's results.
  */
 export function restoreVersion(userId: string, reportId: string, version: number, via: { keyId?: string } = {}): { version: number; refreshRunId: string | null } {
-  ownedReport(reportId, userId);
+  const report = ownedReport(reportId, userId);
   refuseWhileRunning(reportId);
   const row = db.query("SELECT spec_json FROM report_versions WHERE report_id = ? AND version = ?").get(reportId, version) as { spec_json: string } | null;
   if (!row) throw new ReportError(404, "NOT_FOUND", "Version not found");
   const spec = parseSpec(row.spec_json);
   if (!spec.blocks.length) throw new ReportError(400, "INVALID", "That version has no blocks");
+  const datasource = usableDatasource(report.datasource_id);
+  assertRunnableNow(datasource, spec, "STALE_VERSION");
   const saved = commitSpec({ reportId, userId, spec, source: "restore", restoredFrom: version });
   audit(userId, null, "reports.version.restore", { reportId, from: version, version: saved.version, ...(via.keyId ? { via: "mcp", keyId: via.keyId } : {}) });
   let refreshRunId: string | null = null;
-  if (queryResults(reportId, saved.spec).some((view) => !view.result || view.stale)) {
+  if (saved.spec.queries.length) {
     try { refreshRunId = startRefresh(userId, reportId, { trigger: via.keyId ? "mcp" : "user" }).run.id; } catch { /* the owner can refresh by hand */ }
   }
   return { version: saved.version, refreshRunId };

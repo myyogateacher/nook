@@ -81,12 +81,13 @@ export function ProposalSheet({ report, instructionId, instruction, canApply, on
       {!proposal && !error && <p className="reports-loading" role="status">Loading the proposal…</p>}
       {proposal && <>
         {proposal.summary && <p className="report-proposal-summary">{proposal.summary}</p>}
-        {proposal.outOfDate && <p className="report-proposal-stale" role="note"><TriangleAlert aria-hidden="true" />The report changed since this was proposed. Reject it and ask again.</p>}
+        {proposal.outOfDate && <p className="report-proposal-stale" role="note"><TriangleAlert aria-hidden="true" />{proposal.staleReason ?? "The report changed since this was proposed"}. It is rejected when the queue moves on; ask again.</p>}
         {proposal.blocks.map((change) => <section key={change.blockId} className={`report-diff-block report-diff-${change.change}`} aria-label={`${CHANGE_TEXT[change.change]}: ${change.after?.title ?? change.before?.title ?? change.blockId}`}>
           <h3><span className="reports-status">{CHANGE_TEXT[change.change]}</span>{change.after?.title ?? change.before?.title ?? change.blockId}</h3>
           <div className={`report-diff-sides${change.before && change.after && change.change !== "moved" ? " report-diff-two" : ""}`}>
             {change.before && change.change !== "moved" && <div className="report-diff-side"><span className="report-diff-label">Before</span><BlockPreview block={change.before} results={before} palette={palette} /></div>}
-            {change.after && <div className="report-diff-side"><span className="report-diff-label">{change.change === "added" ? "New" : change.change === "moved" ? "Here now" : "After"}</span><BlockPreview block={change.after} results={after} palette={palette} /></div>}
+            {change.after && <div className="report-diff-side"><span className="report-diff-label">{change.change === "added" ? "New" : change.change === "moved" ? "Here now" : "After"}</span>
+              {change.textHidden ? <p className="report-diff-hidden">The new text is shown to the report's owner, who reviews it; you see it once it is applied.</p> : <BlockPreview block={change.after} results={after} palette={palette} />}</div>}
           </div>
         </section>)}
         {proposal.queries.length > 0 && <section className="report-diff-block" aria-label="Queries">

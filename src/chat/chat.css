@@ -448,3 +448,8 @@
   .chat-app.chat-detail-open .chat-pane { flex: 1 0 auto; }
   .chat-app .chat-pane .chat-thread-header, .chat-app .chat-pane .chat-composer { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
 }
+/* Wave 48b: Settings → AI → policy, the report generation model. */
+.ai-report-model { display: grid; gap: 8px; margin: 4px 0 0; border: 0; padding: 0; min-width: 0; }
+.ai-report-model legend { padding: 0; margin-bottom: 4px; }
+.ai-report-model p { margin: 0; }
+.ai-report-model input:not([type]) { min-height: 44px; border: 1px solid var(--field-border); border-radius: var(--field-radius); padding: 0 12px; background: var(--field-bg); color: #ededee; font-size: var(--field-font-size); outline: 0; }

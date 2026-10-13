@@ -14,12 +14,12 @@ mock.module("../src/reports/charts", () => ({
   }
 }));
 
-const { buildChartOption, CHART_PALETTES, formatValue, optionJson, toNumber, axisLabel, MAX_CHART_SERIES } = await import("../src/reports/chartOption");
+const { buildChartOption, chartTheme, formatValue, optionJson, toNumber, axisLabel, MAX_CHART_SERIES } = await import("../src/reports/chartOption");
 const { ReportView } = await import("../src/reports/ReportView");
-const { InspectSheet, blockMapping, docLink } = await import("../src/reports/InspectSheet");
+const { InspectSheet, AutoFixes, blockMapping, docLink } = await import("../src/reports/InspectSheet");
 const { createInspectTabHistory, inspectMark: inspectMarkOf } = await import("../src/reports/inspectHistory");
 type InspectTab = import("../src/reports/inspectHistory").InspectTab;
-const { themedPalette } = await import("../src/reports/chartOption");
+const { paletteFor } = await import("../src/reports/chartOption");
 const { kpiValue } = await import("../src/reports/KpiTile");
 const { toCsv, runLabel, timeAgo } = await import("../src/reports/reportViewApi");
 const { scheduleBadge, scheduleForm, scheduleInput } = await import("../src/reports/ScheduleSheet");
@@ -45,14 +45,15 @@ const result = (key: string, runId = "11111111-1111-4111-8111-111111111111", cre
 };
 const failedResult = (key: string): ReportResult => ({ ...result(key, "22222222-2222-4222-8222-222222222222", "2026-10-13T09:00:00.000Z"), sentSql: null, columns: [], rows: [], rowCount: 0, rowsRead: null, ms: 5, error: "Memory limit exceeded", errorCode: "CLICKHOUSE" });
 const chart = (overrides: Partial<ChartBlock> = {}): ChartBlock => ({ ...(spec.blocks.find((block) => block.id === "daily-line") as ChartBlock), ...overrides });
-const dark = CHART_PALETTES.dark;
+const dark = chartTheme("dark");
+const lightTheme = chartTheme("light");
 
 describe("chart options", () => {
   test("a line chart: categories from x, one series per y, numbers from ClickHouse strings, the palette, a legend for two series", () => {
     const built = buildChartOption(chart(), result("daily"), dark);
     expect(built.problems).toEqual([]);
     const option = built.option!;
-    expect(option.color).toEqual(dark.series);
+    expect(option.color).toEqual(dark.series.slice(0, 2));
     expect((option.xAxis as { data: string[] }).data[0]).toBe("2026-10-01");
     const series = option.series as Array<{ type: string; name: string; data: number[] }>;
     expect(series.map((item) => [item.type, item.name])).toEqual([["line", "revenue"], ["line", "refunds"]]);
@@ -113,16 +114,16 @@ describe("chart options", () => {
     expect(formatter([{ seriesName: "y", name: "a", value: 1, color: "url(javascript:alert(1))" }])).not.toContain("javascript");
   });
 
-  test("both palettes are eight fixed hues with their own text tokens", () => {
-    for (const palette of [CHART_PALETTES.dark, CHART_PALETTES.light]) {
-      expect(palette.series.length).toBe(8);
-      expect(new Set(palette.series).size).toBe(8);
-      expect(palette.text).not.toBe(palette.surface);
+  test("both themes are eight fixed hues with their own ink tokens", () => {
+    for (const theme of [dark, lightTheme]) {
+      expect(theme.series.length).toBe(8);
+      expect(new Set(theme.series).size).toBe(8);
+      expect(theme.ink.ink).not.toBe(theme.ink.surface);
     }
-    expect(CHART_PALETTES.light.text).not.toBe(CHART_PALETTES.dark.text);
-    const light = buildChartOption(chart(), result("daily"), CHART_PALETTES.light).option!;
-    expect(light.color).toEqual(CHART_PALETTES.light.series);
-    expect((light.textStyle as { color: string }).color).toBe(CHART_PALETTES.light.text);
+    expect(lightTheme.ink.ink).not.toBe(dark.ink.ink);
+    const light = buildChartOption(chart(), result("daily"), lightTheme).option!;
+    expect(light.color).toEqual(lightTheme.series.slice(0, 2));
+    expect((light.textStyle as { color: string }).color).toBe(lightTheme.ink.ink);
   });
 
   test("values and formats", () => {
@@ -142,7 +143,8 @@ describe("chart options", () => {
 describe("KPI tiles and helpers", () => {
   test("the first row's column, and the change against the compare column", () => {
     const block = spec.blocks.find((item) => item.id === "kpi-revenue") as KpiBlock;
-    expect(kpiValue(block, result("totals"))).toMatchObject({ problem: null, text: "48,210.50", change: { direction: "up", text: "+9.3%" } });
+    // Wave 48b: the value is compacted (12.9K); the full value is its title.
+    expect(kpiValue(block, result("totals"))).toMatchObject({ problem: null, text: "48.2K", full: "48,210.50", change: { direction: "up", text: "+9.3%", tone: "good" } });
     expect(kpiValue({ ...block, column: "missing" }, result("totals")).problem).toContain("no column");
     expect(kpiValue(block, { columns: result("totals").columns, rows: [] }).problem).toContain("no rows");
   });
@@ -197,7 +199,8 @@ describe("the report view (ECharts mocked)", () => {
     drawn.length = 0;
     const markup = await html(<ReportView report={report} canWrite initial={initial} />);
     expect(markup).toContain("<strong>net of refunds</strong>");
-    expect(markup).toContain("48,210.50");
+    expect(markup).toContain("48.2K");
+    expect(markup).toContain('title="48,210.50"');
     expect(markup).toContain("+9.3%");
     expect(markup).toContain("1,312");
     // Two charts drawn by the mocked ECharts, from Nook's options.
@@ -214,7 +217,10 @@ describe("the report view (ECharts mocked)", () => {
     expect(markup.match(/aria-label="How was [^"]+ built"/g)?.length).toBe(5);
     expect(markup.match(/aria-label="More for [^"]+"/g)?.length).toBe(5);
     expect(markup).toContain("Refresh all");
-    expect(markup).toContain("report-block-wide");
+    // Wave 48b layout: the narrative, the KPI strip, then the blocks in their width slots.
+    expect(markup).toContain("report-kpi-strip");
+    expect(markup).toContain("report-w-full");
+    expect(markup).toContain("report-w-half");
     // A viewer gets no Refresh all.
     expect(await html(<ReportView report={report} canWrite={false} initial={initial} />)).not.toContain("Refresh all");
   });
@@ -267,6 +273,19 @@ describe("the inspect sheet", () => {
     expect(markup).toContain("ƒ axis:currency");
     expect(blockMapping(spec.blocks.find((item) => item.id === "kpi-revenue") as KpiBlock)).toEqual({ revenue: "value", revenue_prev: "compare" });
     expect(blockMapping({ ...(spec.blocks.find((item) => item.id === "recent-table") as TableBlock), columns: ["country"] })).toEqual({ country: "shown" });
+  });
+
+  test("Mapping lists the auto-fixes: recorded at save, then this build's, one line per rule (wave 48b)", () => {
+    const folded = { ...block, kind: "bar" as const, x: "country", y: ["revenue"], queryKey: "by_country", autoFixes: [{ rule: "fold_categories" as const, detail: "9 of 24 categories folded into \"Other\" (top 15 kept)" }] };
+    const markup = renderToStaticMarkup(<InspectSheet {...props} block={folded} query={spec.queries.find((item) => item.key === "by_country")} view={views[2]} initialTab="mapping" />);
+    expect(markup).toContain("Auto-fixed: Categories folded");
+    expect(markup).toContain("9 of 24 categories folded into &quot;Other&quot; (top 15 kept)");
+    expect(markup).toContain("intent · width");
+    const both = renderToStaticMarkup(<AutoFixes recorded={[{ rule: "sort", detail: "saved" }]} live={[{ rule: "sort", detail: "live" }, { rule: "compact", detail: "Numbers compacted" }]} />);
+    expect(both).toContain("Auto-fixed: Sorted, Compacted");
+    expect(both.match(/Sorted:/g)?.length).toBe(1);
+    expect(both).toContain("saved");
+    expect(renderToStaticMarkup(<AutoFixes recorded={[]} live={[]} />)).toBe("");
   });
 
   test("Provenance: the run, the doc snapshot, the doc link, the instruction, and the version", () => {
@@ -419,20 +438,19 @@ describe("inspect tabs are real Back and Forward steps", () => {
 });
 
 describe("one theme source", () => {
-  test("the palette takes the scheme's hues and the page's resolved tokens; unusable values are ignored", () => {
-    const themed = themedPalette("dark", { surface: "#111113", text: "rgb(245, 245, 244)", grid: "color-mix(in srgb, red 10%, blue)", muted: "var(--muted)" });
-    expect(themed).toMatchObject({ mode: "dark", surface: "#111113", text: "rgb(245, 245, 244)", grid: CHART_PALETTES.dark.grid, muted: CHART_PALETTES.dark.muted });
-    expect(themed.series).toEqual(CHART_PALETTES.dark.series);
-    expect(themedPalette("light").series).toEqual(CHART_PALETTES.light.series);
-    expect(themedPalette("light dark").mode).toBe("dark");
-    expect(themedPalette("normal").mode).toBe("dark");
+  test("the chart theme is the scheme's mode of shared/reportTheme.ts, nothing read from the page", () => {
+    expect(paletteFor("dark")).toEqual(dark);
+    expect(paletteFor("light").series).toEqual(lightTheme.series);
+    expect(paletteFor("light dark").mode).toBe("dark");
+    expect(paletteFor("normal").mode).toBe("dark");
+    expect(paletteFor("dark", { forcedColors: true }).forcedColors).toBe(true);
   });
 
-  test("reportView.css uses the app's tokens, not literal dark colors", async () => {
+  test("reportView.css wears only the theme's variables, never a literal colour", async () => {
     const css = await Bun.file(new URL("../src/reports/reportView.css", import.meta.url)).text();
-    const rules = css.slice(css.indexOf(".report-view-toolbar"));
-    expect(rules.match(/#[0-9a-f]{3,6}\b/gi) ?? []).toEqual([]);
-    expect(css).toContain("--report-surface: var(--panel)");
+    expect(css.match(/#[0-9a-f]{3,8}\b/gi) ?? []).toEqual([]);
+    expect(css.match(/rgba?\(/gi) ?? []).toEqual([]);
+    expect(css).toContain("--report-surface: var(--rt-surface)");
     expect(css).not.toContain("data-theme");
     const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
     expect(view).toContain("new MutationObserver(update)");
@@ -449,7 +467,7 @@ describe("the report page after waves 46 and 47 merged", () => {
     expect(markup).toContain('class="report-generation"');
     expect(markup).toContain("Check doc");
     expect(markup).toContain("Regenerate");
-    expect(markup).toContain('class="report-view"');
+    expect(markup).toContain('class="report-view report-theme-dark"');
     expect(markup).toContain("Refresh all");
     expect(markup).toContain(">Schedule<");
     expect(markup.match(/aria-label="How was [^"]+ built"/g)?.length).toBe(5);

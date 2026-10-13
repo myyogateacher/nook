@@ -4,12 +4,13 @@ import { ModalDialog } from "../files/Dialog";
 import { Markdown, type RenderContext } from "../chat/markdown/render";
 import { notify } from "../ui/notify";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import type { ChartBlock, ReportBlock, ReportDetail, ReportRun } from "../../shared/reports";
+import { defaultWidth, reportLayout, type ChartBlock, type ReportBlock, type ReportDetail, type ReportResult, type ReportRun } from "../../shared/reports";
+import { reportCssVariables } from "../../shared/reportTheme";
 import type { QueryResultView, ReportResultsView, ScheduleView } from "../../shared/reportsView";
-import { buildChartOption, themedPalette, type ChartPalette } from "./chartOption";
+import { buildChartOption, paletteFor, type ChartPalette } from "./chartOption";
 import { InspectSheet, type DataBlock } from "./InspectSheet";
 import type { InspectTab } from "./inspectHistory";
-import { KpiTile } from "./KpiTile";
+import { KpiTile, type ResultLookup } from "./KpiTile";
 import { ResultTable } from "./ResultTable";
 import { getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
 import { codeOf, messageOf } from "./reportsApi";
@@ -21,46 +22,45 @@ const EChart = lazy(() => import("./charts"));
 
 const POLL_MS = 1000;
 
+/** Whether the system asks for forced colours (texture fills then stand in for hue). */
+const forcedColors = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
+
 /**
- * The chart palette from the page's one theme source (review L4): the root's `color-scheme` (what the
- * app's CSS sets, src/styles.css) picks the series steps, and the report view's own resolved tokens
- * (reportView.css, built on the app's variables) give the surface, text, grid, and tooltip colors.
+ * The chart theme from the page's one theme source (review L4, wave 48b): the root's `color-scheme`
+ * (what the app's CSS sets, src/styles.css) picks the mode; every colour then comes from that mode's
+ * tokens in shared/reportTheme.ts, the same tokens the view's CSS variables are made of.
  */
-export function readChartPalette(element: Element | null): ChartPalette {
-  if (typeof window === "undefined" || typeof getComputedStyle !== "function") return themedPalette("dark");
+export function readChartPalette(): ChartPalette {
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function") return paletteFor("dark");
   try {
-    const scheme = getComputedStyle(document.documentElement).colorScheme;
-    if (!element) return themedPalette(scheme);
-    const css = getComputedStyle(element);
-    const token = (name: string) => css.getPropertyValue(name).trim();
-    return themedPalette(scheme, {
-      surface: token("--report-surface"), text: css.color, muted: token("--report-muted"), grid: token("--report-border"),
-      axis: token("--report-border"), tooltipBg: token("--report-raised"), tooltipBorder: token("--report-border")
-    });
+    return paletteFor(getComputedStyle(document.documentElement).colorScheme, { forcedColors: forcedColors() });
   } catch {
-    return themedPalette("dark");
+    return paletteFor("dark");
   }
 }
 
-/** Re-reads the palette whenever the theme can have changed: the root's attributes or style, or the OS scheme. */
-function useChartPalette(ref: React.RefObject<HTMLElement | null>): ChartPalette {
-  const [palette, setPalette] = useState<ChartPalette>(() => readChartPalette(null));
+/** Re-reads the theme whenever it can have changed: the root's attributes or style, the OS scheme, or forced colours. */
+function useChartPalette(): ChartPalette {
+  const [palette, setPalette] = useState<ChartPalette>(() => readChartPalette());
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const update = () => setPalette((current) => {
-      const next = readChartPalette(ref.current);
-      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+      const next = readChartPalette();
+      return next.mode === current.mode && next.forcedColors === current.forcedColors ? current : next;
     });
     update();
     const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(update);
     observer?.observe(document.documentElement, { attributes: true });
     if (document.body) observer?.observe(document.body, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
-    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-    media?.addEventListener?.("change", update);
-    return () => { observer?.disconnect(); media?.removeEventListener?.("change", update); };
-  }, [ref]);
+    const media = typeof window.matchMedia === "function" ? [window.matchMedia("(prefers-color-scheme: dark)"), window.matchMedia("(forced-colors: active)")] : [];
+    media.forEach((query) => query?.addEventListener?.("change", update));
+    return () => { observer?.disconnect(); media.forEach((query) => query?.removeEventListener?.("change", update)); };
+  }, []);
   return palette;
 }
+
+/** The layout class of a block: its width slot (the grid's 12/6/1 columns follow the view's width). */
+export const widthClass = (block: ReportBlock) => `report-w-${block.width ?? defaultWidth(block)}`;
 
 const isDataBlock = (block: ReportBlock): block is DataBlock => block.type !== "markdown";
 
@@ -94,8 +94,7 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [externalLink, setExternalLink] = useState<string | null>(null);
-  const viewRef = useRef<HTMLElement>(null);
-  const palette = useChartPalette(viewRef);
+  const palette = useChartPalette();
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -180,10 +179,17 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const badge = scheduleBadge(schedule);
   const staleCount = [...results.values()].filter((item) => item.stale || (!item.result && item.failed)).length;
   const lastRun = runs.find((run) => run.status !== "running");
+  const layout = useMemo(() => reportLayout(report.spec), [report.spec]);
+  const cssVars = useMemo(() => reportCssVariables(palette.mode) as React.CSSProperties, [palette.mode]);
+  const lookup = useCallback<ResultLookup>((key) => results.get(key)?.result ?? null, [results]);
   const markdownContext = useMemo<RenderContext>(() => ({ onExternalLink: setExternalLink, onNookLink: (path) => window.location.assign(path), images: { mode: "public" } }), []);
 
+  const card = (block: DataBlock) => <DataBlockCard key={block.id} block={block} view={results.get(block.queryKey)} hasQuery={queries.has(block.queryKey)} palette={palette}
+    running={running} loaded={view !== null} lookup={lookup}
+    onInspect={() => setInspect({ blockId: block.id, tab: "query" })} onMenu={() => setMenuBlock(block.id)} />;
+
   if (!blocks.length) return null;
-  return <section ref={viewRef} className="report-view" aria-label="Report">
+  return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
     <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
         {running ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
@@ -199,16 +205,27 @@ export function ReportView({ report, canWrite, initial }: Props) {
       </div>
     </div>
     {loadError && <p className="form-error" role="alert">{loadError} <button type="button" className="secondary-button" onClick={() => { void loadResults(); }}>Try again</button></p>}
-    <div className="report-grid">
-      {blocks.map((block) => block.type === "markdown"
-        ? <article key={block.id} className="report-block report-block-wide report-block-markdown">
-          {block.title && <h3 className="report-block-title">{block.title}</h3>}
-          <div className="report-markdown"><Markdown text={block.markdown} context={markdownContext} /></div>
-        </article>
-        : <DataBlockCard key={block.id} block={block} view={results.get(block.queryKey)} hasQuery={queries.has(block.queryKey)} palette={palette}
-          running={running} loaded={view !== null}
-          onInspect={() => setInspect({ blockId: block.id, tab: "query" })} onMenu={() => setMenuBlock(block.id)} />)}
-    </div>
+    {layout.narrative.map((block) => <div key={block.id} className="report-narrative">
+      {block.title && <h2 className="report-narrative-title">{block.title}</h2>}
+      <div className="report-markdown"><Markdown text={block.markdown} context={markdownContext} /></div>
+    </div>)}
+    {layout.strip.length > 0 && <div className="report-kpi-area" role="group" aria-label="Key figures">
+      {/* The one hero figure takes its own row; the other KPIs share the strip evenly (each at least 150 px). */}
+      {layout.strip.filter((block) => block.hero).map((block) => card(block))}
+      {layout.strip.some((block) => !block.hero) && <div className="report-kpi-strip">{layout.strip.filter((block) => !block.hero).map((block) => card(block))}</div>}
+    </div>}
+    {layout.sections.map((section) => <section key={section.id ?? "_"} className="report-section" aria-label={section.title ?? undefined}>
+      {section.title && <h2 className="report-section-title">{section.title}</h2>}
+      {section.summary && <p className="report-section-summary">{section.summary}</p>}
+      <div className="report-grid">
+        {section.blocks.map((block) => block.type === "markdown"
+          ? <article key={block.id} className={`report-block report-block-markdown ${widthClass(block)}`}>
+            {block.title && <h3 className="report-block-title">{block.title}</h3>}
+            <div className="report-markdown"><Markdown text={block.markdown} context={markdownContext} /></div>
+          </article>
+          : card(block))}
+      </div>
+    </section>)}
     {menuTarget && isDataBlock(menuTarget) && <BlockMenu block={menuTarget} canWrite={canWrite} busy={Boolean(running)}
       onClose={() => setMenuBlock(null)}
       onInspect={(tab) => { setMenuBlock(null); setInspect({ blockId: menuTarget.id, tab }); }}
@@ -228,18 +245,19 @@ type CardProps = {
   palette: ChartPalette;
   running: ReportRun | null;
   loaded: boolean;
+  /** Other queries' results (KPI comparisons and sparklines). */
+  lookup?: ResultLookup;
   onInspect: () => void;
   onMenu: () => void;
 };
 
 /** One chart, KPI, or table: its title, stale/error badges, the inspect and menu buttons, and the body. */
-export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, onInspect, onMenu }: CardProps) {
+export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, lookup, onInspect, onMenu }: CardProps) {
   const result = view?.result ?? null;
   const failed = view?.failed ?? null;
   const rerunning = Boolean(running && (!running.queryKeys || running.queryKeys.includes(block.queryKey)));
   const title = block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.queryKey);
-  const wide = block.type === "table";
-  return <article className={`report-block report-block-${block.type}${wide ? " report-block-wide" : ""}`} aria-label={title}>
+  return <article className={`report-block report-block-${block.type} ${widthClass(block)}${block.type === "kpi" && block.hero ? " report-block-hero" : ""}`} aria-label={title}>
     <header className="report-block-head">
       <h3 className="report-block-title">{title}</h3>
       <span className="report-block-badges">
@@ -254,7 +272,7 @@ export function DataBlockCard({ block, view, hasQuery, palette, running, loaded,
     </header>
     <div className="report-block-body">
       {!hasQuery ? <p className="report-block-problem">This block names a query the report does not have ({block.queryKey}).</p>
-        : result ? <BlockBody block={block} result={result} palette={palette} />
+        : result ? <BlockBody block={block} result={result} palette={palette} lookup={lookup} />
           : failed ? <p className="report-block-problem"><TriangleAlert aria-hidden="true" />{failed.error ?? "The query failed"}</p>
             : <p className="report-block-empty">{loaded ? "No results yet. Refresh the report to run its queries." : "Loading…"}</p>}
     </div>
@@ -262,18 +280,18 @@ export function DataBlockCard({ block, view, hasQuery, palette, running, loaded,
   </article>;
 }
 
-function BlockBody({ block, result, palette }: { block: DataBlock; result: NonNullable<QueryResultView["result"]>; palette: ChartPalette }) {
-  if (block.type === "kpi") return <KpiTile block={block} result={result} />;
+function BlockBody({ block, result, palette, lookup }: { block: DataBlock; result: ReportResult; palette: ChartPalette; lookup?: ResultLookup }) {
+  if (block.type === "kpi") return <KpiTile block={block} result={result} lookup={lookup} />;
   if (block.type === "table") return <ResultTable columns={result.columns} rows={result.rows} show={block.columns} formats={block.formats} label={block.title ?? block.queryKey} />;
   return <ChartBody block={block} result={result} palette={palette} />;
 }
 
-function ChartBody({ block, result, palette }: { block: ChartBlock; result: NonNullable<QueryResultView["result"]>; palette: ChartPalette }) {
+function ChartBody({ block, result, palette }: { block: ChartBlock; result: ReportResult; palette: ChartPalette }) {
   const built = useMemo(() => buildChartOption(block, result, palette), [block, result, palette]);
   if (!built.option || built.problems.length) return <ul className="report-block-problem">{built.problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>;
   return <div className={`report-chart report-chart-${block.kind}`}>
-    <Suspense fallback={<div className="report-chart-canvas report-chart-loading" role="status">Loading chart…</div>}>
-      <EChart option={built.option} label={`${block.title ?? block.queryKey}: ${block.kind.replace("_", " ")} chart of ${block.y.join(", ")} by ${block.x}`} />
+    <Suspense fallback={<div className="report-chart-canvas report-chart-loading" role="status" style={{ height: built.height }}>Loading chart…</div>}>
+      <EChart option={built.option} mode={palette.mode} height={built.height} label={`${block.title ?? block.queryKey}: ${block.kind.replace("_", " ")} chart of ${block.y.join(", ")} by ${block.x}`} />
     </Suspense>
     {built.cutRows > 0 && <p className="report-block-note">Showing the first {(result.rows.length - built.cutRows).toLocaleString()} rows; the Data tab has them all.</p>}
   </div>;

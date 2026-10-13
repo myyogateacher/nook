@@ -8,7 +8,8 @@ import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, DEFAULT_BASE_URL, DEFAULT_MODEL, type AgentRole, type AgentSettings, type ProviderSummary } from "../../shared/agents";
-import { agentsStatus, createProvider, deleteProvider, listProviders, messageOf, readSettings, testProvider, updateProvider, writeSettings, errorCode, type AgentsStatus, type ProviderTest } from "./chatApi";
+import { agentsStatus, createProvider, deleteProvider, listProviders, messageOf, probeProviderTools, readSettings, testProvider, updateProvider, writeSettings, errorCode, type AgentsStatus, type ProviderTest } from "./chatApi";
+import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { ToolServersSection } from "./ToolServers";
 import { policyDraft, policyFromDraft, policySummary, ProviderKnowledgeFields } from "./ProviderKnowledgePolicy";
 import { ProviderVisionFields, visionDraft, visionFromDraft, visionSummary } from "./ProviderVisionPolicy";
@@ -39,6 +40,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProviderSummary | "new" | null>(null);
   const [tests, setTests] = useState<Record<string, ProviderTest | "running">>({});
+  const [probes, setProbes] = useState<Record<string, ToolCallingProbe | "running">>({});
   const confirm = useConfirm();
   // One title per tab, as API keys' tabs (v0.31 follow-up): "Settings · AI · Model providers · Nook". The page loads lazily, after App set it.
   useEffect(() => { document.title = settingsDocumentTitle("ai", undefined, tab); }, [tab]);
@@ -66,6 +68,18 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
     } catch (reason) {
       notify.error(messageOf(reason, "The test could not run"));
       setTests((current) => { const next = { ...current }; delete next[provider.id]; return next; });
+    }
+  }
+  /** Wave 48b: probes `required` and named tool choice and stores the answer in the provider's compat flags. */
+  async function probeTools(provider: ProviderSummary) {
+    setProbes((current) => ({ ...current, [provider.id]: "running" }));
+    try {
+      const { probe, provider: saved } = await probeProviderTools(provider.id);
+      setProbes((current) => ({ ...current, [provider.id]: probe }));
+      setProviders((current) => current?.map((item) => item.id === saved.id ? saved : item) ?? current);
+    } catch (reason) {
+      notify.error(messageOf(reason, "The tool-calling test could not run"));
+      setProbes((current) => { const next = { ...current }; delete next[provider.id]; return next; });
     }
   }
   async function remove(provider: ProviderSummary) {
@@ -114,11 +128,13 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
     <ul className="ai-providers">
       {providers?.map((provider) => {
         const result = tests[provider.id];
+        const probe = probes[provider.id];
         return <li key={provider.id} className="security-card ai-provider">
           <div className="ai-provider-head">
             <div><strong>{provider.name}</strong>{provider.isDefault && <span className="ai-badge">Default</span>}<small>{provider.baseUrl}</small></div>
             <div className="ai-provider-actions">
               <button type="button" className="secondary-button" onClick={() => { void test(provider); }} disabled={result === "running"}>{result === "running" ? "Testing…" : "Test"}</button>
+              <button type="button" className="secondary-button" onClick={() => { void probeTools(provider); }} disabled={probe === "running"}>{probe === "running" ? "Testing tools…" : "Test tool calling"}</button>
               <button type="button" className="secondary-button" onClick={() => setEditing(provider)}>Edit</button>
               {!provider.isDefault && <button type="button" className="secondary-button" onClick={() => { void makeDefault(provider); }}>Make default</button>}
               <button type="button" className="secondary-button" onClick={() => { void remove(provider); }}>Remove</button>
@@ -131,9 +147,13 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
             <div><dt>Context</dt><dd>{provider.compat.contextTokens.toLocaleString()} tokens{provider.compat.streamUsage ? "" : " · usage estimated"}</dd></div>
             <div><dt>Knowledge bases</dt><dd>{policySummary(provider.knowledge)}</dd></div>
             <div><dt>Images</dt><dd>{visionSummary(provider.vision)}</dd></div>
+            <div><dt>Tool choice</dt><dd>{toolChoiceSummary(provider.compat)}</dd></div>
           </dl>
           {result && result !== "running" && <p className={`ai-test ${result.ok ? "ok" : "failed"}`} role="status">
             {result.models.ok ? `Models: ${result.models.count} in ${result.models.latencyMs} ms.` : `Models: ${result.models.error ?? "failed"}.`} {result.completion.ok ? `Completion: ok (${result.completion.model}) in ${result.completion.latencyMs} ms.` : `Completion: ${result.completion.error ?? "failed"}.`}
+          </p>}
+          {probe && probe !== "running" && <p className={`ai-test ${probe.compat.requiredToolChoice && probe.compat.namedToolChoice ? "ok" : "failed"}`} role="status">
+            Tool calling ({probe.model}): required {probe.required.ok ? "works" : `not supported${probe.required.error ? ` (${probe.required.error})` : ""}`}; a named tool {probe.named.ok ? "works" : `not supported${probe.named.error ? ` (${probe.named.error})` : ""}`}. Saved to the provider; Nook {probe.compat.namedToolChoice ? "names the tool it needs" : probe.compat.requiredToolChoice ? "sends required with only that tool" : "asks with auto and only that tool"}.
           </p>}
         </li>;
       })}
@@ -161,7 +181,8 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     event.preventDefault();
     setBusy(true);
     try {
-      const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks, expectedRevision: settings.revision });
+      const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks,
+        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, expectedRevision: settings.revision });
       onSaved(next);
       notify.success("Policy saved");
     } catch (reason) {
@@ -181,6 +202,14 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
       <label>Agents per person<input type="number" min={1} max={500} value={draft.agentsPerUser} onChange={(event) => setDraft({ ...draft, agentsPerUser: Math.min(500, Math.max(1, Math.floor(Number(event.target.value) || 1))) })} /></label>
       <div><span className="ai-label" id="ai-default-provider">Default provider</span><Select<string> labelledBy="ai-default-provider" label="Default provider" value={draft.defaultProviderId ?? providers.find((provider) => provider.isDefault)?.id ?? null} onChange={(value) => setDraft({ ...draft, defaultProviderId: value })} options={providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.defaultModel }))} placeholder="The provider marked default" disabled={providers.length === 0} /></div>
     </div>
+    <fieldset className="ai-report-model">
+      <legend className="ai-label">Report generation model</legend>
+      <p className="chat-muted">The provider and model that write analytics reports. Chat keeps its default; a report's owner may choose another for one report.</p>
+      <div className="ai-policy-grid">
+        <div><span className="ai-label" id="ai-report-provider">Provider</span><Select<string> labelledBy="ai-report-provider" label="Report generation provider" value={draft.reportProviderId ?? ""} onChange={(value) => setDraft({ ...draft, reportProviderId: value || null })} options={[{ value: "", label: "Chat's default provider" }, ...providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.defaultModel }))]} disabled={providers.length === 0} /></div>
+        <label>Model<input value={draft.reportModel ?? ""} maxLength={AGENT_BOUNDS.model} placeholder="The provider's default model" autoComplete="off" onChange={(event) => setDraft({ ...draft, reportModel: event.target.value || null })} /><small>For example glm-5.3; empty uses the provider's default</small></label>
+      </div>
+    </fieldset>
     <label className="ai-check"><input type="checkbox" checked={draft.publicChatLinks} onChange={(event) => setDraft({ ...draft, publicChatLinks: event.target.checked })} />Allow public chat links</label>
     <p className="chat-muted">{PUBLIC_LINKS_POLICY_TEXT}</p>
     <footer className="file-dialog-actions"><button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save policy"}</button></footer>
@@ -254,4 +283,12 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
       </footer>
     </form>
   </ModalDialog>;
+}
+
+/** A provider's tool-choice flags (wave 46's compat, set by "Test tool calling", wave 48b). */
+export function toolChoiceSummary(compat: { requiredToolChoice?: boolean; namedToolChoice?: boolean }): string {
+  if (compat.namedToolChoice === false && compat.requiredToolChoice === false) return "auto only";
+  if (compat.namedToolChoice === false) return "required (no named tool)";
+  if (compat.requiredToolChoice === false) return "named tool (no required)";
+  return "required and named";
 }

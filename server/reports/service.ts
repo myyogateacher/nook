@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { purgeAfterFrom } from "../bin";
-import { EMPTY_SPEC, REPORT_LIMITS, type QueryOutcome, type ReportDetail, type ReportSpec, type ReportSummary } from "../../shared/reports";
+import { EMPTY_SPEC, REPORT_LIMITS, upgradeSpec, type QueryOutcome, type ReportDetail, type ReportSpec, type ReportSummary } from "../../shared/reports";
 import { readableReport, readableReportSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
@@ -17,10 +17,10 @@ export const REPORTS_PER_USER = 500;
 
 type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null };
 
+/** A stored spec, upgraded to v2 on read (wave 48b, `upgradeSpec`); anything unreadable is the empty spec. */
 export function parseSpec(json: string): ReportSpec {
   try {
-    const value = JSON.parse(json) as ReportSpec;
-    return value && value.version === 1 && Array.isArray(value.blocks) && Array.isArray(value.queries) ? value : EMPTY_SPEC;
+    return upgradeSpec(JSON.parse(json));
   } catch {
     return EMPTY_SPEC;
   }

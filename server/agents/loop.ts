@@ -34,7 +34,11 @@ export type ModelTool = { name: string; description: string; parameters: Record<
  * false) gets `required` with only the named tool offered, which asks for the same call.
  */
 export type ToolChoice = "auto" | "required" | { name: string };
-export type CompletionRequest = { messages: ChatTurn[]; model?: string; temperature?: number | null; maxOutputTokens?: number; tools?: ModelTool[]; toolChoice?: ToolChoice };
+export type CompletionRequest = {
+  messages: ChatTurn[]; model?: string; temperature?: number | null; maxOutputTokens?: number; tools?: ModelTool[]; toolChoice?: ToolChoice;
+  /** Wave 48b's tool-calling probe: send the choice as asked (ignore the compat flags) and never retry a 400 with `auto`. */
+  probeChoice?: boolean;
+};
 export type CompletionResult = { content: string; finishReason: string | null; usage: TokenUsage; model: string | null; toolCalls: ModelToolCall[] };
 /**
  * What a streaming call has produced so far (Wave 42 QA M2): whether the provider answered (a 2xx
@@ -223,7 +227,7 @@ export async function completeStreaming(connection: ProviderConnection, request:
     const named = typeof choice === "object" ? choice.name : null;
     const offered = named !== null ? request.tools.filter((tool) => tool.name === named) : request.tools;
     body.tools = offered.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } }));
-    body.tool_choice = toolChoiceFor(connection.compat, choice);
+    body.tool_choice = request.probeChoice ? (typeof choice === "object" ? { type: "function", function: { name: choice.name } } : choice) : toolChoiceFor(connection.compat, choice);
   }
   const send = async () => {
     try {
@@ -236,7 +240,7 @@ export async function completeStreaming(connection: ProviderConnection, request:
   let response = await send();
   // Review L2 (Wave 46): a provider that refuses `required` or a named choice with a 400 is asked once
   // more with `auto` (under a named choice only that tool is still offered, so it is the only call to make).
-  if (response.status === 400 && body.tool_choice !== undefined && body.tool_choice !== "auto") {
+  if (response.status === 400 && body.tool_choice !== undefined && body.tool_choice !== "auto" && !request.probeChoice) {
     response.cancel();
     body.tool_choice = "auto";
     response = await send();

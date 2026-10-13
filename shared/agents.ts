@@ -155,6 +155,12 @@ export type AgentSettings = {
   agentsPerUser: number;
   kbsPerUser: number;
   defaultProviderId: string | null;
+  /**
+   * Wave 48b: "Report generation model", the provider and model report generation (and wave 48's edit
+   * agent) use; null keeps chat's default. A report's owner may override it per report.
+   */
+  reportProviderId: string | null;
+  reportModel: string | null;
 };
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   createRoles: ["admin", "member"],
@@ -166,7 +172,9 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   auditRetentionDays: 30,
   agentsPerUser: 50,
   kbsPerUser: 10,
-  defaultProviderId: null
+  defaultProviderId: null,
+  reportProviderId: null,
+  reportModel: null
 };
 
 /** Concurrency (plan §2.2): per instance (env `AGENT_MAX_CONCURRENT_RUNS`), per user, per key, per chat. */

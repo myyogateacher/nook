@@ -1,3 +1,4 @@
+import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { api, ApiError, getCsrfToken, noteRequestOutcome } from "../api";
 import type { ChatAttachmentInput, ProviderVisionPolicy, AgentApiUsage, AgentProviderChoice, AuditFacets, AuditRunDetail, AuditRunSummary, AgentDetail, AgentSettings, AgentSummary, AgentToolRef, ChatDetail, ChatMessage, ChatUpdateEvent, ChatSummary, DailyUsage, DeclaredStdioServer, LinkableKey, NookLink, ProviderCompat, ProviderKnowledgePolicy, ProviderSummary, PublicLinkState, RunEvent, ServerAuthKind, ServerAvailability, ToolCatalog, ToolPolicy, ToolServerSummary } from "../../shared/agents";
 
@@ -65,6 +66,8 @@ export const updateProvider = (id: string, input: Partial<ProviderInput> & { exp
 export const deleteProvider = (id: string) => api<{ ok: true }>(`/agents/admin/providers/${id}`, { method: "DELETE", body: "{}" });
 export type ProviderTest = { ok: boolean; models: { ok: boolean; count: number | null; latencyMs: number | null; error: string | null }; completion: { ok: boolean; model: string | null; latencyMs: number | null; error: string | null } };
 export const testProvider = (id: string) => api<{ test: ProviderTest }>(`/agents/admin/providers/${id}/test`, { method: "POST", body: "{}" });
+/** Wave 48b: "Test tool calling" (stored in the provider's compat flags). */
+export const probeProviderTools = (id: string) => api<{ probe: ToolCallingProbe; provider: ProviderSummary }>(`/agents/admin/providers/${id}/test-tools`, { method: "POST", body: "{}" });
 export const providerModels = (id: string) => api<{ models: string[]; cachedAt: string }>(`/agents/admin/providers/${id}/models`);
 export type ToolServerInput = { name: string; slug?: string; url?: string | null; stdioId?: string | null; authKind?: ServerAuthKind; authHeader?: string | null; secret?: string | null; timeoutMs?: number; resultCapBytes?: number; availability?: ServerAvailability; enabled?: boolean };
 export type ToolServerList = { servers: ToolServerSummary[]; stdio: { enabled: boolean; declared: DeclaredStdioServer[] } };

@@ -233,3 +233,69 @@ describe("refresh", () => {
     expect((await send(owner, "POST", `/reports/${empty.body.report.id}/refresh`, {})).body.code).toBe("INVALID");
   });
 });
+
+describe("review fixes", () => {
+  const insertRunning = (reportId: string, startedAt: string, leaseUntil: string | null) => {
+    const id = crypto.randomUUID();
+    db.query("INSERT INTO report_runs (id, report_id, kind, trigger, status, lease_until, started_at) VALUES (?, ?, 'generate', 'user', 'running', ?, ?)").run(id, reportId, leaseUntil, startedAt);
+    return id;
+  };
+
+  test("M1: boot abandons every running row, lease or not; the sweep abandons a lease-less row after the grace period", async () => {
+    const live = await seededReport();
+    const leased = insertRunning(live, new Date().toISOString(), new Date(Date.now() + 10 * 60_000).toISOString());
+    expect(refresh.abandonRunsAtBoot()).toBeGreaterThanOrEqual(1);
+    expect(refresh.runRow(leased)).toMatchObject({ status: "abandoned", error: "The server restarted before the run finished" });
+
+    const fresh = insertRunning(live, new Date().toISOString(), null);
+    expect(refresh.abandonExpiredReportRuns(Date.now(), live)).toBe(0);
+    expect(refresh.runRow(fresh)!.status).toBe("running");
+    // A lease-less run still holds the lock until the grace period passes.
+    expect(() => refresh.startRefresh(owner.userId, live, { trigger: "user" })).toThrow("already running");
+    expect(refresh.abandonExpiredReportRuns(Date.now() + refresh.NO_LEASE_GRACE_MS + 1000, live)).toBe(1);
+    expect(refresh.runRow(fresh)!.status).toBe("abandoned");
+
+    const old = insertRunning(live, new Date(Date.now() - refresh.NO_LEASE_GRACE_MS - 60_000).toISOString(), null);
+    // The lazy check before a start frees it.
+    expect((await refresh.startRefresh(owner.userId, live, { trigger: "user" }).done).status).toBe("succeeded");
+    expect(refresh.runRow(old)!.status).toBe("abandoned");
+  });
+
+  test("M2: pruning keeps the run holding a query's newest result, so an old failure keeps its stale badge", async () => {
+    const reportId = await seededReport();
+    expect((await refresh.startRefresh(owner.userId, reportId, { trigger: "user" }).done).status).toBe("succeeded");
+    fake.state.select = (sql) => sql.includes("GROUP BY country") ? { error: "Code: 241. DB::Exception: boom. (MEMORY_LIMIT_EXCEEDED) (version 24.8.1.1)\n" } : sampleAnswer(sql);
+    const failure = await refresh.startRefresh(owner.userId, reportId, { trigger: "user", queryKey: "by_country" }).done;
+    expect(failure.status).toBe("failed");
+    for (let index = 0; index < 21; index += 1) await refresh.startRefresh(owner.userId, reportId, { trigger: "user", queryKey: "daily" }).done;
+    const kept = (db.query("SELECT id FROM report_runs WHERE report_id = ?").all(reportId) as Array<{ id: string }>).map((row) => row.id);
+    expect(kept).toContain(failure.id);
+    const country = refresh.reportResults(reportId, owner.userId).results.find((item) => item.queryKey === "by_country")!;
+    expect(country).toMatchObject({ stale: true, failed: { runId: failure.id } });
+  });
+
+  test("L6: guests get 404 on every wave 47 route; a run id from another report is refused", async () => {
+    const guest = await createUser("Refresh guest");
+    db.query("UPDATE users SET role = 'guest' WHERE id = ?").run(guest.userId);
+    const reportId = await seededReport();
+    const run = await refresh.startRefresh(owner.userId, reportId, { trigger: "user" }).done;
+    for (const path of ["results", "runs", `runs/${run.id}`, `provenance?runId=${run.id}`, "schedule"]) {
+      expect((await send(guest, "GET", `/reports/${reportId}/${path}`)).status).toBe(404);
+    }
+    // Writes: the app-wide role gate refuses a guest's mutation first (403, as everywhere), before the module's 404.
+    const put = await send(guest, "PUT", `/reports/${reportId}/schedule`, { cadence: "daily", atTime: "09:00", weekday: null, tz: "UTC", enabled: true });
+    const post = await send(guest, "POST", `/reports/${reportId}/refresh`, {});
+    expect([put.status, post.status]).toEqual([403, 403]);
+    expect(db.query("SELECT COUNT(*) AS count FROM report_schedules WHERE report_id = ?").get(reportId)).toEqual({ count: 0 });
+    expect(refresh.runningRun(reportId)).toBeNull();
+
+    const other = await seededReport("Other");
+    expect((await send(owner, "GET", `/reports/${other}/runs/${run.id}`)).status).toBe(404);
+    const crossed = await send(owner, "GET", `/reports/${other}/provenance?runId=${run.id}`);
+    expect(crossed.status).toBe(200);
+    expect(crossed.body).toEqual({ run: null, snapshot: null });
+    expect((await send(owner, "GET", `/reports/${reportId}/provenance?runId=${run.id}`)).body.run.id).toBe(run.id);
+    // Someone else's report, with a valid run id: 404.
+    expect((await send(stranger, "GET", `/reports/${reportId}/provenance?runId=${run.id}`)).status).toBe(404);
+  });
+});

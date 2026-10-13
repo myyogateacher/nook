@@ -180,6 +180,36 @@ describe("the tick", () => {
     for (const reportId of reports) expect(scheduleOf(reportId).nextDueAt).toBe("2026-03-07T14:00:00.000Z");
   });
 
+  test("a scheduled run whose data source an admin turned off counts as a failure", async () => {
+    const off = await send(admin, "POST", "/reports/admin/datasources", { name: "Schedule warehouse off", url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
+    await syncSchema(off.body.datasource.id).catch(() => undefined);
+    const report = await send(owner, "POST", "/reports", { title: "Scheduled off", datasourceId: off.body.datasource.id });
+    const reportId = report.body.report.id as string;
+    db.query("UPDATE reports SET spec_json = ? WHERE id = ?").run(JSON.stringify(sampleSpec()), reportId);
+    scheduler.saveSchedule(owner.userId, reportId, daily(), FRIDAY_NOON);
+    db.query("UPDATE report_datasources SET enabled = 0 WHERE id = ?").run(off.body.datasource.id);
+    fake.requests.length = 0;
+    const tick = scheduler.schedulerTick(Date.parse("2026-03-06T14:00:00Z"));
+    expect(tick).toMatchObject({ claimed: 1, started: 0, failed: 1 });
+    await tick.done;
+    expect(fake.requests.filter((item) => item.sql.startsWith("SELECT * FROM (")).length).toBe(0);
+    expect(scheduleOf(reportId)).toMatchObject({ failCount: 1, nextDueAt: "2026-03-07T14:00:00.000Z", enabled: true });
+    expect(refresh.listRuns(reportId, owner.userId)[0]).toMatchObject({ trigger: "schedule", status: "failed", error: "An admin turned this data source off" });
+  });
+
+  test("L5: a failure recording the outcome is logged, never an unhandled rejection", async () => {
+    const source = await Bun.file(new URL("../server/reports/scheduler.ts", import.meta.url)).text();
+    expect(source).toContain(".catch((error: unknown) => { console.error(\"Report schedule outcome could not be recorded\"");
+    const reportId = await seededReport();
+    scheduler.saveSchedule(owner.userId, reportId, daily(), FRIDAY_NOON);
+    const tick = scheduler.schedulerTick(Date.parse("2026-03-06T14:00:00Z"));
+    expect(tick.started).toBe(1);
+    // The report goes before the run ends: recording the outcome finds no schedule, and nothing throws.
+    db.query("DELETE FROM report_schedules WHERE report_id = ?").run(reportId);
+    await expect(tick.done).resolves.toBeDefined();
+    expect(scheduler.scheduledInFlight()).toBe(0);
+  });
+
   test("a report already running skips the slot without counting a failure", async () => {
     const reportId = await seededReport();
     scheduler.saveSchedule(owner.userId, reportId, daily(), FRIDAY_NOON);

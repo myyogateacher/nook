@@ -40,7 +40,8 @@ export function timeAgo(iso: string | null, nowMs = Date.now()) {
 export function toCsv(columns: readonly { name: string }[], rows: readonly (readonly unknown[])[]) {
   const cell = (value: unknown) => {
     let text = value === null || value === undefined ? "" : typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : JSON.stringify(value);
-    if (/^[=+\-@\t\r]/.test(text) && !/^-?\d+(\.\d+)?$/.test(text)) text = `'${text}`;
+    // Spreadsheets skip leading whitespace before a formula, so ` =x` is defused too; plain numbers (`-1`) stay numbers.
+    if ((/^[\t\r]/.test(text) || /^[=+\-@]/.test(text.trimStart())) && !/^[-+]?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(text)) text = `'${text}`;
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, "\"\"")}"` : text;
   };
   return [columns.map((column) => cell(column.name)).join(","), ...rows.map((row) => columns.map((_, index) => cell(row[index])).join(","))].join("\r\n") + "\r\n";

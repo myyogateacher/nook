@@ -1,31 +1,40 @@
 /* The report viewer (Wave 47): blocks in one column on a phone, two from 768 px; the inspect sheet, the block menu, and the schedule sheet. 44 px tap targets. */
 
+/*
+ * One theme source: every colour here comes from the app's tokens (src/styles.css :root) or the
+ * system colours of the root's `color-scheme` (CanvasText), never a literal. The chart palette reads
+ * the same tokens off this element (ReportView's useChartPalette), so CSS and charts always agree.
+ * The status tones are the app's yellow and red; "good" is the one tone the app has no token for.
+ */
 .report-view {
-  --report-surface: #131316;
-  --report-border: #26262b;
-  --report-text: #ededee;
-  --report-muted: #9a9aa1;
-  --report-code-bg: #0d0d0f;
-  --report-mapped: #3987e5;
+  color: var(--report-text);
+  --report-surface: var(--panel);
+  --report-raised: var(--panel-raised);
+  --report-hover: var(--panel-hover);
+  --report-border: var(--border);
+  --report-text: CanvasText;
+  --report-soft: color-mix(in srgb, CanvasText 82%, var(--panel));
+  --report-muted: var(--muted);
+  --report-faint: color-mix(in srgb, var(--muted) 70%, var(--panel));
+  --report-code-bg: var(--bg);
+  --report-accent: var(--yellow);
+  --report-accent-bg: color-mix(in srgb, var(--yellow) 12%, var(--panel));
+  --report-accent-line: var(--yellow-dim);
+  --report-bad: var(--red);
+  --report-bad-bg: color-mix(in srgb, var(--red) 14%, var(--panel));
+  --report-good: color-mix(in srgb, #22c55e 55%, CanvasText);
+  --report-mapped: color-mix(in srgb, #3987e5 80%, CanvasText);
   display: grid;
   gap: 14px;
   margin-bottom: 18px;
   min-width: 0;
-}
-:root[data-theme="light"] .report-view {
-  --report-surface: #fcfcfb;
-  --report-border: #e1e0dc;
-  --report-text: #0b0b0b;
-  --report-muted: #52514e;
-  --report-code-bg: #f3f2ef;
-  --report-mapped: #2a78d6;
 }
 
 .report-view-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .report-view-status { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--report-muted); font-size: .82rem; }
 .report-view-status > span { display: inline-flex; align-items: center; gap: 5px; }
 .report-view-status svg { width: 14px; height: 14px; }
-.report-view-running { color: #e2c46c; }
+.report-view-running { color: var(--report-accent); }
 .report-view-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-view-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .report-view-actions svg { width: 16px; height: 16px; }
@@ -41,14 +50,14 @@
 .report-block-title { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; color: var(--report-text); font-size: .95rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .report-block-markdown .report-block-title { white-space: normal; }
 .report-block-badges { display: inline-flex; align-items: center; gap: 6px; flex: none; }
-.report-block-spinner { width: 16px; height: 16px; color: #e2c46c; }
+.report-block-spinner { width: 16px; height: 16px; color: var(--report-accent); }
 .report-block-buttons { display: inline-flex; flex: none; }
 .report-block-button { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px; color: var(--report-muted); }
-.report-block-button:hover { color: var(--report-text); background: rgba(127, 127, 127, .12); }
+.report-block-button:hover { color: var(--report-text); background: var(--report-hover); }
 .report-block-button svg { width: 18px; height: 18px; }
 .report-block-body { min-width: 0; }
 .report-block-empty { margin: 0; padding: 18px 0; color: var(--report-muted); font-size: .85rem; text-align: center; }
-.report-block-problem { margin: 0; display: flex; align-items: flex-start; gap: 6px; padding: 10px 0; color: #fda4af; font-size: .85rem; overflow-wrap: anywhere; }
+.report-block-problem { margin: 0; display: flex; align-items: flex-start; gap: 6px; padding: 10px 0; color: var(--report-bad); font-size: .85rem; overflow-wrap: anywhere; }
 ul.report-block-problem { display: block; padding-left: 18px; }
 .report-block-problem svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .report-block-note { margin: 0; color: var(--report-muted); font-size: .76rem; }
@@ -62,8 +71,8 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-kpi-value { color: var(--report-text); font-size: clamp(1.7rem, 6vw, 2.2rem); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.01em; line-height: 1.15; overflow-wrap: anywhere; }
 .report-kpi-change { display: inline-flex; align-items: center; gap: 3px; color: var(--report-muted); font-size: .82rem; font-variant-numeric: tabular-nums; }
 .report-kpi-change svg { width: 16px; height: 16px; }
-.report-kpi-up svg { color: #8fd19e; }
-.report-kpi-down svg { color: #fda4af; }
+.report-kpi-up svg { color: var(--report-good); }
+.report-kpi-down svg { color: var(--report-bad); }
 .report-kpi-vs { color: var(--report-muted); }
 
 .report-chart { min-width: 0; }
@@ -75,44 +84,44 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-table-block { display: grid; gap: 8px; min-width: 0; }
 .report-table td.report-num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-table th.report-mapped, .report-table td.report-mapped { background: color-mix(in srgb, var(--report-mapped) 14%, transparent); }
-.report-role { margin-left: 6px; border-radius: 6px; padding: 0 5px; background: var(--report-mapped); color: #fff; font-size: .68rem; font-style: normal; font-weight: 700; }
+.report-role { margin-left: 6px; border-radius: 6px; padding: 0 5px; background: color-mix(in srgb, var(--report-mapped) 30%, var(--report-surface)); color: var(--report-text); font-size: .68rem; font-style: normal; font-weight: 700; }
 .report-show-all { justify-self: start; min-height: 44px; }
 
 /* The inspect sheet. */
 .report-inspect { display: flex; flex-direction: column; }
 .report-inspect-tabs { display: flex; align-items: center; gap: 4px; padding: 0 20px 8px; overflow-x: auto; scrollbar-width: none; }
-.report-inspect-tabs button[role="tab"] { min-height: 44px; flex: none; border: 1px solid transparent; border-radius: 999px; padding: 0 14px; background: transparent; color: #b8b8be; font-weight: 600; cursor: pointer; }
-.report-inspect-tabs button[role="tab"].active { border-color: #4a3f25; background: #1d1a12; color: #f3d48a; }
+.report-inspect-tabs button[role="tab"] { min-height: 44px; flex: none; border: 1px solid transparent; border-radius: 999px; padding: 0 14px; background: transparent; color: var(--report-soft); font-weight: 600; cursor: pointer; }
+.report-inspect-tabs button[role="tab"].active { border-color: var(--report-accent-line); background: var(--report-accent-bg); color: var(--report-accent); }
 .report-inspect-back { width: 44px; height: 44px; flex: none; }
 .report-inspect-back-idle { visibility: hidden; }
 .report-inspect-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 4px 20px calc(18px + env(safe-area-inset-bottom)); }
 .report-inspect-section { display: grid; gap: 10px; min-width: 0; }
-.report-inspect-purpose { margin: 0; color: #d4d4d8; }
+.report-inspect-purpose { margin: 0; color: var(--report-soft); }
 .report-inspect-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.report-inspect-head h3 { margin: 0; color: #ededee; font-size: .9rem; }
+.report-inspect-head h3 { margin: 0; color: var(--report-text); font-size: .9rem; }
 .report-copy { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
 .report-copy svg, .report-inspect-actions svg { width: 15px; height: 15px; }
-.report-code { margin: 0; max-height: 260px; overflow: auto; border-radius: 10px; padding: 10px 12px; background: #0d0d0f; color: #d4d4d8; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-code { margin: 0; max-height: 260px; overflow: auto; border-radius: 10px; padding: 10px 12px; background: var(--report-code-bg); color: var(--report-soft); font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .report-option { max-height: 420px; white-space: pre; }
 .report-facts-list { margin: 0; display: grid; gap: 6px; font-size: .84rem; }
 .report-facts-list > div { display: grid; grid-template-columns: minmax(110px, 34%) minmax(0, 1fr); gap: 10px; }
-.report-facts-list dt { color: #85858c; }
-.report-facts-list dd { margin: 0; color: #d4d4d8; overflow-wrap: anywhere; }
+.report-facts-list dt { color: var(--report-faint); }
+.report-facts-list dd { margin: 0; color: var(--report-soft); overflow-wrap: anywhere; }
 .report-facts-list dd code { margin-right: 6px; }
-.report-facts-list code.report-mapped { border-radius: 6px; padding: 1px 6px; background: color-mix(in srgb, #3987e5 22%, transparent); color: #cfe0fb; }
-.report-inspect-facts { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; color: #9a9aa1; font-size: .8rem; }
-.report-inspect-error { display: grid; gap: 4px; border-radius: 10px; padding: 10px 12px; background: #2a1519; color: #fda4af; font-size: .84rem; overflow-wrap: anywhere; }
+.report-facts-list code.report-mapped { border-radius: 6px; padding: 1px 6px; background: color-mix(in srgb, var(--report-mapped) 22%, transparent); color: var(--report-text); }
+.report-inspect-facts { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--report-muted); font-size: .8rem; }
+.report-inspect-error { display: grid; gap: 4px; border-radius: 10px; padding: 10px 12px; background: var(--report-bad-bg); color: var(--report-bad); font-size: .84rem; overflow-wrap: anywhere; }
 .report-inspect-error p { margin: 0; }
 .report-inspect-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .report-inspect-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
-.report-inspect-hint, .report-inspect-empty { margin: 0; color: #9a9aa1; font-size: .82rem; }
+.report-inspect-hint, .report-inspect-empty { margin: 0; color: var(--report-muted); font-size: .82rem; }
 
 /* The block menu and the external link sheet. */
 .report-menu-list { display: grid; gap: 4px; padding: 0 12px calc(16px + env(safe-area-inset-bottom)); }
-.report-menu-list button { min-height: 48px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 10px; padding: 0 12px; background: transparent; color: #ededee; font-weight: 550; text-align: left; cursor: pointer; }
-.report-menu-list button:hover:not(:disabled) { background: #1b1b1f; }
-.report-menu-list button:disabled { color: #6e6e75; cursor: default; }
-.report-menu-list svg { width: 18px; height: 18px; color: #9a9aa1; }
+.report-menu-list button { min-height: 48px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 10px; padding: 0 12px; background: transparent; color: var(--report-text); font-weight: 550; text-align: left; cursor: pointer; }
+.report-menu-list button:hover:not(:disabled) { background: var(--report-hover); }
+.report-menu-list button:disabled { color: var(--report-faint); cursor: default; }
+.report-menu-list svg { width: 18px; height: 18px; color: var(--report-muted); }
 .report-link-full { margin: 0; overflow-wrap: anywhere; }
 .report-link-open { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 .report-link-open svg { width: 16px; height: 16px; }
@@ -122,26 +131,25 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-schedule-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .report-schedule { overflow-y: auto; }
 .report-schedule .file-dialog-form { flex: 0 0 auto; }
-.report-field, .report-schedule .file-dialog-form label.report-field { display: grid; gap: 6px; min-width: 0; color: #c9c9ce; font-size: .84rem; font-weight: 500; letter-spacing: normal; text-transform: none; }
+.report-field, .report-schedule .file-dialog-form label.report-field { display: grid; gap: 6px; min-width: 0; color: var(--report-soft); font-size: .84rem; font-weight: 500; letter-spacing: normal; text-transform: none; }
 .report-field input { width: 100%; min-height: 44px; }
 .report-zone { justify-self: start; min-height: 44px; }
 .report-badge-line { margin: 0; display: flex; align-items: flex-start; gap: 8px; border-radius: 10px; padding: 10px 12px; font-size: .84rem; }
 .report-badge-line svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
-.report-badge-error { background: #2a1519; color: #fda4af; }
+.report-badge-error { background: var(--report-bad-bg); color: var(--report-bad); }
 .reports-status svg { width: 12px; height: 12px; margin-right: 4px; }
 .report-runs { display: grid; gap: 8px; padding: 6px 20px calc(18px + env(safe-area-inset-bottom)); }
-.report-runs h3 { margin: 0; color: #ededee; font-size: .92rem; }
+.report-runs h3 { margin: 0; color: var(--report-text); font-size: .92rem; }
 .report-run-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.report-run-list li { display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid #222226; padding: 6px 0; }
+.report-run-list li { display: flex; align-items: flex-start; gap: 10px; border-bottom: 1px solid var(--report-border); padding: 6px 0; }
 .report-run-list .reports-status { flex: none; min-width: 92px; justify-content: center; }
 .report-run-copy { min-width: 0; display: grid; gap: 2px; font-size: .84rem; }
-.report-run-copy strong { color: #ededee; font-weight: 600; }
-.report-run-copy small { color: #85858c; overflow-wrap: anywhere; }
-.report-run-copy .report-run-error-text { color: #fda4af; }
-.report-run-succeeded { border-color: #2f5a3a; color: #8fd19e; }
-.report-run-partial { border-color: #5a4b25; color: #e2c46c; }
-.report-run-failed, .report-run-abandoned { border-color: #6b2f37; color: #fda4af; }
-.report-run-running { border-color: #4a3f25; color: #f3d48a; }
+.report-run-copy strong { color: var(--report-text); font-weight: 600; }
+.report-run-copy small { color: var(--report-faint); overflow-wrap: anywhere; }
+.report-run-copy .report-run-error-text { color: var(--report-bad); }
+.report-run-succeeded { border-color: color-mix(in srgb, var(--report-good) 45%, transparent); color: var(--report-good); }
+.report-run-partial, .report-run-running { border-color: var(--report-accent-line); color: var(--report-accent); }
+.report-run-failed, .report-run-abandoned { border-color: color-mix(in srgb, var(--report-bad) 45%, transparent); color: var(--report-bad); }
 
 @media (max-width: 760px) {
   .report-view-actions { width: 100%; }

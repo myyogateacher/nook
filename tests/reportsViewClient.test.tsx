@@ -17,13 +17,16 @@ mock.module("../src/reports/charts", () => ({
 const { buildChartOption, CHART_PALETTES, formatValue, optionJson, toNumber, axisLabel, MAX_CHART_SERIES } = await import("../src/reports/chartOption");
 const { ReportView } = await import("../src/reports/ReportView");
 const { InspectSheet, blockMapping, docLink } = await import("../src/reports/InspectSheet");
-const { createTabStepGuard, popTab, pushTab } = await import("../src/reports/inspectHistory");
+const { createInspectTabHistory, inspectMark: inspectMarkOf } = await import("../src/reports/inspectHistory");
+type InspectTab = import("../src/reports/inspectHistory").InspectTab;
+const { themedPalette } = await import("../src/reports/chartOption");
 const { kpiValue } = await import("../src/reports/KpiTile");
 const { toCsv, runLabel, timeAgo } = await import("../src/reports/reportViewApi");
 const { scheduleBadge, scheduleForm, scheduleInput } = await import("../src/reports/ScheduleSheet");
 const { readHistoryDepth, withHistoryDepth } = await import("../src/appShellNavigation");
-const { acquireDialogSentinel, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } = await import("../src/historyDialogs");
-const { createDialogGuard } = await import("../src/ui/useHistoryDialogGuard");
+// A private copy of historyDialogs: its sentinel and guard stack are module state that other test
+// files in this process may leave in use; these history tests need a clean one.
+const { acquireDialogSentinel, dialogPopDirection, popStateClosedDialog, registerHistoryDialogGuard, undoDialogPop } = await import("../src/historyDialogs.ts?reports-inspect-tests");
 
 /**
  * The Wave 47 viewer: chart options built only from the block spec (both palettes), formats, KPI
@@ -147,6 +150,9 @@ describe("KPI tiles and helpers", () => {
   test("CSV defuses formulas and quotes what needs it; doc links are http(s) only", () => {
     expect(toCsv([{ name: "a" }, { name: "b,c" }], [["=HYPERLINK(\"x\")", -12.5], ["line\nbreak", null], ["@cmd", "-1"]]))
       .toBe("a,\"b,c\"\r\n\"'=HYPERLINK(\"\"x\"\")\",-12.5\r\n\"line\nbreak\",\r\n'@cmd,-1\r\n");
+    // Review L6: a number stays a number; leading whitespace before a formula is defused too.
+    expect(toCsv([{ name: "n" }], [["-1"], [-1], ["+3"], [" =x"], ["\t=x"], ["  @y"], ["- note"]]))
+      .toBe("n\r\n-1\r\n-1\r\n+3\r\n' =x\r\n'\t=x\r\n'  @y\r\n'- note\r\n");
     expect(docLink("https://docs.example.test/doc/metrics-abc")).toBe("https://docs.example.test/doc/metrics-abc");
     expect(docLink("javascript:alert(1)")).toBeNull();
     expect(docLink("metrics-abc")).toBeNull();
@@ -278,77 +284,157 @@ describe("the inspect sheet", () => {
   });
 });
 
-describe("inspect tabs are Back steps", () => {
-  test("pushing and popping tabs", () => {
-    expect(pushTab(["query"], "data")).toEqual(["query", "data"]);
-    expect(pushTab(["query", "data"], "data")).toEqual(["query", "data"]);
-    expect(popTab(["query", "data", "mapping"])).toEqual(["query", "data"]);
-    expect(popTab(["query"])).toEqual(["query"]);
-  });
-
-  /** A browser history the page pushed entries onto (so no sentinel), with moves delivered like a browser's. */
-  function harness() {
-    const entries: unknown[] = [withHistoryDepth({ route: "reports" }, 1), withHistoryDepth({ route: "report" }, 2)];
-    let index = 1;
+describe("inspect tabs are real Back and Forward steps", () => {
+  /** A browser history with moves delivered like a browser's (popstate through historyDialogs). */
+  function harness(initial: unknown[], landingDepth: number) {
+    const entries: unknown[] = [...initial];
+    let index = entries.length - 1;
     const moves: number[] = [];
-    const history = { get state() { return entries[index]; }, pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; }, back() { moves.push(-1); } };
-    const env = { history: history as unknown as History, href: () => "https://nook.test/reports/x", landingDepth: () => 0 };
-    const go = (delta: number) => { moves.push(delta); };
+    const history = {
+      get state() { return entries[index]; },
+      pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+      back() { moves.push(-1); },
+      go(delta: number) { moves.push(delta); }
+    };
+    const env = { history: history as unknown as History, href: () => "https://nook.test/reports/x", landingDepth: () => landingDepth };
     const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };
     const userBack = () => { index -= 1; return popStateClosedDialog({ state: entries[index] }); };
     const userForward = () => { index += 1; return popStateClosedDialog({ state: entries[index] }); };
-    return { entries, history, env, go, deliver, userBack, userForward, moves, index: () => index };
+    return { entries, history, env, deliver, userBack, userForward, moves, index: () => index };
   }
 
-  test("Back unwinds the tabs newest first, then closes the sheet; Forward changes nothing", () => {
-    const h = harness();
-    let open = true;
-    let stack = ["query"] as Array<"query" | "data" | "mapping" | "provenance">;
-    const depth = readHistoryDepth(h.history.state);
+  /** Mounts the sheet the way InspectSheet does: its dialog layer, then the tab history's guard. */
+  function mountSheet(h: ReturnType<typeof harness>) {
+    const sheet = { open: true, tab: "query" as InspectTab, step: 0 };
     const release = acquireDialogSentinel(h.env);
-    const unregisterSheet = registerHistoryDialogGuard(createDialogGuard({ isOpen: () => open, markClosed: () => { open = false; }, close: () => { open = false; }, openDepth: () => depth, undo: (direction) => undoDialogPop(direction, h.go) }));
-    const unregisterTabs = registerHistoryDialogGuard(createTabStepGuard({ steps: () => stack.length, stepBack: () => { stack = popTab(stack); }, openDepth: () => depth, undo: (direction) => undoDialogPop(direction, h.go) }));
+    const depth = readHistoryDepth(h.history.state);
+    const tabs = createInspectTabHistory({
+      history: h.history as unknown as History, href: () => "https://nook.test/reports/x", initialTab: "query",
+      show: (tab, step) => { sheet.tab = tab; sheet.step = step; },
+      close: () => { sheet.open = false; release(); }
+    });
+    // The sheet's layer, as createDialogGuard does it: close, then undo the browser's move.
+    const unregisterSheet = registerHistoryDialogGuard((popped) => {
+      if (!sheet.open) return false;
+      sheet.open = false;
+      release();
+      const direction = dialogPopDirection(depth, readHistoryDepth(popped));
+      if (!direction) return false;
+      undoDialogPop(direction, (delta) => h.history.go(delta));
+      return true;
+    });
+    const unregisterTabs = registerHistoryDialogGuard((state) => tabs.guard(state));
+    return { sheet, tabs, unmount: () => { unregisterTabs(); unregisterSheet(); release(); } };
+  }
+
+  test("each tab is an entry: Back and Forward move through them; Back from the first tab closes the sheet, never leaving", async () => {
+    const h = harness([withHistoryDepth({ route: "reports" }, 1), withHistoryDepth({ route: "report" }, 2)], 0);
+    const { sheet, tabs, unmount } = mountSheet(h);
     try {
-      stack = pushTab(pushTab(stack, "data"), "mapping");
+      tabs.select("data", sheet.tab);
+      tabs.select("mapping", sheet.tab);
+      tabs.select("mapping", sheet.tab);
+      expect(h.entries.length).toBe(4);
+      expect(inspectMarkOf(h.history.state)).toMatchObject({ tab: "mapping", step: 2 });
+      expect(readHistoryDepth(h.history.state)).toBe(4);
+
       expect(h.userBack()).toBe(true);
-      expect(stack).toEqual(["query", "data"]);
-      expect(open).toBe(true);
+      expect(sheet).toMatchObject({ open: true, tab: "data", step: 1 });
+      expect(h.userBack()).toBe(true);
+      expect(sheet).toMatchObject({ open: true, tab: "query", step: 0 });
+      // Forward redoes the steps.
+      expect(h.userForward()).toBe(true);
+      expect(sheet.tab).toBe("data");
+      expect(h.userForward()).toBe(true);
+      expect(sheet.tab).toBe("mapping");
+      expect(h.moves).toEqual([]);
+
+      // The sheet's own Back button is the browser's Back.
+      tabs.back();
+      expect(h.moves).toEqual([-1]);
+      h.deliver();
+      expect(sheet.tab).toBe("data");
+      h.userBack();
+      expect(sheet.tab).toBe("query");
+      // Back from the first tab closes the sheet and undoes the move: still on the report's entry.
+      expect(h.userBack()).toBe(true);
+      expect(sheet.open).toBe(false);
       expect(h.moves).toEqual([1]);
       h.deliver();
       expect(h.index()).toBe(1);
-
-      // Forward inside the sheet: undone, no step.
-      h.entries.push(withHistoryDepth({ route: "elsewhere" }, 3));
-      expect(h.userForward()).toBe(true);
-      expect(stack).toEqual(["query", "data"]);
+      await Bun.sleep(5);
+      // Forward onto a tab entry of the closed sheet steps straight back off it (historyDialogs uses window.history here).
+      const holder = globalThis as { window?: unknown };
+      const previous = holder.window;
+      holder.window = { history: h.history };
+      try { expect(h.userForward()).toBe(true); } finally { holder.window = previous; }
       expect(h.moves).toEqual([-1]);
       h.deliver();
       expect(h.index()).toBe(1);
-      h.userBack();
-      h.deliver();
-      expect(stack).toEqual(["query"]);
-      expect(open).toBe(true);
-
-      // The last Back closes the sheet.
-      expect(h.userBack()).toBe(true);
-      expect(open).toBe(false);
-      h.deliver();
-      expect(h.index()).toBe(1);
     } finally {
-      unregisterTabs();
-      unregisterSheet();
-      release();
+      unmount();
     }
   });
 
-  test("the sheet registers its tab guard after its own, so the tabs answer Back first", async () => {
+  test("on a landing entry (the dialog sentinel) the tabs stack above it; × unwinds to the base, then closes", async () => {
+    const h = harness([withHistoryDepth({ route: "report" }, 0)], 0);
+    const { sheet, tabs, unmount } = mountSheet(h);
+    try {
+      expect(h.entries.length).toBe(2);
+      tabs.select("data", sheet.tab);
+      tabs.select("provenance", sheet.tab);
+      expect(h.entries.length).toBe(4);
+      expect(h.userBack()).toBe(true);
+      expect(sheet.tab).toBe("data");
+      expect(h.userForward()).toBe(true);
+      expect(sheet.tab).toBe("provenance");
+      // ×: back to the sentinel first (one go), then the sheet closes and its sentinel is popped.
+      tabs.requestClose();
+      expect(sheet.open).toBe(true);
+      expect(h.moves).toEqual([-2]);
+      h.deliver();
+      expect(sheet).toMatchObject({ open: false, tab: "query" });
+      expect(h.index()).toBe(1);
+      await Bun.sleep(5);
+      expect(h.moves).toEqual([-1]);
+      h.deliver();
+      expect(h.index()).toBe(0);
+    } finally {
+      unmount();
+    }
+  });
+
+  test("the sheet registers its tab guard after its own, and charts stay lazy and tree-shaken", async () => {
     const source = await Bun.file(new URL("../src/reports/InspectSheet.tsx", import.meta.url)).text();
-    expect(source.indexOf("useHistoryDialogGuard(true, onClose)")).toBeLessThan(source.indexOf("registerHistoryDialogGuard(createTabStepGuard("));
+    expect(source.indexOf("useHistoryDialogGuard(true, onClose)")).toBeLessThan(source.indexOf("registerHistoryDialogGuard((state) => tabs.guard(state))"));
+    expect(source).toContain("onClose={close}");
     const charts = await Bun.file(new URL("../src/reports/charts.tsx", import.meta.url)).text();
     expect(charts).toContain('from "echarts/core"');
     expect(charts).not.toMatch(/from "echarts"/);
     expect(charts).toContain("SVGRenderer");
     const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
     expect(view).toContain('lazy(() => import("./charts"))');
+  });
+});
+
+describe("one theme source", () => {
+  test("the palette takes the scheme's hues and the page's resolved tokens; unusable values are ignored", () => {
+    const themed = themedPalette("dark", { surface: "#111113", text: "rgb(245, 245, 244)", grid: "color-mix(in srgb, red 10%, blue)", muted: "var(--muted)" });
+    expect(themed).toMatchObject({ mode: "dark", surface: "#111113", text: "rgb(245, 245, 244)", grid: CHART_PALETTES.dark.grid, muted: CHART_PALETTES.dark.muted });
+    expect(themed.series).toEqual(CHART_PALETTES.dark.series);
+    expect(themedPalette("light").series).toEqual(CHART_PALETTES.light.series);
+    expect(themedPalette("light dark").mode).toBe("dark");
+    expect(themedPalette("normal").mode).toBe("dark");
+  });
+
+  test("reportView.css uses the app's tokens, not literal dark colors", async () => {
+    const css = await Bun.file(new URL("../src/reports/reportView.css", import.meta.url)).text();
+    const rules = css.slice(css.indexOf(".report-view-toolbar"));
+    expect(rules.match(/#[0-9a-f]{3,6}\b/gi) ?? []).toEqual([]);
+    expect(css).toContain("--report-surface: var(--panel)");
+    expect(css).not.toContain("data-theme");
+    const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
+    expect(view).toContain("new MutationObserver(update)");
+    expect(view).toContain('matchMedia("(prefers-color-scheme: dark)")');
   });
 });

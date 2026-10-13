@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, Copy, Download, LoaderCircle, RefreshCw } from "lucide-react";
-import { readHistoryDepth } from "../appShellNavigation";
 import { ModalDialog } from "../files/Dialog";
-import { registerHistoryDialogGuard, whenHistorySettled } from "../historyDialogs";
+import { registerHistoryDialogGuard } from "../historyDialogs";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ChartBlock, KpiBlock, ReportBlock, ReportDetail, ReportQuery, ReportResult, TableBlock } from "../../shared/reports";
 import type { ProvenanceView, QueryResultView } from "../../shared/reportsView";
 import { buildChartOption, chartMapping, optionJson, type ChartPalette } from "./chartOption";
-import { createTabStepGuard, INSPECT_TAB_LABELS, INSPECT_TABS, popTab, pushTab, type InspectTab } from "./inspectHistory";
+import { createInspectTabHistory, INSPECT_TAB_LABELS, INSPECT_TABS, type InspectTab } from "./inspectHistory";
 import { ResultTable } from "./ResultTable";
 import { getProvenance, RUN_STATUS_TEXT, runLabel, timeAgo, toCsv } from "./reportViewApi";
 import { countLabel, messageOf } from "./reportsApi";
@@ -83,22 +82,26 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
 
 /**
  * "How was this built" (plan wave 47, user request): one block's query, data, mapping, and provenance.
- * Each tab is a history step (inspectHistory.ts): Back unwinds the tabs, then closes the sheet.
+ * Each tab is a real history step (inspectHistory.ts): Back and Forward move through the tabs; Back
+ * from the first one closes the sheet.
  */
 export function InspectSheet({ report, block, query, view, palette, canRerun, busy, onRerun, onClose, initialTab = "query", provenance: given }: Props) {
-  const [stack, setStack] = useState<InspectTab[]>([initialTab]);
-  const stackRef = useRef(stack);
-  stackRef.current = stack;
-  const tab = stack[stack.length - 1]!;
+  const [shownTab, setShownTab] = useState<{ tab: InspectTab; step: number }>({ tab: initialTab, step: 0 });
+  const tab = shownTab.tab;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const [tabs] = useState(() => createInspectTabHistory({
+    history: typeof window === "undefined" ? { state: null, pushState: () => undefined, go: () => undefined } : window.history,
+    href: () => window.location.href,
+    initialTab,
+    show: (next, step) => setShownTab({ tab: next, step }),
+    close: () => onCloseRef.current()
+  }));
+  // Back from the first tab: the sheet's own layer closes (no tab entry is left above it then).
   useHistoryDialogGuard(true, onClose);
-  const depthRef = useRef(typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state));
-  useEffect(() => whenHistorySettled(() => { depthRef.current = readHistoryDepth(window.history.state); }), []);
-  // Registered after the sheet's guard, so Back asks it first: tabs unwind before the sheet closes.
-  useEffect(() => registerHistoryDialogGuard(createTabStepGuard({
-    steps: () => stackRef.current.length,
-    stepBack: () => setStack((current) => popTab(current)),
-    openDepth: () => depthRef.current
-  })), []);
+  // Registered after the sheet's guard, so the tabs answer Back and Forward first.
+  useEffect(() => registerHistoryDialogGuard((state) => tabs.guard(state)), [tabs]);
+  const close = () => tabs.requestClose();
 
   const result = view?.result ?? null;
   const failed = view?.failed ?? null;
@@ -106,13 +109,14 @@ export function InspectSheet({ report, block, query, view, palette, canRerun, bu
   const mapping = blockMapping(block);
   const title = block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.queryKey);
 
-  return <ModalDialog title={title} eyebrow="How was this built" onClose={onClose} variant="sheet" className="reports-dialog report-inspect">
+  const first = shownTab.step === 0;
+  return <ModalDialog title={title} eyebrow="How was this built" onClose={close} variant="sheet" className="reports-dialog report-inspect">
     <div className="report-inspect-tabs" role="tablist" aria-label="Inspect">
       {/* Always laid out, so the tabs never move under a finger; hidden on the first step. */}
-      <button type="button" className={`icon-button report-inspect-back${stack.length > 1 ? "" : " report-inspect-back-idle"}`} disabled={stack.length <= 1} aria-hidden={stack.length <= 1 || undefined}
-        aria-label={stack.length > 1 ? `Back to ${INSPECT_TAB_LABELS[stack[stack.length - 2]!]}` : "Back"} onClick={() => setStack((current) => popTab(current))}><ChevronLeft /></button>
+      <button type="button" className={`icon-button report-inspect-back${first ? " report-inspect-back-idle" : ""}`} disabled={first} aria-hidden={first || undefined}
+        aria-label="Back to the previous tab" onClick={() => tabs.back()}><ChevronLeft /></button>
       {INSPECT_TABS.map((name) => <button key={name} type="button" role="tab" id={`inspect-tab-${name}`} aria-selected={tab === name} aria-controls="inspect-panel"
-        className={tab === name ? "active" : undefined} onClick={() => setStack((current) => pushTab(current, name))}>{INSPECT_TAB_LABELS[name]}</button>)}
+        className={tab === name ? "active" : undefined} onClick={() => tabs.select(name, tab)}>{INSPECT_TAB_LABELS[name]}</button>)}
     </div>
     <div className="report-inspect-body" role="tabpanel" id="inspect-panel" aria-labelledby={`inspect-tab-${tab}`}>
       {tab === "query" && <QueryTab block={block} query={query} result={result} failed={failed} canRerun={canRerun} busy={busy} onRerun={onRerun} />}

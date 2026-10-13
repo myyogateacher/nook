@@ -323,5 +323,21 @@ export function optionJson(option: unknown): string {
 
 /** The palette for the page's color scheme (the app is dark today; a light scheme gets the light steps). */
 export function paletteFor(scheme: string | null | undefined): ChartPalette {
-  return scheme === "light" ? CHART_PALETTES.light : CHART_PALETTES.dark;
+  return /\blight\b/.test(scheme ?? "") && !/\bdark\b/.test(scheme ?? "") ? CHART_PALETTES.light : CHART_PALETTES.dark;
+}
+
+/** The surface and text colors the page's CSS resolved (reportView.css tokens); empty values keep the palette's own. */
+export type ThemeTokens = Partial<Record<"surface" | "text" | "muted" | "grid" | "axis" | "tooltipBg" | "tooltipBorder", string>>;
+
+const usableColor = (value: string | undefined) => Boolean(value && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%/]+\)|hsla?\([\d\s.,%/deg]+\))$/i.test(value.trim()));
+
+/**
+ * One theme source (review L4): the series hues come from the scheme's validated steps, and the
+ * surface, text, grid, and tooltip colors from the same CSS tokens the page itself uses. Only plain
+ * color values are taken (ECharts cannot read `var()` or `color-mix()`).
+ */
+export function themedPalette(scheme: string | null | undefined, tokens: ThemeTokens = {}): ChartPalette {
+  const base = paletteFor(scheme);
+  const picked = Object.fromEntries(Object.entries(tokens).filter(([, value]) => usableColor(value)).map(([key, value]) => [key, value!.trim()]));
+  return { ...base, ...picked };
 }

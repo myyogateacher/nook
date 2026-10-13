@@ -118,18 +118,26 @@ async function killRunQueries(datasourceId: string | null, runId: string, keys: 
   await Promise.all(keys.map((key) => killQuery(row, runQueryId(runId, key))));
 }
 
+/** A running row without a lease (a run kind that never set one) is abandoned this long after it started. */
+export const NO_LEASE_GRACE_MS = 15 * 60_000;
+
 /**
- * Runs whose lease ran out become `abandoned` (at boot, every scheduler tick, and lazily before a
- * report's results are read or a run starts). Their queries get a best-effort KILL QUERY.
+ * Runs whose lease ran out become `abandoned` (every scheduler tick, and lazily before a report's
+ * results are read or a run starts), as do running rows that never had a lease once they are
+ * NO_LEASE_GRACE_MS old. `all` (boot only: the server is one process, so nothing it ran before
+ * survives a restart) abandons every running row. Their queries get a best-effort KILL QUERY.
  */
-export function abandonExpiredReportRuns(nowMs = Date.now(), reportId?: string): number {
+export function abandonExpiredReportRuns(nowMs = Date.now(), reportId?: string, options: { all?: boolean } = {}): number {
   const at = new Date(nowMs).toISOString();
+  const graceStart = new Date(nowMs - NO_LEASE_GRACE_MS).toISOString();
   const expired = db.query(`SELECT r.*, p.datasource_id, p.spec_json FROM report_runs r JOIN reports p ON p.id = r.report_id
-    WHERE r.status = 'running' AND r.lease_until IS NOT NULL AND r.lease_until <= $at AND ($reportId IS NULL OR r.report_id = $reportId)`)
-    .all({ at, reportId: reportId ?? null }) as Array<RunRow & { datasource_id: string | null; spec_json: string }>;
+    WHERE r.status = 'running' AND ($all = 1 OR (r.lease_until IS NOT NULL AND r.lease_until <= $at) OR (r.lease_until IS NULL AND r.started_at <= $graceStart))
+      AND ($reportId IS NULL OR r.report_id = $reportId)`)
+    .all({ at, graceStart, all: options.all ? 1 : 0, reportId: reportId ?? null }) as Array<RunRow & { datasource_id: string | null; spec_json: string }>;
   let count = 0;
   for (const run of expired) {
-    const changed = db.query("UPDATE report_runs SET status = 'abandoned', finished_at = ?, error = 'The run stopped before it finished; its lease ran out' WHERE id = ? AND status = 'running'").run(at, run.id).changes;
+    const reason = options.all ? "The server restarted before the run finished" : "The run stopped before it finished; its lease ran out";
+    const changed = db.query("UPDATE report_runs SET status = 'abandoned', finished_at = ?, error = ? WHERE id = ? AND status = 'running'").run(at, reason, run.id).changes;
     if (!changed) continue;
     count += 1;
     // The process holding it (if any) stops at its next heartbeat; this one aborts its own copy now.
@@ -270,6 +278,10 @@ export function pruneRuns(reportId: string, spec: ReportSpec) {
   const good = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND error IS NULL AND created_at = (
     SELECT max(created_at) FROM report_results WHERE report_id = $reportId AND query_key = rr.query_key AND error IS NULL)`).all({ reportId }) as Array<{ run_id: string }>;
   for (const row of good) pinned.add(row.run_id);
+  // And each query's newest result of any kind: pruning a newer failure would clear its block's stale badge.
+  const newest = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND created_at = (
+    SELECT max(created_at) FROM report_results WHERE report_id = $reportId AND query_key = rr.query_key)`).all({ reportId }) as Array<{ run_id: string }>;
+  for (const row of newest) pinned.add(row.run_id);
   const old = db.query("SELECT id FROM report_runs WHERE report_id = ? AND status <> 'running' ORDER BY started_at DESC, rowid DESC LIMIT -1 OFFSET ?")
     .all(reportId, REPORT_LIMITS.runsKept) as Array<{ id: string }>;
   const remove = old.map((row) => row.id).filter((id) => !pinned.has(id));
@@ -353,10 +365,10 @@ export function listRuns(reportId: string, userId: string): ReportRun[] {
   return (db.query("SELECT * FROM report_runs WHERE report_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?").all(reportId, REPORT_LIMITS.runsKept) as RunRow[]).map(runView);
 }
 
-/** Boot: runs left `running` by a stopped server whose lease ran out are abandoned (and their queries killed). */
+/** Boot: every run left `running` by the stopped server is abandoned, lease or not (and its queries killed). */
 export function abandonRunsAtBoot(nowMs = Date.now()) {
   try {
-    const count = abandonExpiredReportRuns(nowMs);
+    const count = abandonExpiredReportRuns(nowMs, undefined, { all: true });
     if (count) console.info(`Report runs: ${count} abandoned at boot`);
     return count;
   } catch (error) {

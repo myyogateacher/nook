@@ -6,7 +6,7 @@ import { notify } from "../ui/notify";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ChartBlock, ReportBlock, ReportDetail, ReportRun } from "../../shared/reports";
 import type { QueryResultView, ReportResultsView, ScheduleView } from "../../shared/reportsView";
-import { buildChartOption, paletteFor, type ChartPalette } from "./chartOption";
+import { buildChartOption, themedPalette, type ChartPalette } from "./chartOption";
 import { InspectSheet, type DataBlock } from "./InspectSheet";
 import type { InspectTab } from "./inspectHistory";
 import { KpiTile } from "./KpiTile";
@@ -21,10 +21,45 @@ const EChart = lazy(() => import("./charts"));
 
 const POLL_MS = 1000;
 
-/** The page's color scheme (the app is dark; a light scheme gets the light chart steps). */
-function currentPalette(): ChartPalette {
-  if (typeof window === "undefined" || typeof getComputedStyle !== "function") return paletteFor("dark");
-  try { return paletteFor(getComputedStyle(document.documentElement).colorScheme); } catch { return paletteFor("dark"); }
+/**
+ * The chart palette from the page's one theme source (review L4): the root's `color-scheme` (what the
+ * app's CSS sets, src/styles.css) picks the series steps, and the report view's own resolved tokens
+ * (reportView.css, built on the app's variables) give the surface, text, grid, and tooltip colors.
+ */
+export function readChartPalette(element: Element | null): ChartPalette {
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function") return themedPalette("dark");
+  try {
+    const scheme = getComputedStyle(document.documentElement).colorScheme;
+    if (!element) return themedPalette(scheme);
+    const css = getComputedStyle(element);
+    const token = (name: string) => css.getPropertyValue(name).trim();
+    return themedPalette(scheme, {
+      surface: token("--report-surface"), text: css.color, muted: token("--report-muted"), grid: token("--report-border"),
+      axis: token("--report-border"), tooltipBg: token("--report-raised"), tooltipBorder: token("--report-border")
+    });
+  } catch {
+    return themedPalette("dark");
+  }
+}
+
+/** Re-reads the palette whenever the theme can have changed: the root's attributes or style, or the OS scheme. */
+function useChartPalette(ref: React.RefObject<HTMLElement | null>): ChartPalette {
+  const [palette, setPalette] = useState<ChartPalette>(() => readChartPalette(null));
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const update = () => setPalette((current) => {
+      const next = readChartPalette(ref.current);
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+    update();
+    const observer = typeof MutationObserver === "undefined" ? null : new MutationObserver(update);
+    observer?.observe(document.documentElement, { attributes: true });
+    if (document.body) observer?.observe(document.body, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    media?.addEventListener?.("change", update);
+    return () => { observer?.disconnect(); media?.removeEventListener?.("change", update); };
+  }, [ref]);
+  return palette;
 }
 
 const isDataBlock = (block: ReportBlock): block is DataBlock => block.type !== "markdown";
@@ -53,7 +88,8 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [externalLink, setExternalLink] = useState<string | null>(null);
-  const palette = useMemo(currentPalette, []);
+  const viewRef = useRef<HTMLElement>(null);
+  const palette = useChartPalette(viewRef);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -133,7 +169,7 @@ export function ReportView({ report, canWrite, initial }: Props) {
   const markdownContext = useMemo<RenderContext>(() => ({ onExternalLink: setExternalLink, onNookLink: (path) => window.location.assign(path), images: { mode: "public" } }), []);
 
   if (!blocks.length) return null;
-  return <section className="report-view" aria-label="Report">
+  return <section ref={viewRef} className="report-view" aria-label="Report">
     <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
         {running ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>

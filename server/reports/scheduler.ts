@@ -158,7 +158,11 @@ export function schedulerTick(nowMs = Date.now()): TickResult {
     }
     inFlight += 1;
     result.started += 1;
-    pending.push(start.done.then((run) => recordOutcome(row.report_id, run.id, run.status)).finally(() => { inFlight -= 1; }));
+    pending.push(start.done
+      .then((run) => recordOutcome(row.report_id, run.id, run.status))
+      // Never an unhandled rejection: a failed bookkeeping write is logged (the run itself is recorded).
+      .catch((error: unknown) => { console.error("Report schedule outcome could not be recorded", error instanceof Error ? error.name : "Unknown error"); })
+      .finally(() => { inFlight -= 1; }));
   }
   result.done = Promise.all(pending);
   return result;
@@ -171,7 +175,7 @@ export function startReportScheduler() {
   if (timer) return;
   const tick = () => {
     try {
-      schedulerTick();
+      schedulerTick().done.catch((error: unknown) => console.error("Report scheduled refresh failed", error instanceof Error ? error.name : "Unknown error"));
     } catch (error) {
       console.error("Report scheduler tick failed", error instanceof Error ? error.name : "Unknown error");
     }

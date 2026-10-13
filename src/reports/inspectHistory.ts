@@ -1,13 +1,21 @@
-import { readHistoryDepth } from "../appShellNavigation";
-import { dialogPopDirection, holdDialogSentinel, undoDialogPop } from "../historyDialogs";
+import { readHistoryDepth, withHistoryDepth } from "../appShellNavigation";
 
 /**
- * The inspect sheet's tabs as history steps (plan wave 47, D18/D69 parity): opening the sheet is one
- * layer (useHistoryDialogGuard), and each tab the person moves to is a step inside it. Browser Back
- * first unwinds the tabs, newest first, then closes the sheet; Forward does nothing inside the sheet.
- * Like every dialog in Nook the steps push no history entries: the guard below, registered after the
- * sheet's own guard (so asked first), steps back and undoes the browser's move, and on the landing
- * entry (a deep link) it keeps the dialog sentinel in place so the next Back still lands in the sheet.
+ * The inspect sheet's tabs as real history steps (plan wave 47; Back/Forward parity, a standing rule).
+ *
+ * Opening the sheet is a dialog layer like any other (useHistoryDialogGuard: no entry of its own, or
+ * the dialog sentinel on a landing entry). Each tab the person moves to then pushes one entry on top
+ * of the entry the sheet sits on (the base), one level deeper, carrying `mynotes.inspect` (which sheet,
+ * which tab, which step). Back and Forward move through those entries and the guard below, registered
+ * after the sheet's own guard (so asked first), shows the tab the entry names; reaching the base
+ * shows the first tab. Only a Back from the base reaches the sheet's guard, which closes the sheet and
+ * undoes the move, so Back never leaves the app.
+ *
+ * The entries also carry the dialog hint (`mynotes.dialog`), so historyDialogs.ts treats them like
+ * the sentinel: a move between them is never mistaken for "Back off the sentinel", and Forward onto a
+ * stale one after the sheet closed steps straight back off it. Closing the sheet any other way (×,
+ * Escape, the scrim) first goes back to the base (`history.go(-step)`), then closes, so no tab entry
+ * is left behind the page.
  */
 
 export const INSPECT_TABS = ["query", "data", "mapping", "provenance"] as const;
@@ -15,32 +23,86 @@ export type InspectTab = typeof INSPECT_TABS[number];
 
 export const INSPECT_TAB_LABELS: Record<InspectTab, string> = { query: "Query", data: "Data", mapping: "Mapping", provenance: "Provenance" };
 
-/** Moving to `tab` adds a step unless it is already the current one. */
-export const pushTab = (stack: readonly InspectTab[], tab: InspectTab): InspectTab[] => stack[stack.length - 1] === tab ? [...stack] : [...stack, tab];
-/** One step back; the first tab stays. */
-export const popTab = (stack: readonly InspectTab[]): InspectTab[] => stack.length > 1 ? stack.slice(0, -1) : [...stack];
+const MARK = "mynotes.inspect";
+const DIALOG_HINT = "mynotes.dialog";
 
-type TabGuardOptions = {
-  steps: () => number;
-  stepBack: () => void;
-  /** The depth of the entry the sheet was opened on. */
-  openDepth: () => number;
-  undo?: typeof undoDialogPop;
+type Mark = { sheet: string; tab: InspectTab; step: number };
+
+/** The inspect mark of a history state, if it has one. */
+export function inspectMark(state: unknown): Mark | null {
+  if (!state || typeof state !== "object") return null;
+  const mark = (state as Record<string, unknown>)[MARK] as Partial<Mark> | undefined;
+  if (!mark || typeof mark.sheet !== "string" || typeof mark.step !== "number" || !INSPECT_TABS.includes(mark.tab as InspectTab)) return null;
+  return mark as Mark;
+}
+
+type HistoryLike = Pick<History, "state" | "pushState" | "go">;
+
+type Options = {
+  history: HistoryLike;
+  href: () => string;
+  initialTab: InspectTab;
+  /** Shows a tab (the state the entry the browser landed on names). */
+  show: (tab: InspectTab, step: number) => void;
+  /** Closes the sheet for real. */
+  close: () => void;
+  /** How long a close waits for its go(-step) to land before closing anyway. */
+  closeWaitMs?: number;
 };
 
-/** The guard for the sheet's tab steps: true when it handled the popstate (the sheet stays open). */
-export function createTabStepGuard(options: TabGuardOptions) {
-  return (poppedState: unknown): boolean => {
-    if (options.steps() <= 1) return false;
-    // Back off the dialog sentinel: step back and keep the sentinel under the sheet.
-    if (holdDialogSentinel()) {
-      options.stepBack();
-      return true;
+/** One sheet's tab history: `select` pushes, `back` steps, `requestClose` unwinds then closes, `guard` answers popstate. */
+export function createInspectTabHistory(options: Options) {
+  const sheet = crypto.randomUUID();
+  let step = 0;
+  let baseDepth: number | null = null;
+  let closing: ReturnType<typeof setTimeout> | null = null;
+
+  const finishClose = () => {
+    if (closing) clearTimeout(closing);
+    closing = null;
+    options.close();
+  };
+
+  return {
+    sheet,
+    step: () => step,
+    /** Moves to `tab` as a new history entry (no entry when it is already shown). */
+    select(tab: InspectTab, current: InspectTab) {
+      if (tab === current || closing) return;
+      const state = options.history.state;
+      const depth = readHistoryDepth(state);
+      if (baseDepth === null || step === 0) baseDepth = depth - step;
+      const base = state && typeof state === "object" ? { ...(state as Record<string, unknown>) } : {};
+      step += 1;
+      options.history.pushState(withHistoryDepth({ ...base, [DIALOG_HINT]: true, [MARK]: { sheet, tab, step } }, depth + 1), "", options.href());
+      options.show(tab, step);
+    },
+    /** The sheet's own Back button: the browser's Back, so Forward can redo it. */
+    back() {
+      if (step > 0) options.history.go(-1);
+    },
+    /** ×, Escape, the scrim: back to the base entry first, then close. */
+    requestClose() {
+      if (step === 0) return finishClose();
+      if (closing) return;
+      closing = setTimeout(finishClose, options.closeWaitMs ?? 1000);
+      options.history.go(-step);
+    },
+    /** For historyDialogs' guard stack: true when the popstate only moved between this sheet's tabs. */
+    guard(poppedState: unknown): boolean {
+      const mark = inspectMark(poppedState);
+      if (mark && mark.sheet === sheet) {
+        step = mark.step;
+        options.show(mark.tab, mark.step);
+        return true;
+      }
+      if (baseDepth !== null && readHistoryDepth(poppedState) === baseDepth && (step > 0 || closing)) {
+        step = 0;
+        options.show(options.initialTab, 0);
+        if (closing) finishClose();
+        return true;
+      }
+      return false;
     }
-    const direction = dialogPopDirection(options.openDepth(), readHistoryDepth(poppedState));
-    if (!direction) return false;
-    if (direction === "back") options.stepBack();
-    (options.undo ?? undoDialogPop)(direction);
-    return true;
   };
 }

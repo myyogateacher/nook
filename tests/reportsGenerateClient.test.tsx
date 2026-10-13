@@ -1,13 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "react-dom/server";
 import { applyEvent, resultLine, stepDetail, toolLabel, type ProgressStep } from "../src/reports/GenerateProgress";
-import { formatValue, SpecPreview } from "../src/reports/SpecPreview";
-import type { ReportResult, ReportSpec } from "../shared/reports";
 
 /**
  * The Wave 46 client: the generation step list folds run events into steps and shows each call's SQL
- * or target and why a call was refused; the spec preview renders markdown, KPIs, and the tables of
- * chart and table blocks from the stored results (until wave 47's viewer).
+ * or target and why a call was refused (the spec preview it once had is wave 47's viewer now,
+ * tests/reportsViewClient.test.tsx).
  */
 
 const event = (type: string, data: Record<string, unknown>, seq = 1) => ({ type, data, seq }) as Parameters<typeof applyEvent>[1];
@@ -34,49 +31,5 @@ describe("generation progress", () => {
     expect(resultLine({ tool: "submit_report", ok: false, result: "The spec was not saved:\n- block x: y" })).toBe("The spec was not saved:\n- block x: y");
     expect(resultLine({ tool: "submit_report", ok: true, result: "Saved: 3 blocks, 2 queries." })).toBe("Saved: 3 blocks, 2 queries.");
     expect(resultLine({ tool: "run_sql", ok: true, result: "{}" })).toBeNull();
-  });
-});
-
-describe("spec preview", () => {
-  const spec: ReportSpec = {
-    version: 1,
-    queries: [{ key: "daily", sql: "SELECT 1", purpose: "", createdBy: "agent" }, { key: "totals", sql: "SELECT 2", purpose: "", createdBy: "agent" }],
-    blocks: [
-      { id: "intro", type: "markdown", markdown: "## Revenue\nNet of refunds." },
-      { id: "total", type: "kpi", queryKey: "totals", column: "total", format: "currency", label: "Total revenue" },
-      { id: "chart", type: "chart", title: "Revenue per day", queryKey: "daily", kind: "stacked_bar", x: "day", y: ["revenue"] },
-      { id: "table", type: "table", title: "Days", queryKey: "daily", columns: ["day"] },
-      { id: "lost", type: "table", queryKey: "missing" }
-    ]
-  };
-  const result = (queryKey: string, columns: Array<[string, string]>, rows: unknown[][]): ReportResult => ({
-    runId: "r", queryKey, sql: "", sentSql: null, columns: columns.map(([name, type]) => ({ name, type })), rows, rowCount: rows.length, truncated: false,
-    rowsRead: null, bytesRead: null, chQueryId: null, ms: 1, error: null, errorCode: null, createdAt: "2026-10-13T00:00:00.000Z"
-  });
-
-  test("markdown, a KPI in its format, and chart and table blocks as tables of their stored result", () => {
-    const markup = renderToStaticMarkup(<SpecPreview spec={spec} results={[
-      result("daily", [["day", "Date"], ["revenue", "Float64"]], [["2026-10-01", 120.5], ["2026-10-02", null]]),
-      result("totals", [["total", "Float64"]], [[361.75]])
-    ]} />);
-    expect(markup).toContain("chat-md-h2\">Revenue</h3>");
-    expect(markup).toContain("Revenue");
-    expect(markup).toContain("Total revenue");
-    expect(markup).toContain("$361.75");
-    expect(markup).toContain("Stacked bar chart of revenue by day");
-    expect(markup).toContain("120.5");
-    expect(markup).toContain('<td class="report-null">NULL</td>');
-    // The table block shows only its columns.
-    expect(markup.split("aria-label=\"Rows of daily\"").length).toBe(3);
-    expect(markup).toContain("No stored result for missing yet.");
-  });
-
-  test("formats", () => {
-    expect(formatValue("1234.5", "integer")).toBe("1,235");
-    expect(formatValue(0.256, "percent")).toBe("25.6%");
-    expect(formatValue(2_500_000, "bytes")).toBe("2.5 MB");
-    expect(formatValue(90, "duration_s")).toBe("1.5 min");
-    expect(formatValue(null, "number")).toBe("—");
-    expect(formatValue("DE", undefined)).toBe("DE");
   });
 });

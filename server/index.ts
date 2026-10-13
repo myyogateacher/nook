@@ -50,6 +50,8 @@ import { registerKnowledgeRoutes } from "./knowledge/routes";
 import { registerReportRoutes } from "./reports/routes";
 import { abandonGenerateRuns } from "./reports/generate";
 import { roleHasReports } from "./reports/access";
+import { abandonRunsAtBoot } from "./reports/refresh";
+import { startReportScheduler } from "./reports/scheduler";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
@@ -1134,6 +1136,9 @@ try {
   console.error("Note and whiteboard attachment backfill failed", errorClass(error));
 }
 startSweeper();
+// Analytics reports (Wave 47): runs a stopped server left behind are abandoned; scheduled refreshes tick once a minute.
+abandonRunsAtBoot();
+startReportScheduler();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
 startServerHeartbeat();
 // Nook key usage counts (D283) are kept in memory and written once a minute.

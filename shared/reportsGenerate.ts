@@ -4,7 +4,7 @@
  * that vocabulary. Pure: no imports from server or client code.
  */
 
-import type { ReportDetail, ReportResult, RunStatus } from "./reports";
+import type { ReportDetail, RunStatus } from "./reports";
 
 /** The tool a doc is read with: its name, the argument that takes the link or id, and whether Outline's `resource: "document"` is sent. */
 export type DocToolChoice = { tool: string; arg: string; outline: boolean };
@@ -24,9 +24,6 @@ export type GenerateStarted = { report: ReportDetail; run: { id: string; agentRu
 
 /** `GET /api/reports/:id/generation`: the latest generation run. */
 export type GenerationRun = { id: string; agentRunId: string | null; status: RunStatus; error: string | null; docSnapshotId: string | null; startedAt: string; finishedAt: string | null };
-
-/** `GET /api/reports/:id/generation/results`: the newest stored result of each of the report's queries (the spec preview). */
-export type LatestResults = { results: ReportResult[] };
 
 /** Generation error codes the UI explains: MCP_AUTH means an admin must reconnect the tool server. */
 /**

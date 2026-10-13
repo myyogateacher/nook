@@ -147,7 +147,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         </div>}
       </div>
 
-      {/* Wave 46: generation progress, the doc banner, and the spec preview (wave 47's viewer replaces SpecPreview). */}
+      {/* Wave 46: generation progress, the doc banner, and the actions; inside it, wave 47's viewer (blocks, refresh, schedule, inspect). */}
       <ReportGeneration report={report} canWrite={canWrite} onChanged={() => { void load(); }} />
 
       <section className="report-console" aria-labelledby={`${consoleId}-heading`}>

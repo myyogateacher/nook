@@ -1,6 +1,6 @@
 import { api, ApiError } from "../api";
 import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
-import type { DocServerChoice, DocState, GenerateStarted, GenerationRun, LatestResults } from "../../shared/reportsGenerate";
+import type { DocServerChoice, DocState, GenerateStarted, GenerationRun } from "../../shared/reportsGenerate";
 
 /** The Reports API (docs/plan/API_CONTRACTS.md § Analytics reports, Wave 45). */
 
@@ -66,6 +66,5 @@ export const generateReport = (body: GenerateBody) => api<GenerateStarted>("/rep
 export const regenerateReport = (id: string, body: Partial<Omit<GenerateBody, "title">> = {}) => api<GenerateStarted>(`/reports/${id}/generate`, json("POST", body));
 export const cancelGeneration = (id: string) => api<{ cancelled: boolean }>(`/reports/${id}/generate/cancel`, json("POST", {}));
 export const latestGeneration = (id: string) => api<{ run: GenerationRun | null }>(`/reports/${id}/generation`);
-export const latestResults = (id: string) => api<LatestResults>(`/reports/${id}/generation/results`);
 export const getDocState = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc`);
 export const checkDoc = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc/check`, json("POST", {}));

@@ -1,4 +1,4 @@
-/* Reports, Wave 46: New report from a doc, the generation step list, the doc banner, and the spec preview. Phones first: 390 px, 44 px tap targets. */
+/* Reports, Wave 46: New report from a doc, the generation step list, and the doc banner. Phones first: 390 px, 44 px tap targets. */
 
 .new-report-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; border: 1px solid #2a2a30; border-radius: 12px; padding: 4px; background: #0f0f12; }
 .new-report-modes button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 9px; background: transparent; color: #b8b8be; font-weight: 650; cursor: pointer; }
@@ -41,19 +41,6 @@
 .report-doc-actions { align-items: center; }
 .report-doc-source { color: #85858c; font-size: .8rem; overflow-wrap: anywhere; }
 
-.spec-preview { display: grid; gap: 12px; min-width: 0; }
-.spec-block { display: grid; gap: 8px; min-width: 0; border: 1px solid #26262b; border-radius: 14px; padding: 14px; background: #121215; }
-.spec-block h3 { margin: 0; color: #ededee; font-size: 1rem; overflow-wrap: anywhere; }
-.spec-kind { margin: 0; display: inline-flex; align-items: center; gap: 6px; color: #9a9aa1; font-size: .78rem; }
-.spec-kind svg { width: 14px; height: 14px; }
-.spec-kpi strong { color: #f4f4f5; font-size: 1.8rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.spec-preview-facts { margin: 0; color: #85858c; font-size: .76rem; }
-.spec-markdown { background: transparent; }
-
-@media (min-width: 768px) {
-  .spec-preview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .spec-preview > .spec-markdown { grid-column: 1 / -1; }
-}
 @media (max-width: 760px) {
   .generate-progress { padding: 12px; }
   .generate-head button, .report-doc-banner button { flex: 1 1 100%; justify-content: center; }

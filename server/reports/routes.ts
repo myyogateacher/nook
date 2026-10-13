@@ -12,6 +12,7 @@ import { binReport, cancelConsole, createReport, listReports, reportDatasource, 
 import { limited } from "./runner";
 import "./bin";
 import { registerGenerateRoutes } from "./generateRoutes";
+import { registerReportViewRoutes } from "./viewRoutes";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -152,4 +153,7 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
     if (!tables.length) throw new ReportError(400, "INVALID", "Name a table");
     return describeTablesTool(row, c.get("user").id, { tables });
   }));
+
+  // Wave 47: results, refresh, runs, provenance, and the schedule (viewRoutes.ts).
+  registerReportViewRoutes(app);
 }

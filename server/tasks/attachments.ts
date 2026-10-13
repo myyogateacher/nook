@@ -193,9 +193,10 @@ export async function detachFromCard(userId: string, cardId: string, documentId:
       binned = binUnlinkedAttachments([documentId], userId, binnedFiles);
       db.query("UPDATE cards SET updated_at = ? WHERE id = ?").run(now(), cardId);
       audit(userId, null, "task.attachment_unlink", { boardId: current.id, cardId, documentId });
+      // The Undo record commits with the removal (undoTickets.ts).
+      recordRemovedLink(userId, "card", cardId, documentId, { partId: link.comment_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     })();
     notifyBinnedFiles(binnedFiles);
-    recordRemovedLink(userId, "card", cardId, documentId, { partId: link.comment_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     return { ok: true as const, movedToBin: binned > 0 };
   });
 }

@@ -231,17 +231,18 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
   const spec = HOSTS[kind];
   const ownerId = (db.query("SELECT owner_id FROM documents WHERE id = ? AND purge_started_at IS NULL").get(documentId) as { owner_id: string } | null)?.owner_id ?? null;
   if (ownerId !== null && ownerId === userId) {
-    let before: LinkRow | undefined;
     const outcome = db.transaction(() => {
-      before = hostLinks(kind, hostId).find((link) => link.document_id === documentId);
+      const before = hostLinks(kind, hostId).find((link) => link.document_id === documentId);
       const removed = db.query(DELETE_LINK[spec.store]).run({ kind, hostId, documentId }).changes;
       if (!removed) throw new AttachmentError(404, "NOT_FOUND", "Attachment not found");
       linkChanged(kind, hostId, documentId);
       audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId, asOwner: true });
-      return { documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
+      const documentBinned = binIfOrphanedAttachment(documentId, userId, { notify: false });
+      // The Undo record commits with the removal (undoTickets.ts).
+      if (before) rememberRemoval(userId, before, documentBinned);
+      return { documentBinned };
     })();
     if (outcome.documentBinned) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
-    if (before) rememberRemoval(userId, before, outcome.documentBinned);
     return hostReadable(kind, hostId, userId) ? outcome : {};
   }
   if (spec.linking !== "declared" || !spec.canUnlink) {
@@ -256,14 +257,16 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
     db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, documentId);
     linkChanged(kind, hostId, documentId);
     audit(userId, null, "attachment.unlink", { hostKind: kind, hostId, documentId });
-    return { link, documentBinned: binIfOrphanedAttachment(documentId, userId, { notify: false }) };
+    const documentBinned = binIfOrphanedAttachment(documentId, userId, { notify: false });
+    // The Undo record commits with the removal (undoTickets.ts).
+    rememberRemoval(userId, link, documentBinned);
+    return { documentBinned };
   })();
   if (outcome.documentBinned) sourceAccessChangedHook({ kind: "document", ids: [documentId] });
-  rememberRemoval(userId, outcome.link, outcome.documentBinned);
   return { documentBinned: outcome.documentBinned };
 }
 
-/** Keeps the removed link for the remover's Undo (undoTickets.ts, POST /api/attachments/relink). */
+/** Keeps the removed link for the remover's Undo (undoTickets.ts, POST /api/attachments/relink). Call inside the removal's transaction. */
 export function rememberRemoval(userId: string, link: LinkRow, binned: boolean) {
   recordRemovedLink(userId, link.host_kind as HostKind, link.host_id, link.document_id, { partId: link.part_id, position: link.position, linkedBy: link.linked_by, createdAt: link.created_at, binned });
 }

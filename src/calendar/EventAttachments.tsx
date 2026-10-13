@@ -5,7 +5,7 @@ import { AttachmentList, AttachmentPreview, AttachSheet, LocationStripError, lin
 import { useConfirm } from "../ui/useConfirm";
 import type { DocumentSummary } from "../types";
 import type { EventResponse } from "./calendarApi";
-import { notify } from "../ui/notify";
+import { notify, type NotifyOptions } from "../ui/notify";
 
 /**
  * Event attachments (uploads everywhere U1). Files belong to the event's whole series: every
@@ -121,15 +121,25 @@ export function uploadFailure(reason: unknown): Partial<StagedAttachment> {
   return { status: "failed", error: errorText(reason, "Could not upload this file") };
 }
 
+/** A file Save took off the event that the Undo after Save may put back. */
+export type SheetRemoval = { documentId: string; name: string };
+
 /**
  * Applies the sheet's staged changes to a saved event: unlinks the removed files, then links the
- * additions in the order they were added. Returns the names that failed, with why.
+ * additions in the order they were added. Returns the names that failed, with why, and the removals
+ * Undo may put back: each unlink committed the server's Undo record for it (POST
+ * /api/attachments/relink), except a file that went to someone else's Bin (only its owner restores
+ * it) or one whose name the person cannot see.
  */
-export async function applySheetAttachments(eventId: string, state: SheetAttachmentState) {
+export async function applySheetAttachmentChanges(eventId: string, state: SheetAttachmentState) {
   const failures: string[] = [];
+  const removed: SheetRemoval[] = [];
   for (const documentId of state.removed) {
-    try { await unlinkFromHost("event", eventId, documentId); } catch (reason) {
-      const item = state.existing.find((existing) => existing.documentId === documentId);
+    const item = state.existing.find((existing) => existing.documentId === documentId);
+    try {
+      const result = await unlinkFromHost("event", eventId, documentId);
+      if (item && !item.removed && (!result.documentBinned || item.isOwner)) removed.push({ documentId, name: item.name });
+    } catch (reason) {
       failures.push(`${item && !item.removed ? item.name : "A file"}: ${errorText(reason, "could not be removed")}`);
     }
   }
@@ -139,7 +149,71 @@ export async function applySheetAttachments(eventId: string, state: SheetAttachm
       failures.push(`${item.name}: ${errorText(reason, "could not be attached")}`);
     }
   }
-  return failures;
+  return { failures, removed };
+}
+
+/** applySheetAttachmentChanges, the failures only. */
+export async function applySheetAttachments(eventId: string, state: SheetAttachmentState) {
+  return (await applySheetAttachmentChanges(eventId, state)).failures;
+}
+
+export type SheetUndoResult = { restored: number; total: number; refusals: Array<{ name: string; message: string }> };
+
+/**
+ * The Undo after Save: puts every removed file back through the relink route, one at a time, each
+ * with the server's record of its removal (its old place, out of the Bin when the removal put it
+ * there). One that is already back counts as restored.
+ */
+export async function undoSheetRemovals(eventId: string, removals: readonly SheetRemoval[], relink = relinkToHost): Promise<SheetUndoResult> {
+  const result: SheetUndoResult = { restored: 0, total: removals.length, refusals: [] };
+  for (const removal of removals) {
+    try {
+      await relink("event", eventId, removal.documentId);
+      result.restored += 1;
+    } catch (reason) {
+      result.refusals.push({ name: removal.name, message: errorText(reason, "Could not put the file back") });
+    }
+  }
+  return result;
+}
+
+/** How the Undo went: every file back, the refusal itself for a single file, or "Restored N of M". */
+export function sheetUndoMessage(result: SheetUndoResult): { kind: "success" | "warning" | "error"; message: string } {
+  if (!result.refusals.length) return { kind: "success", message: result.total === 1 ? "File put back" : `Put back ${result.total} files` };
+  if (result.total === 1) return { kind: "error", message: result.refusals[0]!.message };
+  return { kind: result.restored ? "warning" : "error", message: `Restored ${result.restored} of ${result.total} files. ${result.refusals.map((refusal) => `${refusal.name}: ${refusal.message}`).join("; ")}` };
+}
+
+/** "Event saved. Removed “a.txt”." or "... Removed 2 files." */
+export function savedWithRemovals(base: string, removals: readonly SheetRemoval[]) {
+  if (!removals.length) return base;
+  return `${base}. Removed ${removals.length === 1 ? `“${removals[0]!.name}”` : `${removals.length} files`}.`;
+}
+
+type SaveSink = { success: (message: string, options?: NotifyOptions) => unknown; warning: (message: string, options?: NotifyOptions) => unknown; error: (message: string, options?: NotifyOptions) => unknown };
+
+/**
+ * The one toast after Save. When Save removed files, it carries Undo, which puts all of them back
+ * (undoSheetRemovals), says how it went, and then `onUndone` refreshes the event.
+ */
+export function notifySheetSaved(message: string, options: { warning: boolean; eventId: string; removals: readonly SheetRemoval[]; onUndone: () => void; relink?: typeof relinkToHost }, sink: SaveSink = notify) {
+  const show = options.warning ? sink.warning : sink.success;
+  if (!options.removals.length) {
+    show(message);
+    return;
+  }
+  show(message, {
+    action: {
+      label: "Undo",
+      onClick: () => {
+        void undoSheetRemovals(options.eventId, options.removals, options.relink).then((result) => {
+          const outcome = sheetUndoMessage(result);
+          sink[outcome.kind](outcome.message);
+          options.onUndone();
+        });
+      }
+    }
+  });
 }
 
 /** Discarded sheet: the uploads it made go to the Bin (best effort; the hourly sweep catches the rest). */

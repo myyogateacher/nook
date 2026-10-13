@@ -96,7 +96,7 @@ describe("relink: events", () => {
     const link0 = db.query("SELECT linked_by FROM attachment_links WHERE host_kind = 'event' AND host_id = ? AND document_id = ?").get(eventId, spec) as { linked_by: string };
     expect(link0.linked_by).toBe(owner.userId);
 
-    // Without a record (expired, or a restart): someone else's file is a 404, the owner's Files item a confirm.
+    // Without a record (expired, or none): someone else's file is a 404, the owner's Files item a confirm.
     expect((await unlink(editor, "event", eventId, spec)).status).toBe(200);
     resetUndoTickets();
     expect((await relink(editor, { hostKind: "event", hostId: eventId, documentId: spec })).status).toBe(404);

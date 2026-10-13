@@ -96,10 +96,10 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
       // has linked for a day (never linked, or every host purged) move to the Bin. Since 047 (U8) this
       // also covers the card and row uploads the older task and row sweeps used to handle.
       try {
-        // Review L3: the attachment and system-folder rules rely on the 046 triggers; say so loudly if any is missing.
+        // Review L3: the attachment and system-folder rules rely on the 046 triggers (and Undo records on 049's); say so loudly if any is missing.
         if (options.boot) {
           const missing = missingAttachmentTriggers();
-          if (missing.length) console.error(`Attachment self-check: migration 046 triggers are missing (${missing.join(", ")}); system-folder guards and link clean-up are not enforced by the database`);
+          if (missing.length) console.error(`Attachment self-check: migration 046 or 049 triggers are missing (${missing.join(", ")}); system-folder guards and link clean-up are not enforced by the database`);
         }
         const swept = await sweepAttachments({ nowMs: options.nowMs });
         if (swept.staleLinks || swept.orphansBinned) console.info(`Attachments sweep: ${swept.staleLinks} stale links removed, ${swept.orphansBinned} unlinked files moved to the Bin`);

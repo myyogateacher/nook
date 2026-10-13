@@ -44,6 +44,7 @@ import { signInDevicesMigration } from "./044_sign_in_devices";
 import { attachmentsMigration } from "./046_attachments";
 import { legacyAttachmentsMigration } from "./047_legacy_attachments";
 import { contentReferencesMigration } from "./048_content_references";
+import { attachmentUndoRecordsMigration } from "./049_attachment_undo_records";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -104,8 +105,11 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // uploader's Attachments folder, in place, with their links kept) needs 006, 009, 012, 025, and 046.
   legacyAttachmentsMigration,
   // 048 (v0.35.0 review L2: content_reference_sources and content_references, the orphan sweep's
-  // reference index; a cache, created empty) needs nothing. The Messages migration moves to 049.
-  contentReferencesMigration
+  // reference index; a cache, created empty) needs nothing. The Messages migration moves to 050.
+  contentReferencesMigration,
+  // 049 (v0.37.0: attachment_undo_records, the durable Undo records of POST /api/attachments/relink,
+  // with the triggers that end them on any link change or purge) needs 009, 012, 013, 030, 039, and 046.
+  attachmentUndoRecordsMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

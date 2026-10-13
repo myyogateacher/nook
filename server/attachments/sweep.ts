@@ -3,7 +3,8 @@ import { sourceAccessChangedHook } from "../knowledge/hooks";
 import { ATTACHMENTS_FOLDER_KIND, binIfOrphanedAttachment } from "./service";
 import { isReferencedNow, refreshReferenceIndex, registeredReferences } from "./references";
 import type { HostKind } from "./hosts";
-import { linkChanged } from "./undoTickets";
+import { linkChanged, sweepUndoRecords } from "./undoTickets";
+import { UNDO_RECORD_TRIGGERS } from "../migrations/049_attachment_undo_records";
 
 /**
  * The attachment sweeper steps (uploads everywhere plan D395, T347, T348), run hourly by
@@ -34,8 +35,11 @@ export function sweepStaleAttachmentLinks() {
   for (const [kind, exists] of Object.entries(HOST_EXISTS)) {
     const stale = db.query(`SELECT l.host_id, l.document_id FROM attachment_links l WHERE l.host_kind = ? AND NOT ${exists} LIMIT ${SWEEP_LIMIT}`).all(kind) as Array<{ host_id: string; document_id: string }>;
     for (const link of stale) {
-      removed += db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, link.host_id, link.document_id).changes;
-      linkChanged(kind as HostKind, link.host_id, link.document_id);
+      removed += db.transaction(() => {
+        const changes = db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, link.host_id, link.document_id).changes;
+        linkChanged(kind as HostKind, link.host_id, link.document_id);
+        return changes;
+      })();
     }
   }
   return removed;
@@ -82,20 +86,21 @@ export async function sweepOrphanedAttachments(options: { nowMs?: number } = {})
   return binned.length;
 }
 
-/** The triggers migration 046 installs; the attachment rules rely on every one (review L3). */
+/** The triggers migration 046 installs; the attachment rules rely on every one (review L3). 049's are UNDO_RECORD_TRIGGERS. */
 export const ATTACHMENT_TRIGGERS = [
   "events_attachment_links_ad", "notes_attachment_links_ad", "chat_messages_attachment_links_ad", "whiteboards_attachment_links_ad",
   "folders_system_kind_fixed", "folders_system_unchanged", "folders_system_no_child_insert", "folders_system_no_child_update",
   "folder_shares_no_system", "group_grants_no_system_folder", "notes_no_system_folder_insert", "notes_no_system_folder_update", "whiteboards_no_system_folder"
 ] as const;
 
-/** Boot self-check (the grant self-check's pattern: logged loudly, never fatal): the 046 trigger names that are missing. */
+/** Boot self-check (the grant self-check's pattern: logged loudly, never fatal): the 046 and 049 trigger names that are missing. */
 export function missingAttachmentTriggers(): string[] {
   const present = new Set((db.query("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as Array<{ name: string }>).map((row) => row.name));
-  return ATTACHMENT_TRIGGERS.filter((name) => !present.has(name));
+  return [...ATTACHMENT_TRIGGERS, ...UNDO_RECORD_TRIGGERS].filter((name) => !present.has(name));
 }
 
-/** Both steps, for server/sweeper.ts. */
+/** Every step (and expired Undo records, 049), for server/sweeper.ts. */
 export async function sweepAttachments(options: { nowMs?: number } = {}) {
-  return { staleLinks: sweepStaleAttachmentLinks(), orphansBinned: await sweepOrphanedAttachments(options) };
+  const expiredUndoRecords = sweepUndoRecords(options.nowMs ?? Date.now());
+  return { staleLinks: sweepStaleAttachmentLinks(), orphansBinned: await sweepOrphanedAttachments(options), expiredUndoRecords };
 }

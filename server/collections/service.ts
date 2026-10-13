@@ -1000,9 +1000,10 @@ export async function detachDocument(userId: string, rowId: string, documentId: 
       binned = binUnlinkedAttachments([documentId], userId, changed);
       recordLinkChange(rowId, collection, userId, before, now());
       audit(userId, null, "collection.row_detach", { collectionId: collection.id, rowId, documentId });
+      // The Undo record commits with the removal (undoTickets.ts).
+      recordRemovedLink(userId, "row", rowId, documentId, { partId: link.field_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     })();
     sourceAccessChangedHook({ kind: "document", ids: changed });
-    recordRemovedLink(userId, "row", rowId, documentId, { partId: link.field_id, position: 0, linkedBy: link.linked_by, createdAt: link.created_at, binned: binned > 0 });
     return { row: rowDetail(rowId, schemaOf(collection), userId)!, documentBinned: binned > 0 };
   });
 }

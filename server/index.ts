@@ -54,6 +54,7 @@ import { initVaultStatus, vaultFeature } from "./vault/status";
 import { scheduleRotationRun } from "./vault/rotation";
 import { backfillWhiteboardLinks, reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { backfillNoteLinks, resyncNoteLinks } from "./noteAttachments";
+import { recordDraftReferences } from "./attachments/references";
 import { WHITEBOARD_MAX_SCENE_BYTES } from "../shared/whiteboardScene";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
 import { registerCalendarRoutes } from "./calendar/routes";
@@ -813,7 +814,8 @@ app.post("/api/notes/:id/publish", async (c) => {
   const body = await parseJson(c.req.raw, publishSchema);
   try {
     // The caller publishes the draft revision it last saw (T38), in server/noteDrafts.ts.
-    return c.json(await publishDraft(c.get("user").id, id, body.revision, { allowEditors: true }));
+    // Review M1: the publisher's own Files items join the note only once confirmed (409 CONFIRM_REQUIRED).
+    return c.json(await publishDraft(c.get("user").id, id, body.revision, { allowEditors: true, confirmAttachments: body.confirmAttachments?.map((value) => value.toLowerCase()) ?? [] }));
   } catch (error) {
     if (error instanceof DraftActionError) return c.json(error.body, error.status);
     throw error;
@@ -870,6 +872,7 @@ app.post("/api/notes/:id/versions/:version/restore", async (c) => {
         .run(metadata.title, revision, restoredChecksum, now(), id, userId, note.draft_revision);
       if (result.changes === 1) {
         indexNote(id, "draft", metadata.title, restored, restoredChecksum);
+        recordDraftReferences(id, restoredChecksum, restored);
         // The restored text replaces an agent's draft, so its note_draft proposal is superseded (D149).
         resolveNoteDraftProposals(id, { kind: "restored" });
       }

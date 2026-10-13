@@ -9,6 +9,8 @@ import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useConfirm } from "../ui/useConfirm";
+import { confirmRequiredOf, publishFilesConfirm } from "../publishFilesConfirm";
 import {
   announceInboxChanged,
   approveProposal,
@@ -75,6 +77,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
   const [detail, setDetail] = useState<ProposalDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const { ask, confirmElement } = useConfirm();
   const [dialog, setDialog] = useState<Dialog | null>(null);
   // Cancel or Escape hands focus back to the control that opened the dialog (4c: Reject…).
   const dialogReturnRef = useRef<HTMLElement | null>(null);
@@ -218,7 +221,16 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
   async function approve(proposal: Pick<ProposalSummary, "id" | "kind" | "title">, nextId?: string | null) {
     setBusy(proposal.id);
     try {
-      const result = await approveProposal(proposal.id);
+      let result: Awaited<ReturnType<typeof approveProposal>>;
+      try {
+        result = await approveProposal(proposal.id);
+      } catch (reason) {
+        // Review M1: a note draft that would share the owner's own Files items asks first (it stays pending if not).
+        const required = reason instanceof ApiError ? confirmRequiredOf(reason.status, reason.payload) : null;
+        if (!required) throw reason;
+        if (!await ask(publishFilesConfirm(required, "approve"))) return;
+        result = await approveProposal(proposal.id, required.files.map((file) => file.id));
+      }
       setBanner({ text: `Approved: ${proposal.title}`, ref: result.ref, tone: "ok" });
       // On a phone the list (and its banner) is hidden behind the next proposal, so say it in a toast
       // (above the sticky Approve bar) that offers the same Open link as the banner.
@@ -396,6 +408,7 @@ export function InboxApp({ displayName, navigate, flash, onHome, onSettings, onS
     </div>
 
     {dialog?.kind === "reject" && <RejectDialog label={dialog.label} count={dialog.ids.length} effect={dialog.effect} onClose={closeDialog} onReject={(reason) => reject(dialog.ids, reason)} />}
+    {confirmElement}
     {dialog?.kind === "approve-all" && <ConfirmDialog title={bulkConfirmText(dialog.items)} body="Each change is applied on its own, in the order the agent suggested them. Any that no longer apply are left unchanged and marked failed." confirm="Approve all" onClose={closeDialog} onConfirm={() => { void approveAll(dialog.items); }} />}
   </main>;
 }

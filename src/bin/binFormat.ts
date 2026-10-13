@@ -42,8 +42,8 @@ export function binFolderLabel(item: Pick<BinItem, "folder_name"> & Partial<Pick
   if (item.type === "event") return item.folder_name ?? "Calendar";
   if (item.type === "vault") return "Vault";
   if (item.type === "vault_environment" || item.type === "vault_secret") return item.folder_name ?? "its vault";
-  // Notes and files: the server names the folder the restore really uses (an Attachments file that
-  // nothing links any more goes to Default, not back to Attachments).
+  // Notes and files: the server names the folder the restore really uses (an Attachments file goes
+  // back to Attachments, linked or not; an item whose folder is gone goes to Default).
   return item.restore_folder_name ?? item.folder_name ?? "Default";
 }
 

@@ -67,6 +67,11 @@ type Props = {
    * other file a file card. Without it, only images are added, through `uploadImage` or `folderId`.
    */
   attachHost?: "note";
+  /**
+   * A Files item (outside the Attachments folder) the person confirmed sharing with the note in the
+   * From Files picker: the publish sends it as already confirmed, so they are not asked again (review M1).
+   */
+  onFileConfirmed?: (documentId: string) => void;
   /** Accessible name of the editing surface. */
   label?: string;
   placeholder?: string;
@@ -74,10 +79,10 @@ type Props = {
   autoFocus?: boolean;
 };
 
-export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
+export function NoteEditor({ markdown, editable, onChange, folderId = null, onNotice, uploadImage, attachHost, onFileConfirmed, label = "Note content", placeholder = "Start writing… Type / for commands", autoFocus = false }: Props) {
   // The editor is created once, so the upload handler reads the latest props through a ref.
-  const latest = useRef({ folderId, onNotice, uploadImage, attachHost });
-  latest.current = { folderId, onNotice, uploadImage, attachHost };
+  const latest = useRef({ folderId, onNotice, uploadImage, attachHost, onFileConfirmed });
+  latest.current = { folderId, onNotice, uploadImage, attachHost, onFileConfirmed };
   // U4: the attach sheet or the From Files picker, for the editor that asked; and the file preview.
   const [attachLayer, setAttachLayer] = useState<{ editor: Editor; what: "sheet" | "files" } | null>(null);
   const [preview, setPreview] = useState<FileChipOpenDetail | null>(null);
@@ -292,14 +297,14 @@ export function NoteEditor({ markdown, editable, onChange, folderId = null, onNo
         disabledReason={noteFileRoom(attachLayer.editor) <= 0 ? NOTE_FILE_LIMIT_MESSAGE : null}
         onClose={() => closeAttach(attachLayer.editor)}
         onFiles={(files) => { void attachFiles(attachLayer.editor, files); }}
-        onPickDocument={(document) => { insertDocument(attachLayer.editor, document); }} />}
+        onPickDocument={(document, options) => { if (insertDocument(attachLayer.editor, document) && options.confirmed) latest.current.onFileConfirmed?.(document.id); }} />}
       {attachLayer?.what === "files" && <FromFilesSheet hostNoun="note"
         onClose={() => closeAttach(attachLayer.editor)}
-        onPick={(document) => {
+        onPick={(document, options) => {
           const target = attachLayer.editor;
           setAttachLayer(null);
           if (noteFileRoom(target) <= 0) latest.current.onNotice?.warning(NOTE_FILE_LIMIT_MESSAGE);
-          else insertDocument(target, document);
+          else if (insertDocument(target, document) && options.confirmed) latest.current.onFileConfirmed?.(document.id);
         }} />}
       {preview && <AttachmentPreview documentId={preview.id} name={preview.name} onClose={() => setPreview(null)} />}
     </div>

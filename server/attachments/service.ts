@@ -255,37 +255,92 @@ export function unlinkAttachment(userId: string, kind: HostKind, hostId: string,
   return outcome;
 }
 
+/** A document a derived host could newly link: one of the actor's own live Files documents. */
+export type LinkCandidate = { id: string; name: string; owner_id: string; system_kind: string | null };
+
+/**
+ * What a derived sync does with a referenced document the actor owns that is not linked yet
+ * (v0.35.0 review, T350, T354): `link` it, `skip` it (reported in `skipped`), or ask the actor to
+ * `confirm` first (reported in `confirm` and `skipped`; nothing is linked).
+ */
+export type LinkDecision = "link" | "skip" | "confirm";
+export type LinkPolicy = (document: LinkCandidate) => LinkDecision;
+
+export const inAttachmentsFolder = (document: Pick<LinkCandidate, "system_kind">) => document.system_kind === ATTACHMENTS_FOLDER_KIND;
+
+/** The owner put every reference there themselves (a board only its owner saves): link all of them. */
+export const linkOwnedPolicy: LinkPolicy = () => "link";
+/** Someone other than the owner wrote the content (a guard: never today for boards): nothing new is linked. */
+export const noNewLinksPolicy: LinkPolicy = () => "skip";
+/** Content the owner did not author (a copy of someone else's board): their Attachments files only, never a Files item. */
+export const attachmentsOnlyPolicy: LinkPolicy = (document) => inAttachmentsFolder(document) ? "link" : "skip";
+
+/**
+ * A person publishing (v0.35.0 review M1): their Attachments-folder files link silently (they exist
+ * only to be attached); any other Files item needs their explicit confirm, listed in `confirmed`,
+ * because an editor may have put the reference in the shared draft.
+ */
+export const personLinkPolicy = (confirmed: Iterable<string> = []): LinkPolicy => {
+  const ids = new Set([...confirmed].map((id) => id.toLowerCase()));
+  return (document) => inAttachmentsFolder(document) || ids.has(document.id) ? "link" : "confirm";
+};
+
+/** A precomputed set (the boot backfill decides asynchronously, before its transaction). */
+export const allowListPolicy = (allowed: ReadonlySet<string>): LinkPolicy => (document) => allowed.has(document.id) ? "link" : "skip";
+
+export type DerivedLinkPlan = {
+  /** The documents the host will link, in reference order (kept and new). */
+  wanted: string[];
+  /** Referenced ids that will not be linked: someone else's, missing, binned, refused by the policy, past the cap. */
+  skipped: string[];
+  /** The actor's own referenced files in their Bin (review M3). */
+  binned: string[];
+  /** The actor's own files the policy wants confirmed first (not linked). */
+  confirm: Array<{ documentId: string; name: string }>;
+};
+
+/**
+ * What `syncDerivedLinks` would do, without writing (the publish route checks for files that need a
+ * confirm before it stages a version). Read-only; call inside the host's lock.
+ */
+export function planDerivedLinks(kind: HostKind, hostId: string, actorId: string, documentIds: readonly string[], policy: LinkPolicy = linkOwnedPolicy): DerivedLinkPlan {
+  const spec = HOSTS[kind];
+  const current = new Set(hostLinks(kind, hostId).map((link) => link.document_id));
+  const plan: DerivedLinkPlan = { wanted: [], skipped: [], binned: [], confirm: [] };
+  const binnedOwned = db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL");
+  for (const raw of documentIds) {
+    const id = raw.toLowerCase();
+    if (plan.wanted.includes(id) || plan.skipped.includes(id)) continue;
+    if (plan.wanted.length >= spec.caps.perHost) { plan.skipped.push(id); continue; }
+    if (current.has(id)) { plan.wanted.push(id); continue; }
+    const document = linkableDocument(id, actorId);
+    const decision = document ? policy(document) : "skip";
+    if (decision === "link") { plan.wanted.push(id); continue; }
+    plan.skipped.push(id);
+    if (decision === "confirm") plan.confirm.push({ documentId: id, name: document!.name });
+    else if (!document && binnedOwned.get(id, actorId)) plan.binned.push(id);
+  }
+  return plan;
+}
+
 /**
  * Sets a derived host's links (notes on publish, D408; whiteboards on save, U4b). The new set is the
  * referenced documents that are already linked, plus those the actor OWNS (live Files documents, not
- * whiteboards), capped at the host's limit in reference order. Nobody's file is ever linked by
- * someone else (T350). Links that are no longer referenced are removed; documents are never binned
- * here (an older version may still show them), the sweeper handles orphans. `binned` lists the
- * actor's own referenced files that are in their Bin (review M3: show them broken, offer Restore). Call inside the host's
- * own lock; returns what changed.
+ * whiteboards) that `policy` allows, capped at the host's limit in reference order. Nobody's file is
+ * ever linked by someone else (T350), and a policy decides which of the actor's own files may join
+ * silently (T350, T354: a person's Files items need their confirm; a key's reach limits it). Links
+ * that are no longer referenced are removed; documents are never binned here (an older version may
+ * still show them), the sweeper handles orphans. `binned` lists the actor's own referenced files
+ * that are in their Bin (review M3: show them broken, offer Restore); `confirm` lists the files the
+ * policy wanted confirmed (not linked). Call inside the host's own lock; returns what changed.
  */
-export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string, documentIds: readonly string[]) {
+export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string, documentIds: readonly string[], policy: LinkPolicy = linkOwnedPolicy) {
   const spec = HOSTS[kind];
   if (spec.linking !== "derived") throw new AttachmentError(409, "HOST_MANAGED", `A ${spec.noun}'s links are not derived`);
   return db.transaction(() => {
-    const current = new Map(hostLinks(kind, hostId).map((link) => [link.document_id, link]));
-    const wanted: string[] = [];
-    const skipped: string[] = [];
-    // Review M3: the actor's own referenced files that are in their Bin, so the host can show them as
-    // broken with a Restore (they are also in `skipped`; a link already there is kept).
-    const binned: string[] = [];
-    const binnedOwned = db.query("SELECT 1 FROM documents WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL AND purge_started_at IS NULL");
-    for (const raw of documentIds) {
-      const id = raw.toLowerCase();
-      if (wanted.includes(id) || skipped.includes(id)) continue;
-      if (wanted.length >= spec.caps.perHost) { skipped.push(id); continue; }
-      if (current.has(id) || linkableDocument(id, actorId)) wanted.push(id);
-      else {
-        skipped.push(id);
-        if (binnedOwned.get(id, actorId)) binned.push(id);
-      }
-    }
-    const unlinked = [...current.keys()].filter((id) => !wanted.includes(id));
+    const current = new Set(hostLinks(kind, hostId).map((link) => link.document_id));
+    const { wanted, skipped, binned, confirm } = planDerivedLinks(kind, hostId, actorId, documentIds, policy);
+    const unlinked = [...current].filter((id) => !wanted.includes(id));
     for (const id of unlinked) db.query("DELETE FROM attachment_links WHERE host_kind = ? AND host_id = ? AND document_id = ?").run(kind, hostId, id);
     const linked: string[] = [];
     const timestamp = now();
@@ -299,7 +354,7 @@ export function syncDerivedLinks(kind: HostKind, hostId: string, actorId: string
       linked.push(id);
     });
     if (linked.length || unlinked.length) audit(actorId, kind === "note" ? hostId : null, "attachment.sync", { hostKind: kind, hostId, linked: linked.length, unlinked: unlinked.length });
-    return { linked, unlinked, skipped, binned };
+    return { linked, unlinked, skipped, binned, confirm };
   })();
 }
 

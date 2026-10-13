@@ -203,7 +203,7 @@ describe("notes (D408, the G1 regression), chat messages, whiteboards, cards, an
     expect(await contentStatus(recipient, image)).toBe(404);
 
     const synced = syncDerivedLinks("note", noteId, owner.userId, [image, othersImage]);
-    expect(synced).toEqual({ linked: [image], unlinked: [], skipped: [othersImage], binned: [] });
+    expect(synced).toEqual({ linked: [image], unlinked: [], skipped: [othersImage], binned: [], confirm: [] });
     expect(await contentStatus(recipient, image)).toBe(200);
     expect(await contentStatus(recipient, othersImage)).toBe(404);
     // Declared links are refused for a derived host.

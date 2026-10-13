@@ -39,7 +39,7 @@ export const noteManageTools: McpToolSpec[] = [
   defineTool({
     name: "publish_note_draft",
     title: "Publish a note's draft",
-    description: "Makes the draft the note's published text (a new version), visible to everyone the note is shared with. Only for notes the user owns. Call get_note_draft first and pass its revision: a revision this key was not shown fails with DRAFT_NOT_SEEN, and a draft that changed since you read it fails with DRAFT_CHANGED. Returns the new version and whether the note is private or shared. The files the published Markdown references (/api/files/<id>/content images, /files/<id> links) that the user owns become readable to the note's readers; skippedAttachments counts the others, and binnedAttachments lists the user's own referenced files that are in their Bin (restore them in Nook's Bin, then publish again).",
+    description: "Makes the draft the note's published text (a new version), visible to everyone the note is shared with. Only for notes the user owns. Call get_note_draft first and pass its revision: a revision this key was not shown fails with DRAFT_NOT_SEEN, and a draft that changed since you read it fails with DRAFT_CHANGED. Returns the new version and whether the note is private or shared. The files the published Markdown references (/api/files/<id>/content images, /files/<id> links) become readable to the note's readers only when they are the user's own uploads made for attaching (create_text_file or begin_upload with purpose \"attachment\") that are not attached anywhere this key cannot read (unless this key may read them through Files); skippedAttachments counts the others (someone else's file, a file kept elsewhere in Files, which the user must add in Nook, or one this key cannot read), and binnedAttachments lists the user's own referenced files that are in their Bin (restore them in Nook's Bin, then publish again).",
     scopes: ["notes:publish"],
     access: { mode: "items", items: [{ arg: "noteId", kind: "note" }] },
     write: true,
@@ -47,7 +47,9 @@ export const noteManageTools: McpToolSpec[] = [
     inputSchema: z.object({ noteId: uuid, revision: z.number().int().min(1).describe("The revision get_note_draft returned") }).strict(),
     handler: async ({ noteId, revision }, key) => {
       try {
+        // T354: the key links only Attachments-folder files its grants reach; it is never asked to confirm.
         const published = await viaKey(key, () => publishDraft(key.userId, noteId, revision, {
+          key,
           verify: (note) => {
             const seen = seenDraft(key.keyId, noteId);
             if (!seen || seen.revision !== revision) {

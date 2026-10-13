@@ -6,6 +6,7 @@ import { BIN_BUCKETS, BIN_DESCRIPTION, defineTool, issueDetails, McpToolError, t
 import { keyMayRead } from "../keyReach";
 import { searchText } from "../search";
 import { attachToCard, linkableCardDocument, listAttachments, needsLinkConfirm, type CardAttachment } from "./attachments";
+import { keyMayLinkAttachment } from "../attachments/keyLinks";
 import { restoreTaskItem } from "./bin";
 import { createRelation, getBoardWithRelationCounts, listRelations, type CardRelation, type RelationCounts } from "./cardRelations";
 import { searchCards } from "./cardSearch";
@@ -154,13 +155,23 @@ const attachmentFile = (attachment: CardAttachment) => attachment.removed
  * A Files item outside the Attachments folder joins a card only with `confirmed` (D396) and only when
  * the key could read it through Files itself (`files:read` over it): a tasks key never shares a file
  * it cannot see (T341, T345). The caller's own uploads (`purpose: "attachment"` or `task_attachment`)
- * need neither. Anything else is NOT_FOUND, like a missing id. Call inside service().
+ * need neither, unless they are already attached somewhere this key cannot reach (a chat picture, a
+ * private card's file) and its `files:read` does not cover them (T354, server/attachments/keyLinks.ts).
+ * Anything else is NOT_FOUND, like a missing id. Call inside service().
  */
-function requireKeyMayLink(key: McpKeyContext, documentId: string) {
+function requireKeyMayLink(key: McpKeyContext, cardId: string, documentId: string) {
   const document = linkableCardDocument(documentId, key.userId);
-  if (document && needsLinkConfirm(document) && !reachCovers(keyReach(key, "files:read"), anchorsOf("document", documentId))) {
-    throw new TaskError(404, "File not found");
-  }
+  if (!document) return;
+  const refused = needsLinkConfirm(document)
+    ? !reachCovers(keyReach(key, "files:read"), anchorsOf("document", documentId))
+    : !keyMayLinkAttachment(key, document.id, { kind: "card", hostId: cardId.toLowerCase() });
+  if (refused) throw new TaskError(404, "File not found");
+}
+
+/** The Attachments-folder half of requireKeyMayLink (add_comment's attachmentIds; Files items are refused there anyway). */
+function requireKeyMayRelink(key: McpKeyContext, cardId: string, documentId: string) {
+  const document = linkableCardDocument(documentId, key.userId);
+  if (document && !needsLinkConfirm(document) && !keyMayLinkAttachment(key, document.id, { kind: "card", hostId: cardId.toLowerCase() })) throw new TaskError(404, "File not found");
 }
 
 type CardWithDescription = CardSummary & { description?: string };
@@ -535,6 +546,8 @@ export const taskTools: McpToolSpec[] = [
       if (key.person && attachmentIds?.length) throw new McpToolError("INVALID", "Suggested comments cannot attach files", { reason: "PROPOSAL_FILES" });
       const input = routeInput(commentCreateSchema, { body: body ?? "", ...(attachmentIds?.length ? { attachmentIds } : {}) });
       return service(key, async () => {
+        // T354: an upload attached somewhere this key cannot reach is NOT_FOUND here too.
+        for (const documentId of attachmentIds ?? []) requireKeyMayRelink(key, cardId, documentId);
         const { comment } = await createComment(key.userId, cardId, input);
         const files = attachmentIds?.length ? listAttachments(comment.card_id).filter((attachment) => attachment.comment_id === comment.id).map((attachment) => attachment.document_id) : [];
         return { comment: { id: comment.id, card_id: comment.card_id, created_at: comment.created_at, ...(files.length ? { body: comment.body, attachmentIds: files } : {}) } };
@@ -681,7 +694,7 @@ export const taskTools: McpToolSpec[] = [
     handler: async ({ cardId, ...fields }, key) => {
       const input = routeInput(attachmentSchema, fields);
       return service(key, async () => {
-        requireKeyMayLink(key, input.documentId);
+        requireKeyMayLink(key, cardId, input.documentId);
         const { status, attachment } = await attachToCard(key.userId, cardId, input);
         return { attachment: { cardId, documentId: attachment.document_id, name: attachment.name, commentId: attachment.comment_id }, alreadyLinked: status === 200 };
       });

@@ -6,7 +6,7 @@ import { consumeMcpLimits } from "../mcpRateLimit";
 import { McpToolError, type McpErrorCode, type McpKeyContext } from "../mcpToolKit";
 import { canWriteContent } from "../team/userRole";
 import { DraftActionError, rejectAgentDraft, type RejectDraftOutcome } from "../noteDrafts";
-import { isProposalKind, PROPOSAL_KIND_DEFS, type ProposalKind, type ProposalPreview, type ProposalRef, type StoredProposal } from "./kinds";
+import { isProposalKind, PROPOSAL_KIND_DEFS, type ApplyOptions, type ProposalKind, type ProposalPreview, type ProposalRef, type StoredProposal } from "./kinds";
 import { PROPOSAL_EXPIRE_MS, rejectEffectFor, type NoteDraftPayload, type ProposalBaseRow, type RejectEffect } from "./noteDraftProposals";
 import { cleanLine, cleanText } from "./text";
 import { proposalIsStale } from "./stale";
@@ -434,10 +434,12 @@ const notPending = (row: Pick<ProposalRow, "status">) => new InboxError(409, `Th
  * Applies a pending proposal as `approverId` (its owner). The row is claimed `pending → applying`
  * first, so a second approve gets NOT_PENDING; the kind's write tool then runs through the module's
  * service with the proposal's provenance. A refusal (a moved revision, a lost ACL, a full column, a
- * binned target) makes it `failed` with the code and nothing applied (D148). An unexpected error
+ * binned target) makes it `failed` with the code and nothing applied (D148). A note_draft whose text
+ * would share the owner's own Files items answers InboxError 409 CONFIRM_REQUIRED and stays pending
+ * until it is approved again with `options.confirmAttachments` (v0.35.0 review M1). An unexpected error
  * releases the claim; a crash leaves `applying`, which the sweeper fails as INTERRUPTED.
  */
-export async function approveProposal(approverId: string, proposalId: string): Promise<ApproveOutcome> {
+export async function approveProposal(approverId: string, proposalId: string, options: ApplyOptions = {}): Promise<ApproveOutcome> {
   const id = proposalId.toLowerCase();
   return withProposalLock(id, async () => {
     const row = ownedProposal(approverId, id);
@@ -462,7 +464,7 @@ export async function approveProposal(approverId: string, proposalId: string): P
     }
     const kind = PROPOSAL_KIND_DEFS[row.kind];
     try {
-      const ref = await withProposalAuditContext({ via: "proposal", proposalId: id, keyId: row.key_id }, () => kind.apply(approverId, stored(row)));
+      const ref = await withProposalAuditContext({ via: "proposal", proposalId: id, keyId: row.key_id }, () => kind.apply(approverId, stored(row), options));
       db.transaction(() => {
         db.query("UPDATE proposals SET status = 'applied', result_ref = ?, result_code = NULL, reviewed_by = ?, resolved_at = ? WHERE id = ? AND status = 'applying'")
           .run(JSON.stringify(ref), approverId, now(), id);

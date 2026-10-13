@@ -14,7 +14,8 @@ import "./today";
  * reject and the push setting are allowlisted for viewers (D152). Guests have no inbox.
  */
 
-const rejectSchema = z.object({ reason: z.string().max(REJECT_REASON_MAX * 2).optional() }).strict();
+const approveSchema = z.object({ confirmAttachments: z.array(uuid).max(100).optional() }).strict();
+const rejectSchema =z.object({ reason: z.string().max(REJECT_REASON_MAX * 2).optional() }).strict();
 const bulkSchema = z.object({
   action: z.enum(["approve", "reject"]),
   ids: z.array(uuid).min(1).max(BULK_MAX).optional(),
@@ -53,7 +54,11 @@ export function registerInboxRoutes(app: Hono<AppEnv>) {
 
   app.post("/api/inbox/proposals/:id/approve", (c) => answer(c, async () => {
     const id = uuid.parse(c.req.param("id"));
-    const outcome = await approveProposal(c.get("user").id, id);
+    // Older clients may send no body at all.
+    const body = c.req.raw.body === null ? {} as z.infer<typeof approveSchema> : await parseJson(c.req.raw, approveSchema);
+    // Review M1: a note_draft that would share the owner's Files items answers 409 CONFIRM_REQUIRED
+    // (still pending); the app confirms and approves again with those ids.
+    const outcome = await approveProposal(c.get("user").id, id, { confirmAttachments: body.confirmAttachments?.map((value) => value.toLowerCase()) ?? [] });
     if (outcome.status === "failed") throw new InboxError(409, outcome.error, outcome.code, { status: "failed" });
     return outcome;
   }));

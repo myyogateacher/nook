@@ -191,7 +191,7 @@ export const whiteboardTools: McpToolSpec[] = [
     handler: async ({ name, folderId }, key) => {
       if (folderId && !db.query("SELECT 1 FROM folders WHERE id = ? AND owner_id = ?").get(folderId.toLowerCase(), key.userId)) throw notFound("Folder");
       try {
-        const { whiteboard } = await createWhiteboard(key.userId, { name, folderId: folderId?.toLowerCase() ?? null, via: { keyId: key.keyId } });
+        const { whiteboard } = await createWhiteboard(key.userId, { name, folderId: folderId?.toLowerCase() ?? null, via: { keyId: key.keyId }, key });
         return { id: whiteboard.id, name: whiteboardDisplayName(whiteboard.name), url: boardUrl(whiteboard.id) };
       } catch (error) {
         rethrow(error);

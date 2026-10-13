@@ -64,7 +64,8 @@ export function listProposals(options: { status: "pending" | "resolved"; cursor?
 }
 
 export const getProposal = (id: string) => api<{ proposal: ProposalDetail }>(`/inbox/proposals/${id}`);
-export const approveProposal = (id: string) => api<{ id: string; status: "applied"; ref: ProposalRef }>(`/inbox/proposals/${id}/approve`, { method: "POST", body: "{}" });
+/** `confirmAttachments`: the owner's Files items they confirmed a note draft may share (409 CONFIRM_REQUIRED lists them; review M1). */
+export const approveProposal = (id: string, confirmAttachments?: readonly string[]) => api<{ id: string; status: "applied"; ref: ProposalRef }>(`/inbox/proposals/${id}/approve`, { method: "POST", body: JSON.stringify(confirmAttachments?.length ? { confirmAttachments } : {}) });
 export const rejectProposal = (id: string, reason?: string) =>
   api<{ id: string; status: "rejected"; draft?: "restored" | "discarded" | "kept"; draftDiscarded?: boolean }>(`/inbox/proposals/${id}/reject`, { method: "POST", body: JSON.stringify(reason ? { reason } : {}) });
 export const bulkProposals = (action: "approve" | "reject", ids: string[], reason?: string) =>

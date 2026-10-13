@@ -11,6 +11,7 @@ import { audit, db, type NoteRow } from "../db";
 import { McpToolError, notFound, type McpKeyContext, type McpToolSpec } from "../mcpToolKit";
 import type { McpScope } from "../mcpScopes";
 import { appendMarkdownBlock } from "./text";
+import { InboxError } from "./errors";
 import { createDraftNote, DraftActionError, publishDraft, writeDraftLocked } from "../noteDrafts";
 import { checksum, storage, withNoteLock } from "../storage";
 import { readableBoard, readableCard } from "../tasks/access";
@@ -58,14 +59,20 @@ export type StoredProposal = {
 
 type SubmitResult = { targetType: TargetType; targetId: string; payload: Record<string, unknown>; proposalId?: string };
 
+/** What the approver confirmed along with the approval (v0.35.0 review M1: a note_draft's Files items). */
+export type ApplyOptions = { confirmAttachments?: readonly string[] };
+
 type KindDef = {
   /** The module scope a key needs, besides inbox:write (D151). */
   scope: McpScope;
   label: string;
   /** Validates the payload as the key's owner and checks the target is readable (NOT_FOUND otherwise). */
   submit: (key: McpKeyContext, payload: unknown) => Promise<SubmitResult>;
-  /** Applies as `approverId`; throws McpToolError when the module refuses (the proposal then fails). */
-  apply: (approverId: string, proposal: StoredProposal) => Promise<ProposalRef>;
+  /**
+   * Applies as `approverId`; throws McpToolError when the module refuses (the proposal then fails),
+   * or InboxError CONFIRM_REQUIRED when the approver must confirm first (it stays pending).
+   */
+  apply: (approverId: string, proposal: StoredProposal, options?: ApplyOptions) => Promise<ProposalRef>;
   preview: (viewerId: string, proposal: StoredProposal) => Promise<ProposalPreview> | ProposalPreview;
   /** Nook's own name for the target, for the viewer, or null when they cannot read it. */
   targetLabel: (viewerId: string, proposal: StoredProposal) => string | null;
@@ -461,11 +468,16 @@ const noteKinds = {
         return { targetType: "note", targetId: noteId, payload: { noteId, revision: saved.revision, created: note.current_version === 0 }, proposalId: saved.proposalId };
       });
     },
-    apply: async (approverId, proposal) => {
+    apply: async (approverId, proposal, options) => {
       const { noteId, revision } = draftPayload(proposal.payload);
       try {
-        await publishDraft(approverId, noteId, revision);
+        // The approval, by the owner, is the publish (review M1): their Files items need their confirm.
+        await publishDraft(approverId, noteId, revision, { confirmAttachments: options?.confirmAttachments ?? [] });
       } catch (error) {
+        if (error instanceof DraftActionError && error.body.code === "CONFIRM_REQUIRED") {
+          // Not a failure: the proposal stays pending until the owner confirms (or rejects it).
+          throw new InboxError(409, error.message, "CONFIRM_REQUIRED", { status: "pending", files: error.body.files, audience: error.body.audience });
+        }
         if (error instanceof DraftActionError) {
           const code = error.status === 404 ? "NOT_FOUND" : error.body.code === "DRAFT_CHANGED" || error.body.code === "NO_DRAFT" ? "DRAFT_CHANGED" : "INVALID";
           throw new McpToolError(code, error.message);

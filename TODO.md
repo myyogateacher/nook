@@ -6,7 +6,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## In flight
 
-- [ ] **v0.35.0 — uploads everywhere + S3 storage.** All features on main (U0–U8 with migrations 046 and 047, S3 storage, Sonner toasts, whiteboard thumbnails with pictures, Bin restore label + Undo, Google re-auth fix). In progress: combined security review and release QA (gates, S3 suite, upgrade from v0.34.0, scroll audit). Then the release and the GitHub release. Operator to try Take photo on a real phone (QA instance).
+- [ ] **v0.35.0 — uploads everywhere + S3 storage.** All features on main (f42081e). Review and QA done; release blocked on fixes (both agents stopped at the usage limit on 2026-10-12; resume them or relaunch from their briefs): (1) branch `v035-fixes`: review MEDIUM 1 (editor-planted file refs in notes link on owner publish, plus the boot backfill), MEDIUM 2 (notes-only MCP key reads and shares any file; calendar/tasks MCP re-link), LOW restore unlinked attachment into Attachments, LOW sweep race and cost; migration 048 if needed. (2) branch `v035-client-fixes`: HIGH Files CSS order in the production build (binUndo chunk CSS before index CSS), HIGH multi-file paste or drop into a note keeps only the last, LOWs (picker folder name, Bin restore toast type, stale /files URL after binning, pinned footer in event editor at 390, native validation bubble on New API key), finish the scroll audit (Team, Vault, Collections, Settings). Then release, deploy, GitHub release. Operator to try Take photo on a real phone (QA instance).
 
 ## Known LOW leftovers
 

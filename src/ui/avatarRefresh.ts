@@ -10,6 +10,8 @@ import { selfAvatarNow, setSelfAvatar } from "./selfAvatar";
  * `/api/me/avatar` for their own picture, `/api/team/:id` for anyone else (people who can read Team;
  * guests get 404 there and keep the letters, so nothing new is revealed). The answer is remembered
  * per stale URL, so every avatar on screen with that URL switches to the new one (or to the letters).
+ * The server sends avatars `private, no-cache` with an ETag, so the browser revalidates on each new
+ * page load: a stale URL reaches the server as a 404 (and this lookup) instead of the HTTP cache.
  */
 
 const PATH = /^\/api\/users\/([0-9a-f-]{36})\/avatar\?v=[0-9a-f-]{36}$/;

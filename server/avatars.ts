@@ -386,6 +386,20 @@ export function registerAvatarRoute(app: Hono<AppEnv>) {
     if (!UUID.test(userId) || !UUID.test(version) || version === AVATAR_REMOVED) return notFound();
     const row = db.query("SELECT avatar_id FROM users WHERE id = ?").get(userId) as { avatar_id: string | null } | null;
     if (!row?.avatar_id || row.avatar_id !== version) return notFound();
+    // `no-cache` (T353): the browser keeps the bytes but asks again on every new page load, so a
+    // replaced or removed picture (a new `v`, the old one 404) is gone for other viewers on their
+    // next load. The answer for a current URL is a cheap 304 (one row read, no object read).
+    const etag = `"${version}"`;
+    const cacheHeaders = () => {
+      c.header("Cache-Control", "private, no-cache");
+      c.header("ETag", etag);
+      c.header("X-Content-Type-Options", "nosniff");
+      c.header("Cross-Origin-Resource-Policy", "same-origin");
+    };
+    if (c.req.header("If-None-Match") === etag) {
+      cacheHeaders();
+      return c.body(null, 304);
+    }
     let bytes: Uint8Array;
     try {
       bytes = await (await objectStore().open("avatars", version)).bytes();
@@ -394,12 +408,7 @@ export function registerAvatarRoute(app: Hono<AppEnv>) {
     }
     const type = sniffAvatar(bytes);
     if (!type) return notFound();
-    const etag = `"${version}"`;
-    c.header("Cache-Control", "private, max-age=86400");
-    c.header("ETag", etag);
-    c.header("X-Content-Type-Options", "nosniff");
-    c.header("Cross-Origin-Resource-Policy", "same-origin");
-    if (c.req.header("If-None-Match") === etag) return c.body(null, 304);
+    cacheHeaders();
     c.header("Content-Type", type);
     return c.body(bytes as Uint8Array<ArrayBuffer>, 200);
   });

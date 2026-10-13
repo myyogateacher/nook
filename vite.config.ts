@@ -116,6 +116,69 @@ function sonnerStaticStyles(): Plugin {
   };
 }
 
+/**
+ * The boot chunk: the global stylesheets (src/styles.css, src/ui/ui.css) and the chunk-reload guard.
+ * The guard gives the chunk exports, so Vite keeps it as a real chunk; a CSS-only chunk is folded
+ * into its importer and its CSS linked last.
+ */
+const BOOT_MODULES = /[\\/]src[\\/](?:styles\.css|ui[\\/]ui\.css|chunkReload\.ts)$/;
+
+/** The stylesheet hrefs an HTML page links, in document order. */
+export function stylesheetLinks(html: string): string[] {
+  return [...html.matchAll(/<link\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .filter((tag) => /\brel=["']?stylesheet\b/i.test(tag))
+    .map((tag) => /\bhref=["']?([^"'\s>]+)/i.exec(tag)?.[1] ?? "");
+}
+
+/**
+ * v0.35.0 QA (Files layout): the problems with an index.html's stylesheet order, or none. The global
+ * stylesheets (`globalCss`, the boot chunk's CSS) must be linked first, before every module
+ * stylesheet, or a generic rule such as `.icon-button{display:grid}` beats a module's rule of equal
+ * specificity.
+ */
+export function cssOrderProblems(html: string, globalCss: readonly string[]): string[] {
+  if (!globalCss.length) return ["the global stylesheets (src/styles.css, src/ui/ui.css) are not in a CSS file of their own chunk"];
+  const links = stylesheetLinks(html).map((href) => href.replace(/^.*\//, ""));
+  const wanted = globalCss.map((file) => file.replace(/^.*\//, ""));
+  const problems: string[] = [];
+  const missing = wanted.filter((file) => !links.includes(file));
+  if (missing.length) problems.push(`index.html does not link ${missing.join(", ")}`);
+  const head = links.slice(0, wanted.length);
+  if (!missing.length && head.join() !== wanted.join()) {
+    problems.push(`index.html links ${links.join(", ")}: the global stylesheet ${wanted.join(", ")} must come first`);
+  }
+  return problems;
+}
+
+/**
+ * Fails a production build when a module stylesheet would load before the global ones (v0.35.0 QA:
+ * a shared chunk's files.css was linked ahead of index.css). Runs in every build, the Docker verify
+ * image's included.
+ */
+function cssOrder(): Plugin {
+  return {
+    name: "nook-css-order",
+    apply: "build",
+    enforce: "post",
+    generateBundle(_options, bundle) {
+      const html = bundle["index.html"];
+      if (!html || html.type !== "asset") return;
+      const chunks = Object.values(bundle).filter((item) => item.type === "chunk");
+      const holding = (pattern: RegExp) => chunks.filter((chunk) => chunk.moduleIds.some((id) => pattern.test(id)));
+      const styles = holding(/[\\/]src[\\/]styles\.css$/);
+      const ui = holding(/[\\/]src[\\/]ui[\\/]ui\.css$/);
+      const problems: string[] = [];
+      if (styles.length !== 1 || ui.length !== 1 || styles[0] !== ui[0]) {
+        problems.push("src/styles.css and src/ui/ui.css must share one chunk (the boot chunk)");
+      }
+      const globalCss = styles.length === 1 ? [...(styles[0].viteMetadata?.importedCss ?? [])] : [];
+      problems.push(...cssOrderProblems(String(html.source), globalCss));
+      if (problems.length) this.error(`Stylesheet order (v0.35.0 QA): ${problems.join("; ")}`);
+    }
+  };
+}
+
 /** Kept in step with COMPRESSIBLE in server/staticFiles.ts: images, fonts, and wasm are left alone. */
 const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".map", ".webmanifest", ".svg", ".txt", ".xml"]);
 
@@ -151,7 +214,7 @@ export default defineConfig({
   // Order matters: the Excalidraw patches run while modules are transformed, the fonts are copied
   // when the bundle is written, and precompress runs last (closeBundle), so the .br and .gz twins
   // are made from the patched chunks. Fonts (woff2) are already compressed and are left alone.
-  plugins: [react(), tailwindcss(), excalidrawFonts(), sonnerStaticStyles(), precompress()],
+  plugins: [react(), tailwindcss(), excalidrawFonts(), sonnerStaticStyles(), cssOrder(), precompress()],
   // Sonner is served from source in development too, so its stylesheet is not injected at runtime.
   optimizeDeps: { exclude: ["sonner"] },
   server: {
@@ -162,6 +225,18 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: false
+    sourcemap: false,
+    rolldownOptions: {
+      output: {
+        // v0.35.0 QA (Files layout): a chunk the entry imports statically has its CSS linked before
+        // the entry's own. A shared chunk holding a module stylesheet (files.css, shared by Files and
+        // the lazy apps) was linked ahead of the global styles, so generic rules such as
+        // `.icon-button{display:grid}` beat the module's. The global stylesheets get their own
+        // chunk, which the entry imports first, so they always load first (checked by cssOrder()).
+        codeSplitting: {
+          groups: [{ name: "boot", test: BOOT_MODULES, priority: 100 }]
+        }
+      }
+    }
   }
 });

@@ -202,11 +202,11 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
       </section>}
     </section>}
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
-    {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} />}
+    {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
     {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} onClose={() => setChanges(null)}
       reopen={() => setChanges(lastChanges.current)} onReportChanged={reloadReport} />}
     {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(false)} reopen={() => setSharing(true)} />}
-    {renaming && report && <RenameSheet report={report} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
+    {renaming && report && <RenameSheet report={report} reopen={() => setRenaming(true)} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;
 }
@@ -255,12 +255,12 @@ export function ResultView({ outcome }: { outcome: QueryOutcome }) {
   </div>;
 }
 
-function RenameSheet({ report, onCancel, onSaved }: { report: ReportDetail; onCancel: () => void; onSaved: (report: ReportDetail) => void }) {
+function RenameSheet({ report, onCancel, onSaved, reopen }: { report: ReportDetail; onCancel: () => void; onSaved: (report: ReportDetail) => void; reopen?: () => void }) {
   const [title, setTitle] = useState(report.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputId = useId();
-  useHistoryDialogGuard(true, onCancel, { blocked: busy });
+  useHistoryDialogGuard(true, onCancel, { blocked: busy, reopen });
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return setError("Enter a title.");

@@ -56,6 +56,8 @@ export function scheduleBadge(schedule: ScheduleView | null) {
 }
 
 type Props = {
+  /** Forward after Back shows the sheet again. */
+  reopen?: () => void;
   reportId: string;
   schedule: ScheduleView | null;
   runs: ReportRun[];
@@ -68,12 +70,12 @@ type Props = {
  * Schedule and run history (plan wave 47): an optional cadence (off by default) with the time of day,
  * weekday, and zone, and the report's last 20 runs with their outcome. Back closes it.
  */
-export function ScheduleSheet({ reportId, schedule, runs, canWrite, onSaved, onClose }: Props) {
+export function ScheduleSheet({ reportId, schedule, runs, canWrite, onSaved, onClose, reopen }: Props) {
   const zone = browserZone();
   const [form, setForm] = useState<Form>(() => scheduleForm(schedule, zone));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useHistoryDialogGuard(true, onClose, { blocked: busy });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   async function submit(event: FormEvent) {

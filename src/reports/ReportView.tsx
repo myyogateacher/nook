@@ -245,7 +245,7 @@ export function ReportView({ report, canWrite, generating = false, initial }: Pr
       onRerun={() => { setMenuBlock(null); void startRefresh(menuTarget.queryKey); }} />}
     {inspected && isDataBlock(inspected) && <InspectSheet report={report} block={inspected} query={queries.get(inspected.queryKey)} view={results.get(inspected.queryKey)}
       palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} />}
-    {scheduleOpen && <ScheduleSheet reportId={report.id} schedule={schedule} runs={runs} canWrite={canWrite}
+    {scheduleOpen && <ScheduleSheet reportId={report.id} schedule={schedule} runs={runs} canWrite={canWrite} reopen={() => setScheduleOpen(true)}
       onSaved={(next) => { setSchedule(next); setScheduleOpen(false); notify.success(next.enabled ? "Schedule saved" : "Schedule off"); }} onClose={() => setScheduleOpen(false)} />}
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}
   </section>;

@@ -24,8 +24,8 @@ export function effectiveModelText(view: Pick<ReportModelView, "effective">): st
  * this one report; empty keeps the admin's "Report generation model" (or chat's default). A sheet:
  * Back closes it (useHistoryDialogGuard), 44 px controls.
  */
-export function ModelSheet({ reportId, onClose }: { reportId: string; onClose: () => void }) {
-  useHistoryDialogGuard(true, onClose);
+export function ModelSheet({ reportId, onClose, reopen }: { reportId: string; onClose: () => void; /** Forward after Back shows the sheet again. */ reopen?: () => void }) {
+  useHistoryDialogGuard(true, onClose, { reopen });
   const [view, setView] = useState<ReportModelView | null>(null);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");

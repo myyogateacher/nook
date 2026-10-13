@@ -32,7 +32,7 @@ describe("v0.35.0 QA low fixes", () => {
   test("the event editor's forms use the shared scrolling body with a pinned footer", () => {
     expect(source("calendar/EventSheet.tsx")).toContain("calendar-form calendar-event-form file-dialog-body");
     expect(source("calendar/EventLinks.tsx")).toContain('className="calendar-form file-dialog-body"');
-    expect(source("files/files.css")).toContain(".file-dialog > :is(.file-dialog-form, .file-dialog-body) > .file-dialog-actions:last-child { position: sticky;");
+    expect(source("files/files.css")).toContain(".file-dialog > .file-dialog-body > .file-dialog-actions:last-child, .file-dialog > .file-dialog-form > .file-dialog-actions:last-child { position: sticky;");
   });
 
   test("the key dialogs validate in the app, not with the browser's bubble", () => {

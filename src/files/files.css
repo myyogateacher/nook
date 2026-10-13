@@ -115,10 +115,10 @@
    at the bottom (AI provider QA): a dialog taller than the window never hides its Save button.
    v0.35.0 QA: `.file-dialog-body` gives a dialog's own form or body (the event, card, and row
    editors) the same scrolling body and pinned footer without the dialog form's field styles. */
-.file-dialog > :is(.file-dialog-form, .file-dialog-body) { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 84px; }
+.file-dialog > .file-dialog-body, .file-dialog > .file-dialog-form { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; scroll-padding-bottom: 84px; }
 /* v0.30: the pinned footer pads itself; padding under it (the chat dialogs' 16 px) let rows show below it. */
-.file-dialog > :is(.file-dialog-form, .file-dialog-body):has(> .file-dialog-actions:last-child) { padding-bottom: 0; }
-.file-dialog > :is(.file-dialog-form, .file-dialog-body) > .file-dialog-actions:last-child { position: sticky; bottom: 0; z-index: 1; margin: 0 -20px; padding: 12px 20px 18px; background: #141416; }
+.file-dialog > .file-dialog-body:has(> .file-dialog-actions:last-child), .file-dialog > .file-dialog-form:has(> .file-dialog-actions:last-child) { padding-bottom: 0; }
+.file-dialog > .file-dialog-body > .file-dialog-actions:last-child, .file-dialog > .file-dialog-form > .file-dialog-actions:last-child { position: sticky; bottom: 0; z-index: 1; margin: 0 -20px; padding: 12px 20px 18px; background: #141416; }
 .file-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 14px 20px 18px; }
 /* Footer buttons: an icon sits beside its label on one line, and every button is a 44 px target
    (the generator's "Again" once wrapped its label under its icon, the Wave 25 "Delete vault" bug). */

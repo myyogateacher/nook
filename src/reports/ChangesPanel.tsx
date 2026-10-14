@@ -58,7 +58,7 @@ type Props = {
  * (manual edits). A side panel from 761 px, a bottom sheet on phones; Back closes it, and each sheet
  * over it is its own Back step (Forward opens it again).
  */
-export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel }: Props) {
+export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel, focusComposer = false }: Props & { /** "Ask for a chart" on an empty report: the composer takes focus. */ focusComposer?: boolean }) {
   const [view, setView] = useState<InstructionsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -139,7 +139,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
         <Select id={targetId} value={target || PAGE} onChange={(next) => setTarget(next === PAGE ? "" : next)}
           options={[{ value: PAGE, label: "The whole report" }, ...dataBlocks.map((block) => ({ value: block.id, label: blockLabel(report, block.id) }))]} />
         <label htmlFor={textId} className="sr-only">What should change</label>
-        <textarea id={textId} value={text} maxLength={INSTRUCTION_LIMITS.text} rows={3} placeholder={target ? "Split this by country…" : "Add weekly retention below the revenue chart…"}
+        <textarea id={textId} autoFocus={focusComposer} value={text} maxLength={INSTRUCTION_LIMITS.text} rows={3} placeholder={target ? "Split this by country…" : "Add weekly retention below the revenue chart…"}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send(event as unknown as FormEvent); }} />
         <div className="report-changes-compose-actions">

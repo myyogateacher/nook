@@ -165,3 +165,32 @@
   .report-header-actions .report-overflow { flex: none; }
   .report-header-actions .report-overflow-button { flex: none; }
 }
+
+/*
+ * Item 4: the report's panels use the screen. From 761 px the side panels (Changes, Runs, Versions,
+ * Share, Arrange, the proposal, Schedule, Model, the SQL console) sit at the right, full height; from
+ * 1024 px they are clamp(480px, 40vw, 720px) wide. "How was this built" is a large dialog. Phones keep
+ * full-screen sheets.
+ */
+@media (min-width: 761px) {
+  .file-dialog.reports-dialog:is(.report-changes, .report-edit-sheet, .report-schedule, .report-model-sheet, .report-console-sheet) { inset: 0 0 0 auto; margin: 0; width: min(600px, 78vw); height: 100dvh; max-height: none; border-width: 0 0 0 1px; border-radius: 0; }
+  .file-dialog.reports-dialog.report-inspect { width: min(1100px, 92vw); height: 88vh; max-height: 88vh; }
+}
+@media (min-width: 1024px) {
+  .file-dialog.reports-dialog:is(.report-changes, .report-edit-sheet, .report-schedule, .report-model-sheet, .report-console-sheet) { width: clamp(480px, 40vw, 720px); }
+}
+@media (max-width: 760px) {
+  .file-dialog.reports-dialog:is(.report-changes, .report-edit-sheet, .report-schedule, .report-model-sheet, .report-console-sheet) { top: 0; max-height: none; height: 100dvh; border: 0; border-radius: 0; }
+}
+/* SQL in Inspect scrolls sideways instead of wrapping mid-token; the Data tab's table uses the width. */
+.report-inspect .report-code { white-space: pre; overflow-wrap: normal; overflow-x: auto; max-height: 360px; }
+.report-inspect .report-result-table, .report-inspect table { width: 100%; }
+.report-inspect-head-actions { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+/* The SQL console panel: the console fills it and scrolls. */
+.report-console-sheet-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }
+.report-console.report-console-in-panel { border: 0; padding: 0; background: transparent; }
+.report-console-in-panel .report-console-head h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.report-console-in-panel .report-sql { min-height: 220px; }
+/* An empty report: the two ways to get charts, above its console. */
+.report-empty-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: -6px 0 18px; }
+@media (max-width: 760px) { .report-empty-actions > button { flex: 1 1 auto; } }

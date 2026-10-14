@@ -1,5 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Copy, Download, History, LoaderCircle, RefreshCw } from "lucide-react";
+import { ChevronLeft, Copy, Download, FileTerminal, History, LoaderCircle, RefreshCw } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { registerHistoryDialogGuard } from "../historyDialogs";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -13,6 +13,7 @@ import { CommentOnBlockButton } from "./reportComment";
 import { getProvenance, RUN_STATUS_TEXT, runLabel, timeAgo, toCsv } from "./reportViewApi";
 import { countLabel, messageOf } from "./reportsApi";
 import { ReportRunsContext } from "./RunsSheet";
+import { ReportConsoleContext } from "./reportConsole";
 
 export type DataBlock = KpiBlock | ChartBlock | TableBlock;
 
@@ -165,10 +166,15 @@ export function InspectSheet({ report, block, query, view, palette, canRerun, bu
 
 function QueryTab({ block, query, result, failed, canRerun, busy, onRerun }: { block: DataBlock; query: ReportQuery | undefined; result: ReportResult | null; failed: ReportResult | null; canRerun: boolean; busy: boolean; onRerun: (key: string) => void }) {
   const latest = failed && (!result || failed.createdAt >= result.createdAt) ? failed : result;
+  // Item 4: the owner tweaks the block's query in the SQL console panel (prefilled with it).
+  const openConsole = useContext(ReportConsoleContext);
   return <section className="report-inspect-section">
     {!query && <p className="form-error">This block names the query <code>{block.queryKey}</code>, which the report does not have.</p>}
     {query?.purpose && <p className="report-inspect-purpose">{query.purpose}</p>}
-    <div className="report-inspect-head"><h3>SQL as saved</h3>{query && <CopyButton text={query.sql} label="Copy" />}</div>
+    <div className="report-inspect-head"><h3>SQL as saved</h3>{query && <span className="report-inspect-head-actions">
+      {openConsole && <button type="button" className="secondary-button" onClick={() => openConsole(query.sql)}><FileTerminal aria-hidden="true" />Open in console</button>}
+      <CopyButton text={query.sql} label="Copy" />
+    </span>}</div>
     <pre className="report-code"><code>{query?.sql ?? "—"}</code></pre>
     <div className="report-inspect-head"><h3>SQL as sent</h3>{latest?.sentSql && <CopyButton text={latest.sentSql} label="Copy" />}</div>
     {latest?.sentSql ? <pre className="report-code"><code>{latest.sentSql}</code></pre> : <p className="report-inspect-empty">{latest ? "Nothing was sent: the guard refused it, or it never reached ClickHouse." : "Not run yet."}</p>}

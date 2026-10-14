@@ -9,6 +9,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ReportShare, ReportVisibility, ShareLevel } from "../../shared/reportsEdit";
 import { getSharing, saveSharing } from "./reportEditApi";
 import { messageOf } from "./reportsApi";
+import { CopyLinkRow } from "./reportLink";
 
 const AUDIENCES: Array<{ value: ReportVisibility; label: string; hint: string }> = [
   { value: "private", label: "Only me", hint: "Nobody else sees this report." },
@@ -21,7 +22,7 @@ const AUDIENCES: Array<{ value: ReportVisibility; label: string; hint: string }>
  * the report, its results, and how each block was built (never the doc); "Can comment" adds asking the
  * edit agent for changes. Only the owner refreshes, schedules, applies, restores, or edits.
  */
-export function ShareSheet({ reportId, title, onClose, reopen }: { reportId: string; title: string; onClose: () => void; reopen?: () => void }) {
+export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed = false, flash = () => undefined }: { reportId: string; title: string; onClose: () => void; reopen?: () => void; /** The report's URL (the Copy link row); none in tests. */ link?: string; /** The clipboard refused the Share click's copy: the field starts selected. */ copyFailed?: boolean; flash?: (message: string) => void }) {
   const [visibility, setVisibility] = useState<ReportVisibility>("private");
   const [shares, setShares] = useState<ReportShare[]>([]);
   const [people, setPeople] = useState<PickerPerson[]>([]);
@@ -80,6 +81,7 @@ export function ShareSheet({ reportId, title, onClose, reopen }: { reportId: str
 
   return <ModalDialog title="Share" eyebrow={title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-edit-sheet report-share">
     <div className="report-edit-sheet-body">
+      {link && <CopyLinkRow url={link} selectFirst={copyFailed} flash={flash} />}
       {!loaded && !error && <p className="reports-loading" role="status">Loading…</p>}
       {loaded && <>
         <fieldset className="report-share-audience">

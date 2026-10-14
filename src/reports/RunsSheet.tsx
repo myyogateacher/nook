@@ -100,7 +100,7 @@ export function RunsSheet({ reportId, title, focusRunId, onClose, reopen }: { re
     return () => { live = false; };
   }, [reportId]);
   const toggle = (id: string) => setOpen((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  return <ModalDialog title="Runs" eyebrow={title} onClose={onClose} variant="sheet" className="reports-dialog report-changes report-runs">
+  return <ModalDialog title="Runs" eyebrow={title} onClose={onClose} variant="sheet" className="reports-dialog report-changes report-runs-panel">
     <div className="report-changes-body">
       {error && <p className="form-error" role="alert">{error}</p>}
       {!runs && !error && <p className="reports-loading" role="status">Loading runs…</p>}

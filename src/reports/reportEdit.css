@@ -119,5 +119,13 @@
 .report-run-ms { color: var(--report-muted); font-weight: 400; }
 .report-run-instruction { margin: 0; color: var(--report-soft); font-style: italic; overflow-wrap: anywhere; }
 @media (max-width: 760px) {
-  .file-dialog.report-runs { max-height: 100dvh; height: 100dvh; border-radius: 0; }
+  .file-dialog.report-runs-panel { max-height: 100dvh; height: 100dvh; border-radius: 0; }
 }
+
+/* The report's link (Share, and the readers' link sheet): the URL in a read-only field and Copy. */
+.report-link-row { display: grid; gap: 6px; min-width: 0; }
+.report-link-row label { display: flex; align-items: center; gap: 6px; color: var(--report-muted); font-size: .8rem; }
+.report-link-row label svg { width: 15px; height: 15px; }
+.report-link-field { display: flex; gap: 8px; min-width: 0; }
+.report-link-field input { flex: 1 1 auto; min-width: 0; min-height: 40px; border: 1px solid var(--report-border); border-radius: 10px; padding: 0 12px; background: var(--report-code-bg); color: var(--report-text); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-overflow: ellipsis; }
+@media (max-width: 760px), (pointer: coarse) { .report-link-field input { min-height: 44px; } }

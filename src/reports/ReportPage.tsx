@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, History, LoaderCircle, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -8,8 +8,11 @@ import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { REPORT_LIMITS, type QueryOutcome, type ReportDetail } from "../../shared/reports";
-import { cancelConsole, cellText, codeOf, countLabel, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
+import { REPORT_LIMITS, type DatasourceChoice, type QueryOutcome, type ReportDetail } from "../../shared/reports";
+import { cancelConsole, cellText, codeOf, countLabel, datasourceChoices, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
+import { NewReportSheet } from "./NewReportSheet";
+import { copyReportLink, LinkSheet, reportLink } from "./reportLink";
+import { ReportConsoleContext } from "./reportConsole";
 import { STATUS_LABELS } from "./ReportsHome";
 import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
@@ -61,7 +64,15 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   // Wave 48: the Changes panel (instructions, proposals, versions), aimed at a block or the whole report, and Share.
   const [changes, setChanges] = useState<{ blockId: string | null } | null>(null);
   const lastChanges = useRef<{ blockId: string | null }>({ blockId: null });
-  const [sharing, setSharing] = useState(false);
+  const composerFocus = useRef(false);
+  // Share (the owner): the click copies the link first; `copyFailed` opens the panel with the link selected.
+  const [sharing, setSharing] = useState<{ copyFailed: boolean } | null>(null);
+  // Readers' "Copy link" when the clipboard refuses: the link in a small sheet.
+  const [linkSheet, setLinkSheet] = useState(false);
+  // Item 4: the SQL console is a panel on a report with blocks (⋯ → SQL console, Inspect → Open in console).
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  // An empty report: "Generate from a doc" into this report.
+  const [generating, setGenerating] = useState<DatasourceChoice[] | null>(null);
   // The Runs panel (owner only), opened at a run from Inspect → Provenance.
   const [runsAt, setRunsAt] = useState<{ runId: string | null } | null>(null);
   const lastRuns = useRef<{ runId: string | null }>({ runId: null });
@@ -142,11 +153,49 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     }
   }
 
+  const share = useCallback(() => {
+    void copyReportLink(reportLink(reportId), { flash, onFallback: () => setSharing({ copyFailed: true }) }).then((copied) => { if (copied) setSharing({ copyFailed: false }); });
+  }, [flash, reportId]);
+  const copyLink = useCallback(() => {
+    void copyReportLink(reportLink(reportId), { flash, onFallback: () => setLinkSheet(true) });
+  }, [flash, reportId]);
+  const openConsole = useCallback((prefill?: string) => {
+    if (prefill !== undefined) { setSql(prefill); setOutcome(null); setRunError(null); }
+    setConsoleOpen(true);
+  }, []);
+  const generateFromDoc = useCallback(() => {
+    datasourceChoices().then(({ datasources }) => setGenerating(datasources)).catch((reason) => notify.error(messageOf(reason, "Could not load the data sources")));
+  }, []);
+
   const insertTable = (table: string) => {
     setSql((current) => current.trim() ? current : `SELECT *\nFROM ${table}\nLIMIT 100`);
     setSchemaOpen(false);
     flash(`Inserted ${table}`);
   };
+
+  /** The guarded SQL console: on the page of an empty report, in the SQL console panel otherwise. */
+  const consoleBody = (inPanel = false) => !report ? null :
+    <section className={`report-console${inPanel ? " report-console-in-panel" : ""}`} aria-labelledby={`${consoleId}-heading`}>
+      <div className="report-console-head">
+        <h2 id={`${consoleId}-heading`}>SQL console</h2>
+        <button type="button" className="secondary-button" onClick={() => setSchemaOpen(true)} disabled={!report.datasourceId}><TableProperties />Schema</button>
+      </div>
+      <label htmlFor={consoleId} className="sr-only">SQL</label>
+      <textarea id={consoleId} className="report-sql" value={sql} spellCheck={false} autoCapitalize="off" autoCorrect="off" maxLength={REPORT_LIMITS.sqlChars}
+        placeholder={"SELECT toStartOfWeek(day) AS week, sum(revenue)\nFROM analytics.orders\nGROUP BY week ORDER BY week"}
+        onChange={(event) => setSql(event.target.value)} onKeyDown={onKeyDown} rows={7} />
+      <div className="report-console-actions">
+        <p className="file-dialog-hint">One SELECT, or SHOW, DESCRIBE, EXISTS, EXPLAIN. Read-only, at most {REPORT_LIMITS.consoleRows.toLocaleString()} rows; no SETTINGS, FORMAT, or external table functions.</p>
+        {canWrite && <span className="report-run-buttons">
+          {running && <button type="button" className="secondary-button" onClick={() => { void cancel(); }}><CircleStop />Cancel</button>}
+          <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId} aria-busy={running || undefined}>
+            {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
+          </button>
+        </span>}
+      </div>
+      {runError && <p className="form-error report-run-error" role="alert">{runError.code ? <code>{runError.code}</code> : null} {runError.message}</p>}
+      {outcome && <ResultView outcome={outcome} />}
+    </section>;
 
   return <main className="app-page reports-app report-page">
     <header className="app-page-header">
@@ -172,9 +221,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           </button>}
           <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare aria-hidden="true" />Changes</button>
           {report.isOwner && <button type="button" className="secondary-button report-wide-only" onClick={() => openRuns(null)}><History aria-hidden="true" />Runs</button>}
-          {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={() => setSharing(true)}><Share2 aria-hidden="true" />Share</button>}
+          {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={share}><Share2 aria-hidden="true" />Share</button>}
           {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
-          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), share: () => setSharing(true), rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
         </div>
       </div>
 
@@ -182,54 +231,53 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
       <ReportCommandsContext.Provider value={registry}>
         <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
           <ReportRunsContext.Provider value={report.isOwner ? openRuns : null}>
-            <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+            <ReportConsoleContext.Provider value={consoleInPanel(report) ? openConsole : null}>
+              <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+            </ReportConsoleContext.Provider>
           </ReportRunsContext.Provider>
         </ReportCommentContext.Provider>
       </ReportCommandsContext.Provider>
 
-      {report.isOwner && <section className="report-console" aria-labelledby={`${consoleId}-heading`}>
-        <div className="report-console-head">
-          <h2 id={`${consoleId}-heading`}>SQL console</h2>
-          <button type="button" className="secondary-button" onClick={() => setSchemaOpen(true)} disabled={!report.datasourceId}><TableProperties />Schema</button>
-        </div>
-        <label htmlFor={consoleId} className="sr-only">SQL</label>
-        <textarea id={consoleId} className="report-sql" value={sql} spellCheck={false} autoCapitalize="off" autoCorrect="off" maxLength={REPORT_LIMITS.sqlChars}
-          placeholder={"SELECT toStartOfWeek(day) AS week, sum(revenue)\nFROM analytics.orders\nGROUP BY week ORDER BY week"}
-          onChange={(event) => setSql(event.target.value)} onKeyDown={onKeyDown} rows={7} />
-        <div className="report-console-actions">
-          <p className="file-dialog-hint">One SELECT, or SHOW, DESCRIBE, EXISTS, EXPLAIN. Read-only, at most {REPORT_LIMITS.consoleRows.toLocaleString()} rows; no SETTINGS, FORMAT, or external table functions.</p>
-          {canWrite && <span className="report-run-buttons">
-            {running && <button type="button" className="secondary-button" onClick={() => { void cancel(); }}><CircleStop />Cancel</button>}
-            <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId} aria-busy={running || undefined}>
-              {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
-            </button>
-          </span>}
-        </div>
-        {runError && <p className="form-error report-run-error" role="alert">{runError.code ? <code>{runError.code}</code> : null} {runError.message}</p>}
-        {outcome && <ResultView outcome={outcome} />}
-      </section>}
+      {/* Item 4: an empty report keeps its console on the page (the only thing there), under two ways to get charts. */}
+      {consoleOnPage(report) && <>
+        {ownerWrite && <div className="report-empty-actions">
+          <button type="button" className="primary-button" onClick={generateFromDoc}><FileText aria-hidden="true" />Generate from a doc</button>
+          <button type="button" className="secondary-button" onClick={() => { composerFocus.current = true; openChanges(null); }}><MessageSquarePlus aria-hidden="true" />Ask for a chart</button>
+        </div>}
+        {consoleBody()}
+      </>}
     </section>}
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
     {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
-    {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} onClose={() => setChanges(null)}
+    {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
       reopen={() => setChanges(lastChanges.current)} onReportChanged={reloadReport} />}
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
-    {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(false)} reopen={() => setSharing(true)} />}
+    {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash} />}
+    {linkSheet && report && <LinkSheet url={reportLink(report.id)} title={report.title} onClose={() => setLinkSheet(false)} flash={flash} />}
+    {consoleOpen && report && <ConsoleSheet title={report.title} onClose={() => setConsoleOpen(false)} reopen={() => setConsoleOpen(true)} blocked={running}>{consoleBody(true)}</ConsoleSheet>}
+    {generating && report && <NewReportSheet sources={generating} reportId={report.id} initialSource={report.datasourceId} onCancel={() => setGenerating(null)} onCreated={() => { setGenerating(null); void load(); }} />}
     {renaming && report && <RenameSheet report={report} reopen={() => setRenaming(true)} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
   </main>;
 }
 
+/** Item 4: the owner's console sits on the page of an empty report; with blocks it is a panel (⋯, Inspect). Readers never get one. */
+export const consoleOnPage = (report: Pick<ReportDetail, "isOwner" | "spec">) => report.isOwner && report.spec.blocks.length === 0;
+export const consoleInPanel = (report: Pick<ReportDetail, "isOwner" | "spec">) => report.isOwner && report.spec.blocks.length > 0;
+
 /**
  * The overflow menu's items: on a phone Share and Schedule first (the header hides them there), then
  * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
  */
-export function overflowItems({ ownerWrite, owner = false, commands, runs, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
+export function overflowItems({ ownerWrite, owner = false, commands, runs, console: openConsole, copyLink, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
   const items: MenuItem[] = [];
+  // Readers (viewers and commenters) have no Share: they copy the link from here.
+  if (!owner && copyLink) items.push({ id: "copy-link", label: "Copy link", icon: <Link2 aria-hidden="true" />, onSelect: copyLink });
   if (owner && runs) items.push({ id: "runs", label: "Runs", icon: <History aria-hidden="true" />, onSelect: runs, narrowOnly: true });
   if (ownerWrite) items.push({ id: "share", label: "Share", icon: <Share2 aria-hidden="true" />, onSelect: share, narrowOnly: true });
   if (commands.schedule) items.push({ id: "schedule", label: commands.schedule.badge ? `Schedule (${commands.schedule.badge})` : "Schedule", icon: <CalendarClock aria-hidden="true" />, onSelect: commands.schedule.open, narrowOnly: true });
   if (!ownerWrite) return items;
+  if (openConsole) items.push({ id: "console", label: "SQL console", icon: <FileTerminal aria-hidden="true" />, onSelect: openConsole });
   items.push({ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: rename });
   items.push({ id: "model", label: "Model", icon: <Cpu aria-hidden="true" />, onSelect: model });
   if (commands.checkDoc) items.push({ id: "check-doc", label: commands.checkDoc.busy ? "Checking the doc…" : "Check doc", icon: <FileSearch aria-hidden="true" />, onSelect: commands.checkDoc.run, disabled: commands.checkDoc.busy || Boolean(commands.regenerate?.busy) });
@@ -292,5 +340,13 @@ function RenameSheet({ report, onCancel, onSaved, reopen }: { report: ReportDeta
         <button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
       </footer>
     </form>
+  </ModalDialog>;
+}
+
+/** The SQL console as a panel (item 4): wide on a desktop, full screen on a phone; Back closes it. */
+function ConsoleSheet({ title, onClose, reopen, blocked, children }: { title: string; onClose: () => void; reopen: () => void; blocked: boolean; children: ReactNode }) {
+  useHistoryDialogGuard(true, onClose, { reopen, blocked });
+  return <ModalDialog title="SQL console" eyebrow={title} onClose={onClose} variant="sheet" className="reports-dialog report-console-sheet">
+    <div className="report-console-sheet-body">{children}</div>
   </ModalDialog>;
 }

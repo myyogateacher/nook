@@ -5,7 +5,7 @@ import { Select } from "../ui/Select";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type DatasourceChoice } from "../../shared/reports";
 import type { DocServerChoice } from "../../shared/reportsGenerate";
-import { codeOf, createReport, docServers, generateReport, messageOf } from "./reportsApi";
+import { codeOf, createReport, docServers, generateReport, messageOf, regenerateReport } from "./reportsApi";
 import "./generate.css";
 
 type Mode = "doc" | "blank";
@@ -26,7 +26,7 @@ export function generateErrorText(reason: unknown, fallback: string) {
  * away, so a bad link or a refused credential answers here; the report page then follows the run.
  * One sheet, one history layer: Back or Escape closes it (D18), never while a request is in flight.
  */
-export function NewReportSheet({ sources, onCancel, onCreated }: { sources: DatasourceChoice[]; onCancel: () => void; onCreated: (id: string) => void }) {
+export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, initialSource = null }: { sources: DatasourceChoice[]; onCancel: () => void; onCreated: (id: string) => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null }) {
   const [servers, setServers] = useState<DocServerChoice[] | null>(null);
   const [mode, setMode] = useState<Mode>("doc");
   const [docRef, setDocRef] = useState("");
@@ -34,7 +34,7 @@ export function NewReportSheet({ sources, onCancel, onCreated }: { sources: Data
   const [tool, setTool] = useState<string>(AUTO);
   const [arg, setArg] = useState("");
   const [title, setTitle] = useState("");
-  const [source, setSource] = useState<string | null>(sources[0]?.id ?? null);
+  const [source, setSource] = useState<string | null>(initialSource ?? sources[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ids = { mode: useId(), doc: useId(), server: useId(), tool: useId(), arg: useId(), title: useId(), source: useId() };
@@ -46,8 +46,8 @@ export function NewReportSheet({ sources, onCancel, onCreated }: { sources: Data
       if (!live) return;
       setServers(list);
       setServerId((current) => current ?? list.find((item) => item.pick)?.id ?? list[0]?.id ?? null);
-      if (list.length === 0) setMode("blank");
-    }).catch(() => { if (live) { setServers([]); setMode("blank"); } });
+      if (list.length === 0 && !reportId) setMode("blank");
+    }).catch(() => { if (live) { setServers([]); if (!reportId) setMode("blank"); } });
     return () => { live = false; };
   }, []);
 
@@ -77,7 +77,8 @@ export function NewReportSheet({ sources, onCancel, onCreated }: { sources: Data
     setBusy(true);
     setError(null);
     try {
-      const started = await generateReport({ docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO ? null : tool, arg: arg.trim() || null, title: title.trim() || null });
+      const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO ? null : tool, arg: arg.trim() || null };
+      const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null });
       onCreated(started.report.id);
     } catch (reason) {
       setError(generateErrorText(reason, "Could not start generating the report"));
@@ -86,13 +87,13 @@ export function NewReportSheet({ sources, onCancel, onCreated }: { sources: Data
   }
 
   const noServers = servers !== null && servers.length === 0;
-  return <ModalDialog title="New report" eyebrow="Reports" onClose={onCancel} busy={busy} variant="sheet" className="reports-dialog new-report-sheet">
+  return <ModalDialog title={reportId ? "Generate from a doc" : "New report"} eyebrow="Reports" onClose={onCancel} busy={busy} variant="sheet" className="reports-dialog new-report-sheet">
     <form className="file-dialog-form" onSubmit={submit} noValidate>
-      <div className="new-report-modes" role="radiogroup" aria-labelledby={ids.mode}>
+      {!reportId && <div className="new-report-modes" role="radiogroup" aria-labelledby={ids.mode}>
         <span id={ids.mode} className="sr-only">Start from</span>
         <button type="button" role="radio" aria-checked={mode === "doc"} className={mode === "doc" ? "is-active" : undefined} onClick={() => setMode("doc")} disabled={busy || noServers}><FileText aria-hidden="true" />From a doc</button>
         <button type="button" role="radio" aria-checked={mode === "blank"} className={mode === "blank" ? "is-active" : undefined} onClick={() => setMode("blank")} disabled={busy}><Table2 aria-hidden="true" />Blank</button>
-      </div>
+      </div>}
       {mode === "doc" && <>
         <label htmlFor={ids.doc}>Doc link</label>
         <input id={ids.doc} value={docRef} maxLength={2048} autoFocus autoComplete="off" inputMode="url" placeholder="https://docs.example.com/doc/revenue-metrics-AbC123" onChange={(event) => setDocRef(event.target.value)} />
@@ -113,8 +114,10 @@ export function NewReportSheet({ sources, onCancel, onCreated }: { sources: Data
       </>}
       <span className="reports-label" id={ids.source}>Data source</span>
       <Select labelledBy={ids.source} label="Data source" value={source} onChange={setSource} options={sources.map((item) => ({ value: item.id, label: item.name, description: `Default database ${item.database}` }))} />
-      <label htmlFor={ids.title}>Title{mode === "doc" ? " (optional)" : ""}</label>
-      <input id={ids.title} value={title} maxLength={REPORT_LIMITS.title} autoFocus={mode === "blank"} autoComplete="off" placeholder={mode === "doc" ? "From the doc" : "Weekly revenue"} onChange={(event) => setTitle(event.target.value)} />
+      {!reportId && <>
+        <label htmlFor={ids.title}>Title{mode === "doc" ? " (optional)" : ""}</label>
+        <input id={ids.title} value={title} maxLength={REPORT_LIMITS.title} autoFocus={mode === "blank"} autoComplete="off" placeholder={mode === "doc" ? "From the doc" : "Weekly revenue"} onChange={(event) => setTitle(event.target.value)} />
+      </>}
       <p className="file-dialog-hint">{mode === "doc"
         ? "The AI reads the doc, writes read-only SQL against the tables an admin allowed, checks it, and builds the report. It uses your AI budget."
         : "The report starts as a draft with a SQL console. Queries run on that data source, read-only, on the tables an admin allowed."}</p>

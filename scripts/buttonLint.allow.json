@@ -68,5 +68,7 @@
   {"screen":"whiteboards","selector":"button.ui-select.ui-select-field.whiteboards-sort-select","rule":"target","reason":"pre-reports screen, accepted as built"},
   {"screen":"reports","selector":"button.reports-row-open","rule":"wrap","reason":"Lane I: a report row is a two-line list item (title, then its facts), not a text button"},
   {"screen":"reports","selector":"button.reports-row-open","rule":"overflow","reason":"Lane I: a long report title ends in an ellipsis on a phone; the full title is on the report page"},
-  {"screen":"*","selector":"button.report-run-head","rule":"wrap","reason":"Runs panel: a run header is a two-line disclosure (title and status, then its facts) by design"}
+  {"screen":"*","selector":"button.report-run-head","rule":"wrap","reason":"Runs panel: a run header is a two-line disclosure (title and status, then its facts) by design"},
+  {"screen":"notes","selector":"button.note-card-select","rule":"wrap","reason":"a note card (title over its time), pre-reports screen accepted as built; the baseline instance had no notes"},
+  {"screen":"notes","selector":"button.note-card-select","rule":"padding","reason":"a note card whose right side is its Draft tag, pre-reports screen accepted as built; the baseline instance had no notes"}
 ]

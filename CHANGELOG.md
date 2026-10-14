@@ -2,6 +2,56 @@
 
 Release notes for Nook, newest first. Upgrade steps for each release are in [docs/OPERATIONS.md](docs/OPERATIONS.md#upgrades).
 
+## v0.38.0 — 2026-10-15
+
+**Analytics reports (new Reports app)**
+
+- **Reports from a doc**: pick a doc and Nook's AI writes the report from it: an Outline page or any MCP doc server added in Settings → AI → Tool servers, or a note or Files text document in Nook itself (paste any Nook link, or "Pick from Nook", which also searches the text of Files documents; it is read with the owner's live access). Long docs are read in sections, and you can tick read-only doc tools so the AI may follow linked pages; "Doc changed" also watches the linked pages and searches a run read, names the page that changed, and re-reads the metrics defined on it.
+- **ClickHouse data sources**: admins add them in Settings → Report data sources, with **Test connection**, the databases a report may read (an allowlist), and a schema catalog that syncs tables and columns so the AI and the Schema browser know what exists.
+- **SQL guard**: every query is checked against ClickHouse's own query tree before it runs: a single `SELECT` on allowlisted tables (`FINAL` included), no table functions such as `url()` or `s3()`, run read-only with a row limit and timeouts.
+- **Report folders**: a left nav of folders on the Reports home (nested up to three levels), report rows you drag or **Move to…** a folder, folders you drag to nest or reorder, and **New report** or **Generate from a doc** straight into a folder. Deleted folders go to the Bin for 30 days; their reports move to Unfiled and come back on restore.
+- **Generation with a planner**: the AI writes a plan of todos and works through them, running queries to check its numbers before it submits the report; the live step log groups each step under its todo. A report names itself from the doc unless you typed a title.
+- **Metric catalog and the Metrics view**: the metrics a doc defines are extracted once per doc version, plan todos and SQL are held to them, the owner can edit them in **Metrics** (each edit is a version), and "Doc changed" names the metrics that changed.
+- **Checks on the numbers**: result sanity checks (join fan-out, KPIs that should reconcile with their breakdown, coverage, units) and ClickHouse repair hints from the schema catalog (including FINAL for collapsing engines) go back to the AI once, so it can fix the query before saving.
+- **Fallback model**: Settings → AI can name a fallback model for reports that gets one more attempt when the report model ends without a saved report; each block records the model that wrote it, and Runs lists every model a run used.
+- **The Ledger theme and every chart kind**: KPI, line, bar, pie, scatter, table, heatmap, calendar, funnel, gauge, treemap, sankey, boxplot, histogram, waterfall, combo and bullet, with stacks and small multiples, drawn to the same design rules on a phone and a desktop.
+- **"How was this built"**: Inspect on any block shows its SQL, the mapping, and where it came from in the doc, with **Open in console**; the SQL console and Schema browser are in ⋯.
+- **Refresh and schedules**: Refresh all or one block, or a schedule (hourly, daily, weekdays or weekly, in the report's time zone).
+- **Changes**: comment on a report or a block in plain words; the AI answers with a proposal you apply or reject, and every applied change is a numbered version.
+- **Versions**: who made each version and how (generated, an applied instruction, a manual edit, a rename, a restore), a structured diff with the changed SQL words marked, compare any two, a read-only view of an old version, **Run with today's data** on it, and a confirmed restore.
+- **Runs**: each refresh, generation and change is kept with its step log and timings.
+- **Sharing**: private, chosen people and groups (view or comment), or everyone; **Share** copies the link.
+- **MCP tools** for agents and keys with the `reports` scope: list, read, create, refresh, schedule, comment, apply or reject proposals, and read the metric catalog.
+- **Report model**: Settings → AI can set a separate provider and model for generation and changes.
+
+**Agents**
+
+- **Nook's own tools without a linked key**: agents reach Nook's tools through a hidden internal key per person (read scopes, writes only as Inbox proposals), on by default and switchable per agent and by admins.
+- **Tool servers sync by themselves**: on save, daily in the background, and on first use.
+- **Providers that only offer `tool_choice: auto`**: a text answer is nudged (at most twice) toward the submit call, and malformed tool arguments are repaired.
+- **GPT models that refuse tools at their default reasoning** get a compatible `reasoning_effort` automatically.
+
+**Operations**
+
+- **Structured server logs**: one line per event with a scope, request id and route template, `pretty` or `json`; secrets are never logged. New settings `LOG_LEVEL` (default `info`), `LOG_FORMAT` (default `pretty`) and `LOG_SLOW_MS` (default `1000`). The app's polling requests now log at `debug`.
+
+**UI**
+
+- Reports use their own button spec (one line, padded, 44 px targets on a phone). Every other screen keeps its buttons as they were.
+- **Back and Forward reopen sheets everywhere**: every dialog layer gets its own history entry, so Forward after Back reopens nested sheets in order, also on pages reached in the app and past a page change.
+- Settings: the page title no longer shows a focus ring after you switch windows, and a provider's DEFAULT badge sits beside its name.
+
+**Development**
+
+- The test suite is reliable under load: ephemeral ports, CPU-time work budgets, and probes that wait on real conditions. `scripts/reportEval.ts` scores report generation on 10 trap cases, with a scripted subset in CI.
+
+**Upgrading**
+
+- Migrations **050–053 and 055–059** run once on the first boot (054 is reserved for Messages). **Back up first** (`./scripts/backup.sh --force`).
+- **Disk and time**: 051 rebuilds the agent audit tables (about twice their size in free disk while it runs, and a slow first boot when the Audit log is large); 053, 057 and 058 rebuild `agent_settings`.
+- If a migration refuses because `PRAGMA foreign_key_check` finds broken rows, nothing was changed: fix or clear those rows (or restore the backup) and start again. See [Upgrading to 0.38.0](docs/OPERATIONS.md#upgrades).
+- New optional settings: `LOG_LEVEL`, `LOG_FORMAT`, `LOG_SLOW_MS`; the report and fallback models are set in Settings → AI. A ClickHouse or doc server on a private network needs its host in `AGENT_ALLOWED_PRIVATE_HOSTS`.
+
 ## v0.37.0 — 2026-10-13
 
 - **Undo survives a restart**: the records behind Undo after removing an attachment are stored in the database, with the same rules as before (60 seconds, ended by any later change to that attachment, and cleared when the event, card, row, file or person is purged).

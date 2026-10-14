@@ -278,20 +278,27 @@ describe("final review L3 and M3", () => {
     expect(moved.status).toBe(200);
   });
 
-  test("M3: docs/OPERATIONS.md has the next release's reports upgrade section: 050–053, backup, disk, and the foreign-key refusal", async () => {
+  test("M3: docs/OPERATIONS.md has the 0.38.0 reports upgrade section: 050–059, backup, disk, and the foreign-key refusal", async () => {
     const text = await Bun.file(new URL("../docs/OPERATIONS.md", import.meta.url)).text();
-    const start = text.indexOf("### Upgrading to the next release (analytics reports, migrations 050–053, 055, and 056)");
+    const start = text.indexOf("### Upgrading to 0.38.0 (analytics reports, migrations 050–053 and 055–059)");
     expect(start).toBeGreaterThan(0);
     const section = text.slice(start, text.indexOf("\n**Upgrading to 0.37.0", start));
-    for (const word of ["**050**", "api_key_grants", "**051**", "2× the size", "slow first boot", "**052**", "**053**", "**055**", "**056**", "agent_settings", "Back up first", "./scripts/backup.sh --force", "Check free disk", "PRAGMA foreign_key_check", "If a migration refuses"]) expect([word, section.includes(word)]).toEqual([word, true]);
+    for (const word of ["**050**", "api_key_grants", "**051**", "2× the size", "slow first boot", "**052**", "**053**", "**055**", "**056**", "**057**", "**058**", "**059**", "fallback model", "agent_settings", "APP_VERSION=0.38.0", "AGENT_ALLOWED_PRIVATE_HOSTS", "LOG_LEVEL", "Back up first", "./scripts/backup.sh --force", "Check free disk", "PRAGMA foreign_key_check", "If a migration refuses"]) expect([word, section.includes(word)]).toEqual([word, true]);
     // The refusals it quotes are the migrations' own.
     const m051 = await Bun.file(new URL("../server/migrations/051_report_runs_via.ts", import.meta.url)).text();
     const m053 = await Bun.file(new URL("../server/migrations/053_report_model.ts", import.meta.url)).text();
     expect(m051).toContain("Migration 051 cannot rebuild ${name}");
     expect(m053).toContain("Migration 053 cannot rebuild agent_settings");
+    const m057 = await Bun.file(new URL("../server/migrations/057_agent_internal_keys.ts", import.meta.url)).text();
+    expect(m057).toContain("Migration 057 cannot rebuild agent_settings");
     expect(section).toContain("Migration 053 cannot rebuild agent_settings");
-    // No released version number yet.
-    expect(section).not.toMatch(/\b0\.3[89]\.\d/);
+    expect(section).toContain("Migration 057 cannot rebuild agent_settings");
+    const m058 = await Bun.file(new URL("../server/migrations/058_report_metric_catalog.ts", import.meta.url)).text();
+    expect(m058).toContain("Migration 058 cannot rebuild agent_settings");
+    expect(section).toContain("Migration 058 cannot rebuild agent_settings");
+    expect(section).toContain("PRAGMA foreign_key_check");
+    // The release it names is this one.
+    expect(section).not.toMatch(/\b0\.39\.\d/);
     const { registeredMigrationIds } = await import("../server/migrations");
     expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59]);
   });

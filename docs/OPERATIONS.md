@@ -8,7 +8,7 @@ Internal identifiers keep the original `mynotes` prefix for compatibility with e
 
 1. Clone the repository and copy `.env.example` to `.env` if you need to override the defaults.
 2. Ensure `/srv/mynotes` exists and is writable by UID 1000, or set `MYNOTES_DATA_DIR` to another host directory.
-3. Run `APP_VERSION=0.37.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
+3. Run `APP_VERSION=0.38.0 GIT_SHA=$(git rev-parse --short HEAD) docker compose up -d --build`.
 4. Open `http://localhost:2026` and create the first account.
 
 ### Accounts
@@ -425,7 +425,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `MAIL_FILE_PATH` | empty | With `MAIL_TRANSPORT=file`: the absolute path of the JSON file messages are written to. |
 | `GOOGLE_OIDC_TEST_BASE_URL` | empty | Tests and local QA only: a fake Google issuer (`tests/support/fakeGoogle.ts`). Refused when `NODE_ENV=production`. |
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
-| `APP_VERSION` | `0.37.0` | Build metadata shown in Settings → About and reported by the MCP server. |
+| `APP_VERSION` | `0.38.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
 | `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
@@ -610,9 +610,9 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-### Upgrading to the next release (analytics reports, migrations 050–053, 055, and 056)
+### Upgrading to 0.38.0 (analytics reports, migrations 050–053 and 055–059)
 
-The next release adds the **Reports** module (analytics reports over ClickHouse). Its six migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.
+0.38.0 adds the **Reports** module (analytics reports over ClickHouse) and gives agents Nook's own tools without a linked key. Its nine migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.
 
 | Migration | What it does | Cost |
 | --- | --- | --- |
@@ -622,15 +622,18 @@ The next release adds the **Reports** module (analytics reports over ClickHouse)
 | **053** `report_model` | **Rebuilds `agent_settings`** (its key CHECK gains `report_provider_id` and `report_model`), keeping every row; adds `reports.model_provider_id` and `reports.model`. | Small. |
 | **055** `report_run_plans` | Adds `report_runs.plan_json` (a generation's or edit's plan) and `reports.title_source` (where the title came from; existing reports read as typed, except those still titled "Untitled report"). 054 stays reserved for the Messages module. | Small. |
 | **056** `report_doc_browse` | Adds `reports.doc_browse_tools` (the doc tools the AI may use to read linked pages; empty for existing reports), `reports.doc_source` (`server`, or `nook` for a doc in Nook itself), and the `report_doc_pages` table (a snapshot of each linked page a run read). | Small. |
+| **057** `agent_internal_keys` | Adds `mcp_api_keys.internal` (the hidden per-person key agents use for Nook's own tools; none exist until an agent first needs one) and `agents.nook_auto` (on for every agent), and **rebuilds `agent_settings`** again (its key CHECK gains `nook_auto_tools`), keeping every row. | Small. |
+| **058** `report_metric_catalog` | Creates `report_metric_catalogs` (each version of a report's metric catalog, extracted from a doc snapshot or edited by the owner in Metrics) and **rebuilds `agent_settings`** a third time (its key CHECK gains `report_fallback_provider_id` and `report_fallback_model`), keeping every row. | Small. |
+| **059** `report_folders` | Creates `report_folders` (each owner's folders on the Reports home, nested up to three levels, with the Bin's 30 days) and adds `reports.folder_id` (empty, so every existing report starts in Unfiled). | Small. |
 
 Steps:
 
 1. **Back up first:** `./scripts/backup.sh --force`. Restoring this backup is the only way back.
 2. **Check free disk** on the data volume: at least twice the size of the agent audit tables, plus the usual margin. Measure them with `sqlite3 <data>/mynotes.sqlite "SELECT name, SUM(pgsize) FROM dbstat WHERE name LIKE 'agent_%' OR name LIKE 'report_r%' OR name = 'api_key_grants' GROUP BY name"`.
-3. Pull, rebuild with the new `APP_VERSION`, and restart as above. Expect the first boot to take longer (051 copies the Audit log); `/api/health` answers once the migrations are done.
-4. **If a migration refuses** (the server exits with a message such as "Migration 051 cannot rebuild agent_audit_steps: … reference a missing … row (PRAGMA foreign_key_check)" or "Migration 053 cannot rebuild agent_settings: …"), nothing was changed: each migration runs in one transaction. The rebuilds refuse when `PRAGMA foreign_key_check` already finds rows that point at a missing parent (for 053, an `agent_settings.updated_by` naming a deleted person). Stop the server, find the rows with `sqlite3 <data>/mynotes.sqlite "PRAGMA foreign_key_check"`, and either clear or fix them (for 053: `UPDATE agent_settings SET updated_by = NULL WHERE updated_by NOT IN (SELECT id FROM users)`) or restore the backup; then start again.
+3. Pull, rebuild with `APP_VERSION=0.38.0`, and restart as above. Expect the first boot to take longer (051 copies the Audit log); `/api/health` answers once the migrations are done.
+4. **If a migration refuses** (the server exits with a message such as "Migration 051 cannot rebuild agent_audit_steps: … reference a missing … row (PRAGMA foreign_key_check)", "Migration 053 cannot rebuild agent_settings: …", "Migration 057 cannot rebuild agent_settings: …", or "Migration 058 cannot rebuild agent_settings: …"), nothing was changed: each migration runs in one transaction. The rebuilds refuse when `PRAGMA foreign_key_check` already finds rows that point at a missing parent (for 053, 057, and 058, an `agent_settings.updated_by` naming a deleted person). Stop the server, find the rows with `sqlite3 <data>/mynotes.sqlite "PRAGMA foreign_key_check"`, and either clear or fix them (for 053, 057, and 058: `UPDATE agent_settings SET updated_by = NULL WHERE updated_by NOT IN (SELECT id FROM users)`) or restore the backup; then start again.
 
-After the upgrade, an admin adds a ClickHouse data source in Settings → Report data sources. Generation also needs a model provider and a doc system's MCP server in Settings → AI → Tool servers (see *Agent chat*); Settings → AI can set a separate report model (provider and model) that generation and report edits use.
+After the upgrade, an admin adds a ClickHouse data source in Settings → Report data sources. Generation also needs a model provider and a doc system's MCP server in Settings → AI → Tool servers (see *Agent chat*); Settings → AI can set a separate report model (provider and model) that generation and report edits use, and a **fallback model for reports** (off while unset) that gets one more attempt when the report model ends without a saved report. A ClickHouse or doc server on a private, loopback, or LAN address is refused until its host is listed in `AGENT_ALLOWED_PRIVATE_HOSTS` (plain `http` is allowed only for those hosts). New optional settings: `LOG_LEVEL`, `LOG_FORMAT`, and `LOG_SLOW_MS` (see *Logs*); the defaults keep today's output readable. Pull, rebuild with `APP_VERSION=0.38.0`, and restart as above.
 
 **Upgrading to 0.37.0:** back up first with `./scripts/backup.sh --force`. **Migration 049** (`attachment_undo_records`) runs once on the first boot and can only be undone by restoring that backup. It is additive and touches no existing row: it creates one empty table, `attachment_undo_records` (the records behind **Undo** after removing an attachment: who removed which file from which event, card, row, or chat message, its old place, and a 60-second expiry; ids and times only), its indexes, and triggers on the three link tables and on events, notes, chat messages, whiteboards, cards, collection rows, documents, and users that delete those records when a link changes or the host, file, or person is purged. Undo after removing an attachment now survives a restart: the records were in memory before, so Undo records from the minute before the upgrade are lost once. Expired records are deleted when read and by the hourly sweep, so the table stays tiny. On boot the sweeper logs `Attachment self-check: migration 046 or 049 triggers are missing (…)` if any is gone. The event sheet now offers **Undo** after a Save that removed files. No new settings. Pull, rebuild with `APP_VERSION=0.37.0`, and restart as above.
 

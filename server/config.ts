@@ -447,7 +447,7 @@ export const config = {
   storage: storageConfig,
   /** APP_NAME (Wave 39): titles, link previews, the manifest, mail, and MCP. Tests switch it in process. */
   appName: appNameValue,
-  appVersion: process.env.APP_VERSION ?? "0.37.0",
+  appVersion: process.env.APP_VERSION ?? "0.38.0",
   gitSha: (process.env.GIT_SHA ?? "development").slice(0, 40),
   pushEnabled: pushEnabledValue as "auto" | "true" | "false",
   pushSubject,

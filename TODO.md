@@ -26,7 +26,12 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
   Open:
   - [ ] (Lane R, prep on branch `release-0.38.0`; merge, tag and deploy wait for approval) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
-- [ ] (Lane E, approved 2026-10-14) Generator reliability, in order: E1 an eval harness (docs, seeded real ClickHouse data, expected numbers, `--compare`); E2 sanity checks on results; E3 repair hints for ClickHouse errors; E4 a metric catalog from the doc; E5 an optional model fallback. Original proposal: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
+- [ ] (Lane E, approved 2026-10-14) Generator reliability: reports that are well formed can still be wrong.
+  - [x] E1 eval harness: `scripts/reportEval.ts` and 10 cases in `evals/reports/cases/` (FINAL and soft deletes, refund dates, IST days, join fan-out, funnel, percent as 0–1, linked-page metric, top route, cents, duplicate deliveries); scripted golden and trap specs; a CI subset replayed from recorded fixtures; `--compare`; OPERATIONS "Report generation eval".
+  - [ ] E2 result sanity checks (join fan-out, reconciliation, coverage, units).
+  - [ ] E3 ClickHouse error repair hints.
+  - [ ] E4 metric catalog per doc snapshot, with the Metrics view.
+  - [ ] E5 model fallback (optional).
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] (Lane F) Tool-server sync stores `readOnlyHint: false` the same as "not annotated", so the reports browse list hides write tools by `destructiveHint` and name only. Store the raw hint at sync (`server/agents/toolServers.ts`) and use it in `isReadLikeTool`.
 - [ ] (Lane F) Wave 45 leftovers: `format()` the string function is refused along with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.

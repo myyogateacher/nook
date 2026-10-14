@@ -836,3 +836,19 @@ CLICKHOUSE_TEST_URL=http://nook:nooktest@127.0.0.1:22200 bun test tests/reportsC
 ```
 
 The user and password may also come from `CLICKHOUSE_TEST_USER` and `CLICKHOUSE_TEST_PASSWORD`. To refresh a fixture, run `curl -s -u nook:nooktest 'http://127.0.0.1:22200/?default_format=TabSeparatedRaw' --data-binary "EXPLAIN QUERY TREE <the .sql file's statement>"` and save it as the matching `.txt`; `tests/reportsQueryTree26.test.ts` fails until every fixture has an expectation.
+
+### Report generation eval
+
+`scripts/reportEval.ts` measures whether generated reports are **correct**, not only well formed. Each case in `evals/reports/cases/<id>/` is a doc (`doc.md`, plus linked pages such as `metrics.md` that the doc links to), a seed script that drops and recreates its own `eval_<id>` database, and the facts a correct report must contain (numbers within a tolerance, a ranked top label). The cases set the traps real ClickHouse docs set: ReplacingMergeTree without `FINAL` and soft-deleted PeerDB rows, refunds on the refund date, IST day boundaries, a join that fans out, a funnel of distinct people, percent stored as 0–1, money in cents, at-least-once deliveries, health checks in traffic, and a metric defined only on a linked page.
+
+The eval runs Nook's real generation path in-process (a fresh data directory, a note per doc, a data source per case, `POST /api/reports/generate`), then scores the persisted results and prints a table per case: facts passed, whether the first `submit_report` passed, retries, nudges, sanity hints, tool calls, tokens, wall time, and the run id. A JSON report is written to `--out` (default `REPORT_EVAL_OUT_DIR`, else `<tmp>/nook-report-eval`). The data directory is kept: start Nook on it to open each report's Runs view (its sign-in and keys are in `<data dir>/eval-login.txt`).
+
+Run it against your model and ClickHouse (GLM through Z.ai shown; the key stays in your shell, never in a file in the repository):
+
+```sh
+REPORT_EVAL_BASE_URL=https://api.z.ai/api/paas/v4 REPORT_EVAL_MODEL=glm-5.3 REPORT_EVAL_API_KEY=… \
+  bun --no-env-file scripts/reportEval.ts --clickhouse http://nook:nooktest@127.0.0.1:22200 --out ~/nook-evals
+bun --no-env-file scripts/reportEval.ts --compare ~/nook-evals/report-eval-A.json ~/nook-evals/report-eval-B.json
+```
+
+Options: `--cases a,b` runs some cases; `--tool-choice full` for providers that accept `required` and a named `tool_choice` (the default sends `auto` only, as Z.ai needs); `--timeout <s>` per run (600). Without `REPORT_EVAL_BASE_URL` the scripted provider submits each case's golden spec (`--variant golden|trap|both`), which checks the cases themselves: a golden report passes every fact and a trap fails the facts it names. `--record` reruns the golden and trap specs through a recording proxy and rewrites each case's `fixtures.json`; `--fixtures` replays them without a ClickHouse. `bun test tests/reportEval.test.ts` runs the cases marked `ci` from their fixtures, and every case against a real ClickHouse when `CLICKHOUSE_TEST_URL` is set. Re-record after a change to the statements Nook sends (a missing statement fails the test and names itself).

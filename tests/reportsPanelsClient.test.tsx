@@ -127,7 +127,7 @@ describe("wide panels (CSS)", () => {
 
   test("the ⋯ menu grows to its longest item (up to the screen less 32 px), so \"Schedule (Hourly at :50)\" stays on one line at 390 px", async () => {
     const css = await Bun.file(new URL("../src/reports/reports.css", import.meta.url)).text();
-    const menu = /\.report-overflow-menu \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const menu = /^\.report-overflow-menu \{([^}]*)\}/m.exec(css)?.[1] ?? "";
     expect(menu).toContain("min-width: 220px; width: max-content; max-width: calc(100vw - 32px);");
   });
 });

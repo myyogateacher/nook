@@ -68,6 +68,10 @@ services:
       MAIL_DAILY_LIMIT: ${MAIL_DAILY_LIMIT:-500}
       MAIL_ALLOW_HTTP_LINKS: ${MAIL_ALLOW_HTTP_LINKS:-false}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      # Logs (docs/OPERATIONS.md, Logs): error, warn, info, or debug; pretty or json; slow-request threshold in ms.
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      LOG_SLOW_MS: ${LOG_SLOW_MS:-1000}
     volumes:
       - ${MYNOTES_DATA_DIR:-/srv/mynotes}:/data
     read_only: true

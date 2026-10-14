@@ -6,6 +6,9 @@ import type { ScheduleInput, ScheduleView } from "../../shared/reportsView";
 import { ownedReport, readableReport, roleHasReports } from "./access";
 import { ReportError } from "./errors";
 import { abandonExpiredReportRuns, startRefresh } from "./refresh";
+import { logger } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Report schedules (plan wave 47): an optional cadence per report, off by default. The
@@ -161,7 +164,7 @@ export function schedulerTick(nowMs = Date.now()): TickResult {
     pending.push(start.done
       .then((run) => recordOutcome(row.report_id, run.id, run.status))
       // Never an unhandled rejection: a failed bookkeeping write is logged (the run itself is recorded).
-      .catch((error: unknown) => { console.error("Report schedule outcome could not be recorded", error instanceof Error ? error.name : "Unknown error"); })
+      .catch((error: unknown) => { slog.error("Report schedule outcome could not be recorded", error); })
       .finally(() => { inFlight -= 1; }));
   }
   result.done = Promise.all(pending);
@@ -175,9 +178,13 @@ export function startReportScheduler() {
   if (timer) return;
   const tick = () => {
     try {
-      schedulerTick().done.catch((error: unknown) => console.error("Report scheduled refresh failed", error instanceof Error ? error.name : "Unknown error"));
+      const ticked = schedulerTick();
+      const counts = { claimed: ticked.claimed, started: ticked.started, skipped: ticked.skipped, failed: ticked.failed };
+      if (ticked.claimed) slog.info("Scheduler tick", counts);
+      else slog.debug("Scheduler tick", counts);
+      ticked.done.catch((error: unknown) => slog.error("Report scheduled refresh failed", error));
     } catch (error) {
-      console.error("Report scheduler tick failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Report scheduler tick failed", error);
     }
   };
   timer = setInterval(tick, SCHEDULER_TICK_MS);

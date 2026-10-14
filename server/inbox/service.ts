@@ -13,6 +13,9 @@ import { proposalIsStale } from "./stale";
 import { InboxError } from "./errors";
 import { checkNoteDraftPin, checkRunKind, checkTargetPin, openRunForKey, releaseRunSlot, reserveRunSlot, runHeaders, type OpenRun } from "./routines";
 import { mailProposalsAwaiting } from "../mail/triggers";
+import { logger } from "../log";
+
+const slog = logger("inbox");
 
 /**
  * The proposal primitive (docs/plan/research/2026-09-28-agent-inbox-routines.md §4, D146–D159).
@@ -194,7 +197,7 @@ export async function submitProposals(key: McpKeyContext, items: readonly Submit
     } catch (error) {
       if (error instanceof McpToolError) results.push({ error: error.message, code: error.code, ...(error.details ? { details: error.details } : {}) });
       else {
-        console.error("Proposal submit failed", error instanceof Error ? error.name : "Unknown error");
+        slog.error("Proposal submit failed", error);
         results.push({ error: "Something went wrong", code: "INTERNAL" });
       }
     }
@@ -381,7 +384,7 @@ export async function getProposal(ownerId: string, proposalId: string) {
   try {
     preview = await PROPOSAL_KIND_DEFS[row.kind].preview(ownerId, stored(row));
   } catch (error) {
-    if (!(error instanceof McpToolError)) console.error("Proposal preview failed", error instanceof Error ? error.name : "Unknown error");
+    if (!(error instanceof McpToolError)) slog.error("Proposal preview failed", error);
     preview = { restricted: true };
   }
   const position = row.status === "pending" ? pendingPosition(ownerId, row) : null;
@@ -543,7 +546,7 @@ export async function bulkProposals(userId: string, input: { action: "approve" |
     } catch (error) {
       if (error instanceof InboxError) results.push({ id, status: (error.extra.status as string | undefined) ?? "error", code: error.code ?? "ERROR", error: error.message });
       else {
-        console.error("Bulk proposal action failed", error instanceof Error ? error.name : "Unknown error");
+        slog.error("Bulk proposal action failed", error);
         results.push({ id, status: "error", code: "INTERNAL", error: "Something went wrong" });
       }
     }

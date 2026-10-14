@@ -12,6 +12,9 @@ import { noteKeyLimited, noteKeyValueRead, presentSecret, presentVault, safeDeta
 import { KeyLimitError } from "./limits";
 import { createSecret, getSecret, getVault, listSecrets, listVaults, listVersions, readValue, setValue } from "./service";
 import { requireVaultEnabled } from "./status";
+import { logger } from "../log";
+
+const slog = logger("vault");
 
 /**
  * The vault's REST API for `nkv_` keys, `/api/v1/vault/*` (Wave 27, vault plan §7, D220, T183, T184).
@@ -172,7 +175,7 @@ export async function handleVaultRest(request: Request, url: URL, subpath: strin
     // Field paths and rules only: zod messages never quote the input (T188).
     if (error instanceof ZodError) return refuse(400, "Invalid request", "INVALID", { details: error.issues.map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`) });
     if (error instanceof Error && error.name === "VaultIntegrityError") return refuse(500, "Stored vault data failed its integrity check", "VAULT_INTEGRITY");
-    console.error("Vault REST request failed", error instanceof Error ? error.name : "Unknown error");
+    slog.error("Vault REST request failed", error);
     return refuse(500, "Something went wrong", "INTERNAL");
   }
 }

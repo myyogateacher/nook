@@ -12,6 +12,9 @@ import { TOOL_IMAGE_BOUNDS, type ToolImageRef } from "../../shared/agents";
 import { checkEgressUrl, EgressError, egressFetch, privateHostAllowed } from "./egress";
 import type { McpImage } from "./mcpClient";
 import { AgentError } from "./status";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Images in chats (D370 as amended, T304): the image proxy for outside pictures a person chose to
@@ -185,7 +188,7 @@ export async function proxyImage(c: Context<AppEnv>): Promise<Response> {
   } catch (error) {
     if (!(error instanceof Unavailable)) throw error;
     // The host and the reason only: the path and query can carry what the reply tried to send out.
-    if (error.reason !== "CLIENT_GONE") console.warn(`Image proxy: ${url.host} not loaded (${error.reason})`);
+    if (error.reason !== "CLIENT_GONE") slog.warn(`Image proxy: ${url.host} not loaded (${error.reason})`);
     throw new AgentError(502, "IMAGE_UNAVAILABLE", "That image could not be loaded");
   } finally {
     const left = (inFlight.get(userId) ?? 1) - 1;

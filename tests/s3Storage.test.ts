@@ -30,7 +30,8 @@ const s3Env = (prefix: string, overrides: Record<string, string> = {}) => ({
 });
 
 async function run(args: string[], env: Record<string, string>) {
-  const child = Bun.spawn(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env }, stdout: "pipe", stderr: "pipe" });
+  // LOG_LEVEL=info: these tests read the startup lines the server log writes (server/log.ts).
+  const child = Bun.spawn(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, LOG_LEVEL: "info", ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   const line = stdout.split("\n").find((item) => item.startsWith("PROBE "));
   return { code, stdout, stderr, probe: line ? JSON.parse(line.slice(6)) as Record<string, any> : null };
@@ -117,7 +118,7 @@ describe("startup with STORAGE_BACKEND=s3", () => {
   test("a copy of a live data directory (another directory, same id) refuses to start while the live server runs; a clean stop releases the claim (review N1)", async () => {
     const live = scratch();
     const env = (dir: string) => ({ DATA_DIR: dir, STORAGE_BACKEND: "s3", ...s3Env("livecopy/") });
-    const server = Bun.spawn(["bun", "--no-env-file", join("tests", "support", "storageProbe.ts"), "serve"], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env(live) }, stdout: "pipe", stderr: "pipe" });
+    const server = Bun.spawn(["bun", "--no-env-file", join("tests", "support", "storageProbe.ts"), "serve"], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, LOG_LEVEL: "info", ...env(live) }, stdout: "pipe", stderr: "pipe" });
     const reader = server.stdout.getReader();
     let seen = "";
     while (!seen.includes("PROBE ")) {

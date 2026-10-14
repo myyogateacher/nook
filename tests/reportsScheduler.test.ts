@@ -199,7 +199,7 @@ describe("the tick", () => {
 
   test("L5: a failure recording the outcome is logged, never an unhandled rejection", async () => {
     const source = await Bun.file(new URL("../server/reports/scheduler.ts", import.meta.url)).text();
-    expect(source).toContain(".catch((error: unknown) => { console.error(\"Report schedule outcome could not be recorded\"");
+    expect(source).toContain(".catch((error: unknown) => { slog.error(\"Report schedule outcome could not be recorded\"");
     const reportId = await seededReport();
     scheduler.saveSchedule(owner.userId, reportId, daily(), FRIDAY_NOON);
     const tick = scheduler.schedulerTick(Date.parse("2026-03-06T14:00:00Z"));

@@ -1,3 +1,6 @@
+import { logger } from "../log";
+
+const slog = logger("knowledge");
 /**
  * Hooks other modules call without importing the knowledge module (no import cycles):
  * - Notes tells it a note was published (plan §9: a source re-indexes after a publish, debounced 60 s).
@@ -14,7 +17,7 @@ function run<T>(listeners: ReadonlySet<(value: T) => void>, value: T, what: stri
     try {
       listener(value);
     } catch (error) {
-      console.error(`A knowledge ${what} hook failed`, error instanceof Error ? error.name : "Unknown error");
+      slog.error(`A knowledge ${what} hook failed`, error);
     }
   }
 }

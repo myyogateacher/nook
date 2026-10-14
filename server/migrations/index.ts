@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { elapsed, logger } from "../log";
 import { initialMigration } from "./001_initial";
 import { folderSharingMigration } from "./002_folder_sharing";
 import { totpMigration } from "./003_totp";
@@ -139,15 +140,27 @@ export const registeredMigrations: readonly typeof migrations[number][] = migrat
  */
 export const registeredMigrationIds: readonly number[] = migrations.map((migration) => migration.id);
 
+/** Applies the pending migrations in order; returns how many ran (each is logged with its timing). */
 export function runMigrations(db: Database) {
+  const log = logger("db");
+  let applied = 0;
   db.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
   for (let index = 0; index < migrations.length; index += 1) {
     const migration = migrations[index]!;
     if (index > 0 && migrations[index - 1]!.id >= migration.id) throw new Error("Database migrations must have unique ascending ids");
     if (db.query("SELECT id FROM schema_migrations WHERE id = ?").get(migration.id)) continue;
-    db.transaction(() => {
-      migration.up(db);
-      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, new Date().toISOString());
-    })();
+    const start = performance.now();
+    try {
+      db.transaction(() => {
+        migration.up(db);
+        db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(migration.id, migration.name, new Date().toISOString());
+      })();
+    } catch (error) {
+      log.error("Migration failed", { migration: migration.id, name: migration.name, err: error });
+      throw error;
+    }
+    applied += 1;
+    log.info("Migration applied", { migration: migration.id, name: migration.name, ms: elapsed(start) });
   }
+  return applied;
 }

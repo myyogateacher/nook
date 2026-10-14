@@ -22,6 +22,9 @@ import { isWhiteboard, renameWhiteboardIndex } from "./whiteboards/search";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { isHostKind } from "./attachments/hosts";
 import { ensureSystemFolder, isSystemFolder, SYSTEM_FOLDER_BODY, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
+import { logger } from "./log";
+
+const slog = logger("files");
 
 const MAX_CONCURRENT_UPLOADS = 3;
 const MULTIPART_OVERHEAD_BYTES = 65_536;
@@ -178,7 +181,7 @@ function receiveSingleFile(request: Request, writer: ObjectWriter): Promise<Rece
           try {
             step();
           } catch (teardownError) {
-            console.error("Upload teardown step failed", teardownError instanceof Error ? teardownError.name : "Unknown error");
+            slog.error("Upload teardown step failed", teardownError);
           }
         };
         guarded(() => source.unpipe(parser));
@@ -275,14 +278,14 @@ async function commitReceived(userId: string, id: string, writer: ObjectWriter, 
       return { created: true as const };
     })();
   } catch (error) {
-    await removeObject(id).catch(() => console.error("Could not remove an uncommitted upload; the sweeper will"));
+    await removeObject(id).catch((error) => slog.error("Could not remove an uncommitted upload; the sweeper will", error));
     const uniqueRace = uploadKey && (error as { code?: string }).code?.includes("CONSTRAINT")
       && db.query("SELECT 1 FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey);
     if (!uniqueRace) throw error;
     outcome = { replayOf: (db.query("SELECT id FROM documents WHERE owner_id = ? AND upload_key = ?").get(userId, uploadKey) as { id: string }).id };
   }
   if ("replayOf" in outcome) {
-    await removeObject(id).catch(() => console.error("Could not remove an uncommitted upload; the sweeper will"));
+    await removeObject(id).catch((error) => slog.error("Could not remove an uncommitted upload; the sweeper will", error));
     const replay = replayFor(userId, uploadKey!);
     if (!replay || replay.deleted) throw new UploadError(409, { error: "This upload was already stored and has since been deleted", code: "IDEMPOTENCY_KEY_USED" });
     return { document: replay.document, replay: true };
@@ -380,7 +383,7 @@ export async function storeRawUpload(source: Readable, options: StoreRawOptions,
     throw error;
   } finally {
     slot.release();
-    if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
+    if (!committed) await writer.discard().catch((error) => slog.error("Could not discard staged upload", error));
     // The row is committed (or there is none): the orphan sweep may judge the object again (review M1).
     writer.release();
   }
@@ -465,7 +468,7 @@ async function handleUpload(c: Context<AppEnv>) {
     throw error;
   } finally {
     slot.release();
-    if (!committed) await writer.discard().catch(() => console.error("Could not discard staged upload"));
+    if (!committed) await writer.discard().catch((error) => slog.error("Could not discard staged upload", error));
     // The row is committed (or there is none): the orphan sweep may judge the object again (review M1).
     writer.release();
   }
@@ -544,7 +547,7 @@ async function handleContent(c: Context<AppEnv>) {
     }
   } catch (error) {
     const reason = error instanceof DocumentIntegrityError ? error.reason : error instanceof StorageUnavailableError ? error.code : error instanceof Error ? error.name : "unknown";
-    console.error(`Document content ${error instanceof StorageUnavailableError ? "storage" : "integrity"} error (${reason}) for document ${id}`);
+    slog.error(`Document content ${error instanceof StorageUnavailableError ? "storage" : "integrity"} error`, { reason, doc: id.slice(0, 8), err: error });
     // S3 storage (review L1): an unreachable store is retryable; a missing or wrong-sized object fails closed.
     if (error instanceof StorageUnavailableError) return contentError(503, "File storage is unavailable. Try again later.", "STORAGE_UNAVAILABLE");
     return contentError(500, "Something went wrong");

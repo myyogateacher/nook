@@ -6,6 +6,7 @@
  *
  * Admins see account metadata only; nothing here reads anyone's content (D73).
  */
+import { logger } from "../log";
 import { revokeUserPushSubscriptions } from "../calendar/push";
 import { clearDevices } from "../signInDevices";
 import { isEmailAllowed } from "../config";
@@ -197,7 +198,7 @@ export const NO_ACTIVE_ADMIN_WARNING = "Nook has accounts but no active admin (e
  * Boot check: logs NO_ACTIVE_ADMIN_WARNING when accounts exist but none is an active admin. An
  * empty database is a fresh install (the first registration becomes the admin) and stays quiet.
  */
-export function warnIfNoActiveAdmin(warn: (message: string) => void = console.warn) {
+export function warnIfNoActiveAdmin(warn: (message: string) => void = (message) => logger("team").warn(message)) {
   if (hasActiveAdmin() || !db.query("SELECT 1 FROM users LIMIT 1").get()) return false;
   warn(NO_ACTIVE_ADMIN_WARNING);
   return true;

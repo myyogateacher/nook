@@ -15,6 +15,9 @@
 import { hasScope, type McpScope } from "../mcpScopes";
 import { NO_FILTER, type SqlFilter } from "../keyResources";
 import type { ResourceKind } from "../keyGrants";
+import { logger } from "../log";
+
+const slog = logger("today");
 
 export const TODAY_LIMIT = 10;
 export const TODAY_FETCH = TODAY_LIMIT + 1;
@@ -111,7 +114,7 @@ export async function loadToday(context: TodayContext, only?: readonly string[])
       const bounded = page(result.items);
       sections[name] = { items: bounded.items, more: result.more || bounded.more, href: provider.href };
     } catch (error) {
-      console.error(`Today section ${name} failed`, error instanceof Error ? error.message : error);
+      slog.error(`Today section ${name} failed`, error);
       sections[name] = { items: [], more: false, href: provider.href, error: "This section could not be loaded" };
     }
   }));

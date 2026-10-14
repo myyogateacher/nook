@@ -2,6 +2,9 @@ import { db, now } from "./db";
 import { cleanIndexText, searchText } from "./search";
 import { checksum, storage, withNoteLock } from "./storage";
 import { neutralizeWhiteboardEmbeds } from "../shared/whiteboardEmbed";
+import { logger } from "./log";
+
+const slog = logger("search");
 
 /**
  * Note search index sync (docs/plan/WAVES_7-9.md §2.2, D30–D34).
@@ -133,7 +136,7 @@ export async function reconcileSearchIndex(): Promise<SearchReconcileCounts> {
 
   db.query("INSERT INTO note_fts (note_fts) VALUES ('optimize')").run();
   if (counts.indexed || counts.removed || counts.unreadable) {
-    console.info(`Search index: ${counts.indexed} indexed, ${counts.removed} removed, ${counts.unreadable} unreadable`);
+    slog.info(`Search index: ${counts.indexed} indexed, ${counts.removed} removed, ${counts.unreadable} unreadable`);
   }
   return counts;
 }

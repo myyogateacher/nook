@@ -5,6 +5,9 @@ import { emptyTaskBin, listTaskBin, sweepTaskBin, type TaskBinType } from "./tas
 import { readableBoardPredicate } from "./tasks/access";
 import { readableCollectionPredicate } from "./collections/access";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
+import { logger } from "./log";
+
+const slog = logger("bin");
 
 /** Bin retention is a constant (D11), not configurable. */
 export const BIN_RETENTION_MS = 30 * 86_400_000;
@@ -75,7 +78,7 @@ export async function purgeLocked(type: CoreBinType, id: string, options: { reas
   try {
     await binStorage.removeBytes(type, id);
   } catch (error) {
-    console.error(`Bin purge could not remove ${type} bytes (${error instanceof Error ? (error as NodeJS.ErrnoException).code ?? error.name : "Unknown error"})`);
+    slog.error("Bin purge could not remove stored bytes", { type, err: error });
     return "pending";
   }
 
@@ -263,7 +266,7 @@ export async function sweepBin(options: { nowMs?: number } = {}): Promise<BinSwe
       counts.pending += provided.pending;
     } catch (error) {
       counts.pending += 1;
-      console.error(`Bin sweep failed for ${type} items`, error instanceof Error ? error.name : "Unknown error");
+      slog.error(`Bin sweep failed for ${type} items`, error);
     }
   }
   return counts;

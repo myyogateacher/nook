@@ -1,3 +1,4 @@
+import { logger, shortId } from "../log";
 import { db, now } from "../db";
 import { REPORT_LIMITS, type CatalogColumn, type CatalogTable, type SchemaSearchHit, type SchemaSyncResult } from "../../shared/reports";
 import { databaseAllowed, tableAllowed } from "./allowlist";
@@ -168,8 +169,11 @@ export function syncSchema(datasourceId: string): Promise<SchemaSyncResult> {
         db.query("UPDATE report_datasources SET schema_synced_at = ?, schema_table_count = ?, schema_truncated = ?, schema_error = NULL WHERE id = ?")
           .run(at, fetched.tables.length, fetched.truncated ? 1 : 0, datasourceId);
       })();
-      return { tables: fetched.tables.length, columns: fetched.tables.reduce((sum, table) => sum + table.columns.length, 0), mode: fetched.mode, truncated: fetched.truncated, ms: Date.now() - started };
+      const synced = { tables: fetched.tables.length, columns: fetched.tables.reduce((sum, table) => sum + table.columns.length, 0), mode: fetched.mode, truncated: fetched.truncated, ms: Date.now() - started };
+      logger("reports").info("Schema synced", { datasource: shortId(datasourceId), ...synced });
+      return synced;
     } catch (error) {
+      logger("reports").warn("Schema sync failed", { datasource: shortId(datasourceId), ms: Date.now() - started, err: error });
       const message = error instanceof Error && error.name !== "Error" ? error.message : "The schema could not be read";
       db.query("UPDATE report_datasources SET schema_error = ? WHERE id = ?").run(message.slice(0, 500), datasourceId);
       throw error;

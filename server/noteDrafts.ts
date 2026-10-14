@@ -13,6 +13,9 @@ import { personLinkPolicy, type LinkPolicy } from "./attachments/service";
 import { keyLinkPolicy } from "./attachments/keyLinks";
 import { recordDraftReferences, recordVersionReferences } from "./attachments/references";
 import type { McpKeyContext } from "./mcpToolKit";
+import { logger } from "./log";
+
+const slog = logger("notes");
 
 /**
  * Draft writes shared by the HTTP routes and the MCP tools, so both keep the
@@ -114,13 +117,6 @@ export async function createDraftNote(userId: string, folderId: string | null, i
     }
   })();
   return { id, title, folderId: targetFolderId, revision: 1, ...(proposalId ? { proposalId } : {}) };
-}
-
-/** Error class and errno code for logs. Messages can carry paths, so they are never logged. */
-function errorClass(error: unknown) {
-  if (!(error instanceof Error)) return "Unknown error";
-  const code = (error as NodeJS.ErrnoException).code;
-  return typeof code === "string" ? `${error.name} (${code})` : error.name;
 }
 
 /**
@@ -263,7 +259,7 @@ export async function publishDraft(userId: string, noteId: string, revision: num
       // (T350). A file that became unconfirmed since the check above is skipped, never linked.
       links = syncNoteLinks(noteId, userId, markdown, policy);
     })();
-    await storage.finalizePublished(noteId, markdown).catch((error) => console.error(`Could not refresh current Markdown mirror for note ${noteId}`, errorClass(error)));
+    await storage.finalizePublished(noteId, markdown).catch((error) => slog.error(`Could not refresh current Markdown mirror for note ${noteId}`, error));
     audit(userId, noteId, "note.publish", { version: nextVersion, ...(note.owner_id !== userId ? { editor: true } : {}) });
     // Knowledge bases (Wave 44, AC-E) that use this note index it again after 60 s of quiet.
     notePublishedHook(noteId);
@@ -313,7 +309,7 @@ async function discardPublishedDraftLocked(note: NoteRow, userId: string) {
     unindexNote(note.id, "draft");
     resolveNoteDraftProposals(note.id, { kind: "discarded", userId });
   })();
-  await storage.discardDraft(note.id).catch((error) => console.error(`Could not remove discarded draft for note ${note.id}`, errorClass(error)));
+  await storage.discardDraft(note.id).catch((error) => slog.error(`Could not remove discarded draft for note ${note.id}`, error));
   audit(userId, note.id, "draft.discard");
 }
 

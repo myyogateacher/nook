@@ -6,6 +6,9 @@ import { ownedReport, readableReport, readableReportSql, type ReportRow } from "
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
+import { logger } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Reports (plan wave 45): list, create a draft (a title and a data source), rename, change the data
@@ -99,7 +102,7 @@ export function binReport(userId: string, id: string) {
   db.query("UPDATE reports SET deleted_at = ?, deleted_by = ?, purge_after = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL")
     .run(at.toISOString(), userId, purgeAfterFrom(at), at.toISOString(), id);
   audit(userId, null, "reports.report.bin", { id });
-  for (const hook of binnedHooks) { try { hook(id); } catch (error) { console.error("Reports: a Bin hook failed", error instanceof Error ? error.name : "Error"); } }
+  for (const hook of binnedHooks) { try { hook(id); } catch (error) { slog.error("Reports: a Bin hook failed", error); } }
   return { ok: true as const, purgeAfter: purgeAfterFrom(at) };
 }
 

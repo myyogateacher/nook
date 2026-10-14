@@ -20,6 +20,9 @@ import { identityOf, liveToolFailure, liveToolFor, resolveTools, type ExternalTo
 import { sessionFor } from "./toolServers";
 import { shareLevel, shareReadableSql } from "./sharing";
 import { runKnowledgeTool } from "../knowledge/tool";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * API and MCP runs (Wave 42 "AC-C", plan §7.1, §7.2, D364, D365): the agent loop for a general
@@ -275,7 +278,7 @@ async function execute(state: LiveExternal, active: ActiveRun, caller: ExternalC
       if (active.controller.signal.aborted) throw error;
       if (error instanceof McpClientError) return fail(error.code === "MCP_TIMEOUT" ? "TOOL_TIMEOUT" : error.code, error.message);
       if (error instanceof AgentError) return fail(error.code, error.message);
-      console.error("Agent tool call failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Agent tool call failed", error);
       return fail("INTERNAL", "The tool could not be run");
     }
     const capped = capResultText(text, live.resultCapBytes);
@@ -332,7 +335,7 @@ async function execute(state: LiveExternal, active: ActiveRun, caller: ExternalC
             chargeUsage(active.userId, agent.id, step.usage, 0, caller.keyId);
             insertAuditStep(runId, seq, { kind: "model", text: step.content, toolCalls: [], usage: step.usage, durationMs: step.durationMs });
           } catch (error) {
-            console.error("Agent API run could not charge a stopped step", error instanceof Error ? error.name : "Unknown error");
+            slog.error("Agent API run could not charge a stopped step", error);
           }
           flushDelta();
           emit(state, { type: "usage", data: { usage: step.usage } });
@@ -375,7 +378,7 @@ async function execute(state: LiveExternal, active: ActiveRun, caller: ExternalC
       status = "error";
       errorCode = "INTERNAL";
       errorMessage = ERROR_TEXT.INTERNAL!;
-      console.error("Agent API run failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Agent API run failed", error);
     }
   } finally {
     clearTimeout(wallClock);
@@ -389,7 +392,7 @@ async function execute(state: LiveExternal, active: ActiveRun, caller: ExternalC
     finishedAt = finishAuditRun(runId, { status, errorCode, steps: state.steps, toolCalls: state.toolCalls.length, usage: state.usage, output: state.output });
     chargeUsage(active.userId, agent.id, { promptTokens: 0, completionTokens: 0, estimated: false }, 1, caller.keyId);
   } catch (error) {
-    console.error("Agent API run could not be recorded", error instanceof Error ? error.name : "Unknown error");
+    slog.error("Agent API run could not be recorded", error);
   }
   audit(active.userId, null, "agents.run.finish", { runId, via: caller.via, keyId: caller.keyId, agentId: agent.id, status, errorCode, steps: state.steps, toolCalls: state.toolCalls.length, droppedToolCalls, promptTokens: state.usage.promptTokens, completionTokens: state.usage.completionTokens });
   const result: ExternalRunResult = {

@@ -4,6 +4,9 @@ import { isValidTimeZone, nextOccurrence, parseLocal, zonedToUtc, type Recurrenc
 import { mailReminder } from "../mail/calendarMail";
 import { listAccessNotices, markAccessNoticesRead, sweepAccessNotices, unreadAccessNotices } from "../access/notices";
 import { paths } from "../mail/links";
+import { logger } from "../log";
+
+const slog = logger("calendar");
 
 /**
  * Reminders, the dispatcher, and in-app notifications (WAVES_10-12.md §4.1–4.3, D64, T66, T67).
@@ -210,7 +213,7 @@ export function emitNotifications(created: NotificationCreated[]) {
     try {
       listener(created);
     } catch (error) {
-      console.error("Notification listener failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Notification listener failed", error);
     }
   }
 }
@@ -324,11 +327,11 @@ export function runDispatch(options: { nowMs?: number } = {}): DispatchCounts | 
     try {
       listener(created);
     } catch (error) {
-      console.error("Notification listener failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Notification listener failed", error);
     }
   }
   if (counts.notified || counts.skipped || counts.limited || counts.removed) {
-    console.info(`Reminders: ${counts.notified} notified, ${counts.skipped} skipped as too late, ${counts.limited} deferred by the hourly limit, ${counts.removed} removed after access loss`);
+    slog.info(`Reminders: ${counts.notified} notified, ${counts.skipped} skipped as too late, ${counts.limited} deferred by the hourly limit, ${counts.removed} removed after access loss`);
   }
   return counts;
 }
@@ -343,7 +346,7 @@ export function startDispatcher() {
     try {
       runDispatch();
     } catch (error) {
-      console.error("Reminder dispatch failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Reminder dispatch failed", error);
     }
   }, DISPATCH_INTERVAL_MS);
   timer.unref();

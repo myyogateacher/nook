@@ -2,6 +2,9 @@ import { db, now } from "../db";
 import { buildFtsQuery, cleanIndexText, HIT_END, HIT_START, toSegments, type Segment } from "../search";
 import { readableCollectionPredicate } from "./access";
 import { parseStoredSchema, readValues, type CollectionSchema, type FieldDefinition, type RowValues } from "./schema";
+import { logger } from "../log";
+
+const slog = logger("search");
 
 /**
  * Row search (WAVES_10-12.md §3.3, D57, T60). A separate mapping table and
@@ -112,7 +115,7 @@ export function reconcileCollectionSearchIndex(): CollectionSearchCounts {
     if (stale.length < RECONCILE_BATCH) break;
   }
   if (counts.indexed) db.query("INSERT INTO collection_row_fts (collection_row_fts) VALUES ('optimize')").run();
-  if (counts.indexed || counts.removed) console.info(`Collection search index: ${counts.indexed} indexed, ${counts.removed} removed`);
+  if (counts.indexed || counts.removed) slog.info(`Collection search index: ${counts.indexed} indexed, ${counts.removed} removed`);
   return counts;
 }
 

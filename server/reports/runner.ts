@@ -1,4 +1,5 @@
 import type { QueryOutcome, StatementClass } from "../../shared/reports";
+import { logger } from "../log";
 import { databaseAllowed, tableAllowed } from "./allowlist";
 import { chQuery, ChError, queryIdFor, type ChResult } from "./clickhouse";
 import { allowlistOf, datasourceTarget, type DatasourceRow } from "./datasources";
@@ -112,7 +113,31 @@ function outcome(classified: Classified, result: ChResult, rows: unknown[][], ma
 /** SHOW rows read before the allowlist filter (the cap applies after it, review L1). */
 const SHOW_READ_ROWS = 100_000;
 
+const queryLog = logger("reports");
+
+/**
+ * The query log (docs/OPERATIONS.md "Logs"): id, class, time, rows read and returned, truncated;
+ * a guard refusal by its code; a ClickHouse failure by its code. The statement is logged only at
+ * debug (it is the person's or the agent's SQL), and result rows never are.
+ */
 export async function runGuarded(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
+  const started = performance.now();
+  if (queryLog.enabled("debug")) queryLog.debug("Query SQL", { query: options.queryId, sql: sql.slice(0, 4000) });
+  try {
+    const result = await runGuardedUnlogged(row, sql, options);
+    queryLog.info("ClickHouse query", { query: options.queryId, class: result.class, ms: Math.round(performance.now() - started), rowsRead: result.rowsRead ?? undefined, bytesRead: result.bytesRead ?? undefined, rows: result.rows.length, truncated: result.truncated || undefined });
+    return result;
+  } catch (error) {
+    const ms = Math.round(performance.now() - started);
+    if (error instanceof GuardError) queryLog.warn("Query refused", { query: options.queryId, code: error.code, ms });
+    else if (error instanceof ChError) queryLog.warn("ClickHouse query failed", { query: options.queryId, code: error.code, chCode: error.chCode ?? undefined, chName: error.chName ?? undefined, ms });
+    else if (!(error instanceof ReportError)) queryLog.error("ClickHouse query failed", { query: options.queryId, ms, err: error });
+    else queryLog.warn("ClickHouse query failed", { query: options.queryId, code: error.code, ms });
+    throw error;
+  }
+}
+
+async function runGuardedUnlogged(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
   const classified = classify(sql);
   if (!options.classes.includes(classified.class)) {
     throw new GuardError(classified.class === "metadata" ? "METADATA_FORBIDDEN" : "NOT_SELECT", classified.class === "metadata" ? "Only a SELECT runs here" : "Only metadata statements (SHOW, DESCRIBE, EXISTS, EXPLAIN, system tables) run here");

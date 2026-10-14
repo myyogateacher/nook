@@ -1,6 +1,9 @@
 import { config } from "../config";
 import { VaultError } from "./access";
 import { verifyKeys } from "./crypto";
+import { logger } from "../log";
+
+const slog = logger("vault");
 
 /**
  * Whether the vault module is on (D212, T199). Off when VAULT_ENCRYPTION_KEY is unset, and off (the
@@ -11,7 +14,7 @@ export type VaultStatus = { enabled: boolean; reason: "unset" | "key_mismatch" |
 
 let status: VaultStatus = { enabled: false, reason: "unset" };
 
-export function initVaultStatus(log: (line: string) => void = (line) => console.log(line)): VaultStatus {
+export function initVaultStatus(log: (line: string) => void = (line) => slog.info(line)): VaultStatus {
   const key = config.vault.key;
   if (!key) {
     status = { enabled: false, reason: "unset" };

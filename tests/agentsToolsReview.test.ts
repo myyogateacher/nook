@@ -793,7 +793,7 @@ describe("review 8: upgrade from a v0.26.0 (main 45a6b93) database", () => {
     const base = `http://localhost:${childPort}`;
     const child = Bun.spawn(["bun", "--no-env-file", join(root, "server", "index.ts")], {
       cwd: root, stdout: "pipe", stderr: "pipe",
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: base, APP_ORIGINS: base, PORT: childPort, NODE_ENV: "test", COOKIE_SECURE: "false", TOTP_ENCRYPTION_KEY: totp, AGENT_SECRETS_KEY: secrets, AGENT_ALLOWED_PRIVATE_HOSTS: "127.0.0.1" }
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: base, APP_ORIGINS: base, PORT: childPort, NODE_ENV: "test", COOKIE_SECURE: "false", TOTP_ENCRYPTION_KEY: totp, AGENT_SECRETS_KEY: secrets, AGENT_ALLOWED_PRIVATE_HOSTS: "127.0.0.1", LOG_LEVEL: "error" }
     });
     const stderr = new Response(child.stderr).text();
     try {

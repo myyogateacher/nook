@@ -21,6 +21,9 @@ import { hashInviteToken, InviteError, previewInvite, previewInviteHash } from "
 import { invitePreviewSchema, parseJson, recoveryCode, totpCode, uuid } from "../validation";
 import { claimFlow, clearFlowCookie, countFlowFailure, createFlow, endedFlow, readFlow, safeReturnPath, SECOND_FACTOR_TTL_MS, type FlowIntent, type FlowRow } from "./flows";
 import { authorizationUrl, domainAllowed, exchangeCode, freshAuthTime, googleAuthoritative, OidcError, sha256Hex, verifyIdToken, type GoogleClaims } from "./oidc";
+import { logger } from "../log";
+
+const slog = logger("auth");
 
 /**
  * Google sign-in routes (Wave 35, docs/plan/WAVE_35_GOOGLE_SIGNIN.md §3).
@@ -221,7 +224,7 @@ export function registerGoogleRoutes(app: Hono<AppEnv>) {
       claims = await verifyIdToken(await exchangeCode(code, flow.code_verifier), flow.nonce);
     } catch (error) {
       // The reason code only: never the code, a token, or a claim (T260).
-      console.warn(`Google sign-in failed: reason=${error instanceof OidcError ? error.reason : error instanceof Error ? error.name : "unknown"}`);
+      slog.warn("Google sign-in failed", { reason: error instanceof OidcError ? error.reason : error instanceof Error ? error.name : "unknown" });
       return failTo(c, flow, "failed");
     }
     if (!claims.emailVerified) return failTo(c, flow, "unverified");

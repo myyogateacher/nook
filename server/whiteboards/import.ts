@@ -7,6 +7,9 @@ import { purgeOwnedItem } from "../bin";
 import { sanitizeDisplayName } from "../validation";
 import { canonicalSceneJson, IMAGE_MIME_TYPES, jsonDepth, sceneWithoutImages, validateScene, WHITEBOARD_MAX_DEPTH, WHITEBOARD_MAX_FILES, WHITEBOARD_MAX_SCENE_BYTES, type CanonicalScene } from "../../shared/whiteboardScene";
 import { chargeWhiteboardCreate, createWhiteboard, unavailableImages, WhiteboardError, whiteboardStoredName } from "./service";
+import { logger } from "../log";
+
+const slog = logger("files");
 
 /**
  * Import `.excalidraw` (Wave 24, whiteboard plan §8, T160, T164). The file goes through the same
@@ -86,7 +89,7 @@ async function discard(userId: string, ids: string[]) {
   for (const id of ids) {
     const timestamp = now();
     db.query("UPDATE documents SET deleted_at = ?, purge_after = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL").run(timestamp, timestamp, id, userId);
-    await purgeOwnedItem("document", id, userId).catch(() => console.error("Could not remove an image of a failed whiteboard import; the Bin keeps it"));
+    await purgeOwnedItem("document", id, userId).catch((error) => slog.error("Could not remove an image of a failed whiteboard import; the Bin keeps it", error));
   }
 }
 

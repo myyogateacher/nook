@@ -13,6 +13,9 @@ import { datasourceRow } from "./datasources";
 import { assertRunnableNow, specHash } from "./specCheck";
 import { liveGenerations } from "./generate";
 import type { ReportBlock } from "../../shared/reports";
+import { logger } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Instructions to the edit agent (plan wave 48, D450, D453): a comment on the page or a block becomes a
@@ -364,12 +367,12 @@ export function sweepInstructions(): number {
     db.query("UPDATE report_instructions SET status = 'failed', error = 'The edit stopped before it finished', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'").run(at, at, row.id);
   }
   for (const { report_id } of db.query("SELECT DISTINCT report_id FROM report_instructions WHERE status = 'proposed'").all() as Array<{ report_id: string }>) {
-    try { rejectStaleProposals(report_id); } catch (error) { console.error("Reports: a stale proposal check failed", error instanceof Error ? error.name : "Error"); }
+    try { rejectStaleProposals(report_id); } catch (error) { slog.error("Reports: a stale proposal check failed", error); }
   }
   const waiting = db.query(`SELECT DISTINCT i.report_id FROM report_instructions i JOIN reports r ON r.id = i.report_id AND r.deleted_at IS NULL
     WHERE i.status = 'queued' AND NOT EXISTS (SELECT 1 FROM report_instructions a WHERE a.report_id = i.report_id AND a.status IN ('running','proposed'))`).all() as Array<{ report_id: string }>;
   for (const { report_id } of waiting) {
-    try { kick(report_id); } catch (error) { console.error("Reports: an instruction queue could not move", error instanceof Error ? error.name : "Error"); }
+    try { kick(report_id); } catch (error) { slog.error("Reports: an instruction queue could not move", error); }
   }
   return waiting.length;
 }
@@ -396,7 +399,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 export function startInstructionSweep() {
   if (timer) return;
   timer = setInterval(() => {
-    try { sweepInstructions(); } catch (error) { console.error("Reports: the instruction sweep failed", error instanceof Error ? error.name : "Error"); }
+    try { sweepInstructions(); } catch (error) { slog.error("Reports: the instruction sweep failed", error); }
   }, INSTRUCTION_SWEEP_MS);
   (timer as { unref?: () => void }).unref?.();
 }

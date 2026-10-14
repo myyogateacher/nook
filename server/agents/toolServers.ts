@@ -6,6 +6,9 @@ import { describeMcpError, McpHttpTransport, McpSession, type McpToolInfo } from
 import { openSecret, sealSecret, secretHint, shownHint } from "./secrets";
 import { AgentError } from "./status";
 import { declaredStdioServer, McpStdioTransport, stdioEnabled } from "./stdio";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Tool servers (plan §4.1, D349; Wave 41 AC-B): admin-configured MCP servers over Streamable HTTP
@@ -360,7 +363,7 @@ export async function syncServer(actorId: string | null, id: string): Promise<To
     // Server-chosen names are validated (review L7): anything outside [A-Za-z0-9_.-]{1,128} is dropped and counted.
     const tools = listed.filter((tool) => TOOL_NAME.test(tool.name)).map(storedTool);
     const droppedTools = listed.length - tools.length;
-    if (droppedTools > 0) console.warn(`Agents: a tool server listed ${droppedTools} ${droppedTools === 1 ? "tool" : "tools"} with an invalid name; ${droppedTools === 1 ? "it was" : "they were"} dropped`);
+    if (droppedTools > 0) slog.warn(`Agents: a tool server listed ${droppedTools} ${droppedTools === 1 ? "tool" : "tools"} with an invalid name; ${droppedTools === 1 ? "it was" : "they were"} dropped`);
     const json = JSON.stringify(tools);
     if (json.length > 1_000_000) throw new AgentError(502, "TOO_LARGE", "The tool server lists more tool schema than Nook stores (1 MB)");
     db.transaction(() => {

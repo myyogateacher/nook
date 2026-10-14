@@ -7,6 +7,9 @@ import { config } from "./config";
 import { audit, db } from "./db";
 import { isObjectInFlight, objectStore, putHeld, StorageUnavailableError } from "./objectStore";
 import { parseJson } from "./validation";
+import { logger } from "./log";
+
+const slog = logger("files");
 
 /**
  * Profile pictures (Wave 35, D299, T257, T262). The server downloads a Google picture once, stores it
@@ -233,13 +236,13 @@ export async function storeAvatarFromUrl(userId: string, pictureUrl: string, opt
   if (!options.chosen && avatarChosenByPerson(currentAvatarId(userId))) return false;
   const fetched = await fetchAvatar(pictureUrl);
   if (!fetched.ok) {
-    console.warn(`Avatar download skipped: reason=${fetched.reason}`);
+    slog.warn(`Avatar download skipped: reason=${fetched.reason}`);
     return false;
   }
   try {
     return await replaceAvatar(userId, crypto.randomUUID(), fetched.bytes, !options.chosen);
   } catch (error) {
-    console.error("Avatar store failed", error instanceof Error ? error.name : "Unknown error");
+    slog.error("Avatar store failed", error);
     return false;
   }
 }

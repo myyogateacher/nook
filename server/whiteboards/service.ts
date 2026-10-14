@@ -19,6 +19,9 @@ import {
 } from "../../shared/whiteboardScene";
 import { indexWhiteboard } from "./search";
 import { avatarUrlFor } from "../avatars";
+import { logger } from "../log";
+
+const slog = logger("files");
 
 /**
  * Whiteboards on Files (docs/plan/research/2026-09-28-whiteboard-module.md §6, §8, D192–D194,
@@ -409,13 +412,13 @@ export async function createWhiteboard(userId: string, input: { name: string; fo
       else audit(userId, null, "whiteboard.create", { documentId, folderId });
     })();
   } catch (error) {
-    await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
+    await removeObject(objectId).catch((error) => slog.error("Could not remove an uncommitted whiteboard object; the sweeper will", error));
     throw error;
   } finally {
     release();
   }
   if (replayOf) {
-    await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
+    await removeObject(objectId).catch((error) => slog.error("Could not remove an uncommitted whiteboard object; the sweeper will", error));
     return { whiteboard: replay(userId, uploadKey!)!, replay: true };
   }
   return { whiteboard: readableWhiteboard(documentId, userId)!, replay: false };
@@ -565,13 +568,13 @@ export async function saveScene(documentId: string, userId: string, baseRevision
         }
       })();
     } catch (error) {
-      await removeObject(objectId).catch(() => console.error("Could not remove an uncommitted whiteboard object; the sweeper will"));
+      await removeObject(objectId).catch((error) => slog.error("Could not remove an uncommitted whiteboard object; the sweeper will", error));
       throw error;
     } finally {
       release();
     }
-    if (!keep) await removeObject(board.object_id).catch(() => console.error("Could not remove a superseded whiteboard object; the sweeper will"));
-    for (const object of dropped) await removeObject(object).catch(() => console.error("Could not remove a dropped whiteboard snapshot; the sweeper will"));
+    if (!keep) await removeObject(board.object_id).catch((error) => slog.error("Could not remove a superseded whiteboard object; the sweeper will", error));
+    for (const object of dropped) await removeObject(object).catch((error) => slog.error("Could not remove a dropped whiteboard snapshot; the sweeper will", error));
     auditSave(userId, documentId, baseRevision + 1);
     return { revision: baseRevision + 1, savedAt, sha256: prepared.sha256, sizeBytes: prepared.bytes.byteLength, ...(keep ? { snapshotKept: true as const } : {}) };
   });
@@ -815,7 +818,7 @@ export async function reconcileWhiteboardSearchIndex(budget = 200) {
       counts.unreadable += 1;
     }
   }
-  if (counts.indexed || counts.removed || counts.unreadable) console.info(`Whiteboard search index: ${counts.indexed} indexed, ${counts.removed} removed, ${counts.unreadable} unreadable`);
+  if (counts.indexed || counts.removed || counts.unreadable) slog.info(`Whiteboard search index: ${counts.indexed} indexed, ${counts.removed} removed, ${counts.unreadable} unreadable`);
   return counts;
 }
 

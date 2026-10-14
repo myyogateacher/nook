@@ -1,3 +1,4 @@
+import { noteKeyHolder } from "./httpLog";
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { config, isEmailAllowed, isOriginAllowed } from "./config";
 import { db } from "./db";
@@ -187,6 +188,7 @@ export function authenticateKeyRequest(request: Request, options: { surface: Aut
     }
   }
   markKeyUsed(row.id, surface);
+  noteKeyHolder(row.id, row.user_id, row.role);
   return { ...row, actor, surface };
 }
 

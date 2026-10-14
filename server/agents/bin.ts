@@ -3,6 +3,9 @@ import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { AGENT_BOUNDS } from "../../shared/agents";
 import { readAgentSettings } from "./settings";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Chats and agents in the Bin (plan §6.1, D363), registered with server/bin.ts as providers. The
@@ -43,7 +46,7 @@ export async function sweepTable(table: "chats" | "agents", cutoff: string): Pro
         if (outcome === "purged") counts.purged += 1;
       } catch (error) {
         counts.pending += 1;
-        console.error(`Bin sweep could not purge a ${table === "chats" ? "chat" : "agent"}`, error instanceof Error ? error.name : "Unknown error");
+        slog.error(`Bin sweep could not purge a ${table === "chats" ? "chat" : "agent"}`, error);
       }
     }
   }

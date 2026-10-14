@@ -7,6 +7,9 @@ import { datasourceRow, usableDatasource, type DatasourceRow } from "./datasourc
 import { asReportError, ReportError } from "./errors";
 import { killQuery, runGuarded } from "./runner";
 import { parseSpec } from "./service";
+import { currentLogContext, logger, shortId, withLogContext } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Refresh (plan wave 47): re-run a report's saved queries without the AI. Every query goes
@@ -354,8 +357,8 @@ export function startRefresh(userId: string, reportId: string, options: { trigge
   audit(userId, null, "reports.refresh.start", { reportId, runId: run.id, trigger: options.trigger, queryKey: options.queryKey ?? null });
   const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set() };
   active.set(run.id, state);
-  const done = execute(run, report, spec, queries, userId, state).catch((error: unknown) => {
-    console.error("Report refresh failed", error instanceof Error ? error.name : "Unknown error");
+  const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state)).catch((error: unknown) => {
+    slog.error("Report refresh failed", error);
     db.query("UPDATE report_runs SET status = 'failed', finished_at = ?, error = 'The refresh stopped on an internal error', lease_until = NULL WHERE id = ? AND status = 'running'").run(now(), run.id);
     active.delete(run.id);
     return runView(runRow(run.id) ?? run);
@@ -382,10 +385,10 @@ export function listRuns(reportId: string, userId: string): ReportRun[] {
 export function abandonRunsAtBoot(nowMs = Date.now()) {
   try {
     const count = abandonExpiredReportRuns(nowMs, undefined, { all: true });
-    if (count) console.info(`Report runs: ${count} abandoned at boot`);
+    if (count) slog.info(`Report runs: ${count} abandoned at boot`);
     return count;
   } catch (error) {
-    console.error("Report run boot check failed", error instanceof Error ? error.name : "Unknown error");
+    slog.error("Report run boot check failed", error);
     return 0;
   }
 }

@@ -688,6 +688,9 @@ docker compose ps</code></pre></div></article></div>
           <tr><td><code>AGENT_IMAGE_PROXY_TEST_HOSTS</code></td><td>empty</td><td>Tests and local QA only: hosts the chat image proxy may reach over http on any port. Refused when <code>NODE_ENV=production</code>; in production the proxy loads public https addresses on port 443 only.</td></tr>
           <tr><td><code>APP_VERSION</code></td><td><code>0.37.0</code></td><td>Build metadata shown in Settings → About and reported by the MCP server.</td></tr>
           <tr><td><code>GIT_SHA</code></td><td><code>development</code></td><td>Commit shown in Settings → About (first 40 characters).</td></tr>
+          <tr><td><code>LOG_LEVEL</code></td><td><code>info</code></td><td><code>error</code>, <code>warn</code>, <code>info</code>, or <code>debug</code>. <code>debug</code> adds health checks, static files, single 401/404s, and query SQL. Follow the log with <code>docker compose logs -f app</code>.</td></tr>
+          <tr><td><code>LOG_FORMAT</code></td><td><code>pretty</code></td><td><code>pretty</code> (one readable line per event with <code>key=value</code> fields) or <code>json</code> (one JSON object per line, for a log shipper).</td></tr>
+          <tr><td><code>LOG_SLOW_MS</code></td><td><code>1000</code></td><td>A request slower than this many milliseconds logs at <code>warn</code>.</td></tr>
         </tbody></table></div>
         <p>Fixed limits: 3 uploads in progress per user on the server (the app sends 2 at a time), 30-day Bin retention, 1 MiB text previews, 20 searches per 10 seconds, and an hourly sweeper.</p>
       </section>

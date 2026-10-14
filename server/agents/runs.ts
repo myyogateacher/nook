@@ -19,6 +19,9 @@ import { withinAgentRun } from "./depth";
 import { shareLevel } from "./sharing";
 import { publishChatUpdate } from "./chatUpdates";
 import { runKnowledgeTool } from "../knowledge/tool";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Runs (plan §2.2, §2.3, §2.4, D344, D345): every run is an `agent_runs` row and an in-memory
@@ -66,9 +69,11 @@ export function assertBudget(userId: string) {
   const settings = readAgentSettings();
   const usage = dailyUsage(userId);
   if (settings.dailyTokensUser > 0 && usage.promptTokens + usage.completionTokens >= settings.dailyTokensUser) {
+    slog.info("Budget refusal", { budget: "user", code: "BUDGET_EXCEEDED" });
     throw new AgentError(429, "BUDGET_EXCEEDED", `You have used today's budget of ${settings.dailyTokensUser.toLocaleString("en-US")} tokens; it resets at midnight UTC`, { retryAfterSeconds: secondsToMidnight() });
   }
   if (settings.dailyTokensInstance > 0 && instanceTokensToday() >= settings.dailyTokensInstance) {
+    slog.info("Budget refusal", { budget: "instance", code: "BUDGET_EXCEEDED" });
     throw new AgentError(429, "BUDGET_EXCEEDED", "This Nook has used today's token budget; it resets at midnight UTC", { retryAfterSeconds: secondsToMidnight() });
   }
 }
@@ -332,7 +337,7 @@ function toolExecutor(run: ActiveRun, channel: RunChannel, agent: AgentRow, mess
       if (run.controller.signal.aborted) throw error;
       if (error instanceof McpClientError) return fail(error.code === "MCP_TIMEOUT" ? "TOOL_TIMEOUT" : error.code, error.message);
       if (error instanceof AgentError) return fail(error.code, error.message);
-      console.error("Agent tool call failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Agent tool call failed", error);
       return fail("INTERNAL", "The tool could not be run");
     }
     // Tool images are kept with the chat for the person (never sent to the model), within the run's limit,
@@ -540,7 +545,7 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
           try {
             chargeUsage(run.userId, agent.id, step.usage, 0);
           } catch (error) {
-            console.error("Agent run could not charge a stopped step", error instanceof Error ? error.name : "Unknown error");
+            slog.error("Agent run could not charge a stopped step", error);
           }
         }
       },
@@ -581,7 +586,7 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
       status = "error";
       errorCode = "INTERNAL";
       errorMessage = "Something went wrong while answering";
-      console.error("Agent run failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Agent run failed", error);
     }
   } finally {
     stopWallClock(run);
@@ -604,7 +609,7 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
     })();
   } catch (error) {
     // Never leave the row streaming (QA Q4): the message ends as an error with a message, the run as recorded as it can be.
-    console.error("Agent run could not be recorded", error instanceof Error ? error.name : "Unknown error");
+    slog.error("Agent run could not be recorded", error);
     status = "error";
     errorCode = "INTERNAL";
     errorMessage = "The answer could not be saved";
@@ -613,7 +618,7 @@ async function execute(run: ActiveRun, channel: RunChannel, agent: AgentRow, act
         .run(AGENT_BOUNDS.assistantMessageChars, AGENT_BOUNDS.assistantMessageChars, now(), messageId);
       db.query("UPDATE agent_runs SET status = 'error', error_code = 'INTERNAL', finished_at = ? WHERE id = ?").run(now(), run.runId);
     } catch (again) {
-      console.error("Agent run could not be marked failed", again instanceof Error ? again.name : "Unknown error");
+      slog.error("Agent run could not be marked failed", again);
     }
   }
   audit(run.userId, null, "agents.run.finish", { runId: run.runId, chatId: chat.id, status, errorCode, toolCalls: run.toolCalls.length, droppedToolCalls, promptTokens: usage?.promptTokens ?? 0, completionTokens: usage?.completionTokens ?? 0, ...(imageStats ? { imagesSent: imageStats.sent, imagesOmitted: imageStats.omitted } : {}) });
@@ -687,7 +692,7 @@ export function cancelChatRuns(chatId: string) {
  * Boot (plan §2.2 "Restart"): runs the previous process left live become `interrupted`, and their
  * streaming assistant rows keep the text that was flushed, marked `interrupted`. Returns the count.
  */
-export function markInterruptedRuns(log: (line: string) => void = (line) => console.log(line)) {
+export function markInterruptedRuns(log: (line: string) => void = (line) => slog.info(line)) {
   const changed = db.transaction(() => {
     const runs = db.query("UPDATE agent_runs SET status = 'interrupted', error_code = NULL, finished_at = ? WHERE status IN ('queued','running','awaiting_confirmation')").run(now()).changes;
     db.query("UPDATE chat_messages SET status = 'interrupted', finished_at = ? WHERE status IN ('streaming','awaiting_confirmation')").run(now());

@@ -23,6 +23,9 @@ import { BANNED_FUNCTIONS } from "./sqlGuard";
 import { reportErrorOf, validateSpec } from "./specValidate";
 import { forValidation, knownSpec, reattach, specHash } from "./specCheck";
 import type { SavedOutcome } from "./versions";
+import { currentLogContext, logger, shortId, withLogContext } from "../log";
+
+const slog = logger("reports");
 
 /**
  * The edit agent (plan wave 48, D451, T380–T382): one instruction (a comment on the page or a block)
@@ -289,7 +292,7 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
     // The lock is held by a refresh or a generation: the instruction stays queued for the next kick.
     if (error instanceof ReportError && error.code === "RUN_IN_PROGRESS") return false;
     // Anything else fails the instruction with a reason (review L3): no 500, no endless retry by the sweep.
-    console.error("Reports: an edit could not start", error instanceof Error ? error.name : "Error");
+    slog.error("Reports: an edit could not start", error);
     failInstruction(instruction.id, error instanceof ReportError ? error.message : "The edit could not start");
     audit(author.id, null, "reports.instruction.failed", { reportId: report.id, instructionId: instruction.id, code: error instanceof ReportError ? error.code : "INTERNAL" });
     hooks.settled(instructionRow(instruction.id)!);
@@ -311,15 +314,15 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
     } catch { /* the next beat tries again */ }
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  void executeEdit({ entry, channel, connection, datasource, prompt, spec, instruction, authorId: author.id, agentRunId, docSnapshotId: snapshot?.id ?? null })
-    .catch((error) => console.error("Reports: an edit run failed unexpectedly", error instanceof Error ? error.name : "Error"))
+  void withLogContext({ ...currentLogContext(), run: shortId(runId), report: shortId(report.id), instruction: shortId(instruction.id) }, () => executeEdit({ entry, channel, connection, datasource, prompt, spec, instruction, authorId: author.id, agentRunId, docSnapshotId: snapshot?.id ?? null }))
+    .catch((error) => slog.error("Reports: an edit run failed unexpectedly", error))
     .finally(() => {
       clearTimeout(timer);
       clearInterval(heartbeat);
       live.delete(runId);
       const settled = instructionRow(instruction.id);
       if (settled) {
-        try { hooks.settled(settled); } catch (error) { console.error("Reports: the instruction queue failed to move on", error instanceof Error ? error.name : "Error"); }
+        try { hooks.settled(settled); } catch (error) { slog.error("Reports: the instruction queue failed to move on", error); }
       }
     });
   return true;
@@ -500,14 +503,14 @@ async function executeEdit(run: Execution) {
     else if (reason) { status = "cancelled"; errorMessage = reason === "abandoned" ? "The edit stopped: its run was reclaimed" : "The edit was stopped"; }
     else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
     else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
-    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "The edit failed"; console.error("Reports: edit error", error instanceof Error ? error.name : "Error"); }
+    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "The edit failed"; slog.error("Reports: edit error", error); }
   }
 
   try {
     finishAuditRun(agentRunId, { status, errorCode, steps, toolCalls: toolCallCount, usage, output: proposed ? `${output}\n[change proposed]`.trim() : `${output}\n[${errorMessage ?? "no change"}]`.trim() });
     chargeUsage(userId, REPORTS_AGENT_ID, { promptTokens: 0, completionTokens: 0, estimated: false }, 1);
   } catch (error) {
-    console.error("Reports: could not finish the edit's audit row", error instanceof Error ? error.name : "Error");
+    slog.error("Reports: could not finish the edit's audit row", error);
   }
   if (!proposed) {
     const at = now();

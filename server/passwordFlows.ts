@@ -15,6 +15,9 @@ import { checkReauth, consumeRecoveryCode, consumeTotp, needsTotpCode } from "./
 import { passwordMethodRefusal } from "./authMethods";
 import { hashPassword, isUsablePasswordHash, verifyPassword } from "./passwords";
 import { email, parseJson, password, recoveryCode, totpCode } from "./validation";
+import { logger } from "./log";
+
+const slog = logger("auth");
 
 /**
  * Password flows (Wave 30, E3; docs/plan/research/2026-09-28-outbound-email.md §A.5, §E.6).
@@ -152,7 +155,7 @@ export function registerPasswordResetRoutes(app: Hono<AppEnv>) {
         try {
           processResetRequest(body.email);
         } catch (error) {
-          console.error(`Password reset request failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+          slog.error(`Password reset request failed`, error);
         }
         resolve();
       }, 0));

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { currentLogContext, shortId, withLogContext } from "../log";
 
 /**
  * The agent-run depth guard (Wave 42 "AC-C", plan §7.2, T318): every run (a chat's, an API call's,
@@ -16,7 +17,8 @@ const frames = new AsyncLocalStorage<AgentRunFrame>();
 export const currentAgentRun = (): AgentRunFrame | null => frames.getStore() ?? null;
 
 /** Runs `operation` (and everything it awaits or schedules) inside the run's frame. */
-export const withinAgentRun = <T>(frame: AgentRunFrame, operation: () => T): T => frames.run(frame, operation);
+export const withinAgentRun = <T>(frame: AgentRunFrame, operation: () => T): T =>
+  frames.run(frame, () => withLogContext({ ...currentLogContext(), run: shortId(frame.runId) }, operation));
 
 /**
  * Across an HTTP hop (Wave 42 review M1, T318) the frame above cannot follow: Nook sends

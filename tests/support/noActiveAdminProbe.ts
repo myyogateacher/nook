@@ -34,11 +34,12 @@ try {
   db.query("INSERT INTO users (id, email, display_name, password_hash, created_at, disabled_at) VALUES (?, 'old@example.test', 'Old', 'x', ?, ?)")
     .run(crypto.randomUUID(), timestamp, timestamp);
 
-  const warnings: string[] = [];
-  const originalWarn = console.warn;
-  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  // Boot warnings go through the logger (server/log.ts); captured here so stdout keeps one JSON line.
+  const { captureLogs } = await import("../../server/log");
+  const capture = captureLogs({ level: "warn" });
   const app = (await import("../../server/index")).default;
-  console.warn = originalWarn;
+  capture.restore();
+  const warnings = capture.lines.filter((entry) => entry.level === "warn").map((entry) => entry.line);
 
   const register = (email: string) => app.fetch(new Request(`${origin}/api/auth/register`, {
     method: "POST",

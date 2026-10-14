@@ -5,6 +5,7 @@ import { join } from "node:path";
 // server/config.ts reads the environment once for the whole run: the harness must set it first.
 import "./support/harness";
 const { addressBucket, clientAddress, forwardedWarningLogged, normalizeIp, resetForwardedWarning } = await import("../server/clientAddress");
+const { captureLogs } = await import("../server/log");
 
 /**
  * TRUSTED_PROXY_HOPS (Wave 35 review N1): the client address for rate limits and audits. Requests go
@@ -72,9 +73,7 @@ describe("client address behind trusted proxies (N1b)", () => {
 
   test("S8: with hops 0, a forwarded request logs one warning per process, without the address", async () => {
     resetForwardedWarning();
-    const warnings: string[] = [];
-    const original = console.warn;
-    console.warn = (...args: unknown[]) => { warnings.push(args.join(" ")); };
+    const capture = captureLogs({ level: "warn" });
     try {
       await addressFor(0);
       expect(forwardedWarningLogged()).toBe(false);
@@ -82,8 +81,9 @@ describe("client address behind trusted proxies (N1b)", () => {
       await addressFor(0, "198.51.100.1");
       await addressFor(1, "203.0.113.9");
     } finally {
-      console.warn = original;
+      capture.restore();
     }
+    const warnings = capture.lines.filter((entry) => entry.level === "warn").map((entry) => entry.line);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("TRUSTED_PROXY_HOPS is 0");
     expect(warnings[0]).not.toContain("203.0.113.9");

@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db } from "./support/harness";
 
 const mail = await import("../server/mail");
 const { enqueueMail, mergeIds, logSentMail, WINDOW_MS } = await import("../server/mail/outbox");
 const { runMailDispatch, releaseStaleClaims, setMailJitterForTests, MAIL_CAPS, sweepMail, RETRY_BACKOFF_MS } = await import("../server/mail/dispatcher");
 const { verifyUnsubscribeToken } = await import("../server/mail/unsubscribe");
+const { captureLogs } = await import("../server/log");
 
 /**
  * The outbox and dispatcher (outbound email plan §D, F.2): transactional enqueue, coalescing with a
@@ -27,21 +28,22 @@ function transport(behaviour: () => "ok" | "fail4xx" | "fail5xx" = () => "ok") {
   return { sent, fn };
 }
 
-let logs: string[] = [];
-let spies: Array<{ mockRestore: () => void }> = [];
+// The server log (server/log.ts), captured at its most verbose level for each test.
+let capture: ReturnType<typeof captureLogs> | null = null;
+const logText = () => capture?.text() ?? "";
 beforeEach(() => {
   mail.resetMailLimits();
   db.query("DELETE FROM mail_outbox").run();
   setMailJitterForTests(() => 0.5);
-  logs = [];
-  spies = (["info", "warn", "error"] as const).map((level) => spyOn(console, level).mockImplementation((...args: unknown[]) => { logs.push(args.map(String).join(" ")); }));
+  capture = captureLogs({ level: "debug" });
 });
 afterEach(() => {
-  for (const spy of spies) spy.mockRestore();
+  capture?.restore();
   mail.setMailTransportForTests(null);
   setMailJitterForTests(null);
   // No log line may carry an address (F.2 Logs).
-  expect(logs.filter((line) => line.includes("@"))).toEqual([]);
+  // Masked addresses (p***@e***.test) are allowed; a readable one never.
+  expect(logText().split("\n").filter((line) => /[A-Za-z0-9._%+-]@/.test(line))).toEqual([]);
 });
 
 async function verifiedUser(label: string) {
@@ -112,7 +114,7 @@ describe("dispatch", () => {
     expect(sent[0]).toMatchObject({ to: user.email, idempotencyKey: id, subject: "Two-factor authentication is on" });
     expect(sent[0]!.headers).toBeUndefined();
     expect(row(id)).toMatchObject({ status: "sent", provider_id: "msg_1", attempts: 1, payload: "{}" });
-    expect(logs.join("\n")).toContain(`Mail sent: purpose=security.two_factor recipient=${mail.recipientHash(user.email)} id=msg_1`);
+    expect(logText()).toContain(`Mail sent: purpose=security.two_factor recipient=${mail.recipientHash(user.email)} id=msg_1`);
   });
 
   test("gates: unverified gets only verify and security; blocked gets only security; prefs off skips", async () => {
@@ -144,7 +146,7 @@ describe("dispatch", () => {
     expect(verifyMail.html).not.toContain(`?token=`);
     expect(db.query("SELECT COUNT(*) AS count FROM auth_tokens WHERE user_id = ? AND token_hash = ?").get(unverified.userId, new Bun.CryptoHasher("sha256").update(token).digest("hex"))).toEqual({ count: 1 });
     expect(JSON.stringify(db.query("SELECT * FROM mail_outbox").all())).not.toContain(token);
-    expect(logs.join("\n")).not.toContain(token);
+    expect(logText()).not.toContain(token);
   });
 
   test("a suppressed address gets security mail only; a card the recipient cannot read is skipped as access_lost", async () => {

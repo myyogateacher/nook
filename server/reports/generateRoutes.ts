@@ -13,6 +13,7 @@ import { cancelGenerate, regenerate, startGenerate } from "./generate";
 import { reportModelView, setReportModel } from "./model";
 import { handle, id } from "./routes";
 import { storedPlan } from "./planner";
+import { searchNookFiles } from "./nookFileSearch";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports, Wave 46: the doc servers a person may read a doc
@@ -41,6 +42,8 @@ export const GENERIC_GENERATION_ERROR = "The last generation did not finish; the
 
 export function registerGenerateRoutes(app: Hono<AppEnv>) {
   app.get("/api/reports/doc-servers", handle((c) => ({ servers: docServerChoices(c.get("user").role) })));
+  // K4: "Pick from Nook" searches Files text documents by name and text (a bounded scan, paged).
+  app.get("/api/reports/nook-files", handle((c) => searchNookFiles(c.get("user").id, c.req.query("q") ?? "", c.req.query("cursor") ?? null)));
   app.post("/api/reports/generate", handle(async (c) => {
     const user = c.get("user");
     const body = await parseJson(c.req.raw, generateCreate);

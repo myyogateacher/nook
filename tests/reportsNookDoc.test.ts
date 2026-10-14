@@ -9,6 +9,7 @@ import { DEFAULT_COMPAT } from "../shared/agents";
 const { generateDeps, liveGenerations } = await import("../server/reports/generate");
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { fetchNookFetched } = await import("../server/reports/docSource");
+const { NOOK_FILE_SEARCH_LIMITS, resetNookFileSearchRate } = await import("../server/reports/nookFileSearch");
 
 /**
  * B4: Nook as a built-in doc source (`nook`): listed first, no sync; a doc ref is a link to a note or a
@@ -226,5 +227,68 @@ describe("K1: generate straight into a folder", () => {
     expect((await generate(owner, published, { folderId: binned })).status).toBe(404);
     expect((await generate(owner, published, { folderId: "not-a-uuid" })).status).toBe(400);
     expect(count()).toBe(before);
+  });
+});
+
+describe("K4: Pick from Nook searches Files text", () => {
+  const search = async (session: Session, q: string, cursor?: string) => {
+    resetNookFileSearchRate();
+    return send(session, "GET", `/reports/nook-files?q=${encodeURIComponent(q)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+  };
+  const ids = (body: Json) => (body.results as Array<{ id: string }>).map((hit) => hit.id);
+
+  test("matches every word in the name or the text, with a plain snippet; access is exactly read_document_text's", async () => {
+    const word = `zq${crypto.randomUUID().slice(0, 8)}`;
+    const byText = await upload(owner, "Quarter notes.md", `# Notes\n\nThe ${word} metric is net of refunds.`);
+    const byName = await upload(owner, `${word} rules.txt`, "nothing here", "text/plain");
+    const binary = await upload(owner, `${word}.bin`, "\u0000\u0001", "application/octet-stream");
+    const binned = await upload(owner, "Old.md", `${word} old`);
+    expect((await send(owner, "DELETE", `/files/${binned}`)).status).toBe(200);
+    const theirs = await upload(other, "Theirs.md", `${word} private to them`);
+    const shared = await upload(other, "Shared.md", `${word} shared with everyone`);
+    expect((await send(other, "PUT", `/files/${shared}/sharing`, { visibility: "all_users", userIds: [] })).status).toBe(200);
+
+    const found = await search(owner, `${word} REFUNDS`);
+    expect(found.status).toBe(200);
+    expect(found.body).toEqual({ results: [expect.objectContaining({ id: byText, name: "Quarter notes.md", matched: "text", isOwner: true })], next: null });
+    expect(found.body.results[0].snippet).toContain(`The ${word} metric is net of refunds.`);
+
+    const all = await search(owner, word);
+    expect(ids(all.body).sort()).toEqual([byText, byName, shared].sort());
+    expect(all.body.results.find((hit: Json) => hit.id === byName)).toMatchObject({ matched: "name", snippet: null });
+    // The same answer as reading each one as the doc source does (read_document_text): hit ⇔ readable text.
+    for (const id of [byText, byName, binary, binned, theirs, shared]) {
+      const readable = await fetchNookFetched(owner.userId, id).then(() => true, () => false);
+      expect([id, readable]).toEqual([id, ids(all.body).includes(id)]);
+    }
+    expect(ids((await search(other, word)).body).sort()).toEqual([theirs, shared].sort());
+    expect((await search(owner, "   ")).body).toEqual({ results: [], next: null });
+    expect((await search(owner, word, "not-a-cursor")).status).toBe(400);
+  });
+
+  test("pages with a cursor (newest first) when the scan cap is reached; rate limited", async () => {
+    const word = `pg${crypto.randomUUID().slice(0, 8)}`;
+    const made: string[] = [];
+    for (let index = 0; index < 5; index += 1) made.push(await upload(owner, `Page ${index}.md`, `${word} ${index}`));
+    const saved = NOOK_FILE_SEARCH_LIMITS.scan;
+    NOOK_FILE_SEARCH_LIMITS.scan = 2;
+    try {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page += 1) {
+        const answer = await search(owner, word, cursor);
+        seen.push(...ids(answer.body));
+        if (!answer.body.next) break;
+        cursor = answer.body.next as string;
+      }
+      expect(seen).toEqual([...made].reverse());
+    } finally {
+      NOOK_FILE_SEARCH_LIMITS.scan = saved;
+    }
+    resetNookFileSearchRate();
+    const statuses: number[] = [];
+    for (let index = 0; index < 11; index += 1) statuses.push((await send(owner, "GET", `/reports/nook-files?q=${word}`)).status);
+    expect(statuses.at(-1)).toBe(429);
+    resetNookFileSearchRate();
   });
 });

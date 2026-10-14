@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DocServerChoice } from "../shared/reportsGenerate";
 import { DocSourceNotice, docModeDisabled, docSourceState, NOOK_FALLBACK, sourceForLink } from "../src/reports/NewReportSheet";
-import { matchingFiles, nookLinkOf } from "../src/reports/NookDocPicker";
+import { filePick, nookLinkOf } from "../src/reports/NookDocPicker";
 import { parseNookRef } from "../shared/nookDocRef";
 import { BrowseToolsPicker } from "../src/reports/BrowseToolsPicker";
 import { docChangedText } from "../src/reports/ReportGeneration";
@@ -197,10 +197,11 @@ describe("B4: Nook as a doc source in New report", () => {
     expect(sourceForLink("revenue metrics", list)).toBeNull();
   });
 
-  test("the picker: a pick becomes this instance's link; files match by name and must be text", () => {
+  test("the picker: a pick becomes this instance's link; a Files hit (K4) says whether its text matched", () => {
     expect(nookLinkOf({ kind: "note", id }, "https://nook.example.test")).toBe(`https://nook.example.test/notes/${id}`);
     expect(nookLinkOf({ kind: "file", id }, "https://nook.example.test")).toBe(`https://nook.example.test/files/${id}`);
-    const file = (name: string, preview_kind: "text" | "pdf", kind: "file" | "whiteboard" = "file") => ({ id: name, owner_id: "u", owner_name: "Ana", is_owner: 1 as const, folder_id: null, name, mime_type: "text/markdown", preview_kind, size_bytes: 1, visibility: "private" as const, sharing_override: 0 as const, kind, created_at: "", updated_at: "" });
-    expect(matchingFiles([file("Revenue metrics.md", "text"), file("Revenue deck.pdf", "pdf"), file("Revenue board", "text", "whiteboard"), file("Churn.md", "text")], "revenue met").map((pick) => pick.title)).toEqual(["Revenue metrics.md"]);
+    const hit = { id, name: "Revenue metrics.md", ownerName: "Ana", isOwner: true, updatedAt: "", matched: "text" as const, snippet: "…net revenue…" };
+    expect(filePick(hit)).toEqual({ kind: "file", id, title: "Revenue metrics.md", detail: "File · Ana · matches its text", snippet: "…net revenue…" });
+    expect(filePick({ ...hit, matched: "name", snippet: null }).detail).toBe("File · Ana");
   });
 });

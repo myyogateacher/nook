@@ -63,6 +63,10 @@ export const isReadLikeTool = (tool: { name: string; destructive?: boolean; read
 /** The read-only tools ticked by default: those that fetch, list, or search docs. */
 export const defaultBrowseTools = (names: readonly string[]): string[] => names.filter((name) => /fetch|search|list|get_document|read_document|read_note/i.test(name)).slice(0, DOC_BROWSE_LIMITS.ticked);
 
+/** K4: `GET /api/reports/nook-files?q=&cursor=`: Files text documents whose name or text has every word, one page at a time. */
+export type NookFileHit = { id: string; name: string; ownerName: string; isOwner: boolean; updatedAt: string; /** Where every word was found: the name alone, or the text. */ matched: "name" | "text"; /** Plain text around the first word (text matches). */ snippet: string | null };
+export type NookFileSearch = { results: NookFileHit[]; /** Ask again with this to search older files; null when every file was searched. */ next: string | null };
+
 /** `POST /api/reports/generate` and `POST /api/reports/:id/generate` (202): the report and the run to follow on `/api/runs/:agentRunId/events`. */
 export type GenerateStarted = { report: ReportDetail; run: { id: string; agentRunId: string; docSnapshotId: string; docChanged: boolean } };
 

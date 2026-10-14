@@ -32,7 +32,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## Known LOW leftovers
 
-- [ ] Button lint triage (`scripts/buttonMetrics.ts lint`, 2026-10-14 on lanec QA: 572 findings, 0 overflow): header account buttons (Inbox, bell, Sign out, account) have 0 px side padding and are 44 px wide with text; the Settings nav's two-line items count as wraps; at 390 the agents/AI "Chat" button (38 px tall), `chat-link`s, Notes' 28 px folder buttons, the sidebar brand, and the Whiteboards selects and Import/New (42 px) are under 44 px; `ui-select-field` has 10/8 px padding; `modules-switch` 6 px. Fix the real ones and list the intentional ones in `scripts/buttonLint.allow.json`.
+- [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
 - [ ] Lane B: when the reports doc-servers listing calls `ensureSynced` (C1), `tests/docSource.test.ts` must keep its server never-synced on a name that resolves fast (or give it `tools_synced_at`), or the lazy sync waits on DNS for `docs.example.test`.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.

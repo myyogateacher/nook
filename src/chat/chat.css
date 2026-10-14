@@ -220,6 +220,11 @@
 /* AC-B: tool servers (Settings → AI) */
 .ai-servers { display: grid; gap: 14px; margin-top: 10px; }
 .ai-server-disabled { opacity: .72; }
+/* Button lint (C3): the screens lane C owns meet the rules: tool server actions and the agents list's Chat at least 64 px wide and 44 px tall on phones; the catalog toggle padded; the policy selects 12 px at the sides. */
+.ai-server .ai-provider-actions .secondary-button, .agents-settings .agents-list .secondary-button { min-width: 64px; justify-content: center; }
+.ai-server > .chat-link { padding-inline: 12px; }
+.ai-policy .ui-select-field { padding-inline: 12px; }
+@media (max-width: 760px) { .ai-server .ai-provider-actions .secondary-button, .agents-settings .agents-list .secondary-button, .ai-server > .chat-link { min-height: 44px; } }
 .ai-status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 8px; border-radius: 50%; background: #5b5b62; vertical-align: 1px; }
 .ai-status-ok { background: #9ad5a0; }
 .ai-status-auth_failed, .ai-status-unreachable, .ai-status-error { background: #fda4af; }
@@ -256,6 +261,9 @@
 .agents-nook-module { margin: 6px 0 2px; color: #7c7c83; font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .agents-link-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .agents-link-row .secondary-button { min-height: 38px; padding: 0 12px; font-size: .84rem; }
+/* Button lint (C3): the editor's server toggles padded, and 44 px phone targets in the tool picker. */
+.agents-tools-head .chat-link { padding-inline: 12px; margin-inline-start: -12px; }
+@media (max-width: 760px) { .agents-link-row .secondary-button, .agents-tools-head .chat-link { min-height: 44px; } }
 
 /* AC-B: the Link Nook key sheet */
 .chat-link-key { display: grid; align-content: start; gap: 12px; padding: 0 20px 16px; }

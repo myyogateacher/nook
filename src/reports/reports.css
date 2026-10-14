@@ -234,7 +234,7 @@
   /* An even grid of two columns; Remove keeps its own cell, last. */
   .report-source-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report-source-actions .report-source-remove { margin-left: 0; }
-  .report-source-actions .secondary-button { padding: 0 10px; min-width: 0; }
+  .report-source-actions .secondary-button { padding: 0 12px; min-width: 0; }
 }
 
 /* Wave 48 integration: the report header (Refresh all, Changes, Share, Schedule, and the overflow menu). */

@@ -240,7 +240,7 @@
 /* Wave 48 integration: the report header (Refresh all, Changes, Share, Schedule, and the overflow menu). */
 .report-header-actions { align-items: center; }
 .report-overflow { position: relative; }
-.report-overflow-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 220px; display: grid; gap: 2px; padding: 6px; border: 1px solid #35353a; border-radius: 11px; background: #1b1b1f; box-shadow: 0 16px 42px rgb(0 0 0 / 55%); }
+.report-overflow-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 220px; width: max-content; max-width: calc(100vw - 32px); display: grid; gap: 2px; padding: 6px; border: 1px solid #35353a; border-radius: 11px; background: #1b1b1f; box-shadow: 0 16px 42px rgb(0 0 0 / 55%); }
 .report-overflow-menu button { min-height: 44px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 7px; padding: 0 12px; background: transparent; color: #d4d4d8; font: inherit; text-align: left; cursor: pointer; }
 .report-overflow-menu button svg { width: 16px; height: 16px; flex: none; }
 .report-overflow-menu button:hover, .report-overflow-menu button:focus-visible { background: #2c2922; color: #f2cc75; outline: none; }

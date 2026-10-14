@@ -1,0 +1,19 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    label String
+  PROJECTION
+    LIST id: 1, nodes: 1
+      FUNCTION id: 2, function_name: format, function_type: ordinary, result_type: String
+        ARGUMENTS
+          LIST id: 3, nodes: 3
+            CONSTANT id: 4, constant_value: '{} on {}', constant_value_type: String
+            FUNCTION id: 5, function_name: toString, function_type: ordinary, result_type: String
+              ARGUMENTS
+                LIST id: 6, nodes: 1
+                  COLUMN id: 7, column_name: id, result_type: UInt64, source_id: 8
+            FUNCTION id: 9, function_name: toString, function_type: ordinary, result_type: String
+              ARGUMENTS
+                LIST id: 10, nodes: 1
+                  COLUMN id: 11, column_name: d, result_type: Date, source_id: 8
+  JOIN TREE
+    TABLE id: 8, alias: __table1, table_name: myt.events

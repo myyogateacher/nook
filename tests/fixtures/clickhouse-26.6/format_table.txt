@@ -1,0 +1,13 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    a String
+  PROJECTION
+    LIST id: 1, nodes: 1
+      COLUMN id: 2, column_name: a, result_type: String, source_id: 3
+  JOIN TREE
+    TABLE_FUNCTION id: 3, alias: __table1, table_function_name: format
+      ARGUMENTS
+        LIST id: 4, nodes: 3
+          IDENTIFIER id: 5, identifier: CSV
+          CONSTANT id: 6, constant_value: 'a String', constant_value_type: String
+          CONSTANT id: 7, constant_value: 'x', constant_value_type: String

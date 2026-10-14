@@ -181,6 +181,13 @@ export const ALLOWED_SYSTEM_TABLES: Readonly<Record<string, "name" | "table">> =
   tables: "name", columns: "table", parts: "table", dictionaries: "name", data_skipping_indices: "table"
 };
 
+/**
+ * Banned only as a table function: `format(CSV, …)` reads inline data, but `format('{} {}', a, b)` is
+ * the string function. The lexer refuses it after FROM / JOIN / a FROM-list comma; the query tree
+ * refuses its TABLE_FUNCTION node and lets its FUNCTION node through (ClickHouse 26.6 fixtures).
+ */
+const TABLE_ONLY_BANNED: ReadonlySet<string> = new Set(["format"]);
+
 export const isBannedFunction = (name: string) => {
   const lower = name.toLowerCase();
   return BANNED_FUNCTIONS.has(lower) || BANNED_PREFIXES.some((prefix) => lower.startsWith(prefix));
@@ -234,7 +241,9 @@ function checkSelect(tokens: readonly Token[]): { systemRefs: SystemRef[]; table
       if (token.value === "desc" && (isWord(next, "table") || isPunct(tokens[index - 1], "("))) throw new GuardError("BANNED_KEYWORD", "DESCRIBE is a metadata statement; run it on its own");
     }
     if (isName(token) && isPunct(next, "(") && isBannedFunction(nameText(token))) {
-      throw new GuardError("BANNED_FUNCTION", `${nameText(token)}() is not allowed in a report query`);
+      const previous = tokens[index - 1];
+      const tablePosition = isWord(previous, "from", "join") || (isPunct(previous, ",") && inFrom.has(depth));
+      if (!TABLE_ONLY_BANNED.has(nameText(token).toLowerCase()) || tablePosition) throw new GuardError("BANNED_FUNCTION", `${nameText(token)}() is not allowed in a report query`);
     }
     // `name AS (` in a WITH list names a CTE.
     if (isName(token) && isWord(next, "as") && isPunct(tokens[index + 2], "(")) cteNames.add(token.value.toLowerCase());
@@ -530,7 +539,8 @@ export const ALLOWED_TABLE_FUNCTIONS: ReadonlySet<string> = new Set(["numbers", 
  */
 export function assertQueryTreeAllowed(tree: QueryTree, allowlist: readonly string[], database: string, statementClass: StatementClass) {
   for (const call of tree.calls ?? []) {
-    if (isBannedFunction(call)) throw new GuardError("BANNED_FUNCTION", `${call}() is not allowed in a report query`);
+    // A FUNCTION node is never a table function: `format` here is the string function.
+    if (isBannedFunction(call) && !TABLE_ONLY_BANNED.has(call.toLowerCase())) throw new GuardError("BANNED_FUNCTION", `${call}() is not allowed in a report query`);
   }
   for (const fn of tree.functions) {
     if (!ALLOWED_TABLE_FUNCTIONS.has(fn.toLowerCase())) throw new GuardError("BANNED_FUNCTION", `The table function ${fn}() is not allowed in a report query`);
@@ -543,4 +553,46 @@ export function assertQueryTreeAllowed(tree: QueryTree, allowlist: readonly stri
     }
     if (!tableAllowed(allowlist, db, ref.table)) throw new GuardError("NOT_ALLOWED_TABLE", "This query reads a table that is not on this data source's allowlist (names behind views are not shown)");
   }
+}
+
+const QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$/;
+
+/** Whether the author's SQL spells `name` (`e.col`, `` `e`.`col` ``, `db.t.col`) as name tokens joined by dots. */
+function writtenIn(sql: string, name: string): boolean {
+  let tokens: Token[];
+  try {
+    tokens = lex(sql).tokens;
+  } catch {
+    return false;
+  }
+  const parts = name.toLowerCase().split(".");
+  for (let index = 0; index + parts.length * 2 - 1 <= tokens.length; index += 1) {
+    if (parts.every((part, at) => {
+      const token = tokens[index + at * 2];
+      return isName(token) && token.value.toLowerCase() === part && (at === 0 || isPunct(tokens[index + at * 2 - 1], "."));
+    })) return true;
+  }
+  return false;
+}
+
+/**
+ * A useful message for an `EXPLAIN QUERY TREE` failure that names a qualified column (`e.col`), or null
+ * for the generic one. ClickHouse's own text is never shown (its "Maybe you meant" may name columns off
+ * the allowlist): the hint names only the column as the author wrote it and, through `tablesWithColumn`,
+ * allowlisted catalog tables that have that column. It is given only when the author's SQL spells the
+ * name and the column is one of an allowlisted table. Formats are ClickHouse 26.6's UNKNOWN_IDENTIFIER
+ * ("Identifier 'e.idx' cannot be resolved from table with name e", "Unknown expression identifier
+ * `x.id`") and NOT_AN_AGGREGATE ("Column 'e.id' is not under aggregate function and not in GROUP BY keys").
+ */
+export function qualifiedColumnHint(message: string, sql: string, tablesWithColumn: (column: string) => string[]): string | null {
+  const unknown = /Identifier '([^']+)' cannot be resolved|Unknown expression identifier `([^`]+)`/.exec(message);
+  const aggregate = /Column '([^']+)' is not under aggregate function/.exec(message);
+  const name = unknown ? unknown[1] ?? unknown[2] : aggregate?.[1];
+  if (!name || !QUALIFIED.test(name) || !writtenIn(sql, name)) return null;
+  const column = name.slice(name.lastIndexOf(".") + 1);
+  const qualifier = name.slice(0, name.lastIndexOf("."));
+  const tables = tablesWithColumn(column).slice(0, 3);
+  if (!tables.length) return null;
+  if (aggregate) return `${name} is not under an aggregate function and not in GROUP BY: add it to GROUP BY, or wrap it in an aggregate such as any(${name})`;
+  return `ClickHouse could not resolve ${name}: ${qualifier} does not name a table with a column ${column} here. ${column} is a column of ${tables.join(", ")}; check which table ${qualifier} stands for`;
 }

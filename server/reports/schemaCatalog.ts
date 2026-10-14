@@ -220,6 +220,14 @@ function cachedTable(datasourceId: string, dbName: string, name: string): TableR
   return db.query("SELECT * FROM report_schema_tables WHERE datasource_id = ? AND db = ? AND name = ?").get(datasourceId, dbName, name) as TableRow | null;
 }
 
+/** Allowlisted catalog tables (`db.table`) that have a column named `column` (case-sensitive, as ClickHouse is), at most `limit`. */
+export function tablesWithColumn(row: DatasourceRow, column: string, limit = 3): string[] {
+  const patterns = allowlistOf(row);
+  const rows = db.query("SELECT * FROM report_schema_tables WHERE datasource_id = ? AND instr(columns_json, ?) > 0 ORDER BY db, name LIMIT 200").all(row.id, JSON.stringify(column)) as TableRow[];
+  return rows.filter((table) => tableAllowed(patterns, table.db, table.name) && parseColumns(table.columns_json).some((item) => item.name === column))
+    .slice(0, limit).map((table) => `${table.db}.${table.name}`);
+}
+
 /** FTS words of a free-text query (letters and digits; at most 8). */
 export function searchTerms(query: string): string[] {
   return [...new Set((query.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((word) => word.length >= 2 || /\d/.test(word)))].slice(0, 8);

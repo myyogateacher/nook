@@ -4,7 +4,8 @@ import { databaseAllowed, tableAllowed } from "./allowlist";
 import { chQuery, ChError, queryIdFor, type ChResult } from "./clickhouse";
 import { allowlistOf, datasourceTarget, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
+import { tablesWithColumn } from "./schemaCatalog";
+import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, qualifiedColumnHint, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
 
 /**
  * Running a statement through the guard (plan wave 45, D411, D412): classify, check what the lexer
@@ -95,8 +96,10 @@ async function checkQueryTree(row: DatasourceRow, select: string, statementClass
     if (error.code === "TOO_LARGE" || error.chName === "TOO_MANY_ROWS_OR_BYTES" || error.chCode === 396) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
     // The network's own failures carry Nook's text, never ClickHouse's.
     if (error.code === "TIMEOUT" || error.code === "UNREACHABLE") throw error;
-    // Review M2: a failed check never shows ClickHouse's text (it may name what is off the allowlist).
-    throw CHECK_FAILED();
+    // Review M2: a failed check never shows ClickHouse's text (it may name what is off the allowlist);
+    // a qualified column the author wrote gets Nook's own hint, naming only allowlisted tables.
+    const hint = qualifiedColumnHint(error.message, select, (column) => tablesWithColumn(row, column));
+    throw hint ? new GuardError("UNSUPPORTED_SYNTAX", hint) : CHECK_FAILED();
   }
   if (result.rows.length >= TREE_MAX_ROWS) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
   const tree = queryTreeTables(result.rows.map((line) => String(line[0] ?? "")).join("\n"));

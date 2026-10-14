@@ -60,7 +60,11 @@ describe("allowed statements", () => {
     ["SELECT * FROM events WHERE id NOT IN tuple(1, 2)", "select"],
     // Follow-up: IN an alias the query defines is not a table.
     ["WITH [1, 2] AS ids SELECT * FROM events WHERE id IN ids", "select"],
-    ["SELECT id AS picked FROM events WHERE id IN picked", "select"]
+    ["SELECT id AS picked FROM events WHERE id IN picked", "select"],
+    // Lane F: format() the string function (only the table function is refused).
+    ["SELECT format('{} on {}', status, toString(d)) AS label FROM events", "select"],
+    ["SELECT id FROM events WHERE status = FORMAT('{}-{}', 'a', 'b')", "select"],
+    ["SELECT id FROM events JOIN users ON format('{}', events.u) = users.id", "select"]
   ])("%s", (sql, expected) => {
     expect(refused(sql)).toBe("ALLOWED");
     expect(classify(sql).class).toBe(expected as "select" | "metadata");
@@ -117,8 +121,11 @@ describe("bypass attempts are refused", () => {
     ["SELECT * FROM icebergS3('https://x')", "BANNED_FUNCTION"],
     ["SELECT * FROM azureBlobStorage('x')", "BANNED_FUNCTION"],
     ["SELECT * FROM dictionary('secret_dict')", "BANNED_FUNCTION"],
-    // format() is also a table function, so the string function of that name is refused too (use concat).
+    // format() as a table function (FROM, JOIN, a FROM-list comma); the string function is allowed (reportsQueryTree26).
     ["SELECT * FROM format(CSV, 'a String', '1')", "BANNED_FUNCTION"],
+    ["SELECT * FROM events JOIN format(CSV, 'a String', '1') USING a", "BANNED_FUNCTION"],
+    ["SELECT * FROM events, `format`(CSV, 'a String', '1')", "BANNED_FUNCTION"],
+    ["SELECT * FROM (SELECT * FROM FORMAT(CSV, 'a String', '1'))", "BANNED_FUNCTION"],
     ["WITH x AS (SELECT * FROM url('http://x', CSV, 'a String')) SELECT * FROM x", "BANNED_FUNCTION"],
     ["SELECT a FROM events WHERE a IN (SELECT b FROM s3('https://x'))", "BANNED_FUNCTION"],
     ["SELECT (SELECT count() FROM remote('h', 'db.t')) AS n", "BANNED_FUNCTION"],

@@ -1,0 +1,1 @@
+Code: 47. DB::Exception: Identifier 'e.idx' cannot be resolved from table with name e. In scope SELECT e.idx FROM myt.events AS e. Maybe you meant: ['e.id']. (UNKNOWN_IDENTIFIER) (version 26.6.8.7 (official build))

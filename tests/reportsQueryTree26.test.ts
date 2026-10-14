@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { assertQueryTreeAllowed, GuardError, queryTreeTables } from "../server/reports/sqlGuard";
+import { assertQueryTreeAllowed, classify, GuardError, qualifiedColumnHint, queryTreeTables } from "../server/reports/sqlGuard";
 import { fakeQueryTree } from "./support/fakeClickhouse";
 
 /**
@@ -46,6 +46,9 @@ const EXPECTED: Record<string, { tables: string[]; functions?: string[]; verdict
   url: { tables: [], functions: ["url"], verdict: "BANNED_FUNCTION" },
   s3: { tables: [], functions: ["s3"], verdict: "BANNED_FUNCTION" },
   remote: { tables: [], functions: ["remote"], verdict: "BANNED_FUNCTION" },
+  // Lane F: format() the string function is a FUNCTION node (allowed); the table function a TABLE_FUNCTION node (refused).
+  format_string: { tables: ["myt.events"], verdict: "ok" },
+  format_table: { tables: [], functions: ["format"], verdict: "BANNED_FUNCTION" },
   user_q2: { tables: ["myt.myt_chat_escalation"], verdict: "ok" },
   user_q3: { tables: ["myt.myt_chat_escalation"], verdict: "ok" }
 };
@@ -93,5 +96,49 @@ describe("EXPLAIN QUERY TREE from ClickHouse 26.6 (real fixtures)", () => {
     expect(fakeQueryTree("SELECT * FROM myt.t FINAL", "myt")).toContain("table_name: myt.t, final: 1");
     expect(fakeQueryTree("SELECT * FROM myt.t AS x FINAL WHERE 1", "myt")).toContain("table_name: myt.t, final: 1");
     expect(fakeQueryTree("SELECT * FROM myt.t WHERE 1", "myt")).not.toContain("final");
+  });
+});
+
+describe("format(): the string function, not the table function (ClickHouse 26.6 fixtures)", () => {
+  const sql = (name: string) => readFileSync(new URL(`${name}.sql`, DIR), "utf8").trim();
+  test("the string function passes the lexer and the tree; the table function is refused by both", () => {
+    expect(queryTreeTables(tree("format_string")).calls).toContain("format");
+    expect(classify(sql("format_string")).class).toBe("select");
+    expect(() => classify(sql("format_table"))).toThrow(expect.objectContaining({ code: "BANNED_FUNCTION" }));
+    // Other banned functions are still refused as FUNCTION nodes.
+    expect(() => assertQueryTreeAllowed({ tables: [], functions: [], calls: ["hostName"] }, ALLOW, "myt", "select")).toThrow(expect.objectContaining({ code: "BANNED_FUNCTION" }));
+  });
+});
+
+describe("tree-check errors that name a qualified column (ClickHouse 26.6 error fixtures)", () => {
+  const sql = (name: string) => readFileSync(new URL(`${name}.sql`, DIR), "utf8").trim();
+  const error = (name: string) => readFileSync(new URL(`${name}.error`, DIR), "utf8").trim();
+  // The allowlisted catalog: myt.events (id, d, tags, v) and myt.myt_chat_escalation (id, route, status, ...).
+  const CATALOG: Record<string, string[]> = { "myt.events": ["id", "d", "tags", "v"], "myt.myt_chat_escalation": ["id", "route", "status", "outcome"] };
+  const withColumn = (column: string) => Object.entries(CATALOG).filter(([, columns]) => columns.includes(column)).map(([table]) => table);
+  const hint = (name: string) => qualifiedColumnHint(error(name), sql(name), withColumn);
+
+  test("a column of another allowlisted table: says where it is", () => {
+    expect(hint("error_alias_column")).toBe("ClickHouse could not resolve e.route: e does not name a table with a column route here. route is a column of myt.myt_chat_escalation; check which table e stands for");
+  });
+
+  test("NOT_AN_AGGREGATE on e.id: add it to GROUP BY or aggregate it", () => {
+    expect(hint("error_not_aggregate")).toBe("e.id is not under an aggregate function and not in GROUP BY: add it to GROUP BY, or wrap it in an aggregate such as any(e.id)");
+  });
+
+  test("an unknown alias of a real column names the allowlisted tables that have it", () => {
+    expect(hint("error_unknown_alias")).toBe("ClickHouse could not resolve x.id: x does not name a table with a column id here. id is a column of myt.events, myt.myt_chat_escalation; check which table x stands for");
+  });
+
+  test("no hint (the generic message) when the column is on no allowlisted table, or the author did not write the name", () => {
+    expect(hint("error_typo_column")).toBeNull();
+    expect(qualifiedColumnHint(error("error_alias_column"), "SELECT route FROM myt.events", withColumn)).toBeNull();
+    // ClickHouse's own suggestions ("Maybe you meant") never reach the hint.
+    expect(hint("error_unknown_alias")).not.toContain("Maybe");
+    expect(qualifiedColumnHint("Code: 60. DB::Exception: Unknown table expression identifier 'secret.t'. (UNKNOWN_TABLE)", "SELECT * FROM secret.t", withColumn)).toBeNull();
+  });
+
+  test("backticked parts are the same name", () => {
+    expect(qualifiedColumnHint(error("error_alias_column"), "SELECT `e`.`route` FROM myt.events AS e", withColumn)).toContain("route is a column of myt.myt_chat_escalation");
   });
 });

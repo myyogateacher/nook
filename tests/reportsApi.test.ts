@@ -277,6 +277,25 @@ describe("reports and the console", () => {
     expect(plain.text).not.toContain("UNKNOWN_IDENTIFIER");
   });
 
+  test("Lane F: a failed tree check on a qualified column the author wrote gets Nook's hint, naming only allowlisted catalog tables", async () => {
+    const { report } = await ready();
+    // ClickHouse 26.6's texts (tests/fixtures/clickhouse-26.6/error_*.error), with a suggestion that must never be shown.
+    fake.state.queryTree = (select) => `Code: 47. DB::Exception: Identifier 'x.amount' cannot be resolved from table with name x. In scope ${select}. Maybe you meant: ['x.secret_col']. (UNKNOWN_IDENTIFIER) (version 26.6.8.7 (official build))`;
+    const unknown = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT x.amount FROM orders AS o, (SELECT 1) AS x" });
+    expect(unknown.body).toMatchObject({ code: "GUARD", guard: "UNSUPPORTED_SYNTAX" });
+    expect(unknown.body.error ?? unknown.text).toContain("amount is a column of analytics.orders; check which table x stands for");
+    expect(unknown.text).not.toContain("secret_col");
+    expect(unknown.text).not.toContain("Code: 47");
+    fake.state.queryTree = () => "Code: 215. DB::Exception: Column 'o.amount' is not under aggregate function and not in GROUP BY keys. In query SELECT o.amount, count() FROM orders AS o. (NOT_AN_AGGREGATE) (version 26.6.8.7 (official build))";
+    const aggregate = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT o.amount, count() FROM orders AS o" });
+    expect(aggregate.text).toContain("o.amount is not under an aggregate function and not in GROUP BY");
+    // A column on no allowlisted table keeps the generic message.
+    fake.state.queryTree = () => "Code: 47. DB::Exception: Identifier 'o.pay' cannot be resolved from table with name o. (UNKNOWN_IDENTIFIER) (version 26.6.8.7 (official build))";
+    const generic = await send(member, "POST", `/reports/${report.id}/console`, { sql: "SELECT o.pay FROM orders AS o" });
+    expect(generic.text).toContain("ClickHouse could not check this query");
+    expect(generic.text).not.toContain("pay");
+  });
+
   test("follow-up M2: a run's ClickHouse text is shown only when every name in it is on the allowlist", async () => {
     const { report } = await ready();
     fake.state.select = () => ({ error: "Code: 241. DB::Exception: Memory limit exceeded while reading secret.salaries. (MEMORY_LIMIT_EXCEEDED) (version 24.8.1.1)", status: 500 });

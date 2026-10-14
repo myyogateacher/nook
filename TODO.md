@@ -2,7 +2,7 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-14):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused). `main` is ahead of v0.37.0 with the analytics reports module (unreleased migrations **050–053, 055, 056**; 054 is reserved for Messages). Development now happens directly on `main`, pushed as each change passes its gates.
+**Current state (2026-10-14):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused). `main` is ahead of v0.37.0 with the analytics reports module (unreleased migrations **050–053, 055–057**; 054 is reserved for Messages). Development now happens directly on `main`, pushed as each change passes its gates.
 
 ## In flight
 
@@ -21,8 +21,11 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - The AI may browse docs with the read-only tools the person ticks (056): a snapshot for each linked page, "Doc changed" names a linked page, ⋯ → Doc settings, and Provenance lists the pages.
   - Nook as a built-in doc source (056's `doc_source`): notes and Files text documents by link (every route shape, any instance origin) or "Pick from Nook", read with the owner's live access; a pasted link selects its source.
 
-  Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
-  - [ ] (Lane R, prep on branch `release-0.38.0`; merge, tag and deploy wait for approval) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–055 in OPERATIONS.
+  - Agents and tool servers: tool servers sync on save, daily, and on first use. Agents get Nook's tools through an internal key (057; read scopes plus Inbox proposals; admin toggle and per-agent toggle).
+  - Button lint (`scripts/buttonMetrics.ts lint`); the baseline is accepted for screens built before reports.
+
+  Open:
+  - [ ] (Lane R, prep on branch `release-0.38.0`; merge, tag and deploy wait for approval) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
 - [ ] (Lane E, approved 2026-10-14) Generator reliability, in order: E1 an eval harness (docs, seeded real ClickHouse data, expected numbers, `--compare`); E2 sanity checks on results; E3 repair hints for ClickHouse errors; E4 a metric catalog from the doc; E5 an optional model fallback. Original proposal: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] (UI fix, in progress) Two problems that predate this thread: the Settings page title (e.g. "AI") shows the yellow focus ring after navigation, on every Settings section; and in Settings → AI → Model providers the DEFAULT badge sits under the provider name instead of beside it.

@@ -175,7 +175,7 @@ export function waterfallColors(mode: ThemeMode): { up: string; down: string; to
   return { up: DIVERGING[mode].low[1]!, down: DIVERGING[mode].high[1]!, total: REPORT_INK[mode].muted };
 }
 
-/** Text on a coloured fill (heatmap cells, treemap tiles): dark ink or white, whichever clears contrast on that fill. */
+/** Text on a coloured fill (heatmap cells, treemap tiles): black or white, whichever clears contrast on that fill (≥ 4.5:1 on every ramp step and hue; tested). */
 export function inkOn(fill: string): string {
   const match = /^#([0-9a-f]{6})$/i.exec(fill);
   if (!match) return "#ffffff";
@@ -185,8 +185,8 @@ export function inkOn(fill: string): string {
     return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   };
   const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
-  // Contrast against white vs against near-black ink (#0b0b0b, luminance ≈ 0.0033).
-  return (1.05 / (luminance + 0.05)) >= ((luminance + 0.05) / 0.0533) ? "#ffffff" : "#0b0b0b";
+  // White or black, whichever contrasts more (black, not the ink #0b0b0b, so mid blues such as #2a78d6 still clear 4.5:1).
+  return (1.05 / (luminance + 0.05)) >= ((luminance + 0.05) / 0.05) ? "#ffffff" : "#000000";
 }
 
 // ------------------------------------------------------------------------------------ the layout

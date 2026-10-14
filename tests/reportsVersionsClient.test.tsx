@@ -116,6 +116,9 @@ describe("the panel (the owner)", () => {
     // A SQL change shows as red and green lines.
     expect(document.querySelectorAll(".report-vdiff-line.is-del").length).toBeGreaterThan(0);
     expect(document.querySelectorAll(".report-vdiff-line.is-add").length).toBeGreaterThan(0);
+    // The SQL is broken at its clauses for the diff, and the changed words of the changed line are marked.
+    expect([...document.querySelectorAll(".report-vdiff-line.is-add .report-vdiff-word")].map((node) => node.textContent)).toContain("8");
+    expect([...document.querySelectorAll(".report-vdiff-line.is-del")].map((node) => node.textContent)).toContain("−Removed: LIMIT 10");
 
     await view.click(view.button("Restore", top())!);
     const dialog = await view.waitFor(() => document.querySelector(".app-confirm-layer"));
@@ -240,6 +243,9 @@ describe("Back and Forward, layer by layer (D478)", () => {
     await view.click(await view.waitFor(() => document.querySelector<HTMLButtonElement>('button[aria-label="Open v2: Applied a change"]')));
     await view.click(await view.waitFor(() => view.button("View this version")));
     await view.waitFor(() => document.querySelector(".report-vview-banner"));
+    // Each layer's sentinel lands asynchronously: wait for the moves, then read the stack.
+    await settleHistory(view);
+    await view.waitFor(() => isDialogSentinelState(window.history.state));
     const start = window.history.length;
     expect(titles()).toEqual(["Versions", "Version 2", "Viewing v2"]);
     expect(isDialogSentinelState(window.history.state)).toBe(true);

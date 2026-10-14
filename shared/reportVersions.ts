@@ -34,7 +34,10 @@ export type VersionSnapshot = {
   results: QueryResultView[];
 };
 
-export type DiffLine = { op: "same" | "add" | "del"; text: string };
+/** One piece of a changed line: `changed` where it differs from the line it is paired with (a word diff). */
+export type DiffPart = { text: string; changed: boolean };
+/** A diff line; a removed line and the added line paired with it carry `parts`, their word diff. */
+export type DiffLine = { op: "same" | "add" | "del"; text: string; parts?: DiffPart[] };
 export type FieldChange = { field: string; before: string | null; after: string | null };
 export type BlockDiff = {
   blockId: string;
@@ -63,7 +66,7 @@ export type VersionDiff = {
   truncated: boolean;
 };
 
-export const DIFF_LIMITS = { lines: 600, entries: 120, value: 240 } as const;
+export const DIFF_LIMITS = { lines: 600, entries: 120, value: 240, words: 400 } as const;
 
 // ------------------------------------------------------------------------------------- labels
 
@@ -163,7 +166,107 @@ export function lineDiff(before: string | null, after: string | null): { lines: 
   }
   while (i < a.length) lines.push({ op: "del", text: a[i++]! });
   while (j < b.length) lines.push({ op: "add", text: b[j++]! });
+  pairWords(lines);
   return { lines, truncated };
+}
+
+/** Words, runs of spaces, and single punctuation marks: the units a word diff compares. */
+export const diffTokens = (line: string) => line.match(/\s+|[A-Za-z0-9_.$]+|[^\sA-Za-z0-9_.$]/g) ?? [];
+
+/** The word diff of two lines: each side's parts, the tokens the other side lacks marked `changed`. */
+export function wordDiff(before: string, after: string): { before: DiffPart[]; after: DiffPart[] } | null {
+  const a = diffTokens(before);
+  const b = diffTokens(after);
+  if (a.length > DIFF_LIMITS.words || b.length > DIFF_LIMITS.words) return null;
+  const pairs = lcsPairs(a, b, (x, y) => x === y);
+  const keptA = new Set(pairs.map(([x]) => x));
+  const keptB = new Set(pairs.map(([, y]) => y));
+  const parts = (tokens: string[], kept: Set<number>) => {
+    const out: DiffPart[] = [];
+    tokens.forEach((text, index) => {
+      // Whitespace stands out only between two changed words.
+      const space = text.trim() === "";
+      const changed = space ? Boolean(out.at(-1)?.changed) && index + 1 < tokens.length && !kept.has(index + 1) && tokens[index + 1]!.trim() !== "" : !kept.has(index);
+      const last = out.at(-1);
+      if (last && last.changed === changed) last.text += text;
+      else out.push({ text, changed });
+    });
+    return out;
+  };
+  return { before: parts(a, keptA), after: parts(b, keptB) };
+}
+
+/** Pairs each run of removed lines with the added run after it, line by line, and gives the pairs their word diff. */
+function pairWords(lines: DiffLine[]) {
+  let index = 0;
+  while (index < lines.length) {
+    if (lines[index]!.op !== "del") { index += 1; continue; }
+    let delEnd = index;
+    while (delEnd < lines.length && lines[delEnd]!.op === "del") delEnd += 1;
+    let addEnd = delEnd;
+    while (addEnd < lines.length && lines[addEnd]!.op === "add") addEnd += 1;
+    for (let k = 0; k < Math.min(delEnd - index, addEnd - delEnd); k += 1) {
+      const removed = lines[index + k]!;
+      const added = lines[delEnd + k]!;
+      const words = wordDiff(removed.text, added.text);
+      if (!words) continue;
+      removed.parts = words.before;
+      added.parts = words.after;
+    }
+    index = addEnd;
+  }
+}
+
+/** Where a clause starts: the line breaks before these (display only). Longest first, so "LEFT JOIN" wins over "JOIN". */
+const CLAUSES = ["UNION ALL", "UNION DISTINCT", "GROUP BY", "ORDER BY", "LIMIT BY", "PREWHERE", "WHERE", "HAVING", "LIMIT", "OFFSET", "SETTINGS", "FROM",
+  "LEFT OUTER JOIN", "RIGHT OUTER JOIN", "FULL OUTER JOIN", "LEFT ANY JOIN", "LEFT SEMI JOIN", "LEFT ANTI JOIN", "LEFT ARRAY JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN", "INNER JOIN", "CROSS JOIN", "ANY JOIN", "ARRAY JOIN", "GLOBAL JOIN", "ASOF JOIN", "JOIN", "UNION"];
+const CLAUSE_AT = new RegExp(`^(?:${CLAUSES.map((clause) => clause.replace(/ /g, "\\s+")).join("|")})(?![A-Za-z0-9_])`, "i");
+
+/**
+ * SQL broken before its major clauses (FROM, WHERE, GROUP BY, ORDER BY, LIMIT, JOINs, …) for the diff
+ * only: the stored SQL never changes. Deterministic; strings, quoted names, and comments are left alone,
+ * and a clause already at the start of a line stays where it is.
+ */
+export function breakSql(sql: string): string {
+  let out = "";
+  let index = 0;
+  let quote: string | null = null;
+  while (index < sql.length) {
+    const char = sql[index]!;
+    if (quote) {
+      out += char;
+      if (char === "\\" && index + 1 < sql.length) { out += sql[index + 1]; index += 2; continue; }
+      if (char === quote) quote = null;
+      index += 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") { quote = char; out += char; index += 1; continue; }
+    if (char === "-" && sql[index + 1] === "-") {
+      const end = sql.indexOf("\n", index);
+      const stop = end < 0 ? sql.length : end;
+      out += sql.slice(index, stop);
+      index = stop;
+      continue;
+    }
+    const before = out.at(-1);
+    // A clause starts at a word boundary; one already at the start of a line is taken whole, so the
+    // JOIN of a "LEFT JOIN" there never breaks again (the result is stable when broken twice).
+    if ((before === undefined || /\s/.test(before)) && /[A-Za-z]/.test(char)) {
+      const match = CLAUSE_AT.exec(sql.slice(index, index + 40));
+      if (match) {
+        if (before !== undefined && before !== "\n") {
+          const trimmed = out.replace(/[ \t]+$/, "");
+          out = trimmed.endsWith("\n") || trimmed === "" ? trimmed : `${trimmed}\n`;
+        }
+        out += match[0];
+        index += match[0].length;
+        continue;
+      }
+    }
+    out += char;
+    index += 1;
+  }
+  return out;
 }
 
 const blockTitle = (block: ReportBlock) => block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.type === "markdown" ? "Text" : block.queryKey);
@@ -218,13 +321,13 @@ export function diffSpecVersions(before: ReportSpec, after: ReportSpec, options:
   for (const query of after.queries) {
     const old = oldQueries.get(query.key);
     if (old && old.sql === query.sql && old.purpose === query.purpose) continue;
-    const diff = withText ? lineDiff(old?.sql ?? null, query.sql) : { lines: [], truncated: false };
+    const diff = withText ? lineDiff(old ? breakSql(old.sql) : null, breakSql(query.sql)) : { lines: [], truncated: false };
     if (diff.truncated) truncated = true;
     queries.push({ key: query.key, change: old ? "changed" : "added", lines: diff.lines, ...(old && old.purpose !== query.purpose ? { purpose: { field: "purpose", before: old.purpose, after: query.purpose } } : {}) });
   }
   for (const query of before.queries) {
     if (newKeys.has(query.key)) continue;
-    const diff = withText ? lineDiff(query.sql, null) : { lines: [], truncated: false };
+    const diff = withText ? lineDiff(breakSql(query.sql), null) : { lines: [], truncated: false };
     if (diff.truncated) truncated = true;
     queries.push({ key: query.key, change: "removed", lines: diff.lines });
   }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DIFF_LIMITS, diffSpecVersions, lineDiff } from "../shared/reportVersions";
+import { breakSql, DIFF_LIMITS, diffSpecVersions, lineDiff, wordDiff } from "../shared/reportVersions";
 import type { ReportSpec } from "../shared/reports";
 import { historySpecs } from "./support/reportVersionsSeed";
 
@@ -13,7 +13,7 @@ const at = (n: number) => specs[n - 1]!;
 
 describe("line diff", () => {
   test("unchanged, removed, and added lines in order", () => {
-    expect(lineDiff("a\nb\nc", "a\nB\nc\nd").lines).toEqual([
+    expect(lineDiff("a\nb\nc", "a\nB\nc\nd").lines.map(({ op, text }) => ({ op, text }))).toEqual([
       { op: "same", text: "a" }, { op: "del", text: "b" }, { op: "add", text: "B" }, { op: "same", text: "c" }, { op: "add", text: "d" }
     ]);
     expect(lineDiff(null, "x\ny").lines.map((line) => line.op)).toEqual(["add", "add"]);
@@ -26,6 +26,63 @@ describe("line diff", () => {
     const diff = lineDiff(long, `${long}\nmore`);
     expect(diff.truncated).toBe(true);
     expect(diff.lines.length).toBe(DIFF_LIMITS.lines);
+  });
+});
+
+describe("word diff", () => {
+  const marked = (parts: Array<{ text: string; changed: boolean }>) => parts.map((part) => part.changed ? `[${part.text}]` : part.text).join("");
+
+  test("the changed words of a pair of lines are marked, the rest is not; both sides read back as the lines", () => {
+    const words = wordDiff("SELECT sum(revenue) AS total FROM t", "SELECT sum(net_revenue) AS net total FROM t")!;
+    expect(marked(words.before)).toBe("SELECT sum([revenue]) AS total FROM t");
+    expect(marked(words.after)).toBe("SELECT sum([net_revenue]) AS [net] total FROM t");
+    expect(words.before.map((part) => part.text).join("")).toBe("SELECT sum(revenue) AS total FROM t");
+    // Two changed words in a row are one mark, with the space between them.
+    expect(marked(wordDiff("ORDER BY a ASC", "ORDER BY b DESC")!.after)).toBe("ORDER BY [b DESC]");
+    expect(marked(wordDiff("x = 1", "x = 1")!.after)).toBe("x = 1");
+  });
+
+  test("a removed run and the added run after it are paired line by line; unpaired lines carry no parts", () => {
+    const { lines } = lineDiff("a\nLIMIT 8\nc", "a\nLIMIT 10\nextra line\nc");
+    const del = lines.find((line) => line.op === "del")!;
+    const added = lines.filter((line) => line.op === "add");
+    expect(marked(del.parts!)).toBe("LIMIT [8]");
+    expect(marked(added[0]!.parts!)).toBe("LIMIT [10]");
+    expect(added[1]!.parts).toBeUndefined();
+    expect(lines.find((line) => line.op === "same")!.parts).toBeUndefined();
+  });
+
+  test("very long lines get no word diff (the line colours still show)", () => {
+    const long = Array.from({ length: DIFF_LIMITS.words }, (_, index) => `w${index}`).join(" ");
+    expect(wordDiff(long, `${long} more`)).toBeNull();
+  });
+});
+
+describe("SQL broken at its clauses for the diff", () => {
+  test("one-line SQL breaks before FROM, WHERE, GROUP BY, ORDER BY, LIMIT, and JOINs; the same input always gives the same lines", () => {
+    const sql = "SELECT country, sum(revenue) AS revenue FROM analytics.orders o LEFT JOIN analytics.users u ON u.id = o.user_id WHERE o.day >= today() - 7 GROUP BY country HAVING revenue > 0 ORDER BY revenue DESC LIMIT 8";
+    expect(breakSql(sql)).toBe([
+      "SELECT country, sum(revenue) AS revenue", "FROM analytics.orders o", "LEFT JOIN analytics.users u ON u.id = o.user_id", "WHERE o.day >= today() - 7",
+      "GROUP BY country", "HAVING revenue > 0", "ORDER BY revenue DESC", "LIMIT 8"
+    ].join("\n"));
+    expect(breakSql(sql)).toBe(breakSql(sql));
+    expect(breakSql(breakSql(sql))).toBe(breakSql(sql));
+  });
+
+  test("strings, quoted names, comments, and words that only contain a keyword are left alone; existing lines are kept", () => {
+    expect(breakSql("SELECT 'from where' AS `group by`, fromage FROM t -- order by x\nORDER BY 1")).toBe("SELECT 'from where' AS `group by`, fromage\nFROM t -- order by x\nORDER BY 1");
+    expect(breakSql("select a\nfrom t\nwhere b")).toBe("select a\nfrom t\nwhere b");
+    expect(breakSql("SELECT x FROM (SELECT y FROM t)")).toBe("SELECT x\nFROM (SELECT y\nFROM t)");
+  });
+
+  test("a change in GROUP BY shows on its own line, word-marked; the stored SQL is untouched", () => {
+    const before: ReportSpec = { ...at(1), queries: at(1).queries.map((query) => query.key === "by_country" ? { ...query, sql: "SELECT country, sum(revenue) AS revenue FROM analytics.orders GROUP BY country ORDER BY revenue DESC LIMIT 8" } : query) };
+    const after: ReportSpec = { ...before, queries: before.queries.map((query) => query.key === "by_country" ? { ...query, sql: query.sql.replace("GROUP BY country", "GROUP BY country, region") } : query) };
+    const diff = diffSpecVersions(before, after, { from: 1, to: 2 });
+    const changed = diff.queries[0]!.lines.filter((line) => line.op !== "same");
+    expect(changed.map((line) => [line.op, line.text])).toEqual([["del", "GROUP BY country"], ["add", "GROUP BY country, region"]]);
+    expect(changed[1]!.parts!.filter((part) => part.changed).map((part) => part.text)).toEqual([", region"]);
+    expect(after.queries.find((query) => query.key === "by_country")!.sql).not.toContain("\n");
   });
 });
 
@@ -46,7 +103,7 @@ describe("the diff between two specs", () => {
     const diff = diffSpecVersions(at(2), at(3), { from: 2, to: 3 });
     const intro = diff.blocks.find((block) => block.blockId === "intro")!;
     expect(intro.fields).toEqual([]);
-    expect(intro.text!.filter((line) => line.op !== "same")).toEqual([
+    expect(intro.text!.filter((line) => line.op !== "same").map(({ op, text }) => ({ op, text }))).toEqual([
       { op: "del", text: "Revenue is **net of refunds**, per the metrics doc. Data: `analytics.orders`." },
       { op: "add", text: "Revenue is **net of refunds**." },
       { op: "add", text: "Source: `analytics.orders`." }

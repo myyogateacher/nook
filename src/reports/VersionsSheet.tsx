@@ -68,11 +68,25 @@ export function DiffLines({ lines, label }: { lines: DiffLine[]; label: string }
     }
     return out;
   }, [lines]);
+  // The first change in view: scrolled to sideways (and down) once, the rest stays where the person puts it.
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current;
+    const first = element?.querySelector<HTMLElement>(".report-vdiff-word, .report-vdiff-line.is-del, .report-vdiff-line.is-add");
+    if (!element || !first) return;
+    const target = first.classList.contains("report-vdiff-word") ? first : first.querySelector<HTMLElement>(".report-vdiff-word") ?? first;
+    const right = target.offsetLeft + target.offsetWidth;
+    if (right > element.scrollLeft + element.clientWidth) element.scrollLeft = Math.max(0, target.offsetLeft - 48);
+    const line = first.closest<HTMLElement>(".report-vdiff-line") ?? first;
+    if (line.offsetTop + line.offsetHeight > element.scrollTop + element.clientHeight) element.scrollTop = Math.max(0, line.offsetTop - 24);
+  }, [lines]);
   if (!lines.length) return null;
-  return <div className="report-vdiff-code" role="region" tabIndex={0} aria-label={label}>
+  return <div ref={box} className="report-vdiff-code" role="region" tabIndex={0} aria-label={label}>
     {folded.map((line, index) => line.op === "fold"
       ? <div key={index} className="report-vdiff-fold">⋯ {line.count} unchanged {line.count === 1 ? "line" : "lines"}</div>
-      : <div key={index} className={`report-vdiff-line is-${line.op}`}><span className="report-vdiff-sign" aria-hidden="true">{line.op === "add" ? "+" : line.op === "del" ? "−" : " "}</span><span className="sr-only">{line.op === "add" ? "Added: " : line.op === "del" ? "Removed: " : ""}</span>{line.text || " "}</div>)}
+      : <div key={index} className={`report-vdiff-line is-${line.op}`}><span className="report-vdiff-sign" aria-hidden="true">{line.op === "add" ? "+" : line.op === "del" ? "−" : " "}</span><span className="sr-only">{line.op === "add" ? "Added: " : line.op === "del" ? "Removed: " : ""}</span>{line.parts
+        ? line.parts.map((part, at) => part.changed ? <mark key={at} className="report-vdiff-word">{part.text}</mark> : <span key={at}>{part.text}</span>)
+        : line.text || " "}</div>)}
   </div>;
 }
 

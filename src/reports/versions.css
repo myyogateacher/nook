@@ -65,7 +65,7 @@
 .report-vdiff-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .report-vdiff-before { background: var(--report-bad-line); color: color-mix(in srgb, var(--red) 70%, CanvasText); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 60%, transparent); border-radius: 4px; padding: 0 4px; }
 .report-vdiff-after { background: var(--report-good-bg); color: color-mix(in srgb, var(--report-good) 70%, CanvasText); border-radius: 4px; padding: 0 4px; }
-.report-vdiff-code { max-height: 360px; overflow: auto; border-radius: 8px; background: var(--bg); font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 6px 0; }
+.report-vdiff-code { position: relative; max-height: 360px; overflow: auto; border-radius: 8px; background: var(--bg); font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 6px 0; }
 .report-vdiff-line, .report-vdiff-fold { white-space: pre; padding: 0 10px 0 4px; min-width: max-content; }
 .report-vdiff-line.is-add { background: var(--report-good-bg); color: color-mix(in srgb, var(--report-good) 55%, CanvasText); }
 .report-vdiff-line.is-del { background: var(--report-bad-line); color: color-mix(in srgb, var(--red) 60%, CanvasText); }
@@ -79,3 +79,7 @@
 .report-vview-banner span { font-size: .84rem; color: var(--report-soft); }
 .report-vview .report-view { padding: 0; }
 .report-vrow-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+/* The word diff: the changed words of a changed line, in a stronger shade of the line's colour. */
+.report-vdiff-word { color: inherit; border-radius: 3px; padding: 0 1px; }
+.report-vdiff-line.is-del .report-vdiff-word { background: color-mix(in srgb, var(--red) 42%, var(--panel)); }
+.report-vdiff-line.is-add .report-vdiff-word { background: color-mix(in srgb, var(--report-good) 38%, var(--panel)); }

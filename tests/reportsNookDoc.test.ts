@@ -22,7 +22,7 @@ const { fetchNookFetched } = await import("../server/reports/docSource");
 retireUsersAfterFile();
 setDefaultTimeout(30_000);
 
-const fake = startFakeClickhouse(24896);
+const fake = startFakeClickhouse(0);
 const provider = startScriptedProvider(0);
 const originalConnection = generateDeps.connection;
 

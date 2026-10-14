@@ -13,7 +13,7 @@ const { insertAuditStep } = await import("../server/agents/audit");
  * errors, recovered calls, Nook's nudges) and the doc it read; a refresh's per-query outcome.
  */
 
-const fake = startFakeClickhouse(24871);
+const fake = startFakeClickhouse(0);
 afterAll(() => fake.stop());
 beforeEach(() => {
   fake.reset();

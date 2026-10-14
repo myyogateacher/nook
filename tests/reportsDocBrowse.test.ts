@@ -27,7 +27,7 @@ retireUsersAfterFile();
 setDefaultTimeout(30_000);
 
 const TOKEN = `doc-token-${crypto.randomUUID()}`;
-const fake = startFakeClickhouse(24895);
+const fake = startFakeClickhouse(0);
 const docs = startFakeDocMcp(0, { token: TOKEN });
 const provider = startScriptedProvider(0);
 const scripted = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });

@@ -251,7 +251,7 @@ describe("request log", () => {
 });
 
 describe("workflow lines", () => {
-  const fake = startFakeClickhouse(24891);
+  const fake = startFakeClickhouse(0);
   afterAll(() => fake.stop());
 
   test("a report refresh logs its start, each query, and its finish with run= and report=", async () => {

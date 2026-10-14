@@ -28,7 +28,7 @@ const { accessSummary, resetAccess } = await import("../server/team/memberAccess
 retireUsersAfterFile();
 setDefaultTimeout(30_000);
 
-const fake = startFakeClickhouse(24872);
+const fake = startFakeClickhouse(0);
 const provider = startScriptedProvider(0, qaEditScript);
 const originalConnection = editDeps.connection;
 const scripted = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });

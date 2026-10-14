@@ -147,7 +147,7 @@ export function startFakeClickhouse(port: number, options: { database?: string }
     }
   });
   return {
-    url: `http://127.0.0.1:${port}/`,
+    url: `http://127.0.0.1:${server.port}/`,
     state,
     requests,
     reset() {

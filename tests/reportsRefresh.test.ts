@@ -13,7 +13,7 @@ const refresh = await import("../server/reports/refresh");
  * abandonment, and KILL QUERY; and keeping the last 20 runs.
  */
 
-const fake = startFakeClickhouse(24861);
+const fake = startFakeClickhouse(0);
 afterAll(() => fake.stop());
 beforeEach(() => {
   fake.reset();

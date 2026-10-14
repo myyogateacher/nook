@@ -26,7 +26,7 @@ const { AgentError } = await import("../server/agents/status");
 retireUsersAfterFile();
 
 const TOKEN = `doc-token-${crypto.randomUUID()}`;
-const fake = startFakeClickhouse(24861);
+const fake = startFakeClickhouse(0);
 const docs = startFakeDocMcp(0, { token: TOKEN });
 const provider = startScriptedProvider(0);
 const originalConnection = generateDeps.connection;

@@ -14,7 +14,7 @@ const refresh = await import("../server/reports/refresh");
  * at once; the owner re-checked at run time; five failures in a row turn the schedule off.
  */
 
-const fake = startFakeClickhouse(24862);
+const fake = startFakeClickhouse(0);
 afterAll(() => fake.stop());
 beforeEach(() => {
   fake.reset();

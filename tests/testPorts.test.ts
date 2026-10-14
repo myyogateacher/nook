@@ -11,6 +11,8 @@ import { join, relative } from "node:path";
 
 const testsDir = import.meta.dir;
 const self = join(testsDir, "testPorts.test.ts");
+// The fakes the tests share with the QA instances (fake doc MCP, scripted report provider) live in scripts/.
+const scriptsDir = join(testsDir, "..", "scripts");
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -42,7 +44,7 @@ function fixedListenPorts(text: string) {
   const source = text.split("if (import.meta.main)")[0]!;
   const findings: string[] = [];
   const line = (index: number) => source.slice(0, index).split("\n").length;
-  for (const match of source.matchAll(/(?<!function )\bstartFake(?:Provider|McpServer)\(\s*([^,)\s]+)/g)) {
+  for (const match of source.matchAll(/(?<!function )\bstart(?:Fake(?!Google\b|S3\b)\w+|ScriptedProvider)\(\s*([^,)\s]+)/g)) {
     if (match[1] !== "0") findings.push(`line ${line(match.index!)}: ${match[0]}`);
   }
   for (const match of source.matchAll(/(?<!function )\b(?:Bun\.(?:serve|listen)|startFakeGoogle|startFakeS3)\s*\(/g)) {
@@ -64,11 +66,14 @@ describe("test ports", () => {
     expect(fixedListenPorts(`createServer(handler).listen(24001);`)).toHaveLength(1);
     expect(fixedListenPorts(`await startFakeGoogle({ port: 22302 });`)).toHaveLength(1);
     expect(fixedListenPorts(`export function startFakeProvider(port: number) {}\nif (import.meta.main) startFakeS3({ port: Number(argv) });`)).toEqual([]);
+    expect(fixedListenPorts(`startFakeClickhouse(24871); startFakeDocMcp(24900, { token }); startScriptedProvider(24901, qaScript);`)).toHaveLength(3);
+    expect(fixedListenPorts(`startFakeClickhouse(0); startFakeDocMcp(0, { token }); startScriptedProvider(0, qaEditScript); startFakeGoogle({ port: 0 });`)).toEqual([]);
     expect(fixedListenPorts(`startFakeProvider(0); Bun.serve({ port: 0, fetch }); Bun.serve(serverOptions); server.listen(0);`)).toEqual([]);
   });
 
   test("no file under tests/ listens on a fixed port", () => {
-    const findings = sourceFiles(testsDir).flatMap((path) => fixedListenPorts(readFileSync(path, "utf8")).map((finding) => `${relative(testsDir, path)} ${finding}`));
+    const fakes = readdirSync(scriptsDir).filter((name) => /^fake.*\.ts$/.test(name)).map((name) => join(scriptsDir, name));
+    const findings = [...sourceFiles(testsDir), ...fakes].flatMap((path) => fixedListenPorts(readFileSync(path, "utf8")).map((finding) => `${relative(testsDir, path)} ${finding}`));
     expect(findings).toEqual([]);
   });
 });

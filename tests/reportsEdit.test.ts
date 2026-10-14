@@ -21,7 +21,7 @@ const { syncSchema } = await import("../server/reports/schemaCatalog");
 retireUsersAfterFile();
 setDefaultTimeout(30_000);
 
-const fake = startFakeClickhouse(24871);
+const fake = startFakeClickhouse(0);
 const provider = startScriptedProvider(0, qaEditScript);
 const originalConnection = editDeps.connection;
 editDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });

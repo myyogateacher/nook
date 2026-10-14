@@ -13,7 +13,7 @@ const { estimateTool, runSchemaQueryTool, sampleRowsTool } = await import("../se
  * and the schema tools that run guarded statements.
  */
 
-const fake = startFakeClickhouse(24852);
+const fake = startFakeClickhouse(0);
 afterAll(() => fake.stop());
 beforeEach(() => fake.reset());
 

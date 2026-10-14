@@ -15,7 +15,7 @@ const { syncSchema } = await import("../server/reports/schemaCatalog");
  * kept out of admin routes, data source secrets under key rotation, and the MCP read tools.
  */
 
-const fake = startFakeClickhouse(24851);
+const fake = startFakeClickhouse(0);
 afterAll(() => fake.stop());
 beforeEach(() => fake.reset());
 

@@ -85,6 +85,7 @@ export function checkBrowseTools(tools: readonly CatalogTool[], names: readonly 
     const tool = tools.find((item) => item.name === name);
     if (!tool) throw refused(`${sourceName} has no tool named ${name.slice(0, 128)}`);
     if (tool.policy !== "auto") throw refused(`${tool.name} on ${sourceName} needs Auto in Settings → AI → Tool servers before the AI may call it`);
+    if (tool.readOnlyHint === false) throw refused(`${sourceName} says ${tool.name} is not read-only, so the AI may not use it to read docs`);
   }
   return unique;
 }

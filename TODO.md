@@ -36,7 +36,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - [ ] E4 metric catalog per doc snapshot, with the Metrics view.
   - [ ] E5 model fallback (optional).
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
-- [ ] (Lane F) Tool-server sync stores `readOnlyHint: false` the same as "not annotated", so the reports browse list hides write tools by `destructiveHint` and name only. Store the raw hint at sync (`server/agents/toolServers.ts`) and use it in `isReadLikeTool`.
 - [ ] (Lane F) Wave 45 leftovers: `format()` the string function is refused along with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
 - [ ] (Lane H) App-wide sheets: Forward does not reopen a second-level sheet (one reopen slot in `useHistoryDialogGuard`, D18).
 

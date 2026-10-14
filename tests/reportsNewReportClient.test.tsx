@@ -132,6 +132,13 @@ describe("B3: tools the AI may use to read more docs", () => {
     for (const name of ["delete_document", "update_document", "create_document", "documents.archive", "moveDocument"]) expect([name, html.includes(name)]).toEqual([name, false]);
   });
 
+  test("a tool the server declares not read-only (readOnlyHint: false) is not listed, even when an admin set it to Auto", () => {
+    const html = renderToStaticMarkup(<BrowseToolsPicker server={{ name: "Outline", tools: [{ name: "fetch", title: null, args: ["id"] }, { name: "sync_pages", title: null, args: [], readOnlyHint: false }, { name: "search", title: null, args: ["query"], readOnlyHint: true }], toolNames: ["fetch", "search", "sync_pages"] }} value={[]} onChange={() => undefined} />);
+    expect(html).toContain("<code>fetch</code>");
+    expect(html).toContain("<code>search</code>");
+    expect(html).not.toContain("sync_pages");
+  });
+
   test("write-like tools: destructive, annotated as writes, or a write verb in the name", () => {
     for (const name of ["delete_document", "update_document", "createDocument", "docs.publish", "remove-member", "set_policy", "upload_file", "import_markdown"]) expect([name, isWriteLikeName(name)]).toEqual([name, true]);
     for (const name of ["fetch", "search", "list_documents", "get_settings", "read_document", "address_book", "updates_feed"]) expect([name, isWriteLikeName(name)]).toEqual([name, false]);

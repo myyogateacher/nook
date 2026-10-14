@@ -341,7 +341,12 @@ export type AgentLevel = "owner" | "manage" | "view";
 export type AgentDetail = AgentSummary & { systemPrompt: string | null };
 
 /** The admin's view of a tool server (plan §4.1); the credential is write-only (`hasSecret`, `hint`). */
-export type CatalogTool = { name: string; title: string | null; description: string; inputSchema: Record<string, unknown>; readOnly: boolean; openWorld: boolean; destructive: boolean; policy: ToolPolicy };
+/**
+ * `readOnly`/`destructive` are the safe readings (true only when the server says so). `readOnlyHint` and
+ * `destructiveHint` are the server's raw annotations, absent when it did not annotate (and on tools
+ * synced before they were kept), so `readOnlyHint: false` (a declared write) differs from "not annotated".
+ */
+export type CatalogTool = { name: string; title: string | null; description: string; inputSchema: Record<string, unknown>; readOnly: boolean; openWorld: boolean; destructive: boolean; readOnlyHint?: boolean; destructiveHint?: boolean; policy: ToolPolicy };
 export type ToolServerSummary = {
   id: string; slug: string; name: string; transport: "http" | "stdio"; url: string | null; stdioId: string | null; authKind: ServerAuthKind; authHeader: string | null;
   hasSecret: boolean; hint: string | null; timeoutMs: number; resultCapBytes: number; availability: ServerAvailability; enabled: boolean;

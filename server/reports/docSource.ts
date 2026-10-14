@@ -96,8 +96,8 @@ export function docServerChoices(role: string): DocServerChoice[] {
     const tools = readOnlyTools(row, all);
     return {
       id: row.id, name: row.name, status: row.status, synced: row.tools_synced_at !== null,
-      tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools),
-      // Write-like tools (destructive, or a write verb in the name) are never listed for reading docs.
+      tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool), ...(tool.readOnlyHint !== undefined ? { readOnlyHint: tool.readOnlyHint } : {}) })), pick: pickDocTool(tools),
+      // Write-like tools (destructive, `readOnlyHint: false`, or a write verb in the name) are never listed for reading docs.
       candidates: docToolCandidates(all), toolNames: all.filter(isReadLikeTool).map((tool) => tool.name).slice(0, 100), host: hostOf(row.url)
     };
   })];

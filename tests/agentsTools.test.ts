@@ -191,6 +191,8 @@ describe("tool servers (admin, §4.1, D349, D354)", () => {
     expect(byName.echo).toMatchObject({ policy: "auto", readOnly: true, openWorld: false });
     expect(byName.fetch_page).toMatchObject({ policy: "auto", readOnly: true, openWorld: true });
     expect(byName.write_thing).toMatchObject({ policy: "confirm", readOnly: false, openWorld: true });
+    // The raw hints are kept when the server gave them, and absent when it did not ("not annotated").
+    expect([byName.echo.readOnlyHint, "readOnlyHint" in byName.write_thing, "destructiveHint" in byName.echo]).toEqual([true, false, false]);
     // The credential went to the server as the bearer header, and nothing else did.
     const synced1 = mcp.calls.filter((call) => call.method === "tools/list").at(-1)!;
     expect(synced1.headers.authorization).toBe("Bearer srv-secret-canary-0001");

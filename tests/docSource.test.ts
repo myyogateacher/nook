@@ -163,6 +163,23 @@ describe("review M2: only read-only doc tools", () => {
       db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), server.id);
     }
   });
+
+  test("a fetch the server declares not read-only (readOnlyHint: false) is never offered for Allow automatically, nor listed; an unannotated one is", () => {
+    const declaredWrite: StoredTool = { ...tool("fetch", { id: {} }), readOnly: false, readOnlyHint: false };
+    db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([declaredWrite, { ...tool("get_document", { url: {} }), readOnly: false }]), server.id);
+    try {
+      const listed = docServerChoices("member").find((item) => item.id === server.id)!;
+      expect(listed.candidates).toEqual([{ name: "get_document", args: ["url"], policy: "confirm" }]);
+      expect(listed.toolNames).toEqual(["get_document"]);
+      // An admin's explicit auto still lets it read the doc (the default policy rules are unchanged), but it is marked so the browse list hides it.
+      db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'auto')").run(server.id);
+      const auto = docServerChoices("member").find((item) => item.id === server.id)!;
+      expect(auto.tools).toEqual([{ name: "fetch", title: null, args: ["id"], readOnlyHint: false }]);
+    } finally {
+      db.query("DELETE FROM agent_tool_policies WHERE server_id = ?").run(server.id);
+      db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), server.id);
+    }
+  });
 });
 
 describe("B2: Allow automatically", () => {

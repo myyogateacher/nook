@@ -31,6 +31,12 @@ export type StoredTool = Omit<CatalogTool, "policy">;
 /** A tool name Nook keeps from a server (review L7). */
 export const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/;
 
+/** The server's raw hints, kept only when it gave a boolean (tri-state: absent means "not annotated"). */
+const rawHints = (readOnlyHint: unknown, destructiveHint: unknown): Pick<StoredTool, "readOnlyHint" | "destructiveHint"> => ({
+  ...(typeof readOnlyHint === "boolean" ? { readOnlyHint } : {}),
+  ...(typeof destructiveHint === "boolean" ? { destructiveHint } : {})
+});
+
 export function parseTools(json: string): StoredTool[] {
   try {
     const value: unknown = JSON.parse(json);
@@ -38,7 +44,8 @@ export function parseTools(json: string): StoredTool[] {
     return value.filter((item): item is StoredTool => !!item && typeof item === "object" && typeof (item as StoredTool).name === "string" && TOOL_NAME.test((item as StoredTool).name)).map((item) => ({
       name: item.name, title: typeof item.title === "string" ? item.title : null, description: typeof item.description === "string" ? item.description : "",
       inputSchema: item.inputSchema && typeof item.inputSchema === "object" ? item.inputSchema : { type: "object" },
-      readOnly: item.readOnly === true, openWorld: item.openWorld !== false, destructive: item.destructive === true
+      readOnly: item.readOnly === true, openWorld: item.openWorld !== false, destructive: item.destructive === true,
+      ...rawHints(item.readOnlyHint, item.destructiveHint)
     }));
   } catch {
     return [];
@@ -345,10 +352,12 @@ export async function resetToolServersForTests() {
   for (const id of [...sessions.keys()]) await dropSession(id);
 }
 
-const storedTool = (tool: McpToolInfo): StoredTool => ({
+export const storedTool = (tool: McpToolInfo): StoredTool => ({
   name: tool.name, title: tool.title, description: tool.description, inputSchema: tool.inputSchema,
   // Safe defaults (D349, [13]): a tool is "not read-only" and "open world" unless the server says otherwise.
-  readOnly: tool.annotations.readOnlyHint === true, openWorld: tool.annotations.openWorldHint !== false, destructive: tool.annotations.destructiveHint === true
+  readOnly: tool.annotations.readOnlyHint === true, openWorld: tool.annotations.openWorldHint !== false, destructive: tool.annotations.destructiveHint === true,
+  // The raw hints too: `readOnlyHint: false` is a declared write, which the reports doc lists never offer.
+  ...rawHints(tool.annotations.readOnlyHint, tool.annotations.destructiveHint)
 });
 
 /**

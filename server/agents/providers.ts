@@ -1,4 +1,5 @@
 import { audit, db, now } from "../db";
+import { logger } from "../log";
 import { AGENT_BOUNDS, DEFAULT_BASE_URL, DEFAULT_COMPAT, REASONING_EFFORTS, DEFAULT_EMBEDDING_DIMS, DEFAULT_EMBEDDING_MODEL, DEFAULT_KNOWLEDGE_POLICY, DEFAULT_MODEL, DEFAULT_VISION_POLICY, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, policyAllowsModel, policyMaxDims, VISION_POLICY_BOUNDS, visionAllowsModel, type AgentProviderChoice, type ProviderCompat, type ReasoningEffort, type ProviderKnowledgePolicy, type ProviderSummary, type ProviderVisionPolicy } from "../../shared/agents";
 import type { KnowledgeEmbeddingChoice } from "../../shared/knowledge";
 import type { ToolCallingProbe } from "../../shared/reportsModel";
@@ -412,7 +413,10 @@ export async function probeToolCalling(actorId: string, id: string): Promise<Too
       if (value === true) delete next[key];
       else if (value === false) next[key] = false;
     }
-    if (learned) next.reasoningEffort = learned;
+    if (learned) {
+      next.reasoningEffort = learned;
+      logger("agents").info("Test tool calling: the model refuses tools at its default reasoning; saved reasoning_effort", { provider: id.slice(0, 8), reasoningEffort: learned });
+    }
     db.query("UPDATE agent_providers SET compat_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
     const saved = parseCompat(JSON.stringify(next));
     audit(actorId, null, "agents.provider.probe_tools", { providerId: id, required: required.outcome, named: named.outcome, ...(learned ? { reasoningEffort: learned } : {}), requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false, before: { requiredToolChoice: current.requiredToolChoice !== false, namedToolChoice: current.namedToolChoice !== false } });
@@ -432,5 +436,6 @@ setCompatLearner((providerId, patch) => {
   if (!row || parseCompat(row.compat_json).reasoningEffort) return;
   const stored = JSON.parse(row.compat_json || "{}") as Record<string, unknown>;
   db.query("UPDATE agent_providers SET compat_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify({ ...stored, reasoningEffort: patch.reasoningEffort }), now(), providerId);
+  logger("agents").info("Provider compat learned: reasoning_effort", { provider: providerId.slice(0, 8), reasoningEffort: patch.reasoningEffort });
   audit(null, null, "agents.provider.compat_learned", { providerId, reasoningEffort: patch.reasoningEffort, reason: "The model refused tools at its default reasoning effort" });
 });

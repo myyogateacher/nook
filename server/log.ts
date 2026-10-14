@@ -1,5 +1,5 @@
 /**
- * Nook's server log (D-logging, docs/OPERATIONS.md "Logs"). One small logger, no dependency.
+ * Nook's server log (D469, docs/OPERATIONS.md "Logs"). One small logger, no dependency.
  *
  * - Levels error, warn, info, debug (and silent, for tests): LOG_LEVEL, default info.
  * - LOG_FORMAT=pretty (one readable line plus logfmt key=values) or json (one object per line).

@@ -265,6 +265,7 @@ export async function completeStreaming(connection: ProviderConnection, request:
       body.reasoning_effort = "none";
       response = await send();
       readBody = undefined;
+      modelLog.warn("Provider refused tools at its default reasoning; retrying with reasoning_effort=none", { provider: connection.id.slice(0, 8), status: response.status });
       if (response.status >= 200 && response.status < 300) {
         connection.compat = { ...connection.compat, reasoningEffort: "none" };
         try { compatLearner?.(connection.id, { reasoningEffort: "none" }); } catch { /* the request still goes on */ }

@@ -1,3 +1,4 @@
+import { logger } from "../log";
 import { config } from "../config";
 import { audit, db, now } from "../db";
 import { checkSavedEndpoint, EgressError } from "../agents/egress";
@@ -214,6 +215,7 @@ export async function testConnection(id: string): Promise<ConnectionTest> {
     result.ok = true;
   } catch (error) {
     result.error = error instanceof ChError || error instanceof ReportError ? error.message : "The data source could not be reached";
+    logger("reports").warn("Test connection failed", { datasource: id.slice(0, 8), code: (error as { code?: string }).code, chCode: error instanceof ChError ? error.chCode ?? undefined : undefined, chName: error instanceof ChError ? error.chName ?? undefined : undefined });
   }
   result.ms = Date.now() - started;
   return result;

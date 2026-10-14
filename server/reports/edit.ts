@@ -450,6 +450,7 @@ async function executeEdit(run: Execution) {
       }
     }
     const capped = capResultText(result.text, EDIT_LIMITS.resultBytes);
+    if (call.recovered) slog.info("Final tool call recovered from a text answer", { tool: call.name, ok: result.ok });
     // A final call the loop took from a text answer is marked in the audit (it went through the same checks).
     insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.recovered ? `[recovered from text] ${call.arguments}` : call.arguments, result: capped.text, ok: result.ok, durationMs: Date.now() - started });
     channel.emit({ type: "tool_result", data: { messageId: runId, callId: call.id, ok: result.ok, resultPreview: preview(capped.text), truncated: capped.truncated, durationMs: Date.now() - started, decision: null, proposalId: null } });
@@ -489,6 +490,7 @@ async function executeEdit(run: Execution) {
     });
     steps = result.steps;
     toolCallCount = result.toolCalls;
+    if (result.nudges) slog.info("Text answers nudged back to submit_patch", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
     if (!proposed) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_PATCH";

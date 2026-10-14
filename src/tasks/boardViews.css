@@ -117,7 +117,7 @@ span.task-filter-chip-body { cursor: default; }
 .task-filter-editor .ui-combobox { min-width: 200px; max-width: 100%; flex: 1; }
 .task-filter-date { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .task-filter-date input { min-height: 32px; border: 1px solid #333338; border-radius: 8px; padding: 0 8px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .82rem; color-scheme: dark; }
-.task-filter-date .secondary-button { min-height: 32px; padding: 0 10px; font-size: .8rem; }
+.task-filter-date .secondary-button { min-height: 32px; margin: 0; padding: 0 10px; font-size: .8rem; }
 .task-filter-done { width: 32px; height: 32px; }
 .task-filter-done svg { width: 16px; }
 .task-filter-text { min-width: 160px; flex: 0 1 220px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #333338; border-radius: 999px; padding: 0 10px; background: #0b0b0d; color: #8d8d94; }

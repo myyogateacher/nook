@@ -126,6 +126,9 @@
    (the generator's "Again" once wrapped its label under its icon, the Wave 25 "Delete vault" bug). */
 .file-dialog-actions button { min-height: 44px; margin: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 16px; font-size: .84rem; font-weight: 650; white-space: nowrap; }
 .file-dialog-actions button svg { width: 16px; height: 16px; flex: none; }
+.file-dialog-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.danger-button { border: 1px solid #6a3039; border-radius: 10px; background: #3a1d22; color: #ffc2ca; cursor: pointer; }
+.danger-button:hover:not(:disabled) { background: #4a2229; }
 .move-list { min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 4px; padding: 6px 12px; }
 .move-option { min-height: 46px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 18px; align-items: center; gap: 12px; border: 1px solid transparent; border-radius: 10px; padding: 0 12px; background: transparent; color: #d6d6d9; font-size: .9rem; text-align: left; cursor: pointer; }
 .move-option:hover:not(:disabled) { background: #1f1f23; }

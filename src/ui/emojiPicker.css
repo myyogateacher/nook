@@ -25,8 +25,8 @@
 
 .emoji-picker-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #2a2a2f; padding: 6px 8px; }
 .emoji-picker-current { min-width: 0; overflow: hidden; color: #b4b4ba; font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
-.emoji-picker-footer .secondary-button { min-height: 34px; gap: 6px; padding: 0 10px; }
-.emoji-picker-footer .secondary-button svg { height: 15px; }
+.emoji-picker-footer .secondary-button { min-height: 34px; display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 0 10px; }
+.emoji-picker-footer .secondary-button svg { width: 15px; height: 15px; }
 
 .ui-sheet .emoji-picker-jump { padding: 0 12px 4px; }
 .ui-sheet .emoji-picker-jump button { height: 40px; }

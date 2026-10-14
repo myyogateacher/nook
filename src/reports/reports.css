@@ -7,6 +7,9 @@
 .reports-search { position: relative; flex: 0 1 280px; min-width: 0; display: flex; align-items: center; }
 .reports-search > svg { position: absolute; left: 12px; width: 16px; height: 16px; color: #85858c; pointer-events: none; }
 .reports-search input { width: 100%; min-height: 44px; padding-left: 36px; }
+/* "+ New report" keeps its look from before the shared spec (D472): 44 px, 16 px text. */
+.reports-app .reports-new { min-height: 44px; gap: 6px; padding: 0 16px; font-size: 1rem; font-weight: 750; }
+.reports-app .reports-new svg { width: 17px; height: 17px; }
 
 .reports-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .reports-card { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 12px; border: 1px solid #26262b; border-radius: 14px; padding: 10px 14px; background: #131316; color: inherit; text-align: left; cursor: pointer; }

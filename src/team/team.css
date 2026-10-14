@@ -39,7 +39,8 @@
 .team-state { display: grid; justify-items: center; gap: 8px; border: 1px dashed #303035; border-radius: 16px; padding: 40px 24px; text-align: center; }
 .team-state h2 { margin: 6px 0 0; color: #ededee; font-size: 1.02rem; }
 .team-state p { max-width: 360px; margin: 0; color: #8d8d94; font-size: .86rem; line-height: 1.5; }
-.team-state .primary-button { gap: 7px; padding: 0 18px; }
+.team-state .primary-button { display: inline-flex; align-items: center; gap: 7px; padding: 0 18px; }
+.team-state .primary-button svg { width: 16px; }
 .team-state-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #303035; border-radius: 15px; background: #19191c; color: #c9a85c; }
 .team-state-icon svg { width: 21px; }
 .team-error .team-state-icon { color: var(--red); }

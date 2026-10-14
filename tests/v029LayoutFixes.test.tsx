@@ -58,10 +58,9 @@ describe("v0.29 layout fixes", () => {
 
   test("L3: a button that starts with an icon keeps the icon beside its label", async () => {
     const styles = await read("styles.css");
-    // Since D472 every shared button is an inline flex row, icon or not.
-    const shared = rule(styles, ":is(.primary-button, .secondary-button, .danger-button, .action-button)");
+    const shared = rule(styles, ":where(.secondary-button, .primary-button, .danger-button):where(:has(> svg:first-child))");
     expect(shared).not.toBeNull();
-    for (const declaration of ["display: inline-flex", "align-items: center", "gap: 8px"]) expect(shared).toContain(declaration);
+    for (const declaration of ["display: inline-flex", "align-items: center", "gap: 6px"]) expect(shared).toContain(declaration);
     // The Sync tools button is one of them.
     expect(await read("chat/ToolServers.tsx")).toContain('className="secondary-button" onClick={() => { void sync(server); }} disabled={syncing === server.id}><RefreshCw />');
     // The inline-icon hack that assumed an inline svg is gone.

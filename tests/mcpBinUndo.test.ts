@@ -98,8 +98,7 @@ describe("Review and Restore all for a key (D175)", () => {
 
   test("Restore all is an inline icon and label button (1h)", async () => {
     const css = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
-    // The shared button spec lays every primary button out inline, icon beside label (D472).
-    const selector = ":is(.primary-button, .secondary-button, .danger-button, .action-button) {";
+    const selector = ".mcp-review-actions .primary-button {";
     const rule = css.slice(css.indexOf(selector), css.indexOf("}", css.indexOf(selector)));
     expect(rule).toContain("display: inline-flex");
     expect(rule).toContain("align-items: center");

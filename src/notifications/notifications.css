@@ -45,7 +45,8 @@
 .notification-devices span { min-width: 0; display: grid; gap: 2px; }
 .notification-devices strong { overflow: hidden; color: #ededee; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
 .notification-devices small { color: #7c7c83; font-size: .74rem; }
-.notification-devices .secondary-button { min-height: 44px; gap: 6px; padding: 0 12px; font-size: .8rem; }
+.notification-devices .secondary-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; font-size: .8rem; }
+.notification-devices .secondary-button svg { width: 14px; }
 .notification-settings-message { margin: 12px 0 0; color: #b9e6c9; font-size: .84rem; }
 
 @media (max-width: 760px) {

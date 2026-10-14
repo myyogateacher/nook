@@ -36,7 +36,7 @@
 .task-home-place { min-width: 0; overflow: hidden; color: #9a9aa1; text-overflow: ellipsis; white-space: nowrap; }
 .task-home-empty { margin: 12px 0; }
 .task-home-more { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; color: #7c7c83; font-size: .78rem; }
-.task-home-more .secondary-button { min-height: 40px; }
+.task-home-more .secondary-button { min-height: 40px; margin: 0; }
 .task-home-note { color: #7c7c83; font-size: .78rem; }
 
 .task-home-lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }

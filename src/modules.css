@@ -21,7 +21,7 @@
 .module-hint { position: fixed; z-index: 60; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; border: 1px solid #36363b; border-radius: 12px; background: #1b1b1e; color: #e4e4e7; font-size: .86rem; box-shadow: 0 16px 50px rgb(0 0 0 / 50%); }
 .module-hint p { margin: 0; }
 .module-hint button { min-height: 44px; flex: none; }
-.module-hint .secondary-button { border-radius: 10px; }
+.module-hint .secondary-button { padding: 0 14px; border-radius: 10px; }
 .module-hint .icon-button { width: 44px; }
 
 @media (max-width: 760px) {

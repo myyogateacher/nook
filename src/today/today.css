@@ -67,7 +67,7 @@
 .today-load-error { display: grid; justify-items: start; gap: 8px; border: 1px solid #3a2522; border-radius: 16px; padding: 20px; background: #171112; }
 .today-load-error h2, .today-load-error p { margin: 0; }
 .today-load-error p { color: #b9a4a1; }
-.today-load-error .primary-button { gap: 7px; padding: 0 16px; }
+.today-load-error .primary-button { display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; }
 /* The one-time email digest prompt (D248). */
 .today-digest-prompt { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; margin: 0 0 24px; border: 1px solid #3a3322; border-radius: 16px; padding: 18px 52px 18px 18px; background: #17150f; }
 .today-digest-icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: #2b261b; color: var(--yellow); }

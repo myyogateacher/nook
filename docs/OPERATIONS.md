@@ -799,6 +799,17 @@ bun run dev:client
 
 `bun run dev` serves the API on port `2026` (stop the Docker container first, since it uses the same port) and restarts on changes. `bun run dev:client` starts Vite at `http://localhost:5173` and proxies `/api` to it. `./data` is ignored by Git. Run `bun run typecheck` and `bun test` before committing.
 
+### Checking a shared button change
+
+`scripts/buttonMetrics.ts` records the computed metrics (size, font, padding, margin, colours) of every shared button on every screen, at 390 px and 1280 px, from a running instance, and diffs two recordings. Record before and after a change to the shared button styles and diff; a button outside the allowed paths that changed fails, unless it was unpadded before:
+
+```sh
+NOOK_QA_EMAIL=… NOOK_QA_PASSWORD=… bun --no-env-file scripts/buttonMetrics.ts record http://qa.localhost:22195 before.json
+# … rebuild with the change, restart …
+NOOK_QA_EMAIL=… NOOK_QA_PASSWORD=… bun --no-env-file scripts/buttonMetrics.ts record http://qa.localhost:22195 after.json
+bun --no-env-file scripts/buttonMetrics.ts diff before.json after.json --allow /reports --allow /settings/datasources
+```
+
 ### Testing against a real ClickHouse
 
 The report guard's parser is driven by `EXPLAIN QUERY TREE` output captured from ClickHouse 26.6 (`tests/fixtures/clickhouse-26.6/`). The gated live tests (`tests/reportsClickhouseLive.test.ts`) run the settings, the LIMIT wrap, the query tree (FINAL included), and the readonly check against a real server:

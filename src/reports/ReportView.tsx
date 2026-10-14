@@ -80,6 +80,8 @@ type Props = {
   generating?: boolean;
   /** Tests and server-side rendering: the results to show without a request. */
   initial?: { results: ReportResultsView; schedule?: ScheduleView | null; runs?: ReportRun[] };
+  /** Lane J: a past version (Versions → View this version): no toolbar, no inspect or menu, nothing runs; pass `initial`. */
+  readOnly?: { emptyText: string };
 };
 
 /**
@@ -89,7 +91,7 @@ type Props = {
  * this built") and a menu with "Re-run this query"; the toolbar has "Refresh all" and the schedule.
  * A refresh is a run: the page polls it and reloads the results when it ends.
  */
-export function ReportView({ report, canWrite, generating = false, initial }: Props) {
+export function ReportView({ report, canWrite, generating = false, initial, readOnly }: Props) {
   const [view, setView] = useState<ReportResultsView | null>(initial?.results ?? null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [running, setRunning] = useState<ReportRun | null>(initial?.results.running ?? null);
@@ -196,15 +198,15 @@ export function ReportView({ report, canWrite, generating = false, initial }: Pr
   useRegisterReportCommands({
     refreshAll: canWrite ? { run: () => { void startRefresh(); }, busy: busy, disabled: busy || !report.spec.queries.length } : null,
     schedule: { open: () => setScheduleOpen(true), badge: badge?.text ?? null }
-  }, ["refreshAll", "schedule"]);
+  }, readOnly ? [] : ["refreshAll", "schedule"]);
 
   const card = (block: DataBlock) => <DataBlockCard key={block.id} block={block} view={results.get(block.queryKey)} hasQuery={queries.has(block.queryKey)} palette={palette}
-    running={running} loaded={view !== null} lookup={lookup}
+    running={running} loaded={view !== null} lookup={lookup} readOnly={readOnly}
     onInspect={() => setInspect({ blockId: block.id, tab: "query" })} onMenu={() => setMenuBlock(block.id)} />;
 
   if (!blocks.length) return null;
   return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
-    <div className="report-view-toolbar">
+    {!readOnly && <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
         {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
           : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
@@ -217,7 +219,7 @@ export function ReportView({ report, canWrite, generating = false, initial }: Pr
           {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
         </button>}
       </div>}
-    </div>
+    </div>}
     {loadError && <p className="form-error" role="alert">{loadError} <button type="button" className="secondary-button" onClick={() => { void loadResults(); }}>Try again</button></p>}
     {layout.narrative.map((block) => <div key={block.id} className="report-narrative">
       {block.title && <h2 className="report-narrative-title">{block.title}</h2>}
@@ -263,10 +265,12 @@ type CardProps = {
   lookup?: ResultLookup;
   onInspect: () => void;
   onMenu: () => void;
+  /** Lane J: a past version's view: no inspect or menu buttons, and this text where a query has no stored result. */
+  readOnly?: { emptyText: string };
 };
 
 /** One chart, KPI, or table: its title, stale/error badges, the inspect and menu buttons, and the body. */
-export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, lookup, onInspect, onMenu }: CardProps) {
+export function DataBlockCard({ block, view, hasQuery, palette, running, loaded, lookup, onInspect, onMenu, readOnly }: CardProps) {
   const result = view?.result ?? null;
   const failed = view?.failed ?? null;
   const rerunning = Boolean(running && (!running.queryKeys || running.queryKeys.includes(block.queryKey)));
@@ -279,16 +283,16 @@ export function DataBlockCard({ block, view, hasQuery, palette, running, loaded,
         {view?.stale && <span className="reports-status reports-status-stale" title={failed ? `The last run failed: ${failed.error ?? ""}` : "The query changed since this result"}>Stale</span>}
         {!result && failed && <span className="reports-status reports-status-error">Error</span>}
       </span>
-      <span className="report-block-buttons">
+      {!readOnly && <span className="report-block-buttons">
         <button type="button" className="icon-button report-block-button" onClick={onInspect} aria-label={`How was ${title} built`} title="How was this built"><ScanSearch /></button>
         <button type="button" className="icon-button report-block-button" onClick={onMenu} aria-label={`More for ${title}`} aria-haspopup="dialog"><MoreHorizontal /></button>
-      </span>
+      </span>}
     </header>
     <div className="report-block-body">
       {!hasQuery ? <p className="report-block-problem">This block names a query the report does not have ({block.queryKey}).</p>
         : result ? <BlockBody block={block} result={result} palette={palette} lookup={lookup} />
           : failed ? <p className="report-block-problem"><TriangleAlert aria-hidden="true" />{failed.error ?? "The query failed"}</p>
-            : <p className="report-block-empty">{loaded ? "No results yet. Refresh the report to run its queries." : "Loading…"}</p>}
+            : <p className="report-block-empty">{readOnly ? readOnly.emptyText : loaded ? "No results yet. Refresh the report to run its queries." : "Loading…"}</p>}
     </div>
     {view?.stale && failed && result && <p className="report-block-note">Showing results from {timeAgo(result.createdAt)}; the last run failed.</p>}
   </article>;

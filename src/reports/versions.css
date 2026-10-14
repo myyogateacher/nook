@@ -1,0 +1,81 @@
+/* Lane J: the Versions panel (a side panel from 761 px, clamp(480px, 40vw, 720px) from 1024 px; full screen on a phone), its diff, and the read-only view. */
+
+.report-versions-panel {
+  --report-good: #4ade80;
+  --report-good-bg: color-mix(in srgb, #4ade80 13%, var(--panel));
+  --report-bad-line: color-mix(in srgb, var(--red) 14%, var(--panel));
+}
+@media (min-width: 761px) {
+  /* The read-only view draws the report: the panel widens to the report's own two-column width. */
+  .file-dialog.reports-dialog.report-changes.report-versions-wide { width: min(1180px, 96vw); }
+}
+@media (max-width: 760px) {
+  .file-dialog.report-versions-panel { max-height: 100dvh; height: 100dvh; border-radius: 0; }
+}
+
+.report-versions-nav, .report-versions-tools, .report-vdetail-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.report-versions-nav button, .report-versions-tools button, .report-vdetail-actions button, .report-vview-banner button, .report-vcompare-swap { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.report-versions-nav { position: sticky; top: 0; z-index: 2; padding: 8px 0; background: var(--panel); }
+
+.report-vlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.report-vrow { position: relative; border: 1px solid var(--report-border); border-radius: 12px; background: var(--report-raised); }
+.report-vrow.is-current { border-color: var(--report-accent-line); }
+.report-vrow-main { display: grid; gap: 3px; padding: 10px 44px 10px 12px; min-width: 0; }
+.report-vdetail-facts .report-vrow-main { padding-right: 12px; }
+/* The whole row opens the version; the Run button sits above that target. */
+.report-vrow-open { position: absolute; inset: 0; width: 100%; border: 0; border-radius: 12px; background: transparent; color: var(--report-muted); cursor: pointer; display: flex; align-items: center; justify-content: flex-end; padding: 0 12px; }
+.report-vrow-open:hover { background: color-mix(in srgb, var(--report-hover) 70%, transparent); }
+.report-vrow-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+.report-vrow-chevron { width: 18px; height: 18px; }
+.report-vrow-title { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .95rem; font-weight: 400; }
+.report-vrow-title strong { font-size: 1rem; }
+.report-vrow-source { font-weight: 650; color: var(--report-text); }
+.report-vrow-who, .report-vrow-change, .report-vrow-meta { font-size: .84rem; color: var(--report-soft); overflow-wrap: anywhere; }
+.report-vrow-who time { text-decoration: underline dotted color-mix(in srgb, var(--report-muted) 60%, transparent); text-underline-offset: 3px; }
+.report-vrow-ask { font-size: .86rem; color: var(--report-text); border-left: 3px solid var(--report-accent-line); padding: 2px 0 2px 8px; overflow-wrap: anywhere; }
+.report-vrow-change { color: var(--report-muted); }
+.report-vrow-note { font-size: .82rem; color: var(--report-muted); font-style: italic; overflow-wrap: anywhere; }
+.report-vrow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--report-muted); }
+.report-vrow-run { position: relative; z-index: 1; min-height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; }
+@media (pointer: coarse) { .report-vrow-run { min-height: 44px; } }
+
+.report-vdetail, .report-vcompare { display: grid; gap: 12px; min-width: 0; }
+.report-vdetail-heading { margin: 4px 0 0; font-size: .95rem; }
+.report-vdetail-against, .report-vcompare-pickers label { display: grid; gap: 4px; font-size: .8rem; color: var(--report-muted); min-width: 0; }
+.report-vcompare-pickers { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; gap: 8px; }
+@media (max-width: 520px) { .report-vcompare-pickers { grid-template-columns: minmax(0, 1fr); } .report-vcompare-swap { justify-self: start; } }
+
+.report-vdiff { display: grid; gap: 12px; min-width: 0; }
+.report-vdiff-summary { margin: 0; font-weight: 650; }
+.report-vdiff-group { display: grid; gap: 8px; min-width: 0; }
+.report-vdiff-group h4 { margin: 4px 0 0; font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; color: var(--report-muted); }
+.report-vdiff-item { display: grid; gap: 6px; border: 1px solid var(--report-border); border-left-width: 3px; border-radius: 10px; padding: 8px 10px; min-width: 0; background: var(--report-raised); }
+.report-vdiff-item.is-added { border-left-color: var(--report-good); }
+.report-vdiff-item.is-removed { border-left-color: var(--red); }
+.report-vdiff-item.is-changed { border-left-color: var(--yellow); }
+.report-vdiff-item.is-moved { border-left-color: var(--report-muted); }
+.report-vdiff-head { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
+.report-vdiff-badge.is-added { color: var(--report-good); }
+.report-vdiff-badge.is-removed { color: var(--red); }
+.report-vdiff-type { font-size: .78rem; color: var(--report-muted); }
+.report-vdiff-note { margin: 0; font-size: .82rem; color: var(--report-muted); }
+.report-vdiff-fields { margin: 0; display: grid; gap: 4px; font-size: .84rem; }
+.report-vdiff-fields > div { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr); gap: 8px; }
+.report-vdiff-fields dt { color: var(--report-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .78rem; padding-top: 2px; }
+.report-vdiff-fields dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.report-vdiff-before { background: var(--report-bad-line); color: color-mix(in srgb, var(--red) 70%, CanvasText); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 60%, transparent); border-radius: 4px; padding: 0 4px; }
+.report-vdiff-after { background: var(--report-good-bg); color: color-mix(in srgb, var(--report-good) 70%, CanvasText); border-radius: 4px; padding: 0 4px; }
+.report-vdiff-code { max-height: 360px; overflow: auto; border-radius: 8px; background: var(--bg); font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 6px 0; }
+.report-vdiff-line, .report-vdiff-fold { white-space: pre; padding: 0 10px 0 4px; min-width: max-content; }
+.report-vdiff-line.is-add { background: var(--report-good-bg); color: color-mix(in srgb, var(--report-good) 55%, CanvasText); }
+.report-vdiff-line.is-del { background: var(--report-bad-line); color: color-mix(in srgb, var(--red) 60%, CanvasText); }
+.report-vdiff-line.is-same { color: var(--report-muted); }
+.report-vdiff-sign { display: inline-block; width: 1.6ch; text-align: center; user-select: none; }
+.report-vdiff-fold { color: var(--report-muted); font-style: italic; padding-left: 12px; }
+
+.report-vview { display: grid; gap: 12px; min-width: 0; }
+.report-vview-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px solid var(--report-accent-line); background: var(--report-accent-bg); border-radius: 12px; padding: 10px 12px; }
+.report-vview-banner p { margin: 0; display: grid; gap: 2px; min-width: 0; }
+.report-vview-banner span { font-size: .84rem; color: var(--report-soft); }
+.report-vview .report-view { padding: 0; }
+.report-vrow-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }

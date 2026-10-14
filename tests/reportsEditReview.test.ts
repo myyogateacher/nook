@@ -282,7 +282,9 @@ describe("M1: a commenter never sees the doc through the edit agent", () => {
     expect(theirs[0].note).toBeNull();
     expect(JSON.stringify(theirs)).not.toContain("SECRET");
     const one = await send(onlooker, "GET", `/reports/${reportId}/versions/${theirs[0].version}`);
-    expect(JSON.stringify(one.body.version)).not.toContain("SECRET-NOTE");
+    // Lane J: one version's spec (the read-only view) is the owner's.
+    expect(one.status).toBe(404);
+    expect(JSON.stringify(one.body)).not.toContain("SECRET-NOTE");
   });
 });
 

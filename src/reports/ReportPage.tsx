@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2 } from "lucide-react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2 } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -21,6 +21,7 @@ import { ChangesPanel, useReportRights, type ChangesSheet } from "./ChangesPanel
 import { ReportCommentContext } from "./reportComment";
 import { ShareSheet } from "./ShareSheet";
 import { ReportRunsContext, RunsSheet } from "./RunsSheet";
+import { newVersionsMemory, VersionsSheet } from "./VersionsSheet";
 import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
 
 type PageProps = {
@@ -79,6 +80,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [runsAt, setRunsAt] = useState<{ runId: string | null } | null>(null);
   const lastRuns = useRef<{ runId: string | null }>({ runId: null });
   const openRuns = useCallback((runId: string | null) => { lastRuns.current = { runId }; setRunsAt({ runId }); }, []);
+  // Lane J: the Versions panel (every reader; what changed, the read-only view, and Restore are the owner's).
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const versionsMemory = useRef(newVersionsMemory());
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
   // The header's actions that live in the viewer and the generation part (reportCommands.tsx).
@@ -223,9 +227,10 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           </button>}
           <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare aria-hidden="true" />Changes</button>
           {report.isOwner && <button type="button" className="secondary-button report-wide-only" onClick={() => openRuns(null)}><History aria-hidden="true" />Runs</button>}
+          <button type="button" className="secondary-button report-wide-only" onClick={() => setVersionsOpen(true)}><GitCommitVertical aria-hidden="true" />Versions</button>
           {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={share}><Share2 aria-hidden="true" />Share</button>}
           {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
-          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), versions: () => setVersionsOpen(true), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
         </div>
       </div>
 
@@ -251,8 +256,13 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     </section>}
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
     {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
-    {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
-      reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} onReportChanged={reloadReport} />}
+    {/* Changes (its Versions link) and Versions open Runs at a version's run: Runs renders after them, on top. */}
+    <ReportRunsContext.Provider value={report?.isOwner ? openRuns : null}>
+      {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
+        reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} onReportChanged={reloadReport} />}
+      {versionsOpen && report && <VersionsSheet report={report} canRestore={ownerWrite} onClose={() => setVersionsOpen(false)} reopen={() => setVersionsOpen(true)} memory={versionsMemory.current}
+        onRestored={() => { setVersionsOpen(false); reloadReport(); }} />}
+    </ReportRunsContext.Provider>
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
     {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash} />}
     {linkSheet && report && <LinkSheet url={reportLink(report.id)} title={report.title} onClose={() => setLinkSheet(false)} flash={flash} />}
@@ -268,14 +278,15 @@ export const consoleOnPage = (report: Pick<ReportDetail, "isOwner" | "spec">) =>
 export const consoleInPanel = (report: Pick<ReportDetail, "isOwner" | "spec">) => report.isOwner && report.spec.blocks.length > 0;
 
 /**
- * The overflow menu's items: on a phone Share and Schedule first (the header hides them there), then
+ * The overflow menu's items: on a phone Runs, Versions, Share, and Schedule first (the header hides them there), then
  * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
  */
-export function overflowItems({ ownerWrite, owner = false, commands, runs, console: openConsole, copyLink, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
+export function overflowItems({ ownerWrite, owner = false, commands, runs, versions, console: openConsole, copyLink, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; versions?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
   const items: MenuItem[] = [];
   // Readers (viewers and commenters) have no Share: they copy the link from here.
   if (!owner && copyLink) items.push({ id: "copy-link", label: "Copy link", icon: <Link2 aria-hidden="true" />, onSelect: copyLink });
   if (owner && runs) items.push({ id: "runs", label: "Runs", icon: <History aria-hidden="true" />, onSelect: runs, narrowOnly: true });
+  if (versions) items.push({ id: "versions", label: "Versions", icon: <GitCommitVertical aria-hidden="true" />, onSelect: versions, narrowOnly: true });
   if (ownerWrite) items.push({ id: "share", label: "Share", icon: <Share2 aria-hidden="true" />, onSelect: share, narrowOnly: true });
   if (commands.schedule) items.push({ id: "schedule", label: commands.schedule.badge ? `Schedule (${commands.schedule.badge})` : "Schedule", icon: <CalendarClock aria-hidden="true" />, onSelect: commands.schedule.open, narrowOnly: true });
   if (!ownerWrite) return items;

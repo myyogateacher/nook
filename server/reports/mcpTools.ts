@@ -6,7 +6,9 @@ import { defineTool, McpToolError, type McpErrorCode, type McpKeyContext, type M
 import { CADENCES } from "../../shared/routineSchedule";
 import { BLOCK_ID, QUERY_KEY, REPORT_LIMITS, type ReportBlock } from "../../shared/reports";
 import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
-import { readableReport, reportLevel } from "./access";
+import { versionSourceLabel, versionWhoLabel } from "../../shared/reportVersions";
+import { ownedReport, readableReport, reportLevel } from "./access";
+import { listVersions, previousVersion, versionDiff } from "./versions";
 import { datasourceChoices } from "./datasources";
 import { ReportError } from "./errors";
 import { startGenerate } from "./generate";
@@ -26,8 +28,9 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *
  * - `reports:read`: list_reports, list_report_datasources (names only), get_report (the spec: blocks
  *   and saved SQL), get_report_block (what the inspect sheet shows: SQL, SQL as sent, mapping, the
- *   latest rows capped at 50), get_report_run, and get_report_instruction (an instruction's status and
- *   its proposal's changes).
+ *   latest rows capped at 50), get_report_run, get_report_instruction (an instruction's status and
+ *   its proposal's changes), list_report_versions (redacted for all but the owner), and
+ *   get_report_version_diff (the owner's).
  * - `reports:write`: create_report (starts a generation from a doc), refresh_report,
  *   set_report_schedule, add_report_instruction (queues it for the edit agent; a proposal unless the
  *   owner turned on auto-apply), apply_report_proposal and reject_report_proposal, update_report_query
@@ -193,6 +196,39 @@ export const reportTools: McpToolSpec[] = [
           queries: proposal.queries
         }
       };
+    })
+  }),
+
+  defineTool({
+    name: "list_report_versions",
+    title: "List report versions",
+    description: `A report's versions, newest first: number, whether it is current, its source (generated, regenerated, an applied instruction, edited by hand, restored from vN), who made it (and who asked, for an applied instruction), when, and its size. The owner also gets each version's instruction text, agent note, model, run id, and what changed against the one before; anyone else gets who, when, and the source only. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "items", items: reportItem },
+    write: false,
+    inputSchema: z.object({ reportId }),
+    handler: ({ reportId: id }, key) => asOwner(key, () => ({
+      versions: listVersions(id, key.userId).map((item) => ({ ...item, sourceLabel: versionSourceLabel(item), who: versionWhoLabel(item) }))
+    }))
+  }),
+  defineTool({
+    name: "get_report_version_diff",
+    title: "Get a report version diff",
+    description: `What changed between two versions of a report the user owns: blocks added, removed, moved, or changed (with the changed fields: kind, title, intent, width, section, mapping), queries added, removed, or changed (a line diff of the SQL), markdown text as a line diff, and sections. \`from\` defaults to the version before \`to\`. Capped; \`truncated\` says when something was cut. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "items", items: reportItem },
+    write: false,
+    inputSchema: z.object({
+      reportId,
+      to: z.number().int().min(1).describe("The newer version (from list_report_versions)"),
+      from: z.number().int().min(1).optional().describe("The older version; default the one before `to`")
+    }),
+    handler: ({ reportId: id, to, from }, key) => asOwner(key, () => {
+      // Only the owner reads a diff (older SQL and text, D459); anyone else gets the same NOT_FOUND.
+      ownedReport(id, key.userId);
+      const start = from ?? previousVersion(id, to);
+      if (start === null) throw new McpToolError("NOT_FOUND", "There is no version before this one");
+      return { diff: versionDiff(id, start, to, key.userId) };
     })
   }),
 

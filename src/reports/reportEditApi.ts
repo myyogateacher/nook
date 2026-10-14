@@ -1,6 +1,6 @@
 import { api } from "../api";
-import type { ReportSpec } from "../../shared/reports";
-import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, ReportSharing, ReportVersion, SharingInput } from "../../shared/reportsEdit";
+import type { InstructionsView, PatchOp, ProposalView, ReportInstruction, ReportSharing, SharingInput } from "../../shared/reportsEdit";
+import type { VersionDiff, VersionHistoryItem, VersionSnapshot } from "../../shared/reportVersions";
 
 /** The Wave 48 report routes (server/reports/editRoutes.ts): instructions, proposals, versions, manual edits, sharing. */
 
@@ -15,8 +15,11 @@ export const applyProposal = (id: string, instructionId: string) => api<{ instru
 export const rejectProposal = (id: string, instructionId: string) => api<{ instruction: ReportInstruction }>(`/reports/${id}/instructions/${instructionId}/reject`, json("POST", {}));
 export const setAutoApply = (id: string, autoApply: boolean) => api<{ autoApply: boolean }>(`/reports/${id}/auto-apply`, json("PUT", { autoApply }));
 
-export const listVersions = (id: string) => api<{ versions: ReportVersion[] }>(`/reports/${id}/versions`);
-export const getVersion = (id: string, version: number) => api<{ version: ReportVersion; spec: ReportSpec }>(`/reports/${id}/versions/${version}`);
+export const listVersions = (id: string) => api<{ versions: VersionHistoryItem[] }>(`/reports/${id}/versions`);
+/** The owner: one version's spec and its stored results (the read-only view). */
+export const getVersion = (id: string, version: number) => api<VersionSnapshot>(`/reports/${id}/versions/${version}`);
+/** The owner: what changed from `from` (default: the version before) to `to`. */
+export const getVersionDiff = (id: string, to: number, from?: number | null) => api<{ diff: VersionDiff }>(`/reports/${id}/version-diff?to=${to}${from ? `&from=${from}` : ""}`);
 export const restoreVersion = (id: string, version: number) => api<{ version: number; refreshRunId: string | null }>(`/reports/${id}/versions/${version}/restore`, json("POST", {}));
 
 export const editSpec = (id: string, ops: PatchOp[], expectedRevision: number) => api<{ version: number; revision: number }>(`/reports/${id}/spec/edit`, json("POST", { ops, expectedRevision }));

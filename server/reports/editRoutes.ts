@@ -10,7 +10,8 @@ import { manualEdit } from "./manualEdit";
 import { patchSchema } from "./patch";
 import { handle, id } from "./routes";
 import { getSharing, setSharing } from "./sharing";
-import { getVersion, listVersions, restoreVersion } from "./versions";
+import { getVersion, listVersions, previousVersion, restoreVersion, versionDiff } from "./versions";
+import { ownedReport } from "./access";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports, Wave 48: instructions to the edit agent (the queue,
@@ -74,6 +75,17 @@ export function registerReportEditRoutes(app: Hono<AppEnv>) {
   }));
 
   app.get("/api/reports/:reportId/versions", handle((c) => ({ versions: listVersions(id(c, "reportId"), c.get("user").id) })));
+  // Lane J: the diff between two versions (the owner), computed here and capped; `from` defaults to the version before `to`.
+  app.get("/api/reports/:reportId/version-diff", handle((c) => {
+    const reportId = id(c, "reportId");
+    const userId = c.get("user").id;
+    const to = versionParam(c.req.query("to"));
+    const fromText = c.req.query("from");
+    ownedReport(reportId, userId);
+    const from = fromText ? versionParam(fromText) : previousVersion(reportId, to);
+    if (from === null) throw new ReportError(404, "NOT_FOUND", "There is no version before this one");
+    return { diff: versionDiff(reportId, from, to, userId) };
+  }));
   app.get("/api/reports/:reportId/versions/:version", handle((c) => getVersion(id(c, "reportId"), versionParam(c.req.param("version")), c.get("user").id)));
   app.post("/api/reports/:reportId/versions/:version/restore", handle(async (c) => {
     const reportId = id(c, "reportId");

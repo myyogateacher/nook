@@ -1,9 +1,12 @@
 import { audit, db, now } from "../db";
 import type { ReportSpec, ResultColumn } from "../../shared/reports";
-import { INSTRUCTION_LIMITS, type ReportVersion, type VersionSource } from "../../shared/reportsEdit";
+import { INSTRUCTION_LIMITS, type VersionSource } from "../../shared/reportsEdit";
+import { diffSpecVersions, type VersionDiff, type VersionHistoryItem, type VersionSnapshot } from "../../shared/reportVersions";
+import type { QueryResultView } from "../../shared/reportsView";
+import { logger, shortId } from "../log";
 import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
-import { capRows, runningRun, startRefresh, abandonExpiredReportRuns } from "./refresh";
+import { capRows, resultView, runningRun, startRefresh, abandonExpiredReportRuns } from "./refresh";
 import { parseSpec } from "./service";
 import { usableDatasource } from "./datasources";
 import { assertRunnableNow } from "./specCheck";
@@ -27,6 +30,8 @@ export type SavedOutcome = {
 };
 
 type VersionRow = { report_id: string; version: number; spec_json: string; source: VersionSource; instruction_id: string | null; restored_from: number | null; run_id: string | null; note: string | null; created_by: string | null; created_at: string; author: string | null };
+
+const slog = logger("reports");
 
 export { maxProvenanceVersion, nextVersion } from "./versionNumbers";
 
@@ -109,33 +114,113 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
   })();
 }
 
-function versionView(row: VersionRow, currentJson: string, latest: number, owner: boolean): ReportVersion {
-  const spec = parseSpec(row.spec_json);
+type HistoryRow = VersionRow & { instruction_text: string | null; instruction_author: string | null; asked_by: string | null; auto_applied: number | null; model: string | null };
+type StoredResult = Parameters<typeof resultView>[0];
+
+const VERSION_SELECT = `SELECT v.*, u.display_name AS author, i.text AS instruction_text, i.author_id AS instruction_author, ia.display_name AS asked_by, i.auto_applied, ar.model
+  FROM report_versions v
+  LEFT JOIN users u ON u.id = v.created_by
+  LEFT JOIN report_instructions i ON i.id = v.instruction_id
+  LEFT JOIN users ia ON ia.id = i.author_id
+  LEFT JOIN report_runs rr ON rr.id = v.run_id
+  LEFT JOIN agent_runs ar ON ar.id = rr.agent_run_id`;
+
+const sizeLine = (spec: ReportSpec) => spec.blocks.length
+  ? `${spec.blocks.length} ${spec.blocks.length === 1 ? "block" : "blocks"}, ${spec.queries.length} ${spec.queries.length === 1 ? "query" : "queries"}`
+  : "Empty";
+
+/**
+ * One row as the caller may see it (lane J, D459). The owner sees everything. Anyone else (a commenter
+ * or a viewer) sees who, when, and the source only: no note (the agent's summary may quote the doc), no
+ * instruction text but their own, no run or model (runs are the owner's), and no change summary.
+ */
+function historyItem(row: HistoryRow, spec: ReportSpec, context: { currentJson: string; latest: number; owner: boolean; userId: string; regenerated: boolean; changeSummary: string | null }): VersionHistoryItem {
+  const { owner } = context;
+  const mine = row.instruction_author !== null && row.instruction_author === context.userId;
   return {
     version: row.version, source: row.source, instructionId: row.instruction_id, restoredFrom: row.restored_from,
     // Review L5: the note is the edit agent's summary, which may quote the doc: the owner's only.
     note: owner ? row.note : null, createdByName: row.author,
-    createdAt: row.created_at, blocks: spec.blocks.length, queries: spec.queries.length, current: row.version === latest && row.spec_json === currentJson
+    createdAt: row.created_at, blocks: spec.blocks.length, queries: spec.queries.length, current: row.version === context.latest && row.spec_json === context.currentJson,
+    regenerated: context.regenerated,
+    askedByName: row.instruction_id ? row.asked_by : null,
+    autoApplied: row.auto_applied === 1,
+    instructionText: owner || mine ? row.instruction_text : null,
+    runId: owner ? row.run_id : null,
+    model: owner ? row.model : null,
+    changeSummary: owner ? context.changeSummary : null
   };
 }
 
-const VERSION_SELECT = "SELECT v.*, u.display_name AS author FROM report_versions v LEFT JOIN users u ON u.id = v.created_by";
+/** A `generate` version after any earlier one with blocks (or after pruned ones) is a regeneration. */
+const isRegenerated = (source: VersionSource, version: number, earlierWithBlocks: boolean, earlierKept: boolean) =>
+  source === "generate" && (earlierWithBlocks || (!earlierKept && version > 1));
 
-/** The report's versions, newest first (anyone who can read the report). */
-export function listVersions(reportId: string, userId: string): ReportVersion[] {
+/** The report's versions, newest first (anyone who can read the report; redacted for all but the owner). */
+export function listVersions(reportId: string, userId: string): VersionHistoryItem[] {
   const report = readableReport(reportId, userId);
-  const rows = db.query(`${VERSION_SELECT} WHERE v.report_id = ? ORDER BY v.version DESC`).all(reportId) as VersionRow[];
-  const latest = rows[0]?.version ?? 0;
-  return rows.map((row) => versionView(row, report.spec_json, latest, report.owner_id === userId));
+  const owner = report.owner_id === userId;
+  const rows = db.query(`${VERSION_SELECT} WHERE v.report_id = ? ORDER BY v.version ASC`).all(reportId) as HistoryRow[];
+  const latest = rows.at(-1)?.version ?? 0;
+  let previous: { version: number; spec: ReportSpec } | null = null;
+  let withBlocks = false;
+  const items: VersionHistoryItem[] = [];
+  for (const row of rows) {
+    const spec = parseSpec(row.spec_json);
+    const changeSummary = !owner ? null : previous ? diffSpecVersions(previous.spec, spec, { from: previous.version, to: row.version, withText: false }).summary : sizeLine(spec);
+    items.push(historyItem(row, spec, { currentJson: report.spec_json, latest, owner, userId, regenerated: isRegenerated(row.source, row.version, withBlocks, previous !== null), changeSummary }));
+    previous = { version: row.version, spec };
+    withBlocks ||= spec.blocks.length > 0;
+  }
+  return items.reverse();
 }
 
-/** One version with its spec, for a preview. */
-export function getVersion(reportId: string, version: number, userId: string): { version: ReportVersion; spec: ReportSpec } {
-  const report = readableReport(reportId, userId);
-  const row = db.query(`${VERSION_SELECT} WHERE v.report_id = ? AND v.version = ?`).get(reportId, version) as VersionRow | null;
+function versionRow(reportId: string, version: number): HistoryRow {
+  const row = db.query(`${VERSION_SELECT} WHERE v.report_id = ? AND v.version = ?`).get(reportId, version) as HistoryRow | null;
   if (!row) throw new ReportError(404, "NOT_FOUND", "Version not found");
+  return row;
+}
+
+const RESULT_AT = () => db.query(`SELECT * FROM report_results WHERE report_id = $reportId AND query_key = $key AND sql = $sql AND error IS NULL
+  AND ($until IS NULL OR created_at < $until) ORDER BY created_at DESC, rowid DESC LIMIT 1`);
+
+/**
+ * One version for the read-only view: the owner's only (an older spec holds older SQL and text). Its
+ * results are the stored ones of exactly its SQL, the newest from while it was current (or before); a
+ * query with none shows "not stored". Nothing is run.
+ */
+export function getVersion(reportId: string, version: number, userId: string): VersionSnapshot {
+  const report = ownedReport(reportId, userId);
+  const row = versionRow(reportId, version);
+  const spec = parseSpec(row.spec_json);
+  const next = db.query("SELECT created_at FROM report_versions WHERE report_id = ? AND version > ? ORDER BY version LIMIT 1").get(reportId, version) as { created_at: string } | null;
   const latest = (db.query("SELECT max(version) AS version FROM report_versions WHERE report_id = ?").get(reportId) as { version: number }).version;
-  return { version: versionView(row, report.spec_json, latest, report.owner_id === userId), spec: parseSpec(row.spec_json) };
+  const earlier = db.query("SELECT version, spec_json FROM report_versions WHERE report_id = ? AND version < ? ORDER BY version DESC").all(reportId, version) as Array<{ version: number; spec_json: string }>;
+  const before = earlier[0] ? parseSpec(earlier[0].spec_json) : null;
+  const changeSummary = before ? diffSpecVersions(before, spec, { from: earlier[0]!.version, to: version, withText: false }).summary : sizeLine(spec);
+  const regenerated = isRegenerated(row.source, version, earlier.some((item) => parseSpec(item.spec_json).blocks.length > 0), earlier.length > 0);
+  const results: QueryResultView[] = spec.queries.map((query) => {
+    const stored = RESULT_AT().get({ reportId, key: query.key, sql: query.sql, until: next?.created_at ?? null }) as StoredResult | null;
+    return { queryKey: query.key, result: stored ? resultView(stored) : null, failed: null, stale: false };
+  });
+  slog.info("Report version read", { report: shortId(reportId), version, stored: results.filter((item) => item.result).length, queries: results.length });
+  return { version: historyItem(row, spec, { currentJson: report.spec_json, latest, owner: true, userId, regenerated, changeSummary }), spec, results };
+}
+
+/** What changed from version `from` to `to`: the owner's only, computed here and capped (DIFF_LIMITS). */
+export function versionDiff(reportId: string, from: number, to: number, userId: string): VersionDiff {
+  ownedReport(reportId, userId);
+  const started = performance.now();
+  const before = parseSpec(versionRow(reportId, from).spec_json);
+  const after = parseSpec(versionRow(reportId, to).spec_json);
+  const diff = diffSpecVersions(before, after, { from, to });
+  slog.info("Report version diff", { report: shortId(reportId), from, to, blocks: diff.blocks.length, queries: diff.queries.length, truncated: diff.truncated, ms: Math.round(performance.now() - started) });
+  return diff;
+}
+
+/** The kept version before `version` (a version's diff is against it by default); null for the first. */
+export function previousVersion(reportId: string, version: number): number | null {
+  return (db.query("SELECT max(version) AS version FROM report_versions WHERE report_id = ? AND version < ?").get(reportId, version) as { version: number | null }).version;
 }
 
 /** Refuses while a run holds the report (a refresh, a generation, an edit): a spec change waits for it. */
@@ -166,5 +251,6 @@ export function restoreVersion(userId: string, reportId: string, version: number
   if (saved.spec.queries.length) {
     try { refreshRunId = startRefresh(userId, reportId, { trigger: via.keyId ? "mcp" : "user" }).run.id; } catch { /* the owner can refresh by hand */ }
   }
+  slog.info("Report version restored", { report: shortId(reportId), from: version, version: saved.version, refresh: Boolean(refreshRunId) });
   return { version: saved.version, refreshRunId };
 }

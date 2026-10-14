@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type MutableRefObject } from "react";
-import { ArrowDown, ArrowUp, Check, CircleStop, History, LayoutList, LoaderCircle, Send, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleStop, GitCommitVertical, LayoutList, LoaderCircle, Send, X } from "lucide-react";
 import { followRun, type SequencedRunEvent } from "../chat/chatApi";
 import { ModalDialog } from "../files/Dialog";
 import { notify } from "../ui/notify";
@@ -156,7 +156,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
           <span>Apply my changes without review</span>
         </label>}
         <span className="report-changes-tool-buttons">
-          <button type="button" className="secondary-button" onClick={() => openSheet({ kind: "versions" })}><History aria-hidden="true" />Versions</button>
+          <button type="button" className="secondary-button" onClick={() => openSheet({ kind: "versions" })}><GitCommitVertical aria-hidden="true" />Versions</button>
           {view?.canApply && <button type="button" className="secondary-button" onClick={() => openSheet({ kind: "arrange" })}><LayoutList aria-hidden="true" />Arrange</button>}
         </span>
       </div>

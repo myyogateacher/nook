@@ -143,3 +143,59 @@ Some rules are fixed automatically without a retry: 3 (top 7 + Other) and 5 (top
 - "Existing stored specs render unchanged" holds for content, order, widths, and formats; KPIs move into the strip and large values compact (48,210.50 → 48.2K, the full value in the tooltip), as the theme requires.
 - Review fixes (2026-10-13): **H1** `checkDesign` / `validateSpec` take `changedBlockIds`; with it, the per-block rules (1, 2, 4, 6, 7, 8, 10, emphasis) apply only to new or changed blocks, while rule 9's totals and the auto-fixes cover every block. Upgraded v1 blocks carry `legacy: true` (exempt until edited; their bars keep row order); a full generation strips it. **M1** a report's override needs a role that may create agents and chat, a provider from `providerChoices()`, and a model from `allowedReportModels` (the provider's default, the admin's report model, models Test saw) unless the admin turns on "Report owners may type any model name" (`reportModelFreeText`). **M2** the probe stores `false` only after a 400 or a 2xx without the probe call; timeouts, network errors, 429, 5xx, and auth errors are "inconclusive" and leave the flag; an unknown provider is 404. **M3** string x values that read as periods (YYYY-MM, YYYY-MM-DD, YYYY-Www, quarters, month names) are ordinal. KPIs gain `compareLabel` (plain text ≤ 60; default "vs previous period", never a column name). The Mapping tab lists this build's auto-fixes and marks recorded ones that no longer apply "at save". 053 checks `foreign_key_check(agent_settings)` before its rebuild. The report page is up to 1,280 px wide, prose at 70ch, KPI titles wrap to two lines.
 - Migration 053 was needed: `agent_settings` (039) fixes its keys in a CHECK, so the two report-model keys need a rebuild; the per-report override is two `reports` columns. The Messages reservation moves to 054.
+
+## Chart kinds, round 2 (2026-10-14, D462–D468)
+
+Eleven kinds and two variants, drawn by `src/reports/chartKinds.ts` from theme tokens and named formatters only (the Mapping tab shows `ƒ name`), and checked by `checkDesign` rules 11–23.
+
+### Kinds, intents, and fields
+
+| Kind | Intent | Fields | Draws |
+|---|---|---|---|
+| `heatmap` | matrix | `x` columns, `x2` rows, `y [value]`; `cohort?`, `midpoint?` | Cells in 7 sequential steps (diverging when values straddle `midpoint`); values in cells (percent with format percent) in black or white by contrast; a stepped scale under it; scrolls inside the tile below 26 px a cell. Cohorts keep row order and scale from period 1 on. |
+| `calendar` | trend | `x` date, `y [value]` | A day grid (one range up to ~7 months, else one per year), sequential steps, the same scale. |
+| `funnel` | conversion | `x` stage, `y [value]` | Stages in row order, ordinal ramp, labels in one column with conversion from the previous stage; tooltip also shows share of the first. |
+| `gauge` | attainment | `y [value]`, `target` or `max` | An HTML meter: value, a same-ramp track, the target tick; with a target, a status (On target, Near target, Below target; reversed with `upIsGood: false`) always as icon + label, the fill in that status colour only then. |
+| `bullet` | attainment | `x`, `y [actual]`, `target`, `ranges?` (≤ 3) | Neutral bands, the actual as a thin slot-1 bar, the target as an ink tick; one value axis. |
+| `treemap` | share | `x` group, `x2?` subgroup, `y [value]` | Categorical hues for groups only (subgroups wear their group's); > 8 groups fold to top 7 + Other (auto); tiny tiles go unlabelled. |
+| `sankey` | flow | `x` source, `x2` target, `y [flow]` | Nodes in slot 2, links a neutral wash lifted on hover. |
+| `boxplot` | distribution | `x`, `y [raw]` or `y [min, q1, median, q3, max]` | Quartiles by Nook (linear interpolation), Tukey whiskers, outliers as dots. |
+| `histogram` | distribution | `y [raw column]` (no x) | Freedman–Diaconis bins, 5–50 (Sturges when the IQR is 0), touching bars with the 2 px gap. |
+| `waterfall` | delta | `x` step, `y [signed change]`; `start?`, `total?` | Rises and falls on the diverging poles (never status colours), totals neutral grey; steps in row order; signed labels where they fit. |
+| `combo` | compare / trend | `x`, `y [bar, line]`, `yUnits [u, u]` | A bar and a line on one value axis; different units are refused. |
+| `stack` on area and bars | share | `stack: normal | percent` | Stacked areas (band wash 24 %) and 100 % stacked bars (shares, tooltip with value). |
+| `facet` on line, bar, area | any | `facet` column | Small multiples: ≤ 12 panels (top 11 + Other), one shared y scale, 2 / 3 / 4 columns by tile width. |
+
+### Rules (refused like SQL errors unless marked auto)
+
+11. A round-2 kind and its intent go together both ways (funnel ↔ conversion, sankey ↔ flow, gauge / bullet ↔ attainment, heatmap ↔ matrix, histogram / boxplot ↔ distribution, treemap ↔ share, waterfall ↔ delta, calendar ↔ trend, combo ↔ compare or trend).
+12. Heatmap at most 40 × 40 cells; both axes ordered (dates, numbers, periods, weekdays, numbered steps such as Week 3).
+13. Calendar over a Date / DateTime x, at most 2 years.
+14. Funnel 2–8 stages, values never increasing (the hint says to order rows by stage; Nook never re-sorts).
+15. Gauge from a one-row result, with a target column or a max above 0 (rule 6 does not turn it into a KPI).
+16. Treemap positive values; more than 8 groups fold (auto).
+17. Sankey at most 30 nodes and 60 links, no negative flows, no cycles (the cycle is named).
+18. Box plot at most 20 categories; precomputed boxes ordered min ≤ q1 ≤ median ≤ q3 ≤ max; raw values get quartiles (auto).
+19. Histogram at least 5 values; its bins are recorded (auto).
+20. Waterfall 2–25 steps.
+21. Combo: one unit for both measures (`yUnits`); rule 7's scale check still applies. There is never a second axis.
+22. Bullet ranges ascend; at most 15 categories.
+23. Facet needs at least 2 values; more than 12 fold (auto). Rules 3 and 4 (auto): a line over 8 or a scatter over 3 series of a series column becomes small multiples.
+
+Shape checks: each round-2 field only on its kinds; `series`, `compareTo`, `emphasis` not on the new kinds; `facet` not with `series`; the measures each kind takes.
+
+### Routing table (taught to both agents)
+
+| The question | Kind |
+|---|---|
+| Cohort retention | heatmap (`cohort: true`, format percent) |
+| Conversion steps | funnel |
+| Target attainment | gauge (one value) or bullet (per category) |
+| Composition over time | area with `stack: percent` |
+| Flow between states | sankey |
+| Distribution | histogram (raw values) or boxplot (per category) |
+| Contribution to change | waterfall |
+| One trend split by many groups | line with `facet` |
+
+### Tokens added
+`sequentialRamp(mode, n)` (low end toward the surface), `ordinalRamp(mode, n)` (≥ 2:1: from step 250 on light, to step 600 on dark), `divergingRamp(mode)`, `METER` (fill `#3987e5` / `#2a78d6`, track `#184f95` / `#cde2fb`), `BULLET_BANDS` (dark `#2f2f35 #25252a #1c1c20`, light `#d6d5cc #e4e3dc #efeee9`), `waterfallColors` (diverging poles, total = muted ink), `inkOn(fill)` (black or white), `MARKS.stackedAreaOpacity` 0.24, heights per kind. Texture fills under forced colours apply to every ECharts kind through the aria decal; the HTML meter hatches its fill.

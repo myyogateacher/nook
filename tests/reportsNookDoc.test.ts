@@ -207,3 +207,24 @@ describe("browse tools for Nook", () => {
     expect(state.body.doc.pages).toEqual([expect.objectContaining({ title: "Order rules", serverName: "Nook", changed: false })]);
   });
 });
+
+describe("K1: generate straight into a folder", () => {
+  test("the report is created in the owner's folder by the generate request; another person's or a binned folder is a 404 before anything is created", async () => {
+    const folder = (await send(owner, "POST", "/reports/folders", { name: `Gen ${crypto.randomUUID().slice(0, 6)}` })).body.folder.id as string;
+    const started = await generate(owner, published, { folderId: folder.toUpperCase() });
+    expect(started.status).toBe(202);
+    expect(db.query("SELECT folder_id FROM reports WHERE id = ?").get(started.body.report.id)).toEqual({ folder_id: folder });
+    expect(await waitForRun(started.body.run.id)).toMatchObject({ status: "succeeded" });
+
+    const count = () => (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ?").get(owner.userId) as { count: number }).count;
+    const before = count();
+    const theirs = (await send(other, "POST", "/reports/folders", { name: "Theirs" })).body.folder.id as string;
+    const refused = await generate(owner, published, { folderId: theirs });
+    expect([refused.status, refused.body.code]).toEqual([404, "NOT_FOUND"]);
+    const binned = (await send(owner, "POST", "/reports/folders", { name: "Binned" })).body.folder.id as string;
+    expect((await send(owner, "DELETE", `/reports/folders/${binned}`)).status).toBe(200);
+    expect((await generate(owner, published, { folderId: binned })).status).toBe(404);
+    expect((await generate(owner, published, { folderId: "not-a-uuid" })).status).toBe(400);
+    expect(count()).toBe(before);
+  });
+});

@@ -11,6 +11,7 @@ import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
 import { openChannel, type RunChannel } from "../agents/stream";
 import { ownedReport } from "./access";
+import { ownedFolder } from "./folderAccess";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { cutBytes, docServerFor, docToolOf, fetchDoc, fetchNookFetched, recordSnapshot, snapshotOf } from "./docSource";
 import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookOrigins, nookSourceName } from "./nookSource";
@@ -110,7 +111,7 @@ export const REPORTS_AGENT_ID = "reports";
 const PROMPT_VERSION = 2;
 
 type Actor = { userId: string; role: string };
-export type GenerateInput = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId?: string | null; title?: string | null; /** B3: the tools the AI may use to read more docs; absent keeps the report's (on the same server). */ browseTools?: string[] | null };
+export type GenerateInput = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId?: string | null; title?: string | null; /** B3: the tools the AI may use to read more docs; absent keeps the report's (on the same server). */ browseTools?: string[] | null; /** K1: a new report is created in this folder (the owner's, checked before the doc is read). */ folderId?: string | null };
 
 
 type Live = { controller: AbortController; userId: string; reportId: string; runId: string; agentRunId: string };
@@ -428,6 +429,8 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
   // The lock is taken atomically below; this early answer only spares a doc read that could not be used.
   if (existing && db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(existing.id)) throw runInProgress();
   const datasource = usableDatasource(input.datasourceId ?? existing?.datasource_id ?? null);
+  // K1: the folder is checked before the doc is read, and the report is created in it (one insert).
+  const folderId = !existing && input.folderId ? ownedFolder(input.folderId.toLowerCase(), actor.userId).id : null;
   // B4: the doc is in Nook itself (read as the owner) or behind an admin's tool server.
   const nook = input.serverId === NOOK_SOURCE_ID;
   const server: ToolServerRow | null = nook ? null : docServerFor(input.serverId, actor.role);
@@ -447,7 +450,7 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
     const typed = oneLine(input.title ?? "", REPORT_LIMITS.title);
     const fromDoc = oneLine(doc.title ?? "", REPORT_LIMITS.title);
     const title = typed || fromDoc || "Untitled report";
-    return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id, titleSource: typed ? "user" : fromDoc ? "doc" : "default" }).id, actor.userId);
+    return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id, titleSource: typed ? "user" : fromDoc ? "doc" : "default", folderId }).id, actor.userId);
   })();
   const runId = crypto.randomUUID();
   const agentRunId = crypto.randomUUID();

@@ -11,8 +11,7 @@ import { defaultBrowseTools, isReadLikeTool, isWriteLikeName, type DocServerChoi
 import { linkHost, parseNookRef } from "../../shared/nookDocRef";
 import { BrowseToolsPicker } from "./BrowseToolsPicker";
 import { NookDocPicker, nookLinkOf } from "./NookDocPicker";
-import { codeOf, createReport, docServers, fileReport, generateReport, messageOf, regenerateReport } from "./reportsApi";
-import { notify } from "../ui/notify";
+import { codeOf, createReport, docServers, generateReport, messageOf, regenerateReport } from "./reportsApi";
 import "./generate.css";
 
 type Mode = "doc" | "blank";
@@ -220,11 +219,8 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
     setError(null);
     try {
       const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO || nook ? null : tool, arg: nook ? null : arg.trim() || null, browseTools: browse };
-      const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null });
-      // Lane I: a generated report starts Unfiled; file it in the chosen folder (it stays Unfiled when that fails).
-      if (!reportId && folderId) {
-        await fileReport(started.report.id, folderId).catch((reason) => notify.warning(messageOf(reason, "The report was created, but could not be put in the folder")));
-      }
+      // K1: a new report is created in the chosen folder by the generate request itself.
+      const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null, ...(folderId ? { folderId } : {}) });
       onCreated(started.report.id);
     } catch (reason) {
       setError(generateErrorText(reason, "Could not start generating the report"));

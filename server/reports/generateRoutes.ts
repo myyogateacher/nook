@@ -28,7 +28,7 @@ const argName = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/, "must
 const browseTools = z.array(z.string().trim().regex(TOOL_NAME, "must be a tool name")).max(DOC_BROWSE_LIMITS.ticked);
 // B4: the doc source is a tool server, or `nook` (Nook itself).
 const sourceId = z.union([uuid, z.literal("nook")]);
-const generateCreate = z.object({ docRef, serverId: sourceId, tool: toolName, arg: argName, datasourceId: uuid, title: oneLine(REPORT_LIMITS.title).nullish(), browseTools: browseTools.nullish() }).strict();
+const generateCreate = z.object({ docRef, serverId: sourceId, tool: toolName, arg: argName, datasourceId: uuid, title: oneLine(REPORT_LIMITS.title).nullish(), browseTools: browseTools.nullish(), folderId: uuid.nullish() }).strict();
 const generateAgain = z.object({ docRef: docRef.optional(), serverId: sourceId.optional(), tool: toolName, arg: argName, datasourceId: uuid.optional(), browseTools: browseTools.nullish() }).strict();
 const browseInput = z.object({ tools: browseTools }).strict();
 const emptySchema = z.object({}).strict();

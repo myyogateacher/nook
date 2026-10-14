@@ -123,6 +123,11 @@ export async function loadResources(module: GrantModule): Promise<ResourceOption
       ...bases.knowledgeBases.map((kb) => ({ value: resourceToken("knowledge_base", kb.id), label: kb.name, description: kb.yourLevel === "owner" ? kb.description || undefined : `Owned by ${kb.ownerName}`, writable: false }))
     ];
   }
+  if (module === "reports") {
+    // Wave 45: your own reports.
+    const { reports } = await api<{ reports: Array<{ id: string; title: string; isOwner: boolean }> }>("/reports");
+    return reports.map((report) => ({ value: resourceToken("report", report.id), label: report.title, writable: report.isOwner }));
+  }
   if (module === "calendar") {
     const { calendars } = await api<{ calendars: Array<{ id: string; name: string; role: string } & Owned> }>("/calendars");
     return calendars.map((item) => ({ value: resourceToken("calendar", item.id), label: item.name, description: ownerNote(item), writable: item.role !== "viewer" }));

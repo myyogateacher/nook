@@ -1,0 +1,165 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`theme tokens the tokens are the approved spec (snapshot) 1`] = `
+{
+  "delta": {
+    "dark": {
+      "bad": "#f08080",
+      "good": "#0ca30c",
+    },
+    "light": {
+      "bad": "#b42318",
+      "good": "#006300",
+    },
+  },
+  "emphasis": {
+    "dark": "#4a4a50",
+    "light": "#c3c2b7",
+  },
+  "heights": {
+    "area": 220,
+    "bar": 220,
+    "barMin": 160,
+    "barPerCategory": 28,
+    "line": 220,
+    "pie": 220,
+    "scatter": 260,
+  },
+  "ink": {
+    "dark": {
+      "accent": "#f6c453",
+      "axis": "#3a3a40",
+      "border": "#29292d",
+      "grid": "#1f1f23",
+      "ink": "#ededef",
+      "inkSecondary": "#b4b4ba",
+      "muted": "#929299",
+      "page": "#09090a",
+      "surface": "#111113",
+      "tooltip": "#18181b",
+    },
+    "light": {
+      "accent": "#b07800",
+      "axis": "#c3c2b7",
+      "border": "rgba(11,11,11,.10)",
+      "grid": "#e1e0d9",
+      "ink": "#0b0b0b",
+      "inkSecondary": "#52514e",
+      "muted": "#898781",
+      "page": "#f9f9f7",
+      "surface": "#fcfcfb",
+      "tooltip": "#ffffff",
+    },
+  },
+  "layout": {
+    "breakpoints": {
+      "medium": 768,
+      "wide": 1024,
+    },
+    "cardPadding": 14,
+    "cardPaddingNarrow": 12,
+    "columns": {
+      "medium": 6,
+      "narrow": 1,
+      "wide": 12,
+    },
+    "gutter": 10,
+    "kpiMinWidth": 150,
+    "radius": 10,
+  },
+  "marks": {
+    "areaOpacity": 0.1,
+    "bar": {
+      "gap": 2,
+      "maxThickness": 24,
+      "radius": 4,
+    },
+    "grid": {
+      "width": 1,
+    },
+    "line": {
+      "dotRadius": 4,
+      "dotRing": 2,
+      "width": 2,
+    },
+    "textureAngles": [
+      0.7853981633974483,
+      2.356194490192345,
+    ],
+  },
+  "sequential": [
+    "#cde2fb",
+    "#b7d3f6",
+    "#9ec5f4",
+    "#86b6ef",
+    "#6da7ec",
+    "#5598e7",
+    "#3987e5",
+    "#2a78d6",
+    "#256abf",
+    "#1c5cab",
+    "#184f95",
+    "#104281",
+    "#0d366b",
+  ],
+  "series": {
+    "dark": [
+      "#c98500",
+      "#3987e5",
+      "#199e70",
+      "#d95926",
+      "#9085e9",
+      "#d55181",
+      "#008300",
+      "#e66767",
+    ],
+    "light": [
+      "#eda100",
+      "#2a78d6",
+      "#1baf7a",
+      "#eb6834",
+      "#4a3aa7",
+      "#e87ba4",
+      "#008300",
+      "#e34948",
+    ],
+  },
+  "status": {
+    "critical": "#d03b3b",
+    "good": "#0ca30c",
+    "serious": "#ec835a",
+    "warning": "#fab219",
+  },
+  "type": {
+    "axis": {
+      "size": 11,
+      "weight": 400,
+    },
+    "blockTitle": {
+      "size": 14,
+      "weight": 600,
+    },
+    "body": {
+      "size": 13,
+      "weight": 400,
+    },
+    "font": "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif",
+    "hero": {
+      "size": 48,
+      "weight": 600,
+    },
+    "kpi": {
+      "size": 26,
+      "weight": 600,
+    },
+    "label": {
+      "size": 10,
+      "weight": 500,
+    },
+    "title": {
+      "size": 20,
+      "weight": 600,
+    },
+  },
+}
+`;

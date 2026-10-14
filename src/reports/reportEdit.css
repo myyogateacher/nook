@@ -1,0 +1,106 @@
+/* Wave 48: the Changes panel (a side panel from 761 px, a bottom sheet on phones), the proposal review, versions, arrange, and share sheets. 44 px tap targets. */
+
+.report-changes, .report-edit-sheet {
+  --report-surface: var(--panel);
+  --report-raised: var(--panel-raised);
+  --report-hover: var(--panel-hover);
+  --report-border: var(--border);
+  --report-text: CanvasText;
+  --report-soft: color-mix(in srgb, CanvasText 82%, var(--panel));
+  --report-muted: var(--muted);
+  --report-faint: color-mix(in srgb, var(--muted) 70%, var(--panel));
+  --report-code-bg: var(--bg);
+  --report-accent: var(--yellow);
+  --report-accent-bg: color-mix(in srgb, var(--yellow) 12%, var(--panel));
+  --report-accent-line: var(--yellow-dim);
+  --report-bad: var(--red);
+  --report-bad-bg: color-mix(in srgb, var(--red) 14%, var(--panel));
+}
+
+@media (min-width: 761px) {
+  .file-dialog.report-changes { inset: 0 0 0 auto; margin: 0; width: min(440px, 100vw); height: 100dvh; max-height: none; border-width: 0 0 0 1px; border-radius: 0; }
+  .file-dialog.report-edit-sheet { width: min(860px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); }
+}
+@media (max-width: 760px) {
+  .file-dialog.report-changes { max-height: 88dvh; }
+}
+
+.report-changes-body, .report-edit-sheet-body { min-height: 0; flex: 1 1 auto; overflow: auto; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); display: grid; align-content: start; gap: 12px; }
+.report-changes-compose { display: grid; gap: 6px; }
+.report-changes-compose label { font-size: .8rem; color: var(--report-muted); }
+.report-changes-compose select, .report-share-list select { min-height: 44px; border: 1px solid var(--report-border); border-radius: 10px; padding: 0 10px; background: var(--report-raised); color: var(--report-text); }
+.report-changes-compose textarea { width: 100%; min-height: 88px; resize: vertical; border: 1px solid var(--report-border); border-radius: 10px; padding: 10px; background: var(--report-raised); color: var(--report-text); font: inherit; }
+.report-changes-compose-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.report-changes-compose-actions .file-dialog-hint { margin: 0; }
+.report-changes-compose-actions button, .report-changes-tools button, .report-instruction-actions button, .report-version button, .report-arrange button, .report-edit-sheet-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+.report-instruction-actions .icon-button, .report-arrange .icon-button, .report-share-list .icon-button { width: 44px; height: 44px; justify-content: center; }
+.report-changes-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.report-changes-tool-buttons { display: inline-flex; gap: 6px; }
+.report-changes-toggle { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.report-changes-toggle input { width: 20px; height: 20px; }
+.report-changes-empty, .report-changes-readonly { margin: 0; color: var(--report-muted); }
+/* Icons only: a chart (ECharts draws SVG) or a KPI sparkline in a proposal keeps its own size. */
+.report-changes svg:not(.report-chart-canvas svg, .report-kpi-spark), .report-edit-sheet svg:not(.report-chart-canvas svg, .report-kpi-spark) { width: 16px; height: 16px; flex: none; }
+
+.report-changes-thread, .report-versions, .report-arrange, .report-share-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.report-instruction { border: 1px solid var(--report-border); border-radius: 12px; padding: 10px 12px; background: var(--report-surface); display: grid; gap: 6px; min-width: 0; }
+.report-instruction-proposed { border-color: var(--report-accent-line); background: var(--report-accent-bg); }
+.report-instruction-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: .78rem; color: var(--report-muted); }
+.report-instruction-head .reports-status { gap: 4px; }
+.report-instruction-status-failed { border-color: var(--report-bad); color: var(--report-bad); }
+.report-instruction-status-applied { color: var(--report-text); }
+.report-instruction-target { font-weight: 600; color: var(--report-soft); }
+.report-instruction-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--report-text); }
+.report-instruction-summary { margin: 0; display: flex; align-items: center; gap: 6px; color: var(--report-soft); font-size: .86rem; }
+.report-instruction-error { margin: 0; color: var(--report-bad); font-size: .86rem; overflow-wrap: anywhere; }
+.report-instruction-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.report-instruction-actions:empty { display: none; }
+.report-instruction-steps { margin: 0; }
+
+/* The proposal: each changed block before and after, side by side from 761 px. */
+.report-view.report-diff { margin: 0; }
+.report-diff .report-block-buttons { display: none; }
+.report-proposal-ask { margin: 0; border-left: 3px solid var(--report-accent-line); padding: 4px 10px; color: var(--report-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-proposal-summary { margin: 0; font-weight: 600; }
+.report-proposal-stale { margin: 0; display: flex; align-items: center; gap: 6px; color: var(--report-bad); }
+.report-diff-block { display: grid; gap: 8px; min-width: 0; }
+.report-diff-block h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: .92rem; }
+.report-diff-sides { display: grid; gap: 10px; min-width: 0; }
+.report-diff-side { display: grid; gap: 4px; min-width: 0; }
+.report-diff-label { font-size: .74rem; font-weight: 650; color: var(--report-muted); text-transform: uppercase; letter-spacing: .04em; }
+.report-diff-removed .report-diff-side { opacity: .7; }
+.report-diff-hidden { margin: 0; border: 1px dashed var(--report-border); border-radius: 12px; padding: 12px; color: var(--report-muted); }
+@media (min-width: 761px) { .report-diff-two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.report-diff-query { display: grid; gap: 6px; }
+.report-diff-query p { margin: 0; display: flex; align-items: center; gap: 8px; }
+.report-diff-sql-before { opacity: .65; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--report-bad) 60%, transparent); }
+.report-edit-sheet-actions { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); border-top: 1px solid var(--report-border); }
+
+.report-version { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--report-border); border-radius: 12px; padding: 10px 12px; }
+.report-version > div { min-width: 0; display: grid; gap: 2px; }
+.report-version strong { margin-right: 8px; }
+/* Review L1: the Current badge keeps its own width in the grid (it stretched across the row). */
+.report-version > div > .reports-status { justify-self: start; }
+.report-version p { margin: 0; font-size: .84rem; color: var(--report-soft); overflow-wrap: anywhere; }
+.report-version .report-version-size { color: var(--report-muted); }
+
+.report-arrange-heading { margin: 4px 0 0; font-size: .86rem; color: var(--report-muted); }
+.report-arrange > li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; border: 1px solid var(--report-border); border-radius: 12px; padding: 6px 6px 6px 12px; }
+.report-arrange-label { min-width: 0; display: grid; }
+.report-arrange-label small { color: var(--report-muted); }
+.report-arrange-buttons { display: inline-flex; gap: 2px; }
+.report-arrange-sql { flex: 1 1 100%; display: grid; gap: 8px; padding: 0 6px 6px 0; }
+.report-arrange-sql .report-sql { width: 100%; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.report-share-audience { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
+.report-share-audience legend { margin-bottom: 6px; font-weight: 600; }
+.report-share-option { min-height: 44px; display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.report-share-option input { margin-top: 4px; width: 20px; height: 20px; flex: none; }
+.report-share-option span { display: grid; }
+.report-share-option small { color: var(--report-muted); }
+.report-share-list li { display: flex; align-items: center; gap: 8px; }
+/* The access picker keeps a fixed width so the name never collapses to a letter a line. */
+.report-share-list li > :not(.report-share-name):not(.icon-button) { flex: 0 0 auto; width: 170px; max-width: 45%; }
+.report-share-name { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
+.report-comment-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+.report-comment-button svg { width: 15px; height: 15px; }

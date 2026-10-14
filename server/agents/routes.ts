@@ -12,7 +12,7 @@ import { chatAttachmentsFor } from "./chatImages";
 import { publicLinkFor, publicLinksOn, publicLinkState, revokePublicLink, roleMayPublish, upsertPublicLink } from "./publicShares";
 import { readShareAccess, shareLevel, writeShareAccess, type ShareKind } from "./sharing";
 import { subscribeChatUpdates } from "./chatUpdates";
-import { createProvider, deleteProvider, listProviders, providerChoices, providerModels, providerRow, providerSummary, testProvider, updateProvider } from "./providers";
+import { createProvider, deleteProvider, listProviders, probeToolCalling, providerChoices, providerModels, providerRow, providerSummary, testProvider, updateProvider } from "./providers";
 import { activeRunForChat, cancelChatRuns, cancelRun, confirmRun, dailyUsage, pendingConfirmationFor, runReadableBy, runSnapshot, startChatRun } from "./runs";
 import { readAgentSettings, roleMayChat, roleMayCreate, writeAgentSettings } from "./settings";
 import { AgentError, adminRecoveryAllowed, agentsStatus, recheckAgentsStatus, requireAgentsEnabled } from "./status";
@@ -40,6 +40,8 @@ const compat = z.object({
   tokenParam: z.enum(["max_completion_tokens", "max_tokens"]).optional(),
   streamUsage: z.boolean().optional(),
   supportsTools: z.boolean().optional(),
+  namedToolChoice: z.boolean().optional(),
+  requiredToolChoice: z.boolean().optional(),
   contextTokens: z.number().int().min(1024).max(10_000_000).optional()
 }).strict();
 // 2026-10-08: the knowledge base policy. `models: null` is "Any"; a list has 1 to 20 model ids; `maxDims: null` is 3,072.
@@ -79,6 +81,10 @@ const settingsSchema = z.object({
   agentsPerUser: z.number().int().min(1).max(500).optional(),
   kbsPerUser: z.number().int().min(1).max(100).optional(),
   defaultProviderId: uuid.nullable().optional(),
+  // Wave 48b: the report generation model (null: chat's default).
+  reportProviderId: uuid.nullable().optional(),
+  reportModel: line(AGENT_BOUNDS.model).nullable().optional(),
+  reportModelFreeText: z.boolean().optional(),
   expectedRevision: z.number().int().min(0)
 }).strict();
 const starters = z.array(z.string().trim().min(1).max(AGENT_BOUNDS.starterLength)).max(AGENT_BOUNDS.starters);
@@ -261,6 +267,7 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
   app.put("/api/agents/admin/settings", handle(adminOnly(async (c) => {
     const { expectedRevision, ...patch } = await parseJson(c.req.raw, settingsSchema);
     if (patch.defaultProviderId) providerRow(patch.defaultProviderId);
+    if (patch.reportProviderId) providerRow(patch.reportProviderId);
     return { settings: writeAgentSettings(c.get("user").id, patch, expectedRevision) };
   })));
   app.get("/api/agents/admin/providers", handleRecovery(adminOnly(() => ({ providers: listProviders() }))));
@@ -272,6 +279,12 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
     const providerId = id(c, "providerId");
     await parseJson(c.req.raw, emptySchema);
     return { test: await testProvider(providerId) };
+  })));
+  // Wave 48b (D436): "Test tool calling", stored in the provider's compat flags.
+  app.post("/api/agents/admin/providers/:providerId/test-tools", handle(adminOnly(async (c) => {
+    const providerId = id(c, "providerId");
+    await parseJson(c.req.raw, emptySchema);
+    return { probe: await probeToolCalling(c.get("user").id, providerId), provider: providerSummary(providerRow(providerId)) };
   })));
   app.get("/api/agents/admin/providers/:providerId/models", handle(adminOnly(async (c) => {
     const providerId = id(c, "providerId");

@@ -2,6 +2,7 @@ import { audit, db, now } from "../db";
 import { adminRevokeKey, listApiKeys, listInventory } from "../apiKeys";
 import { folderLevel } from "../access";
 import { ITEM_TABLES, itemLevel, presentItem, readabilityChecker } from "../access/effective";
+import { readableReportSql } from "../reports/access";
 import { recordAccessEvent } from "../access/events";
 import { itemSortKey, openCursor, openItemHandle, sealCursor, sealItemHandle, type PageCursor } from "../access/handles";
 import { ACCESS_KINDS, KIND_LEVELS, LEVEL_RANK, isLevel, type AccessKind, type ItemLevel, type Level } from "../access/levels";
@@ -118,10 +119,40 @@ function kindCounts(kind: AccessKind, userId: string, role: Role) {
   };
 }
 
+/** Reports shared with the person by name (reports wave 48, D459). */
+const reportMemberCount = (userId: string) => (db.query("SELECT COUNT(*) AS count FROM report_members WHERE user_id = ?").get(userId) as { count: number }).count;
+
+/**
+ * Reports shared with the person by name or through a group (reports wave 48, D459): one row per
+ * report, with every way they reach it; titles only when the viewer can open the report (D269).
+ * Read-only on the page: the owner changes a report's sharing in its Share sheet.
+ */
+function reportRows(viewerId: string, userId: string) {
+  const grants = db.query(`SELECT 'direct' AS via, m.report_id, m.level, '' AS group_id, NULL AS group_name FROM report_members m WHERE m.user_id = $userId
+      UNION ALL
+      SELECT 'group', rg.report_id, rg.level, rg.group_id, g.name FROM group_members gm JOIN report_group_shares rg ON rg.group_id = gm.group_id JOIN user_groups g ON g.id = rg.group_id
+        WHERE gm.user_id = $userId LIMIT 2000`).all({ userId }) as Array<{ via: "direct" | "group"; report_id: string; level: "view" | "comment"; group_id: string; group_name: string | null }>;
+  const byReport = new Map<string, typeof grants>();
+  for (const grant of grants) byReport.set(grant.report_id, [...(byReport.get(grant.report_id) ?? []), grant]);
+  const canRead = (reportId: string, who: string) => Boolean(db.query(`SELECT 1 FROM reports r WHERE r.id = $id AND ${readableReportSql("r")}`).get({ id: reportId, userId: who }));
+  const rows = [];
+  for (const [reportId, sources] of byReport) {
+    const report = db.query("SELECT r.id, r.title, r.owner_id, u.display_name AS owner_name FROM reports r JOIN users u ON u.id = r.owner_id WHERE r.id = ?").get(reportId) as { id: string; title: string; owner_id: string; owner_name: string } | null;
+    if (!report) continue;
+    const readable = canRead(reportId, viewerId);
+    rows.push({
+      kind: "report" as const, title: readable ? report.title : `Report owned by ${report.owner_name}`, titleHidden: !readable, owner: { id: report.owner_id, displayName: report.owner_name },
+      ...(readable ? { id: report.id } : {}), level: sources.some((source) => source.level === "comment") ? "comment" as const : "view" as const, active: canRead(reportId, userId),
+      sources: sources.map((source) => ({ via: source.via, level: source.level, group: source.via === "group" ? { id: source.group_id, name: source.group_name ?? "" } : null, lowerTo: [] as string[] }))
+    });
+  }
+  return rows.sort((left, right) => left.owner.displayName.localeCompare(right.owner.displayName) || left.title.localeCompare(right.title)).slice(0, ACCESS_PAGE);
+}
+
 /** What Reset access removes, counted (the confirm shows these before, the result after). */
 export function resetCounts(userId: string) {
   // Wave 43 (AC-D): direct agent and chat shares count with the others.
-  let direct = vaultMemberCount(userId) + sharedDirectCount(userId);
+  let direct = vaultMemberCount(userId) + sharedDirectCount(userId) + reportMemberCount(userId);
   for (const kind of ACCESS_KINDS) direct += directCount(kind, userId);
   const count = (sql: string) => (db.query(sql).get(userId) as { count: number }).count;
   return {
@@ -210,6 +241,8 @@ export function accessSummary(viewerId: string, userId: string) {
       ...row,
       sources: sources.map(({ handleItem, ...source }) => ({ ...source, ...(viewerId !== userId ? { handle: sealItemHandle(viewerId, userId, handleItem) } : {}) }))
     })),
+    // Reports wave 48 (D459): reports shared with the person, read-only here.
+    reports: reportRows(viewerId, userId),
     resetCounts: counts,
     pageSize: ACCESS_PAGE
   };
@@ -469,6 +502,11 @@ export function resetAccess(actorId: string, userId: string) {
     for (const [ownerId, count] of resetVaultMemberships(actorId, userId)) perOwner.set(ownerId, (perOwner.get(ownerId) ?? 0) + count);
     // Agents and chats shared by name (Wave 43): their rows go (owned ones and everyone-signed-in stay).
     for (const [ownerId, count] of resetSharedDirect(userId)) perOwner.set(ownerId, (perOwner.get(ownerId) ?? 0) + count);
+    // Reports shared by name (reports wave 48, D459).
+    for (const row of db.query("SELECT r.owner_id, COUNT(*) AS count FROM report_members m JOIN reports r ON r.id = m.report_id WHERE m.user_id = ? GROUP BY r.owner_id").all(userId) as Array<{ owner_id: string; count: number }>) {
+      perOwner.set(row.owner_id, (perOwner.get(row.owner_id) ?? 0) + row.count);
+    }
+    db.query("DELETE FROM report_members WHERE user_id = ?").run(userId);
     rotateOnLostReach(actorId, reach);
     const feeds = db.query("UPDATE calendar_feeds SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL").run(timestamp, userId).changes;
     const routines = pauseRoutinesOf(userId);

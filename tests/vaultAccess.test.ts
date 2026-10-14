@@ -144,8 +144,8 @@ describe("the access matrix for sessions (T181)", () => {
     try {
       const features = async (session: typeof member) => ((await (await request("/auth/me", {}, session)).json()) as { features: unknown }).features;
       // Wave 40: `agents` (Chat) follows the same rule, once a model provider exists (QA Q5: members see Chat only when they can use it).
-      expect(await features(member)).toEqual({ vault: true, agents: db.query("SELECT 1 FROM agent_providers LIMIT 1").get() !== null, chatRoleOff: false });
-      expect(await features(guest)).toEqual({ vault: false, agents: false, chatRoleOff: false });
+      expect(await features(member)).toEqual({ vault: true, agents: db.query("SELECT 1 FROM agent_providers LIMIT 1").get() !== null, chatRoleOff: false, reports: true });
+      expect(await features(guest)).toEqual({ vault: false, agents: false, chatRoleOff: false, reports: false });
     } finally {
       setRole(guest, "member");
     }

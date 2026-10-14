@@ -50,6 +50,9 @@ const ChatApp = lazy(() => import("./chat/ChatApp").then((module) => ({ default:
 const AiSettings = lazy(() => import("./chat/AiSettings").then((module) => ({ default: module.AiSettings })));
 const AgentsSettings = lazy(() => import("./chat/AgentsSettings").then((module) => ({ default: module.AgentsSettings })));
 const KnowledgeSettings = lazy(() => import("./chat/KnowledgeSettings").then((module) => ({ default: module.KnowledgeSettings })));
+// Analytics reports (Wave 45): the app and Settings → Report data sources are their own chunks.
+const ReportsApp = lazy(() => import("./reports/ReportsApp").then((module) => ({ default: module.ReportsApp })));
+const ReportDataSources = lazy(() => import("./settings/ReportDataSources").then((module) => ({ default: module.ReportDataSources })));
 import { lineDiff } from "./diff/lineDiff";
 import { TeamSection } from "./team/TeamApp";
 import { useBlockedCount } from "./team/blockedCount";
@@ -136,7 +139,7 @@ type TotpState = { enabled: boolean; required: boolean; setupRequired: boolean }
 type SecurityForm = "setup" | "verify" | "view" | "regenerate" | "disable";
 // `preferences` comes with /api/auth/me only (not with sign-in); see usePreferences.
 // `notices` (Wave 35 review N2c) comes with /api/auth/me only.
-type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean }; app?: { name?: string } };
+type SessionResponse = { user: User; csrfToken: string; totp: TotpState; preferences?: unknown; notices?: { googleReset?: GoogleResetNotice | null }; features?: { vault?: boolean; agents?: boolean; chatRoleOff?: boolean; reports?: boolean }; app?: { name?: string } };
 type ModulesSettingsProps = { disabledModules: readonly ModuleId[]; status: PreferencesStatus; onToggle: (id: ModuleId, enabled: boolean) => void; role?: Role; unavailable?: readonly ModuleId[] };
 type NoteSort = "updated-desc" | "updated-asc" | "created-desc" | "created-asc" | "title-asc" | "title-desc";
 
@@ -732,6 +735,7 @@ function SettingsPage({ session, modules, googleResult = null, navigate, flash, 
     : section === "agents" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading agents…</p></section>}><AgentsSettings agentId={route.app === "settings" ? route.agentId ?? null : null} navigate={go} flash={flash} onOpenChat={(agentId) => navigate({ app: "chat", chatId: null, newChat: true, agentId })} /></Suspense>
     : section === "knowledge" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading knowledge bases…</p></section>}><KnowledgeSettings kbId={route.app === "settings" ? route.kbId ?? null : null} navigate={go} flash={flash} /></Suspense>
     : section === "ai" ? (session.user.role === "admin" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading AI settings…</p></section>}><AiSettings flash={flash} tabs={aiTabs} tab={aiTab} onSelectTab={(tab) => go({ app: "settings", section: "ai", aiTab: tab })} /></Suspense> : <section className="settings-content"><p className="settings-warning">That section is for admins.</p></section>)
+    : section === "datasources" ? (session.user.role === "admin" ? <Suspense fallback={<section className="settings-content" aria-busy="true"><p className="sr-only" role="status">Loading data sources…</p></section>}><ReportDataSources /></Suspense> : <section className="settings-content"><p className="settings-warning">That section is for admins.</p></section>)
     : section === "about" ? <section className="settings-content about-settings" aria-labelledby="about-heading"><div className="settings-section-heading"><span className="settings-icon"><Info /></span><div><h3 id="about-heading">About {appName()}</h3><p>A private, self-hosted workspace for notes, files, and ideas.</p></div></div><div className="about-card"><div className="brand-mark"><Sparkles /></div><div><h4>{appName()}</h4><p>{appName() === "Nook" ? "Built by Pankaj" : "Built on Nook by Pankaj"}</p></div><dl><div><dt>Version</dt><dd>{appInfo.version}</dd></div><div><dt>Git SHA</dt><dd><code>{appInfo.gitSha}</code></dd></div></dl><a href="https://github.com/pankajsoni19" target="_blank" rel="noopener noreferrer">github.com/pankajsoni19</a></div></section>
     : securitySection;
 
@@ -1228,7 +1232,7 @@ export function App() {
   useEffect(() => {
     // The Settings hub names its own screens (Team's sections and the Bin too).
     if (activeApp === "settings" || activeApp === "team" || activeApp === "bin") return;
-    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", inbox: "Inbox", whiteboards: "Whiteboards", vault: "Vault", chat: "Chat" }[activeApp];
+    const sectionName = { home: "Home", notes: "Notes", files: "Files", tasks: "Tasks", collections: "Collections", calendar: "Calendar", notifications: "Notifications", inbox: "Inbox", whiteboards: "Whiteboards", vault: "Vault", chat: "Chat", reports: "Reports" }[activeApp];
     const detail = activeApp === "notes" && note && note.id === selectedNoteId ? note.title || "Untitled" : null;
     document.title = session ? `${detail ? `${detail} · ` : ""}${sectionName} · ${appName()}` : `Sign in · ${appName()}`;
   }, [activeApp, note, selectedNoteId, session]);
@@ -1794,6 +1798,7 @@ export function App() {
     if (section === "whiteboards") return { app: "whiteboards", folder: "all", boardId: null };
     if (section === "vault") return { app: "vault", vaultId: null, envId: null, secretId: null, page: null };
     if (section === "chat") return { app: "chat", chatId: null };
+    if (section === "reports") return { app: "reports", reportId: null };
     return { app: section };
   }
 
@@ -2324,6 +2329,7 @@ export function App() {
       : shownApp === "inbox" ? <InboxApp {...account} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenPath={openInboxPath} />
       : shownApp === "vault" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading the vault…</p></main>}><VaultApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} /></Suspense>
       : shownApp === "chat" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading chat…</p></main>}><ChatApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenAgents={(agentId) => { void openRoute({ app: "settings", section: "agents", ...(agentId ? { agentId } : {}) }); }} onOpenPath={openInboxPath} /></Suspense>
+      : shownApp === "reports" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading reports…</p></main>}><ReportsApp {...account} role={session.user.role ?? "member"} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenDatasources={() => { void openRoute({ app: "settings", section: "datasources" }); }} /></Suspense>
       : shownApp === "whiteboards" ? <Suspense fallback={<main className="app-page" aria-busy="true"><p className="sr-only" role="status">Loading whiteboards…</p></main>}><WhiteboardsApp {...account} userId={session.user.id} navigate={navigate} flash={flash} onHome={() => { void openHome(); }} onOpenPath={openInboxPath} /></Suspense>
       // Settings, Team, and the Bin (Wave 38) are the hub's routes.
       : settingsPage(false)}

@@ -655,9 +655,10 @@ export function runWritableBy(runId: string, userId: string): RunRow {
 /**
  * A chat run this person may follow (Wave 43, AC-D, D361): one they started, or one in a chat shared
  * with them now (the live transcript, read-only), checked on every request (T325); otherwise the 404.
+ * Wave 46: a report generation run (`via = 'reports'`, no chat) is followed by the person who started it only.
  */
 export function runReadableBy(runId: string, userId: string): RunRow & { owner: boolean } {
-  const row = db.query("SELECT * FROM agent_runs WHERE id = ? AND via = 'chat'").get(runId) as RunRow | null;
+  const row = db.query("SELECT * FROM agent_runs WHERE id = ? AND via IN ('chat','reports')").get(runId) as RunRow | null;
   if (!row) throw new AgentError(404, "NOT_FOUND", "Not found");
   if (row.user_id === userId) return { ...row, owner: true };
   const chat = row.chat_id ? db.query("SELECT id, owner_id, visibility, deleted_at FROM chats WHERE id = ?").get(row.chat_id) as { id: string; owner_id: string; visibility: string; deleted_at: string | null } | null : null;

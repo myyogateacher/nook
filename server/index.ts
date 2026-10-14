@@ -47,6 +47,13 @@ import { publicShareHeaders, registerPublicChatShareApi } from "./agents/publicR
 import { agentsFeature, chatRoleOff, initAgentsStatus } from "./agents/status";
 import { markInterruptedRuns } from "./agents/runs";
 import { registerKnowledgeRoutes } from "./knowledge/routes";
+import { registerReportRoutes } from "./reports/routes";
+import { abandonGenerateRuns } from "./reports/generate";
+import { roleHasReports } from "./reports/access";
+import { abandonRunsAtBoot } from "./reports/refresh";
+import { startReportScheduler } from "./reports/scheduler";
+import { failInstructionsAtBoot, startInstructionSweep } from "./reports/instructions";
+import { backfillVersions } from "./reports/versionBackfill";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
@@ -281,7 +288,7 @@ app.post("/api/auth/register", async (c) => {
   return c.json({
     user: { id, email: body.email, displayName: body.displayName, role, avatarUrl: null },
     csrfToken,
-    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role) },
+    features: { vault: vaultFeature(role), agents: agentsFeature(role), chatRoleOff: chatRoleOff(role), reports: roleHasReports(role) },
     totp: { enabled: false, required: config.totpPolicy === "required", setupRequired: config.totpPolicy === "required" }
   }, 201);
 });
@@ -329,7 +336,7 @@ app.post("/api/auth/login", async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, displayName: user.display_name, role: user.role, avatarUrl: avatarUrlFor(user.id) },
     csrfToken,
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role) },
     totp: totpState(user)
   });
 });
@@ -350,7 +357,7 @@ app.get("/api/auth/me", (c) => {
     // Wave 35 review N2c: an admin reset this account; shown once, then dismissed.
     notices: { googleReset: googleResetNotice(user.id) },
     // Wave 25: whether this person sees the Vault module (server/vault/status.ts); Wave 40: the Chat module. UI only (T97).
-    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role) },
+    features: { vault: vaultFeature(user.role), agents: agentsFeature(user.role), chatRoleOff: chatRoleOff(user.role), reports: roleHasReports(user.role) },
     // Wave 39: APP_NAME, as /api/about has it.
     app: { name: config.appName }
   });
@@ -962,6 +969,8 @@ registerVaultRoutes(app);
 registerAgentRoutes(app);
 // Knowledge bases (Wave 44, AC-E): CRUD, sources, Re-index, Try it, and the Access sheet.
 registerKnowledgeRoutes(app);
+// Analytics reports (Wave 45): data sources (admin), the schema catalog, reports, and the SQL console.
+registerReportRoutes(app);
 registerCalendarRoutes(app);
 registerPreferenceRoutes(app);
 registerMailRoutes(app);
@@ -1038,6 +1047,12 @@ try {
   markInterruptedRuns();
 } catch (error) {
   console.error("Agent run sweep failed", errorClass(error));
+}
+// Wave 46: report generation runs the previous process left running are abandoned (unlocking their reports).
+try {
+  abandonGenerateRuns();
+} catch (error) {
+  console.error("Report generation sweep failed", errorClass(error));
 }
 // Wave 44 (AC-E): knowledge sources a restart interrupted go back to the queue, and indexing resumes.
 try {
@@ -1123,6 +1138,14 @@ try {
   console.error("Note and whiteboard attachment backfill failed", errorClass(error));
 }
 startSweeper();
+// Analytics reports (Wave 47): runs a stopped server left behind are abandoned; scheduled refreshes tick once a minute.
+abandonRunsAtBoot();
+startReportScheduler();
+// Wave 48: instructions a stopped server left running fail; queued ones start when their report is free.
+try { failInstructionsAtBoot(); } catch (error) { console.error("Report instruction boot check failed", errorClass(error)); }
+// Reports generated before wave 48 recorded generations: their current spec becomes a version (idempotent).
+try { backfillVersions(); } catch (error) { console.error("Report version backfill failed", errorClass(error)); }
+startInstructionSweep();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
 startServerHeartbeat();
 // Nook key usage counts (D283) are kept in memory and written once a minute.

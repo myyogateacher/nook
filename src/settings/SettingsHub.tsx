@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Bell, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, History, House, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Sparkles, Trash2, Users, UsersRound, type LucideIcon } from "lucide-react";
+import { Bell, BookOpen, Bot, ChevronLeft, ChevronRight, Cpu, Database, History, House, Info, KeyRound, LayoutGrid, LayoutTemplate, Link2, Mail, Scale, Share2, ShieldCheck, Sparkles, Trash2, Users, UsersRound, type LucideIcon } from "lucide-react";
 import { AppPageName } from "../AppShell";
 import { useAppName } from "../appName";
 import { isMobileViewport } from "../mobileNavigation";
@@ -10,7 +10,7 @@ import { HUB_TITLE_ID, type HubEntry, type HubEntryId } from "./hubModel";
 import "./settingsHub.css";
 
 const ICONS: Record<HubEntryId, LucideIcon> = {
-  security: ShieldCheck, notifications: Bell, access: Share2, mcp: KeyRound, agents: Bot, knowledge: BookOpen, ai: Cpu, modules: LayoutGrid, about: Info, bin: Trash2,
+  security: ShieldCheck, notifications: Bell, access: Share2, mcp: KeyRound, agents: Bot, knowledge: BookOpen, ai: Cpu, datasources: Database, modules: LayoutGrid, about: Info, bin: Trash2,
   "team-members": Users, "team-invites": Link2, "team-groups": UsersRound, "team-integrations": Bot, "team-keys": KeyRound,
   "team-policies": Scale, "team-templates": LayoutTemplate, "team-activity": History, "team-email": Mail
 };
@@ -21,7 +21,7 @@ const ICONS: Record<HubEntryId, LucideIcon> = {
  */
 const hintsFor = (name: string): Record<HubEntryId, string> => ({
   security: "Password, two-factor, and Google sign-in", notifications: "Push and email", access: "What others share with you",
-  mcp: "Keys for AI clients and scripts", agents: "Your agents: prompt, model, and steps", knowledge: "Notes and files your agents can search", ai: "Providers, tool servers, and chat policy", modules: `Turn parts of ${name} on or off`, about: "Version and source",
+  mcp: "Keys for AI clients and scripts", agents: "Your agents: prompt, model, and steps", knowledge: "Notes and files your agents can search", ai: "Providers, tool servers, and chat policy", datasources: "ClickHouse connections reports may query", modules: `Turn parts of ${name} on or off`, about: "Version and source",
   bin: "Deleted items, kept for 30 days",
   "team-members": "Everyone on this Nook and their team role", "team-invites": "Links to add people", "team-groups": "Share with a team at once",
   "team-integrations": "Accounts for AI clients and scripts", "team-keys": "Every API key on this Nook", "team-policies": "Key lifetime and where keys work",

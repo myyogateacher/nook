@@ -295,6 +295,18 @@ Whiteboards on Files (Wave 23; plan of record `docs/plan/research/2026-09-28-whi
 - The object lifecycle reaches into Files: the content route serves `whiteboards.object_id`, the sweeper's `hasDocumentRow` and the boot integrity check know scene and snapshot objects, and purge removes them before the rows cascade.
 - Client: `src/whiteboards/`. The list (`WhiteboardsApp.tsx`) and the canvas (`WhiteboardCanvas.tsx`, Excalidraw 0.18.1) are separate lazy chunks, so the main bundle does not carry them. `autosave.ts` is the pure save state machine, `pendingStore.ts` the IndexedDB pending copy, `historyGuard.ts` the pure helpers between Excalidraw, saves, and history. The canvas watches Excalidraw's overlays in the DOM and closes them on Back through the shared dialog guard. `vite.config.ts` copies Excalidraw's fonts to `dist/excalidraw/fonts/`, rewrites its esm.sh font fallback to the same origin, and turns off its copy-as-SVG action, so the CSP stays as it is.
 
+## Analytics reports
+
+Wave 45 (plan of record `docs/plan/WAVES_45-48_REPORTS.md`), in `server/reports/` with routes under `/api/reports` (API_CONTRACTS.md § Analytics reports), migration 050:
+
+- `datasources.ts`: admin-configured ClickHouse endpoints; the password sealed by `server/agents/secrets.ts` (owner `datasource`, under AGENT_SECRETS_KEY); Test connection; the allowlist preview. `allowlist.ts` is the pure glob matcher (and the RE2 form used inside ClickHouse).
+- `clickhouse.ts`: one POST per statement through `server/agents/egress.ts` `egressFetch`, `JSONCompact`, Basic auth, a `nook-…` query id, and the per-query settings that cap time, rows, memory, reads, and threads (`readonly=2`).
+- `sqlGuard.ts` (pure) classifies a statement as select or metadata and refuses anything ambiguous; `runner.ts` checks what the lexer sees against the allowlist, asks `EXPLAIN QUERY TREE` for the authoritative list of tables, wraps selects with `LIMIT max+1`, filters metadata rows, and limits queries per person and per server.
+- `schemaCatalog.ts`: the cached layout of allowlisted tables in `report_schema_tables` with the FTS5 `report_schema_fts`, synced in two bulk reads (or SHOW/DESCRIBE), on save, on Re-sync, daily from the sweeper, and per table on a lookup miss; `schemaTools.ts` holds the six schema tools as plain functions for wave 46's agent.
+- `service.ts`, `access.ts` (owner-only in wave 45), `bin.ts` (Bin provider `report`), `search.ts` (titles), `mcpTools.ts` (`list_reports`, `list_report_datasources`).
+
+Client: `src/reports/` (lazy chunk): `ReportsApp.tsx` routes between `ReportsHome.tsx` (`/reports`) and `ReportPage.tsx` (`/reports/:id`, the SQL console and the `SchemaBrowser.tsx` sheet); `src/reportsRoute.ts` has the Back rules; `src/settings/ReportDataSources.tsx` is Settings → Report data sources (admins, `/settings/datasources`). Sheets use `useHistoryDialogGuard`, so Back closes them first.
+
 ## UI
 
 ### Apps

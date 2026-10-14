@@ -61,6 +61,13 @@ export type ProviderCompat = {
   /** Whether the server sends a final `usage` chunk with `stream_options.include_usage`; off, tokens are estimated. */
   streamUsage: boolean;
   supportsTools: boolean;
+  /**
+   * Wave 46: whether the server takes a named `tool_choice` (`{type:"function", function:{name}}`).
+   * Absent or true: it does; false: Nook sends `required` with only that tool offered.
+   */
+  namedToolChoice?: boolean;
+  /** Wave 46 review L2: whether the server takes `tool_choice: "required"`. Absent or true: it does; false: Nook sends `auto` instead. */
+  requiredToolChoice?: boolean;
   /** The context window, in (estimated) tokens, for the message window. */
   contextTokens: number;
 };
@@ -148,6 +155,14 @@ export type AgentSettings = {
   agentsPerUser: number;
   kbsPerUser: number;
   defaultProviderId: string | null;
+  /**
+   * Wave 48b: "Report generation model", the provider and model report generation (and wave 48's edit
+   * agent) use; null keeps chat's default. A report's owner may override it per report.
+   */
+  reportProviderId: string | null;
+  reportModel: string | null;
+  /** Wave 48b review M1: report owners may type any model name (else only the provider's listed models). */
+  reportModelFreeText: boolean;
 };
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   createRoles: ["admin", "member"],
@@ -159,7 +174,10 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   auditRetentionDays: 30,
   agentsPerUser: 50,
   kbsPerUser: 10,
-  defaultProviderId: null
+  defaultProviderId: null,
+  reportProviderId: null,
+  reportModel: null,
+  reportModelFreeText: false
 };
 
 /** Concurrency (plan §2.2): per instance (env `AGENT_MAX_CONCURRENT_RUNS`), per user, per key, per chat. */
@@ -401,7 +419,8 @@ export const EXTERNAL_BOUNDS = {
   exportMax: 1000
 } as const;
 
-export const AUDIT_VIAS = ["api", "mcp"] as const;
+/** `reports` (Wave 46): a report generation run, the report owner's, with no key. */
+export const AUDIT_VIAS = ["api", "mcp", "reports"] as const;
 export type AuditVia = typeof AUDIT_VIAS[number];
 
 /**

@@ -66,6 +66,8 @@ export type AccessSummary = {
   vaults?: VaultAccessRow[];
   /** Wave 43: agents and chats shared with the person by name or through a group (older servers omit it). */
   chat?: AccessRow[];
+  /** Reports wave 48: reports shared with the person (read-only rows). */
+  reports?: AccessRow[];
   resetCounts: ResetCounts;
   pageSize: number;
 };
@@ -87,7 +89,7 @@ export type AccessSource = {
  */
 export type AccessRow = {
   /** Wave 43: also an agent or a chat (the Chat section). */
-  kind: AccessKind | "agent" | "chat" | "knowledge_base";
+  kind: AccessKind | "agent" | "chat" | "knowledge_base" | "report";
   title: string;
   titleHidden: boolean;
   owner: { id: string; displayName: string };

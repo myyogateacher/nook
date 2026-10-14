@@ -1,0 +1,47 @@
+/* Reports, Wave 46: New report from a doc, the generation step list, and the doc banner. Phones first: 390 px, 44 px tap targets. */
+
+.new-report-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; border: 1px solid #2a2a30; border-radius: 12px; padding: 4px; background: #0f0f12; }
+.new-report-modes button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 9px; background: transparent; color: #b8b8be; font-weight: 650; cursor: pointer; }
+.new-report-modes button svg { width: 16px; height: 16px; }
+.new-report-modes button.is-active { background: #1d1a12; color: #f3d48a; }
+.new-report-modes button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
+.new-report-modes button:disabled { opacity: .5; cursor: default; }
+.new-report-advanced { display: grid; gap: 8px; border: 1px solid #26262b; border-radius: 12px; padding: 0 12px 12px; }
+.new-report-advanced summary { min-height: 44px; display: flex; align-items: center; color: #c9c9ce; cursor: pointer; }
+.new-report-advanced:not([open]) { padding-bottom: 0; }
+
+.report-generation { display: grid; gap: 12px; margin-bottom: 18px; min-width: 0; }
+.generate-progress { display: grid; gap: 10px; border: 1px solid #3a3322; border-radius: 14px; padding: 14px; background: #15140f; min-width: 0; }
+.generate-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.generate-head h2 { margin: 0; display: inline-flex; align-items: center; gap: 8px; color: #f3d48a; font-size: 1rem; }
+.generate-head h2 svg { width: 18px; height: 18px; }
+.generate-head button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+.generate-head button svg { width: 16px; height: 16px; }
+.generate-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.generate-step { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.generate-step-icon { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #1f1f24; color: #b8b8be; }
+.generate-step-icon svg { width: 15px; height: 15px; }
+.generate-step.is-ok .generate-step-icon { background: #15291b; color: #8fd19e; }
+.generate-step.is-failed .generate-step-icon { background: #2d1519; color: #fda4af; }
+.generate-step.is-running .generate-step-icon { color: #f3d48a; }
+.generate-step-body { min-width: 0; flex: 1 1 auto; display: grid; gap: 4px; padding-top: 3px; }
+.generate-step-body strong { color: #ededee; font-size: .88rem; }
+.generate-step-text { color: #9a9aa1; font-size: .8rem; overflow-wrap: anywhere; }
+.generate-step-error { color: #fda4af; font-size: .8rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+.generate-sql { margin: 0; max-height: 160px; overflow: auto; border-radius: 8px; padding: 8px 10px; background: #0d0d0f; color: #d4d4d8; font-size: .76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.generate-note { margin: 0; border-left: 2px solid #3a3322; padding-left: 10px; color: #b8b8be; font-size: .82rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.report-doc-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; border: 1px solid #5a4b25; border-radius: 14px; padding: 10px 14px; background: #1b170d; color: #e8d9ad; }
+.report-doc-banner p { flex: 1 1 220px; margin: 0; overflow-wrap: anywhere; }
+.report-doc-banner button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
+.report-doc-banner svg { width: 16px; height: 16px; }
+.report-doc-banner-icon { color: #e2c46c; display: inline-flex; }
+.report-generation-failed { margin: 0; display: flex; align-items: flex-start; gap: 8px; border: 1px solid #6b2f37; border-radius: 12px; padding: 10px 12px; color: #fda4af; font-size: .86rem; overflow-wrap: anywhere; }
+.report-generation-failed svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.report-doc-actions { align-items: center; }
+.report-doc-source { color: #85858c; font-size: .8rem; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .generate-progress { padding: 12px; }
+  .generate-head button, .report-doc-banner button { flex: 1 1 100%; justify-content: center; }
+}

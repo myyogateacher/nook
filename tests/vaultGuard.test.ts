@@ -49,7 +49,9 @@ test("vault tables stay inside the vault module (D223): no search, Today, or MCP
     // Wave 27 (Vault C): vault keys (their Activity rows and "Keys with access"), their REST routes, and 038.
     "vault/keys.ts", "vault/rest.ts", "migrations/038_vault_keys.ts",
     // Wave 40: 039 rebuilds api_key_grants and re-creates 038's vault-shape trigger verbatim, which names vault_environments.
-    "migrations/039_agent_chat.ts"
+    "migrations/039_agent_chat.ts",
+    // Wave 45: 050 rebuilds api_key_grants the same way.
+    "migrations/050_reports.ts"
   ]);
   const readers = (await sources()).filter(({ path, source }) => !allowed.has(path) && /\bvault_(secrets|values|value_versions|keys|environments|events)\b/.test(source)).map(({ path }) => path);
   expect(readers).toEqual([]);

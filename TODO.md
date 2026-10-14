@@ -25,7 +25,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - Button lint (`scripts/buttonMetrics.ts lint`); the baseline is accepted for screens built before reports.
 
   Open:
-  - [ ] (Lane R, prep on branch `release-0.38.0`; merge, tag and deploy wait for approval) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
+  - [ ] (Lane R: READY on branch `release-0.38.0`, QA passed on real ClickHouse 26.6, 6 QA bugs fixed; WAITING for the operator to approve merge, tag and deploy) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
 - [ ] (Lane I) Reports home gets a left nav of folders: report rows (not cards) grouped by folder; drag a row to another folder (with a keyboard and phone alternative); create a report inside a folder. Requested 2026-10-14.
 - [ ] (Lane I) The Reports "Filter by title" box: when focused it gets a full gold box. Use a soft, muted bottom-border underline instead, with no box and no strong gold. Requested 2026-10-14.
 - [ ] (Lane J) The report page gets a **Versions** button in the header. It shows the version history: who created each version and when, its source (generate, regenerate, an applied instruction with its text, a manual edit, a restore), what changed (blocks and queries added, removed or changed, with a diff), a read-only view of any past version, a compare between two versions, and restore. Requested 2026-10-14.

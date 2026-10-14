@@ -26,6 +26,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
   Open:
   - [ ] (Lane R, prep on branch `release-0.38.0`; merge, tag and deploy wait for approval) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
+- [ ] (Lane I) Reports home gets a left nav of folders: report rows (not cards) grouped by folder; drag a row to another folder (with a keyboard and phone alternative); create a report inside a folder. Requested 2026-10-14.
 - [ ] (Lane E, approved 2026-10-14) Generator reliability: reports that are well formed can still be wrong.
   - [x] E1 eval harness: `scripts/reportEval.ts` and 10 cases in `evals/reports/cases/` (FINAL and soft deletes, refund dates, IST days, join fan-out, funnel, percent as 0–1, linked-page metric, top route, cents, duplicate deliveries); scripted golden and trap specs; a CI subset replayed from recorded fixtures; `--compare`; OPERATIONS "Report generation eval".
   - [ ] E2 result sanity checks (join fan-out, reconciliation, coverage, units).

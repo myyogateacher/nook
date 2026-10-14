@@ -8,6 +8,11 @@ const { inviteEmail, formatExpiry } = await import("../server/team/inviteEmail")
 const { resetInviteRateLimits, hashInviteToken } = await import("../server/team/invites");
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { config, isMailFrom } = await import("../server/config");
+/**
+ * The mail lines of captured logs. The shared test server runs background timers (the reports
+ * scheduler ticks every minute) that may log while a test captures, so a test compares only its own.
+ */
+const mailLines = (lines: string[]) => lines.filter((line) => line.startsWith("Mail "));
 const { captureLogs: captureServerLogs } = await import("../server/log");
 
 type Sent = Parameters<import("../server/mail").MailTransport>[0];
@@ -120,7 +125,7 @@ describe("mail wrapper", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: "Someone@Example.test", from: "Nook <nook@example.test>", subject: "Secret subject", html: "<p>secret</p>" });
     expect(sent[0]!.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
-    expect(logs.lines).toEqual([`Mail sent: purpose=test recipient=${mail.recipientHash("someone@example.test")} id=msg_1`]);
+    expect(mailLines(logs.lines)).toEqual([`Mail sent: purpose=test recipient=${mail.recipientHash("someone@example.test")} id=msg_1`]);
     for (const secret of ["Someone", "example.test", "Secret subject", "secret body", "invite="]) expect(logs.lines.join("\n")).not.toContain(secret);
   });
 
@@ -138,7 +143,7 @@ describe("mail wrapper", () => {
     } finally {
       logs.restore();
     }
-    expect(logs.lines).toEqual([
+    expect(mailLines(logs.lines)).toEqual([
       `Mail failed: purpose=test recipient=${mail.recipientHash("fail@example.test")} error=validation_error status=422`,
       `Mail failed: purpose=test recipient=${mail.recipientHash("slow@example.test")} error=timeout`
     ]);
@@ -160,7 +165,7 @@ describe("mail wrapper", () => {
       logs.restore();
       provider.stop(true);
     }
-    expect(logs.lines).toEqual([`Mail failed: purpose=test recipient=${mail.recipientHash("leak@example.test")} error=validation_error status=422`]);
+    expect(mailLines(logs.lines)).toEqual([`Mail failed: purpose=test recipient=${mail.recipientHash("leak@example.test")} error=validation_error status=422`]);
     for (const secret of ["leak@example.test", "Resend API Error", "re_placeholder"]) expect(logs.lines.join("\n")).not.toContain(secret);
   });
 

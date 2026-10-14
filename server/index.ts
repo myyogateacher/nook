@@ -1,4 +1,6 @@
 import { Hono, type Context } from "hono";
+import { installProcessHooks, log, logger, logSettings } from "./log";
+import { noteRequestError, requestLog } from "./httpLog";
 import { distRoot, serveStaticFile } from "./staticFiles";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
@@ -44,7 +46,7 @@ import { registerVaultRoutes } from "./vault/routes";
 import { registerAgentRoutes } from "./agents/routes";
 import { noteServer, SERVER_IDLE_TIMEOUT_SECONDS } from "./longRequests";
 import { publicShareHeaders, registerPublicChatShareApi } from "./agents/publicRoutes";
-import { agentsFeature, chatRoleOff, initAgentsStatus } from "./agents/status";
+import { agentsFeature, agentsStatus, chatRoleOff, initAgentsStatus } from "./agents/status";
 import { markInterruptedRuns } from "./agents/runs";
 import { registerKnowledgeRoutes } from "./knowledge/routes";
 import { registerReportRoutes } from "./reports/routes";
@@ -57,7 +59,7 @@ import { backfillVersions } from "./reports/versionBackfill";
 import { resumeKnowledgeIndexing } from "./knowledge/index";
 import { sourceAccessChangedHook } from "./knowledge/hooks";
 import { initStdioDeclarations } from "./agents/stdio";
-import { initVaultStatus, vaultFeature } from "./vault/status";
+import { initVaultStatus, vaultFeature, vaultStatus } from "./vault/status";
 import { scheduleRotationRun } from "./vault/rotation";
 import { backfillWhiteboardLinks, reconcileWhiteboardSearchIndex } from "./whiteboards/service";
 import { backfillNoteLinks, resyncNoteLinks } from "./noteAttachments";
@@ -125,14 +127,14 @@ import { checkReauth, consumeRecoveryCode, consumeTotp } from "./reauth";
 /** A two-factor action's body as the shared re-authentication reads it (`code` is the authenticator code). */
 const secondFactorInput = (body: { password?: string; code?: string; recoveryCode?: string }) => ({ password: body.password, totpCode: body.code, recoveryCode: body.recoveryCode });
 
-const app = new Hono<AppEnv>();
+// unhandledRejection and uncaughtException go to the log with their stacks (server/log.ts).
+installProcessHooks();
 
-/** Error class and errno code for logs. Messages can carry paths or constraint text, so they are never logged. */
-function errorClass(error: unknown) {
-  if (!(error instanceof Error)) return "Unknown error";
-  const code = (error as NodeJS.ErrnoException).code;
-  return typeof code === "string" ? `${error.name} (${code})` : error.name;
-}
+const app = new Hono<AppEnv>();
+const storageLog = logger("storage");
+
+// The request log (server/httpLog.ts): first, so its request id and timing cover every other layer.
+app.use("*", requestLog);
 
 function totpState(user: Pick<UserRow, "totp_enabled_at">) {
   const enabled = user.totp_enabled_at !== null;
@@ -986,7 +988,8 @@ app.onError((error, c) => {
   if (error instanceof SyntaxError) return c.json({ error: "Invalid JSON" }, 400);
   // The 046 triggers' backstop for a path that missed its own system-folder check (T342).
   if (isSystemFolderError(error)) return c.json(SYSTEM_FOLDER_BODY, 400);
-  console.error("Request failed", errorClass(error));
+  // The request line (server/httpLog.ts) logs it once at error, with the stack and the request id.
+  noteRequestError(c.req.raw, error);
   return c.json({ error: "Something went wrong" }, 500);
 });
 
@@ -1030,7 +1033,7 @@ async function reconcilePublishedMirrors() {
       await storage.writeCurrentMirror(note.id, markdown);
       if (note.draft_revision === null) await storage.discardDraft(note.id);
     } catch (error) {
-      console.error(`Could not reconcile note ${note.id}`, errorClass(error));
+      logger("notes").error("Could not reconcile a published note", { note: note.id.slice(0, 8), err: error });
     }
   }
 }
@@ -1046,24 +1049,32 @@ initStdioDeclarations();
 try {
   markInterruptedRuns();
 } catch (error) {
-  console.error("Agent run sweep failed", errorClass(error));
+  log.error("Agent run sweep failed", error);
 }
 // Wave 46: report generation runs the previous process left running are abandoned (unlocking their reports).
 try {
   abandonGenerateRuns();
 } catch (error) {
-  console.error("Report generation sweep failed", errorClass(error));
+  log.error("Report generation sweep failed", error);
 }
 // Wave 44 (AC-E): knowledge sources a restart interrupted go back to the queue, and indexing resumes.
 try {
   resumeKnowledgeIndexing();
 } catch (error) {
-  console.error("Knowledge resume failed", errorClass(error));
+  log.error("Knowledge resume failed", error);
 }
 // Migrations ran when ./db loaded: say so loudly when the team has nobody who can manage it.
 warnIfNoActiveAdmin();
 // Wave 39: the effective APP_NAME, so an operator can see the override took.
-console.info(`App name: ${config.appName}${config.appName === DEFAULT_APP_NAME ? " (default)" : " (APP_NAME)"}`);
+log.info(`App name: ${config.appName}${config.appName === DEFAULT_APP_NAME ? " (default)" : " (APP_NAME)"}`);
+// The configuration summary: switches and sizes only, never a secret, a key, or an address.
+log.info("Nook starting", {
+  version: config.appVersion, sha: config.gitSha.slice(0, 12), env: config.isProduction ? "production" : process.env.NODE_ENV ?? "development",
+  port: config.port, storage: config.storage.backend, auth: config.auth.methods, totpPolicy: config.totpPolicy,
+  registration: config.allowRegistration, signupRole: config.signupRole, proxyHops: config.trustedProxyHops,
+  vault: vaultStatus().enabled, agents: agentsStatus().enabled, mail: config.mail.enabled,
+  log: logSettings().level, logFormat: logSettings().format, slowMs: logSettings().slowMs
+});
 // S3 storage slice: where file bytes live. An s3 backend must answer a write, read, and delete under
 // its prefix, and the prefix must belong to this data directory, or the server refuses to start.
 if (config.storage.backend === "s3") {
@@ -1073,78 +1084,81 @@ if (config.storage.backend === "s3") {
     // Every request has its own deadline; the whole check gets one too (review H2), so a silent endpoint exits 1.
     const { clockSkewMs } = await withDeadline(store.probe(), timeoutMs * 4, "probe");
     if (clockSkewMs !== null && Math.abs(clockSkewMs) > CLOCK_SKEW_WARN_MS) {
-      console.warn(`File storage: this host's clock differs from the S3 service's by about ${Math.round(clockSkewMs / 60_000)} minutes. Fix the clock (NTP): S3 refuses requests past 15 minutes, and the orphan sweep's age checks depend on it.`);
+      storageLog.warn(`File storage: this host's clock differs from the S3 service's by about ${Math.round(clockSkewMs / 60_000)} minutes. Fix the clock (NTP): S3 refuses requests past 15 minutes, and the orphan sweep's age checks depend on it.`);
     }
-    if (await withDeadline(claimS3Prefix(store, config.dataDir), timeoutMs * 4, "marker") === "created") console.info("File storage: marked the S3 prefix as this Nook's (.nook-instance)");
+    if (await withDeadline(claimS3Prefix(store, config.dataDir), timeoutMs * 4, "marker") === "created") storageLog.info("File storage: marked the S3 prefix as this Nook's (.nook-instance)");
   } catch (error) {
     const detail = error instanceof StorageUnavailableError
       ? `${error.message}. Check S3_BUCKET, S3_ENDPOINT, S3_REGION, the access key, and that the key may put, get, list, and delete under S3_PREFIX`
       : error instanceof Error ? error.message.replace(/\.$/, "") : "Unknown error";
-    console.error(`File storage check failed: ${detail}. Nook did not start.`);
+    storageLog.error(`File storage check failed: ${detail}. Nook did not start.`, { err: error });
     process.exit(1);
   }
-  console.info(`File storage: s3 bucket ${bucket}${prefix ? ` prefix ${prefix}` : ""} at ${new URL(endpoint).host}`);
+  storageLog.info(`File storage: s3 bucket ${bucket}${prefix ? ` prefix ${prefix}` : ""} at ${new URL(endpoint).host}`);
   // Review N1: claim the prefix again every five minutes (a copy of this data directory started meanwhile
   // is refused while the claim is fresh), and release it on a clean stop so a moved directory may start at once.
   setInterval(() => void fileSweepsAllowed(), PREFIX_REFRESH_MS).unref();
-  let stopping = false;
-  for (const signal of ["SIGTERM", "SIGINT"] as const) {
-    process.on(signal, () => {
-      if (stopping) return;
-      stopping = true;
-      void withDeadline(releaseS3Prefix(objectStore(), config.dataDir), 3_000, "marker")
-        .catch((error) => console.error("File storage: the prefix claim could not be released", error instanceof Error ? error.message : "Unknown error"))
-        .finally(() => process.exit(0));
-    });
-  }
 } else {
-  console.info("File storage: local (DATA_DIR)");
+  storageLog.info("File storage: local (DATA_DIR)");
+}
+// Shutdown: one line, then (on S3) the prefix claim is released so a moved directory may start at once.
+let stopping = false;
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    log.info("Shutting down", { signal, uptimeS: Math.round(process.uptime()) });
+    if (config.storage.backend !== "s3") process.exit(0);
+    void withDeadline(releaseS3Prefix(objectStore(), config.dataDir), 3_000, "marker")
+      .catch((error) => storageLog.error("File storage: the prefix claim could not be released", { err: error }))
+      .finally(() => process.exit(0));
+  });
 }
 // Wave 34 review S1: with proxies trusted but not named, anyone who reaches the app port directly can
 // choose their own X-Forwarded-For. One line, no addresses.
 if (config.trustedProxyHops >= 1 && config.trustedProxyAddresses.length === 0) {
-  console.warn("TRUSTED_PROXY_HOPS is set but TRUSTED_PROXY_ADDRESSES is empty: X-Forwarded-For is trusted from any connection. Publish the port only to the proxy, or set TRUSTED_PROXY_ADDRESSES (see docs/OPERATIONS.md).");
+  log.warn("TRUSTED_PROXY_HOPS is set but TRUSTED_PROXY_ADDRESSES is empty: X-Forwarded-For is trusted from any connection. Publish the port only to the proxy, or set TRUSTED_PROXY_ADDRESSES (see docs/OPERATIONS.md).");
 }
 try {
   await reconcileSearchIndex();
 } catch (error) {
-  console.error("Search index reconcile failed", errorClass(error));
+  log.error("Search index reconcile failed", error);
 }
 try {
   reconcileCollectionSearchIndex();
 } catch (error) {
-  console.error("Collection search index reconcile failed", errorClass(error));
+  log.error("Collection search index reconcile failed", error);
 }
 try {
   await reconcileWhiteboardSearchIndex();
 } catch (error) {
-  console.error("Whiteboard search index reconcile failed", errorClass(error));
+  log.error("Whiteboard search index reconcile failed", error);
 }
 try {
   await reconcileEventNextOccurrences();
 } catch (error) {
-  console.error("Calendar range index reconcile failed", errorClass(error));
+  log.error("Calendar range index reconcile failed", error);
 }
 try {
   reconcileCardExcerpts();
 } catch (error) {
-  console.error("Card excerpt reconcile failed", errorClass(error));
+  log.error("Card excerpt reconcile failed", error);
 }
 // Uploads everywhere U4/U4b: published notes and boards get their derived file links once.
 try {
   await backfillNoteLinks();
   await backfillWhiteboardLinks();
 } catch (error) {
-  console.error("Note and whiteboard attachment backfill failed", errorClass(error));
+  log.error("Note and whiteboard attachment backfill failed", error);
 }
 startSweeper();
 // Analytics reports (Wave 47): runs a stopped server left behind are abandoned; scheduled refreshes tick once a minute.
 abandonRunsAtBoot();
 startReportScheduler();
 // Wave 48: instructions a stopped server left running fail; queued ones start when their report is free.
-try { failInstructionsAtBoot(); } catch (error) { console.error("Report instruction boot check failed", errorClass(error)); }
+try { failInstructionsAtBoot(); } catch (error) { log.error("Report instruction boot check failed", error); }
 // Reports generated before wave 48 recorded generations: their current spec becomes a version (idempotent).
-try { backfillVersions(); } catch (error) { console.error("Report version backfill failed", errorClass(error)); }
+try { backfillVersions(); } catch (error) { log.error("Report version backfill failed", error); }
 startInstructionSweep();
 // Host commands that need the server stopped (vault-admin.ts rotate-kek) look for this heartbeat.
 startServerHeartbeat();
@@ -1153,10 +1167,11 @@ startKeyUsageFlusher();
 try {
   await initPush();
 } catch (error) {
-  console.error("Web Push setup failed; reminders still appear in the app", errorClass(error));
+  log.error("Web Push setup failed; reminders still appear in the app", error);
 }
 startDispatcher();
 startMailDispatcher();
+log.info("Listening", { port: config.port, startupMs: Math.round(performance.now()) });
 
 export default {
   port: config.port,

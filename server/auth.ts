@@ -1,3 +1,4 @@
+import { setLogContext, shortId } from "./log";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Context, Next } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -39,6 +40,7 @@ export class ServiceAccountSignInError extends Error {
  * the account; recordSignIn uses it for the device record, the "New sign-in" mail, and the welcome.
  */
 export async function createSession(c: Context, userId: string, signIn: SignInContext) {
+  setLogContext({ user: shortId(userId) });
   const kind = (db.query("SELECT kind FROM users WHERE id = ?").get(userId) as { kind: string } | null)?.kind;
   if (kind !== "person") throw new ServiceAccountSignInError();
   const token = randomToken();
@@ -104,6 +106,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   }
   c.set("user", { id: row.id, email: row.email, display_name: row.display_name, totp_enabled_at: row.totp_enabled_at, role: row.role });
   c.set("sessionId", row.session_id);
+  setLogContext({ user: shortId(row.id), role: row.role });
   c.set("csrfToken", row.csrf_token);
   db.query("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now(), row.session_id);
   // Recognised devices (migration 044): last seen, and the one-time quiet enrolment of a pre-044 session.

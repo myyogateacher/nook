@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { config } from "./config";
 import { runMigrations } from "./migrations";
+import { logAudit } from "./auditLog";
+import { elapsed, logger } from "./log";
 
 process.umask(0o077);
 mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
@@ -16,7 +18,9 @@ db.exec("PRAGMA busy_timeout = 5000");
 // secret or note does not linger in free pages of the database file (T196).
 db.exec("PRAGMA secure_delete = ON");
 
-runMigrations(db);
+const migrationStart = performance.now();
+const migrationsApplied = runMigrations(db);
+logger("db").info("Database ready", { migrationsApplied, ms: elapsed(migrationStart) });
 
 db.exec("PRAGMA optimize");
 
@@ -174,4 +178,5 @@ export function audit(actorId: string | null, noteId: string | null, eventType: 
   db.query(
     "INSERT INTO audit_log (id, actor_id, note_id, event_type, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
   ).run(crypto.randomUUID(), actorId, noteId, eventType, merged ? JSON.stringify(merged) : null, now());
+  logAudit(actorId, noteId, eventType, merged);
 }

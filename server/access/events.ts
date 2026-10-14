@@ -1,4 +1,5 @@
 import { db, now } from "../db";
+import { logAudit } from "../auditLog";
 
 /**
  * The access activity log (docs/plan/research/2026-09-28-access-management-api-keys.md D288):
@@ -74,6 +75,7 @@ export function recordAccessEvent(event: AccessEvent, timestamp = now()) {
   const meta = event.meta && Object.keys(event.meta).length ? JSON.stringify(event.meta) : null;
   insert.run(crypto.randomUUID(), event.actorId, event.via, event.action, event.targetUserId ?? null, event.groupId ?? null, event.keyId ?? null,
     event.resource?.kind ?? null, event.resource?.id ?? null, meta && meta.length <= 2048 ? meta : null, timestamp);
+  logAudit(event.actorId, null, event.action, { via: event.via, keyId: event.keyId ?? undefined, targetUserId: event.targetUserId ?? undefined, groupId: event.groupId ?? undefined, ...event.meta });
 }
 
 export type AccessEventRow = {

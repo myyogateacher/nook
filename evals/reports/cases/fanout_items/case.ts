@@ -27,6 +27,7 @@ export default {
   },
   trap: {
     fails: ["revenue", "aov", "web_revenue"],
+    sanity: ["fan_out"],
     spec: {
       title: "Shop sales, September 2026",
       queries: [

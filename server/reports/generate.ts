@@ -63,6 +63,8 @@ export const GENERATE_LIMITS = {
   queries: REPORT_LIMITS.queries,
   /** Tries of submit_report: the first and two retries. */
   submits: 3,
+  /** E2: submits the result sanity checks may refuse (each refusal does not use a try). */
+  sanityRounds: 1,
   /** Text answers nudged back to submit_report (providers with only tool_choice auto). */
   nudges: 2,
   /** The doc as the prompt carries it, in bytes. */
@@ -557,6 +559,7 @@ async function executeGeneration(run: Execution) {
   insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook: this run may take ${limits.steps} steps, ${limits.queries} run_sql calls, and ${limits.perRun} tool calls; the doc is ${Math.round(docBytes / 1024)} KB${sectioned ? ", so the prompt carries its outline and first part (read_doc_section reads the rest)" : ""}.]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
   let sqlRuns = 0;
   let submits = 0;
+  let sanityRounds = 0;
   let accepted = false;
   let lastErrors: string[] = [];
   let persistRefused: string | null = null;
@@ -648,7 +651,22 @@ async function executeGeneration(run: Execution) {
           return { text: `Coverage: the document defines about ${signals.metrics} metrics in ${signals.numberedSections} sections with numbers, but this report has ${data.length} data ${data.length === 1 ? "block" : "blocks"}${data.length && data.every((block) => block.type === "table") ? ", all tables" : ""} from ${plannedData} planned data todos. Add todos (add_todo) for the metrics it leaves out, run their queries, and add a block for each in the chart kind its intent routes to (a KPI strip for the headline numbers). Then submit again. This warning comes once and did not use a try.`, ok: false };
         }
         submits += 1;
-        const check = await validateSpec(datasource, raw, { userId, runId, signal: controller.signal });
+        const metricOf = (block: { id: string; queryKey?: string }) => planner.plan?.todos.find((todo) => todo.blockId === block.id)?.metric
+          ?? planner.plan?.todos.find((todo) => todo.queryKey && todo.queryKey === block.queryKey && todo.metric)?.metric ?? null;
+        const check = await validateSpec(datasource, raw, { userId, runId, signal: controller.signal, sanity: { metricOf } });
+        if (check.ok && check.sanity) {
+          // E2: the Runs view shows every round of checks and its extra queries.
+          const sanity = check.sanity;
+          insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook checked the results: ${sanity.checks.length} ${sanity.checks.length === 1 ? "check" : "checks"}, ${sanity.extraQueries} extra ${sanity.extraQueries === 1 ? "query" : "queries"}, ${sanity.hints.length} ${sanity.hints.length === 1 ? "hint" : "hints"}${sanity.hints.length ? `: ${sanity.hints.map((hint) => hint.slice(0, 160)).join(" | ")}` : ""}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+          audit(userId, null, "reports.generate.sanity", { reportId, runId, agentRunId, checks: sanity.checks.length, failed: sanity.checks.filter((item) => !item.ok).map((item) => `${item.check}:${item.target}`).slice(0, 20), extraQueries: sanity.extraQueries, refused: sanity.hints.length > 0 && sanityRounds < GENERATE_LIMITS.sanityRounds });
+          if (sanity.hints.length && sanityRounds < GENERATE_LIMITS.sanityRounds) {
+            sanityRounds += 1;
+            audit(userId, null, "reports.generate.submit", { reportId, runId, agentRunId, ok: false, attempt: submits, errors: sanity.hints.length, sanity: true });
+            submits -= 1;
+            lastErrors = sanity.hints;
+            return { text: `The spec was not saved: its queries ran, but the results look wrong:\n- ${sanity.hints.join("\n- ")}\nFix the queries and call submit_report again. If a result is right as it is, keep it and say why in a markdown block (this did not use a try; these checks refuse once).`, ok: false };
+          }
+        }
         if (!check.ok) {
           lastErrors = check.errors;
           audit(userId, null, "reports.generate.submit", { reportId, runId, agentRunId, ok: false, attempt: submits, errors: check.errors.length });

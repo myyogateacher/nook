@@ -25,6 +25,7 @@ export default {
   },
   trap: {
     fails: ["mrr", "pro_mrr"],
+    sanity: ["units"],
     spec: {
       title: "MRR at the end of September 2026",
       queries: [

@@ -160,3 +160,10 @@ See `docs/plan/THREAT_MODEL.md` § Analytics reports. T356 guard bypass by lexer
 ## Verification
 
 Integration tests that need a real ClickHouse are gated on `CLICKHOUSE_TEST_URL` (`tests/reportsClickhouseLive.test.ts`). QA scenarios (per wave): Test connection warns for a writer; ~1000 tables sync in seconds and search finds the doc's tables; generate and refresh; "doc changed" banner; a malicious doc asking for `url()`/`s3()` is refused; an hourly schedule on a fake clock; ClickHouse killed mid-refresh gives `partial` with a stale badge; the inspect panel matches the chart; per-block and whole refresh; queued instructions and version restore; Back/Forward through every sheet at 390 px; the MCP key scope matrix.
+
+## Lane E: generator reliability (2026-10-14)
+
+Reports that are well formed can still be wrong. In order, each pushed on its own:
+
+- **E1 eval** (`scripts/reportEval.ts`, `evals/reports/`): ten cases (doc, seed of an `eval_<case>` database, expected facts) run through the real generation path and scored on the persisted results; golden and trap specs check the cases themselves; docs/OPERATIONS.md "Report generation eval".
+- **E2 result sanity checks** (`server/reports/sanity.ts`, `sqlShape.ts`): after a submit's queries ran and passed the design rules, `validateSpec` (when the generation asks for it) checks join fan-out (a guarded sample of the joined table's key, FINAL on collapsing engines, at most 4 extra queries), KPI-vs-breakdown reconciliation (same additive expression, or the plan's metric), coverage (holes in a time series, a series that starts or ends inside its literal date range, an empty KPI over a range), and units (percent over 1, a ratio with unit %, cents shown as currency, an all-zero or all-NULL measure). Hints start `sanity <check>:`; they refuse a submit once per run without using a try, and a second submit with the same hints is saved. Each round is a step in Runs (`[Nook checked the results: …]`), an audit entry `reports.generate.sanity`, and one log line per check in the reports scope.

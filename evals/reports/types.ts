@@ -43,7 +43,7 @@ export type EvalCase = {
   /** Doc tools the run may use (the linked-page case): Nook's read_note and search_notes. */
   browseTools?: string[];
   golden: EvalSpec;
-  trap?: { spec: EvalSpec; fails: string[] };
+  trap?: { spec: EvalSpec; fails: string[]; /** The sanity checks (E2) that must refuse its first submit. */ sanity?: string[] };
   /** In the deterministic CI subset (replayed from fixtures.json). */
   ci?: boolean;
 };

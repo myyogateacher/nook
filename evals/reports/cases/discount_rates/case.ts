@@ -26,6 +26,7 @@ export default {
   },
   trap: {
     fails: ["avg_discount", "share"],
+    sanity: ["units"],
     spec: {
       title: "Discounts, September 2026",
       queries: [

@@ -115,6 +115,13 @@ function expectScored(testCase: LoadedCase, golden: CaseResult, trap: CaseResult
   expect({ id: testCase.id, error: golden.error, failing: golden.facts.filter((fact) => !fact.pass) }).toEqual({ id: testCase.id, error: null, failing: [] });
   expect(golden.firstSubmitPass).toBe(true);
   expect(golden.toolCalls).toBeGreaterThan(0);
+  // E2: a golden report never trips a sanity check; a trap that one catches is refused once first.
+  expect({ id: testCase.id, hints: golden.sanityHints }).toEqual({ id: testCase.id, hints: 0 });
+  if (trap && testCase.trap?.sanity) {
+    expect({ id: testCase.id, firstSubmitPass: trap.firstSubmitPass, hinted: trap.sanityHints > 0, retries: trap.retries }).toEqual({ id: testCase.id, firstSubmitPass: false, hinted: true, retries: 1 });
+    const text = (db.query("SELECT group_concat(result_text, ' ') AS text FROM agent_audit_steps WHERE run_id = ? AND tool_name = 'submit_report' AND ok = 0").get(trap.agentRunId) as { text: string }).text;
+    for (const kind of testCase.trap.sanity) expect(text).toContain(`sanity ${kind}:`);
+  }
   if (trap && testCase.trap) {
     expect(trap.runStatus).toBe("succeeded");
     const failed = trap.facts.filter((fact) => !fact.pass).map((fact) => fact.id);

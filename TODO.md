@@ -31,7 +31,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [ ] (Lane J) The report page gets a **Versions** button in the header. It shows the version history: who created each version and when, its source (generate, regenerate, an applied instruction with its text, a manual edit, a restore), what changed (blocks and queries added, removed or changed, with a diff), a read-only view of any past version, a compare between two versions, and restore. Requested 2026-10-14.
 - [ ] (Lane E, approved 2026-10-14) Generator reliability: reports that are well formed can still be wrong.
   - [x] E1 eval harness: `scripts/reportEval.ts` and 10 cases in `evals/reports/cases/` (FINAL and soft deletes, refund dates, IST days, join fan-out, funnel, percent as 0–1, linked-page metric, top route, cents, duplicate deliveries); scripted golden and trap specs; a CI subset replayed from recorded fixtures; `--compare`; OPERATIONS "Report generation eval".
-  - [ ] E2 result sanity checks (join fan-out, reconciliation, coverage, units).
+  - [x] E2 result sanity checks (`server/reports/sanity.ts`): join fan-out (guarded key sample), KPI/breakdown reconciliation, coverage, units; one refusal per run, not a try; Runs step and audit `reports.generate.sanity`. The edit agent and manual edits do not run them yet.
   - [ ] E3 ClickHouse error repair hints.
   - [ ] E4 metric catalog per doc snapshot, with the Metrics view.
   - [ ] E5 model fallback (optional).

@@ -11,6 +11,7 @@ import { queryIdFor } from "./clickhouse";
 import type { DatasourceRow } from "./datasources";
 import { asReportError, ReportError } from "./errors";
 import { runGuarded } from "./runner";
+import { sanityChecks, type SanityContext, type SanityResult } from "./sanity";
 import { parseSpec } from "./service";
 import { backfillVersion } from "./versionBackfill";
 import { nextVersion } from "./versionNumbers";
@@ -165,7 +166,7 @@ export const SPEC_JSON_SCHEMA: Record<string, unknown> = {
 export { isNumericType };
 
 export type SpecCheck =
-  | { ok: true; spec: ReportSpec; results: Map<string, QueryOutcome> }
+  | { ok: true; spec: ReportSpec; results: Map<string, QueryOutcome>; sanity?: SanityResult }
   | { ok: false; errors: string[] };
 
 const MAX_ERRORS = 20;
@@ -624,7 +625,7 @@ function roundTwoRules(block: ChartBlock, result: Rows, say: (rule: number, text
  * The whole check: shape, references, each query run through the guard (selects only), columns, and
  * the design rules. A spec that passes comes back with its auto-fixes recorded.
  */
-export async function validateSpec(row: DatasourceRow, raw: unknown, context: { userId: string; runId: string; signal?: AbortSignal } & DesignOptions): Promise<SpecCheck> {
+export async function validateSpec(row: DatasourceRow, raw: unknown, context: { userId: string; runId: string; signal?: AbortSignal; /** E2: run the result sanity checks (generation). */ sanity?: Pick<SanityContext, "metricOf"> } & DesignOptions): Promise<SpecCheck> {
   const shape = checkSpecShape(raw);
   if (!shape.ok) return shape;
   const spec = shape.spec;
@@ -650,7 +651,9 @@ export async function validateSpec(row: DatasourceRow, raw: unknown, context: { 
   if (errors.length) return { ok: false, errors: errors.slice(0, MAX_ERRORS) };
   const design = checkDesign(spec, results, { changedBlockIds: context.changedBlockIds });
   if (design.errors.length) return { ok: false, errors: design.errors };
-  return { ok: true, spec: design.spec, results };
+  // E2: the results look right? Hints only (the caller decides whether they refuse the submit).
+  const sanity = context.sanity ? await sanityChecks(row, design.spec, results, { userId: context.userId, runId: context.runId, signal: context.signal, metricOf: context.sanity.metricOf }) : undefined;
+  return { ok: true, spec: design.spec, results, ...(sanity ? { sanity } : {}) };
 }
 
 /** A result's rows as stored: at most `storedRows` rows and 2 MiB of JSON (halved until they fit). */

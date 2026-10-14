@@ -22,7 +22,7 @@ export function ArrangeSheet({ report, onClose, reopen, onChanged }: { report: R
   const [sql, setSql] = useState("");
   const [sqlError, setSqlError] = useState<string[] | null>(null);
   const confirm = useConfirm();
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: "reports.changes-arrange" });
   const blocks = report.spec.blocks;
 
   async function save(ops: PatchOp[], done: string) {

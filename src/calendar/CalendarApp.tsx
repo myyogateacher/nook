@@ -6,7 +6,7 @@ import { readHistoryDepth } from "../appShellNavigation";
 import { createCalendarHistoryState, readCalendarHint, type CalendarHint } from "../calendarNavigation";
 import { agendaRoute, calendarBackAction, eventRoute, localDate, monthOf, monthRoute, resolveMonth, shiftMonth, type CalendarRoute } from "../calendarRoute";
 import { ConfirmDialog } from "../files/Dialog";
-import { holdDialogSentinel, offerDialogReopen, popStateClosedDialog } from "../historyDialogs";
+import { holdDialogSentinel, offerDialogReopen, popStateClosedDialog, useLayerOpener } from "../historyDialogs";
 import { formatRoute, parseRoute, type Route } from "../router";
 import { AgendaView } from "./AgendaView";
 import {
@@ -306,7 +306,28 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     else if (sharing) setSharing(null);
     else if (feeds) setFeeds(null);
     else setCalendarsOpen(false);
-  });
+  }, calendarsOpen ? "calendar.calendars" : undefined);
+
+  // H3: Forward after Back went past Calendar and came back reopens the Calendars sheet, then Share or
+  // Subscribe over it (once the calendars have loaded).
+  const pendingCalendarLayer = useRef<{ kind: "share" | "feeds"; id: string } | null>(null);
+  function openCalendarLayer(kind: "share" | "feeds", id: string) {
+    const calendar = calendars?.find((item) => item.id === id);
+    if (!calendar) { pendingCalendarLayer.current = { kind, id }; return; }
+    if (kind === "share") setSharing(calendar);
+    else setFeeds(calendar);
+  }
+  useLayerOpener("calendar.calendars", () => setCalendarsOpen(true));
+  useLayerOpener("calendar.share", (id) => openCalendarLayer("share", id));
+  useLayerOpener("calendar.feeds", (id) => openCalendarLayer("feeds", id));
+  useEffect(() => {
+    const pending = pendingCalendarLayer.current;
+    if (!pending || !calendars) return;
+    pendingCalendarLayer.current = null;
+    const calendar = calendars.find((item) => item.id === pending.id);
+    if (calendar && pending.kind === "share") setSharing(calendar);
+    else if (calendar) setFeeds(calendar);
+  }, [calendars]);
 
   // D479: Share, Subscribe, and Move to Bin replace the Calendars sheet and are a layer of their own,
   // on their own history entry (registered after the guard above, so asked first). Back closes only
@@ -319,7 +340,8 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     else setConfirm(null);
   }, [feeds, sharing]);
   useHistoryDialogGuard(overCalendars, closeOverCalendars, {
-    reopen: sharing ? () => setSharing(sharing) : feeds ? () => setFeeds(feeds) : null
+    reopen: sharing ? () => setSharing(sharing) : feeds ? () => setFeeds(feeds) : null,
+    layerKey: sharing ? `calendar.share:${sharing.id}` : feeds ? `calendar.feeds:${feeds.id}` : undefined
   });
 
   function startCreate(day: string) {

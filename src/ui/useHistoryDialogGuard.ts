@@ -53,7 +53,9 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  */
 export const HistoryDialogReopen = createContext<(() => void) | null>(null);
 
-export function useHistoryDialogGuard(open: boolean, close: () => void, options: { blocked?: boolean; /** null: never reopened, even inside a HistoryDialogReopen owner (a dropdown). */ reopen?: (() => void) | null } = {}) {
+export function useHistoryDialogGuard(open: boolean, close: () => void, options: { blocked?: boolean; /** null: never reopened, even inside a HistoryDialogReopen owner (a dropdown). */ reopen?: (() => void) | null;
+  /** H3: names the layer ("kind" or "kind:id", ids only) so Forward can reopen it after its page remounted (registerLayerOpener). */
+  layerKey?: string } = {}) {
   const ownerReopen = useContext(HistoryDialogReopen);
   const reopenRef = useRef<(() => void) | null>(null);
   reopenRef.current = options.reopen === undefined ? ownerReopen : options.reopen;
@@ -68,7 +70,7 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
-  useDialogSentinel(open);
+  useDialogSentinel(open, options.layerKey);
   // Opened while another guard's undo is in flight (a composer handing Back over to its discard
   // prompt): the entry is the one the undo lands on, so read the depth once it has.
   useEffect(() => open ? whenHistorySettled(() => { depthRef.current = readHistoryDepth(window.history.state); }) : undefined, [open]);

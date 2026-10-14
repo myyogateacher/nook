@@ -22,7 +22,7 @@
 // layer that opens adopts the entry; Forward again does the same for the next layer up. A layer closed
 // any other way (×, Escape, a choice) pops its entry with no reopen, so Forward steps straight back
 // off it (no dead entry).
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { readHistoryDepth, withHistoryDepth } from "./appShellNavigation";
 
 /** Receives the state of the entry the browser moved to; returns true when it closed a dialog. */
@@ -42,6 +42,8 @@ let suppressUndo = 0;
 let closingFromSentinel = false;
 let offeredReopen: (() => void) | null = null;
 const REOPEN_CHECK_MS = 300;
+// A layer reopened by its key may wait for its page to mount and load (H3): a longer check.
+const KEYED_REOPEN_CHECK_MS = 2500;
 
 /**
  * Called by a guard as it closes its layer: when that close came from Back off the layer's sentinel,
@@ -107,6 +109,7 @@ export function popStateClosedDialog(event: { state?: unknown }) {
       armLayers();
     } else {
       forwardReopens.set(top.id, reopen);
+      if (top.key) rememberBackClosed(top.id, top.key, top.depth);
     }
     consumed.add(event);
     return true;
@@ -124,20 +127,25 @@ export function popStateClosedDialog(event: { state?: unknown }) {
     // A sentinel whose layer is closed (Forward onto it): reopen that layer on it, or step back off it.
     consumed.add(event);
     const reopen = id === null ? null : forwardReopens.get(id) ?? null;
-    if (id !== null) forwardReopens.delete(id);
+    const key = id === null ? null : backClosed.get(id)?.key ?? null;
+    if (id !== null) { forwardReopens.delete(id); backClosed.delete(id); }
     const history = lastEnv?.history ?? window.history;
-    if (reopen && id !== null) {
+    if (id !== null && (reopen || key)) {
       const adopt = { id, depth: readHistoryDepth(event.state), history };
       adopting = adopt;
-      reopen();
+      // The owner still mounted shows the layer itself; after the page remounted (Back went past
+      // it, then Forward came back), the layer's key finds whoever opens it now (H3).
+      if (reopen) reopen();
+      else openByKey(key!);
       // The owner is gone (or showed nothing): step back off the sentinel after all.
       setTimeout(() => {
         if (adopting !== adopt) return;
         adopting = null;
+        if (pendingOpen?.key === key) pendingOpen = null;
         if (layerIdOf(history.state) !== id) return;
         ignoreNextPop();
         history.back();
-      }, REOPEN_CHECK_MS);
+      }, reopen ? REOPEN_CHECK_MS : KEYED_REOPEN_CHECK_MS);
     } else {
       ignoreNextPop();
       history.back();
@@ -264,14 +272,67 @@ export function dialogSentinelState(state: unknown, id?: string) {
 type SentinelHistory = Pick<History, "state" | "pushState" | "back"> & Partial<Pick<History, "go" | "replaceState">>;
 type SentinelEnv = { history: SentinelHistory; href: () => string; landingDepth: () => number };
 /** One sentinel entry this page pushed and still holds, bottom to top in `held`. */
-type Entry = { id: string; depth: number; env: SentinelEnv; released: boolean };
+type Entry = { id: string; depth: number; env: SentinelEnv; released: boolean; key?: string };
 /** One open guarded layer, in the order they opened, and the sentinel it sits on (if any). */
-type Layer = { env: SentinelEnv; entry: Entry | null };
+type Layer = { env: SentinelEnv; entry: Entry | null; key?: string };
 
 const layers: Layer[] = [];
 const held: Entry[] = [];
 // The forward entries Back closed layers off: sentinel id → the reopen its layer offered (or null).
 const forwardReopens = new Map<string, (() => void) | null>();
+
+// H3: the layers Back closed, by sentinel id, with the layer's key ("kind" or "kind:id"; never data
+// beyond ids) and the sentinel's depth. Unlike `forwardReopens` it outlives the page that owned the
+// layers: Back past the page and Forward again remounts it, and the key finds the opener mounted
+// now (registerLayerOpener). Kept in module memory for this document only, capped, and cleared by
+// an explicit close and by any push (which drops the forward entries).
+const MAX_BACK_CLOSED = 50;
+const backClosed = new Map<string, { key: string; depth: number }>();
+const openers = new Map<string, (arg: string) => void>();
+// A key Forward is reopening whose opener has not mounted yet (the page is still loading).
+let pendingOpen: { key: string } | null = null;
+
+function rememberBackClosed(id: string, key: string, depth: number) {
+  backClosed.delete(id);
+  backClosed.set(id, { key, depth });
+  while (backClosed.size > MAX_BACK_CLOSED) backClosed.delete(backClosed.keys().next().value!);
+}
+
+function forgetBackClosedAbove(depth: number) {
+  for (const [id, record] of backClosed) if (record.depth > depth) backClosed.delete(id);
+}
+
+const kindOf = (key: string) => key.split(":", 1)[0]!;
+const argOf = (key: string) => key.includes(":") ? key.slice(key.indexOf(":") + 1) : "";
+
+function openByKey(key: string) {
+  const open = openers.get(kindOf(key));
+  if (open) open(argOf(key));
+  else pendingOpen = { key };
+}
+
+/**
+ * Registers how the component mounted now opens the layers of one kind (H3), e.g. the report page
+ * for "reports.changes", the Changes panel for "reports.versions". Forward onto the sentinel of a
+ * layer Back closed calls it with the key's id part when the owner that offered the reopen is gone.
+ * Returns the unregister function.
+ */
+export function registerLayerOpener(kind: string, open: (arg: string) => void) {
+  openers.set(kind, open);
+  if (pendingOpen && kindOf(pendingOpen.key) === kind) {
+    const { key } = pendingOpen;
+    pendingOpen = null;
+    open(argOf(key));
+  }
+  return () => { if (openers.get(kind) === open) openers.delete(kind); };
+}
+
+/** registerLayerOpener while mounted. */
+export function useLayerOpener(kind: string, open: (arg: string) => void) {
+  const openRef = useRef(open);
+  openRef.current = open;
+  useEffect(() => registerLayerOpener(kind, (arg) => openRef.current(arg)), [kind]);
+}
 // Forward landed on a closed layer's sentinel and called its reopen: the next layer to open takes it.
 let adopting: { id: string; depth: number; history: SentinelHistory } | null = null;
 // Sentinels an in-app navigation left below the one it replaced (takeDialogSentinelEntry).
@@ -308,7 +369,7 @@ function armLayer(layer: Layer) {
   const state = history.state;
   const id = layerIdOf(state);
   if (adopting && id === adopting.id && history === adopting.history) {
-    const entry: Entry = { id, depth: adopting.depth, env: layer.env, released: false };
+    const entry: Entry = { id, depth: adopting.depth, env: layer.env, released: false, key: layer.key };
     adopting = null;
     held.push(entry);
     layer.entry = entry;
@@ -318,8 +379,10 @@ function armLayer(layer: Layer) {
   const top = held[held.length - 1];
   const overTop = top !== undefined && id === top.id && readHistoryDepth(state) === top.depth;
   if (top ? !overTop : !needsDialogSentinel(state, { landingDepth: layer.env.landingDepth(), active: false })) return;
-  const entry: Entry = { id: newLayerId(), depth: readHistoryDepth(state) + 1, env: layer.env, released: false };
+  const entry: Entry = { id: newLayerId(), depth: readHistoryDepth(state) + 1, env: layer.env, released: false, key: layer.key };
   history.pushState(dialogSentinelState(state, entry.id), "", layer.env.href());
+  // The push dropped every forward entry, and with them the layers Back had closed.
+  backClosed.clear();
   held.push(entry);
   layer.entry = entry;
   lastEnv = layer.env;
@@ -345,6 +408,8 @@ function scheduleRelease() {
     const { history } = top.env;
     const onTop = layerIdOf(history.state) === top.id;
     held.splice(held.length - count, count);
+    // Closed by ×, Escape, or a choice: nothing above the entry under it is reopened any more (H3).
+    forgetBackClosedAbove(top.depth - count);
     // An in-app navigation (or a move) went past the sentinels: they are ordinary entries now.
     if (!onTop) return;
     ignoreNextPop();
@@ -367,6 +432,7 @@ export function takeDialogSentinelEntry(state: unknown) {
   held.length = 0;
   for (const layer of layers) layer.entry = null;
   forwardReopens.clear();
+  backClosed.clear();
   return true;
 }
 
@@ -394,8 +460,8 @@ export function afterDialogsReleased(callback: () => void, schedule: (step: () =
  * sentinel, pushes its own sentinel; the returned release pops it once the dialog closed by any means
  * other than Back. The pop waits a tick so a dialog that replaces another keeps the same sentinel.
  */
-export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv()) {
-  const layer: Layer = { env, entry: null };
+export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(), key?: string) {
+  const layer: Layer = { env, entry: null, key };
   layers.push(layer);
   const top = held[held.length - 1];
   // A dialog replacing one that closed this tick takes over its sentinel.
@@ -430,6 +496,9 @@ export function resetHistoryDialogsForTests() {
   layers.length = 0;
   held.length = 0;
   forwardReopens.clear();
+  backClosed.clear();
+  openers.clear();
+  pendingOpen = null;
   stranded.clear();
   adopting = null;
   ignoring = 0;
@@ -448,8 +517,10 @@ export function defaultSentinelEnv(): SentinelEnv {
 }
 
 /** Holds a sentinel while `open` when the dialog opened on the landing entry or over another layer's (see acquireDialogSentinel). */
-export function useDialogSentinel(open: boolean) {
-  useEffect(() => open ? acquireDialogSentinel(defaultSentinelEnv()) : undefined, [open]);
+export function useDialogSentinel(open: boolean, key?: string) {
+  const keyRef = useRef(key);
+  keyRef.current = key;
+  useEffect(() => open ? acquireDialogSentinel(defaultSentinelEnv(), keyRef.current) : undefined, [open]);
 }
 
 if (typeof window !== "undefined" && window.history) {

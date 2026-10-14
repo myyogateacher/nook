@@ -17,7 +17,7 @@ mock.module("../src/reports/charts", () => ({ default: () => <div className="moc
 const { ChangesPanel } = await import("../src/reports/ChangesPanel");
 type ChangesSheet = import("../src/reports/ChangesPanel").ChangesSheet;
 const { HistoryDialogReopen, newLayerReopenMemory, useHistoryDialogGuard } = await import("../src/ui/useHistoryDialogGuard");
-const { isDialogSentinelState, popStateClosedDialog, resetHistoryDialogsForTests } = await import("../src/historyDialogs");
+const { isDialogSentinelState, popStateClosedDialog, resetHistoryDialogsForTests, useLayerOpener } = await import("../src/historyDialogs");
 afterEach(() => { resetHistoryDialogsForTests(); });
 const { ModalDialog } = await import("../src/files/Dialog");
 const { Select } = await import("../src/ui/Select");
@@ -49,15 +49,39 @@ function usePopState(routes: string[]) {
 }
 
 /** ReportPage's part: the Changes panel, its reopen, and the memory of the sheet over it. */
-function ReportHost({ routes }: { routes: string[] }) {
-  usePopState(routes);
+function ReportHost({ routes, routed = false }: { routes: string[]; routed?: boolean }) {
+  if (!routed) usePopState(routes);
   const [changes, setChanges] = useState<{ blockId: string | null } | null>(null);
   const last = useRef<{ blockId: string | null }>({ blockId: null });
   const sheet = useRef(newLayerReopenMemory<ChangesSheet>());
+  // As ReportPage: H3's opener, for Forward after Back went past the page.
+  useLayerOpener("reports.changes", (blockId) => { last.current = { blockId: blockId || null }; setChanges(last.current); });
   return <>
     <button type="button" onClick={() => { last.current = { blockId: null }; setChanges({ blockId: null }); }}>Changes</button>
     {changes && <ChangesPanel report={REPORT} initialBlockId={null} onClose={() => setChanges(null)} reopen={() => setChanges(last.current)} sheetMemory={sheet} onReportChanged={() => undefined} />}
   </>;
+}
+
+/** Reports list ↔ report as routes: a route popstate remounts the report page, as the app does. */
+function RoutedReports({ routes }: { routes: string[] }) {
+  const [route, setRoute] = useState(() => String((window.history.state as Record<string, unknown> | null)?.route ?? "list"));
+  const [mounts, setMounts] = useState(0);
+  useEffect(() => {
+    const onPop = (event: PopStateEvent) => {
+      if (popStateClosedDialog(event)) return;
+      routes.push("route");
+      setRoute(String((event.state as Record<string, unknown> | null)?.route ?? "list"));
+      setMounts((count) => count + 1);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [routes]);
+  const open = () => {
+    const depth = Number((window.history.state as Record<string, unknown> | null)?.["mynotes.depth"] ?? 0);
+    window.history.pushState({ route: "report", "mynotes.depth": depth + 1 }, "", `/reports/${REPORT.id}`);
+    setRoute("report");
+  };
+  return route === "report" ? <ReportHost key={mounts} routes={routes} routed /> : <button type="button" onClick={open}>Open report</button>;
 }
 
 const titles = () => [...document.querySelectorAll('[role="dialog"] h2')].map((node) => node.textContent);
@@ -86,6 +110,42 @@ async function openReport() {
 }
 
 describe("Reports: Changes → Versions → Restore confirm (D478)", () => {
+  test("Back ×3 past the report to the list, then Forward ×3: the report, Changes, then Versions come back (H3)", async () => {
+    const routes: string[] = [];
+    mockApi(reportRoutes());
+    const depth = Number((window.history.state as Record<string, unknown> | null)?.["mynotes.depth"] ?? 0);
+    window.history.pushState({ route: "list", "mynotes.depth": depth + 1 }, "", "/reports");
+    const view = await render(<RoutedReports routes={routes} />);
+    await view.click(view.button("Open report")!);
+    await view.click(view.button("Changes")!);
+    await view.waitFor(() => view.button("Versions"));
+    await view.click(view.button("Versions")!);
+    await view.waitFor(() => view.button("Restore"));
+    const length = window.history.length;
+    await browser(view, "back");
+    await browser(view, "back");
+    expect(titles()).toEqual([]);
+    await browser(view, "back");
+    expect(view.button("Open report")).not.toBeNull();
+    expect(routes).toEqual(["route"]);
+    await browser(view, "forward");
+    expect(view.button("Changes")).not.toBeNull();
+    expect(titles()).toEqual([]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 1);
+    expect(titles()).toEqual(["Changes"]);
+    await browser(view, "forward");
+    await view.waitFor(() => view.button("Restore"));
+    expect(titles()).toEqual(["Changes", "Versions"]);
+    expect(window.history.length).toBe(length);
+    expect(routes).toEqual(["route", "route"]);
+    // Back still closes one layer at a time, and the report stays.
+    await browser(view, "back");
+    await browser(view, "back");
+    expect(titles()).toEqual([]);
+    expect(view.button("Changes")).not.toBeNull();
+  });
+
   test("reached in-app (a pushed entry, D479): Back closes Versions, then Changes, staying on the report; Forward reopens both", async () => {
     // Home → Reports → the report, as navigate() pushes them: one level deeper each.
     const depth = Number((window.history.state as Record<string, unknown> | null)?.["mynotes.depth"] ?? 0);

@@ -31,7 +31,7 @@ export function ShareSheet({ reportId, title, onClose, reopen, link, copyFailed 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const name = useId();
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: "reports.share" });
 
   useEffect(() => {
     let alive = true;

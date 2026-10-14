@@ -46,7 +46,8 @@ export function guardDialogPop(openDepth: number, poppedState: unknown, onBack: 
  * `onBack(true)` must close everything and the route handlers follow the browser, unless it
  * returns "keep": then the dialog stays and its URL is restored with replaceState.
  */
-export function useDialogBackGuard(active: boolean, onBack: OnBack) {
+/** `layerKey` (H3): names the layer for registerLayerOpener, so Forward reopens it after the page remounted. */
+export function useDialogBackGuard(active: boolean, onBack: OnBack, layerKey?: string) {
   const activeRef = useRef(active);
   activeRef.current = active;
   const onBackRef = useRef(onBack);
@@ -59,7 +60,7 @@ export function useDialogBackGuard(active: boolean, onBack: OnBack) {
     openEntryRef.current = { url: `${window.location.pathname}${window.location.search}${window.location.hash}`, state: window.history.state };
   }
   wasActiveRef.current = active;
-  useDialogSentinel(active);
+  useDialogSentinel(active, layerKey);
   useEffect(() => registerHistoryDialogGuard((poppedState) => {
     if (!activeRef.current) return false;
     return guardDialogPop(depthRef.current, poppedState, (forced) => onBackRef.current(forced), () => {

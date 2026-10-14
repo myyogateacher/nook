@@ -54,7 +54,7 @@ export function ProposalSheet({ report, instructionId, instruction, canApply, on
   const [busy, setBusy] = useState<"apply" | "reject" | null>(null);
   const palette = useChartPalette();
   const cssVars = useMemo(() => reportCssVariables(palette.mode) as React.CSSProperties, [palette.mode]);
-  useHistoryDialogGuard(true, onClose, { blocked: busy !== null, reopen });
+  useHistoryDialogGuard(true, onClose, { blocked: busy !== null, reopen, layerKey: `reports.changes-proposal:${instructionId}` });
   useEffect(() => {
     let alive = true;
     getProposal(report.id, instructionId).then(({ proposal: next }) => { if (alive) setProposal(next); }).catch((reason) => { if (alive) setError(messageOf(reason, "Could not load the proposal")); });

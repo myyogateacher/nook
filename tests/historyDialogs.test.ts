@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, holdDialogSentinel, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, resetHistoryDialogsForTests, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, holdDialogSentinel, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, registerLayerOpener, resetHistoryDialogsForTests, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
 import { createDialogGuard } from "../src/ui/useHistoryDialogGuard";
 import { guardDialogPop } from "../src/calendar/hooks";
 import { readHistoryDepth, withHistoryDepth } from "../src/appShellNavigation";
@@ -975,4 +975,158 @@ test("inspect tab entries over a nested sentinel stay with the inspect guard (D4
   unregister();
   sheet.close();
   await settleAll(harness);
+});
+
+// H3: Back past the page and Forward again remounts the page; the layers' keys reopen them in order.
+
+/** A keyed layer as a page mounts it: its sentinel carries the key; closing offers no live reopen (the owner is gone after a remount). */
+function keyedLayer(harness: ReturnType<typeof twoWayHistory>, name: string, key: string, log: string[]) {
+  let open = false;
+  let teardown: (() => void) | null = null;
+  const unmount = () => { teardown?.(); teardown = null; };
+  const show = () => {
+    if (open) return;
+    open = true;
+    log.push(`open ${name}`);
+    const release = acquireDialogSentinel(harness.env, key);
+    const unregister = registerHistoryDialogGuard(createDialogGuard({
+      isOpen: () => open, markClosed: () => { open = false; }, close: () => { log.push(`close ${name}`); queueMicrotask(unmount); },
+      openDepth: () => 0, undo: (direction) => undoDialogPop(direction, (delta) => harness.history.go(delta))
+    }));
+    teardown = () => { release(); unregister(); };
+  };
+  return { show, isOpen: () => open, close: () => { if (!open) return; open = false; log.push(`× ${name}`); unmount(); } };
+}
+
+/** A page with two nested keyed layers; mounting registers the openers, as ReportPage and ChangesPanel (or BoardView) do. */
+function keyedPage(harness: ReturnType<typeof twoWayHistory>, keys: [string, string], log: string[]) {
+  const outer = keyedLayer(harness, keys[0], keys[0], log);
+  const inner = keyedLayer(harness, keys[1], keys[1], log);
+  let unregister: Array<() => void> = [];
+  return {
+    outer, inner,
+    mount() { unregister = [registerLayerOpener(keys[0].split(":")[0]!, () => outer.show()), registerLayerOpener(keys[1].split(":")[0]!, () => inner.show())]; },
+    unmount() { for (const off of unregister) off(); unregister = []; outer.close(); inner.close(); }
+  };
+}
+
+for (const [label, keys] of [
+  ["Reports: report → Changes → Versions", ["reports.changes:", "reports.changes-versions"]],
+  ["Tasks: board → Board settings → Share", ["tasks.board-settings", "tasks.settings-layer:share"]]
+] as const) {
+  test(`${label}, Back ×3 to the list, Forward ×3: the page comes back, then each layer in order (H3)`, async () => {
+    const list = { route: "list", "mynotes.depth": 1 };
+    const page = { route: "page", "mynotes.depth": 2 };
+    const harness = twoWayHistory(list);
+    harness.history.pushState(page);
+    const log: string[] = [];
+    let shown = keyedPage(harness, [...keys], log);
+    shown.mount();
+    shown.outer.show();
+    shown.inner.show();
+    expect(harness.entries).toHaveLength(4);
+    // Back closes the inner layer, then the outer one, then leaves the page for the list (a route move).
+    harness.history.back();
+    expect(harness.deliver()).toBe(true);
+    await settleAll(harness);
+    harness.history.back();
+    expect(harness.deliver()).toBe(true);
+    await settleAll(harness);
+    harness.history.back();
+    expect(harness.deliver()).toBe(false);
+    shown.unmount();
+    expect(harness.index()).toBe(0);
+    // Forward: the route shows the page again (a new instance), then each layer by its key.
+    harness.history.forward();
+    expect(harness.deliver()).toBe(false);
+    shown = keyedPage(harness, [...keys], log);
+    shown.mount();
+    harness.history.forward();
+    expect(harness.deliver()).toBe(true);
+    await settleAll(harness);
+    expect([shown.outer.isOpen(), shown.inner.isOpen()]).toEqual([true, false]);
+    expect(harness.index()).toBe(2);
+    harness.history.forward();
+    expect(harness.deliver()).toBe(true);
+    await settleAll(harness);
+    expect([shown.outer.isOpen(), shown.inner.isOpen()]).toEqual([true, true]);
+    expect(harness.index()).toBe(3);
+    // No entry was added on the way: the layers took their old entries back.
+    expect(harness.entries).toHaveLength(4);
+    // And Back still closes one layer at a time.
+    harness.history.back();
+    harness.deliver();
+    await settleAll(harness);
+    expect([shown.outer.isOpen(), shown.inner.isOpen()]).toEqual([true, false]);
+    shown.unmount();
+    await settleAll(harness);
+  });
+}
+
+test("a keyed layer whose opener mounts late (the page still loading) is reopened once it does (H3)", async () => {
+  const harness = twoWayHistory({ route: "page", "mynotes.depth": 1 });
+  const log: string[] = [];
+  const first = keyedPage(harness, ["reports.changes:", "reports.changes-versions"], log);
+  first.mount();
+  first.outer.show();
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  first.unmount();
+  const second = keyedPage(harness, ["reports.changes:", "reports.changes-versions"], log);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await Bun.sleep(50);
+  expect(second.outer.isOpen()).toBe(false);
+  second.mount();
+  await settleAll(harness);
+  expect(second.outer.isOpen()).toBe(true);
+  expect(harness.index()).toBe(1);
+  second.unmount();
+  await settleAll(harness);
+});
+
+test("an explicit close forgets the keys above it: Forward steps back off those entries (H3)", async () => {
+  const harness = twoWayHistory({ route: "page", "mynotes.depth": 1 });
+  const log: string[] = [];
+  const shown = keyedPage(harness, ["reports.changes:", "reports.changes-versions"], log);
+  shown.mount();
+  shown.outer.show();
+  shown.inner.show();
+  // Back closes Versions (remembered), then × closes Changes: nothing above the page is reopened.
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  shown.outer.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(0);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect([shown.outer.isOpen(), shown.inner.isOpen()]).toEqual([false, false]);
+  expect(harness.index()).toBe(0);
+  shown.unmount();
+});
+
+test("the sentinel state holds no layer key or data: only the dialog hint, its id, and the depth (H3)", () => {
+  const harness = twoWayHistory({ route: "page", "mynotes.depth": 1 });
+  const shown = keyedPage(harness, ["reports.changes-proposal:11111111-1111-4111-8111-111111111111", "x"], []);
+  shown.outer.show();
+  const state = harness.history.state as Record<string, unknown>;
+  expect(Object.keys(state).sort()).toEqual(["mynotes.depth", "mynotes.dialog", "mynotes.layer", "route"]);
+  shown.unmount();
+});
+
+test("the report page, the Changes panel, Tasks' Board settings, and Calendar register their layers' openers (H3)", async () => {
+  const read = (file: string) => Bun.file(new URL(file, import.meta.url)).text();
+  const page = await read("../src/reports/ReportPage.tsx");
+  expect(page).toContain(`useLayerOpener("reports.changes", (blockId) => openChanges(blockId || null));`);
+  const panel = await read("../src/reports/ChangesPanel.tsx");
+  expect(panel).toContain("layerKey: `reports.changes:${initialBlockId ?? \"\"}`");
+  expect(panel).toContain(`useLayerOpener("reports.changes-versions", () => openSheet({ kind: "versions" }));`);
+  const board = await read("../src/tasks/BoardView.tsx");
+  expect(board).toContain(`useLayerOpener("tasks.board-settings", () => setDialog({ kind: "settings" }));`);
+  expect(board).toContain("layerKey: overSettings && dialog.kind !== \"deleteBoard\" ? `tasks.settings-layer:${dialog.kind}` : undefined");
+  const calendar = await read("../src/calendar/CalendarApp.tsx");
+  expect(calendar).toContain(`useLayerOpener("calendar.share", (id) => openCalendarLayer("share", id));`);
 });

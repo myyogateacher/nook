@@ -66,6 +66,7 @@ import {
   type CardSummary
 } from "./tasksApi";
 import { useHistoryDialogGuard } from "./useHistoryDialogGuard";
+import { useLayerOpener } from "../historyDialogs";
 
 type BoardViewProps = {
   userId: string;
@@ -187,7 +188,15 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
   const overSettingsNow = dialog !== null && "overSettings" in dialog && dialog.overSettings === true;
   const lastSettingsLayerRef = useRef<BoardDialog | null>(null);
   if (overSettingsNow && dialog.kind !== "deleteBoard") lastSettingsLayerRef.current = dialog;
-  useHistoryDialogGuard(dialog !== null, closeDialog, { reopen: dialog?.kind === "settings" || overSettingsNow ? () => setDialog({ kind: "settings" }) : null });
+  useHistoryDialogGuard(dialog !== null, closeDialog, {
+    reopen: dialog?.kind === "settings" || overSettingsNow ? () => setDialog({ kind: "settings" }) : null,
+    layerKey: dialog?.kind === "settings" ? "tasks.board-settings" : undefined
+  });
+  // H3: Forward after Back went past the board and came back reopens Board settings and the layer over it.
+  useLayerOpener("tasks.board-settings", () => setDialog({ kind: "settings" }));
+  useLayerOpener("tasks.settings-layer", (kind) => {
+    if (kind === "rename" || kind === "share" || kind === "addColumn") setDialog({ kind, overSettings: true });
+  });
 
   // Rename, Share, Add column, and Move to Bin opened from Board settings are a layer above it: the
   // settings sheet stays mounted (its unsaved structure draft too), and closing the layer by Back,
@@ -202,7 +211,8 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     if (target) window.setTimeout(() => { if (target.isConnected) target.focus(); }, 0);
   }, []);
   useHistoryDialogGuard(overSettings, backToSettings, {
-    reopen: dialog?.kind === "deleteBoard" ? null : () => { if (lastSettingsLayerRef.current) setDialog(lastSettingsLayerRef.current); }
+    reopen: dialog?.kind === "deleteBoard" ? null : () => { if (lastSettingsLayerRef.current) setDialog(lastSettingsLayerRef.current); },
+    layerKey: overSettings && dialog.kind !== "deleteBoard" ? `tasks.settings-layer:${dialog.kind}` : undefined
   });
   const openOverSettings = (kind: "rename" | "share" | "addColumn" | "deleteBoard") => {
     settingsChildOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;

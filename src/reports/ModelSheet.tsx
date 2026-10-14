@@ -25,7 +25,7 @@ export function effectiveModelText(view: Pick<ReportModelView, "effective">): st
  * Back closes it (useHistoryDialogGuard), 44 px controls.
  */
 export function ModelSheet({ reportId, onClose, reopen }: { reportId: string; onClose: () => void; /** Forward after Back shows the sheet again. */ reopen?: () => void }) {
-  useHistoryDialogGuard(true, onClose, { reopen });
+  useHistoryDialogGuard(true, onClose, { reopen, layerKey: "reports.model" });
   const [view, setView] = useState<ReportModelView | null>(null);
   const [providerId, setProviderId] = useState("");
   const [model, setModel] = useState("");

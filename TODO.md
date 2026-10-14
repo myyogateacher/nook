@@ -37,7 +37,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - [ ] E5 model fallback (optional).
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] (Lane E, small) `server/reports/edit.ts`'s prompt still says "Use concat, not format()"; the string function `format()` is allowed now (only the table function is refused), so drop that sentence when next touching the file.
-- [ ] Forward after moving Back past a page (e.g. report → Reports list → Forward to the report) does not reopen the sheets that were open on it: route moves drop the remembered reopens, and the page remounts. Reopening them would need the page to restore its sheets from the entry (D479).
 
 ## Known LOW leftovers
 

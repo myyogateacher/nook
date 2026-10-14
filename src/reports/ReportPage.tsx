@@ -8,6 +8,7 @@ import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
 import { newLayerReopenMemory, useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useLayerOpener } from "../historyDialogs";
 import { REPORT_LIMITS, type DatasourceChoice, type QueryOutcome, type ReportDetail } from "../../shared/reports";
 import { cancelConsole, cellText, codeOf, countLabel, datasourceChoices, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
 import { NewReportSheet } from "./NewReportSheet";
@@ -87,6 +88,12 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const versionsMemory = useRef(newVersionsMemory());
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
+  // H3: the page's sheets by key, so Forward reopens them after Back went past the page and came back.
+  useLayerOpener("reports.changes", (blockId) => openChanges(blockId || null));
+  useLayerOpener("reports.versions", () => setVersionsOpen(true));
+  useLayerOpener("reports.share", () => setSharing({ copyFailed: false }));
+  useLayerOpener("reports.runs", (runId) => openRuns(runId || null));
+  useLayerOpener("reports.model", () => setModelOpen(true));
   // The header's actions that live in the viewer and the generation part (reportCommands.tsx).
   const [commands, setCommands] = useState<ReportCommands>({});
   const registry = useMemo(() => ({ set: (part: Partial<ReportCommands>) => setCommands((current) => ({ ...current, ...part })) }), []);
@@ -262,7 +269,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     <ReportRunsContext.Provider value={report?.isOwner ? openRuns : null}>
       {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
         reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} onReportChanged={reloadReport} />}
-      {versionsOpen && report && <VersionsSheet report={report} canRestore={ownerWrite} onClose={() => setVersionsOpen(false)} reopen={() => setVersionsOpen(true)} memory={versionsMemory.current}
+      {versionsOpen && report && <VersionsSheet report={report} canRestore={ownerWrite} onClose={() => setVersionsOpen(false)} reopen={() => setVersionsOpen(true)} layerKey="reports.versions" memory={versionsMemory.current}
         onRestored={() => { setVersionsOpen(false); reloadReport(); }} />}
     </ReportRunsContext.Provider>
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}

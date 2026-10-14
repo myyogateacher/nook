@@ -300,6 +300,8 @@ type Props = {
   report: ReportDetail; canRestore: boolean; onClose: () => void; reopen: () => void; onRestored: () => void;
   /** Kept by the owner when the panel itself is reopened by Forward, so the layers over it come back too (D478). */
   memory?: VersionsMemory;
+  /** H3: which opener shows this sheet again after its page remounted (the header's or the Changes panel's). */
+  layerKey?: string;
 };
 
 /**
@@ -311,7 +313,7 @@ type Props = {
  * who, when, and source only (D459). Each sheet is its own history layer (D478): Back closes the top
  * one, Forward reopens them in order.
  */
-export function VersionsSheet({ report, canRestore, onClose, reopen, onRestored, memory }: Props) {
+export function VersionsSheet({ report, canRestore, onClose, reopen, onRestored, memory, layerKey }: Props) {
   const owner = report.isOwner;
   const [versions, setVersions] = useState<VersionHistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,7 +324,7 @@ export function VersionsSheet({ report, canRestore, onClose, reopen, onRestored,
   const layers = useLayerReopen<Layer>(setLayer, slots.layer);
   const openRun = useContext(ReportRunsContext);
   const { busy, restore, confirmElement } = useRestore(report, versions?.[0]?.version ?? null, onRestored);
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey });
 
   useEffect(() => {
     let alive = true;

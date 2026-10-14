@@ -98,7 +98,7 @@ export function RunsSheet({ reportId, title, focusRunId, onClose, reopen }: { re
   const [runs, setRuns] = useState<ReportRunHistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(() => new Set(focusRunId ? [focusRunId] : []));
-  useHistoryDialogGuard(true, onClose, { reopen });
+  useHistoryDialogGuard(true, onClose, { reopen, layerKey: `reports.runs:${focusRunId ?? ""}` });
   useEffect(() => {
     let live = true;
     listRunHistory(reportId).then(({ runs: next }) => { if (live) setRuns(next); }).catch((reason) => { if (live) setError(messageOf(reason, "Could not load the runs")); });

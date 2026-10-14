@@ -5,6 +5,7 @@ import { ModalDialog } from "../files/Dialog";
 import { notify } from "../ui/notify";
 import { Select } from "../ui/Select";
 import { useHistoryDialogGuard, useLayerReopen, type LayerReopenMemory } from "../ui/useHistoryDialogGuard";
+import { useLayerOpener } from "../historyDialogs";
 import type { ReportDetail } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, INSTRUCTION_STATUS_TEXT, type InstructionsView, type ReportInstruction } from "../../shared/reportsEdit";
 import { ArrangeSheet } from "./ArrangeSheet";
@@ -71,7 +72,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
   const textId = useId();
   const targetId = useId();
   const applied = useRef<Set<string> | null>(null);
-  useHistoryDialogGuard(true, onClose, { reopen: reopenPanel });
+  useHistoryDialogGuard(true, onClose, { reopen: reopenPanel, layerKey: `reports.changes:${initialBlockId ?? ""}` });
 
   const load = useCallback(async () => {
     try {
@@ -97,6 +98,10 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
   }, [load, moving]);
 
   const { open: openSheet, reopen } = useLayerReopen<Sheet>(setSheet, sheetMemory);
+  // H3: Forward after Back went past the page and came back reopens the sheet that was over the panel.
+  useLayerOpener("reports.changes-versions", () => openSheet({ kind: "versions" }));
+  useLayerOpener("reports.changes-arrange", () => openSheet({ kind: "arrange" }));
+  useLayerOpener("reports.changes-proposal", (instructionId) => { if (instructionId) openSheet({ kind: "proposal", instructionId }); });
 
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -176,7 +181,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
     {sheet?.kind === "proposal" && <ProposalSheet report={report} instruction={view?.instructions.find((item) => item.id === sheet.instructionId) ?? null} instructionId={sheet.instructionId}
       canApply={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen}
       onDecided={(applied) => { setSheet(null); void load(); if (applied) onReportChanged(); }} />}
-    {sheet?.kind === "versions" && <VersionsSheet report={report} canRestore={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen} onRestored={() => { setSheet(null); onReportChanged(); }} />}
+    {sheet?.kind === "versions" && <VersionsSheet report={report} canRestore={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen} layerKey="reports.changes-versions" onRestored={() => { setSheet(null); onReportChanged(); }} />}
     {sheet?.kind === "arrange" && <ArrangeSheet report={report} onClose={() => setSheet(null)} reopen={reopen} onChanged={onReportChanged} />}
   </ModalDialog>;
 }

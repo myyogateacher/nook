@@ -5,20 +5,15 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - Plans of record: `DEVELOPMENT_PLAN.md`, `docs/plan/research/`, [reports plan](docs/plan/WAVES_45-48_REPORTS.md), [report theme](docs/plan/REPORT_THEME.md).
 - Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-14).**
-- Production runs **v0.37.0**.
-- `main` carries the analytics reports module and is being released as **v0.38.0**.
+**Current state (2026-10-15).**
+- **v0.38.0** is released (tag and GitHub release on 2026-10-15). It adds the analytics reports module.
 - Migrations:
-  - **001–049** are released and immutable (045 unused).
-  - **050–053 and 055–059** are new in v0.38.0.
-  - **054** is reserved for Messages.
+  - **001–059** are released and immutable (045 and 054 unused; 054 is reserved for Messages).
 - Development happens directly on `main`, pushed as each change passes its gates.
 
 ## In flight
 
-- [ ] Release v0.38.0. Update the `release-0.38.0` branch to current `main`, extend CHANGELOG and the upgrade notes to cover 058–059, run the gates, then merge, tag, push, publish the GitHub release, and rebuild the local Docker image.
-- [ ] Metric catalog, known limit (accepted): a non-Nook doc server's linked pages reach the catalog only after a run has read them, so the first generation's catalog has none of their metrics. Revisit only if pages should be read before the first extraction.
-- [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. Do this after v0.38.0 merges, since that release adds Inspect's reopen.
+- [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. v0.38.0 is out, so this can be done now.
 - [ ] Report folders: a reader's own placement of reports shared with them. Today they stay under Shared with me.
 - [ ] Report shares live in `report_members` and `report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, together with the Access sheet.
 

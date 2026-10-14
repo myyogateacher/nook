@@ -43,8 +43,12 @@ describe("Share copies the link", () => {
     expect(row).toContain('readOnly=""');
     expect(row).toContain('value="https://nook.example.test/reports/x"');
     expect(row).toContain('class="secondary-button"');
-    expect(row).not.toContain("Copy the link below");
-    expect(renderToStaticMarkup(<CopyLinkRow url="u" selectFirst flash={noop} />)).toContain("Copy the link below");
+    expect(row).not.toContain("Copy the link above");
+    // The hint sits under the field, so it points up at it (release QA: it said "below").
+    const manual = renderToStaticMarkup(<CopyLinkRow url="u" selectFirst flash={noop} />);
+    expect(manual).toContain("Copy the link above");
+    expect(manual).not.toContain("below");
+    expect(manual.indexOf("<input")).toBeLessThan(manual.indexOf("Copy the link above"));
   });
 
   test("viewers and commenters get Copy link in ⋯; the owner shares from the header", () => {

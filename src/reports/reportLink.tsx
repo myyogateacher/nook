@@ -44,7 +44,7 @@ export function CopyLinkRow({ url, selectFirst, flash }: { url: string; selectFi
       <input id={id} ref={input} readOnly value={url} onFocus={(event) => event.currentTarget.select()} />
       <button type="button" className="secondary-button" onClick={() => { void copyReportLink(url, { flash, onFallback: () => { setManual(true); input.current?.focus(); input.current?.select(); } }); }}><Copy aria-hidden="true" />Copy</button>
     </div>
-    {manual && <p className="file-dialog-hint" role="status">Copy the link below: the browser did not let Nook copy it.</p>}
+    {manual && <p className="file-dialog-hint" role="status">Copy the link above: the browser did not let Nook copy it.</p>}
   </div>;
 }
 

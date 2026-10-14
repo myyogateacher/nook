@@ -46,7 +46,7 @@ const unit = z.string().trim().regex(UNIT, "must be a short unit word such as or
 const queryKey = z.string().regex(QUERY_KEY, "must match [a-z][a-z0-9_]{0,39}");
 const sectionId = z.string().regex(BLOCK_ID, "must match [a-z0-9][a-z0-9_-]{0,39}");
 const columnRef = z.object({ queryKey: queryKey.optional(), column }).strict();
-const provenance = z.object({ runId: z.string().max(64).nullable(), instructionId: z.string().max(64).nullish(), version: z.number().int().min(0).max(1_000_000), docSnapshotId: z.string().max(64).nullish() }).strict();
+const provenance = z.object({ runId: z.string().max(64).nullable(), instructionId: z.string().max(64).nullish(), version: z.number().int().min(0).max(1_000_000), docSnapshotId: z.string().max(64).nullish(), model: z.string().max(200).nullish() }).strict();
 const base = {
   id: z.string().regex(BLOCK_ID, "must match [a-z0-9][a-z0-9_-]{0,39}"),
   title: z.string().max(REPORT_LIMITS.blockTitle).optional(),
@@ -685,7 +685,7 @@ export function nextSpecVersion(currentSpecJson: string): number {
  * Saves an accepted spec in one transaction: the report's queries (replaced), the run's results, the
  * spec with each block's provenance, the doc hash it came from, status `ready`, and the run `succeeded`.
  */
-export function persistGenerated(input: { reportId: string; runId: string; docSnapshotId: string | null; docHash: string | null; spec: ReportSpec; results: ReadonlyMap<string, QueryOutcome> }): ReportSpec {
+export function persistGenerated(input: { reportId: string; runId: string; docSnapshotId: string | null; docHash: string | null; spec: ReportSpec; results: ReadonlyMap<string, QueryOutcome>; /** E5: the model that wrote it. */ model?: string | null }): ReportSpec {
   return db.transaction(() => {
     // Review L1: a binned or purged report, or a run that is no longer running (abandoned, reclaimed by
     // wave 47's lease sweep), saves nothing: the transaction rolls back.
@@ -697,7 +697,7 @@ export function persistGenerated(input: { reportId: string; runId: string; docSn
     // saved before wave 48 is recorded first (the idempotent backfill), so regenerating never loses it.
     backfillVersion(input.reportId);
     const version = nextVersion(input.reportId, parseSpec(current.spec_json));
-    const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId };
+    const provenance = { runId: input.runId, version, docSnapshotId: input.docSnapshotId, ...(input.model ? { model: input.model.slice(0, 200) } : {}) };
     const spec: ReportSpec = { version: 1, specVersion: 2, sections: input.spec.sections, queries: input.spec.queries, blocks: input.spec.blocks.map((block) => ({ ...block, provenance })) };
     const specJson = JSON.stringify(spec);
     if (specJson.length > 524_288) throw new Error("SPEC_TOO_LARGE");

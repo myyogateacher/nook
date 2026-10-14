@@ -172,6 +172,12 @@ export type AgentSettings = {
   reportModel: string | null;
   /** Wave 48b review M1: report owners may type any model name (else only the provider's listed models). */
   reportModelFreeText: boolean;
+  /**
+   * Lane E (E5): "Fallback model for reports". When the report model used up its submit tries or its
+   * nudges without a saved report, the generation retries once on this provider and model. Off (null) by default.
+   */
+  reportFallbackProviderId: string | null;
+  reportFallbackModel: string | null;
   /** C2: agents get Nook's own tools through each runner's internal key, with no key to link (default on). */
   nookAutoTools: boolean;
 };
@@ -189,6 +195,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   reportProviderId: null,
   reportModel: null,
   reportModelFreeText: false,
+  reportFallbackProviderId: null,
+  reportFallbackModel: null,
   nookAutoTools: true
 };
 

@@ -68,6 +68,18 @@ export function reportModelFor(reportId: string | null): ProviderConnection {
   return connectionFor(effective.providerId, effective.model);
 }
 
+/**
+ * Lane E (E5): the "Fallback model for reports" connection, or null when the setting is off, its
+ * provider is gone, or it is the same provider and model as `primary`. A model left empty is the
+ * provider's default.
+ */
+export function reportFallbackFor(primary: Pick<ProviderConnection, "id" | "model">): ProviderConnection | null {
+  const settings = readAgentSettings();
+  if (!settings.reportFallbackProviderId || !providerExists(settings.reportFallbackProviderId)) return null;
+  const connection = connectionFor(settings.reportFallbackProviderId, settings.reportFallbackModel);
+  return connection.id === primary.id && connection.model === primary.model ? null : connection;
+}
+
 type Actor = { id: string; role: string };
 
 /** Whether a person may choose a report's model: their role may create agents and chat (review M1). */

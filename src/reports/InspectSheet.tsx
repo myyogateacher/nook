@@ -271,6 +271,7 @@ function ProvenanceTab({ report, block, given }: { report: Pick<ReportDetail, "i
     <dl className="report-facts-list">
       <Fact term="Version">{block.provenance ? `v${block.provenance.version}` : "—"}</Fact>
       <Fact term="Made by">{!runId ? "Written by hand (no AI run)" : run ? <>{runLabel(run)} · {RUN_STATUS_TEXT[run.status]} · {timeAgo(run.startedAt)}<br /><code>{run.id}</code></> : state.error ? state.error : <code>{runId}</code>}</Fact>
+      {block.provenance?.model && <Fact term="Model"><code>{block.provenance.model}</code></Fact>}
       {state.view?.todo && <Fact term="Plan todo">{state.view.todo.title} · {state.view.todo.status}{state.view.todo.note ? ` · ${state.view.todo.note}` : ""}</Fact>}
       <Fact term="Instruction">{block.provenance?.instructionId ? <code>{block.provenance.instructionId}</code> : "—"}</Fact>
       <Fact term="Doc snapshot">{snapshot ? <>{snapshot.title ?? "Untitled doc"} · fetched {timeAgo(snapshot.fetchedAt)}<br /><code title={snapshot.sha256}>sha256 {snapshot.sha256.slice(0, 12)}…</code></> : snapshotId || run?.docSnapshotId ? "Snapshot no longer kept" : "—"}</Fact>

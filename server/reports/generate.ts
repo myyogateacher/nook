@@ -24,7 +24,7 @@ import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, s
 import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns } from "./refresh";
 import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
-import { reportModelFor } from "./model";
+import { reportFallbackFor, reportModelFor } from "./model";
 import { finalNote } from "./repairHints";
 import { catalogPromptLines, catalogRow, extractCatalog, metricHints, saveCatalog } from "./metricCatalog";
 import type { CatalogMetric } from "../../shared/reportsMetrics";
@@ -122,7 +122,11 @@ export const startingGenerations = () => [...starting.values()].reduce((sum, cou
 export const GENERATIONS_PER_USER = 1;
 
 /** Test hook: the provider connection (tests may swap it); the report's model (reportModelFor) otherwise. */
-export const generateDeps = { connection: (reportId: string | null): ProviderConnection => reportModelFor(reportId) };
+export const generateDeps = {
+  connection: (reportId: string | null): ProviderConnection => reportModelFor(reportId),
+  /** E5: the fallback connection, or null when the admin's "Fallback model for reports" is off. */
+  fallback: (primary: ProviderConnection): ProviderConnection | null => reportFallbackFor(primary)
+};
 
 // ----------------------------------------------------------------------------------------- prompt
 
@@ -284,7 +288,7 @@ export function systemPrompt(row: DatasourceRow, doc: { title: string | null; ma
     "## ClickHouse dialect and the guard",
     `- Data source: default database \`${row.database}\`. Only these tables can be read (allowlist patterns): ${allowlistOf(row).slice(0, 50).join(", ") || "(none)"}.`,
     "- One statement per query: SELECT or WITH … SELECT. No INTO, OUTFILE, INFILE, SETTINGS, FORMAT, no DDL or writes, no `#` comments, no `{}` parameters, no `$` heredocs.",
-    `- Table functions and functions that reach outside or other tables are refused, for example ${banned}, and anything starting with ${BANNED_PREFIXES.slice(0, 12).join(", ")}. Use concat, not format().`,
+    `- Table functions and functions that reach outside or other tables are refused, for example ${banned}, and anything starting with ${BANNED_PREFIXES.slice(0, 12).join(", ")}.`,
     `- Every query runs read-only with a ${row.timeout_s} s limit and at most ${row.max_rows} rows; the result is cut there. Aggregate in SQL (GROUP BY, toStartOfDay/Week/Month, uniq, sumIf, quantile) so results stay small.`,
     "- Qualify tables as db.table. Prefer the partition and sorting keys in WHERE, and estimate before scanning a large table.",
     "",
@@ -584,13 +588,10 @@ async function executeGeneration(run: Execution) {
     if (controller.signal.aborted) throw error;
     slog.warn("Metric catalog step failed", { err: error });
   }
-  const planner = new Planner({ mode: "report", datasourceId: datasource.id, runId, database: datasource.database, metrics });
+  const makePlanner = () => new Planner({ mode: "report", datasourceId: datasource.id, runId, database: datasource.database, metrics });
+  let planner = makePlanner();
   let coverageWarned = false;
   slog.info("Generation limits", { docBytes, sectioned: sectioned || undefined, steps: limits.steps, queries: limits.queries, toolCalls: limits.perRun, docMetrics: signals.metrics });
-  const messages: ChatTurn[] = [
-    { role: "system", content: metrics.length ? `${run.prompt}\n\n${catalogPromptLines(metrics).join("\n")}` : run.prompt },
-    { role: "user", content: `Build the report "${run.title}" from the document. Explore the schema, test your SQL with run_sql, then call submit_report.` }
-  ];
   let sqlRuns = 0;
   let submits = 0;
   let sanityRounds = 0;
@@ -599,6 +600,8 @@ async function executeGeneration(run: Execution) {
   let persistRefused: string | null = null;
   let steps = 0;
   let toolCallCount = 0;
+  // E5: the steps of the attempts before this one (a fallback attempt counts on from the first).
+  let stepBase = 0;
   let firstToken = false;
   let status: RunStatus = "ok";
   let errorCode: string | null = null;
@@ -718,7 +721,7 @@ async function executeGeneration(run: Execution) {
           check.spec.blocks.splice(at, 0, { id, type: "markdown", markdown: notCovered });
         }
         try {
-          persistGenerated({ reportId, runId, docSnapshotId: run.docSnapshotId, docHash: run.docHash, spec: check.spec, results: check.results });
+          persistGenerated({ reportId, runId, docSnapshotId: run.docSnapshotId, docHash: run.docHash, spec: check.spec, results: check.results, model: current.model });
         } catch (error) {
           if (error instanceof PersistRefused) {
             lastErrors = [error.message];
@@ -771,64 +774,99 @@ async function executeGeneration(run: Execution) {
   };
 
   const tools = [...GENERATE_TOOLS, ...run.browser.modelTools()];
-  try {
-    const result = await runLoop({
-      connection, messages, maxSteps: limits.steps, temperature: null, maxOutputTokens: GENERATE_LIMITS.maxOutputTokens, signal: controller.signal,
-      sink: {
-        delta: (text) => {
-          if (!firstToken) { firstToken = true; markAuditFirstToken(agentRunId); }
-          output += text;
-          channel.emit({ type: "delta", data: { messageId: runId, text } });
+  // E5: the admin's "Fallback model for reports" gets one more attempt when this model used up its
+  // submit tries or its nudges (or its steps) without a saved report.
+  const fallback = generateDeps.fallback(connection);
+  let current = connection;
+  let fallbackUsed = false;
+  for (;;) {
+    const messages: ChatTurn[] = [
+      { role: "system", content: metrics.length ? `${run.prompt}\n\n${catalogPromptLines(metrics).join("\n")}` : run.prompt },
+      { role: "user", content: `Build the report "${run.title}" from the document. Explore the schema, test your SQL with run_sql, then call submit_report.` }
+    ];
+    try {
+      const result = await runLoop({
+        connection: current, messages, maxSteps: limits.steps, temperature: null, maxOutputTokens: GENERATE_LIMITS.maxOutputTokens, signal: controller.signal,
+        sink: {
+          delta: (text) => {
+            if (!firstToken) { firstToken = true; markAuditFirstToken(agentRunId); }
+            output += text;
+            channel.emit({ type: "delta", data: { messageId: runId, text } });
+          },
+          usage: (stepUsage) => channel.emit({ type: "usage", data: { messageId: runId, usage: stepUsage } }),
+          step: (step) => {
+            steps = stepBase + step.step;
+            insertAuditStep(agentRunId, ++seq, { kind: "model", text: step.content, toolCalls: step.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments })), usage: step.usage, durationMs: step.durationMs });
+          },
+          interrupted: (step) => {
+            usage = { promptTokens: usage.promptTokens + step.usage.promptTokens, completionTokens: usage.completionTokens + step.usage.completionTokens, estimated: true };
+            chargeUsage(userId, REPORTS_AGENT_ID, step.usage, 0);
+          }
         },
-        usage: (stepUsage) => channel.emit({ type: "usage", data: { messageId: runId, usage: stepUsage } }),
-        step: (step) => {
-          steps = step.step;
-          insertAuditStep(agentRunId, ++seq, { kind: "model", text: step.content, toolCalls: step.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments })), usage: step.usage, durationMs: step.durationMs });
+        charge: (stepUsage, more) => {
+          usage = { promptTokens: usage.promptTokens + stepUsage.promptTokens, completionTokens: usage.completionTokens + stepUsage.completionTokens, estimated: usage.estimated || stepUsage.estimated };
+          chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
+          if (more && !accepted) assertBudget(userId);
         },
-        interrupted: (step) => {
-          usage = { promptTokens: usage.promptTokens + step.usage.promptTokens, completionTokens: usage.completionTokens + step.usage.completionTokens, estimated: true };
-          chargeUsage(userId, REPORTS_AGENT_ID, step.usage, 0);
-        }
-      },
-      charge: (stepUsage, more) => {
-        usage = { promptTokens: usage.promptTokens + stepUsage.promptTokens, completionTokens: usage.completionTokens + stepUsage.completionTokens, estimated: usage.estimated || stepUsage.estimated };
-        chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
-        if (more && !accepted) assertBudget(userId);
-      },
-      tools: () => tools,
-      execute,
-      // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
-      // 2c: before the plan, a text answer is nudged to plan_report (and a plan in the text is taken as the call).
-      finalTool: {
-        get name() { return planner.plan ? "submit_report" : "plan_report"; },
-        get nudge() { return planner.plan ? FINAL_NUDGE : PLAN_NUDGE; },
-        maxNudges: GENERATE_LIMITS.nudges,
-        accepts: (value) => planner.plan ? Array.isArray(value.blocks) || Boolean(value.spec && typeof value.spec === "object") : Array.isArray(value.todos)
-      },
-      toolChoice: generateToolChoice(limits.steps, () => planner.plan !== null),
-      limits: { perStep: GENERATE_LIMITS.perStep, perRun: limits.perRun }
-    });
-    steps = result.steps;
-    toolCallCount = result.toolCalls;
-    if (result.nudges) {
-      slog.info("Text answers nudged back to submit_report", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
-      // The Runs panel shows the nudges (the live view never did): one model step with Nook's note.
-      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_report ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+        tools: () => tools,
+        execute,
+        // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
+        // 2c: before the plan, a text answer is nudged to plan_report (and a plan in the text is taken as the call).
+        finalTool: {
+          get name() { return planner.plan ? "submit_report" : "plan_report"; },
+          get nudge() { return planner.plan ? FINAL_NUDGE : PLAN_NUDGE; },
+          maxNudges: GENERATE_LIMITS.nudges,
+          accepts: (value) => planner.plan ? Array.isArray(value.blocks) || Boolean(value.spec && typeof value.spec === "object") : Array.isArray(value.todos)
+        },
+        toolChoice: generateToolChoice(limits.steps, () => planner.plan !== null),
+        limits: { perStep: GENERATE_LIMITS.perStep, perRun: limits.perRun }
+      });
+      steps = stepBase + result.steps;
+      toolCallCount += result.toolCalls;
+      if (result.nudges) {
+        slog.info("Text answers nudged back to submit_report", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+        // The Runs panel shows the nudges (the live view never did): one model step with Nook's note.
+        insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_report ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+      }
+      if (!accepted) {
+        status = result.status === "step_limit" ? "step_limit" : "error";
+        errorCode = "NO_REPORT";
+        errorMessage = persistRefused ? `Nothing was saved: ${persistRefused}` : lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
+          : result.finalToolMissed && (result.nudges ?? 0) >= GENERATE_LIMITS.nudges ? `The model answered in text and did not call submit_report after ${GENERATE_LIMITS.nudges} nudges` : "The model finished without submitting a report";
+      }
+    } catch (error) {
+      const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;
+      if (accepted) status = "ok";
+      else if (reason === "timeout") { status = "timeout"; errorMessage = "Generation took too long and was stopped"; }
+      else if (reason) { status = "cancelled"; errorMessage = "Generation was stopped"; }
+      else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
+      else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
+      else { status = "error"; errorCode = "INTERNAL"; errorMessage = "Generation failed"; slog.error("Reports: generation error", error); }
     }
-    if (!accepted) {
-      status = result.status === "step_limit" ? "step_limit" : "error";
-      errorCode = "NO_REPORT";
-      errorMessage = persistRefused ? `Nothing was saved: ${persistRefused}` : lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
-        : result.finalToolMissed && (result.nudges ?? 0) >= GENERATE_LIMITS.nudges ? `The model answered in text and did not call submit_report after ${GENERATE_LIMITS.nudges} nudges` : "The model finished without submitting a report";
-    }
-  } catch (error) {
-    const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;
-    if (accepted) status = "ok";
-    else if (reason === "timeout") { status = "timeout"; errorMessage = "Generation took too long and was stopped"; }
-    else if (reason) { status = "cancelled"; errorMessage = "Generation was stopped"; }
-    else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
-    else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
-    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "Generation failed"; slog.error("Reports: generation error", error); }
+    const retryable = !accepted && !controller.signal.aborted && !persistRefused && (status === "step_limit" || (status === "error" && errorCode === "NO_REPORT"));
+    if (!retryable || !fallback || fallbackUsed) break;
+    fallbackUsed = true;
+    const reason = errorMessage ?? "no report was saved";
+    slog.info("Retrying the generation on the fallback model", { from: current.model, to: fallback.model });
+    insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook retried on the fallback model ${fallback.model}: ${current.model} ended without a saved report (${reason.slice(0, 300)})]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+    audit(userId, null, "reports.generate.fallback", { reportId, runId, agentRunId, from: current.model, to: fallback.model, providerId: fallback.id });
+    channel.emit({ type: "delta", data: { messageId: runId, text: `\n[Retrying on the fallback model ${fallback.model}]\n` } });
+    current = fallback;
+    // The fallback starts over: a new plan, its own tries, nudges, and sanity round.
+    planner = makePlanner();
+    coverageWarned = false;
+    sqlRuns = 0;
+    submits = 0;
+    sanityRounds = 0;
+    lastErrors = [];
+    stepBase = steps;
+    status = "ok";
+    errorCode = null;
+    errorMessage = null;
+  }
+  // The Runs view and the Audit log show the model that ran last (the fallback when it took over).
+  if (fallbackUsed) {
+    try { db.query("UPDATE agent_runs SET model = ?, provider_id = ? WHERE id = ?").run(current.model, current.id, agentRunId); } catch (error) { slog.warn("Could not record the fallback model on the run", { err: error }); }
   }
 
   try {

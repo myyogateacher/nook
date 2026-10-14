@@ -139,7 +139,7 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     "## ClickHouse dialect and the guard",
     `- Data source: default database \`${input.datasource.database}\`. Only these tables can be read (allowlist patterns): ${allowlistOf(input.datasource).slice(0, 50).join(", ") || "(none)"}.`,
     "- One statement per query: SELECT or WITH … SELECT. No INTO, OUTFILE, INFILE, SETTINGS, FORMAT, no DDL or writes, no `#` comments, no `{}` parameters, no `$` heredocs.",
-    `- Table functions and functions that reach outside or other tables are refused, for example ${[...BANNED_FUNCTIONS].slice(0, 16).join(", ")}. Use concat, not format().`,
+    `- Table functions and functions that reach outside or other tables are refused, for example ${[...BANNED_FUNCTIONS].slice(0, 16).join(", ")}.`,
     `- Every query runs read-only with a ${input.datasource.timeout_s} s limit and at most ${input.datasource.max_rows} rows. Aggregate in SQL so results stay small.`,
     "",
     "## Patches",

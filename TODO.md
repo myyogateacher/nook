@@ -35,10 +35,11 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - [x] E3 ClickHouse error repair hints (`server/reports/repairHints.ts`): closest catalog names, casts, HAVING, GROUP BY, partition and sorting keys for limits, FINAL from the catalog engine; tested on captured 26.6 error texts.
   - [x] E4 metric catalog (058 `report_metric_catalogs`): extracted per doc snapshot with a forced tool, checked (table, FINAL, LIMIT 0), owner-editable versions in ⋯ → Metrics, todos carry `metricId`, SQL must use the metric's expression and filters, Doc changed names changed metrics.
   - [ ] E4 leftovers: metric definitions that live only on a linked doc page are not extracted; the catalog is not offered as an MCP tool; the edit agent is not checked against the catalog on submit (only told it in its prompt).
-  - [ ] E5 model fallback (optional).
+  - [x] E5 model fallback: Settings → AI "Fallback model for reports" (off by default); one retry on it after the report model used up its tries or nudges; block provenance records the model (Inspect → Provenance), Runs shows the model that ran last.
+  - [ ] E5 leftovers: the edit agent has no fallback and does not stamp the model on the blocks it changes; Runs shows one model per run (the fallback's after a retry), not both.
 - [ ] Forward after Back past a page (D480) does not yet reopen Inspect or the sheets inside Versions (view, detail, compare). They have no `layerKey`/`useLayerOpener` yet: lane J2 takes Versions, and Inspect follows once v0.38.0 merges with its reopen.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
-- [ ] (Lane E, small) `server/reports/edit.ts`'s prompt still says "Use concat, not format()"; the string function `format()` is allowed now (only the table function is refused), so drop that sentence when next touching the file.
+- [x] (Lane E, small) `server/reports/edit.ts`'s prompt still says "Use concat, not format()"; the string function `format()` is allowed now (only the table function is refused), so drop that sentence when next touching the file.
 
 ## Known LOW leftovers
 

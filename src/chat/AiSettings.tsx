@@ -184,7 +184,8 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     setBusy(true);
     try {
       const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks,
-        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, reportModelFreeText: draft.reportModelFreeText, nookAutoTools: draft.nookAutoTools, expectedRevision: settings.revision });
+        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, reportModelFreeText: draft.reportModelFreeText,
+        reportFallbackProviderId: draft.reportFallbackProviderId, reportFallbackModel: draft.reportFallbackProviderId ? draft.reportFallbackModel?.trim() || null : null, nookAutoTools: draft.nookAutoTools, expectedRevision: settings.revision });
       onSaved(next);
       notify.success("Policy saved");
     } catch (reason) {
@@ -213,6 +214,14 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
       </div>
       <label className="ai-check"><input type="checkbox" checked={draft.reportModelFreeText} onChange={(event) => setDraft({ ...draft, reportModelFreeText: event.target.checked })} />Report owners may type any model name</label>
       <p className="chat-muted">Off: an owner picks from the provider's listed models (seen by Test or the model list), its default, or the report model above.</p>
+    </fieldset>
+    <fieldset className="ai-report-model">
+      <legend className="ai-label">Fallback model for reports</legend>
+      <p className="chat-muted">When a report's model uses up its tries or nudges without saving a report, the generation is retried once on this model. Each block records the model that wrote it.</p>
+      <div className="ai-policy-grid">
+        <div><span className="ai-label" id="ai-report-fallback-provider">Provider</span><Select<string> labelledBy="ai-report-fallback-provider" label="Fallback provider for reports" value={draft.reportFallbackProviderId ?? ""} onChange={(value) => setDraft({ ...draft, reportFallbackProviderId: value || null })} options={[{ value: "", label: "Off (no fallback)" }, ...providers.map((provider) => ({ value: provider.id, label: provider.name, description: provider.defaultModel }))]} disabled={providers.length === 0} /></div>
+        <label>Model<input value={draft.reportFallbackModel ?? ""} maxLength={AGENT_BOUNDS.model} placeholder="The provider's default model" autoComplete="off" disabled={!draft.reportFallbackProviderId} onChange={(event) => setDraft({ ...draft, reportFallbackModel: event.target.value || null })} /><small>Empty uses the provider's default</small></label>
+      </div>
     </fieldset>
     <label className="ai-check"><input type="checkbox" checked={draft.nookAutoTools} onChange={(event) => setDraft({ ...draft, nookAutoTools: event.target.checked })} />Give agents {appName()}'s tools automatically</label>
     <p className="chat-muted">{nookAutoPolicyText()}</p>

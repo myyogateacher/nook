@@ -88,6 +88,9 @@ const settingsSchema = z.object({
   reportProviderId: uuid.nullable().optional(),
   reportModel: line(AGENT_BOUNDS.model).nullable().optional(),
   reportModelFreeText: z.boolean().optional(),
+  // Lane E (E5): the fallback model for reports (null: off).
+  reportFallbackProviderId: uuid.nullable().optional(),
+  reportFallbackModel: line(AGENT_BOUNDS.model).nullable().optional(),
   // C2: agents get Nook's tools automatically (each runner's internal key).
   nookAutoTools: z.boolean().optional(),
   expectedRevision: z.number().int().min(0)
@@ -274,6 +277,7 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
     const { expectedRevision, ...patch } = await parseJson(c.req.raw, settingsSchema);
     if (patch.defaultProviderId) providerRow(patch.defaultProviderId);
     if (patch.reportProviderId) providerRow(patch.reportProviderId);
+    if (patch.reportFallbackProviderId) providerRow(patch.reportFallbackProviderId);
     return { settings: writeAgentSettings(c.get("user").id, patch, expectedRevision) };
   })));
   app.get("/api/agents/admin/providers", handleRecovery(adminOnly(() => ({ providers: listProviders() }))));

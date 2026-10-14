@@ -117,7 +117,7 @@ export type BlockWidth = typeof BLOCK_WIDTHS[number];
  * Who made or last changed a block (the inspect panel's Provenance tab, wave 47): the report run that
  * produced it, the instruction that caused it (wave 48), and the spec version it was stamped in.
  */
-export type BlockProvenance = { runId: string | null; instructionId?: string | null; version: number; /** The doc snapshot the run worked from (report_runs.doc_snapshot_id). */ docSnapshotId?: string | null };
+export type BlockProvenance = { runId: string | null; instructionId?: string | null; version: number; /** The doc snapshot the run worked from (report_runs.doc_snapshot_id). */ docSnapshotId?: string | null; /** Lane E (E5): the model that wrote the block (a generation; the fallback when it took over). */ model?: string | null };
 
 /** A deterministic fix Nook applied instead of a retry (design rules 3 and 5, sorting, compaction); the Mapping tab lists them. */
 export const AUTO_FIX_RULES = ["fold_series", "fold_categories", "sort", "compact", "facet", "fold_panels", "fold_groups", "bin", "quartiles"] as const;

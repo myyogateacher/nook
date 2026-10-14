@@ -139,7 +139,7 @@ describe("generate", () => {
     expect(detail.body.report.status).toBe("ready");
     const spec = detail.body.report.spec;
     expect(spec.blocks.map((block: Json) => block.id)).toEqual(qaSpec().blocks.map((block) => block.id));
-    for (const block of spec.blocks) expect(block.provenance).toEqual({ runId: run.id, version: 1, docSnapshotId: run.docSnapshotId });
+    for (const block of spec.blocks) expect(block.provenance).toEqual({ runId: run.id, version: 1, docSnapshotId: run.docSnapshotId, model: "scripted-report-model" });
     expect(spec.queries.every((query: Json) => query.createdBy === "agent")).toBe(true);
     const queries = db.query("SELECT key, columns_json FROM report_queries WHERE report_id = ? ORDER BY key").all(report.id) as Array<{ key: string; columns_json: string }>;
     expect(queries.map((row) => row.key)).toEqual(["by_country", "revenue_daily", "totals"]);

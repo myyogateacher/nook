@@ -1222,6 +1222,7 @@ export default function WhiteboardCanvas({ boardId, userId, folders, flash, onBa
     {(layer?.kind === "history" || layer?.kind === "restoreVersion") && <HistorySheet boardId={boardId} files={heldFiles}
       covered={layer.kind === "restoreVersion" || restoring}
       onClose={() => { if (!restoring) setLayer(null); }}
+      reopen={() => setLayer({ kind: "history" })}
       onRestore={(snapshot) => setLayer({ kind: "restoreVersion", snapshot })}
       onCopy={(snapshot) => duplicate(snapshot)} />}
     {layer?.kind === "restoreVersion" && <ConfirmDialog title="Restore this version?"

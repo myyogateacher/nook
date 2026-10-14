@@ -88,25 +88,29 @@ test("phone at depth 0: Back closes Repeat, then asks, then keeps editing, and n
   expect(harness.index()).toBe(0);
 });
 
-test("desktop above depth 0: each Back is undone and closes one layer, with no sentinel", async () => {
+test("desktop above depth 0: each Back closes one layer off its own sentinel and never leaves Calendar (D479)", async () => {
   const harness = calendarHistory([withHistoryDepth({ route: "agenda" }, 0), withHistoryDepth({ route: "month" }, 1)], false);
   const { app, closed, show, commit } = eventSheetApp(harness);
+  // D479: the sheet on a pushed entry takes a sentinel too (D18 used to undo Back in place).
+  expect(harness.entries).toHaveLength(3);
   show("repeat");
   await Bun.sleep(5);
   for (const expected of ["repeat", "form", "prompt"] as const) {
     expect(harness.userBack()).toBe(true);
     expect(closed.at(-1)).toBe(expected);
-    // The guard undid the move; the next layer mounts while that undo is in flight.
-    expect(harness.moves).toEqual([1]);
+    // No undo off a sentinel; the next layer mounts and takes a fresh sentinel over the month.
     commit();
-    expect(harness.deliver()).toBe(true);
-    expect(harness.index()).toBe(1);
-    expect(harness.entries).toHaveLength(2);
+    expect(harness.moves).toEqual([]);
+    expect(harness.index()).toBe(2);
+    expect(isDialogSentinelState(harness.history.state)).toBe(true);
+    expect(harness.entries[1]).toEqual({ route: "month", "mynotes.depth": 1 });
   }
   expect(app.layer).toBe("form");
   show(null);
   await Bun.sleep(5);
-  expect(harness.moves).toEqual([]);
+  expect(harness.moves).toEqual([-1]);
+  expect(harness.deliver()).toBe(true);
+  expect(harness.index()).toBe(1);
   // A later, real popstate goes through to the routes.
   expect(popStateClosedDialog({ state: harness.entries[0] })).toBe(false);
 });

@@ -59,6 +59,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [runError, setRunError] = useState<{ message: string; code?: string } | null>(null);
   const [modelOpen, setModelOpen] = useState(false);
   const [schemaOpen, setSchemaOpen] = useState(false);
+  // The table open in the schema browser, so Forward shows it again over the reopened sheet (D478).
+  const schemaTable = useRef(newLayerReopenMemory<string>());
   const [renaming, setRenaming] = useState(false);
   const confirm = useConfirm();
   const consoleId = useId();
@@ -254,7 +256,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         {consoleBody()}
       </>}
     </section>}
-    {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
+    {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} reopen={() => setSchemaOpen(true)} tableMemory={schemaTable} onInsert={canWrite ? insertTable : undefined} />}
     {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
     {/* Changes (its Versions link) and Versions open Runs at a version's run: Runs renders after them, on top. */}
     <ReportRunsContext.Provider value={report?.isOwner ? openRuns : null}>

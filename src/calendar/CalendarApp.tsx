@@ -63,6 +63,7 @@ import type { DocumentSummary } from "../types";
 import { deleteFile } from "../files/filesApi";
 import { notifyBinned } from "../bin/binUndo";
 import { PHONE_QUERY, useDialogBackGuard, useMediaQuery, useReturnFocus } from "./hooks";
+import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { MonthView } from "./MonthView";
 import "../bin/bin.css";
 import "../files/files.css";
@@ -305,6 +306,20 @@ export function CalendarApp({ userId, displayName, navigate, flash, onHome, onSe
     else if (sharing) setSharing(null);
     else if (feeds) setFeeds(null);
     else setCalendarsOpen(false);
+  });
+
+  // D479: Share, Subscribe, and Move to Bin replace the Calendars sheet and are a layer of their own,
+  // on their own history entry (registered after the guard above, so asked first). Back closes only
+  // that layer and the Calendars sheet comes back; Forward after Back shows Share or Subscribe again.
+  // The Move-to-Bin confirm is never reopened.
+  const overCalendars = calendarsOpen && (sharing !== null || feeds !== null || pendingConfirm?.kind === "deleteCalendar");
+  const closeOverCalendars = useCallback(() => {
+    if (sharing) setSharing(null);
+    else if (feeds) setFeeds(null);
+    else setConfirm(null);
+  }, [feeds, sharing]);
+  useHistoryDialogGuard(overCalendars, closeOverCalendars, {
+    reopen: sharing ? () => setSharing(sharing) : feeds ? () => setFeeds(feeds) : null
   });
 
   function startCreate(day: string) {

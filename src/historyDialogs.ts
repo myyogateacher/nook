@@ -243,13 +243,13 @@ export function readLandingEntry(history: Pick<History, "state" | "replaceState"
 }
 
 /**
- * Whether opening a guarded dialog on the entry with `state` must push a sentinel: when the entry is
- * not one this page pushed (its depth is at or below `landingDepth`, the landing entry's), at every
- * width, and only when no sentinel is already in place. Deeper entries keep D18 (no entry: the undo
- * moves back onto them within the page). A layer opened over a layer's sentinel nests its own (D478).
+ * Whether opening a guarded dialog on the entry with `state` must push a sentinel: on every page entry,
+ * at every width, unless one is already in place (D479). Before D479 only the landing entry (depth at
+ * or below `landingDepth`) got one and deeper entries undid Back in place (D18), which left Forward
+ * nothing to reopen. A layer opened over a layer's sentinel nests its own (D478).
  */
 export function needsDialogSentinel(state: unknown, options: { landingDepth: number; active: boolean }) {
-  return !options.active && !isDialogSentinelState(state) && readHistoryDepth(state) <= options.landingDepth;
+  return !options.active && !isDialogSentinelState(state);
 }
 
 /** The sentinel entry's state: the current entry's state, one level deeper, with the dialog hint and the layer's id. */
@@ -423,6 +423,23 @@ export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv()) {
     // Back would leave Nook.
     armLayers();
   };
+}
+
+/** Tests only: forget every layer, sentinel, reopen, and ignored move (module state outlives a test). */
+export function resetHistoryDialogsForTests() {
+  layers.length = 0;
+  held.length = 0;
+  forwardReopens.clear();
+  stranded.clear();
+  adopting = null;
+  ignoring = 0;
+  popInFlight = false;
+  suppressUndo = 0;
+  if (ignoreTimer) clearTimeout(ignoreTimer);
+  if (releaseTimer) clearTimeout(releaseTimer);
+  ignoreTimer = null;
+  releaseTimer = null;
+  settleWaiters.clear();
 }
 
 /** The window's history, and the depth of the entry this page was loaded on. */

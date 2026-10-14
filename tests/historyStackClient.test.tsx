@@ -5,7 +5,7 @@
  * × is an explicit close: Forward never reopens a layer closed that way, it steps back off its entry.
  * The page is opened on the landing entry (a deep link), where Back must never leave Nook.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { useEffect, useRef, useState } from "react";
 import type { ReportDetail } from "../shared/reports";
 import type { InstructionsView, ReportInstruction, ReportVersion } from "../shared/reportsEdit";
@@ -17,7 +17,8 @@ mock.module("../src/reports/charts", () => ({ default: () => <div className="moc
 const { ChangesPanel } = await import("../src/reports/ChangesPanel");
 type ChangesSheet = import("../src/reports/ChangesPanel").ChangesSheet;
 const { HistoryDialogReopen, newLayerReopenMemory, useHistoryDialogGuard } = await import("../src/ui/useHistoryDialogGuard");
-const { isDialogSentinelState, popStateClosedDialog } = await import("../src/historyDialogs");
+const { isDialogSentinelState, popStateClosedDialog, resetHistoryDialogsForTests } = await import("../src/historyDialogs");
+afterEach(() => { resetHistoryDialogsForTests(); });
 const { ModalDialog } = await import("../src/files/Dialog");
 const { Select } = await import("../src/ui/Select");
 
@@ -85,6 +86,31 @@ async function openReport() {
 }
 
 describe("Reports: Changes → Versions → Restore confirm (D478)", () => {
+  test("reached in-app (a pushed entry, D479): Back closes Versions, then Changes, staying on the report; Forward reopens both", async () => {
+    // Home → Reports → the report, as navigate() pushes them: one level deeper each.
+    const depth = Number((window.history.state as Record<string, unknown> | null)?.["mynotes.depth"] ?? 0);
+    window.history.pushState({ route: "reports", "mynotes.depth": depth + 1 }, "", "/reports");
+    window.history.pushState({ route: "report", "mynotes.depth": depth + 2 }, "", `/reports/${REPORT.id}`);
+    const { view, routes } = await openReport();
+    await view.click(view.button("Versions")!);
+    await view.waitFor(() => view.button("Restore"));
+    await browser(view, "back");
+    expect(titles()).toEqual(["Changes"]);
+    await browser(view, "back");
+    expect(titles()).toEqual([]);
+    expect(window.history.state).toEqual({ route: "report", "mynotes.depth": depth + 2 });
+    expect(window.location.pathname).toBe(`/reports/${REPORT.id}`);
+    await browser(view, "forward");
+    await browser(view, "forward");
+    await view.waitFor(() => view.button("Restore"));
+    expect(titles()).toEqual(["Changes", "Versions"]);
+    await browser(view, "back");
+    await browser(view, "back");
+    expect(titles()).toEqual([]);
+    // No route change reached the app: the report stayed on screen throughout.
+    expect(routes).toEqual([]);
+  });
+
   test("Back closes Versions, then Changes; Forward twice reopens Changes, then Versions over it", async () => {
     const { view, routes } = await openReport();
     await view.click(view.button("Versions")!);

@@ -61,20 +61,22 @@ function Preview({ boardId, snapshot, files }: { boardId: string; snapshot: Whit
   </span>;
 }
 
-export function HistorySheet({ boardId, files, onRestore, onCopy, onClose, covered = false }: {
+export function HistorySheet({ boardId, files, onRestore, onCopy, onClose, reopen, covered = false }: {
   boardId: string;
   /** The pictures the canvas already holds, for the previews. */
   files: () => BinaryFiles;
   onRestore: (snapshot: WhiteboardSnapshot) => void;
   onCopy: (snapshot: WhiteboardSnapshot) => Promise<void>;
   onClose: () => void;
+  /** Forward after Back closed the sheet shows it again (D479). */
+  reopen?: () => void;
   /** Verification N1: a confirm is open over the sheet (or a restore is running): Escape is the confirm's, not the sheet's. */
   covered?: boolean;
 }) {
   const [snapshots, setSnapshots] = useState<WhiteboardSnapshot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  useHistoryDialogGuard(true, onClose, { blocked: busy !== null });
+  useHistoryDialogGuard(true, onClose, { blocked: busy !== null, reopen });
   useEffect(() => {
     let live = true;
     listSnapshots(boardId)

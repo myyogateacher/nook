@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
-import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, holdDialogSentinel, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
+import { afterEach, expect, test } from "bun:test";
+import { acquireDialogSentinel, defaultSentinelEnv, dialogSentinelState, holdDialogSentinel, isDialogSentinelState, needsDialogSentinel, readLandingEntry, offerDialogReopen, popStateClosedDialog, registerHistoryDialogGuard, resetHistoryDialogsForTests, takeDialogSentinelEntry, undoDialogPop, whenHistorySettled } from "../src/historyDialogs";
 import { createDialogGuard } from "../src/ui/useHistoryDialogGuard";
 import { guardDialogPop } from "../src/calendar/hooks";
 import { readHistoryDepth, withHistoryDepth } from "../src/appShellNavigation";
+
+// The module keeps its layers and sentinels across tests; each test starts clean.
+afterEach(() => { resetHistoryDialogsForTests(); });
 
 test("the window env reads the landing depth, at every width (A1)", () => {
   const holder = globalThis as { window?: unknown };
@@ -34,16 +37,17 @@ test("every dropdown popup and the routine sheet are their own history layers at
   }
 });
 
-test("a sentinel is pushed for a dialog opened on the landing entry or below it, at any width (A1)", () => {
+test("a sentinel is pushed for a dialog opened on any page entry, at any width (A1, D479)", () => {
   // A fresh load or deep link: the landing entry is at depth 0.
   expect(needsDialogSentinel(null, { landingDepth: 0, active: false })).toBe(true);
   expect(needsDialogSentinel({ "mynotes.depth": 0 }, { landingDepth: 0, active: false })).toBe(true);
   // A reload of an entry the page had pushed (depth 3): its entry below is another document now.
   expect(needsDialogSentinel({ "mynotes.depth": 3 }, { landingDepth: 3, active: false })).toBe(true);
   expect(needsDialogSentinel({ "mynotes.depth": 1 }, { landingDepth: 3, active: false })).toBe(true);
-  // D18 unchanged for entries this page pushed: the undo moves back onto them. Nor a second dialog.
-  expect(needsDialogSentinel({ "mynotes.depth": 2 }, { landingDepth: 0, active: false })).toBe(false);
-  expect(needsDialogSentinel({ "mynotes.depth": 4 }, { landingDepth: 3, active: false })).toBe(false);
+  // D479: entries this page pushed get one too (D18 used to push nothing there and undo Back in place).
+  expect(needsDialogSentinel({ "mynotes.depth": 2 }, { landingDepth: 0, active: false })).toBe(true);
+  expect(needsDialogSentinel({ "mynotes.depth": 4 }, { landingDepth: 3, active: false })).toBe(true);
+  // Never a second one for the same layer, nor one on a sentinel (a nested layer goes through acquire).
   expect(needsDialogSentinel(null, { landingDepth: 0, active: true })).toBe(false);
   expect(needsDialogSentinel(dialogSentinelState(null), { landingDepth: 0, active: false })).toBe(false);
 });
@@ -202,8 +206,8 @@ test("an in-app navigation from the sentinel replaces it instead of stacking on 
   expect(popStateClosedDialog({ state: history.state })).toBe(false);
 });
 
-test("Back that closes a nested sheet at depth 1 keeps the URL and the forward entry", async () => {
-  // A fresh `/` (depth 0), then /calendar (depth 1): no sentinel, D18 closes dialogs by undoing the move.
+test("on a pushed entry each layer sits on its own sentinel; Back closes the top one and moves no further (D479)", async () => {
+  // A fresh `/` (depth 0), then /calendar (depth 1): the dialog and the sheet over it each push a sentinel.
   const entries: unknown[] = [{ route: "home", "mynotes.depth": 0 }, { route: "calendar", "mynotes.depth": 1 }];
   let index = 1;
   const moves: number[] = [];
@@ -217,32 +221,33 @@ test("Back that closes a nested sheet at depth 1 keeps the URL and the forward e
   const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };
   const dialog = acquireDialogSentinel(env);
   const sheet = acquireDialogSentinel(env);
-  expect(entries).toHaveLength(2);
+  expect(entries).toHaveLength(4);
   let sheetOpen = true;
   const unregister = registerHistoryDialogGuard(() => {
     if (!sheetOpen) return false;
     sheetOpen = false;
-    // The dropdown guard undoes Back with history.go(1), still in flight when the sheet releases.
+    // The sheet's guard asks for the old undo: off a sentinel it is never made.
     undoDialogPop("back", (delta) => moves.push(delta));
     return true;
   });
   history.back();
   expect(deliver()).toBe(true);
   expect(sheetOpen).toBe(false);
-  expect(index).toBe(0);
+  expect(moves).toEqual([]);
   sheet();
-  // The release must not push a sentinel over `/` and drop /calendar.
-  expect(entries).toEqual([{ route: "home", "mynotes.depth": 0 }, { route: "calendar", "mynotes.depth": 1 }]);
-  expect(deliver()).toBe(true);
-  expect(history.state).toEqual({ route: "calendar", "mynotes.depth": 1 });
+  // On the dialog's sentinel over /calendar: /home and /calendar are untouched, the sheet's entry is ahead.
+  expect(index).toBe(2);
+  expect(entries.slice(0, 2)).toEqual([{ route: "home", "mynotes.depth": 0 }, { route: "calendar", "mynotes.depth": 1 }]);
+  expect(entries).toHaveLength(4);
   unregister();
+  // Closing the dialog by other means pops its sentinel (ignored): back on /calendar.
   dialog();
   await Bun.sleep(5);
-  expect(entries).toHaveLength(2);
-  expect(index).toBe(1);
+  expect(deliver()).toBe(true);
+  expect(history.state).toEqual({ route: "calendar", "mynotes.depth": 1 });
 });
 
-test("Back that closes the inner of two stacked dialogs above depth 0 lets the undo land, with no sentinel", () => {
+test("Back that closes the inner of two stacked dialogs above depth 0 leaves the outer one on its sentinel (D479)", async () => {
   // Board (depth 0), then a card (depth 1) with Manage tags and a colour sheet open over it.
   const entries: unknown[] = [{ route: "board", "mynotes.depth": 0 }, { route: "card", "mynotes.depth": 1 }];
   let index = 1;
@@ -254,7 +259,7 @@ test("Back that closes the inner of two stacked dialogs above depth 0 lets the u
   const env = { history: history as unknown as History, href: () => "https://nook.test/", landingDepth: () => 0 };
   const outer = acquireDialogSentinel(env);
   const inner = acquireDialogSentinel(env);
-  expect(entries).toHaveLength(2);
+  expect(entries).toHaveLength(4);
   let innerOpen = true;
   let undo = 0;
   const unregister = registerHistoryDialogGuard(() => {
@@ -263,24 +268,24 @@ test("Back that closes the inner of two stacked dialogs above depth 0 lets the u
     undoDialogPop("back", (delta) => { undo = delta; });
     return true;
   });
-  // Back: the browser shows the board entry until the guard's history.go(1) lands.
   history.back();
   expect(popStateClosedDialog({ state: history.state })).toBe(true);
-  expect(undo).toBe(1);
-  // The inner sheet unmounts meanwhile: no sentinel may be pushed over the board entry.
+  // Off a sentinel: no undo, and the outer layer's sentinel is where Back landed.
+  expect(undo).toBe(0);
   inner();
-  expect(entries).toEqual([{ route: "board", "mynotes.depth": 0 }, { route: "card", "mynotes.depth": 1 }]);
-  // The undo lands (ignored) on the card, which needs no sentinel at depth 1.
-  index += 1;
-  expect(popStateClosedDialog({ state: history.state })).toBe(true);
-  expect(entries).toHaveLength(2);
-  expect(history.state).toEqual({ route: "card", "mynotes.depth": 1 });
+  expect(index).toBe(2);
+  expect(isDialogSentinelState(history.state)).toBe(true);
+  expect(entries.slice(0, 2)).toEqual([{ route: "board", "mynotes.depth": 0 }, { route: "card", "mynotes.depth": 1 }]);
   unregister();
   outer();
+  await Bun.sleep(5);
+  expect(history.state).toEqual({ route: "card", "mynotes.depth": 1 });
+  // The ignored pop of the outer sentinel.
+  expect(popStateClosedDialog({ state: history.state })).toBe(true);
 });
 
-test("a guard handing Back over to a prompt at depth 1 keeps the board entry and its forward entry", async () => {
-  // A fresh /tasks (depth 0), then a board (depth 1) with New card open: no sentinel (D18).
+test("a guard handing Back over to a prompt at depth 1 keeps the board entry; the prompt gets its own sentinel (D479)", async () => {
+  // A fresh /tasks (depth 0), then a board (depth 1) with New card open on its own sentinel.
   const entries: unknown[] = [{ route: "tasks", "mynotes.depth": 0 }, { route: "board", "mynotes.depth": 1 }];
   let index = 1;
   const moves: number[] = [];
@@ -293,15 +298,15 @@ test("a guard handing Back over to a prompt at depth 1 keeps the board entry and
   // Moves land (and fire popstate) only when delivered, like a browser.
   const deliver = () => { index += moves.shift()!; return popStateClosedDialog({ state: entries[index] }); };
   const composer = acquireDialogSentinel(env);
-  expect(entries).toHaveLength(2);
+  expect(entries).toHaveLength(3);
   let promptDepth = -1;
   let prompt: (() => void) | null = null;
   let handedOver = false;
   const unregister = registerHistoryDialogGuard(() => {
     if (handedOver) return false;
     handedOver = true;
-    // CardComposer (and CardDialog's unsaved description): Back undoes the move, then the same tick
-    // swaps the closing guard for the Discard prompt's guard.
+    // CardComposer (and CardDialog's unsaved description): Back swaps the closing guard for the
+    // Discard prompt's guard in the same tick.
     undoDialogPop("back", (delta) => moves.push(delta));
     composer();
     prompt = acquireDialogSentinel(env);
@@ -310,19 +315,16 @@ test("a guard handing Back over to a prompt at depth 1 keeps the board entry and
   });
   history.back();
   expect(deliver()).toBe(true);
-  expect(index).toBe(0);
-  // The undo is in flight: nothing is pushed over /tasks, and the prompt's depth is not read yet.
-  expect(entries).toEqual([{ route: "tasks", "mynotes.depth": 0 }, { route: "board", "mynotes.depth": 1 }]);
-  expect(promptDepth).toBe(-1);
-  // The undo lands (ignored) on the board: still no sentinel at depth 1, and the prompt reads depth 1.
-  expect(deliver()).toBe(true);
-  expect(index).toBe(1);
-  expect(entries).toHaveLength(2);
-  expect(promptDepth).toBe(1);
+  // No undo off a sentinel; the prompt pushed its own sentinel over the board and read its depth.
+  expect(moves).toEqual([]);
+  expect(index).toBe(2);
+  expect(entries.slice(0, 2)).toEqual([{ route: "tasks", "mynotes.depth": 0 }, { route: "board", "mynotes.depth": 1 }]);
+  expect(isDialogSentinelState(history.state)).toBe(true);
+  expect(promptDepth).toBe(2);
   unregister();
   prompt!();
   await Bun.sleep(5);
-  expect(entries).toHaveLength(2);
+  expect(deliver()).toBe(true);
   expect(history.state).toEqual({ route: "board", "mynotes.depth": 1 });
   // A later, real popstate goes through.
   expect(popStateClosedDialog({ state: entries[0] })).toBe(false);
@@ -567,17 +569,22 @@ for (const [label, entries] of [
   });
 }
 
-test("in-app navigation: a dialog on a pushed entry takes no sentinel; Back is undone in place (A1)", async () => {
+test("in-app navigation: a dialog on a pushed entry takes a sentinel; Back closes it in place, never leaving (A1, D479)", async () => {
   const harness = tab([withHistoryDepth({ route: "home" }, 0)], 0);
   harness.history.pushState(withHistoryDepth({ route: "tasks" }, 1));
   const closed: string[] = [];
   layer(harness, "share", closed);
-  expect(harness.entries).toHaveLength(2);
+  expect(harness.entries).toHaveLength(3);
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
   expect(harness.userBack()).toBe(true);
   expect(closed).toEqual(["share"]);
   await harness.deliverAll();
   expect(harness.index()).toBe(1);
   expect(harness.left()).toBe(false);
+  // Forward onto the sentinel of a layer with no reopen steps straight back off it.
+  expect(harness.userForward()).toBe(true);
+  await harness.deliverAll();
+  expect(harness.index()).toBe(1);
 });
 
 test("nested layers on the landing entry: each Back closes only the top one, then Back leaves (A1, A2)", async () => {
@@ -606,14 +613,17 @@ test("nested layers on a pushed entry: Back closes the dropdown, then the sheet,
   const closed: string[] = [];
   layer(harness, "sheet", closed);
   layer(harness, "dropdown", closed);
+  // D479: each layer has its own sentinel over the board entry.
+  expect(harness.entries).toHaveLength(4);
   expect(harness.userBack()).toBe(true);
   await harness.deliverAll();
   expect(closed).toEqual(["dropdown"]);
-  expect(harness.index()).toBe(1);
+  expect(harness.index()).toBe(2);
   expect(harness.userBack()).toBe(true);
   await harness.deliverAll();
   expect(closed).toEqual(["dropdown", "sheet"]);
   expect(harness.index()).toBe(1);
+  expect(harness.left()).toBe(false);
 });
 
 test("a dialog closed by its own button on the landing entry pops its sentinel; Back then leaves (A1)", async () => {

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { ChevronDown, ChevronRight, KeyRound, LoaderCircle, Search } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { newLayerReopenMemory, useHistoryDialogGuard, useLayerReopen, type LayerReopenMemory } from "../ui/useHistoryDialogGuard";
 import type { CatalogTable } from "../../shared/reports";
 import { countLabel, describeSchemaTables, listSchemaTables, messageOf, searchSchema, type TableListItem } from "./reportsApi";
 
@@ -14,7 +14,12 @@ type Row = { table: string; comment: string; totalRows: number | null; matchingC
  * lists tables 50 at a time, optionally one database. Opening a table shows its keys and columns
  * (read once from ClickHouse when it was not cached yet). Back or Escape closes the sheet (D18).
  */
-export function SchemaBrowser({ reportId, onClose, onInsert }: { reportId: string; onClose: () => void; onInsert?: (table: string) => void }) {
+export function SchemaBrowser({ reportId, onClose, onInsert, reopen, tableMemory }: { reportId: string; onClose: () => void; onInsert?: (table: string) => void;
+  /** Forward after Back closed the sheet shows it again (D479). */
+  reopen?: () => void;
+  /** Kept by the page so Forward shows the open table again once the sheet is back (D478). */
+  tableMemory?: MutableRefObject<LayerReopenMemory<string>>;
+}) {
   const [query, setQuery] = useState("");
   const [db, setDb] = useState<string>("");
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -25,9 +30,14 @@ export function SchemaBrowser({ reportId, onClose, onInsert }: { reportId: strin
   const [open, setOpen] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, CatalogTable | "missing" | "loading">>({});
   const generation = useRef(0);
-  useHistoryDialogGuard(true, onClose);
-  // Review L6: an open table is a layer of its own, so Back returns to the list before closing the sheet.
-  useHistoryDialogGuard(open !== null, () => setOpen(null));
+  useHistoryDialogGuard(true, onClose, { reopen });
+  // Review L6: an open table is a layer of its own, so Back returns to the list before closing the sheet;
+  // Forward opens it again (D479).
+  const ownTableMemory = useRef(newLayerReopenMemory<string>());
+  const tables = tableMemory ?? ownTableMemory;
+  if (open !== null) tables.current.last = open;
+  const { reopen: reopenTable } = useLayerReopen<string>(setOpen, tables);
+  useHistoryDialogGuard(open !== null, () => setOpen(null), { reopen: reopenTable });
 
   useEffect(() => {
     const current = ++generation.current;

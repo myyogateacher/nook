@@ -363,15 +363,17 @@ describe("inspect tabs are real Back and Forward steps", () => {
   }
 
   test("each tab is an entry: Back and Forward move through them; Back from the first tab closes the sheet, never leaving", async () => {
+    // A report reached in-app (depth 2): the sheet takes its own sentinel (D479), and the tabs stack above it.
     const h = harness([withHistoryDepth({ route: "reports" }, 1), withHistoryDepth({ route: "report" }, 2)], 0);
     const { sheet, tabs, unmount } = mountSheet(h);
     try {
+      expect(h.entries.length).toBe(3);
       tabs.select("data", sheet.tab);
       tabs.select("mapping", sheet.tab);
       tabs.select("mapping", sheet.tab);
-      expect(h.entries.length).toBe(4);
+      expect(h.entries.length).toBe(5);
       expect(inspectMarkOf(h.history.state)).toMatchObject({ tab: "mapping", step: 2 });
-      expect(readHistoryDepth(h.history.state)).toBe(4);
+      expect(readHistoryDepth(h.history.state)).toBe(5);
 
       expect(h.userBack()).toBe(true);
       expect(sheet).toMatchObject({ open: true, tab: "data", step: 1 });
@@ -391,18 +393,14 @@ describe("inspect tabs are real Back and Forward steps", () => {
       expect(sheet.tab).toBe("data");
       h.userBack();
       expect(sheet.tab).toBe("query");
-      // Back from the first tab closes the sheet and undoes the move: still on the report's entry.
+      // Back from the first tab pops the sheet's sentinel and closes it: on the report's entry, no undo.
       expect(h.userBack()).toBe(true);
       expect(sheet.open).toBe(false);
-      expect(h.moves).toEqual([1]);
-      h.deliver();
+      expect(h.moves).toEqual([]);
       expect(h.index()).toBe(1);
       await Bun.sleep(5);
-      // Forward onto a tab entry of the closed sheet steps straight back off it (historyDialogs uses window.history here).
-      const holder = globalThis as { window?: unknown };
-      const previous = holder.window;
-      holder.window = { history: h.history };
-      try { expect(h.userForward()).toBe(true); } finally { holder.window = previous; }
+      // Forward onto the closed sheet's sentinel (no reopen here) steps straight back off it.
+      expect(h.userForward()).toBe(true);
       expect(h.moves).toEqual([-1]);
       h.deliver();
       expect(h.index()).toBe(1);

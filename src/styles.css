@@ -569,6 +569,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 :is(.reports-app, .reports-dialog, .report-sources) :is(.primary-button, .secondary-button, .danger-button)[aria-busy="true"] { opacity: 1; cursor: progress; }
 :is(.reports-app, .reports-dialog, .report-sources) :is(.primary-button, .secondary-button, .danger-button):focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
 :is(.reports-app, .reports-dialog, .report-sources) :is(.primary-button, .secondary-button, .danger-button).icon-only { width: 40px; min-width: 40px; padding: 0; }
+/* A sheet's footer buttons (Save, Cancel) are at least 64 px wide, the button lint's narrow rule. */
+.reports-dialog .file-dialog-actions :is(.primary-button, .secondary-button, .danger-button):not(.icon-only) { min-width: 64px; }
 @media (max-width: 760px), (pointer: coarse) {
   :is(.reports-app, .reports-dialog, .report-sources) :is(.primary-button, .secondary-button, .danger-button) { min-height: 44px; }
   :is(.reports-app, .reports-dialog, .report-sources) :is(.primary-button, .secondary-button, .danger-button).icon-only { width: 44px; min-width: 44px; }

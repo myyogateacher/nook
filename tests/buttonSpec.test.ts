@@ -28,6 +28,10 @@ describe("the shared button spec (D472)", () => {
     expect(touch).toContain(`${SCOPE}.icon-only { width: 44px; min-width: 44px; }`);
   });
 
+  test("reports: a sheet's footer buttons are at least 64 px wide (release QA: Share's Save was 61 px)", () => {
+    expect(rule(".reports-dialog .file-dialog-actions :is(.primary-button, .secondary-button, .danger-button):not(.icon-only)")).toContain("min-width: 64px");
+  });
+
   test("reports: disabled is flat grey, never a dimmed colour; busy keeps its colour; focus is visible", () => {
     const disabled = rule(`${SCOPE}:disabled:not([aria-busy="true"])`);
     expect(disabled).toContain("opacity: 1");

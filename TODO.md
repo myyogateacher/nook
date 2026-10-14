@@ -29,20 +29,20 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [ ] (Lane E, approved 2026-10-14) Generator reliability, in order: E1 an eval harness (docs, seeded real ClickHouse data, expected numbers, `--compare`); E2 sanity checks on results; E3 repair hints for ClickHouse errors; E4 a metric catalog from the doc; E5 an optional model fallback. Original proposal: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] (UI fix, in progress) Two problems that predate this thread: the Settings page title (e.g. "AI") shows the yellow focus ring after navigation, on every Settings section; and in Settings → AI → Model providers the DEFAULT badge sits under the provider name instead of beside it.
-- [ ] Reports test gap: a click test that Inspect → "Open in console" fills in the block's SQL (today the test only checks that the button renders).
-- [ ] Tool-server sync stores `readOnlyHint: false` the same as "not annotated", so the reports browse list hides write tools by `destructiveHint` and name only. Store the raw hint at sync (`server/agents/toolServers.ts`) and use it in `isReadLikeTool`.
-- [ ] Wave 45 leftovers: `format()` the string function is refused along with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
-- [ ] App-wide sheets: Forward does not reopen a second-level sheet (one reopen slot in `useHistoryDialogGuard`, D18).
-- [ ] The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.
+- [ ] (Lane F) Reports test gap: a click test that Inspect → "Open in console" fills in the block's SQL (today the test only checks that the button renders).
+- [ ] (Lane F) Tool-server sync stores `readOnlyHint: false` the same as "not annotated", so the reports browse list hides write tools by `destructiveHint` and name only. Store the raw hint at sync (`server/agents/toolServers.ts`) and use it in `isReadLikeTool`.
+- [ ] (Lane F) Wave 45 leftovers: `format()` the string function is refused along with the table function; tree-check errors that name a qualified column (`t.col`) are shown generically.
+- [ ] (Lane H) App-wide sheets: Forward does not reopen a second-level sheet (one reopen slot in `useHistoryDialogGuard`, D18).
+- [ ] (Lane G) The stopped `test-infra` agent's partial work (fixed test ports, load-tolerant timeouts) is unmerged on its branch.
 
 ## Known LOW leftovers
 
 - [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
-- [ ] Lane B: when the reports doc-servers listing calls `ensureSynced` (C1), `tests/docSource.test.ts` must keep its server never-synced on a name that resolves fast (or give it `tools_synced_at`), or the lazy sync waits on DNS for `docs.example.test`.
+- [ ] (Lane F) Lane B: when the reports doc-servers listing calls `ensureSynced` (C1), `tests/docSource.test.ts` must keep its server never-synced on a name that resolves fast (or give it `tools_synced_at`), or the lazy sync waits on DNS for `docs.example.test`.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.
-- [ ] Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.
-- [ ] Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.
+- [ ] (Lane G) Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.
+- [ ] (Lane G) Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.
 
 ## Standing rules for agent briefs
 

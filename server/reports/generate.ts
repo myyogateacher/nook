@@ -26,6 +26,8 @@ import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { reportModelFor } from "./model";
 import { finalNote } from "./repairHints";
+import { catalogPromptLines, catalogRow, extractCatalog, metricHints, saveCatalog } from "./metricCatalog";
+import type { CatalogMetric } from "../../shared/reportsMetrics";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
 import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
@@ -544,20 +546,51 @@ async function executeGeneration(run: Execution) {
   const { entry, channel, connection, datasource } = run;
   const { userId, runId, agentRunId, reportId, controller } = entry;
   const limits = run.limits;
-  const planner = new Planner({ mode: "report", datasourceId: datasource.id, runId, database: datasource.database });
+  markAuditStarted(agentRunId);
+  let seq = 0;
+  let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
   const signals = docSignals(run.docMarkdown);
   const docBytes = Buffer.byteLength(run.docMarkdown, "utf8");
   const sectioned = docBytes > GENERATE_LIMITS.docPromptBytes;
-  let coverageWarned = false;
-  markAuditStarted(agentRunId);
-  slog.info("Generation limits", { docBytes, sectioned: sectioned || undefined, steps: limits.steps, queries: limits.queries, toolCalls: limits.perRun, docMetrics: signals.metrics });
-  const messages: ChatTurn[] = [
-    { role: "system", content: run.prompt },
-    { role: "user", content: `Build the report "${run.title}" from the document. Explore the schema, test your SQL with run_sql, then call submit_report.` }
-  ];
-  let seq = 0;
   // The run log (Runs) shows this run's limits and how the doc reached the prompt.
   insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook: this run may take ${limits.steps} steps, ${limits.queries} run_sql calls, and ${limits.perRun} tool calls; the doc is ${Math.round(docBytes / 1024)} KB${sectioned ? ", so the prompt carries its outline and first part (read_doc_section reads the rest)" : ""}.]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+  // E4: the doc's metric catalog, extracted once per doc snapshot (the newest version for its hash wins,
+  // so the owner's edits stay); it is checked, stored, and given to the plan and the prompt.
+  let metrics: CatalogMetric[] = [];
+  try {
+    const stored = catalogRow(reportId, run.docHash);
+    if (stored) metrics = stored.metrics;
+    else if (!controller.signal.aborted) {
+      const started = Date.now();
+      let extractUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
+      const extracted = await extractCatalog({
+        connection, datasource, markdown: run.docMarkdown, userId, signal: controller.signal,
+        charge: (stepUsage) => {
+          extractUsage = { promptTokens: extractUsage.promptTokens + stepUsage.promptTokens, completionTokens: extractUsage.completionTokens + stepUsage.completionTokens, estimated: extractUsage.estimated || stepUsage.estimated };
+          chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
+        }
+      });
+      usage = extractUsage;
+      if (extracted) {
+        metrics = extracted;
+        const version = saveCatalog(reportId, { snapshotId: run.docSnapshotId, docSha256: run.docHash, source: "extract", metrics, runId, userId });
+        audit(userId, null, "reports.metrics.extract", { reportId, runId, agentRunId, version, metrics: metrics.length, problems: metrics.filter((metric) => metric.problems.length).length });
+      }
+      const unchecked = metrics.filter((metric) => metric.problems.length).length;
+      const listed = metrics.length ? ` (${metrics.map((metric) => metric.id).slice(0, 12).join(", ")})` : "";
+      insertAuditStep(agentRunId, ++seq, { kind: "model", text: extracted ? `[Nook extracted the doc's metric catalog: ${metrics.length} ${metrics.length === 1 ? "metric" : "metrics"}${listed}${unchecked ? `; ${unchecked} could not be checked` : ""}.]` : "[Nook could not extract a metric catalog from the doc; the report is planned without one.]", toolCalls: [], usage: extractUsage, durationMs: Date.now() - started });
+    }
+  } catch (error) {
+    if (controller.signal.aborted) throw error;
+    slog.warn("Metric catalog step failed", { err: error });
+  }
+  const planner = new Planner({ mode: "report", datasourceId: datasource.id, runId, database: datasource.database, metrics });
+  let coverageWarned = false;
+  slog.info("Generation limits", { docBytes, sectioned: sectioned || undefined, steps: limits.steps, queries: limits.queries, toolCalls: limits.perRun, docMetrics: signals.metrics });
+  const messages: ChatTurn[] = [
+    { role: "system", content: metrics.length ? `${run.prompt}\n\n${catalogPromptLines(metrics).join("\n")}` : run.prompt },
+    { role: "user", content: `Build the report "${run.title}" from the document. Explore the schema, test your SQL with run_sql, then call submit_report.` }
+  ];
   let sqlRuns = 0;
   let submits = 0;
   let sanityRounds = 0;
@@ -567,7 +600,6 @@ async function executeGeneration(run: Execution) {
   let steps = 0;
   let toolCallCount = 0;
   let firstToken = false;
-  let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
   let status: RunStatus = "ok";
   let errorCode: string | null = null;
   let errorMessage: string | null = null;
@@ -658,8 +690,8 @@ async function executeGeneration(run: Execution) {
           ?? planner.plan?.todos.find((todo) => todo.queryKey && todo.queryKey === block.queryKey && todo.metric)?.metric ?? null;
         const check = await validateSpec(datasource, raw, { userId, runId, signal: controller.signal, sanity: { metricOf } });
         if (check.ok && check.sanity) {
-          // E2: the Runs view shows every round of checks and its extra queries.
-          const sanity = check.sanity;
+          // E2: the Runs view shows every round of checks and its extra queries; E4: catalog metrics use their definition.
+          const sanity = { ...check.sanity, hints: [...check.sanity.hints, ...metricHints(check.spec, planner.plan?.todos ?? [], metrics, datasource.database)] };
           insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook checked the results: ${sanity.checks.length} ${sanity.checks.length === 1 ? "check" : "checks"}, ${sanity.extraQueries} extra ${sanity.extraQueries === 1 ? "query" : "queries"}, ${sanity.hints.length} ${sanity.hints.length === 1 ? "hint" : "hints"}${sanity.hints.length ? `: ${sanity.hints.map((hint) => hint.slice(0, 160)).join(" | ")}` : ""}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
           audit(userId, null, "reports.generate.sanity", { reportId, runId, agentRunId, checks: sanity.checks.length, failed: sanity.checks.filter((item) => !item.ok).map((item) => `${item.check}:${item.target}`).slice(0, 20), extraQueries: sanity.extraQueries, refused: sanity.hints.length > 0 && sanityRounds < GENERATE_LIMITS.sanityRounds });
           if (sanity.hints.length && sanityRounds < GENERATE_LIMITS.sanityRounds) {

@@ -1,3 +1,4 @@
+import { catalogRow, changedMetrics } from "./metricCatalog";
 import { logger, shortId } from "../log";
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
@@ -267,12 +268,20 @@ export function docState(reportId: string, userId: string): DocState {
   const mainChanged = Boolean(latest && row.doc_hash && latest.sha256 !== row.doc_hash);
   // B3: the linked pages of the current spec's runs; one that changed since its run read it is "Doc changed" too.
   const pages = pageInfos(reportId);
+  // E4: which catalog metrics' definitions the new snapshot changed (their doc text, compared).
+  let metricsChanged: string[] = [];
+  if (mainChanged && latest) {
+    const catalog = catalogRow(reportId, row.doc_hash);
+    const markdown = catalog?.metrics.length ? (db.query("SELECT markdown FROM report_doc_snapshots WHERE id = ?").get(latest.id) as { markdown: string } | null)?.markdown : null;
+    if (catalog && markdown) metricsChanged = changedMetrics(catalog.metrics, markdown);
+  }
   return {
     doc: row.doc_ref || row.doc_server_id || nook ? { serverId: nook ? NOOK_SOURCE_ID : row.doc_server_id, serverName, tool: row.doc_tool, arg: row.doc_arg, ref: row.doc_ref, hash: row.doc_hash, browseTools: storedBrowseTools(row.doc_browse_tools) } : null,
     latest: latest ? { id: latest.id, sha256: latest.sha256, title: latest.title, bytes: latest.bytes, fetchedAt: latest.fetched_at } : null,
     changed: mainChanged || pages.some((page) => page.changed),
     mainChanged,
-    pages
+    pages,
+    ...(metricsChanged.length ? { metricsChanged } : {})
   };
 }
 

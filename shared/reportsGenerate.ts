@@ -38,6 +38,8 @@ export type DocState = {
   /** The main doc changed (as opposed to a linked page). */
   mainChanged: boolean;
   pages: DocPageInfo[];
+  /** E4: catalog metrics whose definition text changed (or is gone) in the newest snapshot. */
+  metricsChanged?: string[];
 };
 
 /** B3: the AI's doc tools per run: calls, bytes of results, one result shown to the model, ticks per report, pages Check doc reads. */
@@ -96,6 +98,8 @@ export type PlanTodoStatus = typeof PLAN_TODO_STATUSES[number];
 export type PlanTodo = {
   id: string; title: string; kind: PlanTodoKind; section: string | null; metric: string | null; docRef: string | null; tables: string[]; intent: string | null;
   status: PlanTodoStatus; note: string | null; queryKey: string | null; blockId: string | null;
+  /** E4: the metric catalog's id for this todo's metric (absent on plans made before the catalog). */
+  metricId?: string | null;
 };
 export type RunPlan = { goal: string; sections: Array<{ id: string; title: string }>; todos: PlanTodo[]; added: number };
 export const PLAN_LIMITS = { todos: 24, added: 8, title: 160, note: 300, goal: 300, sections: 10 } as const;

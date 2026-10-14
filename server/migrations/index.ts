@@ -53,6 +53,7 @@ import { reportModelMigration } from "./053_report_model";
 import { reportRunPlansMigration } from "./055_report_run_plans";
 import { reportDocBrowseMigration } from "./056_report_doc_browse";
 import { agentInternalKeysMigration } from "./057_agent_internal_keys";
+import { reportMetricCatalogMigration } from "./058_report_metric_catalog";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -138,7 +139,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   reportDocBrowseMigration,
   // 057 (C2: mcp_api_keys.internal, the in-process key that gives agents Nook's tools; agents.nook_auto)
   // needs 005 and 039. 056 is the doc-browse migration (lane B).
-  agentInternalKeysMigration
+  agentInternalKeysMigration,
+  // 058 (reports, lane E: report_metric_catalogs, the doc's metric catalog per version) needs 050 and 056.
+  reportMetricCatalogMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

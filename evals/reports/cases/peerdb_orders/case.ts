@@ -7,6 +7,10 @@ export default {
   title: "PeerDB orders: FINAL and soft deletes",
   traps: ["ReplacingMergeTree read without FINAL counts every version", "soft-deleted rows (_peerdb_is_deleted = 1) still in the table"],
   ci: true,
+  catalog: [
+    { id: "net_revenue", name: "Net revenue", definition: "The sum of amount over revenue orders in the period.", expression: "sum(amount)", table: "eval_peerdb_orders.orders", filters: ["_peerdb_is_deleted = 0", "status IN ('paid', 'shipped')"], final: true, grain: "total", unit: "currency:USD", timeColumn: "created_at" },
+    { id: "revenue_orders", name: "Revenue orders", definition: "The number of revenue orders in the period.", expression: "count()", table: "eval_peerdb_orders.orders", filters: ["_peerdb_is_deleted = 0", "status IN ('paid', 'shipped')"], final: true, grain: "total", unit: "orders", timeColumn: "created_at" }
+  ],
   facts: [
     { id: "net_revenue", label: "Net revenue, September 2026", kind: "number", value: 162695.81 },
     { id: "orders", label: "Revenue orders", kind: "number", value: 1419 },
@@ -28,7 +32,7 @@ export default {
   },
   trap: {
     fails: ["net_revenue", "orders", "paid_revenue"],
-    sanity: ["final"],
+    sanity: ["final", "metric"],
     spec: {
       title: "September 2026 order revenue",
       queries: [

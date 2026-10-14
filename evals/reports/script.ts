@@ -17,10 +17,10 @@ export function todosOf(spec: EvalSpec) {
   }));
 }
 
-export function specScript(spec: EvalSpec): Script {
+export function specScript(spec: EvalSpec, catalog: Array<Record<string, unknown>> = []): Script {
   const todos = todosOf(spec);
   const submit = { name: "submit_report", arguments: { title: spec.title, ...(spec.sections ? { sections: spec.sections } : {}), queries: spec.queries, blocks: spec.blocks } };
-  return unplanned((context) => {
+  const script: Script = unplanned((context) => {
     if (context.tools.includes("nook_probe")) return { toolCalls: [{ name: "nook_probe", arguments: { ok: true } }] };
     const called = calledTools(context);
     if (context.forced === "submit_report") return { toolCalls: [submit] };
@@ -41,4 +41,6 @@ export function specScript(spec: EvalSpec): Script {
     }
     return { toolCalls: [submit] };
   });
+  // The metric extraction (E4) records the case's catalog.
+  return Object.assign(script, { metrics: catalog });
 }

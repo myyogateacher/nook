@@ -1,3 +1,7 @@
+import { metricCatalogView, saveCatalogEdit } from "./metricCatalog";
+import { METRIC_LIMITS, type CatalogMetricInput } from "../../shared/reportsMetrics";
+import { ownedReport } from "./access";
+import { usableDatasource } from "./datasources";
 import type { Hono } from "hono";
 import { pageInfos } from "./docBrowse";
 import { z } from "zod";
@@ -60,7 +64,21 @@ const optionalUuid = (value: string | undefined) => {
   return parsed.success ? parsed.data : null;
 };
 
+const metricsSaveSchema = z.object({ expectedVersion: z.number().int().min(0).nullable(), metrics: z.array(z.unknown()).max(METRIC_LIMITS.metrics) }).strict();
+
 export function registerReportViewRoutes(app: Hono<AppEnv>) {
+  // E4: the metric catalog (the owner's; 404 to anyone else), a version by ?version=, and a save (a new version).
+  app.get("/api/reports/:reportId/metrics", handle((c) => {
+    const version = Number(c.req.query("version") ?? "");
+    return { catalog: metricCatalogView(id(c, "reportId"), c.get("user").id, Number.isInteger(version) && version > 0 ? version : null) };
+  }));
+  app.put("/api/reports/:reportId/metrics", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    const userId = c.get("user").id;
+    const input = await parseJson(c.req.raw, metricsSaveSchema);
+    const report = ownedReport(reportId, userId);
+    return { catalog: await saveCatalogEdit({ userId }, reportId, { expectedVersion: input.expectedVersion, metrics: input.metrics as CatalogMetricInput[] }, usableDatasource(report.datasource_id)) };
+  }));
   app.get("/api/reports/:reportId/results", handle((c) => {
     const reportId = id(c, "reportId");
     const userId = c.get("user").id;

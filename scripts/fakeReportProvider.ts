@@ -341,7 +341,10 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
       if (request.method === "GET" && url.pathname === "/v1/models") return Response.json({ object: "list", data: [{ id: "scripted-report-model", object: "model" }] });
       if (request.method !== "POST" || url.pathname !== "/v1/chat/completions") return Response.json({ error: { message: "not found" } }, { status: 404 });
       const body = await request.json().catch(() => ({})) as ScriptContext["body"] & { reasoning_effort?: string };
-      calls.push(body);
+      // E4: the metric catalog's extraction (only record_metrics offered) answers the script's `metrics`
+      // (none by default) and is not recorded, so scripts and their tests see only the report's own run.
+      const extraction = body.tools?.length === 1 && body.tools[0]!.function.name === "record_metrics";
+      if (!extraction) calls.push(body);
       const messages = body.messages ?? [];
       const lastToolTurn = [...messages].reverse().find((turn) => turn.role === "tool");
       const callName = (id: string | undefined) => {
@@ -361,7 +364,8 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
         lastTool: lastToolTurn ? { name: callName(lastToolTurn.tool_call_id), content: text(lastToolTurn.content) } : null, forced, tools: (body.tools ?? []).map((tool) => tool.function.name)
       };
       let reply: ScriptReply;
-      try { reply = withAutoPlan(script, context); } catch (error) { reply = { status: 500, content: error instanceof Error ? error.message : "script failed" }; }
+      if (extraction) reply = { toolCalls: [{ name: "record_metrics", arguments: { metrics: (script as Script & { metrics?: unknown[] }).metrics ?? [] } }] };
+      else try { reply = withAutoPlan(script, context); } catch (error) { reply = { status: 500, content: error instanceof Error ? error.message : "script failed" }; }
       if (reply.status) return Response.json({ error: { message: reply.content ?? "Scripted failure", type: "server_error" } }, { status: reply.status });
       // QA: a pause before each reply, so the step list can be watched.
       if (options.delayMs) await Bun.sleep(options.delayMs);

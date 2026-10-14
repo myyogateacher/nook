@@ -56,7 +56,21 @@ export class Planner {
   plan: RunPlan | null = null;
   /** Query keys run_sql ran successfully in this run (key → the SQL). */
   readonly ranKeys = new Map<string, string>();
-  constructor(private readonly options: { mode: PlannerMode; datasourceId: string | null; runId: string; database?: string }) {}
+  constructor(private readonly options: { mode: PlannerMode; datasourceId: string | null; runId: string; database?: string; /** E4: the metric catalog's ids and names. */ metrics?: ReadonlyArray<{ id: string; name: string }> }) {}
+
+  /** E4: a todo's catalog metric: the metricId it names (unknown is an error), else a catalog metric whose name or id is its metric. */
+  private metricIdOf(item: Record<string, unknown>, metric: string | null, errors: string[], where: string): string | null {
+    const catalog = this.options.metrics ?? [];
+    if (!catalog.length) return null;
+    const given = text(item.metricId, 40);
+    if (given) {
+      if (catalog.some((entry) => entry.id === given)) return given;
+      errors.push(`${where}: metricId ${given} is not in the metric catalog (ids: ${catalog.map((entry) => entry.id).slice(0, 24).join(", ")})`);
+      return null;
+    }
+    const wanted = metric?.toLowerCase().trim();
+    return wanted ? catalog.find((entry) => entry.name.toLowerCase() === wanted || entry.id === wanted)?.id ?? null : null;
+  }
 
   private save() {
     if (!this.plan) return;
@@ -98,9 +112,11 @@ export class Planner {
     if (intent !== null && !(BLOCK_INTENTS as readonly string[]).includes(intent)) errors.push(`${where} (${id}): intent must be one of ${BLOCK_INTENTS.join(", ")}`);
     const section = item.section === undefined || item.section === null ? null : text(item.section, 40);
     if (section !== null && !sectionIds.has(section)) errors.push(`${where} (${id}): section ${section} is not one of the plan's sections`);
+    const metric = text(item.metric, 120) || null;
+    const metricId = this.metricIdOf(item, metric, errors, `${where} (${id})`);
     return {
-      id, title, kind, section, intent, metric: text(item.metric, 120) || null, docRef: text(item.docRef, 200) || null,
-      tables: this.tablesOf(item.tables, errors, `${where} (${id})`), status: "open", note: null, queryKey: null, blockId: null
+      id, title, kind, section, intent, metric, docRef: text(item.docRef, 200) || null,
+      tables: this.tablesOf(item.tables, errors, `${where} (${id})`), status: "open", note: null, queryKey: null, blockId: null, ...(metricId ? { metricId } : {})
     };
   }
 
@@ -281,7 +297,8 @@ export function storedPlan(json: string | null | undefined): RunPlan | null {
 const todoProperties = {
   id: { type: "string", maxLength: 40 }, title: { type: "string", maxLength: PLAN_LIMITS.title }, kind: { type: "string", enum: [...PLAN_TODO_KINDS] },
   section: { type: "string", maxLength: 40 }, metric: { type: "string", maxLength: 120 }, docRef: { type: "string", maxLength: 200 },
-  tables: { type: "array", maxItems: 10, items: { type: "string" } }, intent: { type: "string", enum: [...BLOCK_INTENTS] }
+  tables: { type: "array", maxItems: 10, items: { type: "string" } }, intent: { type: "string", enum: [...BLOCK_INTENTS] },
+  metricId: { type: "string", maxLength: 40, description: "The metric catalog's id, when the todo is one of its metrics" }
 };
 const todoSchema = { type: "object", required: ["id", "title", "kind"], properties: todoProperties };
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2 } from "lucide-react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, GitCommitVertical, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2, Ruler } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -23,6 +23,7 @@ import { ReportCommentContext } from "./reportComment";
 import { ShareSheet } from "./ShareSheet";
 import { ReportRunsContext, RunsSheet } from "./RunsSheet";
 import { newVersionsMemory, VersionsSheet } from "./VersionsSheet";
+import { MetricsSheet } from "./MetricsSheet";
 import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
 
 type PageProps = {
@@ -86,6 +87,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   // Lane J: the Versions panel (every reader; what changed, the read-only view, and Restore are the owner's).
   const [versionsOpen, setVersionsOpen] = useState(false);
   const versionsMemory = useRef(newVersionsMemory());
+  // E4: the Metrics view (the owner's metric catalog).
+  const [metricsOpen, setMetricsOpen] = useState(false);
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
   // H3: the page's sheets by key, so Forward reopens them after Back went past the page and came back.
@@ -94,6 +97,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   useLayerOpener("reports.share", () => setSharing({ copyFailed: false }));
   useLayerOpener("reports.runs", (runId) => openRuns(runId || null));
   useLayerOpener("reports.model", () => setModelOpen(true));
+  useLayerOpener("reports.metrics", () => setMetricsOpen(true));
   // The header's actions that live in the viewer and the generation part (reportCommands.tsx).
   const [commands, setCommands] = useState<ReportCommands>({});
   const registry = useMemo(() => ({ set: (part: Partial<ReportCommands>) => setCommands((current) => ({ ...current, ...part })) }), []);
@@ -239,7 +243,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           <button type="button" className="secondary-button report-wide-only" onClick={() => setVersionsOpen(true)}><GitCommitVertical aria-hidden="true" />Versions</button>
           {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={share}><Share2 aria-hidden="true" />Share</button>}
           {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
-          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), versions: () => setVersionsOpen(true), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), versions: () => setVersionsOpen(true), console: consoleInPanel(report) ? () => openConsole() : undefined, copyLink, share, rename: () => setRenaming(true), model: () => setModelOpen(true), metrics: report.isOwner ? () => setMetricsOpen(true) : undefined, remove: () => { void remove(); } })} />
         </div>
       </div>
 
@@ -272,6 +276,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
       {versionsOpen && report && <VersionsSheet report={report} canRestore={ownerWrite} onClose={() => setVersionsOpen(false)} reopen={() => setVersionsOpen(true)} layerKey="reports.versions" memory={versionsMemory.current}
         onRestored={() => { setVersionsOpen(false); reloadReport(); }} />}
     </ReportRunsContext.Provider>
+    {metricsOpen && report && <MetricsSheet reportId={report.id} title={report.title} canEdit={ownerWrite} onClose={() => setMetricsOpen(false)} reopen={() => setMetricsOpen(true)} />}
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
     {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash} />}
     {linkSheet && report && <LinkSheet url={reportLink(report.id)} title={report.title} onClose={() => setLinkSheet(false)} flash={flash} />}
@@ -290,7 +295,7 @@ export const consoleInPanel = (report: Pick<ReportDetail, "isOwner" | "spec">) =
  * The overflow menu's items: on a phone Runs, Versions, Share, and Schedule first (the header hides them there), then
  * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
  */
-export function overflowItems({ ownerWrite, owner = false, commands, runs, versions, console: openConsole, copyLink, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; versions?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
+export function overflowItems({ ownerWrite, owner = false, commands, runs, versions, console: openConsole, copyLink, share, rename, model, metrics, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; versions?: () => void; console?: () => void; copyLink?: () => void; share: () => void; rename: () => void; model: () => void; /** E4: the Metrics view (the owner's). */ metrics?: () => void; remove: () => void }): MenuItem[] {
   const items: MenuItem[] = [];
   // Readers (viewers and commenters) have no Share: they copy the link from here.
   if (!owner && copyLink) items.push({ id: "copy-link", label: "Copy link", icon: <Link2 aria-hidden="true" />, onSelect: copyLink });
@@ -302,6 +307,7 @@ export function overflowItems({ ownerWrite, owner = false, commands, runs, versi
   if (openConsole) items.push({ id: "console", label: "SQL console", icon: <FileTerminal aria-hidden="true" />, onSelect: openConsole });
   items.push({ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: rename });
   items.push({ id: "model", label: "Model", icon: <Cpu aria-hidden="true" />, onSelect: model });
+  if (owner && metrics) items.push({ id: "metrics", label: "Metrics", icon: <Ruler aria-hidden="true" />, onSelect: metrics });
   if (commands.checkDoc) items.push({ id: "check-doc", label: commands.checkDoc.busy ? "Checking the doc…" : "Check doc", icon: <FileSearch aria-hidden="true" />, onSelect: commands.checkDoc.run, disabled: commands.checkDoc.busy || Boolean(commands.regenerate?.busy) });
   if (commands.docSettings) items.push({ id: "doc-settings", label: "Doc settings", icon: <Settings2 aria-hidden="true" />, onSelect: commands.docSettings.open });
   if (commands.regenerate) items.push({ id: "regenerate", label: commands.regenerate.busy ? "Starting…" : "Regenerate", icon: <Sparkles aria-hidden="true" />, onSelect: commands.regenerate.run, disabled: commands.regenerate.busy || Boolean(commands.checkDoc?.busy) });

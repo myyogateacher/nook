@@ -94,7 +94,7 @@ export async function runCase(host: EvalHost, testCase: LoadedCase, options: Run
     if (options.variant !== "model") {
       const spec = options.variant === "trap" ? testCase.trap?.spec : testCase.golden;
       if (!spec || !options.scripted) throw new Error(`No ${options.variant} spec or scripted provider for ${testCase.id}`);
-      options.scripted.setScript(specScript(spec));
+      options.scripted.setScript(specScript(spec, testCase.catalog ?? []));
     }
     generateDeps.connection = () => options.connection;
     const links: Record<string, string> = {};

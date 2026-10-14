@@ -1,3 +1,4 @@
+import { catalogPromptLines, catalogRow } from "./metricCatalog";
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import type { RunStatus, TokenUsage } from "../../shared/agents";
@@ -284,7 +285,9 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
   const ticked = storedBrowseTools(report.doc_browse_tools);
   // The browser needs the run id; the run is created below, so the names come from a throwaway first.
   const docToolNames = new DocBrowser({ reportId: report.id, runId: "", source: browseSource, ticked }).names;
-  const prompt = editPrompt({ datasource, report, spec, blockId: instruction.block_id, doc: snapshot, docTools: docToolNames });
+  // E4: the metric catalog (the newest version) rides along, so an edit uses the doc's definitions.
+  const catalogLines = catalogPromptLines(catalogRow(report.id)?.metrics ?? []);
+  const prompt = `${editPrompt({ datasource, report, spec, blockId: instruction.block_id, doc: snapshot, docTools: docToolNames })}${catalogLines.length ? `\n\n${catalogLines.join("\n")}` : ""}`;
   const at = now();
   let runId: string;
   try {

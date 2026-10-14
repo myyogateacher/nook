@@ -1,5 +1,5 @@
 {
- "recordedAt": "2026-10-14T11:59:40.007Z",
+ "recordedAt": "2026-10-14T12:12:50.978Z",
  "version": "26.6.8.7",
  "answers": {
   "EXPLAIN QUERY TREE SELECT avg(discount_rate) * 100 AS avg_discount, countIf(discount_rate > 0) / count() * 100 AS discounted_share,\n  round(sum(toFloat64(list_price) * discount_rate), 2) AS discount_cost\nFROM eval_discount_rates.orders": {

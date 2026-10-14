@@ -21,7 +21,14 @@ import "./generate.css";
 /**
  * B3: the "Doc changed" banner's words: the main doc (with its title), a linked page by name, or both.
  */
-export function docChangedText(doc: Pick<DocState, "mainChanged" | "pages" | "latest">): string {
+export function docChangedText(doc: Pick<DocState, "mainChanged" | "pages" | "latest" | "metricsChanged">): string {
+  // E4: the catalog metrics whose definitions changed, named after the doc's own words.
+  const metrics = doc.metricsChanged ?? [];
+  const named = metrics.length ? ` ${metrics.length === 1 ? "The definition of" : "The definitions of"} ${metrics.slice(0, 3).map((name) => `“${name}”`).join(metrics.length === 2 ? " and " : ", ")}${metrics.length > 3 ? ` and ${metrics.length - 3} more` : ""} changed.` : "";
+  return `${docChangedBase(doc)}${named}`;
+}
+
+function docChangedBase(doc: Pick<DocState, "mainChanged" | "pages" | "latest">): string {
   const pages = doc.pages.filter((page) => page.changed).map((page) => `“${page.title ?? `a page read with ${page.tool}`}”`);
   const linked = pages.length === 0 ? "" : pages.length === 1 ? `the linked page ${pages[0]}` : `the linked pages ${pages.slice(0, 2).join(" and ")}${pages.length > 2 ? ` and ${pages.length - 2} more` : ""}`;
   const main = doc.latest?.title ? `the doc (${doc.latest.title})` : "the doc";

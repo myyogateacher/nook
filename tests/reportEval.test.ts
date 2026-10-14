@@ -115,6 +115,11 @@ function expectScored(testCase: LoadedCase, golden: CaseResult, trap: CaseResult
   expect({ id: testCase.id, error: golden.error, failing: golden.facts.filter((fact) => !fact.pass) }).toEqual({ id: testCase.id, error: null, failing: [] });
   expect(golden.firstSubmitPass).toBe(true);
   expect(golden.toolCalls).toBeGreaterThan(0);
+  // E4: a case with a catalog has it stored with the report (extracted once for the doc snapshot).
+  if (testCase.catalog) {
+    const stored = db.query("SELECT source, metrics_json FROM report_metric_catalogs WHERE report_id = ? ORDER BY version DESC LIMIT 1").get(golden.reportId) as { source: string; metrics_json: string };
+    expect({ source: stored.source, metrics: (JSON.parse(stored.metrics_json) as Array<{ id: string; problems: string[] }>).map((metric) => [metric.id, metric.problems]) }).toEqual({ source: "extract", metrics: testCase.catalog.map((metric) => [metric.id, []]) });
+  }
   // E2: a golden report never trips a sanity check; a trap that one catches is refused once first.
   expect({ id: testCase.id, hints: golden.sanityHints }).toEqual({ id: testCase.id, hints: 0 });
   if (trap && testCase.trap?.sanity) {

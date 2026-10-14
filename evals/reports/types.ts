@@ -44,6 +44,8 @@ export type EvalCase = {
   browseTools?: string[];
   golden: EvalSpec;
   trap?: { spec: EvalSpec; fails: string[]; /** The sanity checks (E2) that must refuse its first submit. */ sanity?: string[] };
+  /** E4: what the scripted provider's metric extraction records (the real model extracts its own). */
+  catalog?: Array<Record<string, unknown>>;
   /** In the deterministic CI subset (replayed from fixtures.json). */
   ci?: boolean;
 };

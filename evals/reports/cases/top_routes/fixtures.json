@@ -1,5 +1,5 @@
 {
- "recordedAt": "2026-10-14T11:59:42.519Z",
+ "recordedAt": "2026-10-14T12:12:54.831Z",
  "version": "26.6.8.7",
  "answers": {
   "EXPLAIN QUERY TREE SELECT countIf(status >= 500) / count() AS error_rate\nFROM eval_top_routes.requests\nWHERE route NOT IN ('healthz', 'readyz')": {

@@ -5,7 +5,7 @@
  *
  *   bun --no-env-file scripts/reportEval.ts [--cases a,b] [--provider scripted|openai] [--variant golden|trap|both]
  *     [--clickhouse http://user:password@127.0.0.1:22200 | --fixtures] [--no-seed] [--record]
- *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--tool-choice auto|full] [--timeout <s>]
+ *     [--out <dir>] [--data-dir <dir>] [--port 22241] [--origin http://e.localhost:22241] [--serve] [--tool-choice auto|full] [--timeout <s>]
  *   bun --no-env-file scripts/reportEval.ts --compare a.json b.json
  *
  * A real model is read from the environment, never from a file in the repository:
@@ -35,7 +35,7 @@ function parseFlags(argv: string[]): { flags: Flags; rest: string[] } {
     const [name, inline] = arg.slice(2).split("=", 2) as [string, string | undefined];
     const next = argv[index + 1];
     if (inline !== undefined) flags[name] = inline;
-    else if (["fixtures", "no-seed", "record", "compare", "help"].includes(name)) flags[name] = true;
+    else if (["fixtures", "no-seed", "record", "compare", "help", "serve"].includes(name)) flags[name] = true;
     else if (next !== undefined && !next.startsWith("--")) { flags[name] = next; index += 1; }
     else flags[name] = true;
   }
@@ -69,7 +69,8 @@ async function main() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dataDir = flagString(flags, "data-dir") ?? mkdtempSync(join(outDir, `data-${stamp}-`));
   const port = Number(flagString(flags, "port") ?? 22241);
-  const origin = `http://localhost:${port}`;
+  // --origin (e.g. http://e.localhost:22242) for a browser QA origin of its own; the port must match.
+  const origin = flagString(flags, "origin") ?? `http://localhost:${port}`;
 
   // The server reads its configuration at import: set it first.
   const hosts = new Set(["127.0.0.1"]);
@@ -77,7 +78,7 @@ async function main() {
   if (baseUrl && providerKind === "openai") { const host = new URL(baseUrl).hostname; if (/^(127\.|10\.|192\.168\.|localhost$)/.test(host)) hosts.add(host); }
   const key = (fill: number) => process.env.REPORT_EVAL_KEEP_KEYS ? Buffer.alloc(32, fill).toString("base64") : Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
   Object.assign(process.env, {
-    DATA_DIR: dataDir, APP_ORIGIN: origin, PORT: String(port), COOKIE_SECURE: "false", NODE_ENV: "development", ALLOW_REGISTRATION: "false",
+    DATA_DIR: dataDir, APP_ORIGIN: origin, PORT: String(port), COOKIE_SECURE: "false", NODE_ENV: flags.serve ? "production" : "development", ALLOW_REGISTRATION: "false",
     TOTP_POLICY: "optional", LOG_LEVEL: process.env.LOG_LEVEL ?? "warn", AGENT_ALLOWED_PRIVATE_HOSTS: [...hosts].join(","),
     TOTP_ENCRYPTION_KEY: process.env.TOTP_ENCRYPTION_KEY ?? key(7), AGENT_SECRETS_KEY: process.env.AGENT_SECRETS_KEY ?? key(11), VAULT_ENCRYPTION_KEY: process.env.VAULT_ENCRYPTION_KEY ?? key(9)
   });
@@ -164,6 +165,11 @@ async function main() {
   const file = join(outDir, `report-eval-${stamp}.json`);
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\n${formatReport(report)}\n\nJSON: ${file}`);
+  if (flags.serve) {
+    // --serve: keep the server up (production mode, serving the built dist/: run `bunx vite build` first) to open the reports, their Runs, and Metrics.
+    console.log(`\nServing ${origin} (sign-in in ${join(dataDir, "eval-login.txt")}); Ctrl-C stops it.`);
+    return;
+  }
   server.stop(true);
   process.exit(results.every((item) => item.variant === "trap" || item.ok) ? 0 : 1);
 }

@@ -1,0 +1,46 @@
+/* The Metrics view (lane E, E4): a wide panel at the right on a desktop, full screen on a phone. */
+@media (min-width: 1024px) {
+  .file-dialog.reports-dialog.report-changes.report-metrics-panel { width: clamp(560px, 52vw, 900px); }
+}
+.report-metrics-body { gap: 14px; }
+.report-metrics-meta { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.report-metrics-meta .file-dialog-hint { margin: 0; flex: 1 1 260px; }
+.report-metrics-version { display: grid; gap: 4px; font-size: .8rem; color: var(--report-muted); }
+.report-metrics-version { min-width: 200px; }
+.report-metrics-restore { min-height: 44px; margin-left: 8px; padding: 0 14px; }
+.report-metrics-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.report-metric { border: 1px solid var(--report-border); border-radius: 12px; padding: 12px 14px; background: var(--report-surface); display: grid; gap: 8px; min-width: 0; }
+.report-metric.is-editing { border-color: var(--report-accent-line); }
+.report-metric-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.report-metric-state { display: inline-flex; flex: none; }
+.report-metric-state.is-ok { color: var(--report-accent); }
+.report-metric-state.is-warn { color: #b45309; }
+.report-metric-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; flex: 1 1 auto; }
+.report-metric-name strong { overflow-wrap: anywhere; }
+.report-metric-name code, .report-metric-facts code { font-size: .8rem; color: var(--report-soft); background: var(--report-code-bg); border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
+.report-metric-edit { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.report-metric-facts { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px 14px; }
+.report-metric-facts div { min-width: 0; display: grid; gap: 2px; }
+.report-metric-facts dt { font-size: .74rem; color: var(--report-muted); }
+.report-metric-facts dd { margin: 0; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px; min-width: 0; font-size: .86rem; color: var(--report-soft); }
+.report-metric-definition { margin: 0; color: var(--report-soft); font-size: .88rem; }
+.report-metric-problem { margin: 0; font-size: .84rem; color: #b45309; overflow-wrap: anywhere; }
+.report-metric-form { display: grid; gap: 10px; }
+.report-metric-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+.report-metric-wide { grid-column: 1 / -1; }
+.report-metric-form input:not([type="checkbox"]) { width: 100%; min-height: 44px; border: 1px solid var(--report-border); border-radius: 10px; padding: 0 10px; background: var(--report-raised); color: var(--report-text); font: inherit; }
+.report-metric-form textarea { width: 100%; resize: vertical; border: 1px solid var(--report-border); border-radius: 10px; padding: 10px; background: var(--report-raised); color: var(--report-text); font: inherit; min-height: 44px; }
+.report-metric-form textarea[spellcheck="false"] { font-family: var(--font-mono, ui-monospace, monospace); font-size: .85rem; }
+.report-metric-check { grid-column: 1 / -1; min-height: 44px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; color: var(--report-soft); font-size: .88rem; }
+.report-metric-check input { width: 20px; height: 20px; }
+.report-metric-problems { margin: 0; padding-left: 18px; }
+.report-metric-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.report-metric-form-actions button { min-height: 44px; min-width: 88px; justify-content: center; padding: 0 16px; display: inline-flex; align-items: center; gap: 6px; }
+.report-metric-spacer { flex: 1 1 auto; }
+@media (max-width: 560px) {
+  .report-metric-form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .report-metric-state.is-warn, :root:not([data-theme="light"]) .report-metric-problem { color: #f59e0b; }
+}
+:root[data-theme="dark"] .report-metric-state.is-warn, :root[data-theme="dark"] .report-metric-problem { color: #f59e0b; }

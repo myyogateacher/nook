@@ -25,6 +25,8 @@ import {
 
 export const ROUND_TWO_KINDS: ReadonlySet<ChartKind> = new Set<ChartKind>(["heatmap", "calendar", "funnel", "gauge", "treemap", "sankey", "boxplot", "histogram", "waterfall", "combo", "bullet"]);
 
+/** Treemap tiles under this share of the whole carry no label (it would not fit; the tooltip and the Data tab have it). */
+const TINY_TILE = 0.02;
 /** Heatmap and calendar colour steps (a stepped scale reads more exactly than a gradient). */
 const SCALE_STEPS = 7;
 /** Labels on heatmap cells only up to this many columns, and when a cell is at least this wide. */
@@ -289,6 +291,8 @@ const funnel: Builder = (block, data, theme, width) => {
   const colors = ordinalRamp(theme.mode, stages.length);
   const format = block.format;
   const top = stages[0]?.value ?? 0;
+  const funnelWidth = width * 0.46;
+  const stageWidth = (value: number) => funnelWidth * Math.max(0.02, top ? value / top : 1);
   const conversion = stages.map((stage, at) => ({ previous: at ? share(stage.value, stages[at - 1]!.value) : null, overall: share(stage.value, top) }));
   const stageLabel = named(`label:funnel:${format ?? "number"}`, (params: { dataIndex?: number; name?: string; value?: unknown }) => {
     const at = params.dataIndex ?? 0;
@@ -312,11 +316,11 @@ const funnel: Builder = (block, data, theme, width) => {
           show: true, position: "right", formatter: stageLabel,
           rich: { name: { color: theme.ink.ink, fontSize: TYPE.axis.size, fontWeight: 600, lineHeight: 14 }, value: { color: theme.ink.inkSecondary, fontSize: TYPE.label.size, lineHeight: 13 } }
         },
-        // Every label in one column right of the widest stage, joined to its stage by a hairline.
-        labelLayout: { x: Math.round(width * 0.46) + 16, align: "left", moveOverlap: "shiftY" },
         labelLine: { show: true, length: 8, lineStyle: { color: theme.ink.axis, width: 1 } },
         emphasis: { label: { show: true } },
-        data: stages.map((stage, at) => ({ ...stage, itemStyle: { color: colors[at] } }))
+        // Every label in one column right of the widest stage: each stage's hairline runs from the middle
+        // of its right edge to that column (the funnel is 46 % of the tile, left-aligned at 4 px).
+        data: stages.map((stage, at) => ({ ...stage, itemStyle: { color: colors[at] }, labelLine: { length: Math.max(6, Math.round(funnelWidth + 10 - (stageWidth(stage.value) + stageWidth(stages[at + 1]?.value ?? stage.value)) / 2)) } }))
       }]
     },
     height: Math.max(CHART_HEIGHTS.funnel, stages.length * 36 + 12)
@@ -357,7 +361,9 @@ const gauge: Builder = (block, data, theme) => {
   return { option: model as unknown as Record<string, unknown>, height: 120, view: "meter" };
 };
 
-const treemap: Builder = (block, data, theme) => {
+const treemap: Builder = (block, data, theme, width) => {
+  // Narrow tiles fit fewer labels: a tile needs twice the share on a phone.
+  const tiny = width < 480 ? TINY_TILE * 2 : TINY_TILE;
   const gi = columnOf(data, block.x);
   const si = columnOf(data, block.x2);
   const vi = columnOf(data, block.y[0]);
@@ -383,7 +389,7 @@ const treemap: Builder = (block, data, theme) => {
   const node = (name: string, children: Map<string, number>, color: string) => ({
     name, value: totalOf(children), itemStyle: { color },
     label: { color: inkOn(color) }, upperLabel: { color: theme.ink.inkSecondary },
-    ...(si >= 0 ? { children: [...children.entries()].sort((left, right) => right[1] - left[1]).map(([child, value]) => ({ name: child, value, itemStyle: { color }, label: { color: inkOn(color) } })) } : {})
+    ...(si >= 0 ? { children: [...children.entries()].sort((left, right) => right[1] - left[1]).map(([child, value]) => ({ name: child, value, itemStyle: { color }, label: { color: inkOn(color), show: value / whole >= tiny } })) } : {})
   });
   const nodes = order.map((name, at) => node(name, groups.get(name)!, theme.series[at]!));
   if (rest.length) nodes.push(node("Other", new Map([["Other", rest.reduce((sum, name) => sum + totalOf(groups.get(name)!), 0)]]), theme.emphasisMuted));
@@ -549,7 +555,7 @@ const histogram: Builder = (block, data, theme) => {
 
 // ----------------------------------------------------------------------------- steps, pairs, targets
 
-const waterfall: Builder = (block, data, theme) => {
+const waterfall: Builder = (block, data, theme, width) => {
   const xi = columnOf(data, block.x);
   const vi = columnOf(data, block.y[0]);
   const colors = waterfallColors(theme.mode);
@@ -566,7 +572,8 @@ const waterfall: Builder = (block, data, theme) => {
   });
   if (block.total) steps.push({ name: "Total", delta: running, from: 0, to: running, total: true });
   const format = block.format;
-  const fewLabels = steps.length <= 12;
+  // Every step's signed change while they fit (about 56 px each); otherwise only the totals and the last step.
+  const fewLabels = steps.length <= 12 && width / Math.max(1, steps.length) >= 56;
   const signed = (step: Step) => step.total ? compactValue(step.to, format, block.unit) : `${step.delta > 0 ? "+" : step.delta < 0 ? "−" : ""}${compactValue(Math.abs(step.delta), format, block.unit)}`;
   const stepLabel = named(`label:waterfall:${format ?? "number"}`, (params: { dataIndex?: number }) => signed(steps[params.dataIndex ?? 0]!));
   const legendSeries = (name: string, color: string) => ({ type: "bar", name, data: [], itemStyle: { color }, stack: "legend" });
@@ -583,7 +590,8 @@ const waterfall: Builder = (block, data, theme) => {
       legend: { ...legendOption(theme), data: ["Increase", "Decrease", ...(steps.some((step) => step.total) ? ["Total"] : [])] },
       grid: { left: 8, right: 16, top: 36, bottom: 8, containLabel: true },
       xAxis: categoryAxis(theme, steps.map((step) => step.name), { boundaryGap: true }),
-      yAxis: valueAxis(theme, format),
+      // Few, round ticks: compacted labels of close ticks would repeat ($1.5M, $1.5M).
+      yAxis: { ...valueAxis(theme, format), splitNumber: 4 },
       series: [
         // The invisible base lifts each step to where the last one ended (stacking all signs, so a base below zero works).
         { type: "bar", name: "base", stack: "waterfall", stackStrategy: "all", silent: true, itemStyle: { color: "transparent", borderColor: "transparent" }, emphasis: { disabled: true }, tooltip: { show: false }, data: steps.map((step) => Math.min(step.from, step.to)) },
@@ -646,7 +654,7 @@ const combo: Builder = (block, data, theme) => {
   };
 };
 
-const bullet: Builder = (block, data, theme) => {
+const bullet: Builder = (block, data, theme, width) => {
   const xi = columnOf(data, block.x);
   const ai = columnOf(data, block.y[0]);
   const ti = columnOf(data, block.target);
@@ -682,7 +690,7 @@ const bullet: Builder = (block, data, theme) => {
           + (actual[at] !== null && target[at] ? line("Of target", share(actual[at]!, target[at]!)) : "") + (block.ranges ?? []).map((name, band) => line(name, formatValue(ranges[at]?.[band], format, unit))).join("");
       })),
       grid: { left: 8, right: 64, top: 8, bottom: 8, containLabel: true },
-      xAxis: { ...valueAxis(theme, format, { grid: false }), axisLine: { show: true, lineStyle: { color: theme.ink.axis } } },
+      xAxis: { ...valueAxis(theme, format, { grid: false }), axisLine: { show: true, lineStyle: { color: theme.ink.axis } }, splitNumber: width < 480 ? 2 : 5, axisLabel: { ...valueAxis(theme, format).axisLabel, hideOverlap: true } },
       // Two copies of one category axis (the second hidden) let the thin measure sit centred on its bands; there is one value axis.
       yAxis: [categoryAxis(theme, categories, { inverse: true }), { ...categoryAxis(theme, categories, { inverse: true }), show: false }],
       series: [

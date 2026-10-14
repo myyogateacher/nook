@@ -1,0 +1,26 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    route LowCardinality(String)
+    argMax(outcome, _peerdb_version) String
+    countIf(equals(status, 'open')) UInt64
+  PROJECTION
+    LIST id: 1, nodes: 3
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3
+      FUNCTION id: 4, function_name: argMax, function_type: aggregate, result_type: String
+        ARGUMENTS
+          LIST id: 5, nodes: 2
+            COLUMN id: 6, column_name: outcome, result_type: String, source_id: 3
+            COLUMN id: 7, column_name: _peerdb_version, result_type: Int64, source_id: 3
+      FUNCTION id: 8, function_name: countIf, function_type: aggregate, result_type: UInt64
+        ARGUMENTS
+          LIST id: 9, nodes: 1
+            FUNCTION id: 10, function_name: equals, function_type: ordinary, result_type: UInt8
+              ARGUMENTS
+                LIST id: 11, nodes: 2
+                  COLUMN id: 12, column_name: status, result_type: String, source_id: 3
+                  CONSTANT id: 13, constant_value: 'open', constant_value_type: String
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.myt_chat_escalation
+  GROUP BY
+    LIST id: 14, nodes: 1
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3

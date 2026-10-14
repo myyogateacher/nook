@@ -1,0 +1,17 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    id UInt64
+    tag String
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+      COLUMN id: 4, column_name: __array_join_exp_1, result_type: String, source_id: 5
+  JOIN TREE
+    ARRAY_JOIN id: 5, is_left: 0
+      TABLE EXPRESSION
+        TABLE id: 3, alias: __table2, table_name: myt.events
+      JOIN EXPRESSIONS
+        LIST id: 6, nodes: 1
+          COLUMN id: 7, alias: __array_join_exp_1, column_name: __array_join_exp_1, result_type: String, source_id: 5
+            EXPRESSION
+              COLUMN id: 8, column_name: tags, result_type: Array(String), source_id: 3

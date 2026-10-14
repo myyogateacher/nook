@@ -1,0 +1,13 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    route LowCardinality(String)
+    count() UInt64
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3
+      FUNCTION id: 4, function_name: count, function_type: aggregate, result_type: UInt64
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.myt_chat_escalation, final: 1
+  GROUP BY
+    LIST id: 5, nodes: 1
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3

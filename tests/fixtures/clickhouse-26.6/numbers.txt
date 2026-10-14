@@ -1,0 +1,11 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    number UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      COLUMN id: 2, column_name: number, result_type: UInt64, source_id: 3
+  JOIN TREE
+    TABLE_FUNCTION id: 3, alias: __table1, table_function_name: numbers
+      ARGUMENTS
+        LIST id: 4, nodes: 1
+          CONSTANT id: 5, constant_value: UInt64_10, constant_value_type: UInt8

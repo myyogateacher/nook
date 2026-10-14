@@ -1,5 +1,6 @@
 import type { GuardCode, StatementClass } from "../../shared/reports";
 import { clickhouseRegex, databaseAllowed, tableAllowed } from "./allowlist";
+import { logger } from "../log";
 
 /**
  * The SQL guard for report queries (plan wave 45, D411, D412, T357). Defence in depth in front of the
@@ -456,7 +457,17 @@ export function assertMetadataAllowed(classified: Classified, allowlist: readonl
 export type QueryTree = { tables: Array<{ db: string; table: string }>; functions: string[]; /** Every `FUNCTION … function_name:` the analyzer resolved (review H2). */ calls?: string[] };
 
 const TREE_NAME = /^[A-Za-z0-9_]+$/;
-const treeRefused = () => new GuardError("UNSUPPORTED_SYNTAX", "Nook could not check which tables this query reads; plain names (letters, digits, _) and simple aliases are required");
+/** Trailing `, key: value` fields on a TABLE line (final, sample_size, sample_offset, is_global, …). */
+const TREE_FIELDS = /^(?:, (?:final|[a-z_]+: [A-Za-z0-9_./ ]+))*$/;
+const treeLog = logger("reports");
+/**
+ * The guard could not parse a tree line: a Nook limitation, not a SQL error, so the hint says so (the
+ * model stops rewriting valid SQL). The line itself is logged at debug only (it may carry a name).
+ */
+const treeRefused = (line?: string) => {
+  if (line !== undefined && treeLog.enabled("debug")) treeLog.debug("Query tree line refused", { line: line.trim().slice(0, 500) });
+  return new GuardError("UNSUPPORTED_SYNTAX", "Nook could not check which tables this query reads. This is a Nook guard limitation, not a SQL error: rewrite without quoted or unusual table names or aliases, or report it");
+};
 
 /**
  * Parses the tree strictly and fails closed (review follow-up): every line that carries
@@ -475,25 +486,34 @@ export function queryTreeTables(text: string): QueryTree {
     const tableFunctionFields = count(line, "table_function_name: ");
     const functionFields = count(line, "function_name: ") - tableFunctionFields;
     if (!tableFields && !tableFunctionFields && !functionFields) {
-      if (/^\s*(TABLE|TABLE_FUNCTION|FUNCTION) id:/.test(line)) throw treeRefused();
+      if (/^\s*(TABLE|TABLE_FUNCTION|FUNCTION) id:/.test(line)) throw treeRefused(line);
       continue;
     }
-    if (tableFields + tableFunctionFields + functionFields !== 1) throw treeRefused();
+    if (tableFields + tableFunctionFields + functionFields !== 1) throw treeRefused(line);
     if (tableFields) {
-      if (!/^\s*TABLE id: \d+, /.test(line)) throw treeRefused();
-      const rest = line.slice(line.indexOf("table_name: ") + "table_name: ".length);
-      const match = /^([^.,\s]+)\.([^.,\s]+)((?:, (?:final|sample_size: [0-9./ ]+|sample_offset: [0-9./ ]+))*)\s*$/.exec(rest);
-      if (!match || !TREE_NAME.test(match[1]!) || !TREE_NAME.test(match[2]!)) throw treeRefused();
+      if (!/^\s*TABLE id: \d+, /.test(line)) throw treeRefused(line);
+      // ClickHouse 26.6: `table_name: myt.t, final: 1, sample_size: 1 / 10, sample_offset: 1 / 2`.
+      // The name runs to the next `, <field>: ` (or the line's end); every field after it must be a
+      // plain `key: value` pair (no field may repeat table_name, guarded above).
+      const rest = line.slice(line.indexOf("table_name: ") + "table_name: ".length).replace(/\s+$/, "");
+      const cut = rest.search(/, (?:[a-z_]+: |final(?:,|$))/);
+      const name = cut < 0 ? rest : rest.slice(0, cut);
+      const trailing = cut < 0 ? "" : rest.slice(cut);
+      const match = /^([^.,\s]+)\.([^.,\s]+)$/.exec(name);
+      if (!match || !TREE_NAME.test(match[1]!) || !TREE_NAME.test(match[2]!) || !TREE_FIELDS.test(trailing)) throw treeRefused(line);
+      // A field named twice means a quoted name carried `, key: ` text: ambiguous, so refused.
+      const keys = [...trailing.matchAll(/, ([a-z_]+)(?=: |,|$)/g)].map((item) => item[1]!);
+      if (new Set(keys).size !== keys.length) throw treeRefused(line);
       tables.push({ db: match[1]!, table: match[2]! });
     } else if (tableFunctionFields) {
-      if (!/^\s*TABLE_FUNCTION id: \d+, /.test(line)) throw treeRefused();
+      if (!/^\s*TABLE_FUNCTION id: \d+, /.test(line)) throw treeRefused(line);
       const match = /table_function_name: ([A-Za-z0-9_]+)(?:,|\s*$)/.exec(line);
-      if (!match) throw treeRefused();
+      if (!match) throw treeRefused(line);
       functions.push(match[1]!);
     } else {
-      if (!/^\s*FUNCTION id: \d+, /.test(line)) throw treeRefused();
+      if (!/^\s*FUNCTION id: \d+, /.test(line)) throw treeRefused(line);
       const match = /function_name: ([A-Za-z0-9_]+)(?:,|\s*$)/.exec(line);
-      if (!match) throw treeRefused();
+      if (!match) throw treeRefused(line);
       calls.push(match[1]!);
     }
   }

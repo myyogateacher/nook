@@ -528,7 +528,7 @@ A line reads `time LEVEL scope message key=value…`:
 | `error` | 5xx answers with the stack, failed background work (sweeps, mail, runs), migration failures, uncaught exceptions and unhandled rejections. |
 | `warn` | 4xx answers other than 401 and 404; 401/404 from one client more than 20 times a minute (one line with the count); requests slower than `LOG_SLOW_MS`; refused sign-ins and keys; refused or failed queries; provider errors (status code only). |
 | `info` | Every other request; startup (configuration summary without secrets, each migration with its time, `Listening`); shutdown; sign-in, sign-out, 2FA, key create and revoke; MCP tool calls; agent runs and each model step (tool names, tokens, time); report runs, generations, instructions, proposals, schedules, doc fetches, schema syncs, ClickHouse queries; uploads (size and type); mail and reminder counts; sweeper counts; knowledge indexing. |
-| `debug` | Health checks, the built client's files, single 401s and 404s, Nook's own ClickHouse statements, and the SQL of console, report, and agent queries. |
+| `debug` | Health checks, the built client's files, single 401s and 404s, Nook's own ClickHouse statements, the SQL of console, report, and agent queries, and the `EXPLAIN QUERY TREE` line the guard could not parse (`Query tree line refused`, no data). |
 
 `LOG_LEVEL=debug` is for a short investigation: it prints query SQL, which can name columns and literal values.
 
@@ -798,3 +798,16 @@ bun run dev:client
 ```
 
 `bun run dev` serves the API on port `2026` (stop the Docker container first, since it uses the same port) and restarts on changes. `bun run dev:client` starts Vite at `http://localhost:5173` and proxies `/api` to it. `./data` is ignored by Git. Run `bun run typecheck` and `bun test` before committing.
+
+### Testing against a real ClickHouse
+
+The report guard's parser is driven by `EXPLAIN QUERY TREE` output captured from ClickHouse 26.6 (`tests/fixtures/clickhouse-26.6/`). The gated live tests (`tests/reportsClickhouseLive.test.ts`) run the settings, the LIMIT wrap, the query tree (FINAL included), and the readonly check against a real server:
+
+```sh
+docker run -d --name nook-clickhouse -p 127.0.0.1:22200:8123 \
+  -e CLICKHOUSE_USER=nook -e CLICKHOUSE_PASSWORD=nooktest -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+  clickhouse/clickhouse-server:26.6
+CLICKHOUSE_TEST_URL=http://nook:nooktest@127.0.0.1:22200 bun test tests/reportsClickhouseLive.test.ts
+```
+
+The user and password may also come from `CLICKHOUSE_TEST_USER` and `CLICKHOUSE_TEST_PASSWORD`. To refresh a fixture, run `curl -s -u nook:nooktest 'http://127.0.0.1:22200/?default_format=TabSeparatedRaw' --data-binary "EXPLAIN QUERY TREE <the .sql file's statement>"` and save it as the matching `.txt`; `tests/reportsQueryTree26.test.ts` fails until every fixture has an expectation.

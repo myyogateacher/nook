@@ -1,0 +1,15 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    id UInt64
+    v String
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+      COLUMN id: 4, column_name: v, result_type: String, source_id: 3
+  JOIN TREE
+    TABLE_FUNCTION id: 3, alias: __table1, table_function_name: remote
+      ARGUMENTS
+        LIST id: 5, nodes: 3
+          CONSTANT id: 6, constant_value: '127.0.0.1:9000', constant_value_type: String
+          CONSTANT id: 7, constant_value: 'other', constant_value_type: String
+          CONSTANT id: 8, constant_value: 'secrets', constant_value_type: String

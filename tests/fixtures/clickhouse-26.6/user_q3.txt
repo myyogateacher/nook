@@ -1,0 +1,58 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    route LowCardinality(String)
+    total UInt64
+    quality_blocked UInt64
+    block_rate Float64
+  PROJECTION
+    LIST id: 1, nodes: 4
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3
+      FUNCTION id: 4, function_name: count, function_type: aggregate, result_type: UInt64
+      FUNCTION id: 5, function_name: countIf, function_type: aggregate, result_type: UInt64
+        ARGUMENTS
+          LIST id: 6, nodes: 1
+            FUNCTION id: 7, function_name: equals, function_type: ordinary, result_type: UInt8
+              ARGUMENTS
+                LIST id: 8, nodes: 2
+                  COLUMN id: 9, column_name: skip_reason, result_type: String, source_id: 3
+                  CONSTANT id: 10, constant_value: 'quality_block', constant_value_type: String
+      FUNCTION id: 11, function_name: round, function_type: ordinary, result_type: Float64
+        ARGUMENTS
+          LIST id: 12, nodes: 2
+            FUNCTION id: 13, function_name: divide, function_type: ordinary, result_type: Float64
+              ARGUMENTS
+                LIST id: 14, nodes: 2
+                  FUNCTION id: 15, function_name: countIf, function_type: aggregate, result_type: UInt64
+                    ARGUMENTS
+                      LIST id: 16, nodes: 1
+                        FUNCTION id: 17, function_name: equals, function_type: ordinary, result_type: UInt8
+                          ARGUMENTS
+                            LIST id: 18, nodes: 2
+                              COLUMN id: 9, column_name: skip_reason, result_type: String, source_id: 3
+                              CONSTANT id: 19, constant_value: 'quality_block', constant_value_type: String
+                  FUNCTION id: 20, function_name: count, function_type: aggregate, result_type: UInt64
+            CONSTANT id: 21, constant_value: UInt64_4, constant_value_type: UInt8
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.myt_chat_escalation, final: 1
+  WHERE
+    FUNCTION id: 22, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 23, nodes: 2
+          FUNCTION id: 24, function_name: equals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 25, nodes: 2
+                COLUMN id: 26, column_name: _peerdb_is_deleted, result_type: UInt8, source_id: 3
+                CONSTANT id: 27, constant_value: UInt64_0, constant_value_type: UInt8
+          FUNCTION id: 28, function_name: in, function_type: ordinary, result_type: LowCardinality(UInt8)
+            ARGUMENTS
+              LIST id: 29, nodes: 2
+                COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3
+                CONSTANT id: 30, constant_value: Tuple_('digest', 'ladder'), constant_value_type: Tuple(String, String)
+  GROUP BY
+    LIST id: 31, nodes: 1
+      COLUMN id: 2, column_name: route, result_type: LowCardinality(String), source_id: 3
+  ORDER BY
+    LIST id: 32, nodes: 1
+      SORT id: 33, sort_direction: DESCENDING, with_fill: 0
+        EXPRESSION total
+          FUNCTION id: 34, function_name: count, function_type: aggregate, result_type: UInt64

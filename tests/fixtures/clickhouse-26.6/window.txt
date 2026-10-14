@@ -1,0 +1,23 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    id UInt64
+    running Float64
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+      FUNCTION id: 4, function_name: sum, function_type: window, result_type: Float64
+        ARGUMENTS
+          LIST id: 5, nodes: 1
+            COLUMN id: 6, column_name: v, result_type: Float64, source_id: 3
+        WINDOW
+          WINDOW id: 7, frame_type: RANGE, frame_begin_type: unbounded preceding, frame_end_type: current
+            PARTITION BY
+              LIST id: 8, nodes: 1
+                COLUMN id: 9, column_name: d, result_type: Date, source_id: 3
+            ORDER BY
+              LIST id: 10, nodes: 1
+                SORT id: 11, sort_direction: ASCENDING, with_fill: 0
+                  EXPRESSION id
+                    COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.events

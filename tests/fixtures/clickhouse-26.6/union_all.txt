@@ -1,0 +1,25 @@
+UNION id: 0, union_mode: UNION_ALL
+  QUERIES
+    LIST id: 1, nodes: 2
+      QUERY id: 2, alias: __table1
+        PROJECTION COLUMNS
+          id UInt64
+        PROJECTION
+          LIST id: 3, nodes: 1
+            COLUMN id: 4, column_name: id, result_type: UInt64, source_id: 5
+        JOIN TREE
+          TABLE id: 5, alias: __table2, table_name: myt.events
+      QUERY id: 6, alias: __table3
+        PROJECTION COLUMNS
+          toUInt64(length(uuid)) UInt64
+        PROJECTION
+          LIST id: 7, nodes: 1
+            FUNCTION id: 8, function_name: toUInt64, function_type: ordinary, result_type: UInt64
+              ARGUMENTS
+                LIST id: 9, nodes: 1
+                  FUNCTION id: 10, function_name: length, function_type: ordinary, result_type: UInt64
+                    ARGUMENTS
+                      LIST id: 11, nodes: 1
+                        COLUMN id: 12, column_name: uuid, result_type: String, source_id: 13
+        JOIN TREE
+          TABLE id: 13, alias: __table4, table_name: myt.myt_chat_escalation

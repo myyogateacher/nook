@@ -73,6 +73,9 @@ describe("answers and failures", () => {
     expect({ code: error.code, chCode: error.chCode, chName: error.chName, message: error.message }).toEqual({ code: "CLICKHOUSE", chCode: 60, chName: "UNKNOWN_TABLE", message: "Table analytics.nope does not exist." });
     expect(parseChError("Code: 159. DB::Exception: Timeout exceeded: elapsed 20.1 seconds. (TIMEOUT_EXCEEDED) (version 24.8)", 500).code).toBe("TIMEOUT");
     expect(parseChError("Unauthorized", 401).chName).toBe("AUTHENTICATION_FAILED");
+    // ClickHouse 26.6's version suffix holds a nested parenthesis; the error name is still read.
+    const final = parseChError("Code: 181. DB::Exception: Storage MergeTree doesn't support FINAL. (ILLEGAL_FINAL) (version 26.6.8.7 (official build))", 500);
+    expect([final.chCode, final.chName, final.message]).toEqual([181, "ILLEGAL_FINAL", "Storage MergeTree doesn't support FINAL."]);
   });
 
   test("an exception appended mid-stream to a 200 is an error, not data", async () => {

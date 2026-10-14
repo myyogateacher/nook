@@ -40,11 +40,12 @@ const exception = (code: number, message: string, name: string) => `Code: ${code
 export function fakeQueryTree(select: string, defaultDb: string): string {
   const lines = ["QUERY id: 0", "  PROJECTION COLUMNS", "  JOIN TREE"];
   let id = 1;
-  for (const match of select.matchAll(/\b(?:FROM|JOIN)\s+(`?[A-Za-z0-9_]+`?(?:\.`?[A-Za-z0-9_]+`?)?)\s*(\()?/gi)) {
+  for (const match of select.matchAll(/\b(?:FROM|JOIN)\s+(`?[A-Za-z0-9_]+`?(?:\.`?[A-Za-z0-9_]+`?)?)\s*(\()?(?:(?:AS\s+)?(?!FINAL\b)[A-Za-z_][A-Za-z0-9_]*\s+)?(FINAL\b)?/gi)) {
     const name = match[1]!.replace(/`/g, "");
     if (match[2]) lines.push(`    TABLE_FUNCTION id: ${id++}, alias: __table${id}, table_function_name: ${name}`);
     else if (/^(select|with)$/i.test(name)) continue;
-    else lines.push(`    TABLE id: ${id++}, alias: __table${id}, table_name: ${name.includes(".") ? name : `${defaultDb}.${name}`}`);
+    // ClickHouse 26.6 prints FINAL as `, final: 1` after the name (tests/fixtures/clickhouse-26.6).
+    else lines.push(`    TABLE id: ${id++}, alias: __table${id}, table_name: ${name.includes(".") ? name : `${defaultDb}.${name}`}${match[3] ? ", final: 1" : ""}`);
   }
   return lines.join("\n");
 }

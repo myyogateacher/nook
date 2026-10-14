@@ -1,0 +1,24 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    name String
+    type String
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: name, result_type: String, source_id: 3
+      COLUMN id: 4, column_name: type, result_type: String, source_id: 3
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: system.columns
+  WHERE
+    FUNCTION id: 5, function_name: and, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 6, nodes: 2
+          FUNCTION id: 7, function_name: equals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 8, nodes: 2
+                COLUMN id: 9, column_name: database, result_type: String, source_id: 3
+                CONSTANT id: 10, constant_value: 'myt', constant_value_type: String
+          FUNCTION id: 11, function_name: equals, function_type: ordinary, result_type: UInt8
+            ARGUMENTS
+              LIST id: 12, nodes: 2
+                COLUMN id: 13, column_name: table, result_type: String, source_id: 3
+                CONSTANT id: 14, constant_value: 'events', constant_value_type: String

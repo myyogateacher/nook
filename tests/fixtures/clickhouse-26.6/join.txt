@@ -1,0 +1,23 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    id UInt64
+    route LowCardinality(String)
+  PROJECTION
+    LIST id: 1, nodes: 2
+      COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+      COLUMN id: 4, column_name: route, result_type: LowCardinality(String), source_id: 5
+  JOIN TREE
+    JOIN id: 6, strictness: ALL, kind: INNER
+      LEFT TABLE EXPRESSION
+        TABLE id: 3, alias: __table1, table_name: myt.events
+      RIGHT TABLE EXPRESSION
+        TABLE id: 5, alias: __table2, table_name: myt.myt_chat_escalation
+      JOIN EXPRESSION
+        FUNCTION id: 7, function_name: equals, function_type: ordinary, result_type: UInt8
+          ARGUMENTS
+            LIST id: 8, nodes: 2
+              FUNCTION id: 9, function_name: toString, function_type: ordinary, result_type: String
+                ARGUMENTS
+                  LIST id: 10, nodes: 1
+                    COLUMN id: 11, column_name: id, result_type: UInt64, source_id: 3
+              COLUMN id: 12, column_name: uuid, result_type: String, source_id: 5

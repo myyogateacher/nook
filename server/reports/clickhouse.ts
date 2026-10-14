@@ -108,7 +108,8 @@ const trimMessage = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 
 
 /** ClickHouse's error text (`Code: 60. DB::Exception: … (UNKNOWN_TABLE) (version …)`) as a ChError. */
 export function parseChError(text: string, status: number): ChError {
-  const match = /Code:\s*(\d+)\.\s*DB::Exception:\s*([\s\S]*?)(?:\s*\(([A-Z_]+)\))?(?:\s*\(version [^)]*\))?\s*$/.exec(text.trim());
+  // 26.6 appends `(version 26.6.8.7 (official build))`: the version may hold one nested parenthesis.
+  const match = /Code:\s*(\d+)\.\s*DB::Exception:\s*([\s\S]*?)(?:\s*\(([A-Z_]+)\))?(?:\s*\(version [^()]*(?:\([^()]*\)[^()]*)?\))?\s*$/.exec(text.trim());
   if (match) {
     const name = match[3] ?? null;
     const code = Number(match[1]);

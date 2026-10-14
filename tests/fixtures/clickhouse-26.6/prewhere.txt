@@ -1,0 +1,20 @@
+QUERY id: 0
+  PROJECTION COLUMNS
+    id UInt64
+  PROJECTION
+    LIST id: 1, nodes: 1
+      COLUMN id: 2, column_name: id, result_type: UInt64, source_id: 3
+  JOIN TREE
+    TABLE id: 3, alias: __table1, table_name: myt.events
+  PREWHERE
+    FUNCTION id: 4, function_name: greater, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 5, nodes: 2
+          COLUMN id: 6, column_name: d, result_type: Date, source_id: 3
+          CONSTANT id: 7, constant_value: '2026-01-01', constant_value_type: String
+  WHERE
+    FUNCTION id: 8, function_name: greater, function_type: ordinary, result_type: UInt8
+      ARGUMENTS
+        LIST id: 9, nodes: 2
+          COLUMN id: 10, column_name: v, result_type: Float64, source_id: 3
+          CONSTANT id: 11, constant_value: UInt64_1, constant_value_type: UInt8

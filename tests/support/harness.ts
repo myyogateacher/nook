@@ -22,11 +22,13 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { freePort } from "./ports";
+import { reservePort } from "./ports";
 
 export const dataDir = mkdtempSync(join(tmpdir(), "mynotes-test-"));
 // MYNOTES_TEST_PORT pins the shared server's port; without it the run takes a free one, so two runs never collide.
-export const port = process.env.MYNOTES_TEST_PORT ? Number(process.env.MYNOTES_TEST_PORT) : freePort();
+// The reservation holds the port until the server below listens on it (tests/support/ports.ts).
+const reservation = process.env.MYNOTES_TEST_PORT ? null : reservePort();
+export const port = reservation ? reservation.port : Number(process.env.MYNOTES_TEST_PORT);
 export const origin = `http://localhost:${port}`;
 export const tailscaleOrigin = "https://notes.example-tailnet.ts.net";
 /**
@@ -88,7 +90,9 @@ export const { db } = await import("../../server/db");
 // The test database is thrown away after the run, so it skips fsync: under host load (Docker verify
 // beside other suites) a commit's fsync on overlayfs stalled ordinary tests past Bun's 5 s timeout.
 db.exec("PRAGMA synchronous = OFF");
-export const server = Bun.serve(serverOptions);
+// A pinned MYNOTES_TEST_PORT binds plainly, so a port another process holds fails loudly (EADDRINUSE).
+export const server = Bun.serve({ ...serverOptions, port, reusePort: reservation !== null });
+reservation?.release();
 
 (globalThis as { __mynotesHarnessCleanup?: () => void }).__mynotesHarnessCleanup = () => {
   server.stop(true);

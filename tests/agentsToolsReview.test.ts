@@ -765,7 +765,6 @@ describe("review 8: upgrade from a v0.26.0 (main 45a6b93) database", () => {
     probe.stop(true);
     return value;
   };
-  const childPort = String(freePort());
 
   /** A data dir whose schema was created by the code at `commit` (git archive), as an operator's DB would be. */
   function dataDirAt(commit: string) {
@@ -776,7 +775,7 @@ describe("review 8: upgrade from a v0.26.0 (main 45a6b93) database", () => {
     const data = join(tree, "data");
     const init = Bun.spawnSync(["bun", "--no-env-file", "-e", "await import('./server/db.ts'); process.exit(0)"], {
       cwd: tree, stdout: "pipe", stderr: "pipe",
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: `http://localhost:${childPort}`, PORT: childPort, NODE_ENV: "test", TOTP_ENCRYPTION_KEY: totp }
+      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: "http://localhost:3000", PORT: "3000", NODE_ENV: "test", TOTP_ENCRYPTION_KEY: totp } // never listens
     });
     expect(init.exitCode).toBe(0);
     return { tree, data };
@@ -793,17 +792,32 @@ describe("review 8: upgrade from a v0.26.0 (main 45a6b93) database", () => {
     seed.query("INSERT INTO users (id, email, display_name, password_hash, created_at, role) VALUES (?, 'upgrade@example.test', 'Upgrade admin', 'x', ?, 'admin')").run(userId, at);
     seed.query("INSERT INTO sessions (id, user_id, token_hash, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(crypto.randomUUID(), userId, createHash("sha256").update(token).digest("hex"), csrf, at, at, new Date(Date.now() + 86_400_000).toISOString());
     seed.close();
-    const base = `http://localhost:${childPort}`;
-    const child = Bun.spawn(["bun", "--no-env-file", join(root, "server", "index.ts")], {
-      cwd: root, stdout: "pipe", stderr: "pipe",
-      env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: base, APP_ORIGINS: base, PORT: childPort, NODE_ENV: "test", COOKIE_SECURE: "false", TOTP_ENCRYPTION_KEY: totp, AGENT_SECRETS_KEY: secrets, AGENT_ALLOWED_PRIVATE_HOSTS: "127.0.0.1", LOG_LEVEL: "error" }
-    });
-    const stderr = new Response(child.stderr).text();
-    try {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* booting */ }
+    // The child must know its port before it listens (APP_ORIGIN), so it takes one that was free a
+    // moment ago. Another process can take it in between: the child then exits with EADDRINUSE and the
+    // boot is retried on a fresh port. A health check only counts while our child is running, so it
+    // cannot be answered by someone else's server.
+    let base = "";
+    let child!: Bun.Subprocess<"ignore", "pipe", "pipe">;
+    let stderr: Promise<string> = Promise.resolve("");
+    for (let boot = 0; boot < 3; boot += 1) {
+      const childPort = String(freePort());
+      base = `http://localhost:${childPort}`;
+      child = Bun.spawn(["bun", "--no-env-file", join(root, "server", "index.ts")], {
+        cwd: root, stdout: "pipe", stderr: "pipe",
+        env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", DATA_DIR: data, APP_ORIGIN: base, APP_ORIGINS: base, PORT: childPort, NODE_ENV: "test", COOKIE_SECURE: "false", TOTP_ENCRYPTION_KEY: totp, AGENT_SECRETS_KEY: secrets, AGENT_ALLOWED_PRIVATE_HOSTS: "127.0.0.1", LOG_LEVEL: "error" }
+      });
+      stderr = new Response(child.stderr).text();
+      let up = false;
+      for (let attempt = 0; attempt < 300 && child.exitCode === null; attempt += 1) {
+        try { if ((await fetch(`${base}/api/health`)).ok) { up = child.exitCode === null; break; } } catch { /* booting */ }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
+      if (up) break;
+      child.kill();
+      await child.exited;
+      if (!/EADDRINUSE|address already in use|in use/i.test(await stderr)) break;
+    }
+    try {
       const call = async (method: string, path: string, body?: unknown) => {
         const response = await fetch(`${base}/api${path}`, { method, headers: { Cookie: `mynotes_session=${token}`, Origin: base, "Content-Type": "application/json", ...(method === "GET" ? {} : { "X-CSRF-Token": csrf }) }, body: method === "GET" ? undefined : JSON.stringify(body ?? {}) });
         const text = await response.text();

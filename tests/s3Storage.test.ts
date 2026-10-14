@@ -3,7 +3,6 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBlackHole, startFakeS3 } from "./support/fakeS3";
-import { freePort } from "./support/ports";
 
 /**
  * The S3 storage slice end to end, each configuration in its own process (docs/plan/research/
@@ -42,7 +41,7 @@ const admin = (args: string[], env: Record<string, string>) => run([join("server
 
 describe("file flows on S3", () => {
   test("tests/s3Flows.test.ts passes against the fake S3 in its own process", async () => {
-    const result = await run(["test", join("tests", "s3Flows.test.ts")], { MYNOTES_TEST_STORAGE: "s3", MYNOTES_TEST_PORT: String(freePort()) });
+    const result = await run(["test", join("tests", "s3Flows.test.ts")], { MYNOTES_TEST_STORAGE: "s3" });
     const output = result.stdout + result.stderr;
     expect(output).toMatch(/\b\d+ pass\b/);
     expect(output).toContain(" 0 fail");

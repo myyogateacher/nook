@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
-import { CircleCheck, Database, Plus, RefreshCw, ShieldAlert, TriangleAlert } from "lucide-react";
+import { CircleCheck, Database, Pencil, PlugZap, Plus, RefreshCw, ShieldAlert, Trash2, TriangleAlert } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { relativeTime } from "../files/format";
 import { notify } from "../ui/notify";
@@ -7,6 +7,7 @@ import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type ConnectionTest, type DatasourceSummary } from "../../shared/reports";
 import { codeOf, createDatasource, deleteDatasource, listDatasources, messageOf, parseAllowlistText, previewAllowlist, syncDatasource, testDatasource, updateDatasource } from "../reports/reportsApi";
+import { HUB_TITLE_ID } from "./hubModel";
 import "../reports/reports.css";
 
 /**
@@ -68,8 +69,9 @@ export function ReportDataSources() {
     }
   }
 
-  return <section className="settings-content report-sources" aria-labelledby="report-sources-heading">
-    <div className="settings-section-heading"><span className="settings-icon"><Database /></span><div><h3 id="report-sources-heading">Report data sources</h3><p>ClickHouse connections reports may query. Use a read-only user that can only SELECT the allowed tables: Nook's own checks are a second layer, not the boundary.</p></div></div>
+  // The page header already names the section (HUB_TITLE_ID), so the section repeats no heading of its own.
+  return <section className="settings-content report-sources" aria-labelledby={HUB_TITLE_ID} aria-describedby="report-sources-intro">
+    <div className="settings-section-heading"><span className="settings-icon"><Database /></span><div><p id="report-sources-intro">ClickHouse connections reports may query. Use a read-only user that can only SELECT the allowed tables: Nook's own checks are a second layer, not the boundary.</p></div></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     {list && list.length === 0 && <p className="file-dialog-hint">No data sources yet.</p>}
     {list && list.length > 0 && <ul className="report-source-list">
@@ -91,10 +93,10 @@ export function ReportDataSources() {
             {result.writeGrants.length > 0 && <ul>{result.writeGrants.map((grant) => <li key={grant}><code>{grant}</code></li>)}</ul>}
           </div>}
           <div className="report-source-actions">
-            <button type="button" className="secondary-button" onClick={() => { void test(source); }} disabled={busy !== null}>{busy === `test:${source.id}` ? "Testing…" : "Test connection"}</button>
+            <button type="button" className="secondary-button" onClick={() => { void test(source); }} disabled={busy !== null}><PlugZap />{busy === `test:${source.id}` ? "Testing…" : "Test connection"}</button>
             <button type="button" className="secondary-button" onClick={() => { void sync(source); }} disabled={busy !== null || !source.enabled}><RefreshCw />{busy === `sync:${source.id}` ? "Syncing…" : "Re-sync schema"}</button>
-            <button type="button" className="secondary-button" onClick={() => setEditing(source)}>Edit</button>
-            <button type="button" className="secondary-button" onClick={() => { void remove(source); }}>Remove</button>
+            <button type="button" className="secondary-button" onClick={() => setEditing(source)}><Pencil />Edit</button>
+            <button type="button" className="secondary-button report-source-remove" onClick={() => { void remove(source); }}><Trash2 />Remove</button>
           </div>
         </li>;
       })}

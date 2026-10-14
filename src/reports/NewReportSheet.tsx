@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { FileText, Table2 } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
@@ -19,15 +19,62 @@ export function generateErrorText(reason: unknown, fallback: string) {
   return code === "MCP_AUTH" ? `Reconnect needed. ${message}` : message;
 }
 
+/** Where "From a doc" stands: the doc servers are loading, failed to load, there are none, or they are listed (with the chosen one's problem, if any). */
+export type DocSourceState =
+  | { kind: "loading" }
+  | { kind: "failed"; message: string }
+  | { kind: "none" }
+  | { kind: "ready"; issue: null | { kind: "unsynced" | "no-tool"; serverName: string } };
+
+export function docSourceState(servers: DocServerChoice[] | null, loadError: string | null, server: DocServerChoice | null): DocSourceState {
+  if (loadError !== null) return { kind: "failed", message: loadError };
+  if (servers === null) return { kind: "loading" };
+  if (servers.length === 0) return { kind: "none" };
+  if (server && !server.synced) return { kind: "ready", issue: { kind: "unsynced", serverName: server.name } };
+  if (server && !server.pick) return { kind: "ready", issue: { kind: "no-tool", serverName: server.name } };
+  return { kind: "ready", issue: null };
+}
+
+/** "From a doc" is off only when the servers could not be loaded or there are none. */
+export const docModeDisabled = (state: DocSourceState) => state.kind === "failed" || state.kind === "none";
+
+export const TOOL_SERVERS_PATH = "/settings/ai/tools";
+
+/** Why "From a doc" is unavailable or may not work, with Retry or (for admins) the way to Settings → AI → Tool servers. */
+export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers }: { state: DocSourceState; admin: boolean; onRetry: () => void; onOpenToolServers?: () => void }) {
+  const settings: ReactNode = admin
+    ? <a href={TOOL_SERVERS_PATH} onClick={(event) => { if (!onOpenToolServers) return; event.preventDefault(); onOpenToolServers(); }}>Settings → AI → Tool servers</a>
+    : "Settings → AI → Tool servers";
+  if (state.kind === "failed") {
+    return <div className="new-report-notice is-error" role="alert">
+      <p>Could not load the doc servers: {state.message}</p>
+      <button type="button" className="secondary-button" onClick={onRetry}>Retry</button>
+    </div>;
+  }
+  if (state.kind === "none") {
+    return <div className="new-report-notice"><p>No doc servers yet. To build a report from a doc, {admin ? <>add the doc system's MCP server in {settings}.</> : <>an admin adds the doc system's MCP server in {settings}.</>}</p></div>;
+  }
+  if (state.kind !== "ready" || !state.issue) return null;
+  const { serverName } = state.issue;
+  if (state.issue.kind === "unsynced") {
+    return <div className="new-report-notice" role="status"><p>{serverName} hasn't been synced yet, so Nook doesn't know its tools. {admin ? <>Sync it in {settings}.</> : <>Ask an admin to sync it in {settings}.</>}</p></div>;
+  }
+  return <div className="new-report-notice" role="status"><p>{serverName} has no read-only tool that returns a document (<code>fetch</code>, <code>get_document</code> or <code>read_document</code> with an <code>id</code> or <code>url</code> input). Choose a tool below, or {admin ? <>allow one to run automatically in {settings}.</> : <>ask an admin to allow one to run automatically in {settings}.</>}</p></div>;
+}
+
 /**
  * New report (Waves 45–46): from a doc (its link, the tool server to read it through, the tool and
  * argument when the auto-pick is wrong, the data source, and an optional title taken from the doc
  * otherwise), or blank (a title and a data source; the SQL console). Generate reads the doc right
  * away, so a bad link or a refused credential answers here; the report page then follows the run.
  * One sheet, one history layer: Back or Escape closes it (D18), never while a request is in flight.
+ * "From a doc" says why it is unavailable (the servers failed to load: Retry; none yet) or why the
+ * chosen server may not work (not synced, no read-only fetch tool), with admins' link to fix it.
  */
-export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, initialSource = null }: { sources: DatasourceChoice[]; onCancel: () => void; onCreated: (id: string) => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null }) {
+export function NewReportSheet({ sources, role = "member", onCancel, onCreated, onOpenToolServers, reportId = null, initialSource = null }: { sources: DatasourceChoice[]; role?: string; onCancel: () => void; onCreated: (id: string) => void; onOpenToolServers?: () => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null }) {
   const [servers, setServers] = useState<DocServerChoice[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const forcedBlank = useRef(false);
   const [mode, setMode] = useState<Mode>("doc");
   const [docRef, setDocRef] = useState("");
   const [serverId, setServerId] = useState<string | null>(null);
@@ -40,16 +87,26 @@ export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, 
   const ids = { mode: useId(), doc: useId(), server: useId(), tool: useId(), arg: useId(), title: useId(), source: useId() };
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
 
-  useEffect(() => {
-    let live = true;
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  const loadServers = useCallback(() => {
+    setLoadError(null);
+    setServers(null);
     docServers().then(({ servers: list }) => {
-      if (!live) return;
+      if (!live.current) return;
       setServers(list);
       setServerId((current) => current ?? list.find((item) => item.pick)?.id ?? list[0]?.id ?? null);
-      if (list.length === 0 && !reportId) setMode("blank");
-    }).catch(() => { if (live) { setServers([]); if (!reportId) setMode("blank"); } });
-    return () => { live = false; };
-  }, []);
+      // No servers: Blank is the only way in. After a failed load, a Retry that finds some goes back to the doc.
+      if (list.length === 0) { if (!reportId) { forcedBlank.current = true; setMode("blank"); } } else if (forcedBlank.current) { forcedBlank.current = false; setMode("doc"); }
+    }).catch((reason) => {
+      if (!live.current) return;
+      setLoadError(messageOf(reason, "the server did not answer"));
+      if (reportId) return;
+      forcedBlank.current = true;
+      setMode("blank");
+    });
+  }, [reportId]);
+  useEffect(() => { loadServers(); }, [loadServers]);
 
   const server = useMemo(() => servers?.find((item) => item.id === serverId) ?? null, [servers, serverId]);
   const chosenTool = tool === AUTO ? null : server?.tools.find((item) => item.name === tool) ?? null;
@@ -86,14 +143,16 @@ export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, 
     }
   }
 
-  const noServers = servers !== null && servers.length === 0;
+  const docSource = docSourceState(servers, loadError, server);
+  const docDisabled = docModeDisabled(docSource);
   return <ModalDialog title={reportId ? "Generate from a doc" : "New report"} eyebrow="Reports" onClose={onCancel} busy={busy} variant="sheet" className="reports-dialog new-report-sheet">
     <form className="file-dialog-form" onSubmit={submit} noValidate>
       {!reportId && <div className="new-report-modes" role="radiogroup" aria-labelledby={ids.mode}>
         <span id={ids.mode} className="sr-only">Start from</span>
-        <button type="button" role="radio" aria-checked={mode === "doc"} className={mode === "doc" ? "is-active" : undefined} onClick={() => setMode("doc")} disabled={busy || noServers}><FileText aria-hidden="true" />From a doc</button>
-        <button type="button" role="radio" aria-checked={mode === "blank"} className={mode === "blank" ? "is-active" : undefined} onClick={() => setMode("blank")} disabled={busy}><Table2 aria-hidden="true" />Blank</button>
+        <button type="button" role="radio" aria-checked={mode === "doc"} className={mode === "doc" ? "is-active" : undefined} onClick={() => setMode("doc")} disabled={busy || docDisabled}><FileText aria-hidden="true" />From a doc</button>
+        <button type="button" role="radio" aria-checked={mode === "blank"} className={mode === "blank" ? "is-active" : undefined} onClick={() => { forcedBlank.current = false; setMode("blank"); }} disabled={busy}><Table2 aria-hidden="true" />Blank</button>
       </div>}
+      {(docDisabled || mode === "doc") && <DocSourceNotice state={docSource} admin={role === "admin"} onRetry={loadServers} onOpenToolServers={onOpenToolServers} />}
       {mode === "doc" && <>
         <label htmlFor={ids.doc}>Doc link</label>
         <input id={ids.doc} value={docRef} maxLength={2048} autoFocus autoComplete="off" inputMode="url" placeholder="https://docs.example.com/doc/revenue-metrics-AbC123" onChange={(event) => setDocRef(event.target.value)} />
@@ -101,7 +160,7 @@ export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, 
         {servers === null
           ? <p className="file-dialog-hint" role="status">Loading tool servers…</p>
           : <Select labelledBy={ids.server} label="Tool server" value={serverId} onChange={(value) => { setServerId(value); setTool(AUTO); setArg(""); }}
-            options={servers.map((item) => ({ value: item.id, label: item.name, description: item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
+            options={servers.map((item) => ({ value: item.id, label: item.name, description: !item.synced ? "Not synced yet" : item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
         {server && <details className="new-report-advanced" open={!server.pick}>
           <summary>Tool and argument</summary>
           <span className="reports-label" id={ids.tool}>Tool</span>
@@ -121,7 +180,6 @@ export function NewReportSheet({ sources, onCancel, onCreated, reportId = null, 
       <p className="file-dialog-hint">{mode === "doc"
         ? "The AI reads the doc, writes read-only SQL against the tables an admin allowed, checks it, and builds the report. It uses your AI budget."
         : "The report starts as a draft with a SQL console. Queries run on that data source, read-only, on the tables an admin allowed."}</p>
-      {noServers && <p className="file-dialog-hint">To build a report from a doc, an admin adds the doc system's MCP server in Settings → AI → Tool servers.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
       <footer className="file-dialog-actions">
         <button type="button" className="secondary-button" onClick={onCancel} disabled={busy}>Cancel</button>

@@ -76,7 +76,7 @@ export function docServerChoices(role: string): DocServerChoice[] {
   const rows = db.query("SELECT * FROM agent_tool_servers WHERE enabled = 1 ORDER BY name COLLATE NOCASE").all() as ToolServerRow[];
   return rows.filter((row) => serverAvailableTo(row, role)).map((row) => {
     const tools = readOnlyTools(row);
-    return { id: row.id, name: row.name, status: row.status, tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools) };
+    return { id: row.id, name: row.name, status: row.status, synced: row.tools_synced_at !== null, tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools) };
   });
 }
 

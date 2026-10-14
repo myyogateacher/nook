@@ -9,8 +9,8 @@ import type { ReportDetail, RunStatus } from "./reports";
 /** The tool a doc is read with: its name, the argument that takes the link or id, and whether Outline's `resource: "document"` is sent. */
 export type DocToolChoice = { tool: string; arg: string; outline: boolean };
 
-/** A tool server a person may read a doc through, its tools (name and argument names), and Nook's auto-pick. */
-export type DocServerChoice = { id: string; name: string; status: string; tools: Array<{ name: string; title: string | null; args: string[] }>; pick: DocToolChoice | null };
+/** A tool server a person may read a doc through, whether its tools were ever synced, its read-only tools (name and argument names), and Nook's auto-pick. */
+export type DocServerChoice = { id: string; name: string; status: string; synced: boolean; tools: Array<{ name: string; title: string | null; args: string[] }>; pick: DocToolChoice | null };
 
 /** A report's doc, its newest snapshot, and whether the doc changed since the report was generated ("Doc changed — regenerate?"). */
 export type DocState = {

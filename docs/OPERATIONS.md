@@ -425,7 +425,7 @@ Compose passes these variables from `.env` (see `.env.example`). Invalid values 
 | `AGENT_IMAGE_PROXY_TEST_HOSTS` | empty | Tests and local QA only: hosts (names, addresses, or CIDR ranges) the chat image proxy may reach over http on any port, standing in for a public picture host. Refused at startup when `NODE_ENV=production`. The proxy never uses `AGENT_ALLOWED_PRIVATE_HOSTS`: in production it loads public https addresses on port 443 only. |
 | `APP_VERSION` | `0.37.0` | Build metadata shown in Settings → About and reported by the MCP server. |
 | `GIT_SHA` | `development` | Commit shown in Settings → About (first 40 characters). |
-| `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, and query SQL. Any other value means `info`. |
+| `LOG_LEVEL` | `info` | `error`, `warn`, `info`, or `debug` (see *Logs*). `debug` adds health checks, static files, single 401/404s, successful polls, and query SQL. Any other value means `info`. |
 | `LOG_FORMAT` | `pretty` | `pretty` (one readable line per event with `key=value` fields) or `json` (one JSON object per line, for a log shipper). |
 | `LOG_SLOW_MS` | `1000` | A request slower than this many milliseconds logs at `warn` (streams excepted). |
 
@@ -528,7 +528,7 @@ A line reads `time LEVEL scope message key=value…`:
 | `error` | 5xx answers with the stack, failed background work (sweeps, mail, runs), migration failures, uncaught exceptions and unhandled rejections. |
 | `warn` | 4xx answers other than 401 and 404; 401/404 from one client more than 20 times a minute (one line with the count); requests slower than `LOG_SLOW_MS`; refused sign-ins and keys; refused or failed queries; provider errors (status code only). |
 | `info` | Every other request; startup (configuration summary without secrets, each migration with its time, `Listening`); shutdown; sign-in, sign-out, 2FA, key create and revoke; MCP tool calls; agent runs and each model step (tool names, tokens, time); report runs, generations, instructions, proposals, schedules, doc fetches, schema syncs, ClickHouse queries; uploads (size and type); mail and reminder counts; sweeper counts; knowledge indexing. |
-| `debug` | Health checks, the built client's files, single 401s and 404s, Nook's own ClickHouse statements, the SQL of console, report, and agent queries, and the `EXPLAIN QUERY TREE` line the guard could not parse (`Query tree line refused`, no data). |
+| `debug` | Health checks, the built client's files, single 401s and 404s, successful (2xx/304) answers to the GET routes the app polls (`/api/notes/:id`, `/api/inbox/count`, `/api/notifications`, `/api/reports/:reportId/runs/:runId`, `/api/reports/:reportId/instructions`, `/api/knowledge/:kbId`; the list is `POLLED_ROUTES` in `server/httpLog.ts`), Nook's own ClickHouse statements, the SQL of console, report, and agent queries, and the `EXPLAIN QUERY TREE` line the guard could not parse (`Query tree line refused`, no data). |
 
 Report generation adds, in the `reports` scope: `Generation limits` (the doc's bytes, `sectioned` when it was over 60 KB, and the run's steps, queries, and tool calls), `Plan made` (todos, sections), `Coverage warning` (once, when a thin spec meets a rich doc), and `Plan finished` (todos, done, skipped, blocked).
 

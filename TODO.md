@@ -15,9 +15,9 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - Long docs and the planner (055).
   - Auto titles.
   - Wider panels and dialogs; Share copies the link; the SQL console moves to ⋯ and Inspect → "Open in console" (an empty report keeps it, with "Generate from a doc" and "Ask for a chart").
+  - "From a doc" says why it is unavailable; polled GETs log at debug.
 
   Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
-  - [ ] (B) "From a doc": a clear reason when it is unavailable; quieter polling logs (2xx GET polls at debug).
   - [ ] (B) The doc tool picker explains Tool and "Link goes into"; it says why a tool is excluded (unsynced, or a policy that is not Auto), with an admin "Allow automatically"; New report dialog layout fixes.
   - [ ] (C) Tool servers sync on add and on connection changes, again daily, and lazily on first use.
   - [ ] (B) The AI may browse docs with the read-only tools the user ticks (056): a snapshot for each page, and "Doc changed" covers linked pages.

@@ -19,6 +19,8 @@ type ReportsAppProps = {
   onSignOut: () => void;
   /** Opens Settings → Report data sources (admins). */
   onOpenDatasources: () => void;
+  /** Opens Settings → AI → Tool servers (admins). */
+  onOpenToolServers?: () => void;
 };
 
 const currentRoute = (): ReportsRoute => {
@@ -31,7 +33,7 @@ const currentRoute = (): ReportsRoute => {
  * /reports/:id, each a history entry. Sheets (New report, the Schema browser, confirms) push none:
  * Back closes them first (D18), then the report, then the app; Back never leaves Nook before Home.
  */
-export function ReportsApp({ displayName, role, navigate, flash, onHome, onSettings, onSignOut, onOpenDatasources }: ReportsAppProps) {
+export function ReportsApp({ displayName, role, navigate, flash, onHome, onSettings, onSignOut, onOpenDatasources, onOpenToolServers }: ReportsAppProps) {
   const [route, setRoute] = useState<ReportsRoute>(currentRoute);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
@@ -63,5 +65,5 @@ export function ReportsApp({ displayName, role, navigate, flash, onHome, onSetti
     return <ReportPage key={route.reportId} reportId={route.reportId} {...account} flash={flash} onBack={back}
       onGone={() => go(reportsRoute(), { replace: true, removed: true })} />;
   }
-  return <ReportsHome {...account} role={role} onHome={onHome} onOpen={(id) => go(reportsRoute(id))} onOpenDatasources={onOpenDatasources} />;
+  return <ReportsHome {...account} role={role} onHome={onHome} onOpen={(id) => go(reportsRoute(id))} onOpenDatasources={onOpenDatasources} onOpenToolServers={onOpenToolServers} />;
 }

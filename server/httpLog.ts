@@ -7,7 +7,8 @@
  *   id-like segments replaced by :id; the query string never is.
  * - Levels: info for normal requests; warn for 4xx other than 401 and 404 (those are debug, unless one
  *   client repeats them: then one warn per minute with the count); error for 5xx, with the stack;
- *   warn for a request slower than LOG_SLOW_MS. Health checks and static files are debug.
+ *   warn for a request slower than LOG_SLOW_MS. Health checks, static files, and successful answers
+ *   to the GET routes the app polls (POLLED_ROUTES) are debug.
  */
 import type { Context, MiddlewareHandler } from "hono";
 import { routePath } from "hono/route";
@@ -44,6 +45,24 @@ const STATIC = /^\/(assets|excalidraw|icons|fonts)\/|^\/(sw\.js|favicon[^/]*|man
 /** Health checks and the built client: debug only. */
 export const isQuietPath = (method: string, path: string) =>
   path === "/api/health" || ((method === "GET" || method === "HEAD") && (STATIC.test(path) || !(path.startsWith("/api/") || path.startsWith("/mcp") || path === "/api")));
+
+/**
+ * GET routes the app polls on a timer or on every focus (docs/OPERATIONS.md "Logs"): a successful
+ * answer (2xx or 304) is debug, so an open tab does not fill the info log. Errors and slow answers
+ * still log as usual. Keep this list explicit: each entry names the client code that polls it.
+ */
+export const POLLED_ROUTES: readonly string[] = [
+  "/api/notes/:id", //                          editor/publishWatch.ts: the open draft re-reads its note
+  "/api/inbox/count", //                        AppShell.tsx: the Inbox badge (bell poll, focus, inbox changes)
+  "/api/notifications", //                      NotificationBell.tsx: the unread count every 60 s
+  "/api/reports/:reportId/runs/:runId", //      reports/ReportView.tsx: a running refresh, every second
+  "/api/reports/:reportId/instructions", //     reports/ChangesPanel.tsx: an edit in progress, every 1.5 s
+  "/api/knowledge/:kbId" //                     chat/KnowledgeSettings.tsx: sources being indexed
+];
+const polled = new Set(POLLED_ROUTES);
+/** A successful answer to a polled GET route (debug, not info). */
+export const isPolledRequest = (method: string, route: string, status: number) =>
+  method === "GET" && polled.has(route) && ((status >= 200 && status < 300) || status === 304);
 
 /** The surface: mcp (/mcp), api (the REST /api/v1), or web (the app and everything else). */
 export const viaOf = (path: string) =>
@@ -108,7 +127,7 @@ export const requestLog: MiddlewareHandler = async (c, next) => {
       return;
     }
   } else if (status >= 400) level = "warn";
-  else if (isQuietPath(method, path)) level = "debug";
+  else if (isQuietPath(method, path) || isPolledRequest(method, route, status)) level = "debug";
   if (level !== "warn" && ms > logSlowMs && !streaming) level = "warn";
   if (!http.enabled(level)) return;
   http[level](ms > logSlowMs && !streaming && level === "warn" && status < 400 ? `${message} slow` : message, fields);

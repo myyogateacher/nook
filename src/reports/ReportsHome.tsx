@@ -19,6 +19,8 @@ type HomeProps = {
   onSignOut: () => void;
   onOpen: (id: string) => void;
   onOpenDatasources: () => void;
+  /** Opens Settings → AI → Tool servers (admins; New report's "From a doc" reasons). */
+  onOpenToolServers?: () => void;
 };
 
 /**
@@ -26,7 +28,7 @@ type HomeProps = {
  * report (a title and a data source; the report starts as a draft with a SQL console). When no data
  * source exists, admins get a way to Settings → Report data sources and everyone else is told to ask one.
  */
-export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources }: HomeProps) {
+export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources, onOpenToolServers }: HomeProps) {
   const { canWrite } = useRole();
   const [reports, setReports] = useState<ReportSummary[] | null>(null);
   const [sources, setSources] = useState<DatasourceChoice[] | null>(null);
@@ -106,6 +108,6 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
         </li>)}
       </ul>}
     </section>
-    {creating && sources && <NewReportSheet sources={sources} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onOpen(id); }} />}
+    {creating && sources && <NewReportSheet sources={sources} role={role} onOpenToolServers={onOpenToolServers} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onOpen(id); }} />}
   </main>;
 }

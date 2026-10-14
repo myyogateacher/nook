@@ -6,7 +6,7 @@ import { startFakeClickhouse } from "./support/fakeClickhouse";
 import { sampleAnswer, sampleSpec } from "./support/reportSeed";
 
 const { captureLogs, logger, redact, redactText, maskEmail, withLogContext } = await import("../server/log");
-const { noteRequestError, requestLog, resetRepeatCounts, templatePath } = await import("../server/httpLog");
+const { isPolledRequest, noteRequestError, POLLED_ROUTES, requestLog, resetRepeatCounts, templatePath } = await import("../server/httpLog");
 
 /**
  * The server log (server/log.ts, server/httpLog.ts, server/auditLog.ts; docs/OPERATIONS.md "Logs"):
@@ -195,6 +195,45 @@ describe("request log", () => {
     expect(templatePath("/api/reports/0b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70/runs/12")).toBe("/api/reports/:id/runs/:id");
     expect(templatePath("/api/public/chat-shares/Xk3v9QbR7tLm2NpZ8wYc")).toBe("/api/public/chat-shares/:id");
     expect(templatePath("/api/notes")).toBe("/api/notes");
+  });
+
+  test("successful answers to the polled GET routes are debug; errors and other methods keep their level", async () => {
+    const hono = new Hono();
+    hono.use("*", requestLog);
+    hono.get("/api/inbox/count", (c) => c.json({ pending: 0 }));
+    hono.get("/api/notes/:id", (c) => c.req.param("id") === "gone" ? c.json({ error: "Not found" }, 404) : c.req.param("id") === "bad" ? c.json({ error: "bad" }, 400) : c.json({}));
+    hono.patch("/api/notes/:id", (c) => c.json({}));
+    hono.get("/api/reports/:reportId/runs/:runId", (c) => c.body(null, 304));
+    hono.get("/api/folders", (c) => c.json({}));
+    const capture = captureLogs({ level: "debug", format: "json" });
+    try {
+      await hono.request("/api/inbox/count");
+      await hono.request("/api/notes/0b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70");
+      await hono.request("/api/notes/bad");
+      await hono.request("/api/notes/0b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70", { method: "PATCH" });
+      await hono.request("/api/reports/0b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70/runs/1b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70");
+      await hono.request("/api/folders");
+    } finally {
+      capture.restore();
+    }
+    const lines = parse(capture.lines);
+    const levelOf = (prefix: string) => lines.find((line) => line.msg.startsWith(prefix))?.level;
+    expect(levelOf("GET /api/inbox/count 200")).toBe("debug");
+    expect(levelOf("GET /api/notes/:id 200")).toBe("debug");
+    expect(levelOf("GET /api/notes/:id 400")).toBe("warn");
+    expect(levelOf("PATCH /api/notes/:id 200")).toBe("info");
+    expect(levelOf("GET /api/reports/:reportId/runs/:runId 304")).toBe("debug");
+    expect(levelOf("GET /api/folders 200")).toBe("info");
+    expect(isPolledRequest("GET", "/api/notifications", 200)).toBe(true);
+    expect(isPolledRequest("GET", "/api/notifications", 500)).toBe(false);
+    expect(isPolledRequest("POST", "/api/notifications", 200)).toBe(false);
+  });
+
+  test("every polled route is a GET route the server registers, under the same template", async () => {
+    const { Glob } = await import("bun");
+    let source = "";
+    for await (const file of new Glob("server/**/*.ts").scan(".")) source += await Bun.file(file).text();
+    for (const route of POLLED_ROUTES) expect(source).toContain(`app.get("${route}"`);
   });
 
   test("the real server logs a signed-in request with its user, role, and route", async () => {

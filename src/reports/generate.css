@@ -9,6 +9,12 @@
 .new-report-advanced { display: grid; gap: 8px; border: 1px solid #26262b; border-radius: 12px; padding: 0 12px 12px; }
 .new-report-advanced summary { min-height: 44px; display: flex; align-items: center; color: #c9c9ce; cursor: pointer; }
 .new-report-advanced:not([open]) { padding-bottom: 0; }
+/* "From a doc" unavailable, or the chosen server's problem: the reason, Retry, and the admin's link. */
+.new-report-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid #3a3322; border-radius: 12px; padding: 10px 12px; background: #15140f; color: #d8cfb4; font-size: .86rem; }
+.new-report-notice p { flex: 1 1 240px; margin: 0; overflow-wrap: anywhere; }
+.new-report-notice a { color: #f3d48a; }
+.new-report-notice.is-error { border-color: #6b2f37; background: #1a1012; color: #fda4af; }
+.new-report-notice button { flex: none; }
 
 .report-generation { display: grid; gap: 12px; margin-bottom: 18px; min-width: 0; }
 .generate-progress { display: grid; gap: 10px; border: 1px solid #3a3322; border-radius: 14px; padding: 14px; background: #15140f; min-width: 0; }

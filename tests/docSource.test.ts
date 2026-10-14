@@ -227,6 +227,10 @@ describe("snapshots and Doc changed", () => {
     const mine = listed.body.servers.find((item: Json) => item.id === server.id);
     expect(mine).toMatchObject({ name: server.name, pick: { tool: "fetch", arg: "id", outline: true } });
     expect(mine.tools.map((item: Json) => item.name)).toEqual(["search", "fetch", "get_page"]);
+    // B1: a server whose tools were never synced says so (the dialog explains it).
+    expect(mine.synced).toBe(false);
+    db.query("UPDATE agent_tool_servers SET tools_synced_at = ? WHERE id = ?").run(new Date().toISOString(), server.id);
+    expect((await send(member, "GET", "/reports/doc-servers")).body.servers.find((item: Json) => item.id === server.id).synced).toBe(true);
     db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'off') ON CONFLICT(server_id, tool_name) DO UPDATE SET policy = 'off'").run(server.id);
     try {
       const again = await send(member, "GET", "/reports/doc-servers");

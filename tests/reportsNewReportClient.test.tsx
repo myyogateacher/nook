@@ -8,7 +8,7 @@ import { parseNookRef } from "../shared/nookDocRef";
 import { BrowseToolsPicker } from "../src/reports/BrowseToolsPicker";
 import { docChangedText } from "../src/reports/ReportGeneration";
 import { overflowItems } from "../src/reports/ReportPage";
-import { defaultBrowseTools, type DocPageInfo } from "../shared/reportsGenerate";
+import { defaultBrowseTools, isReadLikeTool, isWriteLikeName, type DocPageInfo } from "../shared/reportsGenerate";
 
 /**
  * New report's "From a doc" (B1, B2): why it is unavailable (the doc servers failed to load, with
@@ -70,6 +70,19 @@ describe("From a doc: states", () => {
     expect(member).toContain("Ask an admin to allow it");
   });
 
+  test("Allow … automatically is never offered for delete_document or update_document", () => {
+    for (const tool of ["delete_document", "update_document"]) {
+      const state = stateFor({ tools: [], pick: null, candidates: [{ name: tool, args: ["id"], policy: "confirm" }], toolNames: [tool] });
+      expect(state).toEqual({ kind: "ready", issue: { kind: "no-tool", serverId: "s1", serverName: "Outline", tools: [] } });
+      const html = render(state, true, () => undefined);
+      expect(html).not.toContain("automatically</button>");
+      expect(html).not.toContain(tool);
+      // Even a state that names one directly gets no button.
+      const forced = render({ kind: "ready", issue: { kind: "needs-auto", serverId: "s1", serverName: "Outline", tool, policy: "confirm" } }, true, () => undefined);
+      expect(forced).not.toContain("</button>");
+    }
+  });
+
   test("no doc tool at all: lists the server's tools", () => {
     const none = stateFor({ tools: [{ name: "search", title: null, args: ["query"] }], pick: null, candidates: [], toolNames: ["search", "list_collections"] });
     expect(none).toEqual({ kind: "ready", issue: { kind: "no-tool", serverId: "s1", serverName: "Outline", tools: ["search", "list_collections"] } });
@@ -110,12 +123,21 @@ describe("B3: tools the AI may use to read more docs", () => {
     expect(defaultBrowseTools(["fetch", "search", "list_documents", "list_collection_documents", "create_document", "get_page"])).toEqual(["fetch", "search", "list_documents", "list_collection_documents"]);
   });
 
-  test("Auto tools can be ticked; the others are greyed out with why", () => {
-    const html = renderToStaticMarkup(<BrowseToolsPicker server={{ name: "Outline", tools: [{ name: "fetch", title: null, args: ["id"] }, { name: "search", title: null, args: ["query"] }], toolNames: ["fetch", "search", "delete_document"] }} value={["fetch"]} onChange={() => undefined} />);
+  test("Auto tools can be ticked; read-like ones held back by policy are greyed out with why; write-like ones are not listed", () => {
+    const html = renderToStaticMarkup(<BrowseToolsPicker server={{ name: "Outline", tools: [{ name: "fetch", title: null, args: ["id"] }, { name: "search", title: null, args: ["query"] }, { name: "create_document", title: null, args: [] }], toolNames: ["fetch", "search", "list_collections", "delete_document", "update_document", "documents.archive", "moveDocument"] }} value={["fetch"]} onChange={() => undefined} />);
     expect(html).toContain("Tools the AI may use to read more docs");
     expect(html).toMatch(/<input type="checkbox" checked=""\/><span class="browse-tools-name"><code>fetch<\/code>/);
     expect(html).toMatch(/<input type="checkbox"\/><span class="browse-tools-name"><code>search<\/code>/);
-    expect(html).toContain('<li class="is-excluded"><label><input type="checkbox" disabled=""/><span class="browse-tools-name"><code>delete_document</code><span class="browse-tools-why">needs Auto in Settings → AI → Tool servers</span>');
+    expect(html).toContain('<li class="is-excluded"><label><input type="checkbox" disabled=""/><span class="browse-tools-name"><code>list_collections</code><span class="browse-tools-why">needs Auto in Settings → AI → Tool servers</span>');
+    for (const name of ["delete_document", "update_document", "create_document", "documents.archive", "moveDocument"]) expect([name, html.includes(name)]).toEqual([name, false]);
+  });
+
+  test("write-like tools: destructive, annotated as writes, or a write verb in the name", () => {
+    for (const name of ["delete_document", "update_document", "createDocument", "docs.publish", "remove-member", "set_policy", "upload_file", "import_markdown"]) expect([name, isWriteLikeName(name)]).toEqual([name, true]);
+    for (const name of ["fetch", "search", "list_documents", "get_settings", "read_document", "address_book", "updates_feed"]) expect([name, isWriteLikeName(name)]).toEqual([name, false]);
+    expect(isReadLikeTool({ name: "fetch", destructive: true })).toBe(false);
+    expect(isReadLikeTool({ name: "fetch", readOnlyHint: false })).toBe(false);
+    expect(isReadLikeTool({ name: "fetch" })).toBe(true);
   });
 
   test("the Doc changed banner names the main doc, a linked page, or both", () => {

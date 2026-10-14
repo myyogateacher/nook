@@ -2,7 +2,7 @@ import { logger, shortId } from "../log";
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { REPORT_LIMITS } from "../../shared/reports";
-import type { DocServerChoice, DocState, DocToolChoice } from "../../shared/reportsGenerate";
+import { isReadLikeTool, type DocServerChoice, type DocState, type DocToolChoice } from "../../shared/reportsGenerate";
 import { describeMcpError, McpClientError, type McpSession } from "../agents/mcpClient";
 import { AgentError } from "../agents/status";
 import { serverAvailableTo, serverRowOrNull, sessionFor, toolsWithPolicies, type StoredTool, type ToolServerRow } from "../agents/toolServers";
@@ -79,7 +79,7 @@ export const docToolArgs = (choice: DocToolChoice, ref: string): Record<string, 
  */
 export function docToolCandidates(all: ReturnType<typeof toolsWithPolicies>): DocServerChoice["candidates"] {
   return all
-    .filter((tool) => tool.policy !== "auto" && (DOC_TOOL_NAMES as readonly string[]).includes(tool.name.toLowerCase()) && schemaArgs(tool).some((arg) => (REF_ARGS as readonly string[]).includes(arg)))
+    .filter((tool) => tool.policy !== "auto" && isReadLikeTool(tool) && (DOC_TOOL_NAMES as readonly string[]).includes(tool.name.toLowerCase()) && schemaArgs(tool).some((arg) => (REF_ARGS as readonly string[]).includes(arg)))
     .map((tool) => ({ name: tool.name, args: schemaArgs(tool), policy: tool.policy }));
 }
 
@@ -97,7 +97,8 @@ export function docServerChoices(role: string): DocServerChoice[] {
     return {
       id: row.id, name: row.name, status: row.status, synced: row.tools_synced_at !== null,
       tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools),
-      candidates: docToolCandidates(all), toolNames: all.map((tool) => tool.name).slice(0, 100), host: hostOf(row.url)
+      // Write-like tools (destructive, or a write verb in the name) are never listed for reading docs.
+      candidates: docToolCandidates(all), toolNames: all.filter(isReadLikeTool).map((tool) => tool.name).slice(0, 100), host: hostOf(row.url)
     };
   })];
 }

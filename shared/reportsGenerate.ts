@@ -43,6 +43,21 @@ export type DocState = {
 /** B3: the AI's doc tools per run: calls, bytes of results, one result shown to the model, ticks per report, pages Check doc reads. */
 export const DOC_BROWSE_LIMITS = { calls: 8, runBytes: 400 * 1024, resultBytes: 32 * 1024, ticked: 20, checkedPages: 16 } as const;
 
+/** Verbs that mark a tool as a write: such a tool is never offered for reading docs, not even greyed out. */
+const WRITE_VERBS = new Set(["create", "update", "delete", "remove", "move", "archive", "restore", "write", "set", "add", "edit", "rename", "publish", "import", "upload"]);
+
+/** Whether a tool's name has a write verb as one of its words (`delete_document`, `updateDocument`, `docs.create`). */
+export const isWriteLikeName = (name: string): boolean =>
+  name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).some((word) => WRITE_VERBS.has(word));
+
+/**
+ * A tool that may be offered for reading docs (the browse list, "Allow … automatically"): not
+ * annotated destructive, not annotated as a write (`readOnlyHint: false` where the server says so),
+ * and no write verb in its name. Anything else is hidden, never greyed out.
+ */
+export const isReadLikeTool = (tool: { name: string; destructive?: boolean; readOnlyHint?: boolean | null }): boolean =>
+  tool.destructive !== true && tool.readOnlyHint !== false && !isWriteLikeName(tool.name);
+
 /** The read-only tools ticked by default: those that fetch, list, or search docs. */
 export const defaultBrowseTools = (names: readonly string[]): string[] => names.filter((name) => /fetch|search|list|get_document|read_document|read_note/i.test(name)).slice(0, DOC_BROWSE_LIMITS.ticked);
 

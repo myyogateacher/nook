@@ -148,7 +148,8 @@ describe("review M2: only read-only doc tools", () => {
       // B2: the excluded doc tool is a candidate (delete_document is not doc-fetcher-like); every tool is named.
       const before = docServerChoices("member").find((item) => item.id === server.id)!;
       expect(before.candidates).toEqual([{ name: "fetch", args: ["id"], policy: "confirm" }]);
-      expect(before.toolNames).toEqual(["delete_document", "fetch", "get_document"]);
+      // A destructive tool is never listed for reading docs, not even by name.
+      expect(before.toolNames).toEqual(["fetch", "get_document"]);
       // An admin's explicit auto makes a tool usable; an admin's confirm on a read-only tool takes it away.
       db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'auto'), (?, 'get_document', 'confirm')").run(server.id, server.id);
       expect(docToolOf(row, {})).toEqual({ tool: "fetch", arg: "id", outline: false });

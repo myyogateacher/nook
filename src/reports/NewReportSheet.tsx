@@ -7,7 +7,7 @@ import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { setServerPolicies } from "../chat/chatApi";
 import { REPORT_LIMITS, type DatasourceChoice } from "../../shared/reports";
-import { defaultBrowseTools, type DocServerChoice } from "../../shared/reportsGenerate";
+import { defaultBrowseTools, isReadLikeTool, isWriteLikeName, type DocServerChoice } from "../../shared/reportsGenerate";
 import { linkHost, parseNookRef } from "../../shared/nookDocRef";
 import { BrowseToolsPicker } from "./BrowseToolsPicker";
 import { NookDocPicker, nookLinkOf } from "./NookDocPicker";
@@ -48,10 +48,11 @@ export function docSourceState(servers: DocServerChoice[] | null, loadError: str
   if (servers.every((item) => item.builtin)) return server && !server.builtin ? { kind: "ready", issue: null } : { kind: "none" };
   if (server && !server.synced) return { kind: "ready", issue: { kind: "unsynced", serverId: server.id, serverName: server.name } };
   if (server && !server.pick) {
-    const candidate = server.candidates?.[0];
+    // "Allow … automatically" is only ever offered for a read-like tool.
+    const candidate = server.candidates?.find((item) => isReadLikeTool(item));
     return { kind: "ready", issue: candidate
       ? { kind: "needs-auto", serverId: server.id, serverName: server.name, tool: candidate.name, policy: candidate.policy }
-      : { kind: "no-tool", serverId: server.id, serverName: server.name, tools: server.toolNames ?? [] } };
+      : { kind: "no-tool", serverId: server.id, serverName: server.name, tools: (server.toolNames ?? []).filter((name) => !isWriteLikeName(name)) } };
   }
   return { kind: "ready", issue: null };
 }
@@ -104,7 +105,7 @@ export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers, onAl
   if (issue.kind === "needs-auto") {
     return <div className="new-report-notice" role="status">
       <p>{issue.serverName}'s <code>{issue.tool}</code> needs to be allowed to run automatically before Nook can read a doc with it (it is set to {issue.policy === "off" ? "Off" : "Ask first"}). {admin ? <>Change it in {settings}, or here.</> : <>Ask an admin to allow it in {settings}.</>}</p>
-      {admin && onAllow && <button type="button" className="secondary-button" disabled={allowing} onClick={() => onAllow(issue.serverId, issue.tool)}>{allowing ? "Allowing…" : `Allow ${issue.tool} automatically`}</button>}
+      {admin && onAllow && !isWriteLikeName(issue.tool) && <button type="button" className="secondary-button" disabled={allowing} onClick={() => onAllow(issue.serverId, issue.tool)}>{allowing ? "Allowing…" : `Allow ${issue.tool} automatically`}</button>}
     </div>;
   }
   return <div className="new-report-notice" role="status"><p>{issue.serverName} has no tool that returns a document (<code>fetch</code>, <code>get_document</code> or <code>read_document</code> with an <code>id</code> or <code>url</code> input).{issue.tools.length ? <> Its tools: {issue.tools.slice(0, 30).map((name, index) => <span key={name}>{index ? ", " : ""}<code>{name}</code></span>)}{issue.tools.length > 30 ? ", …" : ""}.</> : null} Pick a read-only one under "How Nook reads the doc", or {admin ? <>allow one to run automatically in {settings}.</> : <>ask an admin to allow one in {settings}.</>}</p></div>;

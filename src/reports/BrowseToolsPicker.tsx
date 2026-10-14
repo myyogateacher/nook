@@ -1,14 +1,15 @@
 import type { DocServerChoice } from "../../shared/reportsGenerate";
-import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
+import { DOC_BROWSE_LIMITS, isWriteLikeName } from "../../shared/reportsGenerate";
 
 /**
- * B3: "Tools the AI may use to read more docs": the doc server's tools, the read-only (Auto) ones
- * tickable, every other one greyed out with why. The main doc is always read first; these let the AI
+ * B3: "Tools the AI may use to read more docs": the doc server's read-like tools, the Auto ones
+ * tickable, the others greyed out with why; write-like tools are not listed at all. The main doc is always read first; these let the AI
  * follow its links. Used by New report and ⋯ → Doc settings.
  */
 export function BrowseToolsPicker({ server, value, onChange, disabled = false }: { server: Pick<DocServerChoice, "name" | "tools" | "toolNames">; value: readonly string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
   const allowed = new Set(server.tools.map((tool) => tool.name));
-  const names = [...new Set([...server.tools.map((tool) => tool.name), ...(server.toolNames ?? [])])];
+  // Tools that look like writes are never listed, not even greyed out (an admin must not be invited to set one to Auto).
+  const names = [...new Set([...server.tools.map((tool) => tool.name), ...(server.toolNames ?? [])])].filter((name) => !isWriteLikeName(name));
   const toggle = (name: string, on: boolean) => onChange(on ? [...value.filter((item) => item !== name), name].slice(0, DOC_BROWSE_LIMITS.ticked) : value.filter((item) => item !== name));
   return <fieldset className="browse-tools" disabled={disabled}>
     <legend className="reports-label">Tools the AI may use to read more docs</legend>

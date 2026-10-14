@@ -29,12 +29,22 @@ export function docChangedText(doc: Pick<DocState, "mainChanged" | "pages" | "la
 }
 
 function docChangedBase(doc: Pick<DocState, "mainChanged" | "pages" | "latest">): string {
-  const pages = doc.pages.filter((page) => page.changed).map((page) => `“${page.title ?? `a page read with ${page.tool}`}”`);
+  const pages = doc.pages.filter((page) => page.changed && page.kind !== "search").map((page) => `“${page.title ?? `a page read with ${page.tool}`}”`);
   const linked = pages.length === 0 ? "" : pages.length === 1 ? `the linked page ${pages[0]}` : `the linked pages ${pages.slice(0, 2).join(" and ")}${pages.length > 2 ? ` and ${pages.length - 2} more` : ""}`;
   const main = doc.latest?.title ? `the doc (${doc.latest.title})` : "the doc";
-  if (doc.mainChanged && linked) return `Both ${main} and ${linked} changed since this report was generated.`;
-  if (linked) return `${linked[0]!.toUpperCase()}${linked.slice(1)} changed since this report was generated.`;
-  return `${main[0]!.toUpperCase()}${main.slice(1)} changed since this report was generated.`;
+  const changed = doc.mainChanged && linked ? `Both ${main} and ${linked} changed since this report was generated.`
+    : linked ? `${linked[0]!.toUpperCase()}${linked.slice(1)} changed since this report was generated.`
+    : doc.mainChanged || !searchesChanged(doc) ? `${main[0]!.toUpperCase()}${main.slice(1)} changed since this report was generated.` : "";
+  return [changed, searchesText(doc)].filter(Boolean).join(" ");
+}
+
+const searchesChanged = (doc: Pick<DocState, "pages">) => doc.pages.some((page) => page.changed && page.kind === "search");
+/** K3: a kept search or list whose result set changed: "The search for “X” now returns new or removed pages." */
+function searchesText(doc: Pick<DocState, "pages">): string {
+  const searches = doc.pages.filter((page) => page.changed && page.kind === "search").map((page) => page.title ? `the search for “${page.title}”` : `the list from ${page.tool}`);
+  if (!searches.length) return "";
+  const named = searches.length === 1 ? searches[0]! : `${searches.slice(0, 2).join(" and ")}${searches.length > 2 ? ` and ${searches.length - 2} more` : ""}`;
+  return `${named[0]!.toUpperCase()}${named.slice(1)} now ${searches.length === 1 ? "returns" : "return"} new or removed pages.`;
 }
 
 export function ReportGeneration({ report, canWrite, onChanged }: { report: ReportDetail; canWrite: boolean; onChanged: () => void }) {

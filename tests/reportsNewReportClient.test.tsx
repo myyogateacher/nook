@@ -153,6 +153,11 @@ describe("B3: tools the AI may use to read more docs", () => {
     expect(docChangedText({ mainChanged: true, pages: [page("Rules", false)], latest })).toBe("The doc (Revenue metrics) changed since this report was generated.");
     expect(docChangedText({ mainChanged: false, pages: [page("Rules", true)], latest })).toBe("The linked page “Rules” changed since this report was generated.");
     expect(docChangedText({ mainChanged: true, pages: [page("Rules", true), page(null, true), page("C", true)], latest })).toBe("Both the doc (Revenue metrics) and the linked pages “Rules” and “a page read with fetch” and 1 more changed since this report was generated.");
+    // K3: a kept search or list whose result set changed.
+    const search = (title: string | null, tool = "search"): DocPageInfo => ({ ...page(title, true), id: `s-${title}`, tool, kind: "search" });
+    expect(docChangedText({ mainChanged: false, pages: [page("Rules", false), search("churn")], latest })).toBe("The search for “churn” now returns new or removed pages.");
+    expect(docChangedText({ mainChanged: true, pages: [search(null, "list_documents")], latest })).toBe("The doc (Revenue metrics) changed since this report was generated. The list from list_documents now returns new or removed pages.");
+    expect(docChangedText({ mainChanged: false, pages: [page("Rules", true), search("a"), search("b")], latest })).toBe("The linked page “Rules” changed since this report was generated. The search for “a” and the search for “b” now return new or removed pages.");
   });
 
   test("⋯ has Doc settings for the owner once the generation part offers it", () => {

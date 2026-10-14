@@ -239,6 +239,54 @@ describe("Doc changed for a linked page", () => {
   });
 });
 
+describe("K3: searches and lists are kept as result sets", () => {
+  test("a search answer is kept as ids (and titles) only; Check doc runs it again and flags new pages; the metric catalog never reads it", async () => {
+    const { reportId, runId, finished } = await generate({ browseTools: ["fetch", "search"] }, browsing([[{ name: "doc__search", arguments: { query: "revenue rules" } }]]));
+    expect(finished.status).toBe("succeeded");
+    const row = db.query("SELECT tool, title, markdown FROM report_doc_pages WHERE run_id = ?").get(runId) as { tool: string; title: string; markdown: string };
+    expect([row.tool, row.title]).toEqual(["search", "revenue rules"]);
+    expect(row.markdown.split("\n")).toEqual([...docs.docs.keys()].sort().map((id) => `${id}\t`));
+    const quiet = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+    expect(quiet.body.doc.changed).toBe(false);
+    expect(quiet.body.doc.pages).toEqual([expect.objectContaining({ kind: "search", title: "revenue rules", tool: "search", changed: false })]);
+    // The same set in another order is the same snapshot; a new page is a change.
+    docs.docs.set("zz-new-Nw9999", { title: "A new page", text: "# A new page" });
+    try {
+      const checked = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+      expect(checked.body.doc).toMatchObject({ changed: true, mainChanged: false });
+      expect(checked.body.doc.pages[0]).toMatchObject({ kind: "search", changed: true });
+      const audit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.doc.check' AND metadata_json LIKE ? ORDER BY rowid DESC LIMIT 1").get(`%${reportId}%`) as { metadata_json: string };
+      expect(JSON.parse(audit.metadata_json)).toMatchObject({ pages: 1, pagesChanged: 1 });
+      // Owner-only, like pages.
+      expect((await send(commenter, "GET", `/reports/${reportId}/doc`)).status).not.toBe(200);
+    } finally {
+      docs.docs.delete("zz-new-Nw9999");
+    }
+  });
+
+  test("resultSetOf: JSON objects (ids and titles, never snippets), arrays of ids, Markdown links; nothing it can read is null", async () => {
+    const { resultSetOf, resultListing, isSearchTool, searchQueryOf, checkedRows } = await import("../server/reports/docBrowse");
+    expect(resultSetOf(JSON.stringify({ results: [{ id: "b", title: "Beta", snippet: "SECRET body" }, { id: "a", title: "Alpha\tone" }], truncated: false }))).toEqual([{ id: "b", title: "Beta" }, { id: "a", title: "Alpha one" }]);
+    expect(resultSetOf(JSON.stringify({ data: [{ document: { urlId: "x1", title: "X" } }] }))).toEqual([{ id: "x1", title: "X" }]);
+    expect(resultSetOf(JSON.stringify(["p-2", "p-1"]))).toEqual([{ id: "p-2", title: "" }, { id: "p-1", title: "" }]);
+    expect(resultSetOf(JSON.stringify({ results: [] }))).toEqual([]);
+    expect(resultSetOf("Found:\n- [Rules](https://docs.example.test/doc/r1)\n- https://docs.example.test/doc/r2")).toEqual([{ id: "https://docs.example.test/doc/r1", title: "Rules" }, { id: "https://docs.example.test/doc/r2", title: "" }]);
+    expect(resultSetOf("No documents matched.")).toBeNull();
+    expect(resultSetOf(JSON.stringify({ count: 3 }))).toBeNull();
+    expect(resultSetOf(JSON.stringify(Array.from({ length: 500 }, (_, index) => `id-${index}`)))!.length).toBe(200);
+    expect(resultListing([{ id: "b", title: "B" }, { id: "a", title: "A" }])).toBe("a\tA\nb\tB");
+    expect(["search", "search_notes", "list_documents", "searchDocuments", "find_pages"].every(isSearchTool)).toBe(true);
+    expect(["fetch", "read_note", "get_settings", "playlist_info"].some(isSearchTool)).toBe(false);
+    expect([searchQueryOf(JSON.stringify({ query: " churn " })), searchQueryOf(JSON.stringify({ collectionId: "c" }))]).toEqual(["churn", null]);
+    // Check doc: at most 16 calls; searches take up to 4 of them, pages the rest.
+    const rows = [...Array.from({ length: 20 }, (_, index) => ({ tool: "fetch", n: index })), ...Array.from({ length: 6 }, (_, index) => ({ tool: "search", n: 100 + index }))];
+    const kept = checkedRows(rows);
+    expect([kept.length, kept.filter((row) => row.tool === "search").length]).toEqual([16, 4]);
+    expect(checkedRows(rows.slice(0, 20)).length).toBe(16);
+    expect(checkedRows(rows.slice(20)).length).toBe(4);
+  });
+});
+
 describe("Doc settings", () => {
   test("the owner changes the ticks (Auto only); others cannot", async () => {
     const { reportId } = await generate({}, browsing([]));

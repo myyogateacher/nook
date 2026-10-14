@@ -16,7 +16,7 @@ import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources
 import { cutBytes, docServerFor, docToolOf, fetchDoc, fetchNookFetched, recordSnapshot, snapshotOf } from "./docSource";
 import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookOrigins, nookSourceName } from "./nookSource";
 import type { ToolServerRow } from "../agents/toolServers";
-import { checkBrowseTools, DocBrowser, modelToolName, serverBrowseSource, storedBrowseTools } from "./docBrowse";
+import { checkBrowseTools, DocBrowser, isPageTool, modelToolName, serverBrowseSource, storedBrowseTools } from "./docBrowse";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { ReportError } from "./errors";
 import { adHocQueryId, runGuarded } from "./runner";
@@ -929,7 +929,8 @@ async function linkedPages(run: Execution, reportId: string, runId: string, sign
   const pages: Array<{ title: string | null; markdown: string }> = [];
   for (const row of rows) {
     const key = `${row.server_id}\u0000${row.tool}\u0000${row.args_json}`;
-    if (seen.has(key)) continue;
+    // K3: a kept search or list is a result set, not a page to read metrics from.
+    if (seen.has(key) || !isPageTool(row.tool)) continue;
     seen.add(key);
     pages.push({ title: row.title, markdown: row.markdown });
     if (pages.length >= EXTRACT_LIMITS.pages) break;

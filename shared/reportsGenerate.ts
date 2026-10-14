@@ -24,7 +24,7 @@ export type DocServerChoice = {
 };
 
 /** A linked page an agent read during a run (B3), as its owner sees it: never its text. */
-export type DocPageInfo = { id: string; title: string | null; tool: string; serverName: string; bytes: number; sha256: string; fetchedAt: string; checkedAt: string | null; changed: boolean };
+export type DocPageInfo = { id: string; /** A page's title; for a search (K3), what it searched for (null for a list). */ title: string | null; tool: string; /** K3: a page read, or a search or list kept as its result set (absent: a page). */ kind?: "page" | "search"; serverName: string; bytes: number; sha256: string; fetchedAt: string; checkedAt: string | null; changed: boolean };
 
 /**
  * A report's doc, its newest snapshot, and whether the doc changed since the report was generated ("Doc
@@ -43,7 +43,7 @@ export type DocState = {
 };
 
 /** B3: the AI's doc tools per run: calls, bytes of results, one result shown to the model, ticks per report, pages Check doc reads. */
-export const DOC_BROWSE_LIMITS = { calls: 8, runBytes: 400 * 1024, resultBytes: 32 * 1024, ticked: 20, checkedPages: 16 } as const;
+export const DOC_BROWSE_LIMITS = { calls: 8, runBytes: 400 * 1024, resultBytes: 32 * 1024, ticked: 20, checkedPages: 16, checkedSearches: 4 } as const;
 
 /** Verbs that mark a tool as a write: such a tool is never offered for reading docs, not even greyed out. */
 const WRITE_VERBS = new Set(["create", "update", "delete", "remove", "move", "archive", "restore", "write", "set", "add", "edit", "rename", "publish", "import", "upload"]);

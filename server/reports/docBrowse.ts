@@ -30,6 +30,10 @@ const slog = logger("reports");
  * - **Pages**: a call to a tool that reads one document (`fetch`, `get_document`, `read_document`, …) is
  *   a page: its markdown (≤ 512 KiB) is kept in `report_doc_pages` for the run, owner-only. "Check doc"
  *   reads the pages of the current spec's runs again and "Doc changed" names a page that changed.
+ * - **Searches and lists** (K3): a call to a search or list tool (`search`, `search_notes`, `list_*`, …)
+ *   is kept as a snapshot of its result set, ids and titles only (≤ 200 entries, sorted, hashed), in the
+ *   same owner-only table; "Check doc" runs the same call again and "Doc changed" says the search now
+ *   returns new or removed pages. They count toward the run's 8 doc calls like any call.
  * - **Logs**: one line per call (tool, ms, bytes, ok or code), never the content or the arguments.
  */
 
@@ -39,6 +43,70 @@ export const DOC_TOOL_PREFIX = "doc__";
 // (A literal, not DOC_TOOL_NAMES: docSource.ts imports this module, so its constants may not be ready yet.)
 const PAGE_TOOLS = new Set<string>(["fetch", "get_document", "read_document", "get_page", "read_note", "read_document_text"]);
 export const isPageTool = (name: string) => PAGE_TOOLS.has(name.toLowerCase());
+/** K3: a tool whose answer is a set of pages (a search or a list), kept as a snapshot of the result set. */
+export const isSearchTool = (name: string) => !isPageTool(name) && /(^|[^a-z])(search|list|find)/i.test(name.replace(/([a-z0-9])([A-Z])/g, "$1_$2"));
+
+/** K3: the most entries a search snapshot keeps. */
+export const SEARCH_SNAPSHOT_ENTRIES = 200;
+type ResultEntry = { id: string; title: string };
+const ID_KEYS = ["id", "noteId", "documentId", "pageId", "page_id", "uuid", "url", "uri", "href", "path", "urlId"];
+const TITLE_KEYS = ["title", "name", "label", "heading"];
+const clean = (value: string, max: number) => value.replace(/[\t\r\n]+/g, " ").trim().slice(0, max);
+
+/**
+ * K3: the result set of a search or list answer as ids and titles (never snippets or bodies): from JSON
+ * (objects carrying an id-like key, or an array of ids), else from Markdown links and URLs in the text.
+ * Null when nothing in the answer looks like a result set (it is then not kept).
+ */
+export function resultSetOf(text: string): ResultEntry[] | null {
+  const entries = new Map<string, string>();
+  const add = (id: unknown, title: unknown) => {
+    if ((typeof id !== "string" && typeof id !== "number") || entries.size >= SEARCH_SNAPSHOT_ENTRIES) return;
+    const key = clean(String(id), 500);
+    if (key && !entries.has(key)) entries.set(key, typeof title === "string" ? clean(title, 200) : "");
+  };
+  let parsed: unknown;
+  let json = false;
+  try { parsed = JSON.parse(text); json = true; } catch { /* plain text */ }
+  if (json) {
+    let sawList = false;
+    let visited = 0;
+    const walk = (value: unknown, depth: number) => {
+      if (depth > 6 || visited++ > 5000 || !value || typeof value !== "object") return;
+      if (Array.isArray(value)) {
+        sawList = true;
+        for (const item of value) {
+          if (typeof item === "string" || typeof item === "number") add(item, null);
+          else walk(item, depth + 1);
+        }
+        return;
+      }
+      const record = value as Record<string, unknown>;
+      const idKey = ID_KEYS.find((key) => typeof record[key] === "string" || typeof record[key] === "number");
+      if (idKey) {
+        add(record[idKey], TITLE_KEYS.map((key) => record[key]).find((item) => typeof item === "string"));
+        return;
+      }
+      for (const item of Object.values(record)) walk(item, depth + 1);
+    };
+    walk(parsed, 0);
+    return entries.size || sawList ? [...entries].map(([id, title]) => ({ id, title })) : null;
+  }
+  for (const match of text.matchAll(/\[([^\]\n]{0,300})\]\(([^)\s]{1,500})\)|(https?:\/\/[^\s)<>\]]{1,500})/g)) add(match[2] ?? match[3], match[1] ?? null);
+  return entries.size ? [...entries].map(([id, title]) => ({ id, title })) : null;
+}
+
+/** The snapshot as kept and hashed: one `id<TAB>title` line per entry, sorted by id, so order does not count. */
+export const resultListing = (entries: readonly ResultEntry[]) => [...entries].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).map((entry) => `${entry.id}\t${entry.title}`).join("\n");
+
+/** What a search was for (its query argument), shown as "the search for X"; null for a list. */
+export function searchQueryOf(argsJson: string): string | null {
+  try {
+    const args = JSON.parse(argsJson) as Record<string, unknown>;
+    for (const key of ["query", "q", "search", "text", "term", "keyword", "keywords"]) if (typeof args[key] === "string" && (args[key] as string).trim()) return clean(args[key] as string, 200);
+  } catch { /* none */ }
+  return null;
+}
 
 /** Where the agent's doc tools come from: a tool server (B3) or Nook itself (B4). */
 export type BrowseSource = {
@@ -180,6 +248,7 @@ export class DocBrowser {
     slog.info("Doc tool call", { server: shortId(source.id), tool: name, ms: Math.round(performance.now() - started), bytes, ok: !outcome.isError, ...(outcome.isError ? { code: "TOOL_ERROR" } : {}) });
     if (outcome.isError) throw new ReportError(502, "DOC_FETCH", `${source.name} could not answer${plain(outcome.text) ? `: ${plain(outcome.text)}` : ""}`);
     if (isPageTool(name) && outcome.text.trim()) this.recordPage(source.id, name, argsJson, outcome.text);
+    else if (isSearchTool(name)) this.recordSearch(source.id, name, argsJson, outcome.text);
     const cut = cutBytes(outcome.text, DOC_BROWSE_LIMITS.resultBytes);
     return `<document tool="${name}">\n${defuse(cut.text)}\n</document>${cut.truncated ? `\n[cut at ${Math.round(DOC_BROWSE_LIMITS.resultBytes / 1024)} KB]` : ""}`;
   }
@@ -187,14 +256,27 @@ export class DocBrowser {
   private recordPage(sourceId: string, tool: string, argsJson: string, text: string) {
     try {
       const doc = docFromText(text);
-      const page = cutBytes(doc.markdown, REPORT_LIMITS.docBytes).text;
-      db.query(`INSERT INTO report_doc_pages (id, report_id, run_id, server_id, tool, args_json, args_sha256, title, sha256, bytes, fetched_at, markdown)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(run_id, server_id, tool, args_sha256) DO UPDATE SET title = excluded.title, sha256 = excluded.sha256, bytes = excluded.bytes, fetched_at = excluded.fetched_at, markdown = excluded.markdown, checked_sha256 = NULL, checked_at = NULL`)
-        .run(crypto.randomUUID(), this.options.reportId, this.options.runId, sourceId, tool, argsJson, sha256Of(argsJson), doc.title, sha256Of(page), Buffer.byteLength(page, "utf8"), now(), page);
+      this.keep(sourceId, tool, argsJson, doc.title, cutBytes(doc.markdown, REPORT_LIMITS.docBytes).text);
     } catch (error) {
       slog.warn("Reports: a linked page could not be kept", { err: error });
     }
+  }
+
+  /** K3: a search or list answer, kept as its result set (ids and titles); its title is the query. */
+  private recordSearch(sourceId: string, tool: string, argsJson: string, text: string) {
+    try {
+      const entries = resultSetOf(text);
+      if (entries) this.keep(sourceId, tool, argsJson, searchQueryOf(argsJson), resultListing(entries));
+    } catch (error) {
+      slog.warn("Reports: a search answer could not be kept", { err: error });
+    }
+  }
+
+  private keep(sourceId: string, tool: string, argsJson: string, title: string | null, markdown: string) {
+    db.query(`INSERT INTO report_doc_pages (id, report_id, run_id, server_id, tool, args_json, args_sha256, title, sha256, bytes, fetched_at, markdown)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, server_id, tool, args_sha256) DO UPDATE SET title = excluded.title, sha256 = excluded.sha256, bytes = excluded.bytes, fetched_at = excluded.fetched_at, markdown = excluded.markdown, checked_sha256 = NULL, checked_at = NULL`)
+      .run(crypto.randomUUID(), this.options.reportId, this.options.runId, sourceId, tool, argsJson, sha256Of(argsJson), title, sha256Of(markdown), Buffer.byteLength(markdown, "utf8"), now(), markdown);
   }
 }
 
@@ -220,7 +302,19 @@ function currentPages(reportId: string): PageRow[] {
   // The same page read by two runs counts once: the newest read.
   const byKey = new Map<string, PageRow>();
   for (const row of rows) byKey.set(`${row.server_id}\u0000${row.tool}\u0000${row.args_json}`, row);
-  return [...byKey.values()].slice(0, DOC_BROWSE_LIMITS.checkedPages);
+  return checkedRows([...byKey.values()]);
+}
+
+/**
+ * K3: what Check doc reads again, at most `checkedPages` calls in all: searches and lists take up to
+ * `checkedSearches` of them (the first ones read), pages the rest (all 16 when there is no search).
+ * The order is kept.
+ */
+export function checkedRows<T extends { tool: string }>(all: readonly T[]): T[] {
+  const searches = all.filter((row) => !isPageTool(row.tool)).slice(0, DOC_BROWSE_LIMITS.checkedSearches);
+  const pages = all.filter((row) => isPageTool(row.tool)).slice(0, DOC_BROWSE_LIMITS.checkedPages - searches.length);
+  const kept = new Set<T>([...pages, ...searches]);
+  return all.filter((row) => kept.has(row));
 }
 
 const sourceName = (serverId: string) => serverId === "nook" ? config.appName : (db.query("SELECT name FROM agent_tool_servers WHERE id = ?").get(serverId) as { name: string } | null)?.name ?? "A removed tool server";
@@ -231,7 +325,7 @@ export function pageInfos(reportId: string, runId?: string | null): DocPageInfo[
     ? db.query("SELECT id, run_id, server_id, tool, args_json, title, sha256, bytes, fetched_at, checked_sha256, checked_at FROM report_doc_pages WHERE report_id = ? AND run_id = ? ORDER BY fetched_at, rowid").all(reportId, runId) as PageRow[]
     : currentPages(reportId);
   return rows.map((row) => ({
-    id: row.id, title: row.title, tool: row.tool, serverName: sourceName(row.server_id), bytes: row.bytes, sha256: row.sha256, fetchedAt: row.fetched_at,
+    id: row.id, title: row.title, tool: row.tool, kind: isPageTool(row.tool) ? "page" as const : "search" as const, serverName: sourceName(row.server_id), bytes: row.bytes, sha256: row.sha256, fetchedAt: row.fetched_at,
     checkedAt: row.checked_at, changed: Boolean(row.checked_sha256 && row.checked_sha256 !== row.sha256)
   }));
 }
@@ -242,7 +336,7 @@ export const pageSources = { of: (serverId: string, ownerRole: string, ownerId: 
 /**
  * "Check doc" for the linked pages: reads each page of the current spec's runs again (the same tool and
  * arguments, still only while the tool is Auto and the source the owner's to use) and records the hash
- * it found. A page that cannot be read is left as it was. Returns how many were read and how many failed.
+ * it found; a search or list (K3) is run again and its result set hashed. A page that cannot be read is left as it was. Returns how many were read and how many failed.
  */
 export async function recheckPages(reportId: string, owner: { id: string; role: string }, signal?: AbortSignal): Promise<{ checked: number; failed: number; changed: number }> {
   let checked = 0;
@@ -257,8 +351,14 @@ export async function recheckPages(reportId: string, owner: { id: string; role: 
       const outcome = await source.call(row.tool, JSON.parse(row.args_json) as Record<string, unknown>, signal);
       slog.info("Doc page checked", { server: shortId(row.server_id), tool: row.tool, ms: Math.round(performance.now() - started), bytes: Buffer.byteLength(outcome.text, "utf8"), ok: !outcome.isError });
       if (outcome.isError || !outcome.text.trim()) { failed += 1; continue; }
-      const page = cutBytes(docFromText(outcome.text).markdown, REPORT_LIMITS.docBytes).text;
-      const sha = sha256Of(page);
+      let sha: string;
+      if (isPageTool(row.tool)) sha = sha256Of(cutBytes(docFromText(outcome.text).markdown, REPORT_LIMITS.docBytes).text);
+      else {
+        // K3: the same search again, compared as its result set (ids and titles).
+        const entries = resultSetOf(outcome.text);
+        if (!entries) { failed += 1; continue; }
+        sha = sha256Of(resultListing(entries));
+      }
       db.query("UPDATE report_doc_pages SET checked_sha256 = ?, checked_at = ? WHERE id = ?").run(sha, now(), row.id);
       checked += 1;
       if (sha !== row.sha256) changed += 1;

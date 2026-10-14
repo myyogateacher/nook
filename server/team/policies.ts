@@ -194,10 +194,11 @@ export function policyBlock(key: { createdAt: string; expiresAt: string | null }
  */
 export function blockedKeySql(policies: Policies): { sql: string; params: Array<string | number> } {
   const roleFails = (roles: readonly string[]) => roles.length ? `(u.role <> 'guest' AND u.role NOT IN (${roles.map(() => "?").join(", ")}))` : "(u.role <> 'guest')";
-  const sql = `((k.surfaces = 'mcp' AND ${roleFails(policies.mcpRoles)}) OR (k.surfaces = 'rest' AND ${roleFails(policies.restRoles)})
+  // C2: the internal agents key is never used from outside, so outside-use policies never block it.
+  const sql = `(k.internal = 0 AND ((k.surfaces = 'mcp' AND ${roleFails(policies.mcpRoles)}) OR (k.surfaces = 'rest' AND ${roleFails(policies.restRoles)})
     OR (k.surfaces = 'both' AND ${roleFails(policies.mcpRoles)} AND ${roleFails(policies.restRoles)})
     OR (k.expires_at IS NULL AND ? = 1)
-    OR (k.expires_at IS NOT NULL AND (julianday(k.expires_at) - julianday(k.created_at)) * ${DAY_MS} > ?))`;
+    OR (k.expires_at IS NOT NULL AND (julianday(k.expires_at) - julianday(k.created_at)) * ${DAY_MS} > ?)))`;
   return {
     sql,
     params: [...policies.mcpRoles, ...policies.restRoles, ...policies.mcpRoles, ...policies.restRoles, policies.keyRequireExpiry ? 1 : 0, policies.keyMaxDays * DAY_MS + LIFETIME_SLACK_MS]
@@ -225,7 +226,7 @@ export function surfaceBlocks(key: { createdAt: string; expiresAt: string | null
 export function policyImpact(proposed: Policies, time = Date.now()) {
   const at = new Date(time).toISOString();
   const keys = db.query(`SELECT k.id, k.created_at, k.expires_at, k.surfaces, u.role FROM mcp_api_keys k JOIN users u ON u.id = k.user_id
-    WHERE k.revoked_at IS NULL AND u.disabled_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?) AND (k.revoke_after IS NULL OR k.revoke_after > ?)`)
+    WHERE k.revoked_at IS NULL AND k.internal = 0 AND u.disabled_at IS NULL AND (k.expires_at IS NULL OR k.expires_at > ?) AND (k.revoke_after IS NULL OR k.revoke_after > ?)`)
     .all(at, at) as Array<{ id: string; created_at: string; expires_at: string | null; surfaces: KeySurfaces; role: Role }>;
   const grants = db.query("SELECT key_id, module FROM api_key_grants").all() as Array<{ key_id: string; module: GrantModule }>;
   const modulesByKey = new Map<string, Set<GrantModule>>();

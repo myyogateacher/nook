@@ -4,6 +4,7 @@ import { api, auditRows, makeKey } from "./support/mcpClient";
 import { startFakeProvider } from "./support/fakeProvider";
 import { startFakeMcpServer, type FakeMcpServer } from "./support/fakeMcpServer";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 
 const { confirmationTimeouts } = await import("../server/agents/runs");
 const { McpHttpTransport, McpSession, McpClientError } = await import("../server/agents/mcpClient");
@@ -26,6 +27,8 @@ const { deleteProvider } = await import("../server/agents/providers");
  */
 
 retireUsersAfterFile();
+// C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 const fake = startFakeProvider(24478);
 const mcp = startFakeMcpServer(24476);
 const mcpSse = startFakeMcpServer(24477, { sse: true, serverRequest: true, dropSessionOnce: true, bearer: "tok-secret-0001" });

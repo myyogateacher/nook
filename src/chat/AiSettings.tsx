@@ -1,3 +1,4 @@
+import { appName } from "../appName";
 import { useCallback, useEffect, useId, useState, type FormEvent } from "react";
 import { Cpu, Plus, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
@@ -183,7 +184,7 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
     setBusy(true);
     try {
       const { settings: next } = await writeSettings({ createRoles: draft.createRoles, chatRoles: draft.chatRoles, dailyTokensUser: draft.dailyTokensUser, dailyTokensInstance: draft.dailyTokensInstance, agentsPerUser: draft.agentsPerUser, defaultProviderId: draft.defaultProviderId, publicChatLinks: draft.publicChatLinks,
-        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, reportModelFreeText: draft.reportModelFreeText, expectedRevision: settings.revision });
+        reportProviderId: draft.reportProviderId, reportModel: draft.reportModel?.trim() || null, reportModelFreeText: draft.reportModelFreeText, nookAutoTools: draft.nookAutoTools, expectedRevision: settings.revision });
       onSaved(next);
       notify.success("Policy saved");
     } catch (reason) {
@@ -213,11 +214,16 @@ function PolicyForm({ settings, providers, flash, onSaved }: { settings: AgentSe
       <label className="ai-check"><input type="checkbox" checked={draft.reportModelFreeText} onChange={(event) => setDraft({ ...draft, reportModelFreeText: event.target.checked })} />Report owners may type any model name</label>
       <p className="chat-muted">Off: an owner picks from the provider's listed models (seen by Test or the model list), its default, or the report model above.</p>
     </fieldset>
+    <label className="ai-check"><input type="checkbox" checked={draft.nookAutoTools} onChange={(event) => setDraft({ ...draft, nookAutoTools: event.target.checked })} />Give agents {appName()}'s tools automatically</label>
+    <p className="chat-muted">{nookAutoPolicyText()}</p>
     <label className="ai-check"><input type="checkbox" checked={draft.publicChatLinks} onChange={(event) => setDraft({ ...draft, publicChatLinks: event.target.checked })} />Allow public chat links</label>
     <p className="chat-muted">{PUBLIC_LINKS_POLICY_TEXT}</p>
     <footer className="file-dialog-actions"><button type="submit" className="primary-button" disabled={busy}>{busy ? "Saving…" : "Save policy"}</button></footer>
   </form>;
 }
+
+/** What the automatic Nook tools do (C2), under the admin's checkbox. */
+export const nookAutoPolicyText = () => `Each person's agents read what that person can read in ${appName()}, and suggest changes as Inbox proposals they approve; nothing is changed directly. No key to link: ${appName()} keeps an internal key per person that works only inside ${appName()}. Bin, keys, the Vault, uploads, and report queries stay out. Each agent can turn this off, and a linked key with direct writes still works as before.`;
 
 /** What the public-links policy does (Wave 43, AC-O1, D362), under its checkbox. */
 export const PUBLIC_LINKS_POLICY_TEXT = "Members and admins can then publish a frozen snapshot of one of their chats at a link anyone can open without signing in; tool results stay hidden unless they include them. Turning this off makes every link answer “not found” at once; the links are kept, so they work again if you turn it back on.";

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { createUser, db, origin, request, type Session } from "./support/harness";
 import { startFakeProvider } from "./support/fakeProvider";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 import { settleAgentRunsAfterEach } from "./support/agentRuns";
 
 const { createApiKey, validateGrants, KeyError } = await import("../server/apiKeys");
@@ -24,6 +25,8 @@ type Grant = import("../server/keyGrants").Grant;
  */
 
 retireUsersAfterFile();
+// C2: this file expects exactly the tools it picks; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 settleAgentRunsAfterEach();
 const fake = startFakeProvider(24624);
 let admin: Session;

@@ -169,12 +169,14 @@ type KeyRow = {
   ip_allowlist: string | null; last_used_mcp_at: string | null; last_used_rest_at: string | null;
   last_denied_at: string | null; last_denied_reason: string | null; last_denied_surface: "mcp" | "rest" | null;
   allow_mcp_value_reads: number; vault_protected_access: number;
+  /** C2: the in-process key that gives agents Nook's tools (never usable from outside). */
+  internal: number;
   role: Role; disabled_at: string | null;
 };
 
 const keyColumns = `k.id, k.user_id, k.name, k.description, k.key_prefix, k.kind, k.surfaces, k.scopes, k.created_at, k.last_used_at, k.expires_at,
   k.revoke_after, k.revoked_at, k.rotated_from, k.revoked_by, k.revoke_reason, k.limits_json, k.ip_allowlist, k.last_used_mcp_at, k.last_used_rest_at,
-  k.last_denied_at, k.last_denied_reason, k.last_denied_surface, k.allow_mcp_value_reads, k.vault_protected_access, u.role, u.disabled_at`;
+  k.last_denied_at, k.last_denied_reason, k.last_denied_surface, k.allow_mcp_value_reads, k.vault_protected_access, k.internal, u.role, u.disabled_at`;
 
 const keyById = db.query(`SELECT ${keyColumns} FROM mcp_api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?`);
 const grantsByKey = db.query("SELECT module, permission, resource_kind, resource_id, env_id, protected_at_grant FROM api_key_grants WHERE key_id = ? ORDER BY created_at, rowid");
@@ -209,6 +211,8 @@ function keyState(row: KeyRow, policies: Policies, time = Date.now()): { state: 
   if (row.revoke_after !== null && isoMs(row.revoke_after)! <= time) return { state: "revoked", blockedBy: null };
   if (row.expires_at !== null && isoMs(row.expires_at)! <= time) return { state: "expired", blockedBy: null };
   if (row.disabled_at !== null) return { state: "paused", blockedBy: null };
+  // C2: the internal agents key is never used from outside, so the outside-use policies (surfaces, expiry) do not block it.
+  if (row.internal === 1) return { state: "active", blockedBy: null };
   // Listed as blocked when policy blocks it on every surface it may use (the preview counts the same).
   const blockedBy = surfaceBlocks({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, row.surfaces, policies).block;
   if (blockedBy) return { state: "blocked", blockedBy };
@@ -309,7 +313,8 @@ export function resolveKeyActor(keyId: string, surface: "mcp" | "rest" = "mcp", 
     return { code: "KEY_POLICY", message: surface === "mcp" ? "This API key is not allowed to use MCP (it is a REST key)" : "This API key is not allowed to use the REST API (it is an MCP key)" };
   }
   const policies = readPolicies();
-  const blocked = policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies);
+  // C2: the internal agents key runs in process only; the outside-use policies (surfaces, expiry, lifetime) do not apply.
+  const blocked = row.internal === 1 ? null : policyBlock({ createdAt: row.created_at, expiresAt: row.expires_at }, row.role, surface, policies);
   if (blocked) {
     notePolicyBlock(row, blocked, surface, time);
     return { code: "KEY_POLICY", message: policyBlockMessage(row, blocked, surface, policies), reason: blocked };
@@ -557,7 +562,7 @@ export function markKeyUsed(keyId: string, surface: "mcp" | "rest", time = Date.
 }
 
 export function liveKeyCount(userId: string, time = Date.now()) {
-  return (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL
+  return (db.query(`SELECT COUNT(*) AS count FROM mcp_api_keys WHERE user_id = ? AND revoked_at IS NULL AND internal = 0
     AND (expires_at IS NULL OR expires_at > ?) AND (revoke_after IS NULL OR revoke_after > ?)`).get(userId, new Date(time).toISOString(), new Date(time).toISOString()) as { count: number }).count;
 }
 
@@ -663,6 +668,55 @@ export function createApiKey(userId: string, input: { name: string; description?
   })();
 }
 
+// ------------------------------------------------------------------------------ the internal agents key (C2)
+
+export const INTERNAL_AGENT_KEY_NAME = "Internal (agents)";
+/** The modules whose `read` the internal key holds: every module agents may read (no Bin, vault, or agents). */
+export const INTERNAL_AGENT_KEY_MODULES: readonly GrantModule[] = ["notes", "files", "tasks", "today", "calendar", "collections", "team", "inbox", "whiteboards", "reports"];
+
+/** Every module's read plus `inbox:write` (writes reach the Inbox as proposals only, never directly). */
+export function internalAgentKeyGrants(): Grant[] {
+  const grants: Grant[] = INTERNAL_AGENT_KEY_MODULES.filter((module) => scopeFor(module, "read") !== null).map((module) => ({ module, permission: "read" as KeyPermission, resourceKind: null, resourceId: null }));
+  grants.push({ module: "inbox", permission: "write", resourceKind: null, resourceId: null });
+  return grants;
+}
+
+type InternalRow = { id: string; revoked_at: string | null; revoke_after: string | null };
+const newestInternal = (userId: string) => db.query("SELECT id, revoked_at, revoke_after FROM mcp_api_keys WHERE user_id = ? AND internal = 1 ORDER BY created_at DESC, rowid DESC LIMIT 1").get(userId) as InternalRow | null;
+
+/** The person's internal agents key id when it is live; null when they never had one or revoked it. */
+export function internalAgentKeyId(userId: string): string | null {
+  const row = newestInternal(userId);
+  return row && row.revoked_at === null ? row.id : null;
+}
+
+/** Whether the person turned their agents' automatic Nook tools off by revoking the internal key (or an admin did). */
+export const internalAgentKeyRevoked = (userId: string) => newestInternal(userId)?.revoked_at != null;
+
+/**
+ * The person's internal agents key, created on first need (C2): idempotent, one per person. Never
+ * for a guest, a blocked or missing account, or an integration; never again after it was revoked
+ * (revoking is how its owner or an admin turns it off) unless `restore` is set. Its token is
+ * thrown away at once: it authenticates nothing from outside (server/mcp.ts refuses it anyway).
+ */
+export function ensureInternalAgentKey(userId: string, options: { restore?: boolean } = {}): string | null {
+  const user = db.query("SELECT role, disabled_at, kind FROM users WHERE id = ?").get(userId) as { role: Role; disabled_at: string | null; kind: string | null } | null;
+  if (!user || user.disabled_at !== null || user.role === "guest" || user.kind === "service") return null;
+  return db.transaction(() => {
+    const newest = newestInternal(userId);
+    if (newest && newest.revoked_at === null) return newest.id;
+    if (newest && !options.restore) return null;
+    const createdAt = now();
+    const grants = internalAgentKeyGrants();
+    const created = insertKey({ userId, name: INTERNAL_AGENT_KEY_NAME, description: "Gives your agents Nook's tools in chats: reads, and changes as Inbox proposals. Works inside Nook only.", kind: "general", surfaces: "mcp", grants, expiresAt: null, limits: {}, createdAt });
+    db.query("UPDATE mcp_api_keys SET internal = 1 WHERE id = ?").run(created.id);
+    audit(userId, null, "mcp.key_created", { keyId: created.id, name: INTERNAL_AGENT_KEY_NAME, scopes: created.scopes, internal: true });
+    recordAccessEvent({ actorId: null, via: "web", action: "key.created", targetUserId: userId, keyId: created.id, meta: { grants: grantSummary(grants), surfaces: "mcp", internal: true, ...(options.restore ? { restored: true } : {}) } }, createdAt);
+    slog.info("Internal agents key created", { user: userId.slice(0, 8), restored: options.restore === true });
+    return created.id;
+  })();
+}
+
 // ------------------------------------------------------------------------------ narrowing, rotating, revoking
 
 function ownKey(userId: string, keyId: string) {
@@ -673,6 +727,8 @@ function ownKey(userId: string, keyId: string) {
 const liveOwnKey = (userId: string, keyId: string) => {
   const row = ownKey(userId, keyId);
   if (!row || keyState(row, readPolicies()).state === "revoked") throw new KeyError(404, "NOT_FOUND", "API key not found");
+  // C2: the internal agents key is managed by Nook: it can be revoked, never edited or rotated.
+  if (row.internal === 1) throw new KeyError(409, "KEY_INTERNAL", "This is the internal key that gives your agents Nook's tools; it cannot be edited or rotated. Revoke it to turn those tools off.");
   return row;
 };
 
@@ -1095,6 +1151,8 @@ export type ApiKeyView = {
   vault: VaultFlags | null;
   /** Vault keys (review L4): how many vaults the grants name and in how many they may write; what Team → Keys shows instead of ids. */
   vaultCounts: { vaults: number; writeVaults: number } | null;
+  /** C2: the in-process key that gives agents Nook's tools: listed read-only (revocable), never a usable secret. */
+  internal: boolean;
 };
 
 /**
@@ -1118,7 +1176,7 @@ function present(row: KeyRow, grants: readonly Grant[], policies: Policies, usag
   const effective = effectiveOf(row, grants, policies);
   const revokedBy = revokedByOf(row, state);
   return {
-    id: row.id, name: row.name, description: row.description, prefix: row.key_prefix, kind: row.kind, surfaces: row.surfaces,
+    id: row.id, name: row.name, description: row.description, prefix: row.internal === 1 ? "internal" : row.key_prefix, kind: row.kind, surfaces: row.surfaces, internal: row.internal === 1,
     createdAt: row.created_at, lastUsedAt: row.last_used_at, expiresAt: row.expires_at, revokeAfter: row.revoke_after, revokedAt: row.revoked_at,
     rotatedFrom: row.rotated_from, state, blockedBy, blockedMessage: blockedBy ? POLICY_BLOCK_MESSAGES[blockedBy] : null,
     revokedBy, revokeReason: viewerIsOwner || revokedBy === "admin" ? row.revoke_reason : null,
@@ -1292,7 +1350,7 @@ export function listInventory(filter: InventoryFilter, time = Date.now()) {
     owner: { id: row.user_id, displayName: row.owner_name, role: row.role, blocked: row.disabled_at !== null, kind: row.owner_kind }
   })).map((key) => ({ ...key, grants: key.grants.map((grant) => ({ ...grant, resource: grant.resource ? { kind: grant.resource.kind, id: grant.resource.id, name: null } : null })) }));
   const last = page.at(-1);
-  const summary = db.query(`SELECT COUNT(*) AS live, SUM(CASE WHEN k.expires_at IS NULL THEN 1 ELSE 0 END) AS no_expiry
+  const summary = db.query(`SELECT COUNT(*) AS live, SUM(CASE WHEN k.expires_at IS NULL AND k.internal = 0 THEN 1 ELSE 0 END) AS no_expiry
     FROM mcp_api_keys k WHERE k.revoked_at IS NULL`).get() as { live: number; no_expiry: number | null };
   return {
     keys,

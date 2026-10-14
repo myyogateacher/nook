@@ -172,6 +172,8 @@ export type AgentSettings = {
   reportModel: string | null;
   /** Wave 48b review M1: report owners may type any model name (else only the provider's listed models). */
   reportModelFreeText: boolean;
+  /** C2: agents get Nook's own tools through each runner's internal key, with no key to link (default on). */
+  nookAutoTools: boolean;
 };
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   createRoles: ["admin", "member"],
@@ -186,7 +188,8 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   defaultProviderId: null,
   reportProviderId: null,
   reportModel: null,
-  reportModelFreeText: false
+  reportModelFreeText: false,
+  nookAutoTools: true
 };
 
 /** Concurrency (plan §2.2): per instance (env `AGENT_MAX_CONCURRENT_RUNS`), per user, per key, per chat. */
@@ -308,6 +311,8 @@ export type AgentSummary = {
   starters: string[]; revision: number; createdAt: string; updatedAt: string; isOwner: boolean;
   /** AC-B: the picked tools, whether direct Nook writes are on (AC-O11), whether the caller linked a key, and the trifecta (plan §5.2). */
   tools: AgentToolRef[]; nookDirectWrites: boolean; linked: boolean; trifecta: boolean;
+  /** C2: the per-agent toggle "Give this agent Nook's tools automatically" (default on). */
+  nookAuto: boolean;
   /** Wave 41 QA Q4: `linked` is true only for a live key; a link whose key died says so, to link another. */
   linkState: LinkState;
   /**
@@ -353,7 +358,16 @@ export type NookCatalogTool = { name: string; title: string; module: string; wri
 export type KnowledgeCatalogBase = { id: string; name: string; description: string; ownerName: string; yours: boolean; manageable?: boolean; status: "empty" | "indexing" | "ready" | "error"; chunkCount: number };
 export type ToolCatalog = {
   servers: Array<{ id: string; slug: string; name: string; enabled: boolean; status: ServerStatus; availability: ServerAvailability; tools: Array<Pick<CatalogTool, "name" | "title" | "description" | "readOnly" | "openWorld" | "policy">> }>;
-  nook: { linked: boolean; linkState: LinkState; tools: NookCatalogTool[] };
+  nook: {
+    linked: boolean; linkState: LinkState; tools: NookCatalogTool[];
+    /**
+     * C2: how the agent gets Nook's tools without a linked key: `on` (the runner's internal key; reads,
+     * and writes as Inbox proposals), `off_admin` (the admin setting is off), `off_agent` (this agent's
+     * toggle is off), `revoked` (the runner revoked their internal key, or an admin did), `unavailable`
+     * (a guest, or no agent yet with the setting off). Absent on older servers.
+     */
+    auto?: NookAutoState;
+  };
   /** AC-E: the knowledge bases the editor can attach (older servers omit it). */
   knowledge?: KnowledgeCatalogBase[];
 };
@@ -361,6 +375,8 @@ export type ToolCatalog = {
 export type LinkableKey = { id: string; name: string; prefix: string; state: string; expiresAt: string | null; grants: Array<{ module: string; permission: string; resource: { kind: string; name: string | null } | null; active: boolean }> };
 /** The caller's link on an agent (QA Q4): none, a live key, or a key that is no longer live. */
 export type LinkState = "none" | "live" | "revoked" | "expired" | "inactive";
+/** C2: see ToolCatalog.nook.auto. */
+export type NookAutoState = "on" | "off_admin" | "off_agent" | "revoked" | "unavailable";
 export type NookLink = { keyId: string; name: string; prefix: string; state: string } | null;
 /** `agentId` and `agentName` are null once the chat's agent was purged from the Bin; the chat stays readable. */
 export type ChatSummary = {

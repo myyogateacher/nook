@@ -329,14 +329,15 @@ export const EXPIRY_BLOCKED_TEXT = "Blocked by team policy: keys need an expiry.
 export const blockedLine = (key: Pick<ApiKey, "blockedBy" | "blockedMessage">) => key.blockedBy === "expiry_required" ? EXPIRY_BLOCKED_TEXT : key.blockedMessage ?? "";
 
 export function KeyRow({ apiKey, owner, agentsChip = false, onRotate, onEdit, onRevoke, onReview }: { apiKey: ApiKey; owner?: React.ReactNode; /** API keys' General tab: this key also runs agents. */ agentsChip?: boolean; onRotate?: () => void; onEdit?: () => void; onRevoke?: () => void; onReview?: () => void }) {
-  const state = keyStateLabel(apiKey);
+  // C2: the internal agents key has no expiry by design; "No expiry" is no warning for it.
+  const state = apiKey.internal && apiKey.state === "active" ? { label: "Active", tone: "ok" as const } : keyStateLabel(apiKey);
   const binned = binnedTodayLine(apiKey.binnedToday);
   return <li className={`keys-row state-${apiKey.state}`} data-key-id={apiKey.id}>
     <span className="key-icon" aria-hidden="true"><KeyRound /></span>
     <div className="keys-row-main">
-      <div className="keys-row-title"><strong>{apiKey.name}</strong><span className="keys-chip">{SURFACE_LABELS[apiKey.surfaces]}</span>{apiKey.ipRestricted && <span className="keys-chip" title={apiKey.ipAllowlist?.join(", ")}>{apiKey.ipAllowlist ? `IP limited (${apiKey.ipAllowlist.length})` : "IP limited"}</span>}{apiKey.kind === "vault" && <span className="keys-chip">Vault</span>}{agentsChip && <span className="keys-chip">Agents</span>}<span className={`keys-chip tone-${state.tone}`}>{state.label}</span></div>
+      <div className="keys-row-title"><strong>{apiKey.name}</strong><span className="keys-chip">{SURFACE_LABELS[apiKey.surfaces]}</span>{apiKey.ipRestricted && <span className="keys-chip" title={apiKey.ipAllowlist?.join(", ")}>{apiKey.ipAllowlist ? `IP limited (${apiKey.ipAllowlist.length})` : "IP limited"}</span>}{apiKey.kind === "vault" && <span className="keys-chip">Vault</span>}{agentsChip && <span className="keys-chip">Agents</span>}{apiKey.internal && <span className="keys-chip">Internal (agents)</span>}<span className={`keys-chip tone-${state.tone}`}>{state.label}</span></div>
       {owner && <small className="keys-row-owner">{owner}</small>}
-      <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {lastUsedLine(apiKey, relativeTime)}</small>
+      {apiKey.internal ? <small>No secret: works only inside {appName()}, for your agents' tools in chats · Created {relativeTime(apiKey.createdAt)} · {lastUsedLine(apiKey, relativeTime)}</small> : <small><code>{apiKey.prefix}…</code> · Created {relativeTime(apiKey.createdAt)} · {lastUsedLine(apiKey, relativeTime)}</small>}
       {apiKey.ipAllowlist && <small className="keys-row-description">Only from {apiKey.ipAllowlist.join(", ")}</small>}
       {blockedSurfaceLine(apiKey) && <small className="keys-row-warning">{blockedSurfaceLine(apiKey)}</small>}
       {deniedLine(apiKey, relativeTime) && <small className="keys-row-warning">{deniedLine(apiKey, relativeTime)}</small>}
@@ -355,8 +356,8 @@ export function KeyRow({ apiKey, owner, agentsChip = false, onRotate, onEdit, on
       {binned && onReview && <small className="mcp-key-binned">{binned} · <button type="button" className="text-button" onClick={onReview}>Review</button></small>}
     </div>
     {(onRotate || onEdit || onRevoke) && <div className="keys-row-actions">
-      {onRotate && apiKey.state !== "grace" && apiKey.state !== "expired" && <button type="button" className="keys-action" onClick={onRotate}><RefreshCw aria-hidden="true" />Rotate</button>}
-      {onEdit && apiKey.state !== "expired" && <button type="button" className="keys-action" onClick={onEdit}><Pencil aria-hidden="true" />Edit</button>}
+      {onRotate && !apiKey.internal && apiKey.state !== "grace" && apiKey.state !== "expired" && <button type="button" className="keys-action" onClick={onRotate}><RefreshCw aria-hidden="true" />Rotate</button>}
+      {onEdit && !apiKey.internal && apiKey.state !== "expired" && <button type="button" className="keys-action" onClick={onEdit}><Pencil aria-hidden="true" />Edit</button>}
       {onRevoke && <button type="button" className="keys-action danger" onClick={onRevoke}><Trash2 aria-hidden="true" />{apiKey.state === "grace" ? "Revoke now" : "Revoke"}</button>}
     </div>}
   </li>;

@@ -4,6 +4,7 @@ import { keepRequestOpen, SSE_TIMING } from "../longRequests";
 import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
+import { ensureInternalAgentKey } from "../apiKeys";
 import { parseJson, uuid } from "../validation";
 import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, REASONING_EFFORTS, CHAT_IMAGE_BOUNDS, DEFAULT_MODEL, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, SERVER_AUTH_KINDS, SERVER_AVAILABILITIES, TOOL_POLICIES, VISION_POLICY_BOUNDS, type ChatUpdateEvent } from "../../shared/agents";
 import { createAgent, deleteAgent, agentDetail, listUsableAgents, manageableAgent, updateAgent, usableAgent } from "./agentsService";
@@ -87,6 +88,8 @@ const settingsSchema = z.object({
   reportProviderId: uuid.nullable().optional(),
   reportModel: line(AGENT_BOUNDS.model).nullable().optional(),
   reportModelFreeText: z.boolean().optional(),
+  // C2: agents get Nook's tools automatically (each runner's internal key).
+  nookAutoTools: z.boolean().optional(),
   expectedRevision: z.number().int().min(0)
 }).strict();
 const starters = z.array(z.string().trim().min(1).max(AGENT_BOUNDS.starterLength)).max(AGENT_BOUNDS.starters);
@@ -129,7 +132,8 @@ const agentCreateSchema = z.object({
   maxOutputTokens: z.number().int().min(1).max(AGENT_BOUNDS.maxOutputTokens.max).nullish(),
   starters: starters.optional(),
   tools: z.array(toolRefSchema).max(200).optional(),
-  nookDirectWrites: z.boolean().optional()
+  nookDirectWrites: z.boolean().optional(),
+  nookAuto: z.boolean().optional()
 }).strict();
 const agentPatchSchema = agentCreateSchema.partial().extend({ expectedRevision: revision }).strict();
 const chatCreateSchema = z.object({ agentId: uuid }).strict();
@@ -346,6 +350,16 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
     // C1 lazy sync: an enabled server never synced lists its tools once (bounded, once a minute per server).
     await ensureServersSynced(serversAvailableTo(c.get("user").role).filter((row) => row.enabled === 1 && row.tools_synced_at === null).map((row) => row.id));
     return { catalog: catalogFor(c.get("user").role, agentId ? agentId.data : null, c.get("user").id) };
+  })));
+  // C2: turn the automatic Nook tools back on after the caller (or an admin) revoked their internal key: a new one.
+  app.post("/api/agents/nook-key/restore", handle(chatter(async (c) => {
+    await parseJson(c.req.raw, emptySchema);
+    const user = c.get("user");
+    if (user.role === "guest") throw new AgentError(403, "ROLE_REFUSED", "Guests do not get Nook's tools in agents");
+    if (!readAgentSettings().nookAutoTools) throw new AgentError(409, "NOOK_AUTO_OFF", "An admin turned off Nook's automatic tools for agents");
+    const keyId = ensureInternalAgentKey(user.id, { restore: true });
+    if (!keyId) throw new AgentError(409, "NOOK_AUTO_UNAVAILABLE", "Nook's tools cannot be turned on for this account");
+    return { ok: true };
   })));
   // --- The Audit log (AC-C, plan §7.3, D366): the key's owner in full, admins metadata only ---
   const auditFilter = (c: Context<AppEnv>) => {

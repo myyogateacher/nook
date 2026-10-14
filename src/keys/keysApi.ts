@@ -8,6 +8,8 @@ import type { VaultGrantPayload } from "./vaultKeyGrants";
 
 export type ApiKey = {
   id: string; name: string; description: string | null; prefix: string; kind: "general" | "vault"; surfaces: KeySurfaces;
+  /** C2: the in-process key that gives agents Nook's tools: no secret, revocable, never edited or rotated. */
+  internal?: boolean;
   createdAt: string; lastUsedAt: string | null; expiresAt: string | null; revokeAfter: string | null; revokedAt: string | null;
   rotatedFrom: string | null; state: KeyState; blockedBy: string | null; blockedMessage: string | null;
   revokedBy: "self" | "admin" | "rotation" | null; revokeReason: string | null;

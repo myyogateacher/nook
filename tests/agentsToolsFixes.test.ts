@@ -6,6 +6,7 @@ import { createUser, db, type Session } from "./support/harness";
 import { api, makeKey } from "./support/mcpClient";
 import { startFakeMcpServer } from "./support/fakeMcpServer";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 
 const { mcpToolSpecs } = await import("../server/mcpTools");
 const { NOOK_AGENT_TOOLS, NOOK_NEVER_TOOLS, isBinTool, offeredSpecs, runNookTool } = await import("../server/agents/nookBridge");
@@ -23,6 +24,8 @@ const { resetMcpLimits } = await import("../server/mcpRateLimit");
  */
 
 retireUsersAfterFile();
+// C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 
 const mcp = startFakeMcpServer(0);
 let admin: Session;
@@ -107,16 +110,16 @@ describe("Wave 41 QA L5 and L6: tool server slugs and credential hints", () => {
       const refused = await api(admin, "POST", "/agents/admin/servers", { name: "Reserved", slug, url: "https://tools.example.test/mcp" });
       expect({ slug, status: refused.status, field: refused.body.field }).toEqual({ slug, status: 400, field: "slug" });
     }
-    const derived = await api(admin, "POST", "/agents/admin/servers", { name: "Nook", url: "https://tools.example.test/mcp" });
+    const derived = await api(admin, "POST", "/agents/admin/servers", { name: "Nook", url: "https://tools.example.test/mcp", enabled: false });
     expect(derived.status).toBe(201);
     expect(derived.body.server.slug).toBe("nook-srv");
     await api(admin, "DELETE", `/agents/admin/servers/${derived.body.server.id}`);
   });
 
   test("a credential shorter than 16 characters has no hint (the UI says Saved); a longer one shows its ends", async () => {
-    const short = await api(admin, "POST", "/agents/admin/servers", { name: "Short secret", url: "https://tools.example.test/mcp", authKind: "bearer", secret: "short-1" });
+    const short = await api(admin, "POST", "/agents/admin/servers", { name: "Short secret", url: "https://tools.example.test/mcp", authKind: "bearer", secret: "short-1", enabled: false });
     expect(short.body.server).toMatchObject({ hasSecret: true, hint: null });
-    const long = await api(admin, "POST", "/agents/admin/servers", { name: "Long secret", url: "https://tools.example.test/mcp", authKind: "bearer", secret: "long-secret-value-0042" });
+    const long = await api(admin, "POST", "/agents/admin/servers", { name: "Long secret", url: "https://tools.example.test/mcp", authKind: "bearer", secret: "long-secret-value-0042", enabled: false });
     expect(long.body.server).toMatchObject({ hasSecret: true, hint: "lon…0042" });
     for (const id of [short.body.server.id, long.body.server.id]) await api(admin, "DELETE", `/agents/admin/servers/${id}`);
   });

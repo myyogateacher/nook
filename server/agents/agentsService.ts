@@ -4,7 +4,7 @@ import { AGENT_BOUNDS, type AgentDetail, type AgentSummary, type AgentToolRef } 
 import { readAgentSettings, roleMayCreate } from "./settings";
 import { shareLevel, shareReadableSql, type ShareLevel } from "./sharing";
 import { AgentError } from "./status";
-import { agentToolRefs, linkStateOf, refKeyOf, setAgentTools, trifectaOf } from "./tools";
+import { agentToolRefs, linkStateOf, nookAutoOn, refKeyOf, setAgentTools, trifectaOf } from "./tools";
 import { manageableKbIds } from "../knowledge/service";
 import { serversAvailableTo } from "./toolServers";
 import { agentChangeMask, notifyAccess } from "../access/notices";
@@ -21,6 +21,8 @@ import { effectiveModelOf, providerNameOf, visionFor } from "./providers";
 export type AgentRow = {
   id: string; owner_id: string; name: string; description: string; icon: string | null; color: string | null; system_prompt: string; starters_json: string;
   provider_id: string | null; model: string | null; max_steps: number; temperature: number | null; max_output_tokens: number | null; nook_direct_writes: number;
+  /** C2: give this agent Nook's tools automatically (057). */
+  nook_auto: number;
   visibility: string; all_users_level: string; revision: number; created_at: string; updated_at: string;
   deleted_at: string | null; deleted_by: string | null; purge_after: string | null; purge_started_at: string | null;
 };
@@ -56,6 +58,8 @@ export function toolsVisibleTo(tools: AgentToolRef[], role: string, userId?: str
 export const agentSummary = (row: AgentRow, userId: string, level: ShareLevel = shareLevel("agent", row, userId)): AgentSummary => {
   const tools = agentToolRefs(row.id);
   const link = linkStateOf(row.id, userId).state;
+  // C2: with no Nook picks, the automatic Nook tools count as Nook's tools (trifecta, "uses Nook").
+  const autoNook = !tools.some((tool) => tool.source === "nook") && nookAutoOn(row);
   // D356: below manage, no tools configuration leaves the server; the trifecta warning and "uses Nook" do.
   const configVisible = level === "owner" || level === "manage";
   const managerView = level === "manage" ? toolsVisibleTo(tools, (roleQuery.get(userId) as { role: string } | null)?.role ?? "viewer", userId) : null;
@@ -63,10 +67,10 @@ export const agentSummary = (row: AgentRow, userId: string, level: ShareLevel = 
     id: row.id, ownerId: row.owner_id, name: row.name, description: row.description, icon: row.icon, color: row.color,
     providerId: row.provider_id, model: row.model, maxSteps: row.max_steps, temperature: row.temperature, maxOutputTokens: row.max_output_tokens,
     starters: starters(row.starters_json), revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at, isOwner: row.owner_id === userId,
-    tools: managerView ? managerView.shown : configVisible ? tools : [], hiddenTools: managerView?.hidden.length ?? 0, nookDirectWrites: configVisible && row.nook_direct_writes === 1, linked: link === "live", linkState: link, trifecta: trifectaOf(tools),
+    tools: managerView ? managerView.shown : configVisible ? tools : [], hiddenTools: managerView?.hidden.length ?? 0, nookDirectWrites: configVisible && row.nook_direct_writes === 1, linked: link === "live", linkState: link, trifecta: trifectaOf(tools, autoNook), nookAuto: row.nook_auto === 1,
     yourLevel: level === "owner" ? "owner" : level === "manage" ? "manage" : "view",
     ownerName: (ownerNameQuery.get(row.owner_id) as { display_name: string } | null)?.display_name ?? "Former member",
-    usesNook: tools.some((tool) => tool.source === "nook"),
+    usesNook: autoNook || tools.some((tool) => tool.source === "nook"),
     providerName: providerNameOf(row.provider_id),
     effectiveModel: effectiveModelOf(row.provider_id, row.model),
     vision: visionFor(row.provider_id, row.model)
@@ -114,6 +118,8 @@ export type AgentInput = {
   maxSteps?: number; temperature?: number | null; maxOutputTokens?: number | null; starters?: string[];
   /** AC-B: the picked tools (replaces the list) and the direct-writes flag (AC-O11). */
   tools?: AgentToolRef[]; nookDirectWrites?: boolean;
+  /** C2: Nook's tools automatically (the runner's internal key when no key is linked). */
+  nookAuto?: boolean;
 };
 
 function providerExists(id: string | null | undefined) {
@@ -130,11 +136,11 @@ export function createAgent(actor: { userId: string; role: string }, input: Agen
     if (owned >= settings.agentsPerUser) throw new AgentError(409, "LIMIT_REACHED", `You can have up to ${settings.agentsPerUser} agents`);
     const id = crypto.randomUUID();
     const timestamp = now();
-    db.query(`INSERT INTO agents (id, owner_id, name, description, icon, color, system_prompt, starters_json, provider_id, model, max_steps, temperature, max_output_tokens, nook_direct_writes, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    db.query(`INSERT INTO agents (id, owner_id, name, description, icon, color, system_prompt, starters_json, provider_id, model, max_steps, temperature, max_output_tokens, nook_direct_writes, nook_auto, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       id, actor.userId, input.name.trim(), input.description?.trim() ?? "", input.icon ?? null, input.color ?? null, input.systemPrompt ?? "",
       JSON.stringify((input.starters ?? []).slice(0, AGENT_BOUNDS.starters)), providerExists(input.providerId), input.model?.trim() || null,
-      input.maxSteps ?? AGENT_BOUNDS.maxSteps.default, input.temperature ?? null, input.maxOutputTokens ?? null, input.nookDirectWrites ? 1 : 0, timestamp, timestamp
+      input.maxSteps ?? AGENT_BOUNDS.maxSteps.default, input.temperature ?? null, input.maxOutputTokens ?? null, input.nookDirectWrites ? 1 : 0, input.nookAuto === false ? 0 : 1, timestamp, timestamp
     );
     if (input.tools) setAgentTools(id, actor.role, input.tools, { userId: actor.userId });
     audit(actor.userId, null, "agents.agent.create", { agentId: id, tools: input.tools?.length ?? 0 });
@@ -149,7 +155,7 @@ export function updateAgent(actor: { userId: string; role: string }, id: string,
     const row = manageableAgent(id, actor.userId);
     if (row.revision !== input.expectedRevision) throw new AgentError(409, "REVISION_MISMATCH", "This agent changed elsewhere; reload and try again", { revision: row.revision });
     db.query(`UPDATE agents SET name = ?, description = ?, icon = ?, color = ?, system_prompt = ?, starters_json = ?, provider_id = ?, model = ?, max_steps = ?, temperature = ?, max_output_tokens = ?,
-      nook_direct_writes = ?, revision = revision + 1, updated_at = ? WHERE id = ?`).run(
+      nook_direct_writes = ?, nook_auto = ?, revision = revision + 1, updated_at = ? WHERE id = ?`).run(
       (input.name ?? row.name).trim(), input.description !== undefined ? input.description.trim() : row.description,
       input.icon !== undefined ? input.icon : row.icon, input.color !== undefined ? input.color : row.color,
       input.systemPrompt !== undefined ? input.systemPrompt : row.system_prompt,
@@ -158,7 +164,7 @@ export function updateAgent(actor: { userId: string; role: string }, id: string,
       input.model !== undefined ? input.model?.trim() || null : row.model,
       input.maxSteps ?? row.max_steps, input.temperature !== undefined ? input.temperature : row.temperature,
       input.maxOutputTokens !== undefined ? input.maxOutputTokens : row.max_output_tokens,
-      input.nookDirectWrites !== undefined ? (input.nookDirectWrites ? 1 : 0) : row.nook_direct_writes, now(), id
+      input.nookDirectWrites !== undefined ? (input.nookDirectWrites ? 1 : 0) : row.nook_direct_writes, input.nookAuto !== undefined ? (input.nookAuto ? 1 : 0) : row.nook_auto, now(), id
     );
     const manager = row.owner_id !== actor.userId;
     const toolsBefore = manager ? agentToolRefs(id) : [];

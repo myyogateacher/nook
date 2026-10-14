@@ -25,8 +25,12 @@ import type { AgentRow } from "./agentsService";
  * - **direct**: only with the agent's `nook_direct_writes` flag and the key's write grant; it still
  *   asks first in chats (D352). A write tool with no proposal kind is offered only in this mode.
  *
- * Never offered: proposal and routine machinery, uploads, Bin, key, vault, and the agent module's
- * own tools (`run_agent` of AC-C included; T318).
+ * Never offered: proposal and routine machinery, uploads, Bin, key, vault, the agent module's own
+ * tools (`run_agent` of AC-C included; T318), and every reports tool but the reads (C2).
+ *
+ * C2 (D477, T388): in a chat with no linked key, the tools run with the runner's **internal** key
+ * (server/apiKeys.ts ensureInternalAgentKey): every module's read plus `inbox:write`, so writes are
+ * proposals only; it works in process only. A linked key is preferred when there is one.
  */
 
 /**
@@ -47,7 +51,9 @@ export const NOOK_AGENT_TOOLS: ReadonlySet<string> = new Set([
   // Collections
   "list_collections", "query_rows", "get_row", "create_row", "update_row", "create_collection",
   // Today, team, whiteboards
-  "get_today", "list_team_members", "get_team_member", "list_invites", "list_whiteboards", "read_whiteboard", "create_whiteboard"
+  "get_today", "list_team_members", "get_team_member", "list_invites", "list_whiteboards", "read_whiteboard", "create_whiteboard",
+  // Reports (C2): the read tools only; a report's queries, schedule, and instructions stay out of reach.
+  "list_reports", "get_report", "get_report_block", "get_report_run", "get_report_instruction"
 ]);
 /** Classified as never offered (T318): proposal and routine machinery, uploads, the agent module's own tools, Bin. */
 export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
@@ -62,11 +68,10 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   "attach_file_to_event",
   // Uploads everywhere U3: attaching shares the file with the row's readers, and has no proposal kind yet.
   "attach_file_to_row",
-  // Analytics reports (Wave 45): chat agents get nothing of the warehouse through a key; the report
-  // generation agent (wave 46) has its own schema tools.
-  "list_reports", "list_report_datasources",
-  // Wave 48: the rest of the reports tools; a report's own edit agent works through its instructions.
-  "get_report", "get_report_block", "get_report_run", "get_report_instruction", "create_report", "refresh_report", "set_report_schedule",
+  // Analytics reports (Wave 45, Wave 48; C2): agents read reports (NOOK_AGENT_TOOLS) but never the data
+  // sources, and never change a report: its queries (`update_report_query`, an open SQL proxy, T383),
+  // schedule, instructions, or proposals. A report's own edit agent works through its instructions.
+  "list_report_datasources", "create_report", "refresh_report", "set_report_schedule",
   "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
@@ -116,7 +121,9 @@ export type NookMode = "read" | "proposal" | "direct";
  * `surface` (AC-C): the surface the key's calls are made and counted on: `mcp` for a chat's linked
  * key (it must have MCP), and the calling key's own surface for an API or MCP run.
  */
-export type NookResolved = { toolName: string; description: string; parameters: Record<string, unknown>; policy: "auto" | "confirm"; mode: NookMode; keyId: string; spec?: McpToolSpec; surface?: "mcp" | "rest" };
+export type NookResolved = { toolName: string; description: string; parameters: Record<string, unknown>; policy: "auto" | "confirm"; mode: NookMode; keyId: string; spec?: McpToolSpec; surface?: "mcp" | "rest";
+  /** C2: the runner's internal agents key (proposals only; audited as `internal: true`). */
+  internal?: boolean };
 
 /** The agent's picked Nook tools this key may run now, each in the mode the rights allow (D353, D359). */
 export function nookToolsFor(key: McpKeyContext, agent: Pick<AgentRow, "nook_direct_writes">, picked: readonly string[]): Omit<NookResolved, "spec">[] {
@@ -179,7 +186,9 @@ export async function runNookTool(resolved: NookResolved, args: Record<string, u
   const surface = resolved.surface ?? "mcp";
   // An agent's call is a use of the key on its surface (Wave 41 QA L4): Settings → API keys shows it as last used.
   markKeyUsed(resolved.keyId, surface);
-  return withAuditContext({ via: "agent", runId: context.runId, agentId: context.agentId }, async () => {
+  // C2: the internal key never writes directly, whatever was resolved.
+  if (resolved.internal && resolved.mode === "direct") return { text: JSON.stringify({ error: "Nook's automatic tools only propose changes; link a key with direct writes for this", code: "DIRECT_WRITE_REFUSED" }), ok: false, proposalId: null };
+  return withAuditContext({ via: "agent", runId: context.runId, agentId: context.agentId, ...(resolved.internal ? { internal: true } : {}) }, async () => {
     if (resolved.mode === "proposal") {
       const kind = TOOL_KIND[spec.name];
       if (!kind) return { text: JSON.stringify({ error: "This change cannot be proposed through the Inbox, and the agent may not make it directly", code: "KIND_NOT_ALLOWED" }), ok: false, proposalId: null };

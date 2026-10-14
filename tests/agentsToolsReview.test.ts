@@ -8,6 +8,7 @@ import { createUser, db, origin, type Session } from "./support/harness";
 import { api, makeKey, call as callTool } from "./support/mcpClient";
 import { startFakeMcpServer } from "./support/fakeMcpServer";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 
 const { capResultText } = await import("../server/agents/runs");
 const { McpHttpTransport, McpSession } = await import("../server/agents/mcpClient");
@@ -28,6 +29,8 @@ const { ConfirmationCard } = await import("../src/chat/ToolDisclosure");
  */
 
 retireUsersAfterFile();
+// C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 
 // --- A scripted OpenAI-compatible provider: each completion takes the next turn from `script` ------
 type ScriptCall = { id: string; name: string; args: string };
@@ -617,7 +620,7 @@ describe("review 4: tool-server egress", () => {
     }
     const created: string[] = [];
     for (const name of ["Authorization", "X-Api-Key"]) {
-      const response = await api(admin, "POST", "/agents/admin/servers", { name: `Hop ${name}`, url: "https://tools.example.test/mcp", authKind: "header", authHeader: name, secret: "v" });
+      const response = await api(admin, "POST", "/agents/admin/servers", { name: `Hop ${name}`, url: "https://tools.example.test/mcp", authKind: "header", authHeader: name, secret: "v", enabled: false });
       expect(response.status).toBe(201);
       created.push(response.body.server.id);
     }

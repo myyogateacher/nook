@@ -58,9 +58,10 @@ beforeAll(async () => {
   admin = await createUser("Doc source admin");
   db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
   member = await createUser("Doc source member");
-  const created = await send(admin, "POST", "/agents/admin/servers", { name: `Docs ${crypto.randomUUID().slice(0, 6)}`, url: "https://docs.example.test/mcp", availability: "all" });
+  const created = await send(admin, "POST", "/agents/admin/servers", { name: `Docs ${crypto.randomUUID().slice(0, 6)}`, url: "https://docs.example.test/mcp", availability: "all", enabled: false });
   expect(created.status).toBe(201);
-  db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), created.body.server.id);
+  // Saved disabled so the save does not sync (C1) against a name that does not resolve; turned on here, still never synced.
+  db.query("UPDATE agent_tool_servers SET tools_json = ?, enabled = 1 WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), created.body.server.id);
   server = db.query("SELECT * FROM agent_tool_servers WHERE id = ?").get(created.body.server.id) as ToolServerRow;
   const datasource = await send(admin, "POST", "/reports/admin/datasources", { name: `Docs DS ${crypto.randomUUID().slice(0, 6)}`, url: "https://ch.example.test:8443/", username: "ro", database: "analytics" });
   expect(datasource.status).toBe(201);

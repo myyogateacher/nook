@@ -24,7 +24,7 @@ export const agentsStatus = () => api<AgentsStatus>("/agents/status");
 
 export const listAgents = () => api<{ agents: AgentSummary[] }>("/agents");
 export const getAgent = (id: string) => api<{ agent: AgentDetail }>(`/agents/${id}`);
-export type AgentInput = { name: string; description?: string; icon?: string | null; color?: string | null; systemPrompt?: string; providerId?: string | null; model?: string | null; maxSteps?: number; temperature?: number | null; maxOutputTokens?: number | null; starters?: string[]; tools?: AgentToolRef[]; nookDirectWrites?: boolean };
+export type AgentInput = { name: string; description?: string; icon?: string | null; color?: string | null; systemPrompt?: string; providerId?: string | null; model?: string | null; maxSteps?: number; temperature?: number | null; maxOutputTokens?: number | null; starters?: string[]; tools?: AgentToolRef[]; nookDirectWrites?: boolean; nookAuto?: boolean };
 export const createAgent = (input: AgentInput) => api<{ agent: AgentDetail }>("/agents", { method: "POST", body: JSON.stringify(input) });
 export const updateAgent = (id: string, input: Partial<AgentInput> & { expectedRevision: number }) => api<{ agent: AgentDetail }>(`/agents/${id}`, { method: "PATCH", body: JSON.stringify(input) });
 export const deleteAgent = (id: string) => api<{ ok: true }>(`/agents/${id}`, { method: "DELETE", body: "{}" });
@@ -54,6 +54,8 @@ export const cancelRun = (runId: string) => api<{ status: string }>(`/runs/${run
 export const confirmRun = (runId: string, card: { confirmationId: string; argsHash: string }, decision: "once" | "deny") => api<{ ok: true; decision: "allowed" | "denied" }>(`/runs/${runId}/confirm`, { method: "POST", body: JSON.stringify({ confirmationId: card.confirmationId, argsHash: card.argsHash, decision }) });
 /** The agent editor's provider picker: names, the default, and known models (never addresses or keys). */
 export const agentProviders = () => api<{ providers: AgentProviderChoice[] }>("/agents/providers");
+/** C2: a new internal agents key after the caller (or an admin) revoked theirs: Nook's automatic tools come back. */
+export const restoreNookKey = () => api<{ ok: true }>("/agents/nook-key/restore", { method: "POST", body: "{}" });
 export const toolCatalog = (agentId?: string | null) => api<{ catalog: ToolCatalog }>(`/agents/catalog${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`);
 export const agentLink = (agentId: string) => api<{ link: NookLink; keys: LinkableKey[] }>(`/agents/${agentId}/link`);
 export const setAgentLink = (agentId: string, nookKeyId: string | null) => api<{ link: NookLink }>(`/agents/${agentId}/link`, { method: "PUT", body: JSON.stringify({ nookKeyId }) });

@@ -4,6 +4,7 @@ import { FAKE_IMAGE_TOKENS, startFakeProvider, type ProviderCall } from "./suppo
 import { makePng, GIF_1X1, SVG_IMAGE } from "./support/images";
 import { upload } from "./support/attachments";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 
 const { chatImageLimits } = await import("../server/agents/chatImages");
 const { CHAT_IMAGE_BOUNDS } = await import("../shared/agents");
@@ -18,6 +19,8 @@ const { CHAT_IMAGE_BOUNDS } = await import("../shared/agents");
  */
 
 retireUsersAfterFile();
+// C2: this file expects exactly the tools it picks; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 const fake = startFakeProvider(0, { models: ["gpt-6-luna", "gpt-6-vision", "text-embedding-3-small"] });
 let admin: Session;
 let owner: Session;

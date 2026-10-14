@@ -51,6 +51,7 @@ import { reportRunsViaMigration } from "./051_report_runs_via";
 import { reportInstructionsMigration } from "./052_report_instructions";
 import { reportModelMigration } from "./053_report_model";
 import { reportRunPlansMigration } from "./055_report_run_plans";
+import { agentInternalKeysMigration } from "./057_agent_internal_keys";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -131,7 +132,10 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   reportModelMigration,
   // 055 (reports: report_runs.plan_json, the generation planner's plan; reports.title_source) needs 050.
   // 054 stays reserved for the Messages module, and the doc-browse migration takes 056.
-  reportRunPlansMigration
+  reportRunPlansMigration,
+  // 057 (C2: mcp_api_keys.internal, the in-process key that gives agents Nook's tools; agents.nook_auto)
+  // needs 005 and 039. 056 is the doc-browse migration (lane B).
+  agentInternalKeysMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

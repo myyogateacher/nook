@@ -8,7 +8,8 @@ import { Combobox } from "../ui/Combobox";
 import { Select, type Option } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { AGENT_BOUNDS, type AgentApiUsage, type AgentDetail, type AgentProviderChoice, type AgentSummary, type AgentToolRef, type KnowledgeCatalogBase, type LinkState, type NookLink, type ToolCatalog } from "../../shared/agents";
-import { agentApiUsage, agentProviders, agentsStatus, createAgent, deleteAgent, errorCode, getAgent, listAgents, messageOf, toolCatalog, updateAgent, type AgentsStatus } from "./chatApi";
+import { agentApiUsage, agentProviders, agentsStatus, createAgent, deleteAgent, errorCode, getAgent, listAgents, messageOf, restoreNookKey, toolCatalog, updateAgent, type AgentsStatus } from "./chatApi";
+import { appName } from "../appName";
 import { LinkNookKeySheet } from "./LinkNookKeySheet";
 import { TrifectaBadge } from "./ToolDisclosure";
 import { hasRef, knowledgePickerBases, nookGroups, nookWriteMode, orphanRefs, pickCounts, POLICY_BADGES, policyOptions, refKey, refName, setRefPolicy, toggleRef } from "./toolPicker";
@@ -103,13 +104,13 @@ export function modelSuggestions(provider: AgentProviderChoice | null): Option<s
   return models.map((model) => ({ value: model, label: model === provider?.defaultModel ? `${model} (default)` : model }));
 }
 
-export type EditorForm = { name: string; description: string; icon: string; systemPrompt: string; providerId: string | null; model: string; maxSteps: number; temperature: string; starters: string; directWrites: boolean; tools: AgentToolRef[] };
+export type EditorForm = { name: string; description: string; icon: string; systemPrompt: string; providerId: string | null; model: string; maxSteps: number; temperature: string; starters: string; directWrites: boolean; tools: AgentToolRef[]; nookAuto?: boolean };
 
 /** Whether the editor's fields differ from the agent as loaded (Wave 41 QA Q2): such a form is never refilled by a background load. */
 export function editorDiffers(agent: AgentDetail, form: EditorForm) {
   return form.name !== agent.name || form.description !== agent.description || form.icon !== (agent.icon ?? "") || form.systemPrompt !== (agent.systemPrompt ?? "")
     || (form.providerId ?? null) !== (agent.providerId ?? null) || form.model !== (agent.model ?? "") || form.maxSteps !== agent.maxSteps || form.temperature !== (agent.temperature === null ? "" : String(agent.temperature))
-    || form.starters !== agent.starters.join("\n") || form.directWrites !== agent.nookDirectWrites || JSON.stringify(form.tools) !== JSON.stringify(agent.tools);
+    || form.starters !== agent.starters.join("\n") || form.directWrites !== agent.nookDirectWrites || (form.nookAuto !== undefined && form.nookAuto !== agent.nookAuto) || JSON.stringify(form.tools) !== JSON.stringify(agent.tools);
 }
 
 function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRoute }: { agentId: string; navigate: Navigate; flash: (message: string) => void; canCreate: boolean; onOpenChat: (agentId: string) => void; keysRoute: Route }) {
@@ -127,6 +128,7 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
   const [starters, setStarters] = useState("");
   const [tools, setTools] = useState<AgentToolRef[]>([]);
   const [directWrites, setDirectWrites] = useState(false);
+  const [nookAuto, setNookAuto] = useState(true);
   const [catalog, setCatalog] = useState<ToolCatalog | null>(null);
   const [linking, setLinking] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -150,6 +152,7 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     setStarters(detail.starters.join("\n"));
     setTools(detail.tools);
     setDirectWrites(detail.nookDirectWrites);
+    setNookAuto(detail.nookAuto !== false);
     setStale(false);
   }, []);
   const loadCatalog = useCallback(async () => {
@@ -174,7 +177,7 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
   navigateRef.current = navigate;
   // The form differs from the agent as loaded: never refilled behind the person's back (only Reload does).
   const dirtyRef = useRef<string | null>(null);
-  dirtyRef.current = agent !== null && editorDiffers(agent, { name, description, icon, systemPrompt, providerId, model, maxSteps, temperature, starters, directWrites, tools }) ? agent.id : null;
+  dirtyRef.current = agent !== null && editorDiffers(agent, { name, description, icon, systemPrompt, providerId, model, maxSteps, temperature, starters, directWrites, tools, nookAuto }) ? agent.id : null;
   const load = useCallback(async (force = false) => {
     void loadCatalog();
     if (creating) return;
@@ -202,7 +205,7 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
     if (temp !== null && (!Number.isFinite(temp) || temp < 0 || temp > 2)) return setError("Temperature is between 0 and 2.");
     setBusy(true);
     setError(null);
-    const input = { name: name.trim(), description: description.trim(), icon: icon.trim() || null, systemPrompt, providerId, model: model.trim() || null, maxSteps, temperature: temp, starters: starters.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, AGENT_BOUNDS.starters), tools, nookDirectWrites: directWrites };
+    const input = { name: name.trim(), description: description.trim(), icon: icon.trim() || null, systemPrompt, providerId, model: model.trim() || null, maxSteps, temperature: temp, starters: starters.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, AGENT_BOUNDS.starters), tools, nookDirectWrites: directWrites, nookAuto };
     try {
       if (creating) {
         const { agent: created } = await createAgent(input);
@@ -267,9 +270,10 @@ function AgentEditor({ agentId, navigate, flash, canCreate, onOpenChat, keysRout
       <h4>Tools{catalog && <small> · {pickCounts(tools, catalog).total} picked</small>}</h4>
       {agent?.trifecta && <TrifectaBadge />}
       {agent && agent.hiddenTools > 0 && <p className="file-dialog-hint" role="note">{agent.hiddenTools === 1 ? "1 tool" : `${agent.hiddenTools} tools`} from servers or knowledge bases you can't use {agent.hiddenTools === 1 ? "is" : "are"} also picked. {agent.ownerName} manages {agent.hiddenTools === 1 ? "it" : "them"}; saving keeps {agent.hiddenTools === 1 ? "it" : "them"}.</p>}
-      <ToolPicker catalog={catalog} tools={tools} directWrites={directWrites} linked={agent?.linked ?? false} linkState={agent?.linkState ?? "none"} creating={creating} onChange={setTools} onLink={() => setLinking(true)} />
+      <ToolPicker catalog={catalog} tools={tools} directWrites={directWrites} linked={agent?.linked ?? false} linkState={agent?.linkState ?? "none"} creating={creating} onChange={setTools} onLink={() => setLinking(true)}
+        nookAuto={nookAuto} onNookAuto={setNookAuto} onRestore={() => { void restoreNookKey().then(() => { notify.success(`${appName()}'s tools are on again for your agents`); void loadCatalog(); }, (reason) => notify.error(messageOf(reason, "Could not turn them on"))); }} />
       <label className="ai-check" htmlFor={ids.direct}><input id={ids.direct} type="checkbox" checked={directWrites} onChange={(event) => setDirectWrites(event.target.checked)} />Allow direct Nook writes (otherwise every Nook change becomes an Inbox proposal)</label>
-      <p className="file-dialog-hint">Direct writes also need the linked key's write grant, and they still ask first in chats.</p>
+      <p className="file-dialog-hint">Direct writes also need a linked key with the write grant, and they still ask first in chats. Automatic tools only propose.</p>
       <h4>Starters</h4>
       <label htmlFor={ids.starters}>One per line, at most {AGENT_BOUNDS.starters}</label>
       <textarea id={ids.starters} value={starters} rows={3} onChange={(event) => setStarters(event.target.value)} />
@@ -332,7 +336,7 @@ function AgentInfo({ agent, onBack, onOpenChat, onLink, linking, onCloseLink, on
       <dt>Provider</dt><dd>{agent.providerName ?? "The default provider"}</dd>
       <dt>Model</dt><dd>{agent.model ?? agent.effectiveModel ?? "The provider's default model"} · up to {agent.maxSteps} steps</dd>
       {agent.starters.length > 0 && <><dt>Starters</dt><dd><ul>{agent.starters.map((starter) => <li key={starter}>{starter}</li>)}</ul></dd></>}
-      <dt>Nook tools</dt><dd>{agent.usesNook ? agent.linked ? "They run through your linked Nook key." : agent.linkState !== "none" ? `${LINK_DEAD_SENTENCE[agent.linkState]}: link another to give it Nook's tools.` : "This agent can use Nook's tools through a key of yours. Without one it answers without them." : "This agent uses none of Nook's tools."}</dd>
+      <dt>Nook tools</dt><dd>{agent.usesNook && !agent.linked && agent.linkState === "none" && agent.nookAuto && !agent.tools.some((tool) => tool.source === "nook") ? `They run automatically with your access: reads, and changes as Inbox proposals you approve.` : agent.usesNook ? agent.linked ? "They run through your linked Nook key." : agent.linkState !== "none" ? `${LINK_DEAD_SENTENCE[agent.linkState]}: link another to give it Nook's tools.` : "This agent can use Nook's tools through a key of yours. Without one it answers without them." : "This agent uses none of Nook's tools."}</dd>
     </dl>
     <footer className="file-dialog-actions agents-actions">
       {agent.usesNook && <button type="button" className="secondary-button" onClick={onLink}>{agent.linked ? "Change linked key" : "Link Nook key"}</button>}
@@ -373,7 +377,9 @@ export function AgentApiRuns({ agentId }: { agentId: string }) {
 export const apiRunsSummary = (usage: AgentApiUsage) =>
   `${usage.totals.runs} ${usage.totals.runs === 1 ? "run" : "runs"}, ${usage.totals.errors} failed, ${(usage.totals.promptTokens + usage.totals.completionTokens).toLocaleString()} tokens`;
 
-type ToolPickerProps = { catalog: ToolCatalog | null; tools: AgentToolRef[]; directWrites: boolean; linked: boolean; linkState: LinkState; creating: boolean; onChange: (tools: AgentToolRef[]) => void; onLink: () => void };
+type ToolPickerProps = { catalog: ToolCatalog | null; tools: AgentToolRef[]; directWrites: boolean; linked: boolean; linkState: LinkState; creating: boolean; onChange: (tools: AgentToolRef[]) => void; onLink: () => void;
+  /** C2: the agent's "Nook's tools automatically" toggle, and turning them on again after a revoke. */
+  nookAuto?: boolean; onNookAuto?: (on: boolean) => void; onRestore?: () => void };
 
 /** The picker (plan §5.2): a section per server with a checkbox per tool and an optional stricter policy; Nook's tools by module once a key is linked. */
 /** A link whose key is no longer live (Wave 41 QA Q4). */
@@ -381,8 +387,11 @@ const LINK_DEAD: Record<LinkState, string> = { none: "", live: "", revoked: "Key
 /** The hint's sentence per state (AC-B verification L1): "The linked key was revoked", never "is key revoked". */
 export const LINK_DEAD_SENTENCE: Record<LinkState, string> = { none: "", live: "", revoked: "The linked key was revoked", expired: "The linked key has expired", inactive: "The linked key is inactive" };
 
-function ToolPicker({ catalog, tools, directWrites, linked, linkState, creating, onChange, onLink }: ToolPickerProps) {
+function ToolPicker({ catalog, tools, directWrites, linked, linkState, creating, onChange, onLink, nookAuto = true, onNookAuto, onRestore }: ToolPickerProps) {
   const dead = !linked && linkState !== "none" && linkState !== "live";
+  // C2: with no linked key, the runner's internal key (reads, and changes as proposals) when the automatic tools are on.
+  const autoState = catalog?.nook.auto;
+  const auto = !linked && !dead && nookAuto && autoState === "on";
   const [open, setOpen] = useState<Record<string, boolean>>({});
   if (!catalog) return <p className="chat-muted">Loading the tool catalog…</p>;
   const counts = pickCounts(tools, catalog);
@@ -413,27 +422,31 @@ function ToolPicker({ catalog, tools, directWrites, linked, linkState, creating,
     {catalog.knowledge && <KnowledgeToolGroup bases={catalog.knowledge} tools={tools} onChange={onChange} />}
     <section className="agents-tools-group" aria-label="Nook">
       <div className="agents-tools-head">
-        <strong>Nook{linked && <span className="ai-badge ai-badge-ok">Key linked</span>}{dead && <span className="ai-badge ai-badge-warn">{LINK_DEAD[linkState]} — link another</span>}</strong>
+        <strong>Nook{linked && <span className="ai-badge ai-badge-ok">Key linked</span>}{auto && <span className="ai-badge ai-badge-ok">Automatic</span>}{dead && <span className="ai-badge ai-badge-warn">{LINK_DEAD[linkState]} — link another</span>}</strong>
         <small>{counts.nook} picked</small>
       </div>
+      {autoState !== undefined && autoState !== "off_admin" && autoState !== "unavailable" && onNookAuto && <label className="ai-check"><input type="checkbox" checked={nookAuto} onChange={(event) => onNookAuto(event.target.checked)} />Give this agent {appName()}'s tools automatically</label>}
+      {!linked && !dead && nookAuto && autoState === "on" && <p className="chat-muted">They run with the access of whoever chats: reads, and changes as Inbox proposals they approve. With none ticked the agent gets all of them; tick some to limit it.</p>}
+      {!linked && !dead && nookAuto && autoState === "revoked" && <div className="agents-link-row"><p className="chat-muted">You revoked the internal key that gives your agents {appName()}'s tools, so they are off.</p>{onRestore && <button type="button" className="secondary-button" onClick={onRestore}>Turn on again</button>}</div>}
+      {!linked && autoState === "off_admin" && <p className="chat-muted">An admin turned off automatic tools; link a key to give this agent {appName()}'s tools.</p>}
       <div className="agents-link-row">
-        {creating ? <p className="chat-muted">Create the agent first, then link one of your Nook keys to give it Nook's tools.</p>
+        {creating ? <p className="chat-muted">{auto ? "A linked key is optional: link one after creating the agent to use its grants instead." : "Create the agent first, then link one of your Nook keys to give it Nook's tools."}</p>
           : <><button type="button" className="secondary-button" onClick={onLink}>{linked ? "Change linked key" : dead ? "Link another key" : "Link Nook key"}</button>
-            <p className="chat-muted">{linked ? "Nook's tools run through your linked key; the list shows what that key reaches." : dead ? `${LINK_DEAD_SENTENCE[linkState]}: this agent gets none of Nook's tools until you link another key.` : "Without a key this agent gets none of Nook's tools. Link a key to see and pick the tools it reaches."}</p></>}
+            <p className="chat-muted">{linked ? "Nook's tools run through your linked key; the list shows what that key reaches." : dead ? `${LINK_DEAD_SENTENCE[linkState]}: this agent gets none of Nook's tools until you link another key.` : auto ? "Optional: link a key to use its grants (and direct writes) instead." : "Without a key this agent gets none of Nook's tools. Link a key to see and pick the tools it reaches."}</p></>}
       </div>
-      {linked && nookGroups(catalog.nook.tools).map((group) => <div key={group.module}>
+      {(linked || auto) && nookGroups(catalog.nook.tools).map((group) => <div key={group.module}>
         <p className="agents-nook-module">{group.label}</p>
         {group.tools.map((tool) => {
           const ref: AgentToolRef = { source: "nook", toolName: tool.name };
-          const mode = nookWriteMode(tool, directWrites);
+          const mode = nookWriteMode(tool, directWrites && linked);
           return <div key={tool.name} className="agents-tool">
             <label><input type="checkbox" checked={hasRef(tools, ref)} onChange={() => onChange(toggleRef(tools, ref))} />
-              <span className="agents-tool-text"><span><code>{tool.name}</code><span className="agents-tool-badges">{mode === "read" ? <span className="ai-badge ai-badge-ok">Read-only</span> : mode === "proposal" ? <span className="ai-badge">Proposal · asks first</span> : mode === "direct" ? <span className="ai-badge ai-badge-warn">Direct write · asks first</span> : <span className="ai-badge">Needs direct writes</span>}</span></span><small>{tool.title} · {mode === "proposal" && tool.proposalScope ? `needs inbox:write and ${tool.proposalScope}` : `needs a key with ${tool.scope}`}</small></span>
+              <span className="agents-tool-text"><span><code>{tool.name}</code><span className="agents-tool-badges">{mode === "read" ? <span className="ai-badge ai-badge-ok">Read-only</span> : mode === "proposal" ? <span className="ai-badge">Proposal · asks first</span> : mode === "direct" ? <span className="ai-badge ai-badge-warn">Direct write · asks first</span> : <span className="ai-badge">Needs direct writes</span>}</span></span><small>{tool.title} · {mode === "proposal" && tool.proposalScope ? `needs inbox:write and ${tool.proposalScope}` : auto ? `with your ${tool.scope} access` : `needs a key with ${tool.scope}`}</small></span>
             </label>
           </div>;
         })}
       </div>)}
-      {!linked && !creating && counts.nook > 0 && <p className="chat-muted">{counts.nook} Nook {counts.nook === 1 ? "tool is" : "tools are"} picked but inactive until a key is linked.</p>}
+      {!linked && !auto && !creating && counts.nook > 0 && <p className="chat-muted">{counts.nook} Nook {counts.nook === 1 ? "tool is" : "tools are"} picked but inactive until a key is linked.</p>}
     </section>
     {orphans.length > 0 && <div className="agents-tools-group">
       <div className="agents-tools-head"><strong>No longer available</strong><small>{orphans.length}</small></div>

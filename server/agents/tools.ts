@@ -1,11 +1,11 @@
 import { audit, db, now } from "../db";
-import { keyHoldsAgentRun, listApiKeys, ownApiKey } from "../apiKeys";
+import { ensureInternalAgentKey, internalAgentKeyRevoked, keyHoldsAgentRun, listApiKeys, ownApiKey } from "../apiKeys";
 import { hasScope } from "../mcpScopes";
 import { loadLiveKey, type McpKeyContext } from "../mcpTools";
-import type { AgentToolPolicy, AgentToolRef, LinkableKey, LinkState, NookLink, ToolCatalog, ToolPolicy } from "../../shared/agents";
+import type { AgentToolPolicy, AgentToolRef, LinkableKey, LinkState, NookAutoState, NookLink, ToolCatalog, ToolPolicy } from "../../shared/agents";
 import type { AgentRow } from "./agentsService";
-import { missingNookScope, nookCatalogFor, nookToolSpec, nookToolsFor, type NookResolved } from "./nookBridge";
-import { roleMayChat } from "./settings";
+import { missingNookScope, nookCatalogFor, nookToolSpec, nookToolsFor, offeredSpecs, type NookResolved } from "./nookBridge";
+import { readAgentSettings, roleMayChat } from "./settings";
 import { shareLevel } from "./sharing";
 import { AgentError } from "./status";
 import { defaultPolicy, parseTools, serverAvailableTo, serverPolicies, serverRowOrNull, serversAvailableTo, type ToolServerRow } from "./toolServers";
@@ -119,7 +119,7 @@ export function linkRow(agentId: string, userId: string): LinkRow | null {
 /** Whether a key may be linked: the caller's own live general key with the MCP surface. */
 function linkableKey(userId: string, keyId: string) {
   const key = ownApiKey(userId, keyId);
-  if (!key || key.kind !== "general" || key.surfaces === "rest" || (key.state !== "active" && key.state !== "grace")) return null;
+  if (!key || key.internal || key.kind !== "general" || key.surfaces === "rest" || (key.state !== "active" && key.state !== "grace")) return null;
   return key;
 }
 
@@ -133,7 +133,7 @@ const linkable = (key: ReturnType<typeof listApiKeys>["keys"][number]): Linkable
 
 /** The keys the Link Nook key sheet lists: the caller's own live general keys with the MCP surface. */
 export function linkableKeys(userId: string): LinkableKey[] {
-  return listApiKeys(userId).keys.filter((key) => key.kind === "general" && key.surfaces !== "rest" && (key.state === "active" || key.state === "grace") && !runsAgents(key)).map(linkable);
+  return listApiKeys(userId).keys.filter((key) => !key.internal && key.kind === "general" && key.surfaces !== "rest" && (key.state === "active" || key.state === "grace") && !runsAgents(key)).map(linkable);
 }
 
 export function currentLink(agentId: string, userId: string): NookLink {
@@ -190,6 +190,47 @@ export function inactiveLinkMessage(agentId: string, userId: string): string | n
   return `The linked Nook key ${name}${name ? " " : ""}${why}, so Nook's tools are off for this agent. The person can link another key in the agent's settings.`;
 }
 
+// --- Nook's tools without a linked key (C2) ---------------------------------------------------------
+
+const roleOf = (userId: string) => (db.query("SELECT role FROM users WHERE id = ? AND disabled_at IS NULL").get(userId) as { role: string } | null)?.role ?? null;
+
+/** Whether the agent gets Nook's tools automatically: the admin setting and the agent's own toggle (both default on). */
+export const nookAutoOn = (agent: Pick<AgentRow, "nook_auto">, settings = readAgentSettings()) => settings.nookAutoTools && agent.nook_auto === 1;
+
+/**
+ * The key a chat's Nook tools run with for this runner (C2): a linked key is preferred (and a link
+ * whose key died keeps the tools off, as before: the person chose that key); with no link and the
+ * automatic tools on, the runner's internal key (reads, and writes as Inbox proposals only),
+ * created on first need. Never for a guest or a blocked account, and never after it was revoked.
+ */
+export function chatNookKey(agent: Pick<AgentRow, "id" | "nook_auto">, userId: string): { key: McpKeyContext; internal: boolean } | null {
+  const row = linkRow(agent.id, userId);
+  if (row?.nook_key_id) {
+    const key = liveLinkedKey(agent.id, userId);
+    return key ? { key, internal: false } : null;
+  }
+  if (!nookAutoOn(agent)) return null;
+  const role = roleOf(userId);
+  if (!role || role === "guest") return null;
+  const keyId = ensureInternalAgentKey(userId);
+  if (!keyId) return null;
+  const key = loadLiveKey(keyId, "mcp");
+  if (!key || key.userId !== userId || key.kind !== "general" || hasScope(key.scopes, "agents:run")) return null;
+  return { key, internal: true };
+}
+
+/** The automatic tools' state as the editor shows it (C2). */
+export function nookAutoState(agent: Pick<AgentRow, "nook_auto"> | null, userId: string): NookAutoState {
+  const settings = readAgentSettings();
+  if (!settings.nookAutoTools) return "off_admin";
+  if (agent && agent.nook_auto !== 1) return "off_agent";
+  const role = roleOf(userId);
+  if (!role || role === "guest") return "unavailable";
+  return internalAgentKeyRevoked(userId) ? "revoked" : "on";
+}
+
+const agentRowOf = (agentId: string) => db.query("SELECT * FROM agents WHERE id = ?").get(agentId) as AgentRow | null;
+
 // --- The catalog (plan §12 `GET /api/agents/catalog`) -----------------------------------------------
 
 export function catalogFor(role: string, agentId: string | null, userId: string): ToolCatalog {
@@ -200,11 +241,14 @@ export function catalogFor(role: string, agentId: string | null, userId: string)
       tools: parseTools(row.tools_json).map((tool) => ({ name: tool.name, title: tool.title, description: tool.description, readOnly: tool.readOnly, openWorld: tool.openWorld, policy: policies.get(tool.name) ?? defaultPolicy(tool) }))
     };
   });
-  const key = agentId ? liveLinkedKey(agentId, userId) : null;
+  const agent = agentId ? agentRowOf(agentId) : null;
+  // C2: the linked key, else the runner's internal key while the automatic tools are on (for a new agent: the defaults).
+  const nookKey = agent ? chatNookKey(agent, userId) : nookAutoState(null, userId) === "on" ? chatNookKey({ id: "", nook_auto: 1 }, userId) : null;
+  const key = nookKey?.key ?? null;
   // AC-E: the knowledge bases the editor can open; only those they own or manage can be attached (M4: `manageable`).
   const knowledge = listKnowledge(userId).map((kb) => ({ id: kb.id, name: kb.name, description: kb.description, ownerName: kb.ownerName, yours: kb.yourLevel === "owner", manageable: kb.yourLevel !== "view", status: kb.status, chunkCount: kb.chunkCount }));
   // Without a live key the picker lists none of Nook's tools (QA Q4): what runs is bounded by the key.
-  return { servers, nook: { linked: key !== null, linkState: agentId ? linkStateOf(agentId, userId).state : "none", tools: key ? nookCatalogFor(key) : [] }, knowledge };
+  return { servers, nook: { linked: key !== null && !nookKey?.internal, linkState: agentId ? linkStateOf(agentId, userId).state : "none", tools: key ? nookCatalogFor(key) : [], auto: nookAutoState(agent, userId) }, knowledge };
 }
 
 // --- Per-step resolution (plan §2.1 `toolCatalog`, D358) ---------------------------------------------
@@ -281,14 +325,15 @@ export function liveToolFor(agentId: string, userId: string, identity: ToolIdent
 export function liveToolFailure(agentId: string, userId: string, identity: ToolIdentity, external: ExternalToolOptions | null = null): { code: "KEY_INACTIVE" | "SCOPE_REQUIRED" | "TOOL_UNAVAILABLE"; message: string; scope?: string } {
   const unavailable = { code: "TOOL_UNAVAILABLE" as const, message: "This tool is no longer available to this agent (it was disabled, removed, changed, or the rights changed); the call was not run" };
   if (identity.kind !== "nook") return unavailable;
-  const key = external ? external.nookKey : liveLinkedKey(agentId, userId);
+  const agent = external ? null : agentRowOf(agentId);
+  const key = external ? external.nookKey : agent ? chatNookKey(agent, userId)?.key ?? null : null;
   if (!key) {
     const dead = external ? null : inactiveLinkMessage(agentId, userId);
     return { code: "KEY_INACTIVE", message: dead ?? "The Nook key this tool runs with is no longer active; the call was not run" };
   }
   if (key.keyId !== identity.keyId) return unavailable;
   const scope = missingNookScope(key, identity.toolName, identity.mode);
-  if (scope) return { code: "SCOPE_REQUIRED", scope, message: `The ${external ? "calling" : "linked"} Nook key no longer has the ${scope} permission this tool needs${identity.mode === "proposal" ? " to file a proposal" : ""}; the call was not run` };
+  if (scope) return { code: "SCOPE_REQUIRED", scope, message: `The ${external ? "calling" : linkRow(agentId, userId)?.nook_key_id ? "linked" : "internal"} Nook key no longer has the ${scope} permission this tool needs${identity.mode === "proposal" ? " to file a proposal" : ""}; the call was not run` };
   return unavailable;
 }
 
@@ -297,8 +342,13 @@ export function resolveTools(agent: AgentRow, runner: { userId: string; role: st
   const all = agentToolRefs(agent.id);
   const refs = all.filter((ref) => !only || (only.kind === "server" ? ref.source === "server" && ref.serverId === only.serverId && ref.toolName === only.toolName
     : only.kind === "knowledge" ? ref.source === "knowledge" : ref.source === "nook" && ref.toolName === only.toolName));
-  // The trifecta (plan §5.2 [14], review L10): with Nook tools (AC-E: or knowledge bases) picked, an open-world remote tool asks first.
-  const hasNook = all.some((ref) => ref.source === "nook" || ref.source === "knowledge");
+  // C2: in a chat, an agent with no Nook picks gets every offered Nook tool while its automatic tools are on.
+  const nookPicks = all.flatMap((ref) => ref.source === "nook" ? [ref.toolName] : []);
+  const autoNook = !external && nookPicks.length === 0 && nookAutoOn(agent);
+  const nookNames = (autoNook ? offeredSpecs().map((spec) => spec.name) : nookPicks).filter((name) => !only || (only.kind === "nook" && only.toolName === name));
+  // The trifecta (plan §5.2 [14], review L10): with Nook tools (AC-E: or knowledge bases; C2: or the automatic ones) an open-world remote tool asks first.
+  const chatKey = !external && (nookPicks.length > 0 || autoNook) ? chatNookKey(agent, runner.userId) : null;
+  const hasNook = all.some((ref) => ref.source === "nook" || ref.source === "knowledge") || (autoNook && chatKey !== null);
   const taken = new Set<string>();
   const resolved: ResolvedTool[] = [];
   const servers = new Map<string, { row: ToolServerRow; tools: Map<string, ReturnType<typeof parseTools>[number]>; policies: Map<string, ToolPolicy> } | null>();
@@ -323,11 +373,12 @@ export function resolveTools(agent: AgentRow, runner: { userId: string; role: st
       description: tool.description, parameters: tool.inputSchema, policy, openWorld: tool.openWorld, resultCapBytes: server.row.result_cap_bytes, timeoutMs: server.row.timeout_ms, serverRow: server.row, nook: null, knowledge: null
     });
   }
-  const nookRefs = refs.filter((ref): ref is Extract<AgentToolRef, { source: "nook" }> => ref.source === "nook");
-  if (nookRefs.length > 0) {
-    const key = external ? external.nookKey : liveLinkedKey(agent.id, runner.userId);
+  if (nookNames.length > 0) {
+    const key = external ? external.nookKey : chatKey?.key ?? null;
+    // The internal key never writes directly (C2): proposals only, whatever the agent's direct-writes flag says.
+    const internal = !external && chatKey?.internal === true;
     if (key) {
-      for (const item of nookToolsFor(key, agent, nookRefs.map((ref) => ref.toolName))) {
+      for (const item of nookToolsFor(key, internal ? { nook_direct_writes: 0 } : agent, nookNames)) {
         if (external && item.mode === "direct") continue;
         const spec = nookToolSpec(item.toolName)!;
         // Over the API a proposal runs on its own: it changes nothing until the key's owner approves it in the Inbox.
@@ -335,7 +386,7 @@ export function resolveTools(agent: AgentRow, runner: { userId: string; role: st
         resolved.push({
           modelName: uniqueName(`nook__${item.toolName}`, taken), kind: "nook", serverId: null, server: "nook", serverName: "Nook", toolName: item.toolName,
           description: item.description, parameters: item.parameters, policy, openWorld: false, resultCapBytes: 16_384, timeoutMs: 30_000, serverRow: null,
-          nook: { ...item, policy, spec, surface: external?.surface ?? "mcp" }, knowledge: null
+          nook: { ...item, policy, spec, surface: external?.surface ?? "mcp", ...(internal ? { internal: true } : {}) }, knowledge: null
         });
       }
     }
@@ -357,9 +408,9 @@ export function resolveTools(agent: AgentRow, runner: { userId: string; role: st
 }
 
 /** The trifecta (plan §5.2 [14]): private data (Nook tools) plus an open-world remote tool. */
-export function trifectaOf(refs: AgentToolRef[]): boolean {
-  // AC-E: an attached knowledge base is private data too.
-  const hasNook = refs.some((ref) => ref.source === "nook" || ref.source === "knowledge");
+export function trifectaOf(refs: AgentToolRef[], autoNook = false): boolean {
+  // AC-E: an attached knowledge base is private data too; C2: so are the automatic Nook tools.
+  const hasNook = autoNook || refs.some((ref) => ref.source === "nook" || ref.source === "knowledge");
   if (!hasNook) return false;
   const servers = new Map<string, Map<string, boolean>>();
   for (const ref of refs) {

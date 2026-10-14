@@ -3,6 +3,7 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 import { api, makeKey, ok, errorCode as mcpErrorCode, toolNames } from "./support/mcpClient";
 import { startFakeProvider } from "./support/fakeProvider";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { withoutNookAutoTools } from "./support/nookAuto";
 
 const { config } = await import("../server/config");
 const { modelTimeouts } = await import("../server/agents/loop");
@@ -20,6 +21,8 @@ const { createApiKey } = await import("../server/apiKeys");
  */
 
 retireUsersAfterFile();
+// C2: this file covers the linked-key model; the automatic Nook tools are off for its run.
+withoutNookAutoTools();
 const fake = startFakeProvider(24423);
 let admin: Session;
 let member: Session;

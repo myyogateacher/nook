@@ -35,6 +35,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - [x] E3 ClickHouse error repair hints (`server/reports/repairHints.ts`): closest catalog names, casts, HAVING, GROUP BY, partition and sorting keys for limits, FINAL from the catalog engine; tested on captured 26.6 error texts.
   - [ ] E4 metric catalog per doc snapshot, with the Metrics view.
   - [ ] E5 model fallback (optional).
+- [ ] Forward after Back past a page (D480) does not yet reopen Inspect or the sheets inside Versions (view, detail, compare). They have no `layerKey`/`useLayerOpener` yet: lane J2 takes Versions, and Inspect follows once v0.38.0 merges with its reopen.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
 - [ ] (Lane E, small) `server/reports/edit.ts`'s prompt still says "Use concat, not format()"; the string function `format()` is allowed now (only the table function is refused), so drop that sentence when next touching the file.
 

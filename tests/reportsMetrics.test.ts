@@ -143,3 +143,31 @@ describe("the Metrics API and Doc changed", () => {
     expect(docState(report.id, owner.userId)).toMatchObject({ changed: true, mainChanged: true, metricsChanged: ["Net revenue"] });
   });
 });
+
+describe("the catalog over MCP (E6)", () => {
+  test("get_report_metrics reads the owner's catalog; update_report_metric changes or adds one metric, re-checked, a new version, audited; never for someone else", async () => {
+    await import("../server/mcpTools");
+    const { reportTools } = await import("../server/reports/mcpTools");
+    const tool = (name: string) => reportTools.find((item) => item.name === name)!;
+    const key = { keyId: crypto.randomUUID(), userId: owner.userId, name: "k", scopes: ["reports:read", "reports:write"] } as never;
+    const report = createReport(owner.userId, { title: "MCP metrics", datasourceId, titleSource: "user" });
+    expect(await tool("get_report_metrics").handler({ reportId: report.id }, key)).toEqual({ catalog: null });
+    saveCatalog(report.id, { snapshotId: null, docSha256: sha256Of(DOC), source: "extract", metrics: [metric()], runId: null, userId: owner.userId });
+    const read = await tool("get_report_metrics").handler({ reportId: report.id }, key) as { catalog: { version: number; metrics: Array<Record<string, unknown>> } };
+    expect(read.catalog.version).toBe(1);
+    expect(read.catalog.metrics[0]).toMatchObject({ id: "net_revenue", expression: "sum(amount)", filters: ["_peerdb_is_deleted = 0"], final: true });
+    expect("excerpt" in read.catalog.metrics[0]!).toBe(false);
+    const changed = await tool("update_report_metric").handler({ reportId: report.id, metric: { id: "net_revenue", filters: ["_peerdb_is_deleted = 0", "amount > 0"] }, expectedVersion: 1 }, key) as { version: number; metric: CatalogMetric };
+    expect(changed).toMatchObject({ version: 2, metric: { id: "net_revenue", name: "Net revenue", filters: ["_peerdb_is_deleted = 0", "amount > 0"], problems: [] } });
+    const added = await tool("update_report_metric").handler({ reportId: report.id, metric: { id: "events", name: "Events", expression: "count()", table: "shop.events" } }, key) as { version: number; metric: CatalogMetric };
+    expect(added).toMatchObject({ version: 3, metric: { id: "events", problems: [] } });
+    await expect(Promise.resolve().then(() => tool("update_report_metric").handler({ reportId: report.id, metric: { id: "partial", name: "Partial" } }, key))).rejects.toThrow("A new metric needs a name, an expression, and a table");
+    await expect(Promise.resolve().then(() => tool("update_report_metric").handler({ reportId: report.id, metric: { id: "events", unit: "events" }, expectedVersion: 1 }, key))).rejects.toThrow("changed since");
+    const stranger = { keyId: crypto.randomUUID(), userId: other.userId, name: "k", scopes: ["reports:read", "reports:write"] } as never;
+    await expect(Promise.resolve().then(() => tool("get_report_metrics").handler({ reportId: report.id }, stranger))).rejects.toThrow();
+    const audits = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.metrics.update' AND metadata_json LIKE ?").all(`%${report.id}%`) as Array<{ metadata_json: string }>;
+    expect(audits.map((row) => JSON.parse(row.metadata_json).via)).toEqual(["mcp", "mcp"]);
+    expect(tool("update_report_metric").write).toBe(true);
+    expect(tool("get_report_metrics").scopes).toEqual(["reports:read"]);
+  });
+});

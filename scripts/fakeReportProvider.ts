@@ -39,7 +39,7 @@ export type ScriptContext = {
 };
 export type ScriptReply = { content?: string; toolCalls?: Array<{ name: string; arguments: unknown }>; status?: number };
 export type Script = (context: ScriptContext) => ScriptReply;
-export type ScriptedProvider = { baseUrl: string; port: number; calls: Array<ScriptContext["body"]>; setScript: (script: Script) => void; stop: () => void };
+export type ScriptedProvider = { baseUrl: string; port: number; calls: Array<ScriptContext["body"]>; /** E6: the metric extraction requests (kept apart from `calls`). */ extractions: Array<ScriptContext["body"]>; setScript: (script: Script) => void; stop: () => void };
 
 const text = (content: unknown) => typeof content === "string" ? content : "";
 
@@ -332,6 +332,7 @@ export type ToolChoiceMode = { rejectRequired?: boolean; rejectNamed?: boolean; 
 export function startScriptedProvider(port: number, initial: Script = qaScript, options: { delayMs?: number } & ToolChoiceMode = {}): ScriptedProvider {
   let script = initial;
   const calls: Array<ScriptContext["body"]> = [];
+  const extractions: Array<ScriptContext["body"]> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port,
@@ -345,6 +346,7 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
       // (none by default) and is not recorded, so scripts and their tests see only the report's own run.
       const extraction = body.tools?.length === 1 && body.tools[0]!.function.name === "record_metrics";
       if (!extraction) calls.push(body);
+      else extractions.push(body);
       const messages = body.messages ?? [];
       const lastToolTurn = [...messages].reverse().find((turn) => turn.role === "tool");
       const callName = (id: string | undefined) => {
@@ -388,7 +390,7 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
     }
   });
   const bound = server.port ?? port;
-  return { baseUrl: `http://127.0.0.1:${bound}/v1`, port: bound, calls, setScript: (next) => { script = next; }, stop: () => server.stop(true) };
+  return { baseUrl: `http://127.0.0.1:${bound}/v1`, port: bound, calls, extractions, setScript: (next) => { script = next; }, stop: () => server.stop(true) };
 }
 
 if (import.meta.main) {

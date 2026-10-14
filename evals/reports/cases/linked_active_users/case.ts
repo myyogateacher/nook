@@ -7,6 +7,11 @@ export default {
   title: "A metric defined on a linked page",
   traps: ["WAU is defined only on the linked page (3+ sessions of 60 s, internal and @nook.test accounts excluded)"],
   browseTools: ["read_note", "search_notes"],
+  ci: true,
+  // E6: defined only on the linked page; the scripted extraction records it from there.
+  catalog: [
+    { id: "qualifying_sessions", name: "Qualifying sessions", definition: "Sessions of 60 seconds or more by a user who counts.", expression: "count()", table: "eval_linked_active_users.sessions", filters: ["duration_s >= 60"], final: false, grain: "week", unit: "sessions", timeColumn: "started_at", page: "Metric definitions: engagement" }
+  ],
   facts: [
     { id: "wau", label: "Weekly active users", kind: "number", value: 204, tolerance: 0 },
     { id: "sessions", label: "Qualifying sessions", kind: "number", value: 1621, tolerance: 0 }
@@ -24,6 +29,7 @@ export default {
   },
   trap: {
     fails: ["wau", "sessions"],
+    sanity: ["metric"],
     spec: {
       title: "Weekly engagement",
       queries: [

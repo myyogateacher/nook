@@ -23,7 +23,9 @@ const cost = (micros: number | null) => micros === null ? null : `$${(micros / 1
 
 /** One run's line: what, who, how long, and what it cost. */
 export function runFacts(run: ReportRunHistoryItem): string {
-  return [run.startedBy ? `by ${run.startedBy.name}` : run.trigger === "schedule" ? "by the schedule" : null, timeAgo(run.startedAt), duration(run.durationMs), run.model, tokens(run), cost(run.costMicros)].filter(Boolean).join(" · ");
+  // E6: a run that fell back shows both models, in order.
+  const models = run.models?.length ? run.models.join(" → ") : run.model;
+  return [run.startedBy ? `by ${run.startedBy.name}` : run.trigger === "schedule" ? "by the schedule" : null, timeAgo(run.startedAt), duration(run.durationMs), models, tokens(run), cost(run.costMicros)].filter(Boolean).join(" · ");
 }
 
 function StepItem({ step }: { step: ReportRunStep }) {

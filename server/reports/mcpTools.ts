@@ -14,6 +14,9 @@ import { ReportError } from "./errors";
 import { startGenerate } from "./generate";
 import { addInstruction, applyProposal, getInstruction, proposalView, rejectProposal } from "./instructions";
 import { manualEdit } from "./manualEdit";
+import { catalogRow, metricCatalogView, saveCatalogEdit } from "./metricCatalog";
+import { usableDatasource } from "./datasources";
+import { METRIC_ID, METRIC_LIMITS, type CatalogMetricInput } from "../../shared/reportsMetrics";
 import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
 import { listReports, parseSpec as parseStoredSpec } from "./service";
@@ -132,6 +135,19 @@ export const reportTools: McpToolSpec[] = [
       // A key over chosen reports sees only the folders that hold one of them.
       return { folders: tree.folders.filter((folder) => !ids || folder.count > 0).map((folder) => ({ id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, reports: folder.count })), counts: tree.counts };
     }
+  }),
+  defineTool({
+    name: "get_report_metrics",
+    title: "Get a report's metric catalog",
+    description: `The report's metric catalog (the owner's reports): each metric the doc defines with its id, name, definition, ClickHouse expression, table, required filters, FINAL, grain, unit, time column, the linked page it comes from, and what Nook's checks found; with the catalog version. Null when the report has none yet. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "items", items: reportItem },
+    write: false,
+    inputSchema: z.object({ reportId }),
+    handler: ({ reportId: id }, key) => asOwner(key, () => {
+      const view = metricCatalogView(id, key.userId);
+      return { catalog: view ? { version: view.version, source: view.source, createdAt: view.createdAt, metrics: view.metrics.map(({ excerpt: _excerpt, ...metric }) => metric) } : null };
+    })
   }),
   defineTool({
     name: "get_report",
@@ -345,6 +361,43 @@ export const reportTools: McpToolSpec[] = [
     handler: ({ reportId: id, instructionId }, key) => asOwner(key, () => ({ instruction: rejectProposal(key.userId, id, instructionId, { keyId: key.keyId }) }))
   }),
   defineTool({
+    name: "update_report_metric",
+    title: "Change or add a metric in a report's catalog",
+    description: "Changes one metric of a report's metric catalog, or adds it when its id is new (the owner's reports). Only the fields given change. Nook checks it again (the table is allowlisted, the expression runs with LIMIT 0) and saves a new catalog version; nothing is removed. Generation and edits then hold the report's SQL to it.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem, related: ["metric"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({
+      reportId,
+      metric: z.object({
+        id: z.string().regex(METRIC_ID).describe("The metric's id (from get_report_metrics); a new id adds a metric"),
+        name: z.string().min(1).max(METRIC_LIMITS.name).optional(),
+        definition: z.string().max(METRIC_LIMITS.definition).optional(),
+        expression: z.string().min(1).max(METRIC_LIMITS.expression).optional().describe("A ClickHouse aggregate expression, e.g. sum(amount)"),
+        table: z.string().min(1).max(METRIC_LIMITS.table).optional().describe("db.table"),
+        filters: z.array(z.string().min(1).max(METRIC_LIMITS.filter)).max(METRIC_LIMITS.filters).optional(),
+        final: z.boolean().optional(),
+        grain: z.string().max(METRIC_LIMITS.grain).nullable().optional(),
+        unit: z.string().max(METRIC_LIMITS.unit).nullable().optional(),
+        timeColumn: z.string().max(METRIC_LIMITS.column).nullable().optional()
+      }),
+      expectedVersion: z.number().int().min(0).optional().describe("The catalog version from get_report_metrics; refused when it changed since")
+    }),
+    handler: ({ reportId: id, metric, expectedVersion }, key) => asOwner(key, async () => {
+      const report = ownedReport(id, key.userId);
+      const current = catalogRow(id);
+      const list: CatalogMetricInput[] = (current?.metrics ?? []).map(({ problems: _problems, ...rest }) => rest);
+      const at = list.findIndex((item) => item.id === metric.id);
+      if (at < 0 && (!metric.name || !metric.expression || !metric.table)) throw new ReportError(400, "INVALID", "A new metric needs a name, an expression, and a table");
+      const base: CatalogMetricInput = at >= 0 ? list[at]! : { id: metric.id, name: "", definition: "", expression: "", table: "", filters: [], final: false, grain: null, unit: null, timeColumn: null };
+      const merged = Object.fromEntries(Object.entries({ ...base, ...metric }).filter(([, value]) => value !== undefined)) as CatalogMetricInput;
+      const next = at >= 0 ? list.map((item, index) => index === at ? merged : item) : [...list, merged];
+      const view = await saveCatalogEdit({ userId: key.userId }, id, { expectedVersion: expectedVersion ?? current?.version ?? 0, metrics: next }, usableDatasource(report.datasource_id), { keyId: key.keyId });
+      return { version: view.version, metric: view.metrics.find((item) => item.id === metric.id) ?? null };
+    })
+  }),
+  defineTool({
     name: "update_report_query",
     title: "Change a report's saved query",
     description: "Replaces the SQL (and optionally the purpose) of one of a report's saved queries (the owner's reports). The new SQL goes through the guard and the whole report is checked again (every query runs; the blocks' columns must exist); a refusal changes nothing. The change is a new version. This never runs SQL that is not saved in the report.",
@@ -365,7 +418,7 @@ export const reportTools: McpToolSpec[] = [
         patch: { ops: [{ op: "update_query", key: args.queryKey, sql: args.sql, ...(args.purpose !== undefined ? { purpose: args.purpose } : {}) }] },
         expectedRevision: args.expectedRevision ?? report.revision
       }, { keyId: key.keyId });
-      return { version: saved.version, revision: saved.revision };
+      return { version: saved.version, revision: saved.revision, ...(saved.warnings ? { warnings: saved.warnings } : {}) };
     })
   }),
   defineTool({

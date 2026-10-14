@@ -81,6 +81,12 @@ describe("sanity checks", () => {
       "sanity units: KPI zero (zero) is 0 in every row; a filter may match nothing, a join may not match, or the column may be the wrong one. Check with run_sql before keeping it."
     ]);
     expect(checked.extraQueries).toBe(0);
+    // E6: an edit's scope: only the touched blocks and queries are checked.
+    const scoped = await sanityChecks(row, spec([["t", "SELECT 16 AS rate, 0 AS zero FROM shop.subscriptions"]], [
+      { id: "rate", type: "kpi", title: "Rate", queryKey: "t", column: "rate", format: "percent" },
+      { id: "zero", type: "kpi", title: "Zero", queryKey: "t", column: "zero", format: "number" }
+    ]), new Map([["t", outcome([["rate", "Float64"], ["zero", "UInt8"]], [[16, 0]])]]), { ...context, scope: { blocks: new Set(["zero"]), queries: new Set() } });
+    expect(scoped.hints.map((hint) => hint.slice(0, 29))).toEqual(["sanity units: KPI zero (zero)"]);
     // A growth rate may pass 100 %.
     const growth = await sanityChecks(row, spec([["t", "SELECT 2.5 AS revenue_growth"]], [{ id: "g", type: "kpi", title: "Growth", queryKey: "t", column: "revenue_growth", format: "percent" }]), new Map([["t", outcome([["revenue_growth", "Float64"]], [[2.5]])]]), context);
     expect(growth.hints).toEqual([]);

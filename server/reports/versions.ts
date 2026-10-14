@@ -75,7 +75,9 @@ export function commitSpec(input: Commit): { version: number; spec: ReportSpec; 
     backfillVersion(input.reportId);
     const version = nextVersion(input.reportId, parseSpec(report.spec_json));
     const at = now();
-    const provenance = { runId: input.runId ?? null, instructionId: input.instructionId ?? null, version, docSnapshotId: input.docSnapshotId ?? null };
+    // E6: a block an agent run wrote carries the model that ran it (the fallback when it took over).
+    const model = input.runId ? (db.query("SELECT a.model FROM report_runs r JOIN agent_runs a ON a.id = r.agent_run_id WHERE r.id = ?").get(input.runId) as { model: string } | null)?.model ?? null : null;
+    const provenance = { runId: input.runId ?? null, instructionId: input.instructionId ?? null, version, docSnapshotId: input.docSnapshotId ?? null, ...(model ? { model } : {}) };
     const spec: ReportSpec = {
       ...input.spec,
       version: 1,

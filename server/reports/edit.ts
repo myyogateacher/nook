@@ -1,4 +1,4 @@
-import { catalogPromptLines, catalogRow } from "./metricCatalog";
+import { catalogPromptLines, catalogRow, metricHints } from "./metricCatalog";
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import type { RunStatus, TokenUsage } from "../../shared/agents";
@@ -18,7 +18,7 @@ import { DocBrowser, storedBrowseTools } from "./docBrowse";
 import { browseSourceOf } from "./docSource";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
-import { reportModelFor } from "./model";
+import { reportFallbackFor, reportModelFor } from "./model";
 import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA, sectionsChanged } from "./patch";
 import { HEARTBEAT_MS, LEASE_MS, onRunAbandoned, queryResults, takeRunLock } from "./refresh";
 import { adHocQueryId, runGuarded } from "./runner";
@@ -81,7 +81,11 @@ function editModel(reportId: string): ProviderConnection {
   return reportModelFor(reportId);
 }
 /** Test hook: the provider connection (tests swap it). */
-export const editDeps = { connection: (reportId: string): ProviderConnection => editModel(reportId) };
+export const editDeps = {
+  connection: (reportId: string): ProviderConnection => editModel(reportId),
+  /** E6: the admin's "Fallback model for reports" for an edit too (null when off). */
+  fallback: (primary: ProviderConnection): ProviderConnection | null => reportFallbackFor(primary)
+};
 
 export type InstructionRow = {
   id: string; report_id: string; block_id: string | null; text: string; author_id: string | null; via: "web" | "mcp"; key_id: string | null;
@@ -356,10 +360,14 @@ type Execution = {
 async function executeEdit(run: Execution) {
   const { entry, channel, connection, datasource, instruction, authorId: userId, agentRunId } = run;
   const { runId, reportId, controller } = entry;
-  const planner = new Planner({ mode: "change", datasourceId: datasource.id, runId, database: datasource.database });
+  // E6: the catalog's metrics for the plan (todos name them) and for the submit check.
+  const metrics = catalogRow(reportId)?.metrics ?? [];
+  const makePlanner = () => new Planner({ mode: "change", datasourceId: datasource.id, runId, database: datasource.database, metrics });
+  let planner = makePlanner();
   markAuditStarted(agentRunId);
-  const messages: ChatTurn[] = [{ role: "system", content: run.prompt }, { role: "user", content: instructionTurn(instruction.text) }];
   let seq = 0;
+  let sanityRounds = 0;
+  let stepBase = 0;
   let sqlRuns = 0;
   let submits = 0;
   let proposed = false;
@@ -397,8 +405,23 @@ async function executeEdit(run: Execution) {
     // is proposed (and later saved) is the validated spec, with provenance and authors put back. The
     // design rules apply to the blocks the patch adds or changes (wave 48b D437), so an old (v1) block
     // the instruction leaves alone never fails the edit.
-    const check = await validateSpec(datasource, forValidation(applied.spec), { userId, runId, signal: controller.signal, changedBlockIds: changedBlockIds(touched) });
+    const metricOf = (block: { id: string; queryKey?: string }) => planner.plan?.todos.find((todo) => todo.blockId === block.id)?.metric
+      ?? planner.plan?.todos.find((todo) => todo.queryKey && todo.queryKey === block.queryKey && todo.metric)?.metric ?? null;
+    const check = await validateSpec(datasource, forValidation(applied.spec), { userId, runId, signal: controller.signal, changedBlockIds: changedBlockIds(touched), sanity: { metricOf, changedQueryKeys: changedQueryKeys(touched) } });
     if (!check.ok) return refuse(check.errors);
+    // E6: the result sanity checks on what the patch touched, and the catalog's metrics, refuse once (not a try).
+    if (check.sanity) {
+      const hints = [...check.sanity.hints, ...metricHints(check.spec, planner.plan?.todos ?? [], metrics, datasource.database)];
+      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook checked the results: ${check.sanity.checks.length} ${check.sanity.checks.length === 1 ? "check" : "checks"}, ${check.sanity.extraQueries} extra ${check.sanity.extraQueries === 1 ? "query" : "queries"}, ${hints.length} ${hints.length === 1 ? "hint" : "hints"}${hints.length ? `: ${hints.map((hint) => hint.slice(0, 160)).join(" | ")}` : ""}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+      audit(userId, null, "reports.instruction.sanity", { reportId, instructionId: instruction.id, runId, checks: check.sanity.checks.length, failed: check.sanity.checks.filter((item) => !item.ok).map((item) => `${item.check}:${item.target}`).slice(0, 20), hints: hints.length, refused: hints.length > 0 && sanityRounds < 1 });
+      if (hints.length && sanityRounds < 1) {
+        sanityRounds += 1;
+        audit(userId, null, "reports.instruction.submit", { reportId, instructionId: instruction.id, runId, ok: false, attempt: submits, errors: hints.length, sanity: true });
+        submits -= 1;
+        lastErrors = hints;
+        return { text: `The patch was not accepted: its queries ran, but the results look wrong:\n- ${hints.join("\n- ")}\nFix the patch and call submit_patch again. If a result is right as it is, keep it (this did not use a try; these checks refuse once).`, ok: false };
+      }
+    }
     const validated = reattach(check.spec, applied.spec);
     const diff = diffSpecs(run.spec, validated);
     if (!diff.blocks.length && !diff.queries.length && !sectionsChanged(run.spec, validated)) return refuse(["The patch changes nothing"]);
@@ -504,63 +527,89 @@ async function executeEdit(run: Execution) {
   };
 
   const tools = [...EDIT_TOOLS, ...run.browser.modelTools()];
-  try {
-    const result = await runLoop({
-      connection, messages, maxSteps: EDIT_LIMITS.steps, temperature: null, maxOutputTokens: EDIT_LIMITS.maxOutputTokens, signal: controller.signal,
-      sink: {
-        delta: (text) => {
-          if (!firstToken) { firstToken = true; markAuditFirstToken(agentRunId); }
-          output += text;
-          channel.emit({ type: "delta", data: { messageId: runId, text } });
+  // E6: the fallback model gets one more attempt when this one ends without a proposal.
+  const fallback = editDeps.fallback(connection);
+  let current = connection;
+  let fallbackUsed = false;
+  for (;;) {
+    const messages: ChatTurn[] = [{ role: "system", content: run.prompt }, { role: "user", content: instructionTurn(instruction.text) }];
+    try {
+      const result = await runLoop({
+        connection: current, messages, maxSteps: EDIT_LIMITS.steps, temperature: null, maxOutputTokens: EDIT_LIMITS.maxOutputTokens, signal: controller.signal,
+        sink: {
+          delta: (text) => {
+            if (!firstToken) { firstToken = true; markAuditFirstToken(agentRunId); }
+            output += text;
+            channel.emit({ type: "delta", data: { messageId: runId, text } });
+          },
+          usage: (stepUsage) => channel.emit({ type: "usage", data: { messageId: runId, usage: stepUsage } }),
+          step: (step) => {
+            steps = stepBase + step.step;
+            insertAuditStep(agentRunId, ++seq, { kind: "model", text: step.content, toolCalls: step.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments })), usage: step.usage, durationMs: step.durationMs });
+          },
+          interrupted: (step) => {
+            usage = { promptTokens: usage.promptTokens + step.usage.promptTokens, completionTokens: usage.completionTokens + step.usage.completionTokens, estimated: true };
+            chargeUsage(userId, REPORTS_AGENT_ID, step.usage, 0);
+          }
         },
-        usage: (stepUsage) => channel.emit({ type: "usage", data: { messageId: runId, usage: stepUsage } }),
-        step: (step) => {
-          steps = step.step;
-          insertAuditStep(agentRunId, ++seq, { kind: "model", text: step.content, toolCalls: step.toolCalls.map((call) => ({ name: call.name, arguments: call.arguments })), usage: step.usage, durationMs: step.durationMs });
+        charge: (stepUsage, more) => {
+          usage = { promptTokens: usage.promptTokens + stepUsage.promptTokens, completionTokens: usage.completionTokens + stepUsage.completionTokens, estimated: usage.estimated || stepUsage.estimated };
+          chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
+          if (more && !proposed) assertBudget(userId);
         },
-        interrupted: (step) => {
-          usage = { promptTokens: usage.promptTokens + step.usage.promptTokens, completionTokens: usage.completionTokens + step.usage.completionTokens, estimated: true };
-          chargeUsage(userId, REPORTS_AGENT_ID, step.usage, 0);
-        }
-      },
-      charge: (stepUsage, more) => {
-        usage = { promptTokens: usage.promptTokens + stepUsage.promptTokens, completionTokens: usage.completionTokens + stepUsage.completionTokens, estimated: usage.estimated || stepUsage.estimated };
-        chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
-        if (more && !proposed) assertBudget(userId);
-      },
-      tools: () => tools,
-      execute,
-      // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
-      finalTool: {
-        get name() { return planner.plan ? "submit_patch" : "plan_change"; },
-        get nudge() { return planner.plan ? FINAL_NUDGE : PLAN_NUDGE; },
-        maxNudges: EDIT_LIMITS.nudges,
-        accepts: (value) => planner.plan ? Array.isArray(value.ops) || Boolean(value.patch && typeof value.patch === "object") : Array.isArray(value.todos)
-      },
-      toolChoice: editToolChoice(EDIT_LIMITS.steps, () => planner.plan !== null),
-      limits: { perStep: EDIT_LIMITS.perStep, perRun: EDIT_LIMITS.perRun }
-    });
-    steps = result.steps;
-    toolCallCount = result.toolCalls;
-    if (result.nudges) {
-      slog.info("Text answers nudged back to submit_patch", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
-      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_patch ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+        tools: () => tools,
+        execute,
+        // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
+        finalTool: {
+          get name() { return planner.plan ? "submit_patch" : "plan_change"; },
+          get nudge() { return planner.plan ? FINAL_NUDGE : PLAN_NUDGE; },
+          maxNudges: EDIT_LIMITS.nudges,
+          accepts: (value) => planner.plan ? Array.isArray(value.ops) || Boolean(value.patch && typeof value.patch === "object") : Array.isArray(value.todos)
+        },
+        toolChoice: editToolChoice(EDIT_LIMITS.steps, () => planner.plan !== null),
+        limits: { perStep: EDIT_LIMITS.perStep, perRun: EDIT_LIMITS.perRun }
+      });
+      steps = stepBase + result.steps;
+      toolCallCount += result.toolCalls;
+      if (result.nudges) {
+        slog.info("Text answers nudged back to submit_patch", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+        insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_patch ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+      }
+      if (!proposed) {
+        status = result.status === "step_limit" ? "step_limit" : "error";
+        errorCode = "NO_PATCH";
+        errorMessage = lastErrors.length ? `The agent's patch did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
+          : result.finalToolMissed && (result.nudges ?? 0) >= EDIT_LIMITS.nudges ? `The model answered in text and did not call submit_patch after ${EDIT_LIMITS.nudges} nudges` : "The agent finished without proposing a change";
+      }
+    } catch (error) {
+      const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;
+      if (proposed) status = "ok";
+      else if (reason === "timeout") { status = "timeout"; errorMessage = "The edit took too long and was stopped"; }
+      else if (reason === "cancel") { status = "cancelled"; errorMessage = "Cancelled"; }
+      else if (reason) { status = "cancelled"; errorMessage = reason === "abandoned" ? "The edit stopped: its run was reclaimed" : "The edit was stopped"; }
+      else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
+      else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
+      else { status = "error"; errorCode = "INTERNAL"; errorMessage = "The edit failed"; slog.error("Reports: edit error", error); }
     }
-    if (!proposed) {
-      status = result.status === "step_limit" ? "step_limit" : "error";
-      errorCode = "NO_PATCH";
-      errorMessage = lastErrors.length ? `The agent's patch did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
-        : result.finalToolMissed && (result.nudges ?? 0) >= EDIT_LIMITS.nudges ? `The model answered in text and did not call submit_patch after ${EDIT_LIMITS.nudges} nudges` : "The agent finished without proposing a change";
-    }
-  } catch (error) {
-    const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;
-    if (proposed) status = "ok";
-    else if (reason === "timeout") { status = "timeout"; errorMessage = "The edit took too long and was stopped"; }
-    else if (reason === "cancel") { status = "cancelled"; errorMessage = "Cancelled"; }
-    else if (reason) { status = "cancelled"; errorMessage = reason === "abandoned" ? "The edit stopped: its run was reclaimed" : "The edit was stopped"; }
-    else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
-    else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
-    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "The edit failed"; slog.error("Reports: edit error", error); }
+    const retryable = !proposed && !controller.signal.aborted && (status === "step_limit" || (status === "error" && errorCode === "NO_PATCH"));
+    if (!retryable || !fallback || fallbackUsed) break;
+    fallbackUsed = true;
+    slog.info("Retrying the edit on the fallback model", { from: current.model, to: fallback.model });
+    insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook retried on the fallback model ${fallback.model}: ${current.model} ended without a proposal (${(errorMessage ?? "no patch").slice(0, 300)})]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+    audit(userId, null, "reports.generate.fallback", { reportId, runId, agentRunId, instructionId: instruction.id, from: current.model, to: fallback.model, providerId: fallback.id });
+    current = fallback;
+    planner = makePlanner();
+    sqlRuns = 0;
+    submits = 0;
+    sanityRounds = 0;
+    lastErrors = [];
+    stepBase = steps;
+    status = "ok";
+    errorCode = null;
+    errorMessage = null;
+  }
+  if (fallbackUsed) {
+    try { db.query("UPDATE agent_runs SET model = ?, provider_id = ? WHERE id = ?").run(current.model, current.id, agentRunId); } catch (error) { slog.warn("Could not record the fallback model on the run", { err: error }); }
   }
 
   try {

@@ -28,13 +28,28 @@ const SELECT = `SELECT rr.*, u.display_name AS author_name, ar.model, p.name AS 
   LEFT JOIN agent_runs ar ON ar.id = rr.agent_run_id
   LEFT JOIN agent_providers p ON p.id = ar.provider_id`;
 
+/** E6: the models a run used in order: the fallback's audit entry names the primary and the fallback. */
+function modelsOf(row: HistoryRow): string[] {
+  if (!row.agent_run_id) return [];
+  const fallback = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.generate.fallback' AND metadata_json LIKE ? ORDER BY created_at, rowid").all(`%"runId":"${row.id}"%`) as Array<{ metadata_json: string }>;
+  const chain: string[] = [];
+  for (const entry of fallback) {
+    try {
+      const { from, to } = JSON.parse(entry.metadata_json) as { from?: string; to?: string };
+      if (from && chain.at(-1) !== from) chain.push(from);
+      if (to) chain.push(to);
+    } catch { /* a malformed entry is skipped */ }
+  }
+  return chain.length ? chain : row.model ? [row.model] : [];
+}
+
 function itemOf(row: HistoryRow): ReportRunHistoryItem {
   const finished = row.finished_at ? Date.parse(row.finished_at) : NaN;
   return {
     ...runView(row),
     startedBy: row.created_by ? { id: row.created_by, name: row.author_name ?? "Removed user" } : null,
     durationMs: Number.isFinite(finished) ? Math.max(0, finished - Date.parse(row.started_at)) : null,
-    model: row.model, provider: row.provider_name,
+    model: row.model, models: modelsOf(row), provider: row.provider_name,
     promptTokens: row.agent_run_id ? row.prompt_tokens : null, completionTokens: row.agent_run_id ? row.completion_tokens : null,
     tokensEstimated: row.tokens_estimated === 1, costMicros: row.cost_micros, toolCalls: row.agent_run_id ? row.tool_calls : null,
     instruction: row.instruction

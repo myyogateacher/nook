@@ -13,9 +13,9 @@ import { openChannel, type RunChannel } from "../agents/stream";
 import { ownedReport } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { cutBytes, docServerFor, docToolOf, fetchDoc, fetchNookFetched, recordSnapshot, snapshotOf } from "./docSource";
-import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookSourceName } from "./nookSource";
+import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookOrigins, nookSourceName } from "./nookSource";
 import type { ToolServerRow } from "../agents/toolServers";
-import { checkBrowseTools, DocBrowser, serverBrowseSource, storedBrowseTools } from "./docBrowse";
+import { checkBrowseTools, DocBrowser, modelToolName, serverBrowseSource, storedBrowseTools } from "./docBrowse";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { ReportError } from "./errors";
 import { adHocQueryId, runGuarded } from "./runner";
@@ -26,7 +26,8 @@ import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { reportFallbackFor, reportModelFor } from "./model";
 import { finalNote } from "./repairHints";
-import { catalogPromptLines, catalogRow, extractCatalog, metricHints, saveCatalog } from "./metricCatalog";
+import { catalogPromptLines, catalogRow, extractCatalog, EXTRACT_LIMITS, metricHints, saveCatalog } from "./metricCatalog";
+import { parseNookRef } from "../../shared/nookDocRef";
 import type { CatalogMetric } from "../../shared/reportsMetrics";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
@@ -567,8 +568,9 @@ async function executeGeneration(run: Execution) {
     else if (!controller.signal.aborted) {
       const started = Date.now();
       let extractUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
+      const pages = await linkedPages(run, reportId, runId, controller.signal);
       const extracted = await extractCatalog({
-        connection, datasource, markdown: run.docMarkdown, userId, signal: controller.signal,
+        connection, datasource, markdown: run.docMarkdown, userId, signal: controller.signal, pages,
         charge: (stepUsage) => {
           extractUsage = { promptTokens: extractUsage.promptTokens + stepUsage.promptTokens, completionTokens: extractUsage.completionTokens + stepUsage.completionTokens, estimated: extractUsage.estimated || stepUsage.estimated };
           chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
@@ -898,6 +900,38 @@ async function executeGeneration(run: Execution) {
   audit(userId, null, "reports.generate.finish", { reportId, runId, agentRunId, status, ok: accepted, steps, toolCalls: toolCallCount, submits, queries: sqlRuns, docCalls: run.browser.calls, docBytes: run.browser.bytes, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, plan: planCounts });
   channel.emit({ type: "done", data: { status, messageId: runId } });
   channel.close();
+}
+
+/**
+ * E6: the linked pages the metric catalog reads besides the doc: Nook notes the doc links to, read now
+ * through the run's doc tools when the owner allowed read_note (recorded as the run's pages), and the
+ * pages earlier runs of this report read (report_doc_pages, the newest read of each). At most
+ * EXTRACT_LIMITS.pages; nothing without doc tools or pages.
+ */
+async function linkedPages(run: Execution, reportId: string, runId: string, signal: AbortSignal): Promise<Array<{ title: string | null; markdown: string }>> {
+  const readNote = modelToolName("read_note");
+  if (run.browser.names.includes(readNote)) {
+    const ids = new Set<string>();
+    for (const match of run.docMarkdown.matchAll(/\]\(([^)\s]{1,500})\)|(https?:\/\/[^\s)<>]{1,500})/g)) {
+      const ref = parseNookRef(match[1] ?? match[2] ?? "", nookOrigins());
+      if (ref && ref.kind !== "file") ids.add(ref.id);
+      if (ids.size >= EXTRACT_LIMITS.pages) break;
+    }
+    for (const noteId of ids) {
+      try { await run.browser.call(readNote, { noteId }, signal); } catch (error) { if (signal.aborted) throw error; }
+    }
+  }
+  const rows = db.query("SELECT run_id, server_id, tool, args_json, title, markdown FROM report_doc_pages WHERE report_id = ? ORDER BY run_id = ? DESC, fetched_at DESC, rowid DESC LIMIT 40").all(reportId, runId) as Array<{ server_id: string; tool: string; args_json: string; title: string | null; markdown: string }>;
+  const seen = new Set<string>();
+  const pages: Array<{ title: string | null; markdown: string }> = [];
+  for (const row of rows) {
+    const key = `${row.server_id}\u0000${row.tool}\u0000${row.args_json}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pages.push({ title: row.title, markdown: row.markdown });
+    if (pages.length >= EXTRACT_LIMITS.pages) break;
+  }
+  return pages;
 }
 
 // Wave 47's lease sweep may abandon a generation whose lease ran out: this process stops its copy.

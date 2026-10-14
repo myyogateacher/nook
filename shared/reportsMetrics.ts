@@ -26,6 +26,8 @@ export type CatalogMetric = {
   timeColumn: string | null;
   /** The doc's text around the definition when the catalog was extracted ("Doc changed" compares it). */
   excerpt: string | null;
+  /** E6: the title of the linked page that defines it (null or absent: the main doc). */
+  page?: string | null;
   /** What Nook's checks found (unknown table, an expression that does not run); empty when fine. */
   problems: string[];
 };

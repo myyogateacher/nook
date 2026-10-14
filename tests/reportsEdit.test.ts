@@ -125,7 +125,7 @@ describe("the queue and the edit agent", () => {
     expect(applied.body.instruction).toMatchObject({ status: "applied", appliedVersion: 2 });
     const run = db.query("SELECT run_id FROM report_instructions WHERE id = ?").get(firstId) as { run_id: string };
     const added = specOf(reportId).blocks.find((block: Json) => block.id === "country_revenue");
-    expect(added.provenance).toEqual({ runId: run.run_id, instructionId: firstId, version: 2, docSnapshotId: null });
+    expect(added.provenance).toEqual({ runId: run.run_id, instructionId: firstId, version: 2, docSnapshotId: null, model: "scripted-report-model" });
     // Untouched blocks keep their provenance; the block was inserted after the countries chart.
     expect(specOf(reportId).blocks.map((block: Json) => block.id)).toEqual(["intro", "kpi-revenue", "kpi-orders", "daily-line", "country-bar", "country_revenue", "recent-table"]);
     expect(specOf(reportId).blocks[0].provenance).toEqual({ runId: null, version: 1 });

@@ -49,6 +49,11 @@ export type SanityContext = {
   userId: string; runId: string; signal?: AbortSignal;
   /** The plan's metric for a block (by block id), when the planner named one. */
   metricOf?: (block: ReportBlock) => string | null;
+  /**
+   * E6: an edit checks only what it touched: the blocks it adds or changes and the queries they (or
+   * the edit) use. Null or absent: everything (a generation).
+   */
+  scope?: { blocks: ReadonlySet<string>; queries: ReadonlySet<string> } | null;
 };
 
 const numberOf = (value: unknown): number | null => {
@@ -94,6 +99,7 @@ async function fanOut(row: DatasourceRow, spec: ReportSpec, context: SanityConte
   const catalog = catalogOf(row.id);
   const sampled = new Map<string, { rows: number; keys: number } | null>();
   for (const query of spec.queries) {
+    if (context.scope && !context.scope.queries.has(query.key)) continue;
     const shape = queryShape(query.sql);
     if (!shape.from || !shape.joins.length) continue;
     const driving = shape.from;
@@ -153,6 +159,7 @@ function reconcile(spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>,
     const kpiMetric = context.metricOf?.(kpi)?.toLowerCase().trim() || null;
     for (const chart of spec.blocks) {
       if (chart.type !== "chart" || chart.queryKey === kpi.queryKey || !BREAKDOWN_KINDS.has(chart.kind) || chart.y.length !== 1) continue;
+      if (context.scope && !context.scope.blocks.has(kpi.id) && !context.scope.blocks.has(chart.id)) continue;
       const chartResult = results.get(chart.queryKey);
       const shape = shapes.get(chart.queryKey);
       if (!chartResult || !shape || shape.limited || chartResult.truncated) continue;
@@ -190,8 +197,9 @@ export function literalRange(where: string): { from: number | null; to: number |
   return { from, to };
 }
 
-function coverage(spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, out: SanityResult) {
+function coverage(spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, out: SanityResult, scope?: SanityContext["scope"]) {
   for (const block of spec.blocks) {
+    if (scope && !scope.blocks.has(block.id)) continue;
     if (block.type === "kpi") {
       const result = results.get(block.queryKey);
       if (!result) continue;
@@ -228,7 +236,7 @@ function coverage(spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, 
 
 // ---------------------------------------------------------------------------------------- units
 
-function units(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, out: SanityResult) {
+function units(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, out: SanityResult, scope?: SanityContext["scope"]) {
   const catalog = catalogOf(row.id);
   const measures = (block: ReportBlock): string[] => block.type === "kpi" ? [block.column] : block.type === "chart" ? block.y : [];
   const centColumns = (sql: string): string[] => {
@@ -239,6 +247,7 @@ function units(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string
   };
   for (const block of spec.blocks) {
     if (block.type !== "kpi" && block.type !== "chart") continue;
+    if (scope && !scope.blocks.has(block.id)) continue;
     const result = results.get(block.queryKey);
     if (!result || !result.rows.length) continue;
     const sql = spec.queries.find((query) => query.key === block.queryKey)?.sql ?? "";
@@ -282,8 +291,9 @@ function units(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string
 
 // ---------------------------------------------------------------------------------------- final
 
-function finality(row: DatasourceRow, spec: ReportSpec, out: SanityResult) {
+function finality(row: DatasourceRow, spec: ReportSpec, out: SanityResult, scope?: SanityContext["scope"]) {
   for (const query of spec.queries) {
+    if (scope && !scope.queries.has(query.key)) continue;
     const note = finalNote(query.sql, row);
     out.checks.push({ check: "final", target: query.key, ok: !note });
     if (note) out.hints.push(`sanity final: query ${query.key}: ${note}`);
@@ -296,10 +306,10 @@ export async function sanityChecks(row: DatasourceRow, spec: ReportSpec, results
   const out: SanityResult = { hints: [], checks: [], extraQueries: 0 };
   const budget = { left: SANITY_LIMITS.extraQueries };
   try {
-    finality(row, spec, out);
-    units(row, spec, results, out);
+    finality(row, spec, out, context.scope);
+    units(row, spec, results, out, context.scope);
     reconcile(spec, results, context, out);
-    coverage(spec, results, out);
+    coverage(spec, results, out, context.scope);
     await fanOut(row, spec, context, budget, out);
   } catch (error) {
     if (context.signal?.aborted) throw error;

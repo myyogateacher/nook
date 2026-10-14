@@ -89,6 +89,7 @@ function MetricRow({ metric, canEdit, onEdit }: { metric: CatalogMetric; canEdit
       {metric.filters.length > 0 && <div><dt>Filters</dt><dd>{metric.filters.map((filter) => <code key={filter}>{filter}</code>)}</dd></div>}
       {(metric.unit || metric.grain || metric.timeColumn) && <div><dt>Shape</dt><dd>{[metric.unit, metric.grain, metric.timeColumn && `time ${metric.timeColumn}`].filter(Boolean).join(" · ")}</dd></div>}
     </dl>
+    {metric.page && <p className="report-metric-page">Defined on the linked page “{metric.page}”</p>}
     {metric.definition && <p className="report-metric-definition">{metric.definition}</p>}
     {!ok && <p className="report-metric-problem" role="note">{metric.problems.join(" ")}</p>}
   </li>;

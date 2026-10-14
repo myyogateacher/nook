@@ -105,6 +105,8 @@ describe("report eval scoring", () => {
 });
 
 async function runBoth(testCase: LoadedCase, clickhouse: string) {
+  // The scripted runs are charged like real ones; the eval user's day must not run out mid-file.
+  db.query("DELETE FROM agent_usage_daily WHERE user_id = ?").run(admin.userId);
   const datasources = new Map<string, string>();
   const golden = await runCase(host, testCase, { variant: "golden", clickhouse, connection, scripted: provider, datasources, timeoutMs: 30_000 });
   const trap = testCase.trap ? await runCase(host, testCase, { variant: "trap", clickhouse, connection, scripted: provider, datasources, timeoutMs: 30_000 }) : null;
@@ -119,6 +121,14 @@ function expectScored(testCase: LoadedCase, golden: CaseResult, trap: CaseResult
   if (testCase.catalog) {
     const stored = db.query("SELECT source, metrics_json FROM report_metric_catalogs WHERE report_id = ? ORDER BY version DESC LIMIT 1").get(golden.reportId) as { source: string; metrics_json: string };
     expect({ source: stored.source, metrics: (JSON.parse(stored.metrics_json) as Array<{ id: string; problems: string[] }>).map((metric) => [metric.id, metric.problems]) }).toEqual({ source: "extract", metrics: testCase.catalog.map((metric) => [metric.id, []]) });
+    // E6: a metric defined on a linked page: the page was read for the run (report_doc_pages) and given
+    // to the extraction, and the metric keeps the page's title and its text there.
+    for (const metric of JSON.parse(stored.metrics_json) as Array<{ page?: string | null; excerpt: string | null; name: string }>) {
+      if (!metric.page) continue;
+      expect(db.query("SELECT title FROM report_doc_pages WHERE run_id = ? AND tool = 'read_note'").get(golden.runId)).toEqual({ title: metric.page });
+      expect(metric.excerpt?.toLowerCase()).toContain(metric.name.toLowerCase());
+      expect(String(provider.extractions.at(-1)?.messages?.[0]?.content ?? "")).toContain(`<document page="${metric.page}">`);
+    }
   }
   // E2: a golden report never trips a sanity check; a trap that one catches is refused once first.
   expect({ id: testCase.id, hints: golden.sanityHints }).toEqual({ id: testCase.id, hints: 0 });
@@ -128,7 +138,7 @@ function expectScored(testCase: LoadedCase, golden: CaseResult, trap: CaseResult
     for (const kind of testCase.trap.sanity) expect(text).toContain(`sanity ${kind}:`);
   }
   if (trap && testCase.trap) {
-    expect(trap.runStatus).toBe("succeeded");
+    expect({ id: testCase.id, status: trap.runStatus, error: trap.error }).toEqual({ id: testCase.id, status: "succeeded", error: null });
     const failed = trap.facts.filter((fact) => !fact.pass).map((fact) => fact.id);
     for (const id of testCase.trap.fails) expect({ id: testCase.id, fact: id, failed: failed.includes(id) }).toEqual({ id: testCase.id, fact: id, failed: true });
   }

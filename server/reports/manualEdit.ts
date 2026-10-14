@@ -17,7 +17,7 @@ import { commitSpec, refuseWhileRunning } from "./versions";
  * re-validated like a generated spec (guard, execution, columns) under the report's run lock, and its
  * results are saved under that run; reorders and removals only re-check the spec's shape.
  */
-export async function manualEdit(userId: string, reportId: string, input: { patch: ReportPatch; expectedRevision: number }, via: { keyId?: string; signal?: AbortSignal } = {}): Promise<{ version: number; revision: number; errors?: never }> {
+export async function manualEdit(userId: string, reportId: string, input: { patch: ReportPatch; expectedRevision: number }, via: { keyId?: string; signal?: AbortSignal } = {}): Promise<{ version: number; revision: number; errors?: never; /** E6: the result sanity checks' hints on what the edit touched (saved anyway: a person decided). */ warnings?: string[] }> {
   const report = ownedReport(reportId, userId);
   if (report.revision !== input.expectedRevision) throw new ReportError(409, "REVISION_CONFLICT", "This report changed since; reload it", { revision: report.revision });
   const parsed = parsePatch(input.patch);
@@ -48,7 +48,7 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
     db.query("UPDATE report_runs SET status = ?, error = ?, finished_at = ?, lease_until = NULL WHERE id = ? AND status = 'running'").run(status, error?.slice(0, 1000) ?? null, now(), run.id);
   try {
     // Design rules on the blocks this edit adds or changes only (D437): an old block stays as it was.
-    const check = await validateSpec(datasource, forValidation(spec), { userId, runId: run.id, signal: via.signal, changedBlockIds: changedBlockIds(diff) });
+    const check = await validateSpec(datasource, forValidation(spec), { userId, runId: run.id, signal: via.signal, changedBlockIds: changedBlockIds(diff), sanity: { changedQueryKeys: changed } });
     if (!check.ok) {
       finish("failed", check.errors[0] ?? "The change did not pass the checks");
       throw new ReportError(400, "INVALID", check.errors[0] ?? "The change did not pass the checks", { details: check.errors });
@@ -60,8 +60,9 @@ export async function manualEdit(userId: string, reportId: string, input: { patc
       finish("succeeded", null);
       return committed;
     })();
-    audit(userId, null, "reports.spec.manual", { reportId, version: saved.version, runId: run.id, ops: opsSummary(parsed.patch.ops), queries: [...changed], ...keyMeta });
-    return { version: saved.version, revision: saved.revision };
+    const warnings = check.sanity?.hints ?? [];
+    audit(userId, null, "reports.spec.manual", { reportId, version: saved.version, runId: run.id, ops: opsSummary(parsed.patch.ops), queries: [...changed], ...keyMeta, ...(warnings.length ? { sanityHints: warnings.length } : {}) });
+    return { version: saved.version, revision: saved.revision, ...(warnings.length ? { warnings } : {}) };
   } catch (error) {
     finish("failed", error instanceof ReportError ? error.message : "The change failed");
     throw error;

@@ -402,6 +402,8 @@ export type ReportRunHistoryItem = ReportRun & {
   startedBy: { id: string; name: string } | null;
   durationMs: number | null;
   model: string | null;
+  /** E6: every model the run used, in order (the primary, then the fallback when it took over). */
+  models?: string[];
   provider: string | null;
   promptTokens: number | null;
   completionTokens: number | null;

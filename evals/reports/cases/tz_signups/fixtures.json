@@ -1,5 +1,5 @@
 {
- "recordedAt": "2026-10-14T12:12:55.441Z",
+ "recordedAt": "2026-10-14T15:29:57.546Z",
  "version": "26.6.8.7",
  "answers": {
   "EXPLAIN QUERY TREE SELECT count() AS signups\nFROM eval_tz_signups.signups\nWHERE toDate(created_at, 'Asia/Kolkata') BETWEEN '2026-09-01' AND '2026-09-30'": {

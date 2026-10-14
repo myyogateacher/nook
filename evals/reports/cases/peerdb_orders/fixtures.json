@@ -1,5 +1,5 @@
 {
- "recordedAt": "2026-10-14T12:12:53.928Z",
+ "recordedAt": "2026-10-14T15:29:55.424Z",
  "version": "26.6.8.7",
  "answers": {
   "EXPLAIN QUERY TREE SELECT count() AS value FROM `eval_peerdb_orders`.`orders` FINAL WHERE (_peerdb_is_deleted = 0) AND (status IN ('paid', 'shipped')) LIMIT 0": {

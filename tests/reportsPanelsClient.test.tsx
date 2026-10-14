@@ -9,6 +9,7 @@ const { overflowItems, consoleOnPage, consoleInPanel } = await import("../src/re
 const { copyReportLink, copyText, CopyLinkRow, LINK_COPIED, reportLink } = await import("../src/reports/reportLink");
 const { ReportConsoleContext } = await import("../src/reports/reportConsole");
 const { InspectSheet } = await import("../src/reports/InspectSheet");
+const { ReportCommentContext } = await import("../src/reports/reportComment");
 const { chartTheme } = await import("../src/reports/chartOption");
 
 /**
@@ -80,6 +81,23 @@ describe("the SQL console moves off a report with blocks", () => {
     const markup = renderToStaticMarkup(<ReportConsoleContext.Provider value={(sql) => opened.push(sql)}><InspectSheet {...props} initialTab="query" /></ReportConsoleContext.Provider>);
     expect(markup).toContain("Open in console");
     expect(renderToStaticMarkup(<InspectSheet {...props} initialTab="query" />)).not.toContain("Open in console");
+  });
+
+  test("Inspect → Query keeps Re-run and Ask for a change in one action row (release QA: they touched, stacked in two rows)", () => {
+    const block = spec.blocks.find((item) => item.id === "daily-line") as ChartBlock;
+    const query = spec.queries.find((item) => item.key === block.queryKey) as ReportQuery;
+    const detail = { id: "r", title: "Revenue", doc: null, spec } as unknown as ReportDetail;
+    const props = { report: detail, block, query, view: undefined, palette: chartTheme("dark"), canRerun: true, busy: false, onRerun: noop, onClose: noop };
+    const rows = (markup: string) => [...markup.matchAll(/<div class="report-inspect-actions">([\s\S]*?)<\/div>/g)].map((match) => match[1]!);
+    const both = rows(renderToStaticMarkup(<ReportCommentContext.Provider value={noop}><InspectSheet {...props} initialTab="query" /></ReportCommentContext.Provider>));
+    const row = both.find((item) => item.includes("Re-run this query"));
+    expect(row).toContain("Ask for a change");
+    expect(both.filter((item) => item.includes("Ask for a change"))).toHaveLength(1);
+    // A reader who may comment but not re-run still gets the button; the old second row is gone.
+    const reader = renderToStaticMarkup(<ReportCommentContext.Provider value={noop}><InspectSheet {...props} canRerun={false} initialTab="query" /></ReportCommentContext.Provider>);
+    expect(reader).toContain("Ask for a change");
+    expect(reader).not.toContain("Re-run this query");
+    expect(reader).not.toContain("report-inspect-comment");
   });
 });
 

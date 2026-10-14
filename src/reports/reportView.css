@@ -183,6 +183,7 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-inspect-error { display: grid; gap: 4px; border-radius: 10px; padding: 10px 12px; background: var(--report-bad-bg); color: var(--report-bad); font-size: .84rem; overflow-wrap: anywhere; }
 .report-inspect-error p { margin: 0; }
 .report-inspect-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.report-inspect-actions:empty { display: none; }
 .report-inspect-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
 .report-inspect-hint, .report-inspect-empty { margin: 0; color: var(--report-muted); font-size: .82rem; }
 

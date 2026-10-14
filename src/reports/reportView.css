@@ -112,6 +112,24 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 .report-chart-canvas { width: 100%; height: 220px; }
 .report-chart-loading { display: grid; place-items: center; color: var(--report-muted); font-size: .85rem; }
 
+/* Round 2 (D468). A heatmap or calendar wider than its tile scrolls inside the tile, never the page. */
+.report-chart-scroll { max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+.report-chart-scroll:focus-visible { outline: 2px solid var(--rt-accent); outline-offset: 2px; }
+/* The stepped colour scale under value-coloured charts. */
+.report-scale { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--rt-muted); font-size: var(--rt-label-size); font-variant-numeric: tabular-nums; }
+.report-scale-steps { display: inline-flex; gap: 2px; }
+.report-scale-steps span { width: 16px; height: 8px; border-radius: 2px; }
+/* The gauge kind: a meter, a same-ramp track, a target tick; status always with an icon and a label. */
+.report-meter { display: grid; gap: 8px; padding: 4px 0 2px; }
+.report-meter-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; }
+.report-meter-value { color: var(--rt-ink); font-size: var(--rt-kpi-size); font-weight: 600; line-height: 1.1; }
+.report-meter-status { display: inline-flex; align-items: center; gap: 4px; color: var(--rt-ink-2); font-size: .82rem; font-weight: 600; }
+.report-meter-status svg { width: 16px; height: 16px; }
+.report-meter-track { position: relative; height: 12px; border-radius: 6px; overflow: visible; }
+.report-meter-fill { position: absolute; inset: 0 auto 0 0; border-radius: 6px; }
+.report-meter-target { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 1px; background: var(--rt-ink); box-shadow: 0 0 0 1px var(--rt-surface); }
+.report-meter-caption { margin: 0; color: var(--rt-muted); font-size: var(--rt-label-size); }
+
 /* Tables inside the view wear the theme; numbers right-aligned in tabular figures. */
 .report-view .report-table-scroll { border-color: var(--rt-border); }
 .report-view .report-table th, .report-view .report-table td { border-bottom-color: var(--rt-grid); }
@@ -133,6 +151,10 @@ ul.report-block-problem { display: block; padding-left: 18px; }
 @media (forced-colors: active) {
   .report-block { border-color: CanvasText; }
   .report-kpi-spark path { stroke: CanvasText; }
+  .report-meter-track { border: 1px solid CanvasText; }
+  .report-meter-fill { background: repeating-linear-gradient(45deg, CanvasText 0 2px, Canvas 2px 6px) !important; forced-color-adjust: none; }
+  .report-meter-target { background: Highlight; }
+  .report-scale-steps span { border: 1px solid CanvasText; forced-color-adjust: none; }
 }
 
 /* The inspect sheet. */

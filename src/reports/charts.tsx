@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
-import { BarChart, LineChart, PieChart, ScatterChart } from "echarts/charts";
-import { AriaComponent, DatasetComponent, GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { BarChart, BoxplotChart, FunnelChart, HeatmapChart, LineChart, PieChart, SankeyChart, ScatterChart, TreemapChart } from "echarts/charts";
+import { AriaComponent, CalendarComponent, DatasetComponent, GridComponent, LegendComponent, TitleComponent, TooltipComponent, VisualMapPiecewiseComponent } from "echarts/components";
 import { SVGRenderer } from "echarts/renderers";
 import { ECHARTS_THEME_NAME, reportEchartsTheme, type ThemeMode } from "../../shared/reportTheme";
 
@@ -12,11 +12,18 @@ import { ECHARTS_THEME_NAME, reportEchartsTheme, type ThemeMode } from "../../sh
  * components, and the SVG renderer (crisp at any zoom, no canvas). ECharts runs no eval, so it works
  * under `script-src 'self'`.
  *
+ * Round 2 (D468): heatmap (with the piecewise visual map ECharts requires to colour it, hidden: Nook
+ * draws the scale), calendar, funnel, treemap, sankey, and boxplot, plus the title component for
+ * small-multiple panel names. The gauge kind is an HTML meter (ReportView's MeterView), not ECharts.
+ *
  * Wave 48b: one registered theme, "nook-ledger", built from shared/reportTheme.ts for the page's mode
  * (re-registered and the chart re-made when the mode changes). It only draws the option chartOption.ts
  * built; it never sees the spec.
  */
-echarts.use([LineChart, BarChart, PieChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, DatasetComponent, AriaComponent, SVGRenderer]);
+echarts.use([
+  LineChart, BarChart, PieChart, ScatterChart, HeatmapChart, FunnelChart, TreemapChart, SankeyChart, BoxplotChart,
+  GridComponent, TooltipComponent, LegendComponent, DatasetComponent, AriaComponent, CalendarComponent, VisualMapPiecewiseComponent, TitleComponent, SVGRenderer
+]);
 
 let registered: ThemeMode | null = null;
 function themeFor(mode: ThemeMode) {
@@ -27,7 +34,7 @@ function themeFor(mode: ThemeMode) {
   return ECHARTS_THEME_NAME;
 }
 
-export default function EChart({ option, label, mode = "dark", height }: { option: Record<string, unknown>; label: string; mode?: ThemeMode; height?: number }) {
+export default function EChart({ option, label, mode = "dark", height, minWidth }: { option: Record<string, unknown>; label: string; mode?: ThemeMode; height?: number; minWidth?: number }) {
   const host = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
   const latest = useRef(option);
@@ -52,7 +59,7 @@ export default function EChart({ option, label, mode = "dark", height }: { optio
     chart.current?.setOption(option, { notMerge: true });
   }, [option]);
 
-  useEffect(() => { chart.current?.resize(); }, [height]);
+  useEffect(() => { chart.current?.resize(); }, [height, minWidth]);
 
-  return <div ref={host} className="report-chart-canvas" role="img" aria-label={label} style={height ? { height } : undefined} />;
+  return <div ref={host} className="report-chart-canvas" role="img" aria-label={label} style={height || minWidth ? { ...(height ? { height } : {}), ...(minWidth ? { minWidth } : {}) } : undefined} />;
 }

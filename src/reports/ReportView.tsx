@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarClock, Clock3, ExternalLink, LoaderCircle, MoreHorizontal, RefreshCw, ScanSearch, TriangleAlert } from "lucide-react";
+import { CalendarClock, CircleCheck, CircleX, Clock3, ExternalLink, LoaderCircle, MoreHorizontal, RefreshCw, ScanSearch, TriangleAlert } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { Markdown, type RenderContext } from "../chat/markdown/render";
 import { notify } from "../ui/notify";
@@ -7,7 +7,8 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { defaultWidth, reportLayout, type ChartBlock, type ReportBlock, type ReportDetail, type ReportResult, type ReportRun } from "../../shared/reports";
 import { reportCssVariables } from "../../shared/reportTheme";
 import type { QueryResultView, ReportResultsView, ScheduleView } from "../../shared/reportsView";
-import { buildChartOption, paletteFor, type ChartPalette } from "./chartOption";
+import { buildChartOption, paletteFor, type ChartBuild, type ChartPalette } from "./chartOption";
+import type { MeterModel } from "./chartKinds";
 import { InspectSheet, type DataBlock } from "./InspectSheet";
 import type { InspectTab } from "./inspectHistory";
 import { KpiTile, type ResultLookup } from "./KpiTile";
@@ -299,14 +300,74 @@ function BlockBody({ block, result, palette, lookup }: { block: DataBlock; resul
   return <ChartBody block={block} result={result} palette={palette} />;
 }
 
+/** The width of an element, re-read when it resizes (small multiples and heatmaps lay out by their tile's width). */
+function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number | undefined] {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+    // Panel columns change at 520 and 800 px; round so a resize does not rebuild the option on every pixel.
+    const read = () => setWidth((current) => {
+      const next = Math.round(element.clientWidth / 8) * 8;
+      return next > 0 && next !== current ? next : current;
+    });
+    read();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(read);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
 function ChartBody({ block, result, palette }: { block: ChartBlock; result: ReportResult; palette: ChartPalette }) {
-  const built = useMemo(() => buildChartOption(block, result, palette), [block, result, palette]);
-  if (!built.option || built.problems.length) return <ul className="report-block-problem">{built.problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>;
-  return <div className={`report-chart report-chart-${block.kind}`}>
-    <Suspense fallback={<div className="report-chart-canvas report-chart-loading" role="status" style={{ height: built.height }}>Loading chart…</div>}>
-      <EChart option={built.option} mode={palette.mode} height={built.height} label={`${block.title ?? block.queryKey}: ${block.kind.replace("_", " ")} chart of ${block.y.join(", ")} by ${block.x}`} />
-    </Suspense>
+  const [box, width] = useElementWidth<HTMLDivElement>();
+  const built = useMemo(() => buildChartOption(block, result, palette, { width }), [block, result, palette, width]);
+  const label = `${block.title ?? block.queryKey}: ${block.kind.replace("_", " ")} chart of ${block.y.join(", ")}${block.x && block.x !== block.y[0] ? ` by ${block.x}` : ""}`;
+  return <div ref={box} className={`report-chart report-chart-${block.kind}`}>
+    {!built.option || built.problems.length ? <ul className="report-block-problem">{built.problems.map((problem) => <li key={problem}>{problem}</li>)}</ul>
+      : built.view === "meter" ? <MeterView model={built.option as unknown as MeterModel} label={label} />
+        : <ChartCanvas built={built} label={label} mode={palette.mode} />}
     {built.cutRows > 0 && <p className="report-block-note">Showing the first {(result.rows.length - built.cutRows).toLocaleString()} rows; the Data tab has them all.</p>}
+  </div>;
+}
+
+/** The ECharts canvas; a heatmap or calendar wider than its tile scrolls sideways inside the tile, never the page. */
+function ChartCanvas({ built, label, mode }: { built: ChartBuild; label: string; mode: ChartPalette["mode"] }) {
+  const canvas = <Suspense fallback={<div className="report-chart-canvas report-chart-loading" role="status" style={{ height: built.height }}>Loading chart…</div>}>
+    <EChart option={built.option!} mode={mode} height={built.height} minWidth={built.minWidth} label={label} />
+  </Suspense>;
+  return <>
+    {built.minWidth ? <div className="report-chart-scroll" tabIndex={0} role="group" aria-label={`${label} (scrolls sideways)`}>{canvas}</div> : canvas}
+    {built.scale && <ScaleLegend steps={built.scale} />}
+  </>;
+}
+
+/** A stepped colour scale (low → high) under a value-coloured chart: a swatch row and the low and high values. */
+export function ScaleLegend({ steps }: { steps: NonNullable<ChartBuild["scale"]> }) {
+  return <div className="report-scale" aria-label={`Colour scale from ${steps[0]?.label ?? ""} to ${steps[steps.length - 1]?.label ?? ""}`}>
+    <span className="report-scale-end">{steps[0]?.label}</span>
+    <span className="report-scale-steps" aria-hidden="true">{steps.map((step, at) => <span key={at} style={{ background: step.color }} title={step.label} />)}</span>
+    <span className="report-scale-end">{steps[steps.length - 1]?.label}+</span>
+  </div>;
+}
+
+const STATUS_ICONS = { check: CircleCheck, alert: TriangleAlert, cross: CircleX } as const;
+
+/** The gauge kind: a meter (value, a same-ramp track, the target's tick) with a status that always shows an icon and a label. */
+export function MeterView({ model, label }: { model: MeterModel; label: string }) {
+  const Icon = model.status ? STATUS_ICONS[model.status.icon] : null;
+  return <div className="report-meter" role="img" aria-label={`${label}: ${model.valueText}, ${model.caption}${model.status ? `, ${model.status.label}` : ""}`}>
+    <div className="report-meter-head">
+      <span className="report-meter-value">{model.valueText}</span>
+      {model.status && Icon && <span className={`report-meter-status report-meter-${model.status.tone}`}><Icon aria-hidden="true" style={{ color: model.status.color }} />{model.status.label}</span>}
+    </div>
+    <div className="report-meter-track" style={{ background: model.track }}>
+      <span className="report-meter-fill" style={{ width: `${(model.ratio * 100).toFixed(2)}%`, background: model.fill }} />
+      {model.targetRatio !== null && <span className="report-meter-target" style={{ left: `${(model.targetRatio * 100).toFixed(2)}%` }} />}
+    </div>
+    <p className="report-meter-caption">{model.caption}</p>
   </div>;
 }
 

@@ -1,5 +1,6 @@
 import { ordinalX, type AutoFix, type ChartBlock, type ChartKind, type ResultColumn, type ValueFormat } from "../../shared/reports";
 import { chartHeight, EMPHASIS_MUTED, MARKS, MAX_SERIES, REPORT_INK, REPORT_SERIES, TYPE, type InkTokens, type ThemeMode } from "../../shared/reportTheme";
+import { buildFacets, buildRoundTwo, facetPlan, ROUND_TWO_KINDS, roundTwoMapping } from "./chartKinds";
 
 /**
  * ECharts options for report charts (plan wave 47, T367 "chart option injection"; theme wave 48b,
@@ -161,8 +162,8 @@ export const axisLabel = (value: number, format: ValueFormat | undefined) => com
 export const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]!);
 
 /** A named formatter: the Mapping tab shows its name instead of its code. */
-type Named<F> = F & { formatterName: string };
-const named = <F extends (...args: never[]) => unknown>(name: string, fn: F): Named<F> => Object.assign(fn, { formatterName: name });
+export type Named<F> = F & { formatterName: string };
+export const named = <F extends (...args: never[]) => unknown>(name: string, fn: F): Named<F> => Object.assign(fn, { formatterName: name });
 
 // ----------------------------------------------------------------------------------------- option
 
@@ -183,11 +184,22 @@ export type ChartBuild = {
   autoFixes: AutoFix[];
   /** The chart's fixed height, px (CHART_HEIGHTS by kind). */
   height: number;
+  /** Round 2: `meter` (the gauge kind) is drawn by Nook as HTML from `option` (a MeterModel); default ECharts. */
+  view?: "echarts" | "meter";
+  /** Round 2: the width below which the chart scrolls sideways inside its tile (heatmaps, calendars). */
+  minWidth?: number;
+  /** Round 2: a stepped colour scale shown under value-coloured charts (heatmap, calendar), low to high. */
+  scale?: Array<{ color: string; label: string }>;
 };
 
+/** How the chart is laid out: the width of its tile, px (small multiples pick their columns from it; heatmaps their scroll). */
+export type ChartSize = { width?: number };
+
 /** The columns a chart block maps, by role. */
-export function chartMapping(block: Pick<ChartBlock, "x" | "y" | "series" | "compareTo">): Record<string, string> {
+export function chartMapping(block: Pick<ChartBlock, "x" | "y" | "series" | "compareTo"> & Partial<ChartBlock>): Record<string, string> {
+  if (block.kind && ROUND_TWO_KINDS.has(block.kind)) return roundTwoMapping(block as ChartBlock);
   const mapped: Record<string, string> = { [block.x]: "x" };
+  if (block.facet) mapped[block.facet] = "facet";
   block.y.forEach((name, index) => { mapped[name] = block.y.length > 1 ? `y${index + 1}` : "y"; });
   if (block.series) mapped[block.series] = "series";
   if (block.compareTo && !block.compareTo.queryKey) mapped[block.compareTo.column] = "compare";
@@ -249,17 +261,35 @@ function tooltipFormatter(format: ValueFormat | undefined, unit: string | undefi
   });
 }
 
+/** A percent stack's tooltip: each part's share and its value (D467). */
+function shareTooltip(format: ValueFormat | undefined, unit: string | undefined, theme: ChartTheme, item: boolean, raw: Array<Array<number | null>>) {
+  return named("tooltip:share", (params: unknown) => {
+    const list = (Array.isArray(params) ? params : [params]) as Array<{ seriesName?: string; seriesIndex?: number; dataIndex?: number; name?: string; value?: unknown; color?: string }>;
+    if (!list.length) return "";
+    const lines = list.map((entry) => {
+      const share = toNumber(entry.value);
+      const value = raw[entry.seriesIndex ?? 0]?.[entry.dataIndex ?? 0] ?? null;
+      const swatch = `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;background:${/^#[0-9a-f]{6}$/i.test(entry.color ?? "") ? entry.color : theme.ink.muted}"></span>`;
+      return `<div>${swatch}${escapeHtml(String(entry.seriesName ?? ""))}: <b>${share === null ? "—" : escapeHtml(formatValue(share, "percent"))}</b> (${escapeHtml(formatValue(value, format, unit))})</div>`;
+    });
+    return `${item ? "" : `<div style="color:${theme.ink.muted};margin-bottom:4px">${escapeHtml(String(list[0]!.name ?? ""))}</div>`}${lines.join("")}`;
+  });
+}
+
 const BAR_KINDS: readonly ChartKind[] = ["bar", "stacked_bar", "horizontal_bar"];
 
 /** The forced-colors texture fills (45° and 135° hatches), only under `forced-colors`. */
-const TEXTURE_DECALS = MARKS.textureAngles.map((rotation) => ({ symbol: "rect", dashArrayX: [1, 0], dashArrayY: [2, 4], rotation }));
+export const TEXTURE_DECALS = MARKS.textureAngles.map((rotation) => ({ symbol: "rect", dashArrayX: [1, 0], dashArrayY: [2, 4], rotation }));
 
 /**
  * The option for a chart block over a result. Missing or non-numeric mapped columns are problems
  * (the block shows them instead of a chart); nothing in the option comes from the spec but column
  * names and category values, which ECharts renders as text, and the enum values chosen here.
  */
-export function buildChartOption(block: ChartBlock, data: ChartData, theme: ChartTheme): ChartBuild {
+export function buildChartOption(block: ChartBlock, data: ChartData, theme: ChartTheme, size: ChartSize = {}): ChartBuild {
+  if (ROUND_TWO_KINDS.has(block.kind)) return buildRoundTwo(block, data, theme, size);
+  const facets = facetPlan(block, data);
+  if (facets) return buildFacets(block, data, theme, size, facets);
   const mapped = chartMapping(block);
   const problems: string[] = [];
   const index = (name: string) => data.columns.findIndex((column) => column.name === name);
@@ -316,10 +346,18 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
     }
   }
   const magnitude = Math.max(0, ...series.flatMap((item) => item.values.map((value) => Math.abs(value ?? 0))));
-  if (magnitude >= 10_000) autoFixes.push({ rule: "compact", detail: `Numbers compacted (${compactValue(magnitude, block.format, block.unit)})` });
+  if (magnitude >= 10_000 && block.stack !== "percent") autoFixes.push({ rule: "compact", detail: `Numbers compacted (${compactValue(magnitude, block.format, block.unit)})` });
 
-  const format = block.format;
-  const unit = block.unit;
+  // Round 2 (D467): stacked areas and bars; a percent stack draws each category's parts as shares of it.
+  const stacked = kind === "stacked_bar" || (block.stack !== undefined && (bars || kind === "area"));
+  const percent = stacked && block.stack === "percent";
+  const raw = series.map((item) => item.values);
+  if (percent) {
+    const totals = categories.map((_, at) => series.reduce((sum, item) => sum + Math.max(0, item.values[at] ?? 0), 0));
+    series = series.map((item) => ({ ...item, values: item.values.map((value, at) => value === null || !totals[at] ? null : Math.max(0, value) / totals[at]!) }));
+  }
+  const format = percent ? "percent" as const : block.format;
+  const unit = percent ? undefined : block.unit;
   const ink = theme.ink;
   // Emphasis mode: a series by name, or (one series) a category, in slot 1; everything else grey.
   const emphasisSeries = block.emphasis !== undefined && series.some((item) => item.name === block.emphasis) ? block.emphasis : null;
@@ -345,7 +383,7 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
       backgroundColor: ink.tooltip, borderColor: ink.border, borderWidth: 1, textStyle: { color: ink.ink, fontSize: 12 },
       ...(lineLike ? { axisPointer: { type: "line", lineStyle: { color: ink.axis, width: 1 } } } : {}),
       confine: true,
-      formatter: tooltipFormatter(format, unit, theme, itemTooltip)
+      formatter: percent ? shareTooltip(block.format, block.unit, theme, itemTooltip, raw) : tooltipFormatter(format, unit, theme, itemTooltip)
     },
     legend: legend ? { show: true, top: 0, left: 0, type: "scroll", icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 16, textStyle: { color: ink.inkSecondary, fontSize: TYPE.axis.size }, pageTextStyle: { color: ink.muted } } : { show: false },
     ...(theme.forcedColors ? { aria: { enabled: true, decal: { show: true, decals: TEXTURE_DECALS } } } : {})
@@ -384,18 +422,19 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
   const maxIndex = (values: Array<number | null>) => values.reduce<number>((best, value, at) => value !== null && (best < 0 || value > (values[best] ?? -Infinity)) ? at : best, -1);
   const labelStyle = { color: ink.inkSecondary, fontSize: TYPE.label.size, formatter: compactLabel };
   const stackedLast = series.length - 1;
+  const percentAxis = percent ? { min: 0, max: 1 } : {};
   const echartsSeries: Array<Record<string, unknown>> = series.map((item, at) => {
     const color = colorOf(at, item.name);
     if (kind === "scatter") {
       return { type: "scatter", name: item.name, symbolSize: 8, itemStyle: { color, borderColor: ink.surface, borderWidth: 1 }, data: numericX ? rows.map((row, position) => [toNumber(row[xi]), item.values[position]]) : item.values };
     }
     if (bars) {
-      const rounded = kind !== "stacked_bar" || at === stackedLast;
+      const rounded = !stacked || at === stackedLast;
       const radius = !rounded ? 0 : horizontal ? [0, MARKS.bar.radius, MARKS.bar.radius, 0] : [MARKS.bar.radius, MARKS.bar.radius, 0, 0];
       const top = maxIndex(item.values);
-      const tips = series.length === 1 && kind !== "stacked_bar";
+      const tips = series.length === 1 && !stacked;
       return {
-        type: "bar", name: item.name, barMaxWidth: MARKS.bar.maxThickness, ...(kind === "stacked_bar" ? { stack: "total" } : {}),
+        type: "bar", name: item.name, barMaxWidth: MARKS.bar.maxThickness, ...(stacked ? { stack: "total" } : {}),
         // A 2 px gap in the surface colour between touching bars and stack segments (1 px border each side).
         itemStyle: { color, borderRadius: radius, borderColor: ink.surface, borderWidth: MARKS.bar.gap / 2 },
         emphasis: { focus: "series" },
@@ -413,10 +452,11 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
     return {
       type: "line", name: item.name, symbol: "none", showSymbol: true, connectNulls: false,
       lineStyle: { width: MARKS.line.width, join: "round", cap: "round", color }, itemStyle: { color },
-      ...(kind === "area" ? { areaStyle: { color, opacity: MARKS.areaOpacity } } : {}),
+      ...(kind === "area" ? { areaStyle: { color, opacity: stacked ? MARKS.stackedAreaOpacity : MARKS.areaOpacity } } : {}),
+      ...(stacked ? { stack: "total" } : {}),
       emphasis: { focus: "series" },
       // Direct labels on the line's end and (one series) its maximum; the end dot wears a ring in the surface colour.
-      endLabel: { show: emphasisSeries === null || item.name === emphasisSeries, ...labelStyle, distance: 6 },
+      endLabel: { show: (emphasisSeries === null || item.name === emphasisSeries) && !(stacked && series.length > 1), ...labelStyle, distance: 6 },
       data: item.values.map((value, position) => {
         if (position === end) return { value, symbol: "circle", symbolSize: MARKS.line.dotRadius * 2, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing } };
         if (position === top && top !== end) return { value, symbol: "circle", symbolSize: 6, itemStyle: { color, borderColor: ink.surface, borderWidth: MARKS.line.dotRing }, label: { show: true, position: "top", ...labelStyle } };
@@ -435,8 +475,8 @@ export function buildChartOption(block: ChartBlock, data: ChartData, theme: Char
     ...base,
     ...(compare && !legend ? { legend: { ...(base.legend as object), show: true, top: 0, left: 0, type: "scroll", icon: "roundRect", itemWidth: 10, itemHeight: 10, itemGap: 16, textStyle: { color: ink.inkSecondary, fontSize: TYPE.axis.size } } } : {}),
     grid: { left: 8, right: lineLike ? 56 : horizontal ? 84 : 16, top: withLegend ? 36 : 18, bottom: 8, containLabel: true },
-    xAxis: horizontal ? valueAxis : categoryAxis,
-    yAxis: horizontal ? { ...categoryAxis, inverse: true } : valueAxis,
+    xAxis: horizontal ? { ...valueAxis, ...percentAxis } : categoryAxis,
+    yAxis: horizontal ? { ...categoryAxis, inverse: true } : { ...valueAxis, ...percentAxis },
     series: echartsSeries
   }, categories.length);
 }
@@ -447,4 +487,7 @@ export function optionJson(option: unknown): string {
 }
 
 /** Human text for an auto-fix rule (the Mapping tab). */
-export const AUTO_FIX_TEXT: Record<AutoFix["rule"], string> = { fold_series: "Series folded", fold_categories: "Categories folded", sort: "Sorted", compact: "Compacted" };
+export const AUTO_FIX_TEXT: Record<AutoFix["rule"], string> = {
+  fold_series: "Series folded", fold_categories: "Categories folded", sort: "Sorted", compact: "Compacted",
+  facet: "Small multiples", fold_panels: "Panels folded", fold_groups: "Groups folded", bin: "Binned", quartiles: "Quartiles computed"
+};

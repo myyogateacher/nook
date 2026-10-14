@@ -41,6 +41,26 @@ export function blockMapping(block: DataBlock): Record<string, string> {
   return Object.fromEntries((block.columns ?? []).map((name) => [name, "shown"]));
 }
 
+/** A chart's mapped columns grouped by role, in mapping order (x, y, series; round 2's kinds name their own roles). */
+export function chartRoles(block: ChartBlock): Array<[string, string[]]> {
+  const roles = new Map<string, string[]>();
+  for (const [name, role] of Object.entries(chartMapping(block))) {
+    const key = /^y\d+$/.test(role) ? "y" : role;
+    roles.set(key, [...(roles.get(key) ?? []), name]);
+  }
+  if (!block.series && !roles.has("series") && block.kind !== "gauge" && !roles.has("values") && (block.kind === "line" || block.kind === "bar" || block.kind === "area" || block.kind === "stacked_bar" || block.kind === "horizontal_bar" || block.kind === "scatter" || block.kind === "pie")) roles.set("series", []);
+  return [...roles.entries()];
+}
+
+/** A chart's round-2 settings, as the Mapping tab lists them. */
+export function chartSettings(block: ChartBlock): string | null {
+  const parts = [
+    block.stack ? `stack ${block.stack}` : null, block.cohort ? "cohort" : null, block.midpoint !== undefined ? `midpoint ${block.midpoint}` : null,
+    block.max !== undefined ? `max ${block.max}` : null, block.start ? "start total" : null, block.total ? "end total" : null, block.yUnits ? `units ${block.yUnits.join(" / ")}` : null
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 const blockKindLabel = (block: DataBlock) => block.type === "chart" ? `Chart (${block.kind.replace("_", " ")})` : block.type === "kpi" ? "KPI tile" : "Table";
 
 async function copy(text: string) {
@@ -180,9 +200,9 @@ function MappingTab({ block, view, palette }: { block: DataBlock; view: QueryRes
       <Fact term="Block">{blockKindLabel(block)} <code>{block.id}</code></Fact>
       <Fact term="Query"><code>{block.queryKey}</code></Fact>
       {block.type === "chart" && <>
-        <Fact term="x →"><code className="report-mapped">{block.x}</code></Fact>
-        <Fact term="y →">{block.y.map((name) => <code key={name} className="report-mapped">{name}</code>)}</Fact>
-        <Fact term="series →">{block.series ? <code className="report-mapped">{block.series}</code> : "—"}</Fact>
+        {/* Each role the kind reads (round 2: rows, stage, source → target, target, ranges…), then its options. */}
+        {chartRoles(block).map(([role, names]) => <Fact key={role} term={`${role} →`}>{names.length ? names.map((name) => <code key={name} className="report-mapped">{name}</code>) : "—"}</Fact>)}
+        {chartSettings(block) && <Fact term="options">{chartSettings(block)}</Fact>}
       </>}
       {block.type === "kpi" && <>
         <Fact term="value →"><code className="report-mapped">{block.column}</code></Fact>
@@ -197,8 +217,8 @@ function MappingTab({ block, view, palette }: { block: DataBlock; view: QueryRes
     <AutoFixes recorded={block.autoFixes ?? []} live={built?.autoFixes ?? []} />
     {Object.keys(mapping).length > 0 && <p className="report-inspect-hint">The Data tab highlights {Object.keys(mapping).length === 1 ? "this column" : "these columns"}.</p>}
     {block.type === "chart" && <>
-      <div className="report-inspect-head"><h3>ECharts option</h3>{built?.option && <CopyButton text={optionJson(built.option)} label="Copy" />}</div>
-      <p className="report-inspect-hint">Built by Nook from the block above and the result (chartOption.ts); nothing in it comes from the AI.{built?.cutRows ? ` ${built.cutRows.toLocaleString()} rows past the chart's limit are left out.` : ""}{built?.foldedSeries ? ` ${built.foldedSeries} series fold into "Other".` : ""}</p>
+      <div className="report-inspect-head"><h3>{built?.view === "meter" ? "Meter (drawn by Nook, not ECharts)" : "ECharts option"}</h3>{built?.option && <CopyButton text={optionJson(built.option)} label="Copy" />}</div>
+      <p className="report-inspect-hint">Built by Nook from the block above and the result (chartOption.ts, chartKinds.ts); nothing in it comes from the AI.{built?.cutRows ? ` ${built.cutRows.toLocaleString()} rows past the chart's limit are left out.` : ""}{built?.foldedSeries ? ` ${built.foldedSeries} series fold into "Other".` : ""}</p>
       {built?.problems.length ? <ul className="form-error">{built.problems.map((problem) => <li key={problem}>{problem}</li>)}</ul> : null}
       {built?.option ? <pre className="report-code report-option"><code>{optionJson(built.option)}</code></pre> : !shown ? <p className="report-inspect-empty">No result yet, so no option.</p> : null}
     </>}

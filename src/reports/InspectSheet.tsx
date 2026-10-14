@@ -252,11 +252,11 @@ function ProvenanceTab({ report, block, given }: { report: Pick<ReportDetail, "i
   useEffect(() => {
     if (given || (!runId && !snapshotId)) return;
     let live = true;
-    getProvenance(report.id, { runId, snapshotId })
+    getProvenance(report.id, { runId, snapshotId, blockId: block.id, queryKey: "queryKey" in block ? block.queryKey : null })
       .then((view) => { if (live) setState({ view, error: null }); })
       .catch((reason: unknown) => { if (live) setState({ view: null, error: messageOf(reason, "Could not load the provenance") }); });
     return () => { live = false; };
-  }, [given, report.id, runId, snapshotId]);
+  }, [given, report.id, runId, snapshotId, block]);
   const run = state.view?.run ?? null;
   const snapshot = state.view?.snapshot ?? null;
   const link = docLink(report.doc?.ref);
@@ -265,6 +265,7 @@ function ProvenanceTab({ report, block, given }: { report: Pick<ReportDetail, "i
     <dl className="report-facts-list">
       <Fact term="Version">{block.provenance ? `v${block.provenance.version}` : "—"}</Fact>
       <Fact term="Made by">{!runId ? "Written by hand (no AI run)" : run ? <>{runLabel(run)} · {RUN_STATUS_TEXT[run.status]} · {timeAgo(run.startedAt)}<br /><code>{run.id}</code></> : state.error ? state.error : <code>{runId}</code>}</Fact>
+      {state.view?.todo && <Fact term="Plan todo">{state.view.todo.title} · {state.view.todo.status}{state.view.todo.note ? ` · ${state.view.todo.note}` : ""}</Fact>}
       <Fact term="Instruction">{block.provenance?.instructionId ? <code>{block.provenance.instructionId}</code> : "—"}</Fact>
       <Fact term="Doc snapshot">{snapshot ? <>{snapshot.title ?? "Untitled doc"} · fetched {timeAgo(snapshot.fetchedAt)}<br /><code title={snapshot.sha256}>sha256 {snapshot.sha256.slice(0, 12)}…</code></> : snapshotId || run?.docSnapshotId ? "Snapshot no longer kept" : "—"}</Fact>
       {runId && openRun && <Fact term="Run log"><button type="button" className="secondary-button" onClick={() => openRun(runId)}><History aria-hidden="true" />Open the run that built this</button></Fact>}

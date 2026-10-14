@@ -2,16 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Check, CircleStop, FileText, LoaderCircle, X } from "lucide-react";
 import { followRun, type SequencedRunEvent } from "../chat/chatApi";
 import type { RunStatus as AgentRunStatus } from "../../shared/agents";
-import { cancelGeneration, messageOf } from "./reportsApi";
+import { cancelGeneration, latestGeneration, messageOf } from "./reportsApi";
+import type { RunPlan } from "../../shared/reportsGenerate";
+import { PlanChecklist } from "./PlanChecklist";
 
 /** One tool call of the run as the step list shows it. */
 export type ProgressStep = { callId: string; tool: string; args: string; ok: boolean | null; result: string; durationMs: number | null };
 
 const TOOL_LABELS: Record<string, string> = {
   search_schema: "Search the schema", list_tables: "List tables", describe_tables: "Describe tables", sample_rows: "Sample rows",
-  run_schema_query: "Read metadata", estimate: "Estimate a query", run_sql: "Run SQL", submit_report: "Submit the report"
+  run_schema_query: "Read metadata", estimate: "Estimate a query", run_sql: "Run SQL", submit_report: "Submit the report",
+  read_doc_section: "Read a part of the doc", plan_report: "Plan the report", plan_change: "Plan the change", update_todo: "Update a todo", add_todo: "Add a todo", revise_plan: "Revise the plan"
 };
 export const toolLabel = (tool: string) => TOOL_LABELS[tool] ?? tool;
+const PLANNER_TOOLS = new Set(["plan_report", "plan_change", "update_todo", "add_todo", "revise_plan"]);
 
 /** What a step shows of its arguments: the SQL for SQL tools, the tables or query for the schema tools, a count for a spec. */
 export function stepDetail(tool: string, argsPreview: string): { code: string | null; text: string | null } {
@@ -69,6 +73,9 @@ export function GenerateProgress({ reportId, agentRunId, docTitle, onDone }: Pro
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  // 2c: the agent's plan, read again after each planner call.
+  const [plan, setPlan] = useState<RunPlan | null>(null);
+  const loadPlan = useRef(() => { latestGeneration(reportId).then(({ run }) => { if (run?.plan) setPlan(run.plan); }).catch(() => undefined); });
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
@@ -78,13 +85,18 @@ export function GenerateProgress({ reportId, agentRunId, docTitle, onDone }: Pro
     let status: AgentRunStatus | null = null;
     let failure: string | null = null;
     let attempts = 0;
+    let planDirty = true;
     const onEvent = (event: SequencedRunEvent) => {
       seq = Math.max(seq, event.seq);
       if (event.type === "delta") setNote((current) => (current + event.data.text).slice(-600));
       else if (event.type === "error") { failure = event.data.message; setError(event.data.message); }
       else if (event.type === "done") status = event.data.status;
       else if (event.type === "snapshot") status = event.data.status;
-      else setSteps((current) => applyEvent(current, event));
+      else {
+        if (event.type === "tool_result" || (event.type === "tool_call" && PLANNER_TOOLS.has(event.data.tool))) planDirty = true;
+        setSteps((current) => applyEvent(current, event));
+        if (planDirty && event.type === "tool_result") { planDirty = false; loadPlan.current(); }
+      }
     };
     void (async () => {
       while (!controller.signal.aborted) {
@@ -117,6 +129,7 @@ export function GenerateProgress({ reportId, agentRunId, docTitle, onDone }: Pro
       <h2 id={`generate-${agentRunId}`}><LoaderCircle className="spin" aria-hidden="true" />Generating the report…</h2>
       <button type="button" className="secondary-button" onClick={() => { void stop(); }} disabled={stopping}><CircleStop />{stopping ? "Stopping…" : "Stop"}</button>
     </div>
+    {plan && <PlanChecklist plan={plan} />}
     <ol className="generate-steps" aria-live="polite">
       <li className="generate-step is-ok">
         <span className="generate-step-icon" aria-hidden="true"><FileText /></span>

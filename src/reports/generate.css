@@ -45,3 +45,21 @@
   .generate-progress { padding: 12px; }
   .generate-head button, .report-doc-banner button { flex: 1 1 100%; justify-content: center; }
 }
+
+/* 2c: the agent's plan as a checklist (live and in Runs). */
+.plan-checklist { display: grid; gap: 8px; min-width: 0; border: 1px solid #26262b; border-radius: 12px; padding: 10px 12px; background: #111114; }
+.plan-goal { margin: 0; color: #b8b8be; font-size: .82rem; overflow-wrap: anywhere; }
+.plan-goal strong { color: #ededee; }
+.plan-group { display: grid; gap: 4px; }
+.plan-group h3 { margin: 4px 0 0; color: #d9b55f; font-size: .74rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.plan-group ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.plan-todo { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.plan-todo-icon { flex: none; width: 20px; height: 20px; display: grid; place-items: center; color: #77777e; }
+.plan-todo-icon svg { width: 15px; height: 15px; }
+.plan-todo.is-done .plan-todo-icon { color: #8fd19e; }
+.plan-todo.is-in_progress .plan-todo-icon { color: #f3d48a; }
+.plan-todo.is-blocked .plan-todo-icon, .plan-todo.is-skipped .plan-todo-icon { color: #fda4af; }
+.plan-todo-body { display: grid; gap: 1px; min-width: 0; }
+.plan-todo-title { color: #ededee; font-size: .86rem; overflow-wrap: anywhere; }
+.plan-todo-meta { color: #85858c; font-size: .74rem; }
+.plan-todo-note { color: #c9c9ce; font-size: .78rem; font-style: italic; overflow-wrap: anywhere; }

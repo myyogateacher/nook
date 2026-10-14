@@ -5,6 +5,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ReportRunHistoryItem, ReportRunLog, ReportRunStep } from "../../shared/reports";
 import { api } from "../api";
 import { resultLine, stepDetail, toolLabel } from "./GenerateProgress";
+import { PlanChecklist } from "./PlanChecklist";
 import { RUN_STATUS_TEXT, runLabel, timeAgo } from "./reportViewApi";
 import { messageOf } from "./reportsApi";
 import "./generate.css";
@@ -60,6 +61,7 @@ function RunLog({ reportId, run }: { reportId: string; run: ReportRunHistoryItem
   return <div className="report-run-log">
     {run.instruction && <p className="report-run-instruction">“{run.instruction}”</p>}
     {run.error && <p className="generate-step-error">{run.error}</p>}
+    {log.plan && <PlanChecklist plan={log.plan} heading="Plan" />}
     <ol className="generate-steps">
       {log.doc && <li className="generate-step is-ok">
         <span className="generate-step-icon" aria-hidden="true"><FileText /></span>

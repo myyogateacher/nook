@@ -551,6 +551,8 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   // finalTool runs: nudges sent, and whether the next steps offer only the final tool.
   let nudges = 0;
   let forceFinal = false;
+  // The final tool a nudge forced; a run whose final tool changes (a planner's plan, then the submit) stops forcing it once it is called.
+  let forcedFinalName: string | null = null;
   const perStep = input.limits?.perStep ?? AGENT_BOUNDS.toolCallsPerStep;
   const perRun = input.limits?.perRun ?? AGENT_BOUNDS.toolCallsPerRun;
   // Characters streamed to the caller so far: the stored reply keeps at most the bound of them.
@@ -562,6 +564,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   for (let step = 1; step <= input.maxSteps; step += 1) {
     const last = step === input.maxSteps;
     input.beforeStep?.(step);
+    if (forceFinal && input.finalTool && input.finalTool.name !== forcedFinalName) forceFinal = false;
     const choice = forceFinal && input.finalTool ? { name: input.finalTool.name } : input.toolChoice?.(step, last, { toolCalls, perRun, perStep });
     const named = typeof choice === "object" ? choice.name : null;
     const offer = !!input.tools && input.connection.compat.supportsTools && (named !== null || (!last && toolCalls < perRun));
@@ -623,6 +626,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     if (nudging) {
       nudges += 1;
       forceFinal = true;
+      forcedFinalName = final!.name;
       input.messages.push({ role: "assistant", content: reply.content }, { role: "user", content: final!.nudge });
       continue;
     }

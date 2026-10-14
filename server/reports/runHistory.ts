@@ -3,6 +3,7 @@ import { REPORT_LIMITS, type ReportRunHistoryItem, type ReportRunLog, type Repor
 import { ownedReport } from "./access";
 import { ReportError } from "./errors";
 import { abandonExpiredReportRuns, runView, type RunRow } from "./refresh";
+import { storedPlan } from "./planner";
 
 /**
  * The report's run history (the "Runs" panel): the owner's view of every run Nook keeps, each with
@@ -15,6 +16,7 @@ import { abandonExpiredReportRuns, runView, type RunRow } from "./refresh";
  */
 
 type HistoryRow = RunRow & {
+  plan_json?: string | null;
   author_name: string | null; model: string | null; provider_name: string | null; prompt_tokens: number | null; completion_tokens: number | null;
   tokens_estimated: number | null; cost_micros: number | null; tool_calls: number | null; instruction: string | null;
 };
@@ -81,6 +83,7 @@ export function runLog(reportId: string, runId: string, userId: string): ReportR
     run: itemOf(row),
     doc: doc ? { id: doc.id, title: doc.title, bytes: doc.bytes, sha256: doc.sha256, fetchedAt: doc.fetched_at } : null,
     steps: hasAudit ? stepRows.map(stepOf) : null,
+    plan: storedPlan(row.plan_json),
     queries
   };
 }

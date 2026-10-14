@@ -10,6 +10,7 @@ import { listRuns, reportResults, reportRun, runRow, runView, startRefresh } fro
 import { handle, id } from "./routes";
 import { getSchedule, saveSchedule } from "./scheduler";
 import { runHistory, runLog } from "./runHistory";
+import { storedPlan } from "./planner";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 47): what the viewer reads (each query's last
@@ -36,13 +37,16 @@ function snapshotInfo(reportId: string, snapshotId: string | null | undefined): 
 }
 
 /** A block's provenance: the run that made or last changed it and the doc snapshot it worked from (never the doc's text). */
-export function provenance(reportId: string, userId: string, input: { runId?: string | null; snapshotId?: string | null }): ProvenanceView {
+export function provenance(reportId: string, userId: string, input: { runId?: string | null; snapshotId?: string | null; blockId?: string | null; queryKey?: string | null }): ProvenanceView {
   const report = readableReport(reportId, userId);
   const run = input.runId ? runRow(input.runId) : null;
   const ownRun = run && run.report_id === reportId ? run : null;
   // Review L2: the doc (its snapshots' titles and hashes) and the agent run are the owner's.
   if (report.owner_id !== userId) return { run: ownRun ? forReader(runView(ownRun)) : null, snapshot: null };
-  return { run: ownRun ? runView(ownRun) : null, snapshot: snapshotInfo(reportId, input.snapshotId ?? ownRun?.doc_snapshot_id) };
+  // 2c: the plan todo that produced the block (by its block id, else its query key).
+  const plan = ownRun ? storedPlan((db.query("SELECT plan_json FROM report_runs WHERE id = ?").get(ownRun.id) as { plan_json: string | null } | null)?.plan_json) : null;
+  const todo = plan?.todos.find((item) => input.blockId && item.blockId === input.blockId) ?? plan?.todos.find((item) => input.queryKey && item.queryKey === input.queryKey) ?? null;
+  return { run: ownRun ? runView(ownRun) : null, snapshot: snapshotInfo(reportId, input.snapshotId ?? ownRun?.doc_snapshot_id), todo: todo ? { id: todo.id, title: todo.title, status: todo.status, note: todo.note } : null };
 }
 
 /** A run as a reader of a shared report sees it: no doc snapshot, no agent run (wave 48 review L2). */
@@ -83,7 +87,8 @@ export function registerReportViewRoutes(app: Hono<AppEnv>) {
     return { run: isOwner(reportId, userId) ? run : forReader(run) };
   }));
   app.get("/api/reports/:reportId/provenance", handle((c) => provenance(id(c, "reportId"), c.get("user").id, {
-    runId: optionalUuid(c.req.query("runId")), snapshotId: optionalUuid(c.req.query("snapshotId"))
+    runId: optionalUuid(c.req.query("runId")), snapshotId: optionalUuid(c.req.query("snapshotId")),
+    blockId: c.req.query("blockId")?.slice(0, 40) ?? null, queryKey: c.req.query("queryKey")?.slice(0, 40) ?? null
   })));
   app.get("/api/reports/:reportId/schedule", handle((c) => ({ schedule: getSchedule(id(c, "reportId"), c.get("user").id) })));
   app.put("/api/reports/:reportId/schedule", handle(async (c) => {

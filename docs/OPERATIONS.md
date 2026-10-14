@@ -530,6 +530,8 @@ A line reads `time LEVEL scope message key=value…`:
 | `info` | Every other request; startup (configuration summary without secrets, each migration with its time, `Listening`); shutdown; sign-in, sign-out, 2FA, key create and revoke; MCP tool calls; agent runs and each model step (tool names, tokens, time); report runs, generations, instructions, proposals, schedules, doc fetches, schema syncs, ClickHouse queries; uploads (size and type); mail and reminder counts; sweeper counts; knowledge indexing. |
 | `debug` | Health checks, the built client's files, single 401s and 404s, Nook's own ClickHouse statements, the SQL of console, report, and agent queries, and the `EXPLAIN QUERY TREE` line the guard could not parse (`Query tree line refused`, no data). |
 
+Report generation adds, in the `reports` scope: `Generation limits` (the doc's bytes, `sectioned` when it was over 60 KB, and the run's steps, queries, and tool calls), `Plan made` (todos, sections), `Coverage warning` (once, when a thin spec meets a rich doc), and `Plan finished` (todos, done, skipped, blocked).
+
 `LOG_LEVEL=debug` is for a short investigation: it prints query SQL, which can name columns and literal values.
 
 `LOG_FORMAT=json` writes one JSON object per line (`time`, `level`, `scope`, `msg`, then the fields) for a log shipper; an error's stack is in `err.stack`. In the default `pretty` format the stack follows the event on indented lines. Bun prints one plain `Started server: …` line of its own at boot.
@@ -606,9 +608,9 @@ curl http://localhost:2026/api/health
 
 Every image carries immutable numbered migrations under `server/migrations`. They run transactionally and are recorded in SQLite's `schema_migrations` table before the HTTP server accepts requests. New schema changes are always added as a new migration; released migrations are never edited.
 
-### Upgrading to the next release (analytics reports, migrations 050–053)
+### Upgrading to the next release (analytics reports, migrations 050–053 and 055)
 
-The next release adds the **Reports** module (analytics reports over ClickHouse). Its four migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.
+The next release adds the **Reports** module (analytics reports over ClickHouse). Its five migrations run once, in order, on the first boot, before the HTTP server answers; each is recorded in `schema_migrations` and none can be undone except by restoring a backup.
 
 | Migration | What it does | Cost |
 | --- | --- | --- |
@@ -616,6 +618,7 @@ The next release adds the **Reports** module (analytics reports over ClickHouse)
 | **051** `report_runs_via` | **Rebuilds the agent audit family**: `agent_runs` and every table that references it (`agent_audit_entries`, `agent_audit_steps`, `report_runs`, `report_results`), so `agent_runs.via` admits report generation runs; every row, index, and trigger is copied. | About **2× the size of those tables** in free disk while it runs (the copies plus SQLite's journal), and a **slow first boot** when the agent Audit log is large. |
 | **052** `report_instructions` | New tables only: `report_instructions`, `report_versions` (a first version is recorded for every report that has a spec), `report_members`, `report_group_shares`; adds `reports.auto_apply`. | Small. |
 | **053** `report_model` | **Rebuilds `agent_settings`** (its key CHECK gains `report_provider_id` and `report_model`), keeping every row; adds `reports.model_provider_id` and `reports.model`. | Small. |
+| **055** `report_run_plans` | Adds `report_runs.plan_json` (a generation's or edit's plan) and `reports.title_source` (where the title came from; existing reports read as typed, except those still titled "Untitled report"). 054 stays reserved for the Messages module. | Small. |
 
 Steps:
 

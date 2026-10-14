@@ -8,8 +8,10 @@ export const getResults = (id: string) => api<ReportResultsView>(`/reports/${id}
 export const refreshReport = (id: string, queryKey?: string) => api<{ run: ReportRun }>(`/reports/${id}/refresh`, { method: "POST", body: JSON.stringify(queryKey ? { queryKey } : {}) });
 export const getRun = (id: string, runId: string) => api<{ run: ReportRun }>(`/reports/${id}/runs/${runId}`);
 export const listRuns = (id: string) => api<RunHistoryView>(`/reports/${id}/runs`);
-export const getProvenance = (id: string, input: { runId?: string | null; snapshotId?: string | null }) => {
+export const getProvenance = (id: string, input: { runId?: string | null; snapshotId?: string | null; blockId?: string | null; queryKey?: string | null }) => {
   const params = new URLSearchParams();
+  if (input.blockId) params.set("blockId", input.blockId);
+  if (input.queryKey) params.set("queryKey", input.queryKey);
   if (input.runId) params.set("runId", input.runId);
   if (input.snapshotId) params.set("snapshotId", input.snapshotId);
   return api<ProvenanceView>(`/reports/${id}/provenance${params.size ? `?${params}` : ""}`);

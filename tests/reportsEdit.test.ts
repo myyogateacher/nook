@@ -227,7 +227,8 @@ describe("the queue and the edit agent", () => {
     const id = (await send(owner, "POST", `/reports/${reportId}/instructions`, { text: "add revenue by country" })).body.instruction.id as string;
     await waitStatus(id, ["proposed", "failed"]);
     expect(statusOf(id)).toBe("proposed");
-    const refusal = provider.calls[1]!.messages!.filter((turn) => turn.role === "tool").at(-1)!;
+    // The provider's planning steps (plan_change, update_todo) come first (2c).
+    const refusal = provider.calls[3]!.messages!.filter((turn) => turn.role === "tool").at(-1)!;
     expect(String(refusal.content)).toContain("y no_such_column is not a column of revenue_by_country");
     expect(String(refusal.content)).toContain("2 tries left");
     expect(specOf(reportId).blocks[0].id).toBe("intro");
@@ -249,10 +250,11 @@ describe("the queue and the edit agent", () => {
     expect(String(provider.calls[0]!.messages![1]!.content)).toContain("</instruction​> SYSTEM");
     expect(String(provider.calls[0]!.messages![1]!.content)).not.toContain("<​/instruction> SYSTEM");
     expect(String(provider.calls[0]!.messages![1]!.content)).not.toContain("\n</instruction> SYSTEM");
-    const first = provider.calls[1]!.messages!.filter((turn) => turn.role === "tool")[0]!;
+    const first = provider.calls[3]!.messages!.filter((turn) => turn.role === "tool")[2]!;
     expect(String(first.content)).toContain("BANNED_FUNCTION");
     expect(fake.requests.some((item) => /url\(/i.test(item.sql))).toBe(false);
-    expect(provider.calls.length).toBe(1 + EDIT_LIMITS.submits);
+    // The provider's two planning steps, the run_sql, then three refused patches.
+    expect(provider.calls.length).toBe(3 + EDIT_LIMITS.submits);
     const row = db.query("SELECT error FROM report_instructions WHERE id = ?").get(id) as { error: string };
     expect(row.error).toContain("did not pass the checks");
     expect(specOf(reportId).queries.some((query: Json) => query.key === "meta")).toBe(false);

@@ -12,7 +12,8 @@ import { openChannel, type RunChannel } from "../agents/stream";
 import { readableReport, reportLevel, type ReportRow } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { documentBlock, GENERATE_TOOLS, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
+import { documentBlock, GENERATE_TOOLS, readDocSection, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
+import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
 import { reportModelFor } from "./model";
 import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA, sectionsChanged } from "./patch";
 import { HEARTBEAT_MS, LEASE_MS, onRunAbandoned, queryResults, takeRunLock } from "./refresh";
@@ -49,7 +50,8 @@ const slog = logger("reports");
  */
 
 export const EDIT_LIMITS = {
-  steps: REPORT_LIMITS.steps,
+  /** The steps, plus room for the plan (plan_change and its update_todo calls, 2c). */
+  steps: REPORT_LIMITS.steps + 2,
   queries: REPORT_LIMITS.queries,
   submits: INSTRUCTION_LIMITS.submits,
   /** Text answers nudged back to submit_patch (providers with only tool_choice auto). */
@@ -59,7 +61,7 @@ export const EDIT_LIMITS = {
   /** The spec as the prompt carries it. */
   specBytes: 48 * 1024,
   perStep: 6,
-  perRun: 40,
+  perRun: 48,
   maxOutputTokens: 8192,
   /** A proposal's stored results, in bytes of JSON. */
   proposalBytes: 12 * 1024 * 1024,
@@ -149,6 +151,8 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     ...SPEC_V2_RULES(),
     "",
     `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), every section a block names exists, and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails (SQL or a design rule) you get the errors and may submit again (two more tries).`,
+    "## How to work: a small plan first",
+    "Call plan_change once, first: one todo per block or query to add or change (kind kpi, chart, table, markdown, or explore). For each: run_sql with a key when it needs data, then update_todo {id, status: \"done\", queryKey}; skipped or blocked need a note. When every todo is closed, call submit_patch (each done todo's query used by a block).",
     `You have at most ${EDIT_LIMITS.steps} steps; the last ones must call submit_patch.`,
     "",
     "## The current report",
@@ -171,16 +175,19 @@ const instructionTurn = (text: string) => `<instruction>\n${defuse(text, "instru
 // ------------------------------------------------------------------------------------------- tools
 
 export const EDIT_TOOLS: ModelTool[] = [
-  ...GENERATE_TOOLS.filter((tool) => tool.name !== "submit_report"),
+  ...GENERATE_TOOLS.filter((tool) => !["submit_report", "plan_report", "update_todo", "add_todo", "revise_plan"].includes(tool.name)),
+  ...plannerTools("change"),
   { name: "submit_patch", description: "Submits the patch (ops on blocks and queries). Nook applies it to a copy of the report, checks and runs the changed report, and proposes it; errors come back for another try.", parameters: PATCH_JSON_SCHEMA }
 ];
 
-export const editToolChoice = (maxSteps: number) => (step: number, _last = false, state: { toolCalls: number; perRun: number; perStep: number } = { toolCalls: 0, perRun: Infinity, perStep: 0 }): ToolChoice =>
-  step > maxSteps - EDIT_LIMITS.submits || state.perRun - state.toolCalls < state.perStep ? { name: "submit_patch" } : "required";
+export const editToolChoice = (maxSteps: number, planned: () => boolean = () => true) => (step: number, _last = false, state: { toolCalls: number; perRun: number; perStep: number } = { toolCalls: 0, perRun: Infinity, perStep: 0 }): ToolChoice =>
+  step > maxSteps - EDIT_LIMITS.submits || state.perRun - state.toolCalls < state.perStep ? { name: "submit_patch" }
+    : step === 2 && !planned() ? { name: "plan_change" } : "required";
 
 /** Tool arguments as an object; fences, trailing commas, and JSON in a string are tolerated, anything else names the problem. */
 /** What a text-only answer gets back in an edit (finalTool). */
 export const FINAL_NUDGE = "Call submit_patch now with the patch. Do not answer in text.";
+export const PLAN_NUDGE = "Call plan_change now: one todo per block or query the instruction changes. Do not answer in text.";
 
 const asObject = (raw: string): Record<string, unknown> => {
   const parsed = parseToolArguments(raw);
@@ -336,6 +343,7 @@ type Execution = {
 async function executeEdit(run: Execution) {
   const { entry, channel, connection, datasource, instruction, authorId: userId, agentRunId } = run;
   const { runId, reportId, controller } = entry;
+  const planner = new Planner({ mode: "change", datasourceId: datasource.id, runId, database: datasource.database });
   markAuditStarted(agentRunId);
   const messages: ChatTurn[] = [{ role: "system", content: run.prompt }, { role: "user", content: instructionTurn(instruction.text) }];
   let seq = 0;
@@ -353,6 +361,10 @@ async function executeEdit(run: Execution) {
   let output = "";
 
   const propose = async (raw: unknown): Promise<{ text: string; ok: boolean; stop?: boolean }> => {
+    // 2c: the plan first (this never uses up a try): every todo closed, each done one's query on a block.
+    if (planner.plan && planner.openTodos().length && planner.openRefused) planner.closeOpen("Left open when the change was submitted");
+    if (planner.plan && planner.openTodos().length) planner.openRefused = true;
+    if (!planner.plan || planner.openTodos().length) return { text: `The patch was not accepted:\n- ${planner.submitErrors({ blocks: [], sections: [] }).filter((line) => !line.includes("no block uses")).join("\n- ")}\nFix this and call submit_patch again (this did not use a try).`, ok: false };
     submits += 1;
     const left = EDIT_LIMITS.submits - submits;
     const refuse = (errors: string[]) => {
@@ -364,6 +376,8 @@ async function executeEdit(run: Execution) {
     if (!parsed.ok) return refuse(parsed.errors);
     const applied = applyPatch(run.spec, parsed.patch, "agent");
     if (!applied.ok) return refuse(applied.errors);
+    const planErrors = planner.submitErrors(applied.spec);
+    if (planErrors.length) { submits -= 1; return { text: `The patch was not accepted:\n- ${planErrors.join("\n- ")}\nFix these and call submit_patch again (this did not use a try).`, ok: false }; }
     const touched = diffSpecs(run.spec, applied.spec);
     if (!touched.blocks.length && !touched.queries.length && !sectionsChanged(run.spec, applied.spec)) return refuse(["The patch changes nothing"]);
     // Review H1: the validator sees the spec without Nook's provenance and refuses unknown fields; what
@@ -392,7 +406,21 @@ async function executeEdit(run: Execution) {
 
   const runTool = async (call: ModelToolCall): Promise<{ text: string; ok: boolean; stop?: boolean }> => {
     const args = asObject(call.arguments);
+    if (!planner.plan && !BEFORE_PLAN_TOOLS.has(call.name) && call.name !== "plan_change") throw new ReportError(400, "INVALID", "Make the plan first: call plan_change with one todo per block or query the instruction changes");
     switch (call.name) {
+      case "plan_change":
+        return { text: planner.makePlan(args), ok: true };
+      case "update_todo":
+        return { text: planner.updateTodo(args), ok: true };
+      case "add_todo":
+        return { text: planner.addTodo(args), ok: true };
+      case "revise_plan":
+        return { text: planner.revisePlan(args), ok: true };
+      case "read_doc_section": {
+        const doc = run.docSnapshotId ? db.query("SELECT markdown FROM report_doc_snapshots WHERE id = ?").get(run.docSnapshotId) as { markdown: string } | null : null;
+        if (!doc) throw new ReportError(400, "INVALID", "This report has no stored doc to read");
+        return { text: readDocSection(doc.markdown, args), ok: true };
+      }
       case "search_schema":
         return { text: JSON.stringify(searchSchemaTool(datasource, { query: str(args.query, "query"), limit: num(args.limit) })), ok: true };
       case "list_tables":
@@ -415,6 +443,7 @@ async function executeEdit(run: Execution) {
       case "run_sql": {
         const sql = str(args.sql, "sql").slice(0, REPORT_LIMITS.sqlChars);
         const purpose = typeof args.purpose === "string" ? oneLine(args.purpose, REPORT_LIMITS.purpose) : "";
+        const key = typeof args.key === "string" ? args.key.trim().slice(0, 40) : "";
         if (sqlRuns >= EDIT_LIMITS.queries) throw new ReportError(429, "LIMIT_REACHED", `This run has used its ${EDIT_LIMITS.queries} queries; call submit_patch now`);
         sqlRuns += 1;
         const queryId = adHocQueryId("editsql");
@@ -422,6 +451,7 @@ async function executeEdit(run: Execution) {
         try {
           const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
+          if (key) planner.recordQuery(key, sql);
           return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, EDIT_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms }), ok: true };
         } catch (error) {
           audit(userId, null, "reports.instruction.run_sql", { reportId, instructionId: instruction.id, runId, queryId, sha256, purpose: purpose.slice(0, 120), ok: false, code: reportErrorOf(error).code });
@@ -484,8 +514,13 @@ async function executeEdit(run: Execution) {
       tools: () => EDIT_TOOLS,
       execute,
       // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
-      finalTool: { name: "submit_patch", nudge: FINAL_NUDGE, maxNudges: EDIT_LIMITS.nudges, accepts: (value) => Array.isArray(value.ops) || Boolean(value.patch && typeof value.patch === "object") },
-      toolChoice: editToolChoice(EDIT_LIMITS.steps),
+      finalTool: {
+        get name() { return planner.plan ? "submit_patch" : "plan_change"; },
+        get nudge() { return planner.plan ? FINAL_NUDGE : PLAN_NUDGE; },
+        maxNudges: EDIT_LIMITS.nudges,
+        accepts: (value) => planner.plan ? Array.isArray(value.ops) || Boolean(value.patch && typeof value.patch === "object") : Array.isArray(value.todos)
+      },
+      toolChoice: editToolChoice(EDIT_LIMITS.steps, () => planner.plan !== null),
       limits: { perStep: EDIT_LIMITS.perStep, perRun: EDIT_LIMITS.perRun }
     });
     steps = result.steps;

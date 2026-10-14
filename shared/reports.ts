@@ -407,6 +407,8 @@ export type ReportRunLog = {
   doc: { id: string; title: string | null; bytes: number; sha256: string; fetchedAt: string } | null;
   /** The agent run's timeline; null when there was none (a refresh) or the audit retention purged it. */
   steps: ReportRunStep[] | null;
+  /** A generate or edit run's plan (2c) with its final statuses; null for a refresh or an older run. */
+  plan: import("./reportsGenerate").RunPlan | null;
   /** A refresh's per-query outcome. */
   queries: Array<{ key: string; ms: number | null; rows: number; truncated: boolean; rowsRead: number | null; errorCode: string | null; error: string | null; sql: string }>;
 };

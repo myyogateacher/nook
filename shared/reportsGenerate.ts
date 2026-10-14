@@ -23,7 +23,7 @@ export type DocState = {
 export type GenerateStarted = { report: ReportDetail; run: { id: string; agentRunId: string; docSnapshotId: string; docChanged: boolean } };
 
 /** `GET /api/reports/:id/generation`: the latest generation run. */
-export type GenerationRun = { id: string; agentRunId: string | null; status: RunStatus; error: string | null; docSnapshotId: string | null; startedAt: string; finishedAt: string | null };
+export type GenerationRun = { id: string; agentRunId: string | null; status: RunStatus; error: string | null; docSnapshotId: string | null; startedAt: string; finishedAt: string | null; /** The run's plan (2c), the owner's only. */ plan?: RunPlan | null };
 
 /** Generation error codes the UI explains: MCP_AUTH means an admin must reconnect the tool server. */
 /**
@@ -41,3 +41,19 @@ export const GENERATE_ERROR_HINTS: Record<string, string> = {
   RUN_IN_PROGRESS: "This report is already being refreshed or generated.",
   BUSY: "You are already generating a report; wait for it to finish."
 };
+
+/**
+ * The planner (plan_report / plan_change): the run's goal, sections, and todos. The agent plans after
+ * reading the doc, works through each todo (run_sql with a key, then update_todo done with that key),
+ * and submits only when every todo is done, skipped, or blocked. Kept on the run (report_runs.plan_json).
+ */
+export const PLAN_TODO_KINDS = ["kpi", "chart", "table", "markdown", "explore"] as const;
+export type PlanTodoKind = typeof PLAN_TODO_KINDS[number];
+export const PLAN_TODO_STATUSES = ["open", "in_progress", "done", "skipped", "blocked"] as const;
+export type PlanTodoStatus = typeof PLAN_TODO_STATUSES[number];
+export type PlanTodo = {
+  id: string; title: string; kind: PlanTodoKind; section: string | null; metric: string | null; docRef: string | null; tables: string[]; intent: string | null;
+  status: PlanTodoStatus; note: string | null; queryKey: string | null; blockId: string | null;
+};
+export type RunPlan = { goal: string; sections: Array<{ id: string; title: string }>; todos: PlanTodo[]; added: number };
+export const PLAN_LIMITS = { todos: 24, added: 8, title: 160, note: 300, goal: 300, sections: 10 } as const;

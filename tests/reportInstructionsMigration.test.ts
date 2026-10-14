@@ -112,11 +112,12 @@ describe("migration 052 report_instructions", () => {
     expect(String((db.query("SELECT sql FROM sqlite_master WHERE name = 'agent_runs'").get() as { sql: string }).sql)).toContain("'reports'");
     expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
     expect(db.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
-    // Everything is applied: a later run changes nothing.
+    // Everything is applied (055, which came later, too): a later run changes nothing.
+    runMigrations(db);
     const schema = db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all();
     runMigrations(db);
     expect(db.query("SELECT name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name").all()).toEqual(schema);
-    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 49 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([49, 50, 51, 52, 53]);
+    expect((db.query("SELECT id FROM schema_migrations WHERE id >= 49 ORDER BY id").all() as Array<{ id: number }>).map((row) => row.id)).toEqual([49, 50, 51, 52, 53, 55]);
   });
 
   test("a full migration run from scratch includes 052", () => {

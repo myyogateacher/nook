@@ -292,6 +292,35 @@ const frame = (data: unknown) => encoder.encode(`data: ${JSON.stringify(data)}\n
  * `toolsNeedEffort`: like some newer OpenAI models in Chat Completions, a request with tools is refused
  * (400) unless its reasoning_effort is one of these (env FAKE_PROVIDER_TOOLS_NEED_EFFORT=none,minimal).
  */
+const PLANNER_TOOLS = new Set(["plan_report", "plan_change", "update_todo", "add_todo", "revise_plan"]);
+const calledTools = (context: ScriptContext) => (context.body.messages ?? []).flatMap((turn) => turn.role === "assistant" ? (turn.tool_calls ?? []).map((call) => call.function?.name ?? "") : []);
+
+/** A script the provider runs as written, without the planning steps it adds to the others (planner tests). */
+export const unplanned = (script: Script): Script => Object.assign(script, { unplanned: true });
+
+/**
+ * The planner (2c) wants plan_report / plan_change first and every todo closed before the final submit.
+ * Scripts written before it (and the QA scripts) are wrapped: when the run offers a plan tool, the first
+ * step plans one markdown todo ("Build what was asked") and the second closes it, without consulting the
+ * script; the script then runs with its own step count (those two turns left out). A script marked
+ * `unplanned` runs as written (planner tests).
+ */
+export function withAutoPlan(script: Script, context: ScriptContext): ScriptReply {
+  if ((script as Script & { unplanned?: boolean }).unplanned) return script(context);
+  const planTool = context.tools.includes("plan_report") ? "plan_report" : context.tools.includes("plan_change") ? "plan_change" : null;
+  const called = calledTools(context);
+  const forcedOther = context.forced !== null && context.forced !== planTool && context.forced !== "update_todo";
+  if (planTool && !forcedOther && !called.includes(planTool)) {
+    return { toolCalls: [{ name: planTool, arguments: { goal: "Build what the document or instruction asks for", todos: [{ id: "build", title: "Build what was asked", kind: "markdown" }] } }] };
+  }
+  if (planTool && !forcedOther && context.tools.includes("update_todo") && !called.includes("update_todo")) {
+    return { toolCalls: [{ name: "update_todo", arguments: { id: "build", status: "done" } }] };
+  }
+  // The script counts its own steps: the turns this wrapper added are left out of `step`.
+  const added = (context.body.messages ?? []).filter((turn) => turn.role === "assistant" && turn.tool_calls?.length && turn.tool_calls.every((call) => PLANNER_TOOLS.has(call.function?.name ?? ""))).length;
+  return script({ ...context, step: context.step - added });
+}
+
 export type ToolChoiceMode = { rejectRequired?: boolean; rejectNamed?: boolean; toolsNeedEffort?: string[] };
 
 export function startScriptedProvider(port: number, initial: Script = qaScript, options: { delayMs?: number } & ToolChoiceMode = {}): ScriptedProvider {
@@ -326,7 +355,7 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
         lastTool: lastToolTurn ? { name: callName(lastToolTurn.tool_call_id), content: text(lastToolTurn.content) } : null, forced, tools: (body.tools ?? []).map((tool) => tool.function.name)
       };
       let reply: ScriptReply;
-      try { reply = script(context); } catch (error) { reply = { status: 500, content: error instanceof Error ? error.message : "script failed" }; }
+      try { reply = withAutoPlan(script, context); } catch (error) { reply = { status: 500, content: error instanceof Error ? error.message : "script failed" }; }
       if (reply.status) return Response.json({ error: { message: reply.content ?? "Scripted failure", type: "server_error" } }, { status: reply.status });
       // QA: a pause before each reply, so the step list can be watched.
       if (options.delayMs) await Bun.sleep(options.delayMs);

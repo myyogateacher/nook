@@ -50,6 +50,7 @@ import { reportsMigration } from "./050_reports";
 import { reportRunsViaMigration } from "./051_report_runs_via";
 import { reportInstructionsMigration } from "./052_report_instructions";
 import { reportModelMigration } from "./053_report_model";
+import { reportRunPlansMigration } from "./055_report_run_plans";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -127,7 +128,10 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   reportInstructionsMigration,
   // 053 (reports wave 48b: reports.model_provider_id and reports.model, a report's own generation model)
   // needs 050 and runs after 052. The Messages module moves to 054.
-  reportModelMigration
+  reportModelMigration,
+  // 055 (reports: report_runs.plan_json, the generation planner's plan; reports.title_source) needs 050.
+  // 054 stays reserved for the Messages module, and the doc-browse migration takes 056.
+  reportRunPlansMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

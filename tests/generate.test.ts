@@ -3,10 +3,10 @@ import { createUser, db, request, type Session } from "./support/harness";
 import { startFakeClickhouse, generatedTables, type FakeAnswer } from "./support/fakeClickhouse";
 import { retireUsersAfterFile } from "./support/retireUsers";
 import { startFakeDocMcp } from "../scripts/fakeDocMcp";
-import { qaScript, qaSpec, startScriptedProvider, type Script } from "../scripts/fakeReportProvider";
+import { qaScript, qaSpec, startScriptedProvider, unplanned, type Script } from "../scripts/fakeReportProvider";
 import { DEFAULT_COMPAT } from "../shared/agents";
 
-const { generateDeps, liveGenerations, startingGenerations, GENERATE_LIMITS } = await import("../server/reports/generate");
+const { generateDeps, liveGenerations, startingGenerations, GENERATE_LIMITS, generateLimitsFor } = await import("../server/reports/generate");
 const { persistGenerated, PersistRefused } = await import("../server/reports/specValidate");
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { readAgentSettings } = await import("../server/agents/settings");
@@ -154,10 +154,10 @@ describe("generate", () => {
 
     // The agent run: via reports, no key, frozen, with its steps; the run_sql audit has a hash, never the SQL.
     const agentRun = db.query("SELECT via, key_id, chat_id, status, steps, tool_calls, finished_at FROM agent_runs WHERE id = ?").get(run.agentRunId) as Json;
-    expect(agentRun).toMatchObject({ via: "reports", key_id: null, chat_id: null, status: "ok", steps: 5, tool_calls: 5 });
+    expect(agentRun).toMatchObject({ via: "reports", key_id: null, chat_id: null, status: "ok", steps: 7, tool_calls: 7 });
     const toolSteps = db.query("SELECT tool_name, ok FROM agent_audit_steps WHERE run_id = ? AND kind = 'tool' ORDER BY seq").all(run.agentRunId);
     expect(toolSteps).toEqual([
-      { tool_name: "search_schema", ok: 1 }, { tool_name: "describe_tables", ok: 1 }, { tool_name: "run_sql", ok: 1 }, { tool_name: "submit_report", ok: 0 }, { tool_name: "submit_report", ok: 1 }
+      { tool_name: "plan_report", ok: 1 }, { tool_name: "update_todo", ok: 1 }, { tool_name: "search_schema", ok: 1 }, { tool_name: "describe_tables", ok: 1 }, { tool_name: "run_sql", ok: 1 }, { tool_name: "submit_report", ok: 0 }, { tool_name: "submit_report", ok: 1 }
     ]);
     const sqlAudit = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'reports.generate.run_sql' AND metadata_json LIKE ?").get(`%${run.id}%`) as { metadata_json: string };
     expect(JSON.parse(sqlAudit.metadata_json)).toMatchObject({ ok: true, rows: 3 });
@@ -179,7 +179,8 @@ describe("generate", () => {
     const started = await generate(member, { title: "Forced" });
     expect(started.status).toBe(202);
     expect((await waitForRun(started.body.run.id)).status).toBe("succeeded");
-    const firstForced = GENERATE_LIMITS.steps - GENERATE_LIMITS.submits + 1;
+    // The steps grow by the planner's room (2c) and with the doc's size (2b; this doc is short).
+    const firstForced = generateLimitsFor(0).steps - GENERATE_LIMITS.submits + 1;
     expect(provider.calls.length).toBe(firstForced);
     expect(provider.calls.slice(0, firstForced - 1).every((body) => body.tool_choice === "required")).toBe(true);
     const forced = provider.calls.at(-1)!;
@@ -197,7 +198,9 @@ describe("generate", () => {
     const finished = await waitForRun(started.body.run.id);
     expect(finished.status).toBe("failed");
     expect(finished.error).toContain("queryKey missing is not one of the spec's queries");
-    expect(provider.calls.length).toBe(GENERATE_LIMITS.submits);
+    // The plan and the todo's close come first (2c), then the coverage warning for a one-chart spec of a
+    // three-metric doc (2b, once, no try used), then the three tries.
+    expect(provider.calls.length).toBe(GENERATE_LIMITS.submits + 3);
     const detail = (await send(member, "GET", `/reports/${started.body.report.id}`)).body.report;
     expect(detail).toMatchObject({ status: "error", spec: { blocks: [] } });
     expect(detail.lastError).toContain("did not pass the checks");
@@ -551,19 +554,22 @@ describe("auto-only providers: a text answer is nudged, recovered, or fails clea
     const { run } = await autoOnly(() => ({ content: "I would rather describe the report in words." }));
     expect(run.status).toBe("failed");
     expect(run.error).toContain("did not call submit_report after 2 nudges");
-    expect(provider.calls.length).toBe(3);
+    // The provider's two planning steps, then three texts.
+    expect(provider.calls.length).toBe(5);
   });
 
   test("malformed arguments are repaired (a json fence, trailing commas, JSON inside a string); unparseable ones come back as a named error", async () => {
     const fenced = `\`\`\`json\n${JSON.stringify(qaSpec()).replace(/\]\}$/, "],}")}\n\`\`\``;
     let call = 0;
-    const { run } = await autoOnly(() => {
+    const { run } = await autoOnly(unplanned(() => {
       call += 1;
-      if (call === 1) return { toolCalls: [{ name: "submit_report", arguments: "{\"blocks\": [" }] };
+      if (call === 1) return { toolCalls: [{ name: "plan_report", arguments: { goal: "Revenue", todos: [{ id: "build", title: "Build it", kind: "markdown" }] } }] };
+      if (call === 2) return { toolCalls: [{ name: "submit_report", arguments: "{\"blocks\": [" }] };
+      if (call === 3) return { toolCalls: [{ name: "update_todo", arguments: { id: "build", status: "done" } }] };
       return { toolCalls: [{ name: "submit_report", arguments: JSON.stringify(fenced) }] };
-    });
+    }));
     expect(run).toEqual({ status: "succeeded", error: null });
-    const refusal = provider.calls[1]!.messages!.filter((turn) => turn.role === "tool").at(-1)!;
+    const refusal = provider.calls[2]!.messages!.filter((turn) => turn.role === "tool").at(-1)!;
     expect(String(refusal.content)).toContain("The arguments are not valid JSON (");
   });
 });

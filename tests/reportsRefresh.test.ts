@@ -293,7 +293,7 @@ describe("review fixes", () => {
     expect((await send(owner, "GET", `/reports/${other}/runs/${run.id}`)).status).toBe(404);
     const crossed = await send(owner, "GET", `/reports/${other}/provenance?runId=${run.id}`);
     expect(crossed.status).toBe(200);
-    expect(crossed.body).toEqual({ run: null, snapshot: null });
+    expect(crossed.body).toEqual({ run: null, snapshot: null, todo: null });
     expect((await send(owner, "GET", `/reports/${reportId}/provenance?runId=${run.id}`)).body.run.id).toBe(run.id);
     // Someone else's report, with a valid run id: 404.
     expect((await send(stranger, "GET", `/reports/${reportId}/provenance?runId=${run.id}`)).status).toBe(404);

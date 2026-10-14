@@ -106,6 +106,7 @@ describe("Settings polish", () => {
       setAttribute: (name: string, value: string) => attributes.set(name, value),
       removeAttribute: (name: string) => attributes.delete(name),
       addEventListener: (_type: string, listener: () => void) => listeners.push(listener),
+      removeEventListener: () => undefined,
       focus: () => { focused += 1; }
     } as unknown as HTMLElement;
     const { focusFromScript, lastInputWasKeyboard } = await import("../src/ui/scriptFocus");

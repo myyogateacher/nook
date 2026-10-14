@@ -5,7 +5,7 @@
 //
 // The rule (v0.31 follow-up): the ring shows when the move followed a key press (a keyboard user, who
 // needs to see where focus went), and not after a pointer or touch, or before any input at all.
-// styles.css hides the outline on `[data-script-focus]:focus`; the mark goes on blur.
+// styles.css hides the outline on `[data-script-focus]:focus`; the mark goes when focus moves elsewhere.
 
 let keyboard = false;
 if (typeof window !== "undefined") {
@@ -22,7 +22,15 @@ export function focusFromScript(element: HTMLElement | null | undefined, options
   if (lastInputWasKeyboard()) element.removeAttribute("data-script-focus");
   else {
     element.setAttribute("data-script-focus", "");
-    element.addEventListener("blur", () => element.removeAttribute("data-script-focus"), { once: true });
+    // The window losing focus (another app, a screenshot tool) blurs the element too, but it is still
+    // the active element and is focused again on return, where Chrome's :focus-visible would then show
+    // the ring: the mark stays until focus really moves elsewhere.
+    const clear = () => {
+      if (typeof document !== "undefined" && document.activeElement === element) return;
+      element.removeAttribute("data-script-focus");
+      element.removeEventListener("blur", clear);
+    };
+    element.addEventListener("blur", clear);
   }
   element.focus(options);
 }

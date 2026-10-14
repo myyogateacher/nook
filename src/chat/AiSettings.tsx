@@ -132,7 +132,7 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
         const probe = probes[provider.id];
         return <li key={provider.id} className="security-card ai-provider">
           <div className="ai-provider-head">
-            <div><strong>{provider.name}</strong>{provider.isDefault && <span className="ai-badge">Default</span>}<small>{provider.baseUrl}</small></div>
+            <div><span className="ai-provider-name"><strong>{provider.name}</strong>{provider.isDefault && <span className="ai-badge">Default</span>}</span><small>{provider.baseUrl}</small></div>
             <div className="ai-provider-actions">
               <button type="button" className="secondary-button" onClick={() => { void test(provider); }} disabled={result === "running"}>{result === "running" ? "Testing…" : "Test"}</button>
               <button type="button" className="secondary-button" onClick={() => { void probeTools(provider); }} disabled={probe === "running"}>{probe === "running" ? "Testing tools…" : "Test tool calling"}</button>

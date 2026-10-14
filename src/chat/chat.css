@@ -159,6 +159,10 @@
 .ai-provider { display: grid; gap: 12px; }
 .ai-provider-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .ai-provider-head > div:first-child { display: grid; gap: 2px; min-width: 0; }
+/* The name and its Default badge on one row, the URL below; the badge keeps its text's width. */
+.ai-provider-name { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ai-provider-name strong { overflow-wrap: anywhere; }
+.ai-provider-name .ai-badge { margin-left: 0; flex: none; }
 .ai-provider-head small { color: #8d8d94; font-size: .8rem; overflow-wrap: anywhere; }
 .ai-badge { display: inline-block; margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #1f1d16; color: #f3ce79; font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .ai-provider-actions { display: flex; flex-wrap: wrap; gap: 6px; }

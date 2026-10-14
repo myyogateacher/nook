@@ -5,6 +5,7 @@ import { createUser, db, origin, request, type Session } from "./support/harness
 import { call, newSecret, newVault, resetVaultLimits, setRole, share, unlock, type TestVault } from "./support/vault";
 import { withinOneWindow } from "./support/clock";
 import { registeredMigrationIds, runMigrations } from "../server/migrations";
+import { HEAVY_TEST_TIMEOUT_MS } from "./support/cpuTime";
 
 const { createApiKey, resetKeyDenialsForTests } = await import("../server/apiKeys");
 const { resetKeyRouteLimits } = await import("../server/keyRoutes");
@@ -702,7 +703,7 @@ describe("review 27: migration 038", () => {
     const columns = (late.query("PRAGMA table_info(mcp_api_keys)").all() as Array<{ name: string }>).map((row) => row.name);
     expect(columns).toContain("vault_protected_access");
     late.close();
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 });
 
 // ------------------------------------------------------------------------------------------------

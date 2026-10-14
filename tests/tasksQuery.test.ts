@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
+import { HEAVY_TEST_TIMEOUT_MS } from "./support/cpuTime";
 
 const { resetTaskQueryRateLimit, TASK_QUERY_RATE_LIMIT } = await import("../server/tasks/queryRoutes");
 const { dateInZone, addDays } = await import("../server/today/registry");
@@ -277,7 +278,7 @@ describe("POST /api/tasks/query: paging, sorting, grouping, limits", () => {
     const dated = byDue.map((item) => item.due_on);
     expect(dated.indexOf(null)).toBeGreaterThan(0);
     expect(dated.slice(dated.indexOf(null)).every((value) => value === null)).toBe(true);
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   test("a cursor only continues its own query", async () => {
     const owner = await createUser("Cursor");

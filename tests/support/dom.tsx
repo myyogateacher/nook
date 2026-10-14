@@ -126,7 +126,8 @@ export async function render(node: ReactNode): Promise<Rendered> {
       await act(async () => { (element as HTMLElement).click(); });
       await settle();
     },
-    waitFor: async (check, timeout = 2000) => {
+    // The deadline only matters when the condition never holds; a loaded host needed more than 2 s.
+    waitFor: async (check, timeout = 10_000) => {
       const deadline = Date.now() + timeout;
       let lastError: unknown = null;
       for (;;) {

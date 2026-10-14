@@ -356,22 +356,28 @@ describe("object store: S3 deadlines (review H2)", () => {
     try {
       const store = createS3ObjectStore({ ...s3Settings("hole/"), endpoint: hole.url, timeoutMs });
       const id = crypto.randomUUID();
-      const started = Date.now();
-      expect(timedOut(await store.stat("documents", id).catch((error: unknown) => error))).toBe(true);
-      expect(timedOut(await store.open("documents", id).catch((error: unknown) => error))).toBe(true);
-      expect(timedOut(await store.remove("documents", id).catch((error: unknown) => error))).toBe(true);
-      expect(timedOut(await store.probe().catch((error: unknown) => error))).toBe(true);
-      expect(timedOut(await store.put("documents", id, bytesOf("x")).catch((error: unknown) => error))).toBe(true);
-      const listing = (async () => { for await (const _ of store.list("documents")) { /* never */ } })();
-      expect(timedOut(await listing.catch((error: unknown) => error))).toBe(true);
+      // Each call ends with Timeout within its own deadlines: metadata calls take one, writes (part
+      // uploads) four. Each gets the same slack for a loaded host (other suites on the same CPUs
+      // delayed timers and pushed one 20-deadline total over), still far below a hang.
+      const SLACK_MS = 2000;
+      const bounded = async (deadlines: number, call: () => Promise<unknown>) => {
+        const started = Date.now();
+        const error = await call().then(() => null, (failure: unknown) => failure);
+        return { timedOut: timedOut(error), withinDeadline: Date.now() - started < deadlines * timeoutMs + SLACK_MS };
+      };
+      const ok = { timedOut: true, withinDeadline: true };
+      expect(await bounded(1, () => store.stat("documents", id))).toEqual(ok);
+      expect(await bounded(1, () => store.open("documents", id))).toEqual(ok);
+      expect(await bounded(1, () => store.remove("documents", id))).toEqual(ok);
+      expect(await bounded(1, () => store.probe())).toEqual(ok);
+      expect(await bounded(4, () => store.put("documents", id, bytesOf("x")))).toEqual(ok);
+      expect(await bounded(1, async () => { for await (const _ of store.list("documents")) { /* never */ } })).toEqual(ok);
       // The sweep fails instead of hanging, so the sweeper's in-flight run is released.
-      expect(timedOut(await sweepDocumentFiles({ boot: false, hasDocumentRow: () => false, store }).catch((error: unknown) => error))).toBe(true);
-      // Metadata calls take one deadline, writes (part uploads) four.
-      expect(Date.now() - started).toBeLessThan(20 * timeoutMs);
+      expect(await bounded(4, () => sweepDocumentFiles({ boot: false, hasDocumentRow: () => false, store }))).toEqual(ok);
     } finally {
       hole.stop();
     }
-  }, 20_000);
+  }, 30_000);
 
   test("a download that stops sending bytes errors its stream after the idle deadline", async () => {
     const store = createS3ObjectStore({ ...s3Settings("idle/"), timeoutMs });

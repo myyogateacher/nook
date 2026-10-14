@@ -253,7 +253,10 @@ describe("tool servers (admin, §4.1, D349, D354)", () => {
   test("the catalog lists servers by availability and the agent's picks are validated", async () => {
     const catalog = await api(member, "GET", "/agents/catalog");
     expect(catalog.status).toBe(200);
-    expect(catalog.body.catalog.servers.map((server: { id: string }) => server.id)).toEqual([serverId]);
+    // Tool servers other files left enabled for everyone are listed too (the suite shares one database):
+    // this file's checks look at its own server.
+    const ids = (body: { catalog: { servers: Array<{ id: string }> } }) => body.catalog.servers.map((server) => server.id);
+    expect(ids(catalog.body)).toContain(serverId);
     expect(catalog.body.catalog.nook.linked).toBe(false);
     // Wave 41 QA Q4: without a live key the picker lists none of Nook's tools.
     expect(catalog.body.catalog.nook.tools).toEqual([]);
@@ -284,7 +287,7 @@ describe("tool servers (admin, §4.1, D349, D354)", () => {
     // Hidden from members once the admin limits the server to admins.
     const row = (await api(admin, "GET", `/agents/admin/servers/${serverId}`)).body.server;
     expect((await api(admin, "PATCH", `/agents/admin/servers/${serverId}`, { availability: "admins", expectedRevision: row.revision })).status).toBe(200);
-    expect((await api(member, "GET", "/agents/catalog")).body.catalog.servers).toEqual([]);
+    expect(ids((await api(member, "GET", "/agents/catalog")).body)).not.toContain(serverId);
     const back = (await api(admin, "GET", `/agents/admin/servers/${serverId}`)).body.server;
     expect((await api(admin, "PATCH", `/agents/admin/servers/${serverId}`, { availability: "all", expectedRevision: back.revision })).status).toBe(200);
   });

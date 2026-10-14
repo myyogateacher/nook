@@ -24,3 +24,11 @@ export async function cpuMsAsync(work: () => Promise<unknown>) {
   const used = process.cpuUsage(before);
   return (used.user + used.system) / 1000;
 }
+
+/**
+ * Per-test timeout for a test that does a second or more of CPU work unloaded (a migration run on a
+ * fresh database, thousands of rows, 10 KB inputs through every template). Bun's 5 s default left
+ * them no room when several suites shared the CPUs (load average 15-20 stretched them past 6 s).
+ * Only for such tests; a test that waits on something waits on its condition instead.
+ */
+export const HEAVY_TEST_TIMEOUT_MS = 20_000;

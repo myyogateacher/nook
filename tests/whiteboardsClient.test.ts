@@ -385,6 +385,9 @@ describe("QA F1: sending kept drawings never depends on one event", () => {
     const doc = { ...target, visibilityState: "hidden" as DocumentVisibilityState };
     const fire = (name: string) => { for (const listener of [...(listeners.get(name) ?? [])]) listener(); };
     let runs = 0;
+    // The "last request failed" flag lives in src/api.ts for the whole process: an earlier file's 5xx or
+    // network failure would make this test's first success count as a recovery. Clear it first.
+    noteRequestOutcome(true);
     const remove = installSyncTriggers(target as never, doc as never, () => { runs += 1; }, onApiRecovered);
     fire("online");
     expect(runs).toBe(1);

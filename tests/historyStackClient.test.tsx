@@ -89,14 +89,36 @@ const topDialog = () => [...document.querySelectorAll('[role="dialog"]')].at(-1)
 
 const { act } = await import("react");
 
-/** The browser's Back or Forward: the move, any step back off a dead entry, and React's commits. */
+/**
+ * The browser's Back or Forward: the move, any step back off a dead entry, and React's commits.
+ * It waits on the popstate events themselves, not on a fixed sleep (a loaded host delivered them
+ * late): the move's own, then more for as long as the app keeps stepping (a dead entry), until a
+ * quiet window passes. A Forward with nothing ahead fires none and ends after NO_MOVE_MS.
+ */
+const NO_MOVE_MS = 1000;
+const QUIET_MS = 30;
 async function browser(view: Rendered, move: "back" | "forward") {
-  await act(async () => {
-    if (move === "back") window.history.back();
-    else window.history.forward();
-    await Bun.sleep(40);
+  let pops = 0;
+  let popped: () => void = () => undefined;
+  const onPop = () => { pops += 1; popped(); };
+  const nextPop = (ms: number) => new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    popped = () => { clearTimeout(timer); resolve(true); };
   });
-  await act(async () => { await Bun.sleep(20); });
+  window.addEventListener("popstate", onPop);
+  try {
+    await act(async () => {
+      const first = nextPop(NO_MOVE_MS);
+      if (move === "back") window.history.back();
+      else window.history.forward();
+      if (!(await first) && pops === 0) return;
+      // The app may step again (off a dead entry): wait until it stops.
+      while (await nextPop(QUIET_MS)) { /* another step */ }
+    });
+    await act(async () => { await Bun.sleep(0); });
+  } finally {
+    window.removeEventListener("popstate", onPop);
+  }
   await view.waitFor(() => true);
 }
 

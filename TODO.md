@@ -45,7 +45,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.
-- [ ] (Lane G, after lane H3 lands) Make `tests/historyStackClient.test.tsx` (D478) load-tolerant: lane F saw a test take 2.4 s under load average 15–22. Left alone while lane H changes the file.
+- [ ] (Lane H, seen by lane G) `src/historyDialogs.ts` keeps its guards, sentinels, and reopen slots in module state with no test reset, so one client test that fails mid-way (a dialog never unmounted) cascades into later pure tests in the same run (`calendarSheetHistory`, `sprintCompleteNesting` failed at 1 ms after `reportsVersionsClient` timed out under load). A `resetHistoryDialogsForTests()` called from `tests/support/dom.tsx` afterEach would contain it.
 
 ## Standing rules for agent briefs
 

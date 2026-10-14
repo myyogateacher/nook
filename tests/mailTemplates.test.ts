@@ -7,6 +7,7 @@ import { appLink, DOCS_URL, paths, setMailOriginForTests } from "../server/mail/
 import { previewFixtures, renderTemplate, TEMPLATES } from "../server/mail/registry";
 import { darkPreview, fixtureContext, registerMailPreviewRoutes, renderFixture } from "../server/mail/preview";
 import { parseRoute } from "../src/router";
+import { HEAVY_TEST_TIMEOUT_MS } from "./support/cpuTime";
 
 /**
  * Mail templates (docs/plan/research/2026-09-28-outbound-email.md §C, §F.2): golden files, the
@@ -139,7 +140,7 @@ describe("escaping (T222, T228)", () => {
     }
     const amp = renderTemplate("sharing.shared", { actors: ["A"], items: [{ kind: "note", id: "7b2e7c80-3d4f-4e5a-8b6c-333333333333", title: "Tom &amp; Jerry", access: null }] }, fixtureContext("sharing.shared", "nook.test"));
     expect(amp.html).toContain("Tom &amp;amp; Jerry");
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   test("Wave 29 templates escape hostile titles, places, and names the same way", () => {
     const value = "<script>x</script>\r\nBcc: v@example.test \u202e" + "y".repeat(5000);
@@ -154,7 +155,7 @@ describe("escaping (T222, T228)", () => {
       expect(rendered.subject.length).toBeLessThanOrEqual(120);
       expect(rendered.html.length).toBeLessThan(40_000);
     }
-  });
+  }, HEAVY_TEST_TIMEOUT_MS);
 
   test("SafeHtml is built only by the html tag", () => {
     const Constructor = SafeHtml as unknown as new (value: string) => SafeHtml;

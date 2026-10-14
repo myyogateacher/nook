@@ -165,7 +165,7 @@
 .task-comment-edit span { display: flex; justify-content: flex-end; gap: 6px; }
 .task-card-dialog textarea { width: 100%; min-height: 64px; resize: vertical; border: 1px solid #333338; border-radius: 10px; padding: 10px 12px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .88rem; outline: 0; }
 .task-card-dialog textarea:focus { border-color: #6b582f; }
-.task-comment-composer .primary-button { min-height: 40px; margin: 0; padding: 0 16px; font-size: .84rem; }
+.task-comment-composer .primary-button { min-height: 40px; padding: 0 16px; }
 
 @media (max-width: 760px) {
   .task-card-dialog { inset: 0; margin: 0; width: 100vw; max-height: none; height: 100dvh; border: 0; border-radius: 0; }
@@ -260,7 +260,7 @@
 .task-due-editor input { width: 100%; min-width: 0; min-height: 38px; border: 1px solid #2c2c31; border-radius: 9px; padding: 0 10px; background: #0b0b0d; color: #e4e4e6; font: inherit; font-size: .88rem; color-scheme: dark; }
 .task-due-editor input:focus { border-color: #6b582f; outline: 2px solid #6b582f; outline-offset: 1px; }
 .task-due-editor-control input { flex: 1; }
-.task-due-editor-control .secondary-button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.task-due-editor-control .secondary-button { gap: 4px; }
 .task-due-editor-control .secondary-button svg { width: 13px; }
 .task-due-editor > .task-add-time { margin-left: -8px; }
 .task-due-editor > p { margin: 0; }

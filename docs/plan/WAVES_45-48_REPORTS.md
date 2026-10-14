@@ -129,7 +129,7 @@ Eleven more chart kinds and two variants, so reports have them from day one. The
 
 **Deviations.** The gauge is an HTML meter, not ECharts' GaugeChart (the theme's meter form; smaller). Heatmaps use a hidden piecewise visual map (ECharts requires one) and Nook's own stepped scale under the chart. `combo` declares units through `yUnits` (the block has one `format`). Cohort heatmaps build their scale from period 1 on (period 0 is everyone). Waterfall's rises and falls use the diverging poles (blue up, red down; swapped with `upIsGood: false`).
 
-## Decisions, chart kinds round 2 and the 2026-10-14 fixes (D462–D471)
+## Decisions, chart kinds round 2 and the 2026-10-14 fixes (D462–D472)
 
 | ID | Decision |
 | --- | --- |
@@ -143,6 +143,7 @@ Eleven more chart kinds and two variants, so reports have them from day one. The
 | D469 | Structured server logs (`server/log.ts`, branch `server-logging`): scopes, run/report context, redaction; tests run with LOG_LEVEL=silent. |
 | D470 | Runs with a final tool (`submit_report`, `submit_patch`) do not end on text: JSON in the text that looks like the spec or patch is run as the call (same validation, audited as recovered), else up to two nudges offer only that tool; then NO_REPORT / NO_PATCH says so. Tool arguments tolerate fences, trailing commas, and JSON in a string. Chat runs are unchanged. |
 | D471 | Provider compat `reasoningEffort` (`omit` default; `none…high` sent as `reasoning_effort`). Test tool calling and live requests detect "tools refused at the default reasoning" and save `none` (then `minimal`, `low`); OpenAI's Responses API is not supported. |
+| D472 | One button spec app-wide (`src/styles.css`): `.primary-button`, `.secondary-button`, `.danger-button`, `.action-button` are padded 14 px, 40 px tall (44 px at ≤ 760 px or a coarse pointer), .84rem/650, a 16 px icon 8 px from its label, one line. Disabled is a flat grey (never a dimmed colour); `aria-busy="true"` keeps the colour with a progress cursor; focus is the yellow ring; `.icon-only` is square and needs an aria-label. Containers may resize their buttons; per-component copies of the spec are removed. The auth forms keep their 46 px CTA. |
 
 ## Threats (T356–T373; wave 48: T380–T387)
 

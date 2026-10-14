@@ -8,8 +8,7 @@
 .profile-picture-summary > div { flex: 1 1 220px; min-width: 0; display: grid; gap: 4px; }
 .profile-picture-summary strong { color: #ececef; }
 .profile-picture-summary small { color: #85858c; font-size: .84rem; line-height: 1.5; }
-.profile-picture-summary .secondary-button { min-height: 44px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; }
-.profile-picture-summary .secondary-button svg { width: 16px; }
+.profile-picture-summary .secondary-button { min-height: 44px; gap: 7px; padding: 0 16px; }
 .app-user-avatar.profile-picture-avatar { width: 64px; height: 64px; font-size: 1.5rem; }
 .profile-picture-drop { margin: 14px 0 0; padding: 14px; border: 1px dashed #6d5a2c; border-radius: 12px; color: #f5cf79; font-size: .86rem; text-align: center; }
 .profile-picture-card .password-change-done, .profile-picture-card .form-error, .profile-picture-card .recognised-devices-empty { margin: 14px 0 0; }
@@ -29,5 +28,5 @@
 
 @media (max-width: 760px) {
   .file-dialog.avatar-crop-dialog { width: 100%; }
-  .profile-picture-summary .secondary-button { width: 100%; justify-content: center; }
+  .profile-picture-summary .secondary-button { width: 100%; }
 }

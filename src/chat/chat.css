@@ -46,7 +46,7 @@
 .chat-error p { color: #fda4af; }
 .chat-loading { padding: 24px 0; }
 .chat-starters { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
-.chat-starters .secondary-button { min-height: 40px; padding: 0 14px; font-size: .86rem; }
+.chat-starters .secondary-button { min-height: 40px; }
 
 /* The thread */
 .chat-thread { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
@@ -89,7 +89,7 @@
 .chat-edit textarea, .chat-composer textarea, .agents-form textarea { width: 100%; border: 1px solid #333338; border-radius: 12px; padding: 10px 12px; background: #0b0b0d; color: #ededee; font: inherit; font-size: .93rem; line-height: 1.5; resize: vertical; outline: 0; }
 .chat-edit textarea:focus, .chat-composer textarea:focus, .agents-form textarea:focus { border-color: #6b582f; }
 .chat-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.chat-edit-actions .primary-button, .chat-edit-actions .secondary-button { min-height: 40px; margin-top: 0; padding: 0 14px; }
+.chat-edit-actions .primary-button, .chat-edit-actions .secondary-button { min-height: 40px; }
 
 /* Composer: pinned above the keyboard on phones. */
 .chat-composer { position: sticky; bottom: 0; z-index: 2; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; margin-top: 18px; padding: 12px 0 calc(8px + env(safe-area-inset-bottom)); background: rgb(13 13 15 / 94%); backdrop-filter: blur(10px); }
@@ -151,7 +151,7 @@
 .chat-link-sheet .chat-link-url code { display: block; padding: 10px 12px; border: 1px solid #333338; border-radius: 10px; background: #0b0b0d; color: #ededee; font-size: .86rem; white-space: pre-wrap; }
 .chat-link-sheet .file-dialog-hint { padding: 0 20px; }
 .chat-link-sheet .file-dialog-actions { padding: 12px 20px 20px; }
-.chat-link-sheet a.primary-button { display: inline-flex; align-items: center; justify-content: center; min-height: 46px; padding: 0 18px; text-decoration: none; }
+.chat-link-sheet a.primary-button { min-height: 46px; padding: 0 18px; }
 
 /* Settings → AI and Settings → Agents */
 .ai-settings, .agents-settings, .agents-editor { display: grid; gap: 14px; align-content: start; }
@@ -162,7 +162,7 @@
 .ai-provider-head small { color: #8d8d94; font-size: .8rem; overflow-wrap: anywhere; }
 .ai-badge { display: inline-block; margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #1f1d16; color: #f3ce79; font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .ai-provider-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.ai-provider-actions .secondary-button, .agents-list .secondary-button { min-height: 38px; padding: 0 12px; font-size: .84rem; }
+.ai-provider-actions .secondary-button, .agents-list .secondary-button { min-height: 38px; padding: 0 12px; }
 .ai-add, .agents-add { justify-self: start; }
 .ai-provider-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px 16px; margin: 0; }
 .ai-provider-facts div { display: grid; gap: 2px; }
@@ -213,9 +213,8 @@
 .agents-icon-row { display: flex; align-items: center; gap: 8px; }
 .agents-icon-input { width: 90px; }
 .agents-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.agents-actions .secondary-button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; white-space: nowrap; }
+.agents-actions .secondary-button { min-height: 44px; gap: 6px; }
 /* Share… carries an icon: beside its label, never stacked above it. */
-.agents-actions .secondary-button svg { flex: none; width: 16px; height: 16px; }
 
 /* AC-B: tool servers (Settings → AI) */
 .ai-servers { display: grid; gap: 14px; margin-top: 10px; }
@@ -231,10 +230,10 @@
 .ai-tool-text strong { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; }
 .ai-tool-text code { font-size: .86rem; }
 .ai-tool-text small { color: #8d8d94; font-size: .8rem; overflow-wrap: anywhere; }
-.ai-tools .secondary-button { min-height: 36px; padding: 0 12px; font-size: .84rem; }
+.ai-tools .secondary-button { min-height: 36px; padding: 0 12px; }
 .ai-stdio { display: grid; gap: 8px; }
 .ai-stdio p { margin: 0; }
-.ai-provider-actions .secondary-button svg { width: 14px; height: 14px; }
+.ai-provider-actions .secondary-button svg { height: 14px; }
 
 /* AC-B: the tool picker (Settings → Agents) */
 .agents-tools { display: grid; gap: 12px; }
@@ -254,7 +253,7 @@
 .agents-tool-badges .ai-badge { margin-left: 0; }
 .agents-nook-module { margin: 6px 0 2px; color: #7c7c83; font-size: .7rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .agents-link-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.agents-link-row .secondary-button { min-height: 38px; padding: 0 12px; font-size: .84rem; }
+.agents-link-row .secondary-button { min-height: 38px; padding: 0 12px; }
 
 /* AC-B: the Link Nook key sheet */
 .chat-link-key { display: grid; align-content: start; gap: 12px; padding: 0 20px 16px; }
@@ -266,7 +265,7 @@
 .chat-link-key-text { display: grid; gap: 2px; min-width: 0; flex: 1 1 220px; }
 .chat-link-key-text small, .chat-link-current small { color: #8d8d94; font-size: .8rem; overflow-wrap: anywhere; }
 .chat-link-grants { color: #c9c9ce !important; }
-.chat-link-keys .primary-button, .chat-link-current .secondary-button { min-height: 38px; margin: 0; padding: 0 14px; font-size: .84rem; }
+.chat-link-keys .primary-button, .chat-link-current .secondary-button { min-height: 38px; }
 .chat-link-key .file-dialog-actions { padding: 4px 0 0; }
 /* Like every dialog body: it scrolls under the header and keeps Done in view (a long key list once ran off the sheet). */
 .chat-link-key-sheet .chat-link-key { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
@@ -291,7 +290,7 @@
 .chat-confirm > strong { display: flex; align-items: flex-start; gap: 8px; color: #f3ce79; font-size: .92rem; }
 .chat-confirm > strong svg { width: 18px; flex: none; margin-top: 1px; }
 .chat-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.chat-confirm-actions .primary-button, .chat-confirm-actions .secondary-button { min-height: 42px; margin: 0; padding: 0 16px; }
+.chat-confirm-actions .primary-button, .chat-confirm-actions .secondary-button { min-height: 42px; padding: 0 16px; }
 .chat-trifecta { display: inline-flex; align-items: flex-start; gap: 6px; border: 1px solid #5a3d1f; border-radius: 10px; padding: 6px 10px; background: #2a1f14; color: #f3b56e; font-size: .82rem; line-height: 1.4; }
 .chat-trifecta svg { width: 16px; flex: none; margin-top: 1px; }
 .chat-trifecta-compact { min-height: 32px; align-items: center; border-radius: 999px; padding: 0 10px; font-size: .76rem; }
@@ -368,7 +367,7 @@
 .chat-public-url label { color: #f3ce79; font-size: .84rem; }
 .chat-public-url-row { display: flex; gap: 8px; min-width: 0; }
 .chat-public-url-row input { flex: 1; min-width: 0; min-height: 42px; border: 1px solid #36363b; border-radius: 10px; padding: 0 10px; background: #0b0b0d; color: #ededee; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
-.chat-public-url-row .secondary-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.chat-public-url-row .secondary-button { gap: 6px; }
 .chat-public-confirm { flex-wrap: wrap; align-items: center; }
 .chat-public-confirm span { flex: 1 1 100%; color: #fda4af; font-size: .86rem; }
 .agents-shared-heading { display: flex; align-items: center; gap: 6px; margin: 22px 0 8px; color: #9a9aa1; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }

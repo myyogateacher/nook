@@ -126,8 +126,8 @@ button.whiteboard-status { min-height: 40px; border: 0; border-radius: 8px; padd
 
 /* Wave 24: the canvas bar's picture and link buttons, the upload banner, the external-link confirm, and History. */
 .whiteboard-bar .whiteboard-bar-icon { width: 40px; height: 40px; }
-.whiteboard-banner .secondary-button { display: inline-flex; align-items: center; gap: 6px; }
-.whiteboard-banner .secondary-button svg { width: 15px; height: 15px; }
+.whiteboard-banner .secondary-button { gap: 6px; }
+.whiteboard-banner .secondary-button svg { height: 15px; }
 .whiteboard-banner > .spin { width: 15px; height: 15px; flex: none; color: #d9b55f; }
 .whiteboard-banner > span { min-width: 0; }
 .whiteboard-link-url { margin: 0 20px 12px; max-height: 30vh; overflow: auto; border: 1px solid #2f2f35; border-radius: 10px; padding: 10px 12px; background: #0f0f11; overflow-wrap: anywhere; word-break: break-all; }

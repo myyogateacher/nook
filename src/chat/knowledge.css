@@ -23,7 +23,6 @@
 .knowledge-search-field:focus-within { border-color: var(--field-focus); box-shadow: var(--field-ring); }
 .knowledge-search-field svg { width: 16px; height: 16px; color: #8d8d94; }
 .knowledge-search-field input[type="search"] { flex: 1; min-width: 0; min-height: 44px; border: 0; border-radius: 0; padding: 0; background: transparent; color: inherit; font-size: var(--field-font-size); outline: none; box-shadow: none; }
-.knowledge-candidates .action-button { flex: none; }
 /* A grid row in a height-bound form shrinks a scrolling textarea to nothing (19 px at 1280 × 500 with an
    error): it keeps about ten lines, and the form scrolls instead. */
 .knowledge-paste { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86rem; }

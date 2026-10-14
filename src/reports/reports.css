@@ -7,8 +7,6 @@
 .reports-search { position: relative; flex: 0 1 280px; min-width: 0; display: flex; align-items: center; }
 .reports-search > svg { position: absolute; left: 12px; width: 16px; height: 16px; color: #85858c; pointer-events: none; }
 .reports-search input { width: 100%; min-height: 44px; padding-left: 36px; }
-.reports-new { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; }
-.reports-new svg { width: 17px; }
 
 .reports-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .reports-card { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 12px; border: 1px solid #26262b; border-radius: 14px; padding: 10px 14px; background: #131316; color: inherit; text-align: left; cursor: pointer; }
@@ -26,7 +24,6 @@
 .reports-state { display: grid; justify-items: center; gap: 10px; padding: 48px 20px; color: #9a9aa1; text-align: center; }
 .reports-state h2 { margin: 0; color: #ededee; font-size: 1.05rem; }
 .reports-state p { margin: 0; max-width: 40ch; }
-.reports-state button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; }
 .reports-state-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 16px; background: #1d1a12; color: #d9b55f; }
 .reports-loading { margin: 0; padding: 24px 0; color: #9a9aa1; text-align: center; }
 .reports-label { margin-top: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
@@ -42,8 +39,6 @@
 .report-facts span { display: inline-flex; align-items: center; gap: 5px; }
 .report-facts svg { width: 14px; height: 14px; }
 .report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.report-actions button, .report-console-head button, .report-console-actions button { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.report-actions svg, .report-console-head svg, .report-console-actions svg { width: 16px; height: 16px; }
 .report-empty { margin-bottom: 18px; border: 1px dashed #2f2f35; border-radius: 14px; padding: 14px 16px; color: #9a9aa1; }
 .report-empty p { margin: 0; }
 .report-console { display: grid; gap: 10px; border: 1px solid #26262b; border-radius: 14px; padding: 14px; background: #121215; }
@@ -109,10 +104,9 @@
 .report-source-facts div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px; }
 .report-source-facts dt { color: var(--muted); }
 .report-source-facts dd { margin: 0; color: inherit; overflow-wrap: anywhere; }
-/* The card's actions: the app's settings-card buttons (padded, 44 px, icon and label on one line); Remove sits apart, in the danger colour. */
+/* The card's actions: the app's buttons (styles.css), 44 px here; Remove sits apart, in the danger colour. */
 .report-source-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.report-source-actions .secondary-button { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: .86rem; white-space: nowrap; }
-.report-source-actions .secondary-button svg { flex: none; width: 16px; height: 16px; }
+.report-source-actions .secondary-button { min-height: 44px; }
 .report-source-actions .report-source-remove { margin-left: auto; color: var(--red); }
 .report-test { display: grid; gap: 6px; border-radius: 10px; padding: 10px 12px; background: #15201a; color: #bfe6c9; font-size: .84rem; }
 .report-test.failed { background: #2a1519; color: #fda4af; }
@@ -147,7 +141,6 @@
 /* Wave 48 integration: the report header (Refresh all, Changes, Share, Schedule, and the overflow menu). */
 .report-header-actions { align-items: center; }
 .report-overflow { position: relative; }
-.report-overflow-button { min-width: 44px; justify-content: center; padding-inline: 10px; }
 .report-overflow-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 220px; display: grid; gap: 2px; padding: 6px; border: 1px solid #35353a; border-radius: 11px; background: #1b1b1f; box-shadow: 0 16px 42px rgb(0 0 0 / 55%); }
 .report-overflow-menu button { min-height: 44px; display: flex; align-items: center; gap: 10px; border: 0; border-radius: 7px; padding: 0 12px; background: transparent; color: #d4d4d8; font: inherit; text-align: left; cursor: pointer; }
 .report-overflow-menu button svg { width: 16px; height: 16px; flex: none; }

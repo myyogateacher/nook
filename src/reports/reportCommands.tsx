@@ -98,7 +98,7 @@ export function ReportOverflowMenu({ items, label = "More actions" }: { items: M
   // Only phone-only items (a reader's Schedule): wider screens show them in the header, so no menu there.
   const narrowOnly = items.every((item) => item.narrowOnly);
   return <div className={`report-overflow${narrowOnly ? " report-narrow-only-menu" : ""}`} ref={rootRef}>
-    <button ref={buttonRef} type="button" className="secondary-button report-overflow-button" aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label} title={label}
+    <button ref={buttonRef} type="button" className="secondary-button icon-only report-overflow-button" aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label} title={label}
       onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

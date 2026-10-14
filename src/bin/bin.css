@@ -36,8 +36,7 @@
 .bin-state { display: grid; justify-items: center; gap: 8px; border: 1px dashed #303035; border-radius: 16px; padding: 48px 24px; text-align: center; }
 .bin-state h2 { margin: 6px 0 0; color: #ededee; font-size: 1.05rem; }
 .bin-state p { max-width: 360px; margin: 0; color: #8d8d94; font-size: .86rem; line-height: 1.5; }
-.bin-state .primary-button { display: inline-flex; align-items: center; gap: 7px; margin-top: 10px; padding: 0 18px; }
-.bin-state .primary-button svg { width: 16px; }
+.bin-state .primary-button { gap: 7px; margin-top: 10px; padding: 0 18px; }
 .bin-state-icon { width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #303035; border-radius: 15px; background: #19191c; color: #c9a85c; }
 .bin-state-icon svg { width: 21px; }
 .bin-error .bin-state-icon { color: var(--red); }

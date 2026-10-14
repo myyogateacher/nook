@@ -50,23 +50,40 @@ button:focus-visible, input:focus-visible, [contenteditable]:focus-visible { out
 .password-visibility-toggle { position: absolute; top: 50%; right: 1px; display: grid; width: 44px; height: 44px; place-items: center; transform: translateY(-50%); border: 0; border-radius: 10px; background: transparent; color: #aaaab1; cursor: pointer; }
 .password-visibility-toggle:hover { color: #fff; background: #252529; }
 .password-visibility-toggle svg { width: 18px; height: 18px; }
-.primary-button, .publish-button { border: 0; border-radius: 10px; background: var(--yellow); color: #281f0b; font-weight: 750; cursor: pointer; }
-.primary-button { min-height: 46px; margin-top: 4px; }
-.primary-button:hover, .publish-button:hover { background: var(--yellow-strong); }
+.publish-button { border: 0; border-radius: 10px; background: var(--yellow); color: #281f0b; font-weight: 750; cursor: pointer; }
+.publish-button:hover { background: var(--yellow-strong); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 
 /*
- * The one action button: the "New …" / "Add …" action in a Settings section header, and the same
- * metrics in dialog footers. 44 px tall, .84rem/650, a 16 px leading icon, no stray margin.
- * `.primary-button` above is the full-width auth-form CTA (16 px text, 46 px, a 4 px top margin), so
- * it is not used for these. `.secondary` is the grey variant with the same size.
+ * The app's buttons (D472): `.primary-button` (yellow), `.secondary-button` (grey), `.danger-button`
+ * (red), and `.action-button` (a Settings section header's "New …" / "Add …"; `.action-button.secondary`
+ * is its grey form). One spec: padded 14 px, 40 px tall (44 px on a phone or a coarse pointer), .84rem/650,
+ * a 16 px icon 8 px from its label, one line. Disabled is a flat grey, never a dimmed colour; a busy
+ * button (aria-busy="true", e.g. "Running…") keeps its colour and shows the progress cursor. Focus is
+ * the app's yellow ring. `.icon-only` is a square button holding just an icon (it needs an aria-label).
+ * A container may still size its buttons (a full-width footer, a dense toolbar); the auth forms keep
+ * their larger CTA below.
  */
-.action-button { min-height: 44px; display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 8px; margin: 0; border: 1px solid transparent; border-radius: 10px; padding: 0 16px; background: var(--yellow); color: #281f0b; font-size: .84rem; font-weight: 650; line-height: 1.2; white-space: nowrap; cursor: pointer; }
-.action-button:hover:not(:disabled) { background: var(--yellow-strong); }
-.action-button:disabled { opacity: .45; cursor: not-allowed; }
-.action-button svg { flex: none; width: 16px; height: 16px; }
-.action-button.secondary { border-color: #3a3a3f; background: #212125; color: #e1e1e3; }
-.action-button.secondary:hover:not(:disabled) { border-color: #45454b; background: #2a2a2f; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button) { box-sizing: border-box; min-height: 40px; max-width: 100%; display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 8px; margin: 0; border: 1px solid transparent; border-radius: 10px; padding: 0 14px; font-size: .84rem; font-weight: 650; line-height: 1.2; white-space: nowrap; text-decoration: none; cursor: pointer; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button) > svg { flex: none; width: 16px; height: 16px; }
+:is(.primary-button, .action-button) { background: var(--yellow); color: #281f0b; }
+:is(.primary-button, .action-button):hover:not(:disabled) { background: var(--yellow-strong); }
+.secondary-button, .action-button.secondary { border-color: #3a3a3f; background: #212125; color: #e1e1e3; }
+.secondary-button:hover:not(:disabled), .action-button.secondary:hover:not(:disabled) { border-color: #45454b; background: #2a2a2f; }
+.danger-button { border-color: #6a3039; background: #3a1d22; color: #ffc2ca; }
+.danger-button:hover:not(:disabled) { background: #4a2229; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button):disabled:not([aria-busy="true"]) { opacity: 1; border-color: #2c2c31; background: #1a1a1d; color: #6c6c73; cursor: not-allowed; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button)[aria-busy="true"] { opacity: 1; cursor: progress; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button):focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+:is(.primary-button, .secondary-button, .danger-button, .action-button).icon-only { width: 40px; min-width: 40px; padding: 0; }
+.action-button { min-height: 44px; padding: 0 16px; }
+@media (max-width: 760px), (pointer: coarse) {
+  :is(.primary-button, .secondary-button, .danger-button, .action-button) { min-height: 44px; }
+  :is(.primary-button, .secondary-button, .danger-button, .action-button).icon-only { width: 44px; min-width: 44px; }
+}
+/* The sign-in and password pages' full-width CTA: 46 px, 16 px text, a 4 px top margin. */
+:is(.auth-form, .auth-card) .primary-button { min-height: 46px; margin-top: 4px; font-size: 1rem; font-weight: 750; }
+
 
 /*
  * The one form-field look for the Settings dialogs and forms (keys, team, AI, agents, vault): the
@@ -301,7 +318,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .verify-totp-form label { display: grid; gap: 7px; color: #c9c9cd; font-size: .78rem; }
 .verify-totp-form input, .disable-totp-form input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
 .verify-totp-form input { font: 1rem "SFMono-Regular", Consolas, monospace; letter-spacing: .15em; }
-.verify-totp-form .primary-button { min-height: 42px; padding: 0 14px; }
+.verify-totp-form .primary-button { min-height: 42px; }
 .disable-totp-form { margin-top: 22px; padding-top: 18px; border-top: 1px solid #29292d; }
 .disable-totp-form > div { display: grid; grid-template-columns: minmax(150px, 1fr) 140px auto; gap: 9px; }
 .disable-totp-form .secondary-button { min-height: 42px; padding: 0 13px; }
@@ -344,7 +361,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-key-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); align-items: end; gap: 10px; }
 .mcp-key-form label { display: grid; gap: 7px; color: #c9c9cd; font-size: .76rem; }
 .mcp-key-form input { min-height: 42px; border: 1px solid #38383d; border-radius: 9px; padding: 0 11px; background: #09090b; color: white; }
-.mcp-key-form .primary-button { min-height: 42px; padding: 0 14px; }
+.mcp-key-form .primary-button { min-height: 42px; }
 .mcp-permissions { grid-column: 1 / -1; display: grid; gap: 4px; margin: 0; padding: 10px 12px; border: 1px solid #303035; border-radius: 10px; }
 .mcp-permissions legend { padding: 0 6px; color: #c9c9cd; font-size: .76rem; }
 .mcp-key-form .mcp-permissions label { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 6px 0; cursor: pointer; }
@@ -375,8 +392,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-review-list small { color: #8e8e93; font-size: .72rem; }
 .mcp-review-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .mcp-review-actions button { min-height: 44px; }
-.mcp-review-actions .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-top: 0; padding: 0 16px; white-space: nowrap; }
-.mcp-review-actions .primary-button svg { flex: none; width: 18px; height: 18px; }
+.mcp-review-actions .primary-button { gap: 8px; padding: 0 16px; }
+.mcp-review-actions .primary-button svg { width: 18px; height: 18px; }
 @media (max-width: 760px) {
   .mcp-review-dialog { inset: 0; width: auto; max-height: none; height: 100dvh; transform: none; border: 0; border-radius: 0; align-content: start; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
   .mcp-review-actions { flex-direction: column-reverse; }
@@ -385,8 +402,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .new-api-key > p { margin: 4px 0 10px; color: #b5a77f; }
 .new-api-key textarea { width: 100%; min-height: 66px; resize: vertical; border: 1px solid #4a4129; border-radius: 8px; padding: 10px; background: #111113; color: #f1cd78; font: .76rem/1.5 "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
 .new-api-key > div { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
-.new-api-key .secondary-button { min-height: 38px; display: flex; flex: none; align-items: center; gap: 7px; padding: 0 12px; white-space: nowrap; }
-.new-api-key .secondary-button svg { width: 15px; }
+.new-api-key .secondary-button { min-height: 38px; gap: 7px; padding: 0 12px; }
 /* QA Q8: "I saved this key" reads as a button beside Copy key, not a full-width link. */
 .new-api-key .text-button { width: auto; min-height: 38px; margin: 0; padding: 0 12px; border: 1px solid #4a4129; border-radius: 8px; white-space: nowrap; }
 .mcp-key-list { display: grid; border-top: 1px solid #29292d; }
@@ -398,8 +414,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mcp-key-list small { overflow: hidden; color: #7f7f86; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 .text-danger { border: 0; background: transparent; color: #df7e7e; cursor: pointer; }
 .mcp-config pre { max-width: 100%; margin: 0; overflow-x: auto; border: 1px solid #2f2f34; border-radius: 9px; padding: 14px; background: #09090b; color: #d5d5da; font: .73rem/1.55 "SFMono-Regular", Consolas, monospace; }
-.mcp-config .secondary-button { justify-self: start; display: flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 12px; }
-.mcp-config .secondary-button svg { width: 15px; }
+.mcp-config .secondary-button { justify-self: start; gap: 7px; min-height: 38px; padding: 0 12px; }
 .version-list { max-height: 210px; overflow-y: auto; padding: 10px; border-bottom: 1px solid var(--border); }
 .version-list button { width: 100%; display: grid; gap: 4px; padding: 11px 12px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
 .version-list button:hover, .version-list button.selected { background: #29251d; }
@@ -411,12 +426,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .diff-view { flex: 1; overflow: auto; margin: 0 12px; padding: 14px 0; border: 1px solid #28282c; border-radius: 10px; background: #0b0b0d; white-space: pre-wrap; font: .76rem/1.55 "SFMono-Regular", Consolas, monospace; }
 .diff-view span { display: block; padding: 0 12px; color: #aaaab0; }
 .diff-view span.add { background: rgb(49 95 66 / 28%); color: #b6e0c2; }.diff-view span.remove { background: rgb(107 53 65 / 27%); color: #efb2bf; }
-.secondary-button { border: 1px solid #3a3a3f; border-radius: 9px; background: #212125; color: #e1e1e3; cursor: pointer; }
-/* v0.29 L3: a button that starts with an icon lays the icon and its label out on one line. Tailwind's
-   base makes every svg a block, so a plain (inline-block) button stacked the icon above the label
-   ("Sync tools"). :where() keeps this at zero specificity: a button's own display rule still wins. */
-:where(.secondary-button, .primary-button, .danger-button):where(:has(> svg:first-child)) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-:where(.secondary-button, .primary-button, .danger-button):where(:has(> svg:first-child)) > svg { flex: none; }
 .restore-button { margin: 12px; min-height: 41px; }
 .share-options { padding: 14px; display: grid; gap: 7px; }
 .share-options > label { position: relative; cursor: pointer; }

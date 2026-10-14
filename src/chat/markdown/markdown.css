@@ -111,7 +111,7 @@
 .chat-md-remote-note { color: var(--md-muted); font-size: .8rem; }
 .chat-md-remote-error { color: #fda4af; }
 .chat-md-remote-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-.chat-md-remote-actions .secondary-button { min-height: 40px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px; }
+.chat-md-remote-actions .secondary-button { min-height: 40px; gap: 6px; }
 .chat-md-remote-actions svg { width: 15px; height: 15px; }
 .chat-md-remote-always { justify-self: start; min-height: 32px; margin-top: 2px; padding: 0; border: 0; background: transparent; color: var(--md-accent); font-size: .8rem; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .chat-md-remote-always:disabled { opacity: .5; cursor: default; }

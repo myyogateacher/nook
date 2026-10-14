@@ -71,7 +71,7 @@
 .ui-sheet-body { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 10px; }
 .ui-sheet .ui-option { min-height: 44px; font-size: 1rem; }
 .ui-sheet-footer { display: flex; padding: 8px 12px 12px; }
-.ui-sheet-footer .primary-button { flex: 1; min-height: 44px; margin: 0; }
+.ui-sheet-footer .primary-button { flex: 1; min-height: 44px; }
 
 @media (max-width: 760px) {
   .ui-select { min-height: 44px; font-size: 1rem; }

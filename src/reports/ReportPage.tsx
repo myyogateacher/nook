@@ -162,7 +162,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
         {/* The header: Refresh all first; Changes, Share, and Schedule beside it (on a phone only Changes);
             everything else in the overflow menu, Move to Bin last. Owner-only actions are hidden from readers. */}
         <div className="report-actions report-header-actions">
-          {ownerWrite && commands.refreshAll && <button type="button" className="primary-button" onClick={commands.refreshAll.run} disabled={commands.refreshAll.disabled}>
+          {ownerWrite && commands.refreshAll && <button type="button" className="primary-button" onClick={commands.refreshAll.run} disabled={commands.refreshAll.disabled} aria-busy={commands.refreshAll.busy || undefined}>
             {commands.refreshAll.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
           </button>}
           <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare aria-hidden="true" />Changes</button>
@@ -192,7 +192,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
           <p className="file-dialog-hint">One SELECT, or SHOW, DESCRIBE, EXISTS, EXPLAIN. Read-only, at most {REPORT_LIMITS.consoleRows.toLocaleString()} rows; no SETTINGS, FORMAT, or external table functions.</p>
           {canWrite && <span className="report-run-buttons">
             {running && <button type="button" className="secondary-button" onClick={() => { void cancel(); }}><CircleStop />Cancel</button>}
-            <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId}>
+            <button type="button" className="primary-button" onClick={() => { void run(); }} disabled={running || !sql.trim() || !report.datasourceId} aria-busy={running || undefined}>
               {running ? <LoaderCircle className="spin" /> : <Play />}{running ? "Running…" : "Run"}
             </button>
           </span>}

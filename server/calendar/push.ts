@@ -5,6 +5,9 @@ import { config } from "../config";
 import { audit, db } from "../db";
 import { readPrivateFile, writePrivateFileAtomic } from "../storage";
 import { onNotification, type NotificationCreated } from "./reminders";
+import { logger } from "../log";
+
+const slog = logger("calendar");
 
 /**
  * Payload-less Web Push (WAVES_10-12.md D65, §4.3, T62, T63).
@@ -365,7 +368,7 @@ function pumpDeliveries() {
         try {
           await sendToUser(userId, false);
         } catch (error) {
-          console.error("Push delivery failed", error instanceof Error ? error.name : "Unknown error");
+          slog.error("Push delivery failed", error);
         } finally {
           activeUsers.delete(userId);
         }

@@ -6,6 +6,9 @@ import { isMuted } from "./mutes";
 import { enqueueMail, mergeIds, WINDOW_MS, type Payload } from "./outbox";
 import type { Recipient, Resolution } from "./resolve";
 import { REMINDER_LATE_MS, type OccurrenceTime } from "./templates/calendar";
+import { logger } from "../log";
+
+const slog = logger("mail");
 
 /**
  * Calendar mail (docs/plan/research/2026-09-28-outbound-email.md §A.2 #22, #24):
@@ -27,7 +30,7 @@ function safely(label: string, run: () => void) {
   try {
     run();
   } catch (error) {
-    console.error(`Mail enqueue failed: purpose=${label} error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Mail enqueue failed: purpose=${label}`, error);
   }
 }
 

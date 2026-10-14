@@ -24,6 +24,9 @@ import { reportModelFor } from "./model";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
 import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
+import { currentLogContext, logger, shortId, withLogContext } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Report generation (plan wave 46, D424–D427, T368): the doc is read first (docSource.ts, no model),
@@ -320,8 +323,8 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
     } catch { /* the next beat tries again */ }
   }, GENERATE_LIMITS.leaseBeatMs);
   heartbeat.unref?.();
-  void executeGeneration({ entry, channel, connection, datasource, prompt: prompt.text, title: report.title, docSnapshotId: snapshot.id, docHash: doc.sha256 })
-    .catch((error) => console.error("Reports: a generation run failed unexpectedly", error instanceof Error ? error.name : "Error"))
+  void withLogContext({ ...currentLogContext(), run: shortId(runId), report: shortId(report.id) }, () => executeGeneration({ entry, channel, connection, datasource, prompt: prompt.text, title: report.title, docSnapshotId: snapshot.id, docHash: doc.sha256 }))
+    .catch((error) => slog.error("Reports: a generation run failed unexpectedly", error))
     .finally(() => { clearTimeout(timer); clearInterval(heartbeat); live.delete(runId); });
   return { report: reportDetail(report.id, actor.userId), run: { id: runId, agentRunId, docSnapshotId: snapshot.id, docChanged: snapshot.changed } };
 }
@@ -517,14 +520,14 @@ async function executeGeneration(run: Execution) {
     else if (reason) { status = "cancelled"; errorMessage = "Generation was stopped"; }
     else if (error instanceof ProviderError) { status = "error"; errorCode = error.code; errorMessage = error.message; }
     else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; errorMessage = error.message; }
-    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "Generation failed"; console.error("Reports: generation error", error instanceof Error ? error.name : "Error"); }
+    else { status = "error"; errorCode = "INTERNAL"; errorMessage = "Generation failed"; slog.error("Reports: generation error", error); }
   }
 
   try {
     finishAuditRun(agentRunId, { status, errorCode, steps, toolCalls: toolCallCount, usage, output: accepted ? `${output}\n[report saved]`.trim() : `${output}\n[${errorMessage ?? "no report"}]`.trim() });
     chargeUsage(userId, REPORTS_AGENT_ID, { promptTokens: 0, completionTokens: 0, estimated: false }, 1);
   } catch (error) {
-    console.error("Reports: could not finish the generation's audit row", error instanceof Error ? error.name : "Error");
+    slog.error("Reports: could not finish the generation's audit row", error);
   }
   if (!accepted) {
     const at = now();

@@ -1,5 +1,8 @@
 import { AGENT_BOUNDS, CHAT_IMAGE_BOUNDS, MODEL_TIMEOUTS, type ProviderCompat, type TokenUsage } from "../../shared/agents";
 import { EgressError, egressFetch, readEgressText, type EgressResponse } from "./egress";
+import { logger } from "../log";
+
+const modelLog = logger("agents");
 
 /**
  * The model adapter and the agent loop (plan §2.1, D341, D342): OpenAI-compatible Chat Completions
@@ -166,6 +169,7 @@ async function failedResponse(response: EgressResponse): Promise<never> {
     detail = null;
   }
   const status = response.status;
+  modelLog.warn("Provider error", { status, code: "PROVIDER_ERROR" });
   const base = status === 401 || status === 403 ? "The provider refused the API key" : status === 404 ? "The provider has no such model or endpoint" : status === 429 ? "The provider is rate limiting this key" : status >= 500 ? "The provider is unavailable" : "The provider refused the request";
   throw new ProviderError("PROVIDER_ERROR", `${base} (HTTP ${status})${detail ? `: ${detail.redacted}` : ""}`, status, `${base} (HTTP ${status})${detail ? `: ${detail.admin}` : ""}`);
 }
@@ -472,6 +476,10 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     // The ending step's text never goes back to the model: it is charged only for what the stored reply keeps.
     const usage = ending ? keptUsage(reply.usage, reply.content, textRoom) : reply.usage;
     input.sink.step?.({ step, content: reply.content, toolCalls: reply.toolCalls, usage, model: reply.model, durationMs: Date.now() - stepStarted });
+    modelLog.info("Model step", {
+      step, ms: Date.now() - stepStarted, tools: calls.map((call) => call.name).join(",") || undefined, dropped: dropped || undefined,
+      promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, estimated: usage.estimated || undefined, model: reply.model ?? undefined
+    });
     total.promptTokens += usage.promptTokens;
     total.completionTokens += usage.completionTokens;
     total.estimated = total.estimated || usage.estimated;

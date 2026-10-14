@@ -27,6 +27,9 @@ import { readableReportSql } from "./reports/access";
 import { editableCalendarPredicate, readableCalendarPredicate } from "./calendar/access";
 import { environmentOfVault, isVaultNarrowing, validateVaultGrants, vaultEffectiveGrants, vaultGrantInactive, vaultGrantInput, vaultGrantNames, VaultKeyError, type VaultGrantInput } from "./vault/keys";
 import { shareReadableSql } from "./agents/sharing";
+import { logger } from "./log";
+
+const slog = logger("keys");
 
 /**
  * Nook keys (docs/plan/research/2026-09-28-access-management-api-keys.md §C.4, D261–D283): one
@@ -1020,7 +1023,7 @@ export function startKeyUsageFlusher() {
     try {
       flushKeyUsage();
     } catch (error) {
-      console.error("Key usage flush failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Key usage flush failed", error);
     }
   }, 60_000);
   usageTimer.unref();

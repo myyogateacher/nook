@@ -2,6 +2,9 @@ import { config } from "../config";
 import { db } from "../db";
 import { verifySecrets } from "./secrets";
 import { roleMayChat } from "./settings";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Whether the agent chat module is on (plan §4.2, D354). Off when AGENT_SECRETS_KEY is unset, and
@@ -20,7 +23,7 @@ export class AgentError extends Error {
   }
 }
 
-export function initAgentsStatus(log: (line: string) => void = (line) => console.log(line)): AgentsStatus {
+export function initAgentsStatus(log: (line: string) => void = (line) => slog.info(line)): AgentsStatus {
   const key = config.agents.key;
   if (!key) {
     status = { enabled: false, reason: "unset" };
@@ -52,7 +55,7 @@ export const adminRecoveryAllowed = () => status.enabled || status.reason === "k
 /** After an admin removed or re-entered a provider key while off by mismatch: decide again, quietly. */
 export function recheckAgentsStatus() {
   if (status.reason !== "key_mismatch") return status;
-  return initAgentsStatus((line) => console.log(line));
+  return initAgentsStatus((line) => slog.info(line));
 }
 
 /**

@@ -14,6 +14,9 @@ import { embedTexts, takesDimensions, vectorToBlob } from "./embed";
 import { canReadDocument, canReadNote, canReadSource, documentFormat, isKnowledgeFile, kbProvider, ownerIsActive, PROVIDER_REMOVED, refreshKbCounts, refreshKbStatus, type KbRow, type SourceRow } from "./service";
 import { onGroupMembershipChanged, onKnowledgeProviderEvent, onNotePublished, onSourceAccessChanged, onUserUnblocked, type ProviderEvent, type SourceAccessChange } from "./hooks";
 import { lastReindexAt, recordReindex, resetReindexLimitsForTests } from "./limits";
+import { logger, shortId } from "../log";
+
+const slog = logger("knowledge");
 
 /**
  * The index pipeline (plan §9, D368, D369; Wave 44 "AC-E"): a background queue that never blocks a
@@ -74,7 +77,7 @@ export function scheduleKnowledge(kbId: string) {
           // More left: back to the end of the queue (round robin, L3).
           if (await indexBase(next)) queue.add(next);
         } catch (error) {
-          console.error("Knowledge indexing failed", error instanceof Error ? error.name : "Unknown error");
+          slog.error("Knowledge indexing failed", error);
         }
       }
     } finally {
@@ -100,6 +103,16 @@ const basesWithWork = () => (db.query(`SELECT DISTINCT s.kb_id FROM kb_sources s
 
 /** One pass over a base: at most `passSources` sources. True when it has more waiting (it goes back in the queue). */
 async function indexBase(kbId: string): Promise<boolean> {
+  const started = performance.now();
+  const outcome = { docs: 0 };
+  try {
+    return await indexBasePass(kbId, outcome);
+  } finally {
+    if (outcome.docs) slog.info("Knowledge indexed", { kb: shortId(kbId), docs: outcome.docs, ms: Math.round(performance.now() - started) });
+  }
+}
+
+async function indexBasePass(kbId: string, outcome: { docs: number }): Promise<boolean> {
   const skipped = new Set<string>();
   let done = 0;
   let more = false;
@@ -115,14 +128,15 @@ async function indexBase(kbId: string): Promise<boolean> {
       more = true;
       break;
     }
-    const outcome = await indexSource(kb, source);
+    const result = await indexSource(kb, source);
     done += 1;
-    if (outcome === "paused") {
+    if (result === "done") outcome.docs += 1;
+    if (result === "paused") {
       pauseBase(kbId, pauseMessage);
       refreshKbStatus(kbId);
       return false;
     }
-    if (outcome === "requeued") skipped.add(source.id);
+    if (result === "requeued") skipped.add(source.id);
   }
   refreshKbStatus(kbId);
   // A source marked again while it was embedded (a new publish) runs in the next pass.
@@ -147,7 +161,7 @@ function scheduleBudgetWake() {
     try {
       wakeKnowledge();
     } catch (error) {
-      console.error("Knowledge wake-up failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Knowledge wake-up failed", error);
     }
   }, secondsToMidnight() * 1000 + 5_000);
   budgetWake.unref?.();
@@ -237,7 +251,7 @@ async function indexSource(kb: KbRow, source: SourceRow): Promise<"done" | "paus
     content = await readContent(kb, source);
   } catch (error) {
     const message = error instanceof SourceError ? error.message : "The source could not be read";
-    if (!(error instanceof SourceError)) console.error("Knowledge source could not be read", error instanceof Error ? error.name : "Unknown error");
+    if (!(error instanceof SourceError)) slog.error("Knowledge source could not be read", error);
     setState(source.id, "error", message);
     return "done";
   }
@@ -307,7 +321,7 @@ async function indexSource(kb: KbRow, source: SourceRow): Promise<"done" | "paus
         return "paused";
       }
       const message = error instanceof ProviderError || error instanceof AgentError ? error.message : "The embeddings could not be made";
-      if (!(error instanceof ProviderError) && !(error instanceof AgentError)) console.error("Knowledge embedding failed", error instanceof Error ? error.name : "Unknown error");
+      if (!(error instanceof ProviderError) && !(error instanceof AgentError)) slog.error("Knowledge embedding failed", error);
       setState(source.id, "error", message.slice(0, 200));
       return "done";
     }
@@ -454,7 +468,7 @@ export function notePublished(noteId: string) {
     try {
       markNoteSourcesPending(noteId);
     } catch (error) {
-      console.error("Knowledge publish hook failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Knowledge publish hook failed", error);
     }
   }, knowledgeTimers.publishDebounceMs);
   timer.unref?.();
@@ -548,7 +562,7 @@ export function recheckLater(stale: ReadonlyArray<{ kind: "note" | "document"; r
         if (ids.length) recheckKnowledgeSources({ kind, ids });
       }
     } catch (error) {
-      console.error("Knowledge recheck failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Knowledge recheck failed", error);
     }
   }, 0);
   timer.unref?.();
@@ -590,7 +604,7 @@ onKnowledgeProviderEvent(onProviderEvent);
 // ------------------------------------------------------------------------------ boot and the sweep
 
 /** Boot: sources a previous process left `indexing` go back to `pending`, and every base with work is queued. */
-export function resumeKnowledgeIndexing(log: (line: string) => void = (line) => console.log(line)) {
+export function resumeKnowledgeIndexing(log: (line: string) => void = (line) => slog.info(line)) {
   const reset = db.query("UPDATE kb_sources SET status = 'pending' WHERE status = 'indexing'").run().changes;
   const bases = wakeKnowledge();
   if (reset || bases) log(`Knowledge: ${bases} ${bases === 1 ? "base has" : "bases have"} sources waiting to be indexed${reset ? ` (${reset} interrupted)` : ""}.`);

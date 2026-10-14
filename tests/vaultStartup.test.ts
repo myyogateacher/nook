@@ -24,14 +24,14 @@ const totpKey = Buffer.alloc(32, 7).toString("base64");
 // Every child runs with `--no-env-file`: Bun would otherwise load a developer's `.env` from `root`
 // (a checkout has one, a fresh worktree does not), and its settings would leak into these probes.
 function run(args: string[], env: Record<string, string>) {
-  const result = Bun.spawnSync(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env }, stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, LOG_LEVEL: "info", ...env }, stdout: "pipe", stderr: "pipe" });
   const stdout = result.stdout.toString();
   const stderr = result.stderr.toString();
   const line = stdout.split("\n").find((item) => item.startsWith("PROBE "));
   return { code: result.exitCode, stdout, stderr, probe: line ? JSON.parse(line.slice(6)) : null };
 }
 async function runAsync(args: string[], env: Record<string, string>) {
-  const child = Bun.spawn(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, ...env }, stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(["bun", "--no-env-file", ...args], { cwd: root, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", TOTP_ENCRYPTION_KEY: totpKey, LOG_LEVEL: "info", ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   return { code, stdout, stderr };
 }

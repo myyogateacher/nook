@@ -2,6 +2,9 @@ import { registerBinProvider, SWEEP_BATCH_SIZE, SWEEP_RESUME_BATCH_SIZE, type Bi
 import { audit, db, now } from "../db";
 import { withResourceLock } from "../storage";
 import { REPORTS_PER_USER } from "./service";
+import { logger } from "../log";
+
+const slog = logger("reports");
 
 /**
  * Reports in the Bin (plan wave 45, D419), registered with server/bin.ts like chats and agents. The
@@ -38,7 +41,7 @@ export async function sweepReports(cutoff: string): Promise<BinSweepCounts> {
         if (outcome === "purged") counts.purged += 1;
       } catch (error) {
         counts.pending += 1;
-        console.error("Bin sweep could not purge a report", error instanceof Error ? error.name : "Unknown error");
+        slog.error("Bin sweep could not purge a report", error);
       }
     }
   }

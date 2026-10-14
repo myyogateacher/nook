@@ -1,6 +1,9 @@
 import { rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { config } from "./config";
+import { logger } from "./log";
+
+const slog = logger("app");
 
 /**
  * "Is a Nook server using this DATA_DIR right now?" for host commands that must run with the server
@@ -28,7 +31,7 @@ export function startServerHeartbeat(dataDir = config.dataDir) {
     try {
       writeFileSync(path, `Nook server running (pid ${process.pid}); see docs/OPERATIONS.md, Vault.\n`, { mode: 0o600 });
     } catch (error) {
-      console.error("Could not write the server heartbeat", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Could not write the server heartbeat", error);
     }
   };
   beat();

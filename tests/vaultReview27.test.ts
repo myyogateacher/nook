@@ -367,6 +367,9 @@ describe("review 27: values over the key surfaces (T188, T191)", () => {
     const captured: string[] = [];
     const originals = { log: console.log, error: console.error, warn: console.warn, info: console.info };
     for (const name of ["log", "error", "warn", "info"] as const) console[name] = (...args: unknown[]) => { captured.push(args.map((arg) => arg instanceof Error ? `${arg.name}:${arg.message}:${arg.stack}` : typeof arg === "string" ? arg : JSON.stringify(arg)).join(" ")); };
+    // The server log too, at its most verbose level (server/log.ts).
+    const { captureLogs } = await import("../server/log");
+    const logs = captureLogs({ level: "debug" });
     const bodies: string[] = [];
     try {
       const created = await rest(key.token, "POST", `/vault/vaults/${vault.id}/secrets`, { name: "R27_CANARY", comment: `${canary}-sc`, tags: ["canary"], values: { [vault.envs.dev!]: { value: canary, comment: `${canary}-vc` } } });
@@ -386,9 +389,12 @@ describe("review 27: values over the key surfaces (T188, T191)", () => {
       expect((await rest(key.token, "GET", `/vault/vaults/${vault.id}/secrets/${secretId}/values/${vault.envs.dev}`)).body.value.value).toBe(`${canary}-m`);
     } finally {
       Object.assign(console, originals);
+      logs.restore();
     }
     for (const body of bodies) expect(body).not.toContain(canary);
     expect(captured.join("\n")).not.toContain(canary);
+    expect(logs.lines.length).toBeGreaterThan(0);
+    expect(logs.text()).not.toContain(canary);
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map((row) => row.name);
     for (const table of tables) {
       const leaked = JSON.stringify(db.query(`SELECT * FROM "${table}"`).all()).includes(canary);

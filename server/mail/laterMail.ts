@@ -5,6 +5,9 @@ import { isMuted } from "./mutes";
 import { enqueueMail, mergeIds, WINDOW_MS, type Payload } from "./outbox";
 import { readEmailPrefs } from "./prefs";
 import type { Recipient, Resolution } from "./resolve";
+import { logger } from "../log";
+
+const slog = logger("mail");
 
 /**
  * Sprint and Bin mail (docs/plan/research/2026-09-28-outbound-email.md §A.2 #20, #29), both in
@@ -26,7 +29,7 @@ function safely(label: string, run: () => void) {
   try {
     run();
   } catch (error) {
-    console.error(`Mail enqueue failed: purpose=${label} error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Mail enqueue failed: purpose=${label}`, error);
   }
 }
 

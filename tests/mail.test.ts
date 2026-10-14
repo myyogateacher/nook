@@ -8,14 +8,26 @@ const { inviteEmail, formatExpiry } = await import("../server/team/inviteEmail")
 const { resetInviteRateLimits, hashInviteToken } = await import("../server/team/invites");
 const { resetTeamRateLimits } = await import("../server/team/routes");
 const { config, isMailFrom } = await import("../server/config");
+const { captureLogs: captureServerLogs } = await import("../server/log");
 
 type Sent = Parameters<import("../server/mail").MailTransport>[0];
 
-/** Captures console output so tests can prove no address, token, or key reaches the logs. */
+/**
+ * Captures console output and the server log (server/log.ts, at debug) so tests can prove no address,
+ * token, or key reaches the logs. A server log line is its message, plus its fields as JSON when it has any.
+ */
 function captureLogs() {
-  const lines: string[] = [];
-  const spies = (["info", "warn", "error", "log"] as const).map((level) => spyOn(console, level).mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(" ")); }));
-  return { lines, restore: () => { for (const spy of spies) spy.mockRestore(); } };
+  const consoleLines: string[] = [];
+  const spies = (["info", "warn", "error", "log"] as const).map((level) => spyOn(console, level).mockImplementation((...args: unknown[]) => { consoleLines.push(args.map(String).join(" ")); }));
+  const server = captureServerLogs({ level: "debug", format: "json" });
+  const serverLine = (line: string) => {
+    const { time: _time, level: _level, scope: _scope, msg, ...fields } = JSON.parse(line) as Record<string, unknown>;
+    return Object.keys(fields).length ? `${msg} ${JSON.stringify(fields)}` : String(msg);
+  };
+  return {
+    get lines() { return [...consoleLines, ...server.lines.map((entry) => serverLine(entry.line))]; },
+    restore: () => { for (const spy of spies) spy.mockRestore(); server.restore(); }
+  };
 }
 
 function fakeTransport(behaviour: "ok" | "fail" | "hang" = "ok") {

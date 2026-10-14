@@ -2,6 +2,9 @@ import { db } from "../db";
 import { mailEnabled } from "../mail";
 import { enqueueMail, type Payload } from "./outbox";
 import type { Recipient, Resolution } from "./resolve";
+import { logger } from "../log";
+
+const slog = logger("mail");
 
 /**
  * The outbound email plan's two "later" mails (§A.2 #9 and #14, §A.3), as built.
@@ -30,7 +33,7 @@ function safely(label: string, run: () => void) {
   try {
     run();
   } catch (error) {
-    console.error(`Mail enqueue failed: purpose=${label} error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Mail enqueue failed: purpose=${label}`, error);
   }
 }
 

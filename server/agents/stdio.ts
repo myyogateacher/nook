@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "../config";
 import { McpClientError, type McpTransport } from "./mcpClient";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * stdio MCP servers (plan §3.3, D348, T308; Wave 41 AC-B): never configured from the UI. With
@@ -68,7 +71,7 @@ export function parseStdioDeclarations(text: string): StdioDeclaration[] {
 }
 
 /** Startup: reads the declarations only with the flag on; logs the count, never a value. */
-export function initStdioDeclarations(log: (line: string) => void = (line) => console.log(line)): StdioDeclaration[] {
+export function initStdioDeclarations(log: (line: string) => void = (line) => slog.info(line)): StdioDeclaration[] {
   declared = [];
   if (!config.agents.stdio || !config.agents.stdioFile) return declared;
   let text: string;

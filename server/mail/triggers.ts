@@ -4,6 +4,9 @@ import { logShare } from "./digest";
 import { enqueueMail, mergeIds, PROPOSALS_MIN_GAP_MS, WINDOW_MS, type Payload } from "./outbox";
 import type { SharedKind } from "./templates/activity";
 import type { AccountEvent, PasswordEvent, TwoFactorEvent } from "./templates/security";
+import { logger } from "../log";
+
+const slog = logger("mail");
 
 /**
  * The hooks modules call to send mail (docs/plan/research/2026-09-28-outbound-email.md §A.2 v1 set).
@@ -16,7 +19,7 @@ function safely(label: string, run: () => void) {
   try {
     run();
   } catch (error) {
-    console.error(`Mail enqueue failed: purpose=${label} error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Mail enqueue failed: purpose=${label}`, error);
   }
 }
 

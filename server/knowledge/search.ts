@@ -6,6 +6,9 @@ import { AgentError } from "../agents/status";
 import { blobToVector, embedTexts, takesDimensions } from "./embed";
 import { canReadSource, kbChangingModel, kbProvider, MODEL_CHANGING_NOTICE, ownerIsActive, PROVIDER_REMOVED_NOTICE, type KbRow } from "./service";
 import { recheckLater } from "./index";
+import { logger } from "../log";
+
+const slog = logger("knowledge");
 
 /**
  * Search (plan §9, D368; Wave 44 "AC-E"): brute-force cosine over each base's vectors (a dot product,
@@ -187,7 +190,7 @@ export async function searchBases(all: readonly KbRow[], query: string, k: numbe
       if (signal?.aborted) throw error;
       // Keyword-only for this group: the provider failed, refused, or the budget is used up.
       vectorFailed = true;
-      if (!(error instanceof AgentError) && !(error instanceof Error && error.name === "ProviderError")) console.error("Knowledge query embedding failed", error instanceof Error ? error.name : "Unknown error");
+      if (!(error instanceof AgentError) && !(error instanceof Error && error.name === "ProviderError")) slog.error("Knowledge query embedding failed", error);
     }
   }
   vectorHits.sort((left, right) => right.score - left.score || left.id - right.id);

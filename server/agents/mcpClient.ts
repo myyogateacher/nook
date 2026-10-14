@@ -4,6 +4,9 @@ import { AGENT_RUN_HEADER, currentAgentRun } from "./depth";
 import { EgressError, egressFetch, type EgressResponse } from "./egress";
 import { sniff, SNIFF_BYTES } from "../mimeSniff";
 import { TOOL_IMAGE_BOUNDS, type ToolImageRef } from "../../shared/agents";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * The in-house MCP client (plan §3.1, D346; Wave 41 AC-B): Streamable HTTP, spec 2025-11-25, over
@@ -180,7 +183,7 @@ export class McpHttpTransport implements McpTransport {
       }
     } finally {
       response.cancel();
-      if (replies.ignored > 0) console.warn(`Agents: a tool server sent ${replies.ignored} more server-to-client ${replies.ignored === 1 ? "request" : "requests"} in one response than Nook answers (${SERVER_REQUEST_REPLIES_MAX}); ignored`);
+      if (replies.ignored > 0) slog.warn(`Agents: a tool server sent ${replies.ignored} more server-to-client ${replies.ignored === 1 ? "request" : "requests"} in one response than Nook answers (${SERVER_REQUEST_REPLIES_MAX}); ignored`);
     }
     if (!found) {
       if (signal?.aborted) throw new McpClientError("CANCELLED", "The call was cancelled");

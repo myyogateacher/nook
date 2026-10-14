@@ -4,6 +4,9 @@ import { withResourceLock } from "../storage";
 import { readAgentSettings } from "../agents/settings";
 import { forgetKnowledgeVectors } from "./search";
 import { scheduleKnowledge } from "./index";
+import { logger } from "../log";
+
+const slog = logger("knowledge");
 
 /**
  * Knowledge bases in the Bin (plan §9, D363 parity; Wave 44 "AC-E"), a provider of server/bin.ts.
@@ -44,7 +47,7 @@ async function sweep(cutoff: string): Promise<BinSweepCounts> {
         if (outcome === "purged") counts.purged += 1;
       } catch (error) {
         counts.pending += 1;
-        console.error("Bin sweep could not purge a knowledge base", error instanceof Error ? error.name : "Unknown error");
+        slog.error("Bin sweep could not purge a knowledge base", error);
       }
     }
   }

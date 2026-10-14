@@ -1,3 +1,4 @@
+import { logger, shortId } from "../log";
 import { createHash } from "node:crypto";
 import { audit, db, now } from "../db";
 import { REPORT_LIMITS } from "../../shared/reports";
@@ -153,6 +154,18 @@ export const docSessions = { sessionFor: (row: ToolServerRow): McpSession => ses
 
 /** Reads the doc: one tool call, no model. */
 export async function fetchDoc(row: ToolServerRow, choice: DocToolChoice, ref: string, options: { signal?: AbortSignal } = {}): Promise<FetchedDoc> {
+  const started = performance.now();
+  try {
+    const doc = await fetchDocText(row, choice, ref, options);
+    logger("reports").info("Doc fetched", { server: shortId(row.id), tool: choice.tool, bytes: doc.bytes, hash: doc.sha256.slice(0, 12), truncated: doc.truncated || undefined, ms: Math.round(performance.now() - started) });
+    return doc;
+  } catch (error) {
+    logger("reports").warn("Doc fetch failed", { server: shortId(row.id), tool: choice.tool, code: (error as { code?: string }).code, ms: Math.round(performance.now() - started) });
+    throw error;
+  }
+}
+
+async function fetchDocText(row: ToolServerRow, choice: DocToolChoice, ref: string, options: { signal?: AbortSignal }): Promise<FetchedDoc> {
   let text: string;
   try {
     const outcome = await docSessions.sessionFor(row).callTool(choice.tool, docToolArgs(choice, ref), options.signal);

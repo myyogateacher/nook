@@ -37,6 +37,9 @@ import { canWriteContent } from "./team/userRole";
 import { registerVaultTools } from "./vault/mcpTools";
 import { attachmentTools } from "./attachments/mcpTools";
 import { isSystemFolder, isSystemFolderError, SYSTEM_FOLDER_MESSAGE } from "./attachments/service";
+import { elapsed, logger, shortId } from "./log";
+
+const slog = logger("mcp");
 
 /**
  * MCP tools (docs/plan/WAVES_7-9.md §4.2, D36–D37).
@@ -129,6 +132,21 @@ function checkNamedItems(spec: McpToolSpec, reach: ToolReach, args: Record<strin
  * (per surface); and maps errors to `{error, code}` results.
  */
 export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, surface: KeySurface = "mcp"): Promise<ToolResult> {
+  const start = performance.now();
+  const result = await runToolChecked(spec, args, keyId, surface);
+  // One line per tool call: the tool, the key, the surface, how long, and ok or the error code (never arguments or results).
+  let code: string | undefined;
+  if (result.isError) {
+    try { code = (JSON.parse(result.content[0]?.text ?? "{}") as { code?: string }).code; } catch { code = "UNKNOWN"; }
+  }
+  const fields = { tool: spec.name, key: shortId(keyId), surface, write: spec.write ?? false, ms: elapsed(start), ok: !result.isError, code };
+  if (!result.isError) slog.info("Tool call", fields);
+  else if (code === "INTERNAL") slog.error("Tool call", fields);
+  else slog.warn("Tool call", fields);
+  return result;
+}
+
+async function runToolChecked(spec: McpToolSpec, args: unknown, keyId: string, surface: KeySurface): Promise<ToolResult> {
   const actor = resolveKeyActor(keyId, surface);
   if (isKeyDenial(actor)) {
     // Counted once, on the surface that was refused (review S5).
@@ -183,7 +201,7 @@ export async function runTool(spec: McpToolSpec, args: unknown, keyId: string, s
     if (error instanceof StorageUnavailableError) return errorResult("STORAGE_UNAVAILABLE", "File storage is unavailable. Try again later.");
     // The 046 triggers' backstop (T342): a write that would put something into a system folder.
     if (isSystemFolderError(error)) return errorResult("INVALID", SYSTEM_FOLDER_MESSAGE, { reason: "SYSTEM_FOLDER" });
-    console.error(`MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
+    slog.error(`MCP tool ${spec.name} failed`, error);
     return errorResult("INTERNAL", "Something went wrong");
   }
 }

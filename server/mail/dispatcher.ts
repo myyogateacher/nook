@@ -10,6 +10,9 @@ import type { MailCategory, MailClass } from "./templates/types";
 import { createUnsubscribeToken } from "./unsubscribe";
 import { scheduleBinExpiry } from "./laterMail";
 import { scheduleDigests } from "./digest";
+import { logger } from "../log";
+
+const slog = logger("mail");
 
 /**
  * The mail dispatcher (docs/plan/research/2026-09-28-outbound-email.md §D.1–D.3), on the reminders
@@ -167,7 +170,7 @@ async function handle(row: Row, nowMs: number): Promise<keyof TickCounts> {
   }
   if (!outcome.retryable || row.attempts + 1 >= MAX_ATTEMPTS) {
     finish(row.id, "dead", { errorCode: outcome.code, nowMs, attempt: true });
-    if (!outcome.retryable) console.error(`Mail dead: purpose=${template} error=${outcome.code}`);
+    if (!outcome.retryable) slog.error(`Mail dead: purpose=${template} error=${outcome.code}`);
     return "dead";
   }
   requeue(row.id, nowMs + backoff(row.attempts), { attempt: true, errorCode: outcome.code });
@@ -196,7 +199,7 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
       scheduleDigests(nowMs);
       scheduleBinExpiry(nowMs);
     } catch (error) {
-      console.error(`Mail scheduling failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+      slog.error(`Mail scheduling failed`, error);
     }
     const due = db.query("SELECT * FROM mail_outbox WHERE status = 'queued' AND not_before <= ? ORDER BY not_before, created_at LIMIT ?").all(iso(nowMs), MAIL_BATCH) as Row[];
     for (const row of due) {
@@ -206,7 +209,7 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
         counts[await handle(row, nowMs)] += 1;
       } catch (error) {
         // A resolver or renderer bug must not wedge the queue: the row retries, then dies.
-        console.error(`Mail row failed: purpose=${row.template} error=${error instanceof Error ? error.name : "Unknown"}`);
+        slog.error(`Mail row failed: purpose=${row.template}`, error);
         if (row.attempts + 1 >= MAX_ATTEMPTS) finish(row.id, "dead", { errorCode: "internal", nowMs, attempt: true });
         else requeue(row.id, nowMs + backoff(row.attempts), { attempt: true, errorCode: "internal" });
         counts.retried += 1;
@@ -215,7 +218,7 @@ export async function runMailDispatch(options: { nowMs?: number } = {}): Promise
   } finally {
     ticking = false;
   }
-  if (counts.sent || counts.dead || counts.retried) console.info(`Mail: ${counts.sent} sent, ${counts.skipped} skipped, ${counts.held} held, ${counts.retried} retrying, ${counts.dead} dead`);
+  if (counts.sent || counts.dead || counts.retried) slog.info(`Mail: ${counts.sent} sent, ${counts.skipped} skipped, ${counts.held} held, ${counts.retried} retrying, ${counts.dead} dead`);
   return counts;
 }
 
@@ -233,7 +236,7 @@ export function startMailDispatcher() {
   // The test suite drives ticks itself (runMailDispatch with a fake clock), so no timer races it.
   if (process.env.NODE_ENV === "test") return;
   timer = setInterval(() => {
-    runMailDispatch().catch((error) => console.error("Mail dispatch failed", error instanceof Error ? error.name : "Unknown error"));
+    runMailDispatch().catch((error) => slog.error("Mail dispatch failed", error));
   }, MAIL_TICK_MS);
   timer.unref();
 }

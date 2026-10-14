@@ -1,3 +1,4 @@
+import { logger } from "../log";
 import { REPORT_LIMITS, type ResultColumn } from "../../shared/reports";
 import { egressFetch, EgressError, readEgressText } from "../agents/egress";
 
@@ -141,6 +142,8 @@ export function parseJsonCompact(text: string): Omit<ChResult, "queryId"> {
   };
 }
 
+const chLog = logger("reports");
+
 /** Runs one statement. Throws ChError (or EgressError mapped onto it). */
 export async function chQuery(target: ChTarget, sql: string, options: ChOptions): Promise<ChResult> {
   const responseBytes = options.responseBytes ?? REPORT_LIMITS.responseBytes;
@@ -167,7 +170,12 @@ export async function chQuery(target: ChTarget, sql: string, options: ChOptions)
     }
     throw error;
   }
-  if (status !== 200 || exceptionCode) throw parseChError(text, status);
+  if (status !== 200 || exceptionCode) {
+    const failed = parseChError(text, status);
+    chLog.debug("ClickHouse statement failed", { query: options.queryId, status, code: failed.code, chCode: failed.chCode ?? undefined, ms: Date.now() - started });
+    throw failed;
+  }
   const parsed = parseJsonCompact(text);
+  if (chLog.enabled("debug")) chLog.debug("ClickHouse statement", { query: options.queryId, ms: Date.now() - started, rowsRead: parsed.rowsRead ?? undefined, rows: parsed.rows.length });
   return { ...parsed, elapsedMs: parsed.elapsedMs || Date.now() - started, queryId: options.queryId };
 }

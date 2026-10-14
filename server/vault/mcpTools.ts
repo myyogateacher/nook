@@ -11,6 +11,9 @@ import { noteKeyLimited, noteKeyValueRead, presentSecret, presentVault, safeDeta
 import { KeyLimitError } from "./limits";
 import { createSecret, getSecret, listSecrets, listVaults, readValue, secretMetadata, setValue } from "./service";
 import { requireVaultEnabled } from "./status";
+import { logger } from "../log";
+
+const slog = logger("vault");
 
 /**
  * The vault's MCP tools (Wave 27, vault plan §7.1, D221, T191, T192). They are registered ONLY for
@@ -214,7 +217,7 @@ export async function runVaultTool(spec: VaultToolSpec, args: unknown, keyId: st
     if (error instanceof KeyLimitError) noteKeyLimited(actor, error, vaultId);
     // Codes and safe details only: never the input (T188).
     if (error instanceof VaultError) return errorResult(TOOL_CODES[error.code] ?? (error.status >= 500 ? "INTERNAL" : "INVALID"), error.message, safeDetails(error));
-    console.error(`Vault MCP tool ${spec.name} failed`, error instanceof Error ? error.name : "Unknown error");
+    slog.error(`Vault MCP tool ${spec.name} failed`, error);
     return errorResult("INTERNAL", "Something went wrong");
   }
 }

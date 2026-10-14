@@ -3,6 +3,9 @@ import { requireOwner, requireVault, type VaultActor } from "./access";
 import { pendingRows, reencryptBatch, retireGenerations, startGeneration } from "./crypto";
 import { chargeVault } from "./limits";
 import { recordVaultEvent } from "./service";
+import { logger } from "../log";
+
+const slog = logger("vault");
 
 /**
  * Data-key rotation per vault (vault plan §3.3, §6.6; Wave 26). A rotation starts a new DEK
@@ -96,11 +99,11 @@ export function scheduleRotationRun() {
     scheduled = null;
     try {
       const result = runRotationPass(1);
-      if (result.failed) console.error(`Vault rotation: ${result.failed} rows did not open under their own key and were left as they are`);
+      if (result.failed) slog.error(`Vault rotation: ${result.failed} rows did not open under their own key and were left as they are`);
       // Keep going while a pass got anywhere; rows that do not open are passed, not retried.
       if (result.pending > 0 && result.moved + result.failed > 0) scheduleRotationRun();
     } catch (error) {
-      console.error("Vault rotation failed", error instanceof Error ? error.name : "Unknown error");
+      slog.error("Vault rotation failed", error);
     }
   }, ROTATION_PAUSE_MS);
 }

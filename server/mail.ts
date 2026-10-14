@@ -21,6 +21,9 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Resend } from "resend";
 import { config } from "./config";
+import { logger } from "./log";
+
+const slog = logger("mail");
 
 export type MailMessage = { to: string; subject: string; text: string; html?: string; headers?: Record<string, string> };
 export type MailSendRequest = MailMessage & { from: string; idempotencyKey: string };
@@ -105,10 +108,10 @@ export function fileTransport(path: string): MailTransport {
   };
 }
 
-if (config.mail.partial) console.warn("Email is off: set both RESEND_API_KEY and MAIL_FROM to turn it on");
-if (config.mail.blockedReason) console.warn(`Email is off: ${config.mail.blockedReason}`);
-if (config.mail.httpLinks) console.warn("Email is on with http links (MAIL_ALLOW_HTTP_LINKS=true): links in mail are not encrypted");
-if (config.mail.transport === "file") console.warn("Email goes to the MAIL_FILE_PATH file (MAIL_TRANSPORT=file); nothing is sent");
+if (config.mail.partial) slog.warn("Email is off: set both RESEND_API_KEY and MAIL_FROM to turn it on");
+if (config.mail.blockedReason) slog.warn(`Email is off: ${config.mail.blockedReason}`);
+if (config.mail.httpLinks) slog.warn("Email is on with http links (MAIL_ALLOW_HTTP_LINKS=true): links in mail are not encrypted");
+if (config.mail.transport === "file") slog.warn("Email goes to the MAIL_FILE_PATH file (MAIL_TRANSPORT=file); nothing is sent");
 
 let transport: MailTransport | null = config.mail.transport === "file"
   ? fileTransport(config.mail.filePath!)
@@ -199,18 +202,18 @@ export async function sendMail(message: MailMessage, options: SendOptions): Prom
   const address = message.to.trim();
   const handle = recipientHash(address);
   if (!withinLimits(options.senderId, address, options.recipient ?? "address", Date.now())) {
-    console.warn(`Mail not sent: purpose=${options.purpose} recipient=${handle} reason=rate_limited`);
+    slog.warn(`Mail not sent: purpose=${options.purpose} recipient=${handle} reason=rate_limited`);
     return { sent: false, reason: "rate_limited" };
   }
   try {
     const request = { ...message, to: address, from: senderHeader(from!), idempotencyKey: options.idempotencyKey ?? crypto.randomUUID() };
     const { id } = await withTimeout((signal) => transport!(request, signal), options.timeoutMs ?? MAIL_TIMEOUT_MS);
-    console.info(`Mail sent: purpose=${options.purpose} recipient=${handle} id=${id}`);
+    slog.info(`Mail sent: purpose=${options.purpose} recipient=${handle} id=${id}`);
     return { sent: true, id };
   } catch (error) {
     const code = (error instanceof MailProviderError ? error.providerCode : error instanceof Error ? error.name : "unknown_error").replace(/[^A-Za-z0-9_]/g, "").slice(0, 40) || "unknown_error";
     const status = error instanceof MailProviderError && Number.isInteger(error.status) ? ` status=${error.status}` : "";
-    console.error(`Mail failed: purpose=${options.purpose} recipient=${handle} error=${code}${status}`);
+    slog.error(`Mail failed: purpose=${options.purpose} recipient=${handle} error=${code}${status}`);
     return { sent: false, reason: "failed", code, retryable: isRetryable(error) };
   }
 }

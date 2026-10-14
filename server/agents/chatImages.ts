@@ -8,6 +8,9 @@ import { imageTypeOf } from "./images";
 import type { ChatTurn, ContentPart } from "./loop";
 import type { MessageRow } from "./chats";
 import { AgentError } from "./status";
+import { logger } from "../log";
+
+const slog = logger("agents");
 
 /**
  * Images in the chat composer (uploads everywhere U5; D404 as decided by the operator, Q10, Q11).
@@ -149,7 +152,7 @@ async function readImage(documentId: string, ownerId: string): Promise<{ mimeTyp
     if (error instanceof DocumentIntegrityError) return null;
     // S3 storage: an unreachable store omits the picture from this turn (counted as omitted), never fails the run.
     if (error instanceof StorageUnavailableError) {
-      console.warn(`Chat image omitted: file storage unavailable (${error.code})`);
+      slog.warn(`Chat image omitted: file storage unavailable (${error.code})`);
       return null;
     }
     throw error;

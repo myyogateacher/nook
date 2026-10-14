@@ -2,6 +2,9 @@ import type { Context } from "hono";
 import { getConnInfo } from "hono/bun";
 import { config } from "./config";
 import { addressInRanges, compressIpv6, ipv6Groups, normalizeIp } from "./ipRanges";
+import { logger } from "./log";
+
+const slog = logger("http");
 
 export { normalizeIp };
 
@@ -78,7 +81,7 @@ export function clientAddress(c: Context, hops = config.trustedProxyHops, proxie
     // S8: once per process, and never the address: behind a proxy every client shares one bucket.
     if (header && !warnedForwardedIgnored) {
       warnedForwardedIgnored = true;
-      console.warn("A request carried X-Forwarded-For but TRUSTED_PROXY_HOPS is 0, so rate limits see the proxy's address for every client. Behind a reverse proxy, set TRUSTED_PROXY_HOPS (see docs/OPERATIONS.md).");
+      slog.warn("A request carried X-Forwarded-For but TRUSTED_PROXY_HOPS is 0, so rate limits see the proxy's address for every client. Behind a reverse proxy, set TRUSTED_PROXY_HOPS (see docs/OPERATIONS.md).");
     }
     return fallback;
   }

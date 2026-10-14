@@ -8,6 +8,9 @@ import { notifyAccess } from "./access/notices";
 import { mailNewSignIn, startWelcomeMail } from "./mail/signInMail";
 import { kickMailDispatch } from "./mail/dispatcher";
 import { deviceFamilies, deviceLabel, type BrowserFamily, type OsFamily, type SignInMethod } from "./deviceLabels";
+import { logger } from "./log";
+
+const slog = logger("auth");
 
 export { deviceFamilies, deviceLabel, deviceLabelFromCode, SIGN_IN_METHODS, type SignInMethod } from "./deviceLabels";
 
@@ -96,7 +99,7 @@ export function recordSignIn(c: Context, userId: string, signIn: SignInContext, 
     if (isNew && mailNewSignIn(userId, { browser: families.browser, os: families.os, method: signIn.method, at })) kickMailDispatch();
     startWelcomeMail(userId);
   } catch (error) {
-    console.error(`Sign-in device record failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Sign-in device record failed`, error);
   }
 }
 
@@ -134,7 +137,7 @@ export function touchDevice(c: Context, userId: string, session: { id: string; l
       db.query("UPDATE users SET device_baseline = 0 WHERE id = ? AND device_baseline = 1").run(userId);
     })();
   } catch (error) {
-    console.error(`Device touch failed: error=${error instanceof Error ? error.name : "Unknown"}`);
+    slog.error(`Device touch failed`, error);
   }
 }
 

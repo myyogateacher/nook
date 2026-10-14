@@ -43,6 +43,15 @@
 .reports-nav-link:hover { background: #171719; }
 .reports-nav-link.active { background: #242118; color: #ffe4a4; }
 .reports-nav-link.drop-target { background: #3a301d; color: #ffdb83; box-shadow: inset 0 0 0 1px #81672d; }
+/* K2: a dragged folder: an insertion line before or after a row, the row itself faded, a refused drop in red. */
+.reports-nav-entry > .reports-nav-link { position: relative; }
+.reports-nav-link.drop-before::before, .reports-nav-link.drop-after::before { content: ""; position: absolute; left: 8px; right: 4px; height: 2px; border-radius: 2px; background: #f2cc75; pointer-events: none; }
+.reports-nav-link.drop-before::before { top: -2px; }
+.reports-nav-link.drop-after::before { bottom: -2px; }
+.reports-nav-link.drop-refused { background: #2a1717; color: #f0a3a3; box-shadow: inset 0 0 0 1px #6e2e2e; cursor: no-drop; }
+.reports-nav-link.folder-dragging { opacity: .45; }
+.reports-nav-drop-note { margin: 6px 12px 2px; color: #8b8b92; font-size: .76rem; line-height: 1.45; }
+.reports-nav-drop-note.refused { color: #f0a3a3; }
 .reports-nav-link svg { width: 17px; height: 17px; }
 .reports-nav-link b { color: #67676e; font-size: .74rem; font-weight: 600; }
 /* All, Unfiled, and Shared keep their counts in line with the folders' (which have a ⋯ beside them). */
@@ -93,7 +102,7 @@
 .new-report-folder { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px dashed #2f2f35; border-radius: 10px; padding: 8px 8px 8px 12px; color: #9a9aa1; font-size: .86rem; }
 .new-report-folder strong { color: #ededee; }
 .new-report-folder > :last-child:not(button) { flex: 1 1 200px; }
-.reports-folder-sheet .reports-nav { padding: 4px 12px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; }
+.reports-folder-sheet .reports-nav { flex: 1 1 auto; min-height: 0; align-content: start; padding: 4px 12px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; }
 .reports-folder-sheet .reports-nav-link, .reports-folder-sheet .reports-nav-new { min-height: 46px; }
 .reports-folder-sheet .reports-nav-menu { opacity: 1; }
 @media (max-width: 1180px) { .reports-row-open { grid-template-columns: 36px minmax(0, 1fr) 72px minmax(100px, 150px) 96px; } .reports-row-meta time { display: none; } }

@@ -17,8 +17,6 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## In flight
 
 - [ ] Release v0.38.0. Update the `release-0.38.0` branch to current `main`, extend CHANGELOG and the upgrade notes to cover 058–059, run the gates, then merge, tag, push, publish the GitHub release, and rebuild the local Docker image.
-- [ ] (Lane K) Generate a report straight into its folder (no second filing request).
-- [ ] (Lane K) Folders: drag a folder in the nav to nest it or reorder it, with a keyboard and phone alternative.
 - [ ] (Lane K) Doc browsing (B3): keep search and list answers too, so "Doc changed" notices pages a search would now find. Check doc reads at most 16 pages today.
 - [ ] (Lane K) "Pick from Nook" (B4): search the text of Files documents, not only their names (`GET /api/files`, newest 500).
 - [ ] Metric catalog: Check doc does not re-extract the catalog when a linked page changes. It names the changed page, not the changed metrics. A non-Nook doc server's linked pages reach the catalog only after a run has read them.

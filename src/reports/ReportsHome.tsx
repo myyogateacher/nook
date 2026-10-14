@@ -6,7 +6,7 @@ import { notifyBinned, onBinRestored } from "../bin/binUndo";
 import { ModalDialog } from "../files/Dialog";
 import { NameDialog } from "../files/RenameDialog";
 import { relativeTime } from "../files/format";
-import { whenHistorySettled } from "../historyDialogs";
+import { useLayerOpener, whenHistorySettled } from "../historyDialogs";
 import type { ReportsFolderView } from "../router";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { errorText, notify } from "../ui/notify";
@@ -16,9 +16,10 @@ import { REPORT_FOLDER_NAME_MAX, type DatasourceChoice, type ReportFolder, type 
 import { NewReportSheet } from "./NewReportSheet";
 import { ReportFolderNav, type FolderActions } from "./ReportFolderNav";
 import { ReportMoveSheet } from "./ReportMoveSheet";
+import { ReportFolderMoveSheet } from "./ReportFolderMoveSheet";
 import { RenameSheet } from "./ReportPage";
 import { ReportOverflowMenu, type MenuItem } from "./reportCommands";
-import { CADENCE_LABELS, folderPath, orderedFolders, REPORT_DRAG_TYPE, reportsInView, viewTitle } from "./reportFolderTree";
+import { CADENCE_LABELS, folderPath, orderedFolders, placeOf, REPORT_DRAG_TYPE, reportsInView, viewTitle, type FolderPlace } from "./reportFolderTree";
 import { copyReportLink, LinkSheet, reportLink } from "./reportLink";
 import { createFolder, datasourceChoices, deleteFolder, deleteReport, fileReport, listFolders, listReports, messageOf, updateFolder } from "./reportsApi";
 
@@ -57,7 +58,9 @@ function checkFolderName(initial: string) {
  * folder or Unfiled to move it (Undo in the toast); its ⋯ menu has Move to… for keyboards and phones.
  * Each view is a URL (/reports, /reports/folder/:id, /reports/unfiled, /reports/shared), so Back and
  * Forward step between folders; every sheet is a history layer (D18). Under 1024 px the nav is a sheet
- * opened from the folder button at the top. New report in a folder files the report there.
+ * opened from the folder button at the top. New report in a folder files the report there. K2: a folder
+ * drags in the nav to nest or reorder it (Undo in the toast); its ⋯ menu has Move folder to… (a sheet
+ * that Forward reopens) and Move up / Move down.
  */
 export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, onOpen, onOpenDatasources, onOpenToolServers, folder: view = null, onFolder, flash = (message) => notify.info(message) }: HomeProps) {
   const { canWrite } = useRole();
@@ -70,6 +73,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
   const [creating, setCreating] = useState<{ folderId: string | null } | null>(null);
   const [naming, setNaming] = useState<NameRequest | null>(null);
   const [moving, setMoving] = useState<ReportSummary | null>(null);
+  const [movingFolder, setMovingFolder] = useState<ReportFolder | null>(null);
   const [renaming, setRenaming] = useState<ReportSummary | null>(null);
   const [linkFor, setLinkFor] = useState<ReportSummary | null>(null);
   const [drawer, setDrawer] = useState(false);
@@ -127,6 +131,20 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     const where = folderId ? folderPath(folders, folderId) : "Unfiled";
     if (options.undo) notify.success(`Moved “${report.title}” to ${where}`, { action: { label: "Undo", onClick: () => { void fileReport(reportId, previousFolderId).then(() => load(), (reason) => notify.error(errorText(reason, "Could not undo the move"))); } } });
   }, [folders, load, reports]);
+  /** K2: nests or reorders a folder (a drag in the nav, Move folder to…, Move up/down), with Undo in the toast. */
+  const placeFolder = useCallback(async (folder: ReportFolder, place: FolderPlace) => {
+    const before = placeOf(folders, folder.id);
+    await updateFolder(folder.id, place);
+    await load();
+    const message = place.parentId === before.parentId ? `Reordered the folder ${folder.name}`
+      : place.parentId ? `Moved the folder ${folder.name} into ${folderPath(folders, place.parentId)}` : `Moved the folder ${folder.name} to the top level`;
+    notify.success(message, { action: { label: "Undo", onClick: () => { void updateFolder(folder.id, before).then(() => load(), (reason) => notify.error(errorText(reason, "Could not undo the move"))); } } });
+  }, [folders, load]);
+  const foldersRef = useRef(folders);
+  foldersRef.current = folders;
+  const closeFolderMove = useCallback(() => setMovingFolder(null), []);
+  useLayerOpener("report-folder-move", (id) => { const found = foldersRef.current.find((item) => item.id === id); if (found) setMovingFolder(found); });
+
   const dropReport = (reportId: string, folderId: string | null) => {
     setDragging(null);
     move(reportId, folderId).catch((reason) => notify.error(errorText(reason, "Could not move the report")));
@@ -178,7 +196,9 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
     rename: (folder) => setNaming({ kind: "rename", folder }),
     newSubfolder: (folder) => setNaming({ kind: "new", parent: folder }),
     newReportIn: (folder) => { select(folder.id); setCreating({ folderId: folder.id }); },
-    remove: (folder) => { void removeFolder(folder); }
+    remove: (folder) => { void removeFolder(folder); },
+    moveTo: (folder) => setMovingFolder(folder),
+    place: (folder, place) => { placeFolder(folder, place).catch((reason) => notify.error(errorText(reason, "Could not move the folder"))); }
   };
   const chooseInDrawer = (next: ReportsFolderView | null) => {
     setDrawer(false);
@@ -211,7 +231,7 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
 
   const nav = (inDrawer: boolean) => <ReportFolderNav tree={tree} view={view} onSelect={inDrawer ? chooseInDrawer : select} canWrite={canWrite} dragging={dragging} onDropReport={dropReport}
     onNewFolder={() => { if (inDrawer) setDrawer(false); setNaming({ kind: "new", parent: null }); }}
-    actions={inDrawer ? { ...actions, newReportIn: (folder) => { setDrawer(false); actions.newReportIn(folder); } } : actions} />;
+    actions={inDrawer ? { ...actions, newReportIn: (folder) => { setDrawer(false); actions.newReportIn(folder); }, moveTo: (folder) => { setDrawer(false); whenHistorySettled(() => setMovingFolder(folder)); } } : actions} />;
 
   const noSources = sources !== null && sources.length === 0;
   const newReport = () => setCreating({ folderId: currentFolder?.id ?? null });
@@ -298,6 +318,8 @@ export function ReportsHome({ displayName, role, onHome, onSettings, onSignOut, 
       validate={checkFolderName(naming.kind === "rename" ? naming.folder.name : "")} onSubmit={submitName} onCancel={closeNaming} />}
     {moving && <ReportMoveSheet title={moving.title} currentFolderId={moving.folderId} folders={folders} onCancel={() => setMoving(null)}
       onMove={async (folderId) => { await move(moving.id, folderId); setMoving(null); }} />}
+    {movingFolder && <ReportFolderMoveSheet folder={movingFolder} folders={folders} onCancel={closeFolderMove} onReopen={() => setMovingFolder(movingFolder)}
+      onMove={async (place) => { await placeFolder(movingFolder, place); setMovingFolder(null); }} />}
     {renaming && <RenameSheet report={renaming} onCancel={() => setRenaming(null)} onSaved={() => { setRenaming(null); void load(); }} />}
     {linkFor && <LinkSheet url={reportLink(linkFor.id)} title={linkFor.title} onClose={() => setLinkFor(null)} flash={flash} />}
     {confirm.confirmElement}

@@ -16,6 +16,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - Auto titles.
   - Wider panels and dialogs; Share copies the link; the SQL console moves to ⋯ and Inspect → "Open in console" (an empty report keeps it, with "Generate from a doc" and "Ask for a chart").
   - "From a doc" says why it is unavailable; polled GETs log at debug.
+  - The live step log and Runs group each step under its plan todo.
 
   Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
   - [ ] (B) The doc tool picker explains Tool and "Link goes into"; it says why a tool is excluded (unsynced, or a policy that is not Auto), with an admin "Allow automatically"; New report dialog layout fixes.
@@ -23,7 +24,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - [ ] (B) Nook as a built-in doc source: notes and Files by link or picker, read with the owner's access.
   - [ ] (C) Agents get Nook's tools through an auto-provisioned internal key: read scopes plus `inbox:write`, proposals only. Admin toggle and per-agent toggle; migration 057 if needed.
   - [ ] (C) Button lint in `scripts/buttonMetrics.ts`. It flags overflowing, wrapped or clipped labels, side padding under 12 px, targets under 44 px on phones, and text buttons under 64 px wide.
-  - [ ] (A) The live step log grouped under its plan todos.
   - [ ] Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–055 in OPERATIONS.
 - [ ] Generator reliability, proposed and not started: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.

@@ -5,7 +5,7 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import type { ReportRunHistoryItem, ReportRunLog, ReportRunStep } from "../../shared/reports";
 import { api } from "../api";
 import { resultLine, stepDetail, toolLabel } from "./GenerateProgress";
-import { PlanChecklist } from "./PlanChecklist";
+import { groupStepsByTodo, PlanChecklist } from "./PlanChecklist";
 import { RUN_STATUS_TEXT, runLabel, timeAgo } from "./reportViewApi";
 import { messageOf } from "./reportsApi";
 import "./generate.css";
@@ -58,16 +58,21 @@ function RunLog({ reportId, run }: { reportId: string; run: ReportRunHistoryItem
   }, [reportId, run.id]);
   if (error) return <p className="form-error" role="alert">{error}</p>;
   if (!log) return <p className="reports-loading" role="status"><LoaderCircle className="spin" aria-hidden="true" />Loading the run…</p>;
+  // Steps under the plan's todos; reading before the plan, planning, and submits stay in the run's list.
+  const grouped = log.plan && log.steps ? groupStepsByTodo(log.plan, log.steps.map((step) => ({ step, tool: step.kind === "tool" ? step.tool : "", args: step.kind === "tool" ? step.args : null }))) : null;
   return <div className="report-run-log">
     {run.instruction && <p className="report-run-instruction">“{run.instruction}”</p>}
     {run.error && <p className="generate-step-error">{run.error}</p>}
-    {log.plan && <PlanChecklist plan={log.plan} heading="Plan" />}
+    {log.plan && <PlanChecklist plan={log.plan} heading="Plan" stepsOf={(id) => {
+      const list = grouped?.byTodo.get(id)?.filter((item) => item.tool !== "update_todo" || (item.step.kind === "tool" && item.step.ok === false));
+      return list?.length ? <ol className="generate-steps plan-todo-steps">{list.map((item) => <StepItem key={item.step.seq} step={item.step} />)}</ol> : null;
+    }} />}
     <ol className="generate-steps">
       {log.doc && <li className="generate-step is-ok">
         <span className="generate-step-icon" aria-hidden="true"><FileText /></span>
         <span className="generate-step-body"><strong>Read the doc</strong><span className="generate-step-text">{log.doc.title ?? "Untitled doc"} · {(log.doc.bytes / 1024).toFixed(1)} KB · sha256 {log.doc.sha256.slice(0, 12)}…</span></span>
       </li>}
-      {log.steps?.map((step) => <StepItem key={step.seq} step={step} />)}
+      {(grouped ? grouped.general.map((item) => item.step) : log.steps ?? []).map((step) => <StepItem key={step.seq} step={step} />)}
       {log.queries.map((query) => <li key={query.key} className={`generate-step ${query.error ? "is-failed" : "is-ok"}`}>
         <span className="generate-step-icon" aria-hidden="true">{query.error ? <X /> : <Check />}</span>
         <span className="generate-step-body">

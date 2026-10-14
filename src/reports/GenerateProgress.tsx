@@ -4,7 +4,7 @@ import { followRun, type SequencedRunEvent } from "../chat/chatApi";
 import type { RunStatus as AgentRunStatus } from "../../shared/agents";
 import { cancelGeneration, latestGeneration, messageOf } from "./reportsApi";
 import type { RunPlan } from "../../shared/reportsGenerate";
-import { PlanChecklist } from "./PlanChecklist";
+import { groupStepsByTodo, PlanChecklist } from "./PlanChecklist";
 
 /** One tool call of the run as the step list shows it. */
 export type ProgressStep = { callId: string; tool: string; args: string; ok: boolean | null; result: string; durationMs: number | null };
@@ -124,31 +124,39 @@ export function GenerateProgress({ reportId, agentRunId, docTitle, onDone }: Pro
     try { await cancelGeneration(reportId); } catch (reason) { setError(messageOf(reason, "Could not stop the run")); setStopping(false); }
   }
 
+  // The live log grouped under the plan's todos (the plan, reading before it, and submits stay below).
+  const grouped = plan ? groupStepsByTodo(plan, steps) : null;
+  const stepItem = (step: ProgressStep) => {
+    const detail = stepDetail(step.tool, step.args);
+    const line = resultLine(step);
+    return <li key={step.callId} className={`generate-step ${step.ok === null ? "is-running" : step.ok ? "is-ok" : "is-failed"}`}>
+      <span className="generate-step-icon" aria-hidden="true">{step.ok === null ? <LoaderCircle className="spin" /> : step.ok ? <Check /> : <X />}</span>
+      <span className="generate-step-body">
+        <strong>{toolLabel(step.tool)}</strong>
+        {detail.text && <span className="generate-step-text">{detail.text}</span>}
+        {detail.code && <pre className="generate-sql"><code>{detail.code}</code></pre>}
+        {line && <span className={step.ok === false ? "generate-step-error" : "generate-step-text"}>{line}</span>}
+        <span className="sr-only">{step.ok === null ? "running" : step.ok ? "done" : "refused"}</span>
+      </span>
+    </li>;
+  };
+
   return <section className="generate-progress" aria-labelledby={`generate-${agentRunId}`}>
     <div className="generate-head">
       <h2 id={`generate-${agentRunId}`}><LoaderCircle className="spin" aria-hidden="true" />Generating the report…</h2>
       <button type="button" className="secondary-button" onClick={() => { void stop(); }} disabled={stopping}><CircleStop />{stopping ? "Stopping…" : "Stop"}</button>
     </div>
-    {plan && <PlanChecklist plan={plan} />}
+    {plan && <PlanChecklist plan={plan} stepsOf={(id) => {
+      // The checklist shows a todo's status: its own update_todo calls appear only when one was refused.
+      const list = grouped?.byTodo.get(id)?.filter((step) => step.tool !== "update_todo" || step.ok === false);
+      return list?.length ? <ol className="generate-steps plan-todo-steps">{list.map(stepItem)}</ol> : null;
+    }} />}
     <ol className="generate-steps" aria-live="polite">
       <li className="generate-step is-ok">
         <span className="generate-step-icon" aria-hidden="true"><FileText /></span>
         <span className="generate-step-body"><strong>Read the doc</strong>{docTitle && <span className="generate-step-text">{docTitle}</span>}</span>
       </li>
-      {steps.map((step) => {
-        const detail = stepDetail(step.tool, step.args);
-        const line = resultLine(step);
-        return <li key={step.callId} className={`generate-step ${step.ok === null ? "is-running" : step.ok ? "is-ok" : "is-failed"}`}>
-          <span className="generate-step-icon" aria-hidden="true">{step.ok === null ? <LoaderCircle className="spin" /> : step.ok ? <Check /> : <X />}</span>
-          <span className="generate-step-body">
-            <strong>{toolLabel(step.tool)}</strong>
-            {detail.text && <span className="generate-step-text">{detail.text}</span>}
-            {detail.code && <pre className="generate-sql"><code>{detail.code}</code></pre>}
-            {line && <span className={step.ok === false ? "generate-step-error" : "generate-step-text"}>{line}</span>}
-            <span className="sr-only">{step.ok === null ? "running" : step.ok ? "done" : "refused"}</span>
-          </span>
-        </li>;
-      })}
+      {(grouped ? grouped.general : steps).map(stepItem)}
     </ol>
     {note.trim() && <p className="generate-note"><span className="sr-only">The model says: </span>{note.trim()}</p>}
     {error && <p className="form-error" role="alert">{error}</p>}

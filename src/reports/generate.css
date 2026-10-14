@@ -69,3 +69,6 @@
 .plan-todo-title { color: #ededee; font-size: .86rem; overflow-wrap: anywhere; }
 .plan-todo-meta { color: #85858c; font-size: .74rem; }
 .plan-todo-note { color: #c9c9ce; font-size: .78rem; font-style: italic; overflow-wrap: anywhere; }
+/* A todo's own steps, under it in the checklist. */
+.plan-todo-steps { margin: 4px 0 2px; padding-left: 2px; border-left: 2px solid #26262b; }
+.plan-todo-steps .generate-step { padding-left: 8px; }

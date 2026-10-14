@@ -12,7 +12,7 @@ const { generateDeps, liveGenerations, generateLimitsFor, documentBlock, readDoc
 const { Planner, suggestTables } = await import("../server/reports/planner");
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { resetToolServersForTests } = await import("../server/agents/toolServers");
-const { PlanChecklist, planGroups } = await import("../src/reports/PlanChecklist");
+const { PlanChecklist, planGroups, groupStepsByTodo } = await import("../src/reports/PlanChecklist");
 
 /**
  * 2b (long docs, coverage, scaled limits) and 2c (the planner) end to end: a scripted provider plans,
@@ -364,6 +364,28 @@ describe("the plan checklist", () => {
     { id: "countries", title: "Orders by country", kind: "chart", section: "mix", metric: null, docRef: null, tables: [], intent: "rank", status: "in_progress", note: null, queryKey: null, blockId: null },
     { id: "refunds", title: "Refunds by channel", kind: "chart", section: "mix", metric: null, docRef: null, tables: [], intent: null, status: "skipped", note: "no table has refunds by channel", queryKey: null, blockId: null }
   ] };
+  test("the step log groups under the todos: update_todo by id, run_sql by key, the rest by the todo in progress", () => {
+    const steps = [
+      { tool: "search_schema", args: "{\"query\":\"orders\"}" },
+      { tool: "plan_report", args: "{}" },
+      { tool: "update_todo", args: JSON.stringify({ id: "countries", status: "in_progress" }) },
+      { tool: "describe_tables", args: "{\"tables\":[\"analytics.orders\"]}" },
+      { tool: "run_sql", args: JSON.stringify({ sql: "SELECT 1", key: "totals" }) },
+      // A cut preview (the live log) still names its key.
+      { tool: "run_sql", args: "{\"sql\":\"SELECT country, count() AS orders FROM analytics.orders GROUP BY country\",\"key\":\"by_country\",\"purp" },
+      { tool: "update_todo", args: JSON.stringify({ id: "countries", status: "done", queryKey: "by_country" }) },
+      { tool: "sample_rows", args: "{}" },
+      { tool: "submit_report", args: "{}" }
+    ];
+    const withKeys: RunPlan = { ...plan, todos: plan.todos.map((todo) => todo.id === "countries" ? { ...todo, queryKey: "by_country" } : todo) };
+    const { byTodo, general } = groupStepsByTodo(withKeys, steps);
+    expect(byTodo.get("total")!.map((step) => step.tool)).toEqual(["run_sql"]);
+    expect(byTodo.get("countries")!.map((step) => step.tool)).toEqual(["update_todo", "describe_tables", "run_sql", "update_todo"]);
+    expect(general.map((step) => step.tool)).toEqual(["search_schema", "plan_report", "sample_rows", "submit_report"]);
+    const markup = renderToStaticMarkup(<PlanChecklist plan={withKeys} stepsOf={(id) => <ol className="plan-todo-steps">{byTodo.get(id)?.map((step, index) => <li key={index}>{step.tool}</li>)}</ol>} />);
+    expect(markup).toMatch(/Orders by country<\/span>.*<ol class="plan-todo-steps"><li>update_todo<\/li><li>describe_tables<\/li><li>run_sql<\/li><li>update_todo<\/li><\/ol>/);
+  });
+
   test("groups by section with each todo's status, note, and query key (live and in Runs)", () => {
     expect(planGroups(plan).map((group) => [group.title, group.todos.length])).toEqual([[null, 1], ["Where orders come from", 2]]);
     const markup = renderToStaticMarkup(<PlanChecklist plan={plan} />);

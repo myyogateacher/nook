@@ -46,7 +46,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.
-- [ ] Test load leftovers (lane G): a few wall-clock budgets did not fail under two parallel suites plus a busy loop but could move to `tests/support/cpuTime.ts` (`staticFiles` 200 ms, `search` 1500/200 ms, `calendarRecurrence` 200 ms, `collectionsCsv` 1500 ms, `mcpBinUndo` 500 ms). `attachmentsUndoDurable` and `knowledgeDeferred` still spawn their probes with the parent's environment instead of `tests/support/probe.ts`. `freePort()` releases its port before the harness binds it (a tiny race; a collision fails the run at startup, never silently). Lane F saw `historyStackClient` (D478, lane H) take 2.4 s under load; not touched here. Several files never delete the providers, tool servers, or data sources they create (`agentAdmin`, `agentsChat`, `logging`, most `reports*`); `agentsReview` now sets foreign secrets aside, but a shared cleanup helper would be tidier.
+- [ ] (Lane G, after lane H3 lands) Make `tests/historyStackClient.test.tsx` (D478) load-tolerant: lane F saw a test take 2.4 s under load average 15–22. Left alone while lane H changes the file.
 
 ## Standing rules for agent briefs
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, LoaderCircle, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, History, LoaderCircle, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -17,6 +17,7 @@ import { ModelSheet } from "./ModelSheet";
 import { ChangesPanel, useReportRights } from "./ChangesPanel";
 import { ReportCommentContext } from "./reportComment";
 import { ShareSheet } from "./ShareSheet";
+import { ReportRunsContext, RunsSheet } from "./RunsSheet";
 import { ReportCommandsContext, ReportOverflowMenu, type MenuItem, type ReportCommands } from "./reportCommands";
 
 type PageProps = {
@@ -61,6 +62,10 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const [changes, setChanges] = useState<{ blockId: string | null } | null>(null);
   const lastChanges = useRef<{ blockId: string | null }>({ blockId: null });
   const [sharing, setSharing] = useState(false);
+  // The Runs panel (owner only), opened at a run from Inspect → Provenance.
+  const [runsAt, setRunsAt] = useState<{ runId: string | null } | null>(null);
+  const lastRuns = useRef<{ runId: string | null }>({ runId: null });
+  const openRuns = useCallback((runId: string | null) => { lastRuns.current = { runId }; setRunsAt({ runId }); }, []);
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
   // The header's actions that live in the viewer and the generation part (reportCommands.tsx).
@@ -166,16 +171,19 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
             {commands.refreshAll.busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}Refresh all
           </button>}
           <button type="button" className="secondary-button" onClick={() => openChanges(null)}><MessageSquare aria-hidden="true" />Changes</button>
+          {report.isOwner && <button type="button" className="secondary-button report-wide-only" onClick={() => openRuns(null)}><History aria-hidden="true" />Runs</button>}
           {ownerWrite && <button type="button" className="secondary-button report-wide-only" onClick={() => setSharing(true)}><Share2 aria-hidden="true" />Share</button>}
           {commands.schedule && <button type="button" className="secondary-button report-wide-only" onClick={commands.schedule.open}><CalendarClock aria-hidden="true" />Schedule</button>}
-          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, commands, share: () => setSharing(true), rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
+          <ReportOverflowMenu label="More report actions" items={overflowItems({ ownerWrite, owner: report.isOwner, commands, runs: () => openRuns(null), share: () => setSharing(true), rename: () => setRenaming(true), model: () => setModelOpen(true), remove: () => { void remove(); } })} />
         </div>
       </div>
 
       {/* Wave 46: generation progress, the doc banner, and the actions; inside it, wave 47's viewer (blocks, refresh, schedule, inspect). */}
       <ReportCommandsContext.Provider value={registry}>
         <ReportCommentContext.Provider value={rights?.canComment ? openChanges : null}>
-          <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+          <ReportRunsContext.Provider value={report.isOwner ? openRuns : null}>
+            <ReportGeneration report={report} canWrite={ownerWrite} onChanged={() => { void load(); }} />
+          </ReportRunsContext.Provider>
         </ReportCommentContext.Provider>
       </ReportCommandsContext.Provider>
 
@@ -205,6 +213,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
     {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} onClose={() => setChanges(null)}
       reopen={() => setChanges(lastChanges.current)} onReportChanged={reloadReport} />}
+    {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
     {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(false)} reopen={() => setSharing(true)} />}
     {renaming && report && <RenameSheet report={report} reopen={() => setRenaming(true)} onCancel={() => setRenaming(false)} onSaved={(next) => { setReport(next); setRenaming(false); }} />}
     {confirm.confirmElement}
@@ -215,8 +224,9 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
  * The overflow menu's items: on a phone Share and Schedule first (the header hides them there), then
  * Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous). Readers see Schedule only.
  */
-export function overflowItems({ ownerWrite, commands, share, rename, model, remove }: { ownerWrite: boolean; commands: ReportCommands; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
+export function overflowItems({ ownerWrite, owner = false, commands, runs, share, rename, model, remove }: { ownerWrite: boolean; owner?: boolean; commands: ReportCommands; runs?: () => void; share: () => void; rename: () => void; model: () => void; remove: () => void }): MenuItem[] {
   const items: MenuItem[] = [];
+  if (owner && runs) items.push({ id: "runs", label: "Runs", icon: <History aria-hidden="true" />, onSelect: runs, narrowOnly: true });
   if (ownerWrite) items.push({ id: "share", label: "Share", icon: <Share2 aria-hidden="true" />, onSelect: share, narrowOnly: true });
   if (commands.schedule) items.push({ id: "schedule", label: commands.schedule.badge ? `Schedule (${commands.schedule.badge})` : "Schedule", icon: <CalendarClock aria-hidden="true" />, onSelect: commands.schedule.open, narrowOnly: true });
   if (!ownerWrite) return items;

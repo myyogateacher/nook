@@ -519,7 +519,11 @@ async function executeGeneration(run: Execution) {
     });
     steps = result.steps;
     toolCallCount = result.toolCalls;
-    if (result.nudges) slog.info("Text answers nudged back to submit_report", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+    if (result.nudges) {
+      slog.info("Text answers nudged back to submit_report", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+      // The Runs panel shows the nudges (the live view never did): one model step with Nook's note.
+      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_report ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+    }
     if (!accepted) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_REPORT";

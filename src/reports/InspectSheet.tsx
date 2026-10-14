@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft, Copy, Download, LoaderCircle, RefreshCw } from "lucide-react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft, Copy, Download, History, LoaderCircle, RefreshCw } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
 import { registerHistoryDialogGuard } from "../historyDialogs";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
@@ -12,6 +12,7 @@ import { ResultTable } from "./ResultTable";
 import { CommentOnBlockButton } from "./reportComment";
 import { getProvenance, RUN_STATUS_TEXT, runLabel, timeAgo, toCsv } from "./reportViewApi";
 import { countLabel, messageOf } from "./reportsApi";
+import { ReportRunsContext } from "./RunsSheet";
 
 export type DataBlock = KpiBlock | ChartBlock | TableBlock;
 
@@ -259,12 +260,14 @@ function ProvenanceTab({ report, block, given }: { report: Pick<ReportDetail, "i
   const run = state.view?.run ?? null;
   const snapshot = state.view?.snapshot ?? null;
   const link = docLink(report.doc?.ref);
+  const openRun = useContext(ReportRunsContext);
   return <section className="report-inspect-section">
     <dl className="report-facts-list">
       <Fact term="Version">{block.provenance ? `v${block.provenance.version}` : "—"}</Fact>
       <Fact term="Made by">{!runId ? "Written by hand (no AI run)" : run ? <>{runLabel(run)} · {RUN_STATUS_TEXT[run.status]} · {timeAgo(run.startedAt)}<br /><code>{run.id}</code></> : state.error ? state.error : <code>{runId}</code>}</Fact>
       <Fact term="Instruction">{block.provenance?.instructionId ? <code>{block.provenance.instructionId}</code> : "—"}</Fact>
       <Fact term="Doc snapshot">{snapshot ? <>{snapshot.title ?? "Untitled doc"} · fetched {timeAgo(snapshot.fetchedAt)}<br /><code title={snapshot.sha256}>sha256 {snapshot.sha256.slice(0, 12)}…</code></> : snapshotId || run?.docSnapshotId ? "Snapshot no longer kept" : "—"}</Fact>
+      {runId && openRun && <Fact term="Run log"><button type="button" className="secondary-button" onClick={() => openRun(runId)}><History aria-hidden="true" />Open the run that built this</button></Fact>}
       <Fact term="Doc">{link ? <a href={link} target="_blank" rel="noopener noreferrer">{link}</a> : report.doc?.ref ? <code>{report.doc.ref}</code> : "No doc (the report was built by hand)"}</Fact>
     </dl>
   </section>;

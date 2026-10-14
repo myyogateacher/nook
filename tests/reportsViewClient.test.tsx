@@ -308,6 +308,15 @@ describe("the inspect sheet", () => {
     expect(markup).toContain("44444444-4444-4444-8444-444444444444");
     expect(renderToStaticMarkup(<InspectSheet {...props} initialTab="provenance" />)).toContain("Written by hand (no AI run)");
   });
+
+  test("Provenance links to the run that built the block in the Runs panel, for the owner only", async () => {
+    const { ReportRunsContext } = await import("../src/reports/RunsSheet");
+    const withRun = { ...block, provenance: { runId: "33333333-3333-4333-8333-333333333333", version: 3 } };
+    const given = { run: null, snapshot: null };
+    const owner = renderToStaticMarkup(<ReportRunsContext.Provider value={() => undefined}><InspectSheet {...props} block={withRun} initialTab="provenance" provenance={given} /></ReportRunsContext.Provider>);
+    expect(owner).toContain("Open the run that built this");
+    expect(renderToStaticMarkup(<InspectSheet {...props} block={withRun} initialTab="provenance" provenance={given} />)).not.toContain("Open the run that built this");
+  });
 });
 
 describe("inspect tabs are real Back and Forward steps", () => {

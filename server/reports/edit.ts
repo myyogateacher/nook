@@ -490,7 +490,10 @@ async function executeEdit(run: Execution) {
     });
     steps = result.steps;
     toolCallCount = result.toolCalls;
-    if (result.nudges) slog.info("Text answers nudged back to submit_patch", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+    if (result.nudges) {
+      slog.info("Text answers nudged back to submit_patch", { nudges: result.nudges, missed: result.finalToolMissed || undefined });
+      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook nudged the model back to submit_patch ${result.nudges} ${result.nudges === 1 ? "time" : "times"}]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: 0 });
+    }
     if (!proposed) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_PATCH";

@@ -9,6 +9,7 @@ import { readableReport } from "./access";
 import { listRuns, reportResults, reportRun, runRow, runView, startRefresh } from "./refresh";
 import { handle, id } from "./routes";
 import { getSchedule, saveSchedule } from "./scheduler";
+import { runHistory, runLog } from "./runHistory";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 47): what the viewer reads (each query's last
@@ -72,6 +73,9 @@ export function registerReportViewRoutes(app: Hono<AppEnv>) {
     const runs = listRuns(reportId, userId);
     return { runs: isOwner(reportId, userId) ? runs : runs.map(forReader), schedule: getSchedule(reportId, userId) };
   }));
+  // The Runs panel: the owner's run history and one run's step log (404 to anyone else).
+  app.get("/api/reports/:reportId/run-history", handle((c) => ({ runs: runHistory(id(c, "reportId"), c.get("user").id) })));
+  app.get("/api/reports/:reportId/run-history/:runId", handle((c) => runLog(id(c, "reportId"), id(c, "runId"), c.get("user").id)));
   app.get("/api/reports/:reportId/runs/:runId", handle((c) => {
     const reportId = id(c, "reportId");
     const userId = c.get("user").id;

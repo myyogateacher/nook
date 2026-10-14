@@ -34,6 +34,23 @@ describe("the report header's overflow menu", () => {
   };
   const handlers = { share: noop, rename: noop, model: noop, remove: noop };
 
+  test("Runs: the owner's, in the header on wider screens and first in the menu on a phone; readers never", () => {
+    const items = overflowItems({ ownerWrite: true, owner: true, runs: noop, commands, ...handlers });
+    expect(items[0]).toMatchObject({ id: "runs", label: "Runs", narrowOnly: true });
+    expect(overflowItems({ ownerWrite: false, owner: false, runs: noop, commands: { schedule: commands.schedule }, ...handlers }).map((item) => item.id)).toEqual(["schedule"]);
+  });
+
+  test("the Runs panel's one-line facts: who, when, how long, the model, tokens, and cost", async () => {
+    const { runFacts } = await import("../src/reports/RunsSheet");
+    const line = runFacts({ id: "r", reportId: "x", kind: "generate", trigger: "user", status: "succeeded", agentRunId: "a", docSnapshotId: null, queryKeys: null, startedAt: new Date(Date.now() - 120_000).toISOString(), finishedAt: null, error: null,
+      startedBy: { id: "u", name: "Pat" }, durationMs: 12_500, model: "gpt-x", provider: "P", promptTokens: 1000, completionTokens: 234, tokensEstimated: false, costMicros: 12_345, toolCalls: 4, instruction: null });
+    expect(line).toBe("by Pat · 2 min ago · 12.5 s · gpt-x · 1,234 tokens · $0.01");
+    const scheduled = runFacts({ id: "r", reportId: "x", kind: "refresh", trigger: "schedule", status: "succeeded", agentRunId: null, docSnapshotId: null, queryKeys: null, startedAt: new Date().toISOString(), finishedAt: null, error: null,
+      startedBy: null, durationMs: 900, model: null, provider: null, promptTokens: null, completionTokens: null, tokensEstimated: false, costMicros: null, toolCalls: null, instruction: null });
+    expect(scheduled).toStartWith("by the schedule · ");
+    expect(scheduled).toEndWith(" · 900 ms");
+  });
+
   test("the owner: Share and Schedule for phones first, then Rename, Model, Check doc, Regenerate, and Move to Bin last (dangerous)", () => {
     const items = overflowItems({ ownerWrite: true, commands, ...handlers });
     expect(items.map((item) => item.id)).toEqual(["share", "schedule", "rename", "model", "check-doc", "regenerate", "bin"]);

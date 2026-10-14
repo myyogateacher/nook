@@ -379,6 +379,38 @@ export type ReportRun = {
   error: string | null;
 };
 
+/**
+ * The report's run history (the "Runs" panel, owner only): every generate, regenerate, edit, refresh,
+ * and scheduled refresh run Nook still keeps (the last REPORT_LIMITS.runsKept, plus runs a block's
+ * provenance or a query's latest result names). Steps come from the agent run's audit timeline, which
+ * the audit retention (AGENT_AUDIT_DAYS) purges: an older run keeps its row and results, not its steps.
+ */
+export type ReportRunHistoryItem = ReportRun & {
+  startedBy: { id: string; name: string } | null;
+  durationMs: number | null;
+  model: string | null;
+  provider: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  tokensEstimated: boolean;
+  costMicros: number | null;
+  toolCalls: number | null;
+  /** The instruction an edit run carried (its text, for the owner). */
+  instruction: string | null;
+};
+export type ReportRunStep =
+  | { seq: number; kind: "tool"; tool: string; args: string | null; result: string | null; ok: boolean | null; truncated: boolean; durationMs: number; recovered: boolean }
+  | { seq: number; kind: "model"; text: string | null; toolNames: string[]; promptTokens: number | null; completionTokens: number | null; durationMs: number };
+export type ReportRunLog = {
+  run: ReportRunHistoryItem;
+  /** The doc the run read (title, size, hash), when it read one. */
+  doc: { id: string; title: string | null; bytes: number; sha256: string; fetchedAt: string } | null;
+  /** The agent run's timeline; null when there was none (a refresh) or the audit retention purged it. */
+  steps: ReportRunStep[] | null;
+  /** A refresh's per-query outcome. */
+  queries: Array<{ key: string; ms: number | null; rows: number; truncated: boolean; rowsRead: number | null; errorCode: string | null; error: string | null; sql: string }>;
+};
+
 export type ResultColumn = { name: string; type: string };
 
 /** A ClickHouse type with Nullable(…) and LowCardinality(…) taken off. */

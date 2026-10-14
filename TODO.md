@@ -13,13 +13,15 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 
 ## In flight
 
+- [ ] Files full-text index (migration 060, approved 2026-10-15): a `document_fts` index over Files text and Markdown documents, so "Pick from Nook" (K4, today a bounded scan of `GET /api/reports/nook-files`) and Files search become one ranked query, with access exactly as `read_document_text`.
 - [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. v0.38.0 is out, so this can be done now.
-- [ ] (Needs a design decision from the operator) Report folders: a reader's own placement of reports shared with them. Today they stay under Shared with me.
-- [ ] (Waiting: next `group_grants` CHECK rebuild) Report shares live in `report_members` and `report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, together with the Access sheet.
+- [ ] Report organization at scale ([plan](docs/plan/REPORTS_ORG.md), Tableau-style; replaces "readers' own placement" and the D460 `group_grants` fold). The open questions in the plan need the operator's answers before phase 2.
+  - [ ] Phase 1 (061): favorites (★, a Favorites nav entry), filters (owner, status, data source, schedule), search and keyset pagination for hundreds of reports, MCP star tools.
+  - [ ] Phase 2 (062, optional 063): shared folders whose access passes down to subfolders and reports; a new `edit` level; report shares folded into `group_grants` and the Access sheet; a confirm when a move widens access.
+  - [ ] Phase 3 (064, optional): report Lists. A report can sit in many lists, and a list never grants access.
 
 ## Known LOW leftovers
 
-- [ ] "Pick from Nook" (K4) searches Files text by a bounded scan (`GET /api/reports/nook-files`: 100 newest candidates, 8 MiB, 20 hits a request, then "Search older files"), because Files content has no full-text index. A `document_fts` index (migration 060) would make it one query and rank hits. **Awaiting the operator's yes** before building it.
 - [ ] `tests/inboxApp.test.tsx` "Inbox copy" fails late in the evening IST (seen 23:25 on 2026-10-14: `expiresText` of now + 13.5 days read "expires in 13 days"). It is probably a local-midnight boundary in the day count, not the rounding the test means to check.
 - [ ] `tests/reportsScheduler.test.ts` "at most two scheduled refreshes run at once" failed once in a full-suite run (lane L, 2026-10-14) and passes on its own (3/3). It is probably timing under load.
 - [ ] Lane worktrees without `node_modules` cannot run the `vite build` gate: the Excalidraw fonts copy reads `node_modules/…/fonts` relative to the working directory, so the build fails at writeBundle after emitting `dist`. Lane L was not allowed to install or link `node_modules` in its worktree.

@@ -65,7 +65,8 @@ beforeAll(async () => {
   const datasource = await send(admin, "POST", "/reports/admin/datasources", { name: `Docs DS ${crypto.randomUUID().slice(0, 6)}`, url: "https://ch.example.test:8443/", username: "ro", database: "analytics" });
   expect(datasource.status).toBe(201);
   datasourceId = datasource.body.datasource.id;
-});
+  // Creating the server syncs it now (bounded by its timeout); the fake host never answers, so allow for that.
+}, 20_000);
 afterAll(() => {
   db.query("DELETE FROM agent_tool_servers WHERE id = ?").run(server.id);
 });
@@ -143,16 +144,41 @@ describe("review M2: only read-only doc tools", () => {
       // A fetch the server does not mark read-only defaults to confirm: skipped for get_document.
       expect(docToolOf(row, {})).toEqual({ tool: "get_document", arg: "url", outline: false });
       expect(() => docToolOf(row, { tool: "fetch" })).toThrow(expect.objectContaining({ code: "DOC_TOOL_REFUSED" }));
+      // B2: the excluded doc tool is a candidate (delete_document is not doc-fetcher-like); every tool is named.
+      const before = docServerChoices("member").find((item) => item.id === server.id)!;
+      expect(before.candidates).toEqual([{ name: "fetch", args: ["id"], policy: "confirm" }]);
+      expect(before.toolNames).toEqual(["delete_document", "fetch", "get_document"]);
       // An admin's explicit auto makes a tool usable; an admin's confirm on a read-only tool takes it away.
       db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'auto'), (?, 'get_document', 'confirm')").run(server.id, server.id);
       expect(docToolOf(row, {})).toEqual({ tool: "fetch", arg: "id", outline: false });
       expect(() => docToolOf(row, { tool: "get_document" })).toThrow(expect.objectContaining({ code: "DOC_TOOL_REFUSED" }));
       const listed = docServerChoices("member").find((item) => item.id === server.id)!;
       expect(listed.tools.map((item) => item.name)).toEqual(["fetch"]);
+      expect(listed.candidates).toEqual([{ name: "get_document", args: ["url"], policy: "confirm" }]);
       expect(transport.calls.filter((call) => call.method === "tools/call")).toEqual([]);
     } finally {
       db.query("DELETE FROM agent_tool_policies WHERE server_id = ?").run(server.id);
       db.query("UPDATE agent_tool_servers SET tools_json = ? WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), server.id);
+    }
+  });
+});
+
+describe("B2: Allow automatically", () => {
+  test("an admin sets the excluded fetch to auto through the tool-policy API (audited); a member cannot; the dialog's pick follows", async () => {
+    db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'confirm') ON CONFLICT(server_id, tool_name) DO UPDATE SET policy = 'confirm'").run(server.id);
+    try {
+      let mine = (await send(member, "GET", "/reports/doc-servers")).body.servers.find((item: Json) => item.id === server.id);
+      expect(mine.pick).toBeNull();
+      expect(mine.candidates).toEqual([{ name: "fetch", args: ["resource", "id"], policy: "confirm" }]);
+      expect((await send(member, "PUT", `/agents/admin/servers/${server.id}/policies`, { policies: { fetch: "auto" } })).status).toBe(404);
+      expect((await send(admin, "PUT", `/agents/admin/servers/${server.id}/policies`, { policies: { fetch: "auto" } })).status).toBe(200);
+      const audited = db.query("SELECT metadata_json FROM audit_log WHERE event_type = 'agents.server.policies' AND actor_id = ? ORDER BY rowid DESC LIMIT 1").get(admin.userId) as { metadata_json: string } | null;
+      expect(JSON.parse(audited!.metadata_json)).toMatchObject({ serverId: server.id, count: 1 });
+      mine = (await send(member, "GET", "/reports/doc-servers")).body.servers.find((item: Json) => item.id === server.id);
+      expect(mine.pick).toMatchObject({ tool: "fetch", arg: "id" });
+      expect(mine.candidates).toEqual([]);
+    } finally {
+      db.query("DELETE FROM agent_tool_policies WHERE server_id = ? AND tool_name = 'fetch'").run(server.id);
     }
   });
 });

@@ -6,7 +6,11 @@
 .new-report-modes button.is-active { background: #1d1a12; color: #f3d48a; }
 .new-report-modes button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 1px; }
 .new-report-modes button:disabled { opacity: .5; cursor: default; }
-.new-report-advanced { display: grid; gap: 8px; border: 1px solid #26262b; border-radius: 12px; padding: 0 12px 12px; }
+.new-report-advanced { border: 1px solid #26262b; border-radius: 12px; padding: 0 12px 12px; }
+/* B2: the fields stack (a label above its control and its hint): <details> content is not a grid item. */
+.new-report-advanced-body { display: grid; gap: 14px; }
+.new-report-field { display: grid; gap: 6px; min-width: 0; }
+.new-report-field > .file-dialog-hint code, .new-report-notice code { font-size: .78rem; }
 .new-report-advanced summary { min-height: 44px; display: flex; align-items: center; color: #c9c9ce; cursor: pointer; }
 .new-report-advanced:not([open]) { padding-bottom: 0; }
 /* "From a doc" unavailable, or the chosen server's problem: the reason, Retry, and the admin's link. */
@@ -72,3 +76,10 @@
 /* A todo's own steps, under it in the checklist. */
 .plan-todo-steps { margin: 4px 0 2px; padding-left: 2px; border-left: 2px solid #26262b; }
 .plan-todo-steps .generate-step { padding-left: 8px; }
+
+/* B2: the sheet uses more of the screen, its body scrolls, and the sticky footer has a top border. */
+@media (min-width: 761px) {
+  .file-dialog.reports-dialog.new-report-sheet { width: min(620px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 48px)); }
+}
+.file-dialog.reports-dialog.new-report-sheet > .file-dialog-form { gap: 10px; }
+.file-dialog.reports-dialog.new-report-sheet > .file-dialog-form > .file-dialog-actions:last-child { border-top: 1px solid #26262b; margin-top: 6px; }

@@ -10,7 +10,13 @@ import type { ReportDetail, RunStatus } from "./reports";
 export type DocToolChoice = { tool: string; arg: string; outline: boolean };
 
 /** A tool server a person may read a doc through, whether its tools were ever synced, its read-only tools (name and argument names), and Nook's auto-pick. */
-export type DocServerChoice = { id: string; name: string; status: string; synced: boolean; tools: Array<{ name: string; title: string | null; args: string[] }>; pick: DocToolChoice | null };
+export type DocServerChoice = {
+  id: string; name: string; status: string; synced: boolean; tools: Array<{ name: string; title: string | null; args: string[] }>; pick: DocToolChoice | null;
+  /** Doc-fetcher-like tools (fetch, get_document, read_document with id or url) whose policy is not auto. */
+  candidates: Array<{ name: string; args: string[]; policy: "auto" | "confirm" | "off" }>;
+  /** Every synced tool's name (at most 100), whatever its policy. */
+  toolNames: string[];
+};
 
 /** A report's doc, its newest snapshot, and whether the doc changed since the report was generated ("Doc changed — regenerate?"). */
 export type DocState = {

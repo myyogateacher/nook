@@ -71,12 +71,31 @@ export function pickDocTool(tools: readonly StoredTool[], override: { tool?: str
 /** The arguments one doc fetch sends. */
 export const docToolArgs = (choice: DocToolChoice, ref: string): Record<string, unknown> => ({ ...(choice.outline ? { resource: "document" } : {}), [choice.arg]: ref });
 
-/** The tool servers a person may read a doc through: enabled ones open to them, with their tools and the auto-pick. */
+/**
+ * Doc-fetcher-like tools that policy keeps out: `fetch`, `get_document`, or `read_document` taking
+ * `id` or `url` whose effective policy is not `auto` (the dialog says an admin must allow it).
+ */
+export function docToolCandidates(all: ReturnType<typeof toolsWithPolicies>): DocServerChoice["candidates"] {
+  return all
+    .filter((tool) => tool.policy !== "auto" && (DOC_TOOL_NAMES as readonly string[]).includes(tool.name.toLowerCase()) && schemaArgs(tool).some((arg) => (REF_ARGS as readonly string[]).includes(arg)))
+    .map((tool) => ({ name: tool.name, args: schemaArgs(tool), policy: tool.policy }));
+}
+
+/**
+ * The tool servers a person may read a doc through: enabled ones open to them, whether they were
+ * synced, their read-only tools and the auto-pick, the doc tools policy excludes (`candidates`), and
+ * every synced tool's name (the dialog lists them when there is no candidate).
+ */
 export function docServerChoices(role: string): DocServerChoice[] {
   const rows = db.query("SELECT * FROM agent_tool_servers WHERE enabled = 1 ORDER BY name COLLATE NOCASE").all() as ToolServerRow[];
   return rows.filter((row) => serverAvailableTo(row, role)).map((row) => {
-    const tools = readOnlyTools(row);
-    return { id: row.id, name: row.name, status: row.status, synced: row.tools_synced_at !== null, tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools) };
+    const all = toolsWithPolicies(row);
+    const tools = readOnlyTools(row, all);
+    return {
+      id: row.id, name: row.name, status: row.status, synced: row.tools_synced_at !== null,
+      tools: tools.map((tool) => ({ name: tool.name, title: tool.title, args: schemaArgs(tool) })), pick: pickDocTool(tools),
+      candidates: docToolCandidates(all), toolNames: all.map((tool) => tool.name).slice(0, 100)
+    };
   });
 }
 

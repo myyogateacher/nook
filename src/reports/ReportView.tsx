@@ -346,10 +346,12 @@ function ChartCanvas({ built, label, mode }: { built: ChartBuild; label: string;
 
 /** A stepped colour scale (low → high) under a value-coloured chart: a swatch row and the low and high values. */
 export function ScaleLegend({ steps }: { steps: NonNullable<ChartBuild["scale"]> }) {
-  return <div className="report-scale" aria-label={`Colour scale from ${steps[0]?.label ?? ""} to ${steps[steps.length - 1]?.label ?? ""}`}>
-    <span className="report-scale-end">{steps[0]?.label}</span>
+  const low = steps[0]?.from ?? "";
+  const high = steps[steps.length - 1]?.to ?? "";
+  return <div className="report-scale" aria-label={`Colour scale from ${low} to ${high}`}>
+    <span className="report-scale-end">{low}</span>
     <span className="report-scale-steps" aria-hidden="true">{steps.map((step, at) => <span key={at} style={{ background: step.color }} title={step.label} />)}</span>
-    <span className="report-scale-end">{steps[steps.length - 1]?.label}+</span>
+    <span className="report-scale-end">{high}</span>
   </div>;
 }
 

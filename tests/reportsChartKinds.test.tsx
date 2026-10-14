@@ -529,7 +529,7 @@ describe("the meter and the colour scale render as HTML", () => {
     expect(html).toContain("Below target");
     expect(html).toMatch(/report-meter-status[^>]*><svg/);
     expect(html).toContain("report-meter-target");
-    const scale = renderToStaticMarkup(<ScaleLegend steps={[{ color: "#cde2fb", label: "0" }, { color: "#0d366b", label: "10" }]} />);
+    const scale = renderToStaticMarkup(<ScaleLegend steps={[{ color: "#cde2fb", label: "0–5", from: "0", to: "5" }, { color: "#0d366b", label: "5–10", from: "5", to: "10" }]} />);
     expect(scale).toContain("Colour scale from 0 to 10");
   });
 });

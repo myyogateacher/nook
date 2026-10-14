@@ -168,7 +168,7 @@ export function valueScale(values: number[], theme: ChartTheme, format: ValueFor
     low = midpoint! - reach;
   }
   const bucket = (value: number) => Math.min(steps - 1, Math.max(0, Math.floor((value - low) / width)));
-  const legend = colors.map((color, at) => ({ color, label: compactValue(low + at * width, format) }));
+  const legend = colors.map((color, at) => ({ color, label: `${compactValue(low + at * width, format)}–${compactValue(low + (at + 1) * width, format)}`, from: compactValue(low + at * width, format), to: compactValue(at === steps - 1 && !diverging ? max : low + (at + 1) * width, format) }));
   return { bucket, colors, legend, diverging };
 }
 /** The visualMap ECharts needs to colour a heatmap: hidden, one exact piece per step (the 4th data value). */
@@ -190,7 +190,10 @@ const heatmap: Builder = (block, data, theme, width) => {
   }
   if (!cells.size) return { option: null, height: chartHeight("heatmap"), problem: "The value column holds no numbers" };
   const format = block.format;
-  const scale = valueScale([...cells.values()], theme, format, block.midpoint);
+  // Cohorts: the first period is everyone (100 %), so it would squeeze every later period into the
+  // low steps; the scale is made from the later periods and the first column takes the top step.
+  const scaled = block.cohort && columns.length > 2 ? [...cells.entries()].filter(([key]) => !key.startsWith("0:")).map(([, value]) => value) : [...cells.values()];
+  const scale = valueScale(scaled, theme, format, block.midpoint);
   const labelWidth = Math.min(120, 12 + Math.max(...rows.map((name) => name.length)) * 6.5);
   const minWidth = Math.ceil(labelWidth + columns.length * HEATMAP_MIN_CELL + 16);
   const cellWidth = (Math.max(width, minWidth) - labelWidth - 16) / Math.max(1, columns.length);
@@ -278,7 +281,7 @@ const calendar: Builder = (block, data, theme, width) => {
 
 // ------------------------------------------------------------------------------------ ordered flows
 
-const funnel: Builder = (block, data, theme) => {
+const funnel: Builder = (block, data, theme, width) => {
   const xi = columnOf(data, block.x);
   const vi = columnOf(data, block.y[0]);
   // Stage order is the rows' order, never re-sorted (D465).
@@ -303,13 +306,15 @@ const funnel: Builder = (block, data, theme) => {
       color: colors,
       series: [{
         type: "funnel", name: block.y[0], sort: "none", orient: "vertical", funnelAlign: "left",
-        left: 4, top: 6, bottom: 6, width: "48%", min: 0, max: top || 1, minSize: "2%", maxSize: "100%", gap: MARKS.bar.gap,
+        left: 4, top: 6, bottom: 6, width: "46%", min: 0, max: top || 1, minSize: "2%", maxSize: "100%", gap: MARKS.bar.gap,
         itemStyle: { borderColor: theme.ink.surface, borderWidth: 0, borderRadius: 2 },
         label: {
           show: true, position: "right", formatter: stageLabel,
           rich: { name: { color: theme.ink.ink, fontSize: TYPE.axis.size, fontWeight: 600, lineHeight: 14 }, value: { color: theme.ink.inkSecondary, fontSize: TYPE.label.size, lineHeight: 13 } }
         },
-        labelLine: { show: false },
+        // Every label in one column right of the widest stage, joined to its stage by a hairline.
+        labelLayout: { x: Math.round(width * 0.46) + 16, align: "left", moveOverlap: "shiftY" },
+        labelLine: { show: true, length: 8, lineStyle: { color: theme.ink.axis, width: 1 } },
         emphasis: { label: { show: true } },
         data: stages.map((stage, at) => ({ ...stage, itemStyle: { color: colors[at] } }))
       }]
@@ -377,7 +382,7 @@ const treemap: Builder = (block, data, theme) => {
   const whole = ranked.reduce((sum, name) => sum + totalOf(groups.get(name)!), 0);
   const node = (name: string, children: Map<string, number>, color: string) => ({
     name, value: totalOf(children), itemStyle: { color },
-    label: { color: inkOn(color) }, upperLabel: { color: inkOn(color) },
+    label: { color: inkOn(color) }, upperLabel: { color: theme.ink.inkSecondary },
     ...(si >= 0 ? { children: [...children.entries()].sort((left, right) => right[1] - left[1]).map(([child, value]) => ({ name: child, value, itemStyle: { color }, label: { color: inkOn(color) } })) } : {})
   });
   const nodes = order.map((name, at) => node(name, groups.get(name)!, theme.series[at]!));
@@ -398,9 +403,13 @@ const treemap: Builder = (block, data, theme) => {
       series: [{
         type: "treemap", name: block.y[0], roam: false, nodeClick: false, breadcrumb: { show: false }, left: 0, right: 0, top: 0, bottom: 0, squareRatio: 1,
         label: { show: true, fontSize: TYPE.label.size, formatter: tileLabel, overflow: "truncate" },
-        upperLabel: { show: si >= 0, height: 18, fontSize: TYPE.label.size, fontWeight: 600 },
         itemStyle: { borderColor: theme.ink.surface, borderWidth: MARKS.bar.gap, gapWidth: MARKS.bar.gap },
-        levels: [{ itemStyle: { borderColor: theme.ink.surface, borderWidth: MARKS.bar.gap, gapWidth: MARKS.bar.gap } }, { itemStyle: { borderColor: theme.ink.surface, borderWidth: 1, gapWidth: 1 } }],
+        // Level 0 is the root (no header); level 1 the groups (a header on the surface when they have subgroups); level 2 the subgroups.
+        levels: [
+          { itemStyle: { borderWidth: 0, gapWidth: MARKS.bar.gap }, upperLabel: { show: false } },
+          { itemStyle: { borderColor: theme.ink.surface, borderWidth: si >= 0 ? MARKS.bar.gap : 0, gapWidth: 1 }, upperLabel: { show: si >= 0, height: 18, fontSize: TYPE.label.size, fontWeight: 600, color: theme.ink.inkSecondary } },
+          { itemStyle: { borderColor: theme.ink.surface, borderWidth: 1, gapWidth: 1 } }
+        ],
         data: nodes
       }]
     },
@@ -441,8 +450,9 @@ const sankey: Builder = (block, data, theme) => {
         type: "sankey", name: block.y[0], left: 4, top: 8, bottom: 8, right: Math.min(120, 16 + longest * 6), nodeWidth: 10, nodeGap: 10, nodeAlign: "justify", layoutIterations: 32, draggable: false,
         label: { color: theme.ink.inkSecondary, fontSize: TYPE.label.size, overflow: "truncate", width: 110 },
         itemStyle: { color, borderColor: theme.ink.surface, borderWidth: 0 },
-        lineStyle: { color: "source", opacity: 0.28, curveness: 0.5 },
-        emphasis: { focus: "adjacency", lineStyle: { opacity: 0.5 } },
+        // Links in a neutral wash so the nodes read; hovering a node or link lifts its flows.
+        lineStyle: { color: theme.ink.muted, opacity: 0.22, curveness: 0.5 },
+        emphasis: { focus: "adjacency", lineStyle: { color: color, opacity: 0.45 } },
         data: nodes.map((name) => ({ name })),
         links: [...links.values()]
       }]
@@ -606,7 +616,8 @@ const combo: Builder = (block, data, theme) => {
   }
   const categories = rows.map((row) => cellLabel(row[xi]));
   const format = block.format;
-  const unit = block.yUnits?.[0] ?? block.unit;
+  // The format carries a currency; a unit word shows only when the block names one.
+  const unit = block.unit;
   const [barColor, lineColor] = [theme.series[0]!, theme.series[1]!];
   const values = (index: number) => rows.map((row) => toNumber(row[index]));
   const endLabel = named(`label:${format ?? "number"}`, (params: { value?: unknown }) => {

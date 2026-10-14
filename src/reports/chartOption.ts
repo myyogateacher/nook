@@ -189,7 +189,7 @@ export type ChartBuild = {
   /** Round 2: the width below which the chart scrolls sideways inside its tile (heatmaps, calendars). */
   minWidth?: number;
   /** Round 2: a stepped colour scale shown under value-coloured charts (heatmap, calendar), low to high. */
-  scale?: Array<{ color: string; label: string }>;
+  scale?: Array<{ color: string; label: string; from: string; to: string }>;
 };
 
 /** How the chart is laid out: the width of its tile, px (small multiples pick their columns from it; heatmaps their scroll). */

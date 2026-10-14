@@ -116,7 +116,9 @@
 .report-source-actions .report-source-remove { margin-left: auto; color: var(--red); }
 .report-test { display: grid; gap: 6px; border-radius: 10px; padding: 10px 12px; background: #15201a; color: #bfe6c9; font-size: .84rem; }
 .report-test.failed { background: #2a1519; color: #fda4af; }
-.report-test p { margin: 0; display: flex; align-items: flex-start; gap: 6px; }
+.report-test p { margin: 0; display: flex; align-items: flex-start; gap: 6px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+/* ClickHouse's own error text (admins see it) wraps inside the card, never past it. */
+.report-test { min-width: 0; max-width: 100%; }
 .report-test svg { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .report-test-warning { color: #f3d48a; }
 .report-test ul { margin: 0; padding-left: 22px; }

@@ -4,7 +4,7 @@ import type { RunStatus, TokenUsage } from "../../shared/agents";
 import { REPORT_LIMITS, SECTION_LIMITS, type ReportBlock, type ReportSpec } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type ReportPatch } from "../../shared/reportsEdit";
 import { finishAuditRun, insertAuditStep, markAuditFirstToken, markAuditStarted } from "../agents/audit";
-import { ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
+import { parseToolArguments, ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
 import { assertBudget, capResultText, chargeUsage } from "../agents/runs";
 import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
@@ -52,6 +52,8 @@ export const EDIT_LIMITS = {
   steps: REPORT_LIMITS.steps,
   queries: REPORT_LIMITS.queries,
   submits: INSTRUCTION_LIMITS.submits,
+  /** Text answers nudged back to submit_patch (providers with only tool_choice auto). */
+  nudges: 2,
   sampleRows: 20,
   resultBytes: 16 * 1024,
   /** The spec as the prompt carries it. */
@@ -176,10 +178,15 @@ export const EDIT_TOOLS: ModelTool[] = [
 export const editToolChoice = (maxSteps: number) => (step: number, _last = false, state: { toolCalls: number; perRun: number; perStep: number } = { toolCalls: 0, perRun: Infinity, perStep: 0 }): ToolChoice =>
   step > maxSteps - EDIT_LIMITS.submits || state.perRun - state.toolCalls < state.perStep ? { name: "submit_patch" } : "required";
 
+/** Tool arguments as an object; fences, trailing commas, and JSON in a string are tolerated, anything else names the problem. */
+/** What a text-only answer gets back in an edit (finalTool). */
+export const FINAL_NUDGE = "Call submit_patch now with the patch. Do not answer in text.";
+
 const asObject = (raw: string): Record<string, unknown> => {
-  const parsed: unknown = JSON.parse(raw || "{}");
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new ReportError(400, "INVALID", "The arguments must be a JSON object");
-  return parsed as Record<string, unknown>;
+  const parsed = parseToolArguments(raw);
+  if (!parsed.ok) throw new ReportError(400, "INVALID", `The arguments are not valid JSON (${parsed.error}); send one JSON object`);
+  if (!parsed.value || typeof parsed.value !== "object" || Array.isArray(parsed.value)) throw new ReportError(400, "INVALID", "The arguments must be a JSON object");
+  return parsed.value as Record<string, unknown>;
 };
 const str = (value: unknown, name: string) => {
   if (typeof value !== "string" || !value.trim()) throw new ReportError(400, "INVALID", `${name} must be a non-empty string`);
@@ -443,7 +450,8 @@ async function executeEdit(run: Execution) {
       }
     }
     const capped = capResultText(result.text, EDIT_LIMITS.resultBytes);
-    insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.arguments, result: capped.text, ok: result.ok, durationMs: Date.now() - started });
+    // A final call the loop took from a text answer is marked in the audit (it went through the same checks).
+    insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.recovered ? `[recovered from text] ${call.arguments}` : call.arguments, result: capped.text, ok: result.ok, durationMs: Date.now() - started });
     channel.emit({ type: "tool_result", data: { messageId: runId, callId: call.id, ok: result.ok, resultPreview: preview(capped.text), truncated: capped.truncated, durationMs: Date.now() - started, decision: null, proposalId: null } });
     return { content: capped.truncated ? `${capped.text}\n[cut at 16 KB]` : capped.text, ...(result.stop ? { stop: true } : {}) };
   };
@@ -474,6 +482,8 @@ async function executeEdit(run: Execution) {
       },
       tools: () => EDIT_TOOLS,
       execute,
+      // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
+      finalTool: { name: "submit_patch", nudge: FINAL_NUDGE, maxNudges: EDIT_LIMITS.nudges, accepts: (value) => Array.isArray(value.ops) || Boolean(value.patch && typeof value.patch === "object") },
       toolChoice: editToolChoice(EDIT_LIMITS.steps),
       limits: { perStep: EDIT_LIMITS.perStep, perRun: EDIT_LIMITS.perRun }
     });
@@ -482,7 +492,8 @@ async function executeEdit(run: Execution) {
     if (!proposed) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_PATCH";
-      errorMessage = lastErrors.length ? `The agent's patch did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}` : "The agent finished without proposing a change";
+      errorMessage = lastErrors.length ? `The agent's patch did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
+        : result.finalToolMissed && (result.nudges ?? 0) >= EDIT_LIMITS.nudges ? `The model answered in text and did not call submit_patch after ${EDIT_LIMITS.nudges} nudges` : "The agent finished without proposing a change";
     }
   } catch (error) {
     const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;

@@ -131,6 +131,17 @@ describe("admin data sources", () => {
     expect(failed.body.test.error).toContain("Authentication failed");
   });
 
+  test("regression (2026-10-14): the profile probe works on a server that types getSetting('readonly') as UInt8", async () => {
+    const { readonlyOf } = await import("../server/reports/datasources");
+    fake.reset();
+    const datasource = await newDatasource("Typed setting");
+    const tested = await send(admin, "POST", `/reports/admin/datasources/${datasource.id}/test`);
+    expect(tested.body.test).toMatchObject({ ok: true, readonly: 2, error: null });
+    expect(fake.requests[0]!.sql).toContain("toUInt8OrNull(toString(getSetting('readonly')))");
+    // JSONCompact may send the value as a number or a string.
+    expect([readonlyOf(2), readonlyOf("1"), readonlyOf(null), readonlyOf("x"), readonlyOf(1.5)]).toEqual([2, 1, null, null, null]);
+  });
+
   test("the allowlist preview counts matching tables", async () => {
     const datasource = await newDatasource("Preview");
     fake.state.tables = [

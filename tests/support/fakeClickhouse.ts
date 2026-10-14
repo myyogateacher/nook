@@ -85,6 +85,8 @@ export function startFakeClickhouse(port: number, options: { database?: string }
     const hasSettings = Object.keys(request.params).some((name) => !["database", "query_id", "default_format"].includes(name));
     if (state.readonly === 1 && hasSettings) return { status: 500, body: exception(164, "Cannot modify 'readonly' setting in readonly mode", "READONLY"), headers: { "X-ClickHouse-Exception-Code": "164" } };
     if (request.user === "bad") return { status: 516, body: exception(516, "bad: Authentication failed: password is incorrect, or there is no user with such name", "AUTHENTICATION_FAILED") };
+    // Real ClickHouse types getSetting('readonly') as UInt8, and toUInt8OrNull accepts only a String (Code 43).
+    if (/toUInt8OrNull\(\s*getSetting\(/.test(sql)) return { status: 400, body: exception(43, "Illegal type UInt8 of first argument of function toUInt8OrNull. Expected String or FixedString", "ILLEGAL_TYPE_OF_ARGUMENT"), headers: { "X-ClickHouse-Exception-Code": "43" } };
     if (sql.startsWith("SELECT version(), currentUser()")) return { status: 200, body: json([{ name: "version()", type: "String" }, { name: "currentUser()", type: "String" }, { name: "r", type: "Nullable(UInt8)" }], [[state.version, request.user, state.readonly]]) };
     if (sql === "SHOW GRANTS") return { status: 200, body: json([{ name: "GRANTS", type: "String" }], state.grants.map((line) => [line])) };
     if (sql === "SELECT 1") return { status: 200, body: json([{ name: "1", type: "UInt8" }], [[1]]) };

@@ -168,6 +168,13 @@ export function writeGrantsOf(lines: readonly string[]): string[] {
   });
 }
 
+/** The profile's `readonly` as JSONCompact sends it: a number, a numeric string, or null. */
+export function readonlyOf(value: unknown): number | null {
+  if (typeof value === "number") return Number.isInteger(value) ? value : null;
+  if (typeof value === "string" && /^\s*\d+\s*$/.test(value)) return Number(value);
+  return null;
+}
+
 /**
  * Test connection (plan wave 45): the server version, the user, its profile `readonly`, and its write
  * grants, with a warning when the user can write, when its profile refuses Nook's per-query limits,
@@ -179,11 +186,13 @@ export async function testConnection(id: string): Promise<ConnectionTest> {
   const result: ConnectionTest = { ok: false, version: null, user: null, readonly: null, writeGrants: [], warnings: [], error: null, ms: 0 };
   try {
     const target = datasourceTarget(row);
-    const profile = await chQuery(target, "SELECT version(), currentUser(), toUInt8OrNull(getSetting('readonly'))", { queryId: queryIdFor("test", crypto.randomUUID().slice(0, 8)), profileSettings: true });
+    // getSetting returns the setting's own type (UInt8 for readonly on real servers), and toUInt8OrNull
+    // takes only a String: toString first works whatever type the server answers with (2026-10-14 fix).
+    const profile = await chQuery(target, "SELECT version(), currentUser(), toUInt8OrNull(toString(getSetting('readonly')))", { queryId: queryIdFor("test", crypto.randomUUID().slice(0, 8)), profileSettings: true });
     const first = profile.rows[0] ?? [];
     result.version = typeof first[0] === "string" ? first[0] : null;
     result.user = typeof first[1] === "string" ? first[1] : null;
-    result.readonly = typeof first[2] === "number" ? first[2] : first[2] === null || first[2] === undefined ? null : Number(first[2]);
+    result.readonly = readonlyOf(first[2]);
     try {
       const grants = await chQuery(target, "SHOW GRANTS", { queryId: queryIdFor("test", "grants", crypto.randomUUID().slice(0, 8)), profileSettings: true });
       result.writeGrants = writeGrantsOf(grants.rows.map((line) => String(line[0] ?? ""))).map((line) => line.slice(0, 200));

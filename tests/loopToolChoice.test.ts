@@ -137,3 +137,24 @@ describe("toolChoice in the loop", () => {
     expect(toolChoiceFor(DEFAULT_COMPAT, "auto")).toBe("auto");
   });
 });
+
+describe("finalTool: runs that must end with one tool (2026-10-14)", () => {
+  test("chat runs (no finalTool) end on a text answer exactly as before", async () => {
+    const { result, requests } = await run(() => ({ content: "Just text." }));
+    expect(result).toMatchObject({ status: "stop", steps: 1, content: "Just text." });
+    expect(result.nudges).toBeUndefined();
+    expect(requests.length).toBe(1);
+  });
+
+  test("parseToolArguments tolerates fences, trailing commas, and JSON inside a string, and names what it cannot parse", async () => {
+    const { parseToolArguments, jsonObjectFromText } = await import("../server/agents/loop");
+    expect(parseToolArguments("```json\n{\"a\": [1, 2,],}\n```")).toEqual({ ok: true, value: { a: [1, 2] } });
+    expect(parseToolArguments(JSON.stringify("{\"a\": \"x, ]\"}"))).toEqual({ ok: true, value: { a: "x, ]" } });
+    expect(parseToolArguments("")).toEqual({ ok: true, value: {} });
+    const bad = parseToolArguments("{\"a\": ");
+    expect(bad.ok).toBe(false);
+    expect(!bad.ok && bad.error.length > 0).toBe(true);
+    expect(jsonObjectFromText("Sure:\n```json\n{\"blocks\": []}\n```\nDone")).toEqual({ blocks: [] });
+    expect(jsonObjectFromText("no json here")).toBeNull();
+  });
+});

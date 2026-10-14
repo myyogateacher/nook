@@ -816,6 +816,14 @@ NOOK_QA_EMAIL=… NOOK_QA_PASSWORD=… bun --no-env-file scripts/buttonMetrics.t
 bun --no-env-file scripts/buttonMetrics.ts diff before.json after.json --allow /reports --allow /settings/datasources
 ```
 
+**Button lint.** `lint` visits the same screens at 390 px and 1280 px and checks every visible button (`button`, `[role=button]`, and links with a shared button class) against five rules: the label overflows or is clipped (`scrollWidth` over `clientWidth`, or a clipped child); the label wraps onto a second line (its visible text sits on more than one line); side padding under 12 px on a button that shows text; a target under 44 px at 390 (a coarse pointer); a text button under 64 px wide. Visually hidden labels (icon buttons) count as no text. It prints the findings per screen and button selector, with a total per rule, exits 1 when any remain, and changes nothing:
+
+```sh
+NOOK_QA_EMAIL=… NOOK_QA_PASSWORD=… bun --no-env-file scripts/buttonMetrics.ts lint http://qa.localhost:22195 [screens.json] [--out findings.json] [--allow-file other.json]
+```
+
+Intentional exceptions go in `scripts/buttonLint.allow.json`: `[{ "screen": "*" | "<screen name>", "selector": "button.class.class", "label"?: "<exact label>", "rule": "overflow" | "wrap" | "padding" | "target" | "narrow" | "*", "reason": "…" }]`. The selector is the tag plus its classes, sorted, as the report prints it. The rules are tested on a synthetic page in `tests/buttonLint.test.ts`.
+
 ### Testing against a real ClickHouse
 
 The report guard's parser is driven by `EXPLAIN QUERY TREE` output captured from ClickHouse 26.6 (`tests/fixtures/clickhouse-26.6/`). The gated live tests (`tests/reportsClickhouseLive.test.ts`) run the settings, the LIMIT wrap, the query tree (FINAL included), and the readonly check against a real server:

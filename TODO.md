@@ -22,7 +22,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
   Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
   - [ ] (B) Nook as a built-in doc source: notes and Files by link or picker, read with the owner's access.
-  - [ ] (C) Button lint in `scripts/buttonMetrics.ts`. It flags overflowing, wrapped or clipped labels, side padding under 12 px, targets under 44 px on phones, and text buttons under 64 px wide.
   - [ ] Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–055 in OPERATIONS.
 - [ ] Generator reliability, proposed and not started: an eval set of docs, fixture data and expected numbers; a metric catalog extracted from the doc; sanity checks on results (join fan-out, totals that reconcile, coverage, units); repair hints for ClickHouse errors; a model fallback.
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
@@ -33,6 +32,8 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
 ## Known LOW leftovers
 
+- [ ] Button lint triage (`scripts/buttonMetrics.ts lint`, 2026-10-14 on lanec QA: 572 findings, 0 overflow): header account buttons (Inbox, bell, Sign out, account) have 0 px side padding and are 44 px wide with text; the Settings nav's two-line items count as wraps; at 390 the agents/AI "Chat" button (38 px tall), `chat-link`s, Notes' 28 px folder buttons, the sidebar brand, and the Whiteboards selects and Import/New (42 px) are under 44 px; `ui-select-field` has 10/8 px padding; `modules-switch` 6 px. Fix the real ones and list the intentional ones in `scripts/buttonLint.allow.json`.
+- [ ] Lane B: when the reports doc-servers listing calls `ensureSynced` (C1), `tests/docSource.test.ts` must keep its server never-synced on a name that resolves fast (or give it `tools_synced_at`), or the lazy sync waits on DNS for `docs.example.test`.
 - [ ] Several test files use fixed fake-provider ports (24xxx) that collide when lanes run tests in parallel (`agentsExternalFixes`, `agentsTools`, `agentsExternalReview`, `agentsExternal`, `agentsReview`, `knowledgeFixes`); give them per-run ports.
 - [ ] Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.
 

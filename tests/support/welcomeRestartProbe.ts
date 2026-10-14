@@ -67,9 +67,12 @@ try {
     }));
   } else {
     const released = releaseStaleClaims();
-    const early = await runMailDispatch({ nowMs: Date.now() });
-    const due = await runMailDispatch({ nowMs: Date.now() + 61_000 });
-    const again = await runMailDispatch({ nowMs: Date.now() + 10 * 60_000 });
+    // Ticks just before and after the welcome's own not_before, not the wall clock: on a loaded host
+    // the second process can start more than the minute's delay after the first one queued it.
+    const dueAt = Date.parse(outbox()[0]?.not_before ?? new Date().toISOString());
+    const early = await runMailDispatch({ nowMs: dueAt - 1_000 });
+    const due = await runMailDispatch({ nowMs: dueAt + 1_000 });
+    const again = await runMailDispatch({ nowMs: dueAt + 10 * 60_000 });
     const welcome = mails().filter((mail) => mail.subject.startsWith("Welcome"));
     console.log(JSON.stringify({
       released, early: early?.sent ?? null, due: due?.sent ?? null, again: again?.sent ?? null, outbox: outbox(),

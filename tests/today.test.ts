@@ -146,7 +146,9 @@ describe("GET /api/today", () => {
     expect((await request("/today?tz=UTC", {})).status).toBe(401);
 
     resetTodayRateLimit();
-    for (let index = 0; index < TODAY_RATE_LIMIT; index += 1) expect((await request("/today?tz=UTC", {}, user)).status).toBe(200);
+    // The limit counts requests, not work: the cheap storage section fills it (thirty full Today
+    // payloads over a suite-sized database ran past the 5 s test timeout under host load).
+    for (let index = 0; index < TODAY_RATE_LIMIT; index += 1) expect((await request("/today?tz=UTC&sections=storage", {}, user)).status).toBe(200);
     const limited = await request("/today?tz=UTC", {}, user);
     expect(limited.status).toBe(429);
     expect(Number(limited.headers.get("Retry-After"))).toBeGreaterThan(0);

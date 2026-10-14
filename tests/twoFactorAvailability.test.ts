@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
 import { request } from "./support/harness";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 // v0.13.0 QA, A7: /api/about says whether two-factor can be set up here (a TOTP key is configured),
 // and Settings → Security explains instead of offering a setup that would end in 503.
@@ -12,12 +12,11 @@ test("/api/about says two-factor is available when a TOTP key is configured, and
 });
 
 test("without a TOTP key /api/about says two-factor is not available", () => {
-  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "noTotpKeyProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-  const line = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-  const result = JSON.parse(line) as { twoFactor: unknown; keys: string[] };
+  const probed = runProbe("noTotpKeyProbe.ts");
+  const result = probed as { twoFactor: unknown; keys: string[] };
   expect(result.twoFactor).toBe(false);
   expect(result.keys).toEqual(["appName", "authMethods", "gitSha", "hasUsers", "openRegistration", "passwordReset", "twoFactor", "version"]);
-});
+}, PROBE_TIMEOUT_MS);
 
 test("Settings → Security shows the explanation instead of the setup form when two-factor is off", async () => {
   const source = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();

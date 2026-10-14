@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { EVENT_CREATES_PER_MINUTE, listOccurrences, reconcileEventNextOccurrences, resetEventCreateLimit } from "../server/calendar/service";
 import { rangeFor } from "../server/calendar/recurrence";
+import { cpuMs } from "./support/cpuTime";
 
 // Fixture dates sit a few years ahead of the current year (C12), so they never fall into the past.
 const Y = new Date().getUTCFullYear() + 5;
@@ -111,9 +112,11 @@ describe("range API work budget (T66)", () => {
     const mondays = Array.from({ length: 30 }, (_, index) => new Date(Date.UTC(year, 5, index + 1)))
       .filter((day) => day.getUTCDay() === 1).map((day) => day.toISOString().slice(0, 10));
     listOccurrences(user.userId, range, [calendarId]);
-    const started = performance.now();
-    const result = listOccurrences(user.userId, range, [calendarId]);
-    const elapsed = performance.now() - started;
+    // CPU time, not wall time (tests/support/cpuTime.ts), and the best of three: other suites on the
+    // host must not fail the budget, while a lost bound costs every run its full 20k-row scan.
+    let result = listOccurrences(user.userId, range, [calendarId]);
+    let elapsed = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run += 1) elapsed = Math.min(elapsed, cpuMs(() => { result = listOccurrences(user.userId, range, [calendarId]); }));
     expect(result.truncated).toBe(false);
     expect(mondays.length).toBeGreaterThanOrEqual(4);
     expect(result.occurrences.map((item) => item.date)).toEqual(mondays);

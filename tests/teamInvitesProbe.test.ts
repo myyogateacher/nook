@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 test("with ALLOW_REGISTRATION=false an invite opens registration once, with its role; the empty instance's first account is still the admin", () => {
-  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "teamInvitesProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-  const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-  const result = JSON.parse(output) as Record<string, any>;
+  const probed = runProbe("teamInvitesProbe.ts");
+  const result = probed;
   // Bootstrap wins over any token on an empty instance (D163).
   expect(result.first).toEqual({ status: 201, role: "admin" });
   expect(result.closed).toBe(403);
@@ -15,4 +14,4 @@ test("with ALLOW_REGISTRATION=false an invite opens registration once, with its 
   expect(result.reused).toEqual({ status: 404, code: "INVITE_INVALID" });
   expect(result.outsider).toBe(403);
   expect(result.roles).toEqual([{ email: "first@example.test", role: "admin" }, { email: "viewer@example.test", role: "viewer" }]);
-}, 30_000);
+}, PROBE_TIMEOUT_MS);

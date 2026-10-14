@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, origin, port, request, s3Backend, storedObjectExists, type Session } from "./support/harness";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 const documentStorage = await import("../server/documentStorage");
 const { runSweep } = await import("../server/sweeper");
@@ -344,14 +345,13 @@ describe("document uploads", () => {
   });
 
   test("applies the TOTP setup gate to document routes", async () => {
-    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "totpRequiredProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-    const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-    expect(JSON.parse(output)).toEqual({
+    const probed = runProbe("totpRequiredProbe.ts");
+    expect(probed).toEqual({
       upload: { status: 403, code: "TOTP_SETUP_REQUIRED" },
       list: { status: 403, code: "TOTP_SETUP_REQUIRED" },
       content: { status: 403, code: "TOTP_SETUP_REQUIRED" }
     });
-  }, 20_000);
+  }, PROBE_TIMEOUT_MS);
 
   test("refuses uploads over the quota, counting binned documents", async () => {
     const owner = await createUser("Quota owner");

@@ -39,6 +39,20 @@ const sseText = async (session: Session, runId: string, after = 0, { headersOnly
     clearTimeout(timer);
   }
 };
+/** Clears every stored secret except `keep`'s providers' (restore() puts them back): see the key-mismatch test. */
+function setAsideForeignSecrets(keep: string[]) {
+  const tables = [["agent_providers", "api_key_ct"], ["agent_tool_servers", "secret_ct"], ["report_datasources", "password_ct"]] as const;
+  const saved = tables.map(([table, column]) => {
+    const rows = (db.query(`SELECT id, ${column} AS ct FROM ${table} WHERE ${column} IS NOT NULL`).all() as Array<{ id: string; ct: string }>).filter((row) => !keep.includes(row.id));
+    for (const row of rows) db.query(`UPDATE ${table} SET ${column} = NULL WHERE id = ?`).run(row.id);
+    return { table, column, rows };
+  });
+  return {
+    restore() {
+      for (const { table, column, rows } of saved) for (const row of rows) db.query(`UPDATE ${table} SET ${column} = ? WHERE id = ?`).run(row.ct, row.id);
+    }
+  };
+}
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 beforeAll(async () => {
@@ -118,6 +132,10 @@ describe("review: module off by key mismatch", () => {
     const second = await api(admin, "POST", "/agents/admin/providers", { name: "Review second", baseUrl: fake.baseUrl, apiKey: "sk-test-review-second-0002", defaultModel: "gpt-6-luna" });
     expect(second.status).toBe(201);
     const secondId = second.body.provider.id as string;
+    // The key check covers every stored secret, so secrets other files left behind (providers, tool
+    // servers, report data sources sealed with the harness key) would keep the module off after this
+    // test re-enters its own. They are set aside for the test and put back after it.
+    const foreign = setAsideForeignSecrets([providerId, secondId]);
     try {
       expect(setAgentsKeyForTests(Buffer.alloc(32, 123))).toEqual({ enabled: false, reason: "key_mismatch" });
       // Chat routes stay off; non-admins get nothing from the recovery routes.
@@ -126,7 +144,7 @@ describe("review: module off by key mismatch", () => {
       expect((await api(admin, "POST", "/agents/admin/providers", { name: "x", baseUrl: fake.baseUrl })).status).toBe(503);
       const list = await api(admin, "GET", "/agents/admin/providers");
       expect(list.status).toBe(200);
-      expect(list.body.providers.map((item: { id: string; hasSecret: boolean }) => item.hasSecret)).toEqual([true, true]);
+      expect(list.body.providers.filter((item: { id: string }) => [providerId, secondId].includes(item.id)).map((item: { hasSecret: boolean }) => item.hasSecret)).toEqual([true, true]);
       expect((await api(admin, "GET", `/agents/admin/providers/${providerId}`)).status).toBe(200);
       // Remove one key: still one secret the key cannot open.
       const remove = await api(admin, "PATCH", `/agents/admin/providers/${providerId}`, { removeSecret: true, expectedRevision: 1 });
@@ -146,6 +164,7 @@ describe("review: module off by key mismatch", () => {
       expect((await api(admin, "DELETE", `/agents/admin/providers/${secondId}`)).status).toBe(200);
       expect(agentsStatus()).toEqual({ enabled: true, reason: null });
     } finally {
+      foreign.restore();
       setAgentsKeyForTests(key);
       await api(admin, "DELETE", `/agents/admin/providers/${secondId}`);
       await api(admin, "PATCH", `/agents/admin/providers/${providerId}`, { apiKey: "sk-test-review-0001", expectedRevision: 2 });

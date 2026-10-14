@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createUser, dataDir, db, request, type Session } from "./support/harness";
+import { PROBE_TIMEOUT_MS, probeEnv } from "./support/probe";
 
 const { reconcileSearchIndex } = await import("../server/searchIndex");
 const { registeredMigrationIds } = await import("../server/migrations");
@@ -136,7 +137,7 @@ describe("search index sync", () => {
   });
 
   test("boot backfills a 007-shaped data directory from verified files, never from current.md", () => {
-    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe" });
+    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "searchBackfillProbe.ts")], { stdout: "pipe", stderr: "pipe", env: probeEnv() });
     const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
     const result = JSON.parse(output) as Record<string, unknown>;
     // 1–22 are on main; later waves (023 and up) may or may not be registered yet.
@@ -157,5 +158,5 @@ describe("search index sync", () => {
     });
     expect(result.second).toMatchObject({ indexed: 0, removed: 0 });
     expect(probe.stderr.toString()).not.toContain("tampered");
-  }, 20_000);
+  }, PROBE_TIMEOUT_MS);
 });

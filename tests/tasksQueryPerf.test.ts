@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createUser, db } from "./support/harness";
+import { cpuMs } from "./support/cpuTime";
 
 const { queryCards, QUERY_PAGE } = await import("../server/tasks/query");
 const { dateInZone, addDays } = await import("../server/today/registry");
@@ -19,13 +20,17 @@ const CARDS_PER_BOARD = large ? 1000 : 500;
 /**
  * The budget holds for the median of RUNS timed runs after WARMUP untimed ones (C9). The p95 of 20
  * runs is nearly the slowest run, so one scheduler hiccup on a busy machine failed the suite; the
- * median still catches a query that got slower, and both numbers are printed.
+ * median still catches a query that got slower, and both numbers are printed. Runs are timed in CPU
+ * time (tests/support/cpuTime.ts), so a second suite on the same host does not stretch them.
  */
 const BUDGET_MS = 150;
 const WARMUP = large ? 1 : 3;
 const RUNS = large ? 5 : 15;
-/** Per-test timeout: the large fixture takes seconds per query. */
-const TIMEOUT_MS = large ? 300_000 : 5_000;
+/**
+ * Per-test timeout: the large fixture takes seconds per query; the small one runs 18 queries of up to
+ * ~150 ms CPU each, which a host shared with other suites stretched to 4.4 s of wall time.
+ */
+const TIMEOUT_MS = large ? 300_000 : 15_000;
 
 const owner = await createUser("Perf owner");
 const stranger = await createUser("Perf stranger");
@@ -85,11 +90,7 @@ const round = (ms: number) => Math.round(ms * 10) / 10;
 function timeRuns(run: () => unknown, runs = RUNS, warmup = WARMUP) {
   for (let index = 0; index < warmup; index += 1) run();
   const times: number[] = [];
-  for (let index = 0; index < runs; index += 1) {
-    const start = performance.now();
-    run();
-    times.push(performance.now() - start);
-  }
+  for (let index = 0; index < runs; index += 1) times.push(cpuMs(run));
   times.sort((a, b) => a - b);
   const middle = Math.floor(times.length / 2);
   const median = times.length % 2 ? times[middle]! : (times[middle - 1]! + times[middle]!) / 2;

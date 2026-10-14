@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createUser, db, origin, request, type Session } from "./support/harness";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
+import { cpuMs } from "./support/cpuTime";
 
 const { buildCalendar, escapeText, eventLines, foldLine, MAX_FEED_EVENTS } = await import("../server/calendar/ics");
 const { FEED_ADDRESS_CAP, FEED_FAILURES_PER_MINUTE, FEED_HOURLY_LIMIT, feedFailureLimited, feedLimiterSizes, findFeed, isFeedRequest, resetFeedLimits } = await import("../server/calendar/feeds");
@@ -307,9 +309,8 @@ describe("calendar feeds API", () => {
     resetFeedLimits();
     for (let index = 0; index < 200; index += 1) expect(findFeed(calendarId, random())).toBeNull();
     // The limiter itself (the part that once scanned its whole map) stays well under a millisecond per request.
-    const started = performance.now();
-    for (let index = 0; index < 5000; index += 1) feedFailureLimited(`10.0.${index >> 8}.${index & 255}`);
-    expect(performance.now() - started).toBeLessThan(50);
+    // CPU time, not wall time: other suites on the host must not fail a work budget (tests/support/cpuTime.ts).
+    expect(cpuMs(() => { for (let index = 0; index < 5000; index += 1) feedFailureLimited(`10.0.${index >> 8}.${index & 255}`); })).toBeLessThan(50);
     expect(feedLimiterSizes()).toEqual({ feeds: 0, addresses: FEED_ADDRESS_CAP });
   });
 
@@ -338,9 +339,7 @@ describe("calendar feeds API", () => {
   });
 
   test("with TOTP required, a token created from a gated session still works without a session", () => {
-    const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "feedTotpProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-    const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-    expect(probe.exitCode).toBe(0);
-    expect(JSON.parse(output)).toEqual({ ungatedCreate: 403, gatedCreate: 201, feed: 200, feedType: "text/calendar; charset=utf-8", noSessionList: 401 });
-  });
+    const probed = runProbe("feedTotpProbe.ts");
+    expect(probed).toEqual({ ungatedCreate: 403, gatedCreate: 201, feed: 200, feedType: "text/calendar; charset=utf-8", noSessionList: 401 });
+  }, PROBE_TIMEOUT_MS);
 });

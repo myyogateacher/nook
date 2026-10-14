@@ -81,6 +81,9 @@ export const serverOptions = serverModule.default;
 // Every test request comes from one address: the per-client sign-in, registration, and invite
 // buckets (S7) are covered in tests/authLimits.test.ts and off everywhere else.
 (await import("../../server/authLimits")).setClientLimitsForTests(false);
+// New password hashes use a cheap argon2id cost: the production cost made auth-flow tests CPU-bound
+// enough to time out under host load (server/passwords.ts).
+(await import("../../server/passwords")).setPasswordCostForTests(true);
 export const { db } = await import("../../server/db");
 // The test database is thrown away after the run, so it skips fsync: under host load (Docker verify
 // beside other suites) a commit's fsync on overlayfs stalled ordinary tests past Bun's 5 s timeout.

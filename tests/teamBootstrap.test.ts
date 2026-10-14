@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 test("the first registration becomes the only admin, and the host CLI manages roles within the last-admin rule", () => {
-  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "teamBootstrapProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-  const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-  const result = JSON.parse(output) as Record<string, any>;
+  const probed = runProbe("teamBootstrapProbe.ts");
+  const result = probed;
   // With ALLOW_REGISTRATION=false two racing "first" registrations let exactly one through.
   expect(result.statuses).toEqual([201, 403]);
   expect(result.winnerRole).toBe("admin");
@@ -30,12 +29,11 @@ test("the first registration becomes the only admin, and the host CLI manages ro
     { via: "cli", action: "role_change", from_role: "admin", to_role: "viewer", actor_id: null }
   ]);
   expect(result.cliAudit).toEqual({ count: 2 });
-}, 30_000);
+}, PROBE_TIMEOUT_MS);
 
 test("with accounts but no active admin, boot warns and the next registration becomes the admin", () => {
-  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "noActiveAdminProbe.ts")], { stdout: "pipe", stderr: "pipe" });
-  const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-  const result = JSON.parse(output) as Record<string, any>;
+  const probed = runProbe("noActiveAdminProbe.ts");
+  const result = probed;
   // A fresh, empty install is not a lockout.
   expect(result.emptyWarned).toBe(false);
   expect(result.bootWarnings).toHaveLength(1);
@@ -46,4 +44,4 @@ test("with accounts but no active admin, boot warns and the next registration be
   expect(result.roles).toEqual(["admin", "guest"]);
   expect(result.events).toEqual([{ via: "bootstrap", action: "bootstrap_admin", to_role: "admin", actor_id: null }]);
   expect(result.afterWarned).toBe(false);
-}, 30_000);
+}, PROBE_TIMEOUT_MS);

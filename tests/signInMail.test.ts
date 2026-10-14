@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { createUser, db, request, spareEmail, type Session } from "./support/harness";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 const mail = await import("../server/mail");
 const { runMailDispatch } = await import("../server/mail/dispatcher");
@@ -511,9 +512,7 @@ describe("the welcome survives a restart (separate processes, MAIL_TRANSPORT=fil
     const dataDir = mkdtempSync(join(tmpdir(), "mynotes-welcome-probe-"));
     try {
       const probe = (phase: string) => {
-        const result = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "welcomeRestartProbe.ts"), phase, dataDir], { stdout: "pipe", stderr: "pipe" });
-        const line = result.stdout.toString().trim().split("\n").at(-1) ?? "";
-        return JSON.parse(line) as Record<string, unknown>;
+        return runProbe<Record<string, unknown>>("welcomeRestartProbe.ts", [phase, dataDir]);
       };
       const first = probe("queue");
       // Open registration leaves the address unverified: the welcome waits, and verifying queues it. The
@@ -528,5 +527,5 @@ describe("the welcome survives a restart (separate processes, MAIL_TRANSPORT=fil
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, PROBE_TIMEOUT_MS * 2);
 });

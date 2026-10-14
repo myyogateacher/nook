@@ -20,4 +20,16 @@ export async function verifyPassword(plain: string | null | undefined, hash: str
   }
 }
 
-export const hashPassword = (value: string) => Bun.password.hash(value, { algorithm: "argon2id", memoryCost: 65536, timeCost: 3 });
+const PRODUCTION_COST = { memoryCost: 65536, timeCost: 3 };
+let cost = PRODUCTION_COST;
+
+export const hashPassword = (value: string) => Bun.password.hash(value, { algorithm: "argon2id", ...cost });
+
+/**
+ * Tests only: a cheap argon2id cost for new hashes (the stored PHC string carries its own cost, so
+ * verify is unchanged). At the production cost a hash plus verify takes about a second on a loaded
+ * host, and the auth-flow tests do several each, which pushed them past Bun's 5 s test timeout.
+ */
+export function setPasswordCostForTests(cheap: boolean) {
+  cost = cheap ? { memoryCost: 4096, timeCost: 2 } : PRODUCTION_COST;
+}

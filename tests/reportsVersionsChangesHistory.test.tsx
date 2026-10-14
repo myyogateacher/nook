@@ -172,3 +172,131 @@ describe("Versions after Back past the page (D480)", () => {
     await view.waitFor(() => settled);
   });
 });
+
+/** The report page alone, with the app's popstate check in front of its route handler. */
+function PageHost({ routes }: { routes: string[] }) {
+  useEffect(() => {
+    const onPop = (event: PopStateEvent) => { if (!popStateClosedDialog(event)) routes.push("route"); };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [routes]);
+  return <ReportHost />;
+}
+
+
+/** The "Back" button inside the top sheet (the version's view, its detail, or Compare). */
+async function sheetBack(view: Rendered) {
+  const top = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].at(-1)!;
+  await act(async () => { view.button("Back", top)!.click(); await Bun.sleep(40); });
+  await act(async () => { await Bun.sleep(20); });
+}
+
+const fourVersions = () => {
+  const list = [item(4, { source: "manual", current: true }), item(3, { source: "edit" })];
+  mockApi({
+    [`GET /reports/${REPORT_ID}/versions`]: () => ({ versions: list }),
+    [`GET /reports/${REPORT_ID}/version-diff?to=4&from=3`]: () => ({ diff: diffSpecVersions(specs[2]!, specs[3]!, { from: 3, to: 4 }) }),
+    [`GET /reports/${REPORT_ID}/versions/4`]: () => ({ version: list[0], spec: specs[3], results: [] })
+  });
+};
+
+async function openView(view: Rendered) {
+  await view.click(view.button("Versions")!);
+  await view.click(await view.waitFor(() => document.querySelector<HTMLButtonElement>('button[aria-label="Open v4: Edited by hand"]')));
+  await view.click(await view.waitFor(() => view.button("View this version")));
+  await view.waitFor(() => document.querySelector(".report-vview-banner"));
+  expect(titles()).toEqual(["Versions", "Version 4", "Viewing v4"]);
+}
+
+async function finishHistory(view: Rendered) {
+  await view.rerender(<></>);
+  let settled = false;
+  whenHistorySettled(() => { settled = true; });
+  await view.waitFor(() => settled);
+}
+
+describe("the Versions sheets' own Back buttons (L1)", () => {
+  test("browser Back from the read-only view, then Forward: the view comes back", async () => {
+    fourVersions();
+    const routes: string[] = [];
+    const view = await render(<PageHost routes={routes} />);
+    await openView(view);
+    await browser(view, "back");
+    expect(titles()).toEqual(["Versions", "Version 4"]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 3);
+    expect(titles()).toEqual(["Versions", "Version 4", "Viewing v4"]);
+    expect(routes).toEqual([]);
+    await finishHistory(view);
+  });
+
+  test("the view's Back, then the detail's Back: Forward reopens the detail, then the view; Compare's Back too", async () => {
+    fourVersions();
+    const routes: string[] = [];
+    const view = await render(<PageHost routes={routes} />);
+    await openView(view);
+    const length = window.history.length;
+    await sheetBack(view);
+    expect(titles()).toEqual(["Versions", "Version 4"]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 3);
+    expect(titles()).toEqual(["Versions", "Version 4", "Viewing v4"]);
+
+    await sheetBack(view);
+    await sheetBack(view);
+    expect(titles()).toEqual(["Versions"]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 2);
+    expect(titles()).toEqual(["Versions", "Version 4"]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 3);
+    expect(titles()).toEqual(["Versions", "Version 4", "Viewing v4"]);
+    expect(window.history.length).toBe(length);
+
+    // Compare, over the list: its Back steps back too, and Forward shows it again.
+    await sheetBack(view);
+    await sheetBack(view);
+    await view.click(await view.waitFor(() => view.button("Compare versions")));
+    await view.waitFor(() => titles().length === 2);
+    expect(titles()).toEqual(["Versions", "Compare versions"]);
+    await sheetBack(view);
+    expect(titles()).toEqual(["Versions"]);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 2);
+    expect(titles()).toEqual(["Versions", "Compare versions"]);
+    expect(routes).toEqual([]);
+    await finishHistory(view);
+  });
+
+  test("the sheets' Back, then browser Back past the page: Forward ×4 brings back the report, Versions, v4, and the view", async () => {
+    fourVersions();
+    const routes: string[] = [];
+    const depth = Number((window.history.state as Record<string, unknown> | null)?.["mynotes.depth"] ?? 0);
+    window.history.pushState({ route: "list", "mynotes.depth": depth + 1 }, "", "/reports");
+    const view = await render(<RoutedReports routes={routes} />);
+    await view.click(view.button("Open report")!);
+    await openView(view);
+    const length = window.history.length;
+
+    await sheetBack(view);
+    await sheetBack(view);
+    expect(titles()).toEqual(["Versions"]);
+    await browser(view, "back");
+    expect(titles()).toEqual([]);
+    await browser(view, "back");
+    expect(view.button("Open report")).not.toBeNull();
+
+    await browser(view, "forward");
+    expect(view.button("Versions")).not.toBeNull();
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 1);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 2);
+    await browser(view, "forward");
+    await view.waitFor(() => titles().length === 3);
+    expect(titles()).toEqual(["Versions", "Version 4", "Viewing v4"]);
+    expect(window.history.length).toBe(length);
+    expect(routes).toEqual(["route", "route"]);
+    await finishHistory(view);
+  });
+});

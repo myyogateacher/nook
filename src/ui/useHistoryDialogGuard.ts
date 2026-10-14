@@ -70,7 +70,7 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
   const wasOpenRef = useRef(false);
   if (open && !wasOpenRef.current) depthRef.current = typeof window === "undefined" ? 0 : readHistoryDepth(window.history.state);
   wasOpenRef.current = open;
-  useDialogSentinel(open, options.layerKey);
+  const stepBack = useDialogSentinel(open, options.layerKey);
   // Opened while another guard's undo is in flight (a composer handing Back over to its discard
   // prompt): the entry is the one the undo lands on, so read the depth once it has.
   useEffect(() => open ? whenHistorySettled(() => { depthRef.current = readHistoryDepth(window.history.state); }) : undefined, [open]);
@@ -85,6 +85,15 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
       reopen: () => reopenRef.current
     }));
   }, [open]);
+  /**
+   * L1: for a Back button inside the layer. It goes back as browser Back does (the guard closes the
+   * layer and offers its reopen, so Forward shows it again); with no sentinel of its own on top it
+   * closes the layer instead. While blocked it does nothing.
+   */
+  return () => {
+    if (blockedRef.current || !openRef.current) return;
+    if (!stepBack()) closeRef.current();
+  };
 }
 
 /**

@@ -247,16 +247,16 @@ export const newVersionsMemory = (): VersionsMemory => ({ layer: { current: newL
 type Shared = { report: ReportDetail; versions: VersionHistoryItem[]; loaded: boolean; canRestore: boolean; onRestored: () => void; closeAll: () => void; runLink: ((runId: string) => void) | null };
 const versionOptions = (versions: VersionHistoryItem[]) => versions.map((item) => ({ value: String(item.version), label: `v${item.version}${item.current ? " (current)" : ""} · ${versionSourceLabel(item)}` }));
 
-/** "View this version": a wide sheet of its own over the detail (Back closes it; "Back to current" closes the whole panel). */
+/** "View this version": a wide sheet of its own over the detail (Back goes back as browser Back does, so Forward shows it again; "Back to current" closes the whole panel). */
 function ViewSheet({ shared, version, onClose, reopen }: { shared: Shared; version: number; onClose: () => void; reopen: () => void }) {
   const { report, versions, canRestore, onRestored, closeAll } = shared;
   const { busy, restore, confirmElement } = useRestore(report, versions[0]?.version ?? null, onRestored);
   // D480: a layer key, so Forward reopens this view after Back went past the page and came back.
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-view:${version}` });
+  const back = useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-view:${version}` });
   return <ModalDialog title={`Viewing v${version}`} eyebrow={report.title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-changes report-versions-panel report-versions-wide">
     <div className="report-changes-body report-versions-body">
       <div className="report-versions-nav">
-        <button type="button" className="secondary-button" onClick={onClose}><ChevronLeft aria-hidden="true" />Back</button>
+        <button type="button" className="secondary-button" onClick={back}><ChevronLeft aria-hidden="true" />Back</button>
         <button type="button" className="secondary-button" onClick={closeAll}>Back to current</button>
       </div>
       <VersionView report={report} version={version} canRestore={canRestore} busy={busy} onRestore={(item) => { void restore(item); }} />
@@ -277,11 +277,11 @@ function DetailSheet({ shared, version, onClose, reopen, viewMemory }: { shared:
   const viewLayer = useLayerReopen<number>(setViewing, viewMemory);
   useLayerOpener("reports.versions-view", (arg) => { const n = Number(arg); if (Number.isInteger(n) && n > 0) viewLayer.open(n); });
   const { busy, restore, confirmElement } = useRestore(report, versions[0]?.version ?? null, onRestored);
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-detail:${version}` });
+  const back = useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-detail:${version}` });
   return <>
     <ModalDialog title={`Version ${version}`} eyebrow={report.title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-changes report-versions-panel">
       <div className="report-changes-body report-versions-body">
-        <div className="report-versions-nav"><button type="button" className="secondary-button" onClick={onClose}><ChevronLeft aria-hidden="true" />Back</button></div>
+        <div className="report-versions-nav"><button type="button" className="secondary-button" onClick={back}><ChevronLeft aria-hidden="true" />Back</button></div>
         {!shared.loaded ? <p className="reports-loading" role="status">Loading version {version}…</p> : detail ? <section className="report-vdetail" aria-label={`Version ${detail.version}`}>
           <div className="report-vrow report-vdetail-facts"><div className="report-vrow-main"><VersionFacts item={detail} heading /></div></div>
           <div className="report-vdetail-actions">
@@ -313,11 +313,11 @@ function CompareSheet({ shared, initial, onClose, reopen }: { shared: Shared; in
   const options = versionOptions(versions);
   // The pair it opened with names the layer (D480); picking another one changes the view in place.
   const [opened] = useState(pair);
-  useHistoryDialogGuard(true, onClose, { reopen, layerKey: `reports.versions-compare:${opened.from}-${opened.to}` });
+  const back = useHistoryDialogGuard(true, onClose, { reopen, layerKey: `reports.versions-compare:${opened.from}-${opened.to}` });
   const kept = (version: number) => versions.some((item) => item.version === version);
   return <ModalDialog title="Compare versions" eyebrow={report.title} onClose={onClose} variant="sheet" className="reports-dialog report-changes report-versions-panel">
     <div className="report-changes-body report-versions-body">
-      <div className="report-versions-nav"><button type="button" className="secondary-button" onClick={onClose}><ChevronLeft aria-hidden="true" />Back</button></div>
+      <div className="report-versions-nav"><button type="button" className="secondary-button" onClick={back}><ChevronLeft aria-hidden="true" />Back</button></div>
       <section className="report-vcompare" aria-label="Compare versions">
         <div className="report-vcompare-pickers">
           <label><span>From</span><Select value={String(pair.from)} label="From version" options={options} onChange={(next) => setPair({ ...pair, from: Number(next) })} /></label>

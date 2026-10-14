@@ -472,7 +472,19 @@ export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(), k
     armLayer(layer);
   }
   let released = false;
-  return () => {
+  /**
+   * L1: a Back button inside the layer steps the browser back off the layer's own sentinel, as browser
+   * Back does, so Forward reopens the layer. False (nothing moved) when the layer's entry is not the
+   * current top one (no sentinel, a move in flight, or a layer over it): the caller closes it instead.
+   */
+  const back = () => {
+    const entry = layer.entry;
+    if (released || !entry || entry.released || held[held.length - 1] !== entry || ignoring > 0 || popInFlight) return false;
+    if (layerIdOf(env.history.state) !== entry.id) return false;
+    env.history.back();
+    return true;
+  };
+  return Object.assign(() => {
     if (released) return;
     released = true;
     const index = layers.indexOf(layer);
@@ -488,7 +500,7 @@ export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(), k
     // entry (a dropdown sheet over a sheet): the ones still open need a sentinel again, or the next
     // Back would leave Nook.
     armLayers();
-  };
+  }, { back });
 }
 
 /**
@@ -529,7 +541,15 @@ export function defaultSentinelEnv(): SentinelEnv {
 export function useDialogSentinel(open: boolean, key?: string) {
   const keyRef = useRef(key);
   keyRef.current = key;
-  useEffect(() => open ? acquireDialogSentinel(defaultSentinelEnv(), keyRef.current) : undefined, [open]);
+  const backRef = useRef<(() => boolean) | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const release = acquireDialogSentinel(defaultSentinelEnv(), keyRef.current);
+    backRef.current = release.back;
+    return () => { if (backRef.current === release.back) backRef.current = null; release(); };
+  }, [open]);
+  /** Steps back off this layer's sentinel (see acquireDialogSentinel's `back`); false when it could not. */
+  return () => backRef.current?.() ?? false;
 }
 
 if (typeof window !== "undefined" && window.history) {

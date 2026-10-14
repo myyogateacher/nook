@@ -61,10 +61,11 @@ export function countLabel(value: number | null, noun = "rows") {
 
 // Wave 46: generation from a doc, and the doc's state.
 export const docServers = () => api<{ servers: DocServerChoice[] }>("/reports/doc-servers");
-export type GenerateBody = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId: string; title?: string | null };
+export type GenerateBody = { docRef: string; serverId: string; tool?: string | null; arg?: string | null; datasourceId: string; title?: string | null; browseTools?: string[] | null };
 export const generateReport = (body: GenerateBody) => api<GenerateStarted>("/reports/generate", json("POST", body));
 export const regenerateReport = (id: string, body: Partial<Omit<GenerateBody, "title">> = {}) => api<GenerateStarted>(`/reports/${id}/generate`, json("POST", body));
 export const cancelGeneration = (id: string) => api<{ cancelled: boolean }>(`/reports/${id}/generate/cancel`, json("POST", {}));
 export const latestGeneration = (id: string) => api<{ run: GenerationRun | null }>(`/reports/${id}/generation`);
 export const getDocState = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc`);
+export const saveBrowseTools = (id: string, tools: string[]) => api<{ doc: DocState }>(`/reports/${id}/doc/browse-tools`, json("PUT", { tools }));
 export const checkDoc = (id: string) => api<{ doc: DocState }>(`/reports/${id}/doc/check`, json("POST", {}));

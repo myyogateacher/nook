@@ -6,7 +6,8 @@ import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { setServerPolicies } from "../chat/chatApi";
 import { REPORT_LIMITS, type DatasourceChoice } from "../../shared/reports";
-import type { DocServerChoice } from "../../shared/reportsGenerate";
+import { defaultBrowseTools, type DocServerChoice } from "../../shared/reportsGenerate";
+import { BrowseToolsPicker } from "./BrowseToolsPicker";
 import { codeOf, createReport, docServers, generateReport, messageOf, regenerateReport } from "./reportsApi";
 import "./generate.css";
 
@@ -102,6 +103,8 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
   const [serverId, setServerId] = useState<string | null>(null);
   const [tool, setTool] = useState<string>(AUTO);
   const [arg, setArg] = useState("");
+  // B3: the read-only tools the AI may use to read more docs (fetch, list, and search ones ticked by default).
+  const [browse, setBrowse] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [source, setSource] = useState<string | null>(initialSource ?? sources[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
@@ -133,6 +136,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
   useEffect(() => { loadServers(); }, [loadServers]);
 
   const server = useMemo(() => servers?.find((item) => item.id === serverId) ?? null, [servers, serverId]);
+  useEffect(() => { setBrowse(server ? defaultBrowseTools(server.tools.map((item) => item.name)) : []); }, [server]);
   const chosenTool = tool === AUTO ? null : server?.tools.find((item) => item.name === tool) ?? null;
   const autoLabel = server?.pick ? `Auto: ${server.pick.tool} (${server.pick.arg})` : "Auto: none found";
   const argPlaceholder = chosenTool ? chosenTool.args.find((name) => name === "id" || name === "url") ?? chosenTool.args[0] ?? "id" : server?.pick?.arg ?? "id";
@@ -174,7 +178,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
     setBusy(true);
     setError(null);
     try {
-      const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO ? null : tool, arg: arg.trim() || null };
+      const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO ? null : tool, arg: arg.trim() || null, browseTools: browse };
       const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null });
       onCreated(started.report.id);
     } catch (reason) {
@@ -217,6 +221,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
             </div>
           </div>
         </details>}
+        {server?.synced && <BrowseToolsPicker server={server} value={browse} onChange={setBrowse} disabled={busy} />}
       </>}
       <span className="reports-label" id={ids.source}>Data source</span>
       <Select labelledBy={ids.source} label="Data source" value={source} onChange={setSource} options={sources.map((item) => ({ value: item.id, label: item.name, description: `Default database ${item.database}` }))} />

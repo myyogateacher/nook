@@ -71,7 +71,7 @@ const schemaOf = (db: Database, type: "index" | "trigger") => (db.query(`SELECT 
 describe("migration 039 agent chat", () => {
   test("is registered last, as 39, and creates every table of the plan", () => {
     // Wave 42: 040 (the Audit log guards) follows it; 046 (attachments, which triggers on chat_messages) comes after 044, and 047 (legacy attachments) after it.
-    expect(registeredMigrationIds.slice(registeredMigrationIds.indexOf(39))).toEqual([39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 55, 57]);
+    expect(registeredMigrationIds.slice(registeredMigrationIds.indexOf(39))).toEqual([39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 55, 56, 57]);
     expect(agentChatMigration.name).toBe("agent_chat");
     const db = openDb();
     const tables = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>).map((row) => row.name);

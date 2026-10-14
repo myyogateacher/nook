@@ -12,7 +12,9 @@ import { openChannel, type RunChannel } from "../agents/stream";
 import { readableReport, reportLevel, type ReportRow } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
-import { documentBlock, GENERATE_TOOLS, readDocSection, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
+import { docToolsLines, documentBlock, GENERATE_TOOLS, readDocSection, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
+import { DocBrowser, serverBrowseSource, storedBrowseTools } from "./docBrowse";
+import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
 import { reportModelFor } from "./model";
 import { applyPatch, changedBlockIds, changedQueryKeys, diffSpecs, opsSummary, parsePatch, PATCH_JSON_SCHEMA, sectionsChanged } from "./patch";
@@ -126,7 +128,7 @@ function targetBlockText(reportId: string, spec: ReportSpec, blockId: string | n
   return lines.join("\n");
 }
 
-export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow; spec: ReportSpec; blockId: string | null; doc: { markdown: string } | null }): string {
+export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow; spec: ReportSpec; blockId: string | null; doc: { markdown: string } | null; docTools?: readonly string[] }): string {
   const spec = specForPrompt(input.spec);
   const specText = spec.length > EDIT_LIMITS.specBytes ? `${spec.slice(0, EDIT_LIMITS.specBytes)}\n[cut]` : spec;
   return [
@@ -151,6 +153,7 @@ export function editPrompt(input: { datasource: DatasourceRow; report: ReportRow
     ...SPEC_V2_RULES(),
     "",
     `The result must still be a valid report: at most ${REPORT_LIMITS.queries} queries and ${REPORT_LIMITS.blocks} blocks, every queryKey names a query, every query is used by a block (remove queries you stop using), every section a block names exists, and named columns exist in the query's result. Nook runs the changed report's queries before proposing it; if anything fails (SQL or a design rule) you get the errors and may submit again (two more tries).`,
+    ...(input.docTools?.length ? ["## Doc tools", ...docToolsLines(input.docTools)] : []),
     "## How to work: a small plan first",
     "Call plan_change once, first: one todo per block or query to add or change (kind kpi, chart, table, markdown, or explore). For each: run_sql with a key when it needs data, then update_todo {id, status: \"done\", queryKey}; skipped or blocked need a note. When every todo is closed, call submit_patch (each done todo's query used by a block).",
     `You have at most ${EDIT_LIMITS.steps} steps; the last ones must call submit_patch.`,
@@ -274,7 +277,13 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
   const agentRunId = crypto.randomUUID();
   const snapshot = db.query("SELECT id, markdown FROM report_doc_snapshots WHERE report_id = ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1").get(report.id) as { id: string; markdown: string } | null;
   const spec = parseSpec(report.spec_json);
-  const prompt = editPrompt({ datasource, report, spec, blockId: instruction.block_id, doc: snapshot });
+  // B3: the doc tools the owner allowed, read with the doc server's credentials if the server is the owner's to use.
+  const ownerRole = (db.query("SELECT role FROM users WHERE id = ?").get(report.owner_id) as { role: string } | null)?.role ?? "member";
+  const browseSource = report.doc_server_id ? serverBrowseSource(report.doc_server_id, ownerRole) : null;
+  const ticked = storedBrowseTools(report.doc_browse_tools);
+  // The browser needs the run id; the run is created below, so the names come from a throwaway first.
+  const docToolNames = new DocBrowser({ reportId: report.id, runId: "", source: browseSource, ticked }).names;
+  const prompt = editPrompt({ datasource, report, spec, blockId: instruction.block_id, doc: snapshot, docTools: docToolNames });
   const at = now();
   let runId: string;
   try {
@@ -321,7 +330,7 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
     } catch { /* the next beat tries again */ }
   }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  void withLogContext({ ...currentLogContext(), run: shortId(runId), report: shortId(report.id), instruction: shortId(instruction.id) }, () => executeEdit({ entry, channel, connection, datasource, prompt, spec, instruction, authorId: author.id, agentRunId, docSnapshotId: snapshot?.id ?? null }))
+  void withLogContext({ ...currentLogContext(), run: shortId(runId), report: shortId(report.id), instruction: shortId(instruction.id) }, () => executeEdit({ entry, channel, connection, datasource, prompt, spec, instruction, authorId: author.id, agentRunId, docSnapshotId: snapshot?.id ?? null, browser: new DocBrowser({ reportId: report.id, runId, source: browseSource, ticked }) }))
     .catch((error) => slog.error("Reports: an edit run failed unexpectedly", error))
     .finally(() => {
       clearTimeout(timer);
@@ -337,7 +346,7 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
 
 type Execution = {
   entry: Live; channel: RunChannel; connection: ProviderConnection; datasource: DatasourceRow; prompt: string; spec: ReportSpec;
-  instruction: InstructionRow; authorId: string; agentRunId: string; docSnapshotId: string | null;
+  instruction: InstructionRow; authorId: string; agentRunId: string; docSnapshotId: string | null; browser: DocBrowser;
 };
 
 async function executeEdit(run: Execution) {
@@ -406,7 +415,7 @@ async function executeEdit(run: Execution) {
 
   const runTool = async (call: ModelToolCall): Promise<{ text: string; ok: boolean; stop?: boolean }> => {
     const args = asObject(call.arguments);
-    if (!planner.plan && !BEFORE_PLAN_TOOLS.has(call.name) && call.name !== "plan_change") throw new ReportError(400, "INVALID", "Make the plan first: call plan_change with one todo per block or query the instruction changes");
+    if (!planner.plan && !BEFORE_PLAN_TOOLS.has(call.name) && !run.browser.isDocTool(call.name) && call.name !== "plan_change") throw new ReportError(400, "INVALID", "Make the plan first: call plan_change with one todo per block or query the instruction changes");
     switch (call.name) {
       case "plan_change":
         return { text: planner.makePlan(args), ok: true };
@@ -461,6 +470,8 @@ async function executeEdit(run: Execution) {
       case "submit_patch":
         return propose(args.patch && typeof args.patch === "object" && !Array.isArray(args.patch) ? args.patch : args);
       default:
+        // B3: the doc tools the owner allowed (doc__<name>), within the same caps as a generation.
+        if (run.browser.isDocTool(call.name)) return { text: await run.browser.call(call.name, args, controller.signal), ok: true };
         throw new ReportError(400, "INVALID", `There is no tool named ${call.name.slice(0, 64)}`);
     }
   };
@@ -479,14 +490,16 @@ async function executeEdit(run: Execution) {
         result = { text: JSON.stringify({ error: known.message, code: known.code, ...(typeof known.details.guard === "string" ? { guard: known.details.guard } : {}) }), ok: false };
       }
     }
-    const capped = capResultText(result.text, EDIT_LIMITS.resultBytes);
+    const capBytes = run.browser.isDocTool(call.name) ? DOC_BROWSE_LIMITS.resultBytes + 1024 : EDIT_LIMITS.resultBytes;
+    const capped = capResultText(result.text, capBytes);
     if (call.recovered) slog.info("Final tool call recovered from a text answer", { tool: call.name, ok: result.ok });
     // A final call the loop took from a text answer is marked in the audit (it went through the same checks).
     insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.recovered ? `[recovered from text] ${call.arguments}` : call.arguments, result: capped.text, ok: result.ok, durationMs: Date.now() - started });
     channel.emit({ type: "tool_result", data: { messageId: runId, callId: call.id, ok: result.ok, resultPreview: preview(capped.text), truncated: capped.truncated, durationMs: Date.now() - started, decision: null, proposalId: null } });
-    return { content: capped.truncated ? `${capped.text}\n[cut at 16 KB]` : capped.text, ...(result.stop ? { stop: true } : {}) };
+    return { content: capped.truncated ? `${capped.text}\n[cut at ${Math.round(capBytes / 1024)} KB]` : capped.text, ...(result.stop ? { stop: true } : {}) };
   };
 
+  const tools = [...EDIT_TOOLS, ...run.browser.modelTools()];
   try {
     const result = await runLoop({
       connection, messages, maxSteps: EDIT_LIMITS.steps, temperature: null, maxOutputTokens: EDIT_LIMITS.maxOutputTokens, signal: controller.signal,
@@ -511,7 +524,7 @@ async function executeEdit(run: Execution) {
         chargeUsage(userId, REPORTS_AGENT_ID, stepUsage, 0);
         if (more && !proposed) assertBudget(userId);
       },
-      tools: () => EDIT_TOOLS,
+      tools: () => tools,
       execute,
       // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
       finalTool: {

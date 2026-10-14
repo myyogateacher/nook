@@ -8,6 +8,7 @@ import { AgentError } from "../agents/status";
 import { serverAvailableTo, serverRowOrNull, sessionFor, toolsWithPolicies, type StoredTool, type ToolServerRow } from "../agents/toolServers";
 import { ownedReport } from "./access";
 import { ReportError } from "./errors";
+import { checkBrowseTools, pageInfos, recheckPages, serverBrowseSource, storedBrowseTools } from "./docBrowse";
 
 /**
  * The doc a report is built from (plan wave 46, D424, T368): fetched deterministically through an
@@ -226,33 +227,56 @@ export function snapshotOf(id: string): { id: string; sha256: string; title: str
   return db.query("SELECT id, sha256, title, markdown FROM report_doc_snapshots WHERE id = ?").get(id) as { id: string; sha256: string; title: string | null; markdown: string } | null;
 }
 
-type DocRow = { doc_server_id: string | null; doc_tool: string | null; doc_arg: string | null; doc_ref: string | null; doc_hash: string | null };
+type DocRow = { doc_server_id: string | null; doc_tool: string | null; doc_arg: string | null; doc_ref: string | null; doc_hash: string | null; doc_browse_tools: string };
+const DOC_COLUMNS = "doc_server_id, doc_tool, doc_arg, doc_ref, doc_hash, doc_browse_tools";
 
 /** The report's doc, its newest snapshot, and whether the doc changed since the report was generated. */
 export function docState(reportId: string, userId: string): DocState {
   // The doc (its link, server, and snapshots) is the owner's; readers of a shared report never see it (wave 48, D456).
   ownedReport(reportId, userId);
-  const row = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref, doc_hash FROM reports WHERE id = ?").get(reportId) as DocRow;
+  const row = db.query(`SELECT ${DOC_COLUMNS} FROM reports WHERE id = ?`).get(reportId) as DocRow;
   const latest = db.query("SELECT id, sha256, title, length(CAST(markdown AS BLOB)) AS bytes, fetched_at FROM report_doc_snapshots WHERE report_id = ? ORDER BY fetched_at DESC, rowid DESC LIMIT 1")
     .get(reportId) as { id: string; sha256: string; title: string | null; bytes: number; fetched_at: string } | null;
   const serverName = row.doc_server_id ? (db.query("SELECT name FROM agent_tool_servers WHERE id = ?").get(row.doc_server_id) as { name: string } | null)?.name ?? null : null;
+  const mainChanged = Boolean(latest && row.doc_hash && latest.sha256 !== row.doc_hash);
+  // B3: the linked pages of the current spec's runs; one that changed since its run read it is "Doc changed" too.
+  const pages = pageInfos(reportId);
   return {
-    doc: row.doc_ref || row.doc_server_id ? { serverId: row.doc_server_id, serverName, tool: row.doc_tool, arg: row.doc_arg, ref: row.doc_ref, hash: row.doc_hash } : null,
+    doc: row.doc_ref || row.doc_server_id ? { serverId: row.doc_server_id, serverName, tool: row.doc_tool, arg: row.doc_arg, ref: row.doc_ref, hash: row.doc_hash, browseTools: storedBrowseTools(row.doc_browse_tools) } : null,
     latest: latest ? { id: latest.id, sha256: latest.sha256, title: latest.title, bytes: latest.bytes, fetchedAt: latest.fetched_at } : null,
-    changed: Boolean(latest && row.doc_hash && latest.sha256 !== row.doc_hash)
+    changed: mainChanged || pages.some((page) => page.changed),
+    mainChanged,
+    pages
   };
 }
 
-/** "Check doc": fetches the report's doc again and stores a snapshot when it changed. */
+/** "Check doc": fetches the report's doc again and stores a snapshot when it changed; then reads its linked pages again (B3). */
 export async function checkDoc(actor: { userId: string; role: string }, reportId: string, signal?: AbortSignal): Promise<DocState> {
   // Review M3: Check doc writes a snapshot, so it is the owner's (wave 48's viewers only read the state).
   ownedReport(reportId, actor.userId);
-  const row = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref, doc_hash FROM reports WHERE id = ?").get(reportId) as DocRow;
+  const row = db.query(`SELECT ${DOC_COLUMNS} FROM reports WHERE id = ?`).get(reportId) as DocRow;
   if (!row.doc_server_id || !row.doc_ref) throw new ReportError(400, "INVALID", "This report has no doc to check");
   const server = docServerFor(row.doc_server_id, actor.role);
   const choice = docToolOf(server, { tool: row.doc_tool, arg: row.doc_arg });
   const doc = await fetchDoc(server, choice, row.doc_ref, { signal });
   const snapshot = recordSnapshot(reportId, doc);
-  audit(actor.userId, null, "reports.doc.check", { reportId, serverId: server.id, tool: choice.tool, sha256: doc.sha256, bytes: doc.bytes, changed: snapshot.changed });
+  const pages = await recheckPages(reportId, { id: actor.userId, role: actor.role }, signal);
+  audit(actor.userId, null, "reports.doc.check", { reportId, serverId: server.id, tool: choice.tool, sha256: doc.sha256, bytes: doc.bytes, changed: snapshot.changed, pages: pages.checked, pagesFailed: pages.failed, pagesChanged: pages.changed });
+  return docState(reportId, actor.userId);
+}
+
+/**
+ * "Doc settings" (B3): the tools the AI may use to read more docs, for the report's doc server. Each
+ * must be one of its tools with policy Auto (DOC_TOOL_REFUSED otherwise). The owner's only.
+ */
+export function setBrowseTools(actor: { userId: string; role: string }, reportId: string, tools: string[]): DocState {
+  ownedReport(reportId, actor.userId);
+  const row = db.query(`SELECT ${DOC_COLUMNS} FROM reports WHERE id = ?`).get(reportId) as DocRow;
+  if (!row.doc_server_id) throw new ReportError(400, "INVALID", "This report has no doc server; generate it from a doc first");
+  const server = docServerFor(row.doc_server_id, actor.role);
+  const source = serverBrowseSource(server.id, actor.role);
+  const names = checkBrowseTools(source.tools(), tools, server.name);
+  db.query("UPDATE reports SET doc_browse_tools = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(names), now(), reportId);
+  audit(actor.userId, null, "reports.doc.browse_tools", { reportId, serverId: server.id, count: names.length });
   return docState(reportId, actor.userId);
 }

@@ -18,12 +18,28 @@ export type DocServerChoice = {
   toolNames: string[];
 };
 
-/** A report's doc, its newest snapshot, and whether the doc changed since the report was generated ("Doc changed — regenerate?"). */
+/** A linked page an agent read during a run (B3), as its owner sees it: never its text. */
+export type DocPageInfo = { id: string; title: string | null; tool: string; serverName: string; bytes: number; sha256: string; fetchedAt: string; checkedAt: string | null; changed: boolean };
+
+/**
+ * A report's doc, its newest snapshot, and whether the doc changed since the report was generated ("Doc
+ * changed — regenerate?"): the main doc, or (B3) a linked page of the current spec's runs (`pages`,
+ * each with its own `changed`). `browseTools` are the ticked tools the AI may use to read more docs.
+ */
 export type DocState = {
-  doc: { serverId: string | null; serverName: string | null; tool: string | null; arg: string | null; ref: string | null; hash: string | null } | null;
+  doc: { serverId: string | null; serverName: string | null; tool: string | null; arg: string | null; ref: string | null; hash: string | null; browseTools: string[] } | null;
   latest: { id: string; sha256: string; title: string | null; bytes: number; fetchedAt: string } | null;
   changed: boolean;
+  /** The main doc changed (as opposed to a linked page). */
+  mainChanged: boolean;
+  pages: DocPageInfo[];
 };
+
+/** B3: the AI's doc tools per run: calls, bytes of results, one result shown to the model, ticks per report, pages Check doc reads. */
+export const DOC_BROWSE_LIMITS = { calls: 8, runBytes: 400 * 1024, resultBytes: 32 * 1024, ticked: 20, checkedPages: 16 } as const;
+
+/** The read-only tools ticked by default: those that fetch, list, or search docs. */
+export const defaultBrowseTools = (names: readonly string[]): string[] => names.filter((name) => /fetch|search|list|get_document|read_document|read_note/i.test(name)).slice(0, DOC_BROWSE_LIMITS.ticked);
 
 /** `POST /api/reports/generate` and `POST /api/reports/:id/generate` (202): the report and the run to follow on `/api/runs/:agentRunId/events`. */
 export type GenerateStarted = { report: ReportDetail; run: { id: string; agentRunId: string; docSnapshotId: string; docChanged: boolean } };
@@ -39,7 +55,7 @@ export type GenerationRun = { id: string; agentRunId: string | null; status: Run
 export const GENERATE_ERROR_CODES = ["DOC_TOOL_REFUSED"] as const;
 
 export const GENERATE_ERROR_HINTS: Record<string, string> = {
-  DOC_TOOL_REFUSED: "That tool is not read-only, so Nook will not call it to read a doc; choose a read-only tool.",
+  DOC_TOOL_REFUSED: "That tool is not allowed to run automatically, so Nook will not call it to read a doc; choose a read-only tool, or ask an admin to set it to Auto.",
   MCP_AUTH: "The doc server refused Nook's credential. An admin needs to reconnect it in Settings → AI → Tool servers.",
   DOC_FETCH: "Nook could not read the doc through that tool server.",
   LIMIT_REACHED: "Today's AI budget is used up; it resets at midnight UTC.",

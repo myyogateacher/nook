@@ -214,7 +214,7 @@ describe("snapshots and Doc changed", () => {
 
   test("doc state: changed once the newest snapshot differs from the report's doc hash; Check doc over HTTP", async () => {
     const reportId = await newReport();
-    expect(docState(reportId, member.userId)).toEqual({ doc: null, latest: null, changed: false });
+    expect(docState(reportId, member.userId)).toEqual({ doc: null, latest: null, changed: false, mainChanged: false, pages: [] });
     // Check doc needs a doc.
     expect((await send(member, "POST", `/reports/${reportId}/doc/check`)).body.code).toBe("INVALID");
     const v1 = docOf("# Revenue\nv1");

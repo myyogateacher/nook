@@ -7,7 +7,8 @@ import type { GenerationRun } from "../../shared/reportsGenerate";
 import { TOOL_NAME } from "../agents/toolServers";
 import { db } from "../db";
 import { readableReport } from "./access";
-import { checkDoc, docServerChoices, docState } from "./docSource";
+import { checkDoc, docServerChoices, docState, setBrowseTools } from "./docSource";
+import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { cancelGenerate, regenerate, startGenerate } from "./generate";
 import { reportModelView, setReportModel } from "./model";
 import { handle, id } from "./routes";
@@ -23,8 +24,11 @@ const oneLine = (max: number) => z.string().trim().min(1).max(max).refine((value
 const docRef = oneLine(2048);
 const toolName = z.string().trim().regex(TOOL_NAME, "must be a tool name").nullish();
 const argName = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/, "must be an argument name").nullish();
-const generateCreate = z.object({ docRef, serverId: uuid, tool: toolName, arg: argName, datasourceId: uuid, title: oneLine(REPORT_LIMITS.title).nullish() }).strict();
-const generateAgain = z.object({ docRef: docRef.optional(), serverId: uuid.optional(), tool: toolName, arg: argName, datasourceId: uuid.optional() }).strict();
+// B3: the tools the AI may use to read more docs (each must be Auto on the doc server).
+const browseTools = z.array(z.string().trim().regex(TOOL_NAME, "must be a tool name")).max(DOC_BROWSE_LIMITS.ticked);
+const generateCreate = z.object({ docRef, serverId: uuid, tool: toolName, arg: argName, datasourceId: uuid, title: oneLine(REPORT_LIMITS.title).nullish(), browseTools: browseTools.nullish() }).strict();
+const generateAgain = z.object({ docRef: docRef.optional(), serverId: uuid.optional(), tool: toolName, arg: argName, datasourceId: uuid.optional(), browseTools: browseTools.nullish() }).strict();
+const browseInput = z.object({ tools: browseTools }).strict();
 const emptySchema = z.object({}).strict();
 const modelInput = z.object({ override: z.object({ providerId: uuid.nullable(), model: oneLine(200).nullable() }).strict().nullable() }).strict();
 
@@ -71,6 +75,12 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
     return { model: setReportModel(reportId, c.get("user"), body.override) };
   }));
   app.get("/api/reports/:reportId/doc", handle((c) => ({ doc: docState(id(c, "reportId"), c.get("user").id) })));
+  app.put("/api/reports/:reportId/doc/browse-tools", handle(async (c) => {
+    const user = c.get("user");
+    const reportId = id(c, "reportId");
+    const body = await parseJson(c.req.raw, browseInput);
+    return { doc: setBrowseTools({ userId: user.id, role: user.role }, reportId, body.tools) };
+  }));
   app.post("/api/reports/:reportId/doc/check", handle(async (c) => {
     const user = c.get("user");
     const reportId = id(c, "reportId");

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert } from "lucide-react";
+import { CalendarClock, ChevronLeft, CircleStop, Cpu, Database, FileSearch, FileTerminal, FileText, History, Link2, LoaderCircle, MessageSquarePlus, MessageSquare, Pencil, Play, RefreshCw, Share2, Sparkles, TableProperties, Trash2, TriangleAlert, Settings2 } from "lucide-react";
 import { AccountActions } from "../AppShell";
 import { appName } from "../appName";
 import { notifyBinned } from "../bin/binUndo";
@@ -281,6 +281,7 @@ export function overflowItems({ ownerWrite, owner = false, commands, runs, conso
   items.push({ id: "rename", label: "Rename", icon: <Pencil aria-hidden="true" />, onSelect: rename });
   items.push({ id: "model", label: "Model", icon: <Cpu aria-hidden="true" />, onSelect: model });
   if (commands.checkDoc) items.push({ id: "check-doc", label: commands.checkDoc.busy ? "Checking the doc…" : "Check doc", icon: <FileSearch aria-hidden="true" />, onSelect: commands.checkDoc.run, disabled: commands.checkDoc.busy || Boolean(commands.regenerate?.busy) });
+  if (commands.docSettings) items.push({ id: "doc-settings", label: "Doc settings", icon: <Settings2 aria-hidden="true" />, onSelect: commands.docSettings.open });
   if (commands.regenerate) items.push({ id: "regenerate", label: commands.regenerate.busy ? "Starting…" : "Regenerate", icon: <Sparkles aria-hidden="true" />, onSelect: commands.regenerate.run, disabled: commands.regenerate.busy || Boolean(commands.checkDoc?.busy) });
   items.push({ id: "bin", label: "Move to Bin", icon: <Trash2 aria-hidden="true" />, onSelect: remove, danger: true });
   return items;

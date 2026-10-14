@@ -13,6 +13,8 @@ export type ReportCommands = {
   schedule?: { open: () => void; badge: string | null } | null;
   checkDoc?: { run: () => void; busy: boolean } | null;
   regenerate?: { run: () => void; busy: boolean } | null;
+  /** B3: ⋯ → Doc settings (the tools the AI may use to read more docs), the owner's. */
+  docSettings?: { open: () => void } | null;
 };
 type Registry = { set: (part: Partial<ReportCommands>) => void };
 

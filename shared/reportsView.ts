@@ -4,6 +4,7 @@
  * frozen types. Pure: no server or client imports.
  */
 import type { ReportResult, ReportRun, ReportSchedule } from "./reports";
+import type { DocPageInfo } from "./reportsGenerate";
 
 /**
  * What a block shows for one query: the last good result (`result`), and the newest attempt when it
@@ -18,7 +19,7 @@ export type ReportResultsView = { results: QueryResultView[]; running: ReportRun
 export type DocSnapshotInfo = { id: string; title: string | null; sha256: string; fetchedAt: string };
 
 /** GET /api/reports/:id/provenance. */
-export type ProvenanceView = { run: ReportRun | null; snapshot: DocSnapshotInfo | null; /** The plan todo that produced the block (2c), the owner's only. */ todo?: { id: string; title: string; status: string; note: string | null } | null };
+export type ProvenanceView = { run: ReportRun | null; snapshot: DocSnapshotInfo | null; /** The plan todo that produced the block (2c), the owner's only. */ todo?: { id: string; title: string; status: string; note: string | null } | null; /** B3: the linked pages the run read, the owner's only. */ pages?: DocPageInfo[] };
 
 /** A report's schedule as the Schedule sheet edits it; `autoDisabled` once five scheduled refreshes failed in a row. */
 export type ScheduleView = ReportSchedule & { autoDisabled: boolean; lastRunId: string | null };

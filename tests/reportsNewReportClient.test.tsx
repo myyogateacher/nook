@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DocServerChoice } from "../shared/reportsGenerate";
 import { DocSourceNotice, docModeDisabled, docSourceState } from "../src/reports/NewReportSheet";
+import { BrowseToolsPicker } from "../src/reports/BrowseToolsPicker";
+import { docChangedText } from "../src/reports/ReportGeneration";
+import { overflowItems } from "../src/reports/ReportPage";
+import { defaultBrowseTools, type DocPageInfo } from "../shared/reportsGenerate";
 
 /**
  * New report's "From a doc" (B1, B2): why it is unavailable (the doc servers failed to load, with
@@ -95,5 +99,34 @@ describe("the doc tool picker's copy and layout", () => {
     expect(css).toMatch(/\.new-report-advanced-body \{ display: grid;/);
     expect(css).toMatch(/\.new-report-field \{ display: grid;/);
     expect(css).toMatch(/\.new-report-sheet > \.file-dialog-form > \.file-dialog-actions:last-child \{ border-top: 1px solid/);
+  });
+});
+
+describe("B3: tools the AI may use to read more docs", () => {
+  test("fetch, list, and search tools are ticked by default", () => {
+    expect(defaultBrowseTools(["fetch", "search", "list_documents", "list_collection_documents", "create_document", "get_page"])).toEqual(["fetch", "search", "list_documents", "list_collection_documents"]);
+  });
+
+  test("Auto tools can be ticked; the others are greyed out with why", () => {
+    const html = renderToStaticMarkup(<BrowseToolsPicker server={{ name: "Outline", tools: [{ name: "fetch", title: null, args: ["id"] }, { name: "search", title: null, args: ["query"] }], toolNames: ["fetch", "search", "delete_document"] }} value={["fetch"]} onChange={() => undefined} />);
+    expect(html).toContain("Tools the AI may use to read more docs");
+    expect(html).toMatch(/<input type="checkbox" checked=""\/><span class="browse-tools-name"><code>fetch<\/code>/);
+    expect(html).toMatch(/<input type="checkbox"\/><span class="browse-tools-name"><code>search<\/code>/);
+    expect(html).toContain('<li class="is-excluded"><label><input type="checkbox" disabled=""/><span class="browse-tools-name"><code>delete_document</code><span class="browse-tools-why">needs Auto in Settings → AI → Tool servers</span>');
+  });
+
+  test("the Doc changed banner names the main doc, a linked page, or both", () => {
+    const page = (title: string | null, changed: boolean): DocPageInfo => ({ id: title ?? "p", title, tool: "fetch", serverName: "Outline", bytes: 10, sha256: "a".repeat(64), fetchedAt: "2026-10-14T00:00:00.000Z", checkedAt: null, changed });
+    const latest = { id: "s", sha256: "b".repeat(64), title: "Revenue metrics", bytes: 10, fetchedAt: "2026-10-14T00:00:00.000Z" };
+    expect(docChangedText({ mainChanged: true, pages: [page("Rules", false)], latest })).toBe("The doc (Revenue metrics) changed since this report was generated.");
+    expect(docChangedText({ mainChanged: false, pages: [page("Rules", true)], latest })).toBe("The linked page “Rules” changed since this report was generated.");
+    expect(docChangedText({ mainChanged: true, pages: [page("Rules", true), page(null, true), page("C", true)], latest })).toBe("Both the doc (Revenue metrics) and the linked pages “Rules” and “a page read with fetch” and 1 more changed since this report was generated.");
+  });
+
+  test("⋯ has Doc settings for the owner once the generation part offers it", () => {
+    const noop = () => undefined;
+    const handlers = { share: noop, rename: noop, model: noop, remove: noop };
+    const ids = overflowItems({ ownerWrite: true, owner: true, commands: { checkDoc: { run: noop, busy: false }, regenerate: { run: noop, busy: false }, docSettings: { open: noop } }, ...handlers }).map((item) => item.id);
+    expect(ids).toEqual(["share", "rename", "model", "check-doc", "doc-settings", "regenerate", "bin"]);
   });
 });

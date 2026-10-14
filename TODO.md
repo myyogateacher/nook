@@ -2,7 +2,7 @@
 
 Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
 
-**Current state (2026-10-14):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused). `main` is ahead of v0.37.0 with the analytics reports module (unreleased migrations **050–053, 055**; 054 is reserved for Messages, 056 for doc browsing). Development now happens directly on `main`, pushed as each change passes its gates.
+**Current state (2026-10-14):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused). `main` is ahead of v0.37.0 with the analytics reports module (unreleased migrations **050–053, 055, 056**; 054 is reserved for Messages). Development now happens directly on `main`, pushed as each change passes its gates.
 
 ## In flight
 
@@ -18,9 +18,9 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
   - "From a doc" says why it is unavailable; polled GETs log at debug.
   - The live step log and Runs group each step under its plan todo.
   - The doc tool picker explains Tool and "Link goes into" and why a tool is excluded (admins: "Allow … automatically"); the New report sheet scrolls under a bordered footer.
+  - The AI may browse docs with the read-only tools the person ticks (056): a snapshot for each linked page, "Doc changed" names a linked page, ⋯ → Doc settings, and Provenance lists the pages.
 
   Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
-  - [ ] (B) The AI may browse docs with the read-only tools the user ticks (056): a snapshot for each page, and "Doc changed" covers linked pages.
   - [ ] (B) Nook as a built-in doc source: notes and Files by link or picker, read with the owner's access.
   - [ ] (C) Button lint in `scripts/buttonMetrics.ts`. It flags overflowing, wrapped or clipped labels, side padding under 12 px, targets under 44 px on phones, and text buttons under 64 px wide.
   - [ ] Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–055 in OPERATIONS.

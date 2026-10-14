@@ -1,4 +1,5 @@
 import type { Hono } from "hono";
+import { pageInfos } from "./docBrowse";
 import { z } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
@@ -46,7 +47,8 @@ export function provenance(reportId: string, userId: string, input: { runId?: st
   // 2c: the plan todo that produced the block (by its block id, else its query key).
   const plan = ownRun ? storedPlan((db.query("SELECT plan_json FROM report_runs WHERE id = ?").get(ownRun.id) as { plan_json: string | null } | null)?.plan_json) : null;
   const todo = plan?.todos.find((item) => input.blockId && item.blockId === input.blockId) ?? plan?.todos.find((item) => input.queryKey && item.queryKey === input.queryKey) ?? null;
-  return { run: ownRun ? runView(ownRun) : null, snapshot: snapshotInfo(reportId, input.snapshotId ?? ownRun?.doc_snapshot_id), todo: todo ? { id: todo.id, title: todo.title, status: todo.status, note: todo.note } : null };
+  // B3: the linked pages the run's agent read (titles and hashes, never their text), the owner's only.
+  return { run: ownRun ? runView(ownRun) : null, snapshot: snapshotInfo(reportId, input.snapshotId ?? ownRun?.doc_snapshot_id), todo: todo ? { id: todo.id, title: todo.title, status: todo.status, note: todo.note } : null, ...(ownRun ? { pages: pageInfos(reportId, ownRun.id) } : {}) };
 }
 
 /** A run as a reader of a shared report sees it: no doc snapshot, no agent run (wave 48 review L2). */

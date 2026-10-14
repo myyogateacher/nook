@@ -108,13 +108,86 @@ export const MARKS = {
   bar: { maxThickness: 24, radius: 4, gap: 2 },
   line: { width: 2, dotRadius: 4, dotRing: 2 },
   areaOpacity: 0.1,
+  /** Stacked areas: each band a wash a little stronger than a lone area, so neighbouring bands read apart. */
+  stackedAreaOpacity: 0.24,
   grid: { width: 1 },
   /** Texture fills (forced-colors and print only): 45° and 135°. */
   textureAngles: [Math.PI / 4, (3 * Math.PI) / 4]
 } as const;
 
 /** Chart heights by kind, px; bars grow per category. */
-export const CHART_HEIGHTS = { line: 220, area: 220, pie: 220, scatter: 260, bar: 220, barPerCategory: 28, barMin: 160 } as const;
+export const CHART_HEIGHTS = {
+  line: 220, area: 220, pie: 220, scatter: 260, bar: 220, barPerCategory: 28, barMin: 160,
+  // Round 2 (D463): heatmap rows and bullets grow per row; facets per panel row.
+  heatmapRow: 26, heatmapAxis: 48, calendarYear: 150, funnel: 240, treemap: 260, sankey: 300, boxplot: 240, histogram: 220, waterfall: 240, combo: 240,
+  bulletPerCategory: 34, facetPanel: 132
+} as const;
+
+// --------------------------------------------------------------------------- round 2 (D463)
+
+/** Small multiples: at most this many panels (the rest fold into "Other"). */
+export const MAX_FACETS = 12;
+/** Heatmap cells: at most this many columns and rows. */
+export const MAX_HEATMAP_SIDE = 40;
+/** Heatmap cell width below which the tile scrolls sideways (inside the tile, never the page). */
+export const HEATMAP_MIN_CELL = 26;
+
+/**
+ * The sequential ramp in `steps` steps, from "near zero" (receding toward the surface: light steps on
+ * the light surface, dark steps on the dark one) to the strongest step (D463).
+ */
+export function sequentialRamp(mode: ThemeMode, steps: number): string[] {
+  const count = Math.max(2, Math.min(SEQUENTIAL_BLUE.length, Math.round(steps)));
+  const picks = Array.from({ length: count }, (_, index) => Math.round((index * (SEQUENTIAL_BLUE.length - 1)) / (count - 1)));
+  return picks.map((at) => SEQUENTIAL_BLUE[mode === "light" ? at : SEQUENTIAL_BLUE.length - 1 - at]!);
+}
+
+/**
+ * An ordinal ramp of `count` steps for ordered marks (funnel stages), strongest first. Every step clears
+ * 2:1 on its surface: on light it stops at step 250, on dark at step 600 (palette.md § Sequential hue).
+ */
+export function ordinalRamp(mode: ThemeMode, count: number): string[] {
+  const [from, to] = mode === "light" ? [SEQUENTIAL_BLUE.length - 1, 3] : [0, SEQUENTIAL_DARK_LIMIT];
+  const n = Math.max(1, count);
+  return Array.from({ length: n }, (_, index) => SEQUENTIAL_BLUE[n === 1 ? (mode === "light" ? 7 : 4) : Math.round(from + ((to - from) * index) / (n - 1))]!);
+}
+
+/** The diverging ramp, low pole → grey midpoint → high pole (7 steps). */
+export const divergingRamp = (mode: ThemeMode): string[] => [...DIVERGING[mode].low, DIVERGING[mode].mid, ...DIVERGING[mode].high];
+
+/**
+ * The meter (gauge kind): the fill and its track, a lighter step of the same ramp (choosing-a-form.md
+ * § Meter). Status (good / warning / critical) recolours the fill only together with an icon and a label.
+ */
+export const METER: Record<ThemeMode, { fill: string; track: string }> = {
+  dark: { fill: "#3987e5", track: "#184f95" },
+  light: { fill: "#2a78d6", track: "#cde2fb" }
+};
+
+/** Bullet bands (poor → fair → good), neutral greys stepping away from the surface; the measure and target sit on them. */
+export const BULLET_BANDS: Record<ThemeMode, readonly string[]> = {
+  dark: ["#2f2f35", "#25252a", "#1c1c20"],
+  light: ["#d6d5cc", "#e4e3dc", "#efeee9"]
+};
+
+/** Waterfall steps: rises and falls on the diverging poles (never status colours); totals neutral. */
+export function waterfallColors(mode: ThemeMode): { up: string; down: string; total: string } {
+  return { up: DIVERGING[mode].low[1]!, down: DIVERGING[mode].high[1]!, total: REPORT_INK[mode].muted };
+}
+
+/** Text on a coloured fill (heatmap cells, treemap tiles): dark ink or white, whichever clears contrast on that fill. */
+export function inkOn(fill: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(fill);
+  if (!match) return "#ffffff";
+  const value = Number.parseInt(match[1]!, 16);
+  const channel = (shift: number) => {
+    const c = ((value >> shift) & 255) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+  // Contrast against white vs against near-black ink (#0b0b0b, luminance ≈ 0.0033).
+  return (1.05 / (luminance + 0.05)) >= ((luminance + 0.05) / 0.0533) ? "#ffffff" : "#0b0b0b";
+}
 
 // ------------------------------------------------------------------------------------ the layout
 
@@ -137,9 +210,13 @@ export function blockSpan(width: keyof typeof BLOCK_WIDTH_SPANS, columns: Layout
   return width === "full" ? 6 : 3;
 }
 
-/** A chart's fixed height for its kind (horizontal bars: 28 px per category, at least 160). */
+/** A chart's fixed height for its kind (horizontal bars: 28 px per category, at least 160; heatmap rows 26 px; bullets 34 px). */
 export function chartHeight(kind: string, categories = 0): number {
   if (kind === "horizontal_bar") return Math.max(CHART_HEIGHTS.barMin, categories * CHART_HEIGHTS.barPerCategory + 24);
+  if (kind === "heatmap") return Math.max(CHART_HEIGHTS.barMin, categories * CHART_HEIGHTS.heatmapRow + CHART_HEIGHTS.heatmapAxis);
+  if (kind === "calendar") return Math.max(1, categories) * CHART_HEIGHTS.calendarYear + 16;
+  if (kind === "bullet") return Math.max(CHART_HEIGHTS.barMin - 60, categories * CHART_HEIGHTS.bulletPerCategory + 40);
+  if (kind === "funnel" || kind === "treemap" || kind === "sankey" || kind === "boxplot" || kind === "histogram" || kind === "waterfall" || kind === "combo") return CHART_HEIGHTS[kind];
   if (kind === "bar" || kind === "stacked_bar") return CHART_HEIGHTS.bar;
   if (kind === "scatter") return CHART_HEIGHTS.scatter;
   if (kind === "pie") return CHART_HEIGHTS.pie;

@@ -74,8 +74,22 @@ export const BLOCK_ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 
 // --------------------------------------------------------------------------------------- the spec
 
-export const CHART_KINDS = ["line", "area", "bar", "stacked_bar", "horizontal_bar", "pie", "scatter"] as const;
+export const CHART_KINDS = [
+  "line", "area", "bar", "stacked_bar", "horizontal_bar", "pie", "scatter",
+  // Round 2 (docs/plan/REPORT_THEME.md § Chart kinds, round 2; D462–D468).
+  "heatmap", "calendar", "funnel", "gauge", "treemap", "sankey", "boxplot", "histogram", "waterfall", "combo", "bullet"
+] as const;
 export type ChartKind = typeof CHART_KINDS[number];
+/** Kinds that draw without an x column (a gauge reads one value; a histogram bins its one y column). */
+export const KINDS_WITHOUT_X: readonly ChartKind[] = ["gauge", "histogram"];
+/** Kinds that read a second dimension `x2`: heatmap rows (required), sankey targets (required), a treemap's second level (optional). */
+export const KINDS_WITH_X2: readonly ChartKind[] = ["heatmap", "sankey", "treemap"];
+/** Kinds that may stack (`stack`): stacked area, and normal or 100 % stacked bars. */
+export const STACKABLE_KINDS: readonly ChartKind[] = ["area", "bar", "stacked_bar", "horizontal_bar"];
+/** Kinds that may split into small multiples (`facet`). */
+export const FACETABLE_KINDS: readonly ChartKind[] = ["line", "bar", "area"];
+export const STACK_MODES = ["normal", "percent"] as const;
+export type StackMode = typeof STACK_MODES[number];
 
 /**
  * The v1 formats (wave 45): still read and rendered, so stored specs show as before. A v2 spec the
@@ -93,7 +107,7 @@ export type ValueFormat = LegacyValueFormat | SpecFormat;
 export const UNIT = /^(?!.*\b\d*px\b)[A-Za-z%°µ/ .-]{1,24}$/;
 
 /** What a block is for (D431): drives the chart choice and the design rules. */
-export const BLOCK_INTENTS = ["trend", "compare", "rank", "share", "distribution", "relationship", "headline", "detail", "delta"] as const;
+export const BLOCK_INTENTS = ["trend", "compare", "rank", "share", "distribution", "relationship", "headline", "detail", "delta", "matrix", "conversion", "attainment", "flow"] as const;
 export type BlockIntent = typeof BLOCK_INTENTS[number];
 /** Layout slots: full = 12 columns, half = 6, third = 4 (docs/plan/REPORT_THEME.md § Layout). */
 export const BLOCK_WIDTHS = ["full", "half", "third"] as const;
@@ -106,7 +120,7 @@ export type BlockWidth = typeof BLOCK_WIDTHS[number];
 export type BlockProvenance = { runId: string | null; instructionId?: string | null; version: number; /** The doc snapshot the run worked from (report_runs.doc_snapshot_id). */ docSnapshotId?: string | null };
 
 /** A deterministic fix Nook applied instead of a retry (design rules 3 and 5, sorting, compaction); the Mapping tab lists them. */
-export const AUTO_FIX_RULES = ["fold_series", "fold_categories", "sort", "compact"] as const;
+export const AUTO_FIX_RULES = ["fold_series", "fold_categories", "sort", "compact", "facet", "fold_panels", "fold_groups", "bin", "quartiles"] as const;
 export type AutoFix = { rule: typeof AUTO_FIX_RULES[number]; detail: string };
 
 type BlockBase = {
@@ -155,7 +169,7 @@ export type ChartBlock = BlockBase & {
   type: "chart";
   queryKey: string;
   kind: ChartKind;
-  /** The category or time column. */
+  /** The category or time column (every kind but gauge and histogram). */
   x: string;
   /** One or more numeric columns. */
   y: string[];
@@ -168,6 +182,29 @@ export type ChartBlock = BlockBase & {
   upIsGood?: boolean;
   /** A comparison measure (a column of the same result), drawn muted and dashed. */
   compareTo?: ColumnRef;
+  // ---- round 2 (D462): each field belongs to the kinds named; checkSpecShape refuses it elsewhere.
+  /** The second dimension: heatmap rows (cohorts), sankey target nodes, a treemap's second level. */
+  x2?: string;
+  /** heatmap: values on both sides of it draw on the diverging ramp, centred here. */
+  midpoint?: number;
+  /** heatmap: rows are cohorts and columns periods (rows keep their order; percent values label the cells). */
+  cohort?: boolean;
+  /** gauge and bullet: the column holding the target. */
+  target?: string;
+  /** gauge: the scale's maximum when there is no target column. */
+  max?: number;
+  /** bullet: up to three columns of ascending band limits (poor, fair, good). */
+  ranges?: string[];
+  /** waterfall: the first row is the starting total, not a step. */
+  start?: boolean;
+  /** waterfall: a total bar after the last step. */
+  total?: boolean;
+  /** combo: each measure's unit, which must be the same (there is never a second axis). */
+  yUnits?: string[];
+  /** area and bars: stacked (`normal`), or each category's parts as shares of 100 % (`percent`). */
+  stack?: StackMode;
+  /** line, bar, area: one small chart per value of this column, on a shared y scale. */
+  facet?: string;
 };
 export type TableBlock = BlockBase & { type: "table"; queryKey: string; columns?: string[]; formats?: Record<string, ValueFormat> };
 export type ReportBlock = MarkdownBlock | KpiBlock | ChartBlock | TableBlock;
@@ -214,10 +251,16 @@ export function defaultIntent(block: ReportBlock): BlockIntent | undefined {
     case "table": return "detail";
     default:
       switch (block.kind) {
-        case "line": case "area": return "trend";
+        case "line": case "area": case "calendar": return "trend";
         case "horizontal_bar": return "rank";
-        case "stacked_bar": case "pie": return "share";
+        case "stacked_bar": case "pie": case "treemap": return "share";
         case "scatter": return "relationship";
+        case "heatmap": return "matrix";
+        case "funnel": return "conversion";
+        case "gauge": case "bullet": return "attainment";
+        case "sankey": return "flow";
+        case "boxplot": case "histogram": return "distribution";
+        case "waterfall": return "delta";
         default: return "compare";
       }
   }
@@ -357,6 +400,19 @@ export const COMPARE_LABEL_MAX = 60;
 
 /** Category labels that are periods in order: 2026-10, 2026-10-13, 2026-W41, 2026-Q4, Q4, Q4 2026, Jan–Dec. */
 const PERIOD_LABEL = /^(?:\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?(?:[ T]\d{2}:\d{2}(?::\d{2})?)?|\d{4}-?W\d{2}|(?:\d{4}[- ]?)?Q[1-4](?:[- ]?\d{4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?: \d{4})?)$/i;
+
+/** Weekday names and labels that end in a period number (Week 3, M0, Day 14, P1): ordered, for heatmap axes. */
+const ORDINAL_LABEL = /^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?|[A-Za-z][A-Za-z ._-]{0,11}\d{1,4}|\d{1,4}[A-Za-z ._-]{0,12})$/i;
+
+/**
+ * Whether a column reads as an ordered axis (heatmap rows and columns): a date or number type, or
+ * string values that are all periods, weekdays, or numbered steps (Week 3, M0).
+ */
+export function ordinalColumn(type: string, values: readonly unknown[]): boolean {
+  if (isTimeType(type) || isNumericType(type)) return true;
+  if (!values.length) return false;
+  return values.every((value) => typeof value === "string" && (PERIOD_LABEL.test(value.trim()) || ORDINAL_LABEL.test(value.trim())));
+}
 
 /**
  * Whether a chart's x is ordinal or time (never re-sorted, never folded): a trend or distribution, a

@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { db, now } from "../db";
 import {
-  BLOCK_ID, BLOCK_INTENTS, COMPARE_LABEL_MAX, BLOCK_WIDTHS, blockKeys, CHART_KINDS, defaultIntent, defaultWidth, isNumericType, isTimeType, ordinalX, QUERY_KEY, REPORT_LIMITS, reportLayout, SECTION_LIMITS,
-  SPEC_FORMAT, UNIT, VALUE_FORMATS, type AutoFix, type ChartBlock, type QueryOutcome, type ReportBlock, type ReportSpec, type ResultColumn
+  BLOCK_ID, BLOCK_INTENTS, COMPARE_LABEL_MAX, BLOCK_WIDTHS, blockKeys, CHART_KINDS, defaultIntent, defaultWidth, FACETABLE_KINDS, isNumericType, isTimeType, KINDS_WITH_X2, KINDS_WITHOUT_X, ordinalColumn, ordinalX,
+  QUERY_KEY, REPORT_LIMITS, reportLayout, SECTION_LIMITS, SPEC_FORMAT, STACK_MODES, STACKABLE_KINDS, UNIT, VALUE_FORMATS,
+  type AutoFix, type BlockIntent, type ChartBlock, type ChartKind, type QueryOutcome, type ReportBlock, type ReportSpec, type ResultColumn
 } from "../../shared/reports";
-import { MAX_SCATTER_SERIES, MAX_SERIES } from "../../shared/reportTheme";
+import { MAX_FACETS, MAX_HEATMAP_SIDE, MAX_SCATTER_SERIES, MAX_SERIES } from "../../shared/reportTheme";
+import { findCycle, histogramBins } from "../../shared/reportStats";
 import { queryIdFor } from "./clickhouse";
 import type { DatasourceRow } from "./datasources";
 import { asReportError, ReportError } from "./errors";
@@ -69,8 +71,12 @@ const blockSchema = z.discriminatedUnion("type", [
     sparkline: z.object({ queryKey, x: column, y: column }).strict().optional()
   }).strict(),
   z.object({
-    ...base, type: z.literal("chart"), queryKey, kind: z.enum(CHART_KINDS), x: column, y: z.array(column).min(1).max(REPORT_LIMITS.chartSeries), series: column.optional(),
-    format: format.optional(), unit: unit.optional(), emphasis: z.string().min(1).max(200).optional(), upIsGood: z.boolean().optional(), compareTo: columnRef.optional()
+    ...base, type: z.literal("chart"), queryKey, kind: z.enum(CHART_KINDS), x: column.optional(), y: z.array(column).min(1).max(REPORT_LIMITS.chartSeries), series: column.optional(),
+    format: format.optional(), unit: unit.optional(), emphasis: z.string().min(1).max(200).optional(), upIsGood: z.boolean().optional(), compareTo: columnRef.optional(),
+    // Round 2 (D462): checkSpecShape refuses each on the kinds it does not belong to.
+    x2: column.optional(), midpoint: z.number().finite().optional(), cohort: z.boolean().optional(), target: column.optional(), max: z.number().finite().positive().optional(),
+    ranges: z.array(column).min(1).max(3).optional(), start: z.boolean().optional(), total: z.boolean().optional(), yUnits: z.array(unit).length(2).optional(),
+    stack: z.enum(STACK_MODES).optional(), facet: column.optional()
   }).strict(),
   z.object({ ...base, type: z.literal("table"), queryKey, columns: z.array(column).max(REPORT_LIMITS.tableColumns).optional(), formats: z.record(z.string(), format).optional() }).strict()
 ]);
@@ -111,11 +117,24 @@ export const BLOCK_JSON_SCHEMA: Record<string, unknown> = {
       }
     },
     {
-      type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "kind", "x", "y"],
+      type: "object", additionalProperties: false, required: ["id", "type", "title", "intent", "queryKey", "kind", "y"],
       properties: {
-        ...blockBase, type: { const: "chart" }, queryKey: { type: "string" }, kind: { enum: [...CHART_KINDS] }, x: columnProp,
-        y: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.chartSeries, items: columnProp }, series: columnProp, format: formatProp, unit: unitProp,
-        emphasis: { type: "string", maxLength: 200, description: "A series name or (one series) a category value to highlight" }, upIsGood: { type: "boolean" }, compareTo: refProp
+        ...blockBase, type: { const: "chart" }, queryKey: { type: "string" }, kind: { enum: [...CHART_KINDS] },
+        x: { ...columnProp, description: "The category, stage, step, date, or source column; every kind but gauge and histogram" },
+        y: { type: "array", minItems: 1, maxItems: REPORT_LIMITS.chartSeries, items: columnProp, description: "Numeric measures; one for heatmap, calendar, funnel, gauge, treemap, sankey, histogram, waterfall, bullet; boxplot 1 (raw values) or 5 (min, q1, median, q3, max); combo 2 (bar, line)" },
+        series: columnProp, format: formatProp, unit: unitProp,
+        emphasis: { type: "string", maxLength: 200, description: "A series name or (one series) a category value to highlight" }, upIsGood: { type: "boolean" }, compareTo: refProp,
+        x2: { ...columnProp, description: "heatmap: the row column (cohorts); sankey: the target node; treemap: the second level" },
+        midpoint: { type: "number", description: "heatmap: centre of a diverging scale when values fall on both sides (usually 0)" },
+        cohort: { type: "boolean", description: "heatmap: rows are cohorts, columns are periods since start" },
+        target: { ...columnProp, description: "gauge, bullet: the target column" },
+        max: { type: "number", exclusiveMinimum: 0, description: "gauge: the scale maximum when there is no target" },
+        ranges: { type: "array", minItems: 1, maxItems: 3, items: columnProp, description: "bullet: columns of ascending band limits (poor, fair, good)" },
+        start: { type: "boolean", description: "waterfall: the first row is the starting total" },
+        total: { type: "boolean", description: "waterfall: add an ending total bar" },
+        yUnits: { type: "array", minItems: 2, maxItems: 2, items: unitProp, description: "combo: the unit of each measure; they must be the same" },
+        stack: { enum: [...STACK_MODES], description: "area, bar: normal = stacked, percent = 100% stacked shares" },
+        facet: { ...columnProp, description: "line, bar, area: one small chart per value (at most 12), shared y scale" }
       }
     },
     { type: "object", additionalProperties: false, required: ["id", "type", "title", "queryKey"], properties: { ...blockBase, type: { const: "table" }, queryKey: { type: "string" }, columns: { type: "array", maxItems: REPORT_LIMITS.tableColumns, items: columnProp }, formats: { type: "object", additionalProperties: formatProp } } }
@@ -191,6 +210,7 @@ export function checkSpecShape(raw: unknown): { ok: true; spec: ReportSpec } | {
     if (ids.has(block.id)) errors.push(`blocks: the id ${block.id} is used twice`);
     ids.add(block.id);
     for (const key of blockKeys(block)) if (!keys.has(key)) errors.push(`block ${block.id}: queryKey ${key} is not one of the spec's queries`);
+    if (block.type === "chart") errors.push(...kindFieldErrors(block as Omit<ChartBlock, "x"> & { x?: string }));
     if (block.section !== undefined && !sections.has(block.section)) errors.push(`block ${block.id}: section ${block.section} is not one of the spec's sections`);
   }
   if (errors.length) return { ok: false, errors: errors.slice(0, MAX_ERRORS) };
@@ -203,6 +223,8 @@ export function checkSpecShape(raw: unknown): { ok: true; spec: ReportSpec } | {
       const { autoFixes: _ignored, ...block } = raw as ReportBlock;
       const intent = block.intent ?? defaultIntent(block as ReportBlock);
       const filled = { ...block, ...(intent ? { intent } : {}), width: block.width ?? defaultWidth(block as ReportBlock) } as ReportBlock;
+      // A gauge reads one value and a histogram bins one column: their x is that column (D462).
+      if (filled.type === "chart" && !filled.x) return { ...filled, x: filled.y[0]! };
       if (filled.type === "kpi" && filled.compareColumn && !filled.compareTo) {
         const { compareColumn, ...rest } = filled;
         return { ...rest, compareTo: { column: compareColumn } };
@@ -211,6 +233,31 @@ export function checkSpecShape(raw: unknown): { ok: true; spec: ReportSpec } | {
     })
   };
   return { ok: true, spec };
+}
+
+/** Round 2's per-kind fields (D462): each field only on its kinds, the measures each kind reads, and the columns it needs. */
+const NEW_KINDS: readonly ChartKind[] = ["heatmap", "calendar", "funnel", "gauge", "treemap", "sankey", "boxplot", "histogram", "waterfall", "combo", "bullet"];
+const FIELD_KINDS: Record<string, readonly ChartKind[]> = {
+  midpoint: ["heatmap"], cohort: ["heatmap"], target: ["gauge", "bullet"], max: ["gauge"], ranges: ["bullet"], start: ["waterfall"], total: ["waterfall"], yUnits: ["combo"],
+  x2: KINDS_WITH_X2, stack: STACKABLE_KINDS, facet: FACETABLE_KINDS
+};
+function kindFieldErrors(block: Omit<ChartBlock, "x"> & { x?: string }): string[] {
+  const errors: string[] = [];
+  const say = (text: string) => errors.push(`block ${block.id}: ${text}`);
+  const record = block as unknown as Record<string, unknown>;
+  for (const [field, kinds] of Object.entries(FIELD_KINDS)) if (record[field] !== undefined && !kinds.includes(block.kind)) say(`${field} is only for ${kinds.join(", ")}, not ${block.kind}`);
+  if (NEW_KINDS.includes(block.kind)) {
+    for (const field of ["series", "compareTo", "emphasis"] as const) if (block[field] !== undefined) say(`${field} is not used by ${block.kind}; remove it`);
+  }
+  if (!block.x && !KINDS_WITHOUT_X.includes(block.kind)) say(`a ${block.kind} needs x`);
+  if ((block.kind === "heatmap" || block.kind === "sankey") && !block.x2) say(block.kind === "heatmap" ? "a heatmap needs x2, the row column (x is the column dimension, y the value)" : "a sankey needs x2, the target node column (x is the source, y the flow)");
+  const measures = block.kind === "combo" ? [2] : block.kind === "boxplot" ? [1, 5] : NEW_KINDS.includes(block.kind) ? [1] : null;
+  if (measures && !measures.includes(block.y.length)) say(block.kind === "boxplot" ? "a boxplot takes y = [raw values] or y = [min, q1, median, q3, max]" : block.kind === "combo" ? "a combo takes y = [bar measure, line measure]" : `a ${block.kind} takes exactly one y measure`);
+  if (block.kind === "combo" && !block.yUnits) say("a combo needs yUnits, the unit of each measure (they must match: one axis only)");
+  if (block.kind === "gauge" && !block.target && block.max === undefined) say("a gauge needs a target column or a max");
+  if (block.kind === "bullet" && !block.target) say("a bullet needs a target column");
+  if (block.facet && block.series) say("a faceted chart splits by facet; drop series (each panel draws the y columns)");
+  return errors;
 }
 
 type Rows = Pick<QueryOutcome, "columns" | "rows">;
@@ -245,6 +292,12 @@ export function checkColumns(spec: Pick<ReportSpec, "blocks">, results: Readonly
     } else if (block.type === "chart") {
       need(block.x, "x");
       if (block.series) need(block.series, "series");
+      if (block.x2) need(block.x2, "x2");
+      if (block.facet) need(block.facet, "facet");
+      for (const [name, what] of [...(block.target ? [[block.target, "target"]] : []), ...(block.ranges ?? []).map((name) => [name, "ranges column"])] as Array<[string, string]>) {
+        need(name, what);
+        if (types.has(name)) numeric(name, what);
+      }
       if (block.compareTo) {
         if (block.compareTo.queryKey && block.compareTo.queryKey !== block.queryKey) errors.push(`block ${block.id}: a chart's compareTo must be a column of its own query ${block.queryKey}`);
         else { need(block.compareTo.column, "compareTo column"); numeric(block.compareTo.column, "compareTo column"); }
@@ -281,10 +334,39 @@ export const DESIGN_LIMITS = {
   stripKpis: 6,
   blocks: REPORT_LIMITS.blocks,
   /** Compaction (auto): values this large show as 12.9K / $4.2M. */
-  compactFrom: 10_000
+  compactFrom: 10_000,
+  // Round 2 (D465).
+  /** Rule 12: heatmap columns and rows. */
+  heatmapSide: MAX_HEATMAP_SIDE,
+  /** Rule 13: a calendar spans at most this many days (2 years). */
+  calendarDays: 731,
+  /** Rule 14: funnel stages. */
+  funnelStages: { min: 2, max: 8 },
+  /** Rule 16 (auto): treemap top-level groups beyond this fold into "Other" (top 7 kept). */
+  treemapGroups: 8,
+  /** Rule 17: sankey nodes and links. */
+  sankeyNodes: 30,
+  sankeyLinks: 60,
+  /** Rule 18: box plot categories. */
+  boxCategories: 20,
+  /** Rule 19: values a histogram needs. */
+  histogramValues: 5,
+  /** Rule 20: waterfall steps. */
+  waterfallSteps: { min: 2, max: 25 },
+  /** Rule 22: bullet categories. */
+  bulletCategories: 15,
+  /** Small multiples (auto): panels beyond this fold into "Other". */
+  facets: MAX_FACETS
 } as const;
 
-const BAR_KINDS = new Set(["bar", "stacked_bar", "horizontal_bar"]);
+/** Rule 11: the intents each round-2 kind serves, and the kinds each new intent is drawn with (D462). */
+export const KIND_INTENTS: Partial<Record<ChartKind, readonly BlockIntent[]>> = {
+  heatmap: ["matrix"], calendar: ["trend"], funnel: ["conversion"], gauge: ["attainment"], bullet: ["attainment"], treemap: ["share"],
+  sankey: ["flow"], boxplot: ["distribution"], histogram: ["distribution"], waterfall: ["delta"], combo: ["compare", "trend"]
+};
+export const INTENT_KINDS: Partial<Record<BlockIntent, readonly ChartKind[]>> = { matrix: ["heatmap"], conversion: ["funnel"], attainment: ["gauge", "bullet"], flow: ["sankey"] };
+
+const BAR_KINDS = new Set(["bar", "stacked_bar", "horizontal_bar", "combo"]);
 const typeOf = (columns: readonly ResultColumn[], name: string) => columns.find((item) => item.name === name)?.type ?? "";
 const numberOf = (value: unknown): number | null => {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -356,12 +438,18 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
     // Rule 10: no chart over an empty result.
     if (result.rows.length === 0) { say(10, "the query returned no rows; a chart needs data (filter less, or use a table or markdown note)"); return block; }
     const positive = categoryTotals(block, result).filter((item) => item.total > 0).length;
-    // Rule 6: one value is a KPI, not a chart.
-    if (result.rows.length === 1 && block.y.length === 1 && !block.series) say(6, "the result is a single value; make it a kpi block");
+    // Rule 6: one value is a KPI, not a chart (a gauge is the one chart of one value).
+    if (kind !== "gauge" && result.rows.length === 1 && block.y.length === 1 && !block.series) say(6, `the result is a single value; make it a kpi block${kind === "funnel" || kind === "bullet" ? "" : " (or a gauge against a target)"}`);
+    // Rule 11: the round-2 kinds and intents go together.
+    const kindIntents = KIND_INTENTS[kind];
+    if (kindIntents && intent && !kindIntents.includes(intent)) say(11, `a ${kind} is for intent ${kindIntents.join(" or ")}, not ${intent}`);
+    const intentKinds = intent ? INTENT_KINDS[intent] : undefined;
+    if (intentKinds && !intentKinds.includes(kind)) say(11, `intent ${intent} is drawn as a ${intentKinds.join(" or ")}, not a ${kind}`);
+    fixes.push(...roundTwoRules(block, result, say));
     // Rule 1: a trend runs over time.
     if (intent === "trend" && !isTimeType(typeOf(result.columns, block.x))) say(1, `intent trend needs x to be a Date or DateTime column, but ${block.x} is ${typeOf(result.columns, block.x) || "unknown"}; use intent compare, or select a date`);
     // Rule 2: a share is a stacked bar, or a pie of at most 5 slices that make the whole.
-    if (intent === "share" && kind !== "stacked_bar" && kind !== "pie") say(2, `intent share is drawn as a stacked_bar (or a pie of at most ${DESIGN_LIMITS.pieSlices} slices); ${kind} is not`);
+    if (intent === "share" && kind !== "stacked_bar" && kind !== "pie" && kind !== "treemap" && !block.stack) say(2, `intent share is drawn as a stacked_bar, a bar or area with stack percent, a treemap, or a pie of at most ${DESIGN_LIMITS.pieSlices} slices; ${kind} is not`);
     if (kind === "pie" && intent !== "share") say(2, "a pie shows a share of a whole; set intent share or use a bar");
     const totals = categoryTotals(block, result);
     if (kind === "pie") {
@@ -372,13 +460,19 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
       if (block.y.length > 1 || block.series) say(2, "a pie shows one measure over one category column");
     }
     const names = seriesNames(block, result);
-    // Rule 4: scatter is capped at 3 series.
-    if (kind === "scatter" && names.length > DESIGN_LIMITS.scatterSeries) say(4, `a scatter may show at most ${DESIGN_LIMITS.scatterSeries} series (this has ${names.length}); facet it into separate charts or fold the rest into Other in SQL`);
+    // Rules 3 and 4 (auto, D466): too many series on a line (over 8) or a scatter (over 3) become small
+    // multiples, one panel per series on a shared scale; v1 blocks keep wave 47's fold.
+    const autoFacet = !block.legacy && block.series !== undefined && ((kind === "scatter" && names.length > DESIGN_LIMITS.scatterSeries) || (kind === "line" && names.length > DESIGN_LIMITS.series));
+    if (kind === "scatter" && names.length > DESIGN_LIMITS.scatterSeries && !autoFacet) say(4, `a scatter may show at most ${DESIGN_LIMITS.scatterSeries} series (this has ${names.length}); split it by a series column so Nook draws small multiples, or fold the rest into Other in SQL`);
+    if (autoFacet) fixes.push({ rule: "facet", detail: `${names.length} series drawn as small multiples (one panel each, shared y scale)` });
+    const panels = autoFacet ? names.length : block.facet ? new Set(result.rows.map((row) => label(row[result.columns.findIndex((item) => item.name === block.facet)]))).size : 0;
+    if (panels > DESIGN_LIMITS.facets) fixes.push({ rule: "fold_panels", detail: `${panels - (DESIGN_LIMITS.facets - 1)} of ${panels} panels folded into "Other" (top ${DESIGN_LIMITS.facets - 1} kept)` });
+    if (block.facet && panels < 2) say(23, `facet ${block.facet} has ${panels} value; small multiples need at least 2 (drop facet)`);
     // Rule 3 (auto): more than 8 series fold into the top 7 + Other.
-    if (kind !== "scatter" && kind !== "pie" && names.length > DESIGN_LIMITS.series) fixes.push({ rule: "fold_series", detail: `${names.length - (DESIGN_LIMITS.series - 1)} of ${names.length} series folded into "Other" (top ${DESIGN_LIMITS.series - 1} kept)` });
-    // Rule 7: no dual axes; measures of very different scale go in separate charts.
+    if (!autoFacet && kind !== "scatter" && kind !== "pie" && names.length > DESIGN_LIMITS.series) fixes.push({ rule: "fold_series", detail: `${names.length - (DESIGN_LIMITS.series - 1)} of ${names.length} series folded into "Other" (top ${DESIGN_LIMITS.series - 1} kept)` });
+    // Rule 7: no dual axes; measures of very different scale go in separate charts (a box plot's five numbers are one measure).
     const measures = [...block.y, ...(block.compareTo && !block.compareTo.queryKey ? [block.compareTo.column] : [])];
-    if (measures.length >= 2 && !block.series) {
+    if (measures.length >= 2 && !block.series && kind !== "boxplot") {
       const peaks = measures.map((name) => {
         const yi = result.columns.findIndex((item) => item.name === name);
         return Math.max(0, ...result.rows.map((row) => Math.abs(numberOf(row[yi]) ?? 0)));
@@ -410,6 +504,120 @@ export function checkDesign(spec: ReportSpec, results: ReadonlyMap<string, Rows>
   if (strip > DESIGN_LIMITS.stripKpis) errors.push(`spec: rule 9: at most ${DESIGN_LIMITS.stripKpis} KPIs in the strip (there are ${strip}); move the rest into a section or drop them`);
   if (spec.blocks.length > DESIGN_LIMITS.blocks) errors.push(`spec: rule 9: at most ${DESIGN_LIMITS.blocks} blocks`);
   return { errors: errors.slice(0, MAX_ERRORS), spec: { ...spec, blocks } };
+}
+
+const columnIndex = (result: Rows, name: string | undefined) => name === undefined ? -1 : result.columns.findIndex((item) => item.name === name);
+const distinct = (result: Rows, index: number) => [...new Set(result.rows.map((row) => label(row[index])))];
+
+/**
+ * Rules 12–22 (chart kinds round 2, D465): one function per kind's limits; refusals go through `say`
+ * (only for checked blocks), the auto-fixes (treemap groups, histogram bins, box plot quartiles) are returned.
+ */
+function roundTwoRules(block: ChartBlock, result: Rows, say: (rule: number, text: string) => void): AutoFix[] {
+  const fixes: AutoFix[] = [];
+  const xi = columnIndex(result, block.x);
+  const yi = columnIndex(result, block.y[0]);
+  const values = result.rows.map((row) => numberOf(row[yi]));
+  const show = (value: number) => Number.isInteger(value) ? String(value) : value.toFixed(2);
+  switch (block.kind) {
+    case "heatmap": {
+      const x2i = columnIndex(result, block.x2);
+      const columns = distinct(result, xi);
+      const rows = distinct(result, x2i);
+      if (columns.length > DESIGN_LIMITS.heatmapSide || rows.length > DESIGN_LIMITS.heatmapSide) say(12, `the heatmap would be ${columns.length} columns × ${rows.length} rows; at most ${DESIGN_LIMITS.heatmapSide}×${DESIGN_LIMITS.heatmapSide}: aggregate to coarser periods (toStartOfWeek, toStartOfMonth) or keep the first ${DESIGN_LIMITS.heatmapSide} cohorts in SQL`);
+      for (const [name, index] of [[block.x, xi], [block.x2!, x2i]] as Array<[string, number]>) {
+        if (index >= 0 && !ordinalColumn(result.columns[index]!.type, result.rows.map((row) => row[index]))) say(12, `heatmap axes must be ordered (dates, numbers, periods, weekdays, or numbered steps such as Week 3); ${name} is not, so use a bar chart or a table`);
+      }
+      break;
+    }
+    case "calendar": {
+      if (!isTimeType(typeOf(result.columns, block.x))) { say(13, `a calendar needs x to be a Date or DateTime column, but ${block.x} is ${typeOf(result.columns, block.x) || "unknown"}`); break; }
+      const times = result.rows.map((row) => Date.parse(String(row[xi]).slice(0, 10))).filter((time) => Number.isFinite(time));
+      const days = times.length ? (Math.max(...times) - Math.min(...times)) / 86_400_000 : 0;
+      if (days > DESIGN_LIMITS.calendarDays) say(13, `a calendar shows at most 2 years; these dates span ${Math.round(days)} days: filter the dates in SQL or use a line chart by week`);
+      break;
+    }
+    case "funnel": {
+      const stages = result.rows.length;
+      if (stages < DESIGN_LIMITS.funnelStages.min || stages > DESIGN_LIMITS.funnelStages.max) say(14, `a funnel has ${DESIGN_LIMITS.funnelStages.min}–${DESIGN_LIMITS.funnelStages.max} stages, one row each (this has ${stages}); merge steps in SQL or use a bar chart`);
+      for (let at = 1; at < values.length; at += 1) {
+        if (values[at] !== null && values[at - 1] !== null && values[at]! > values[at - 1]!) {
+          say(14, `funnel values must not increase from one stage to the next (${label(result.rows[at]![xi])} ${show(values[at]!)} > ${label(result.rows[at - 1]![xi])} ${show(values[at - 1]!)}); order the rows by stage in SQL (stages are never re-sorted), or use a bar chart if the steps are not a funnel`);
+          break;
+        }
+      }
+      break;
+    }
+    case "gauge": {
+      if (result.rows.length !== 1) say(15, `a gauge shows one value from a one-row result (this has ${result.rows.length} rows); aggregate in SQL`);
+      const target = block.target ? numberOf(result.rows[0]?.[columnIndex(result, block.target)]) : block.max ?? null;
+      if (target !== null && target <= 0) say(15, `the gauge's ${block.target ? "target" : "max"} must be above 0`);
+      break;
+    }
+    case "treemap": {
+      if (values.some((value) => value !== null && value < 0)) say(16, "a treemap shows positive parts of a whole; filter out negative values in SQL or use a bar chart");
+      const groups = distinct(result, xi).length;
+      if (groups > DESIGN_LIMITS.treemapGroups) fixes.push({ rule: "fold_groups", detail: `${groups - (DESIGN_LIMITS.treemapGroups - 1)} of ${groups} top-level groups folded into "Other" (top ${DESIGN_LIMITS.treemapGroups - 1} kept)` });
+      break;
+    }
+    case "sankey": {
+      const x2i = columnIndex(result, block.x2);
+      const links = new Map<string, readonly [string, string]>();
+      for (const row of result.rows) links.set(JSON.stringify([label(row[xi]), label(row[x2i])]), [label(row[xi]), label(row[x2i])]);
+      const nodes = new Set([...links.values()].flat());
+      if (nodes.size > DESIGN_LIMITS.sankeyNodes || links.size > DESIGN_LIMITS.sankeyLinks) say(17, `a sankey shows at most ${DESIGN_LIMITS.sankeyNodes} nodes and ${DESIGN_LIMITS.sankeyLinks} links (this has ${nodes.size} and ${links.size}); group small sources and targets as Other in SQL`);
+      const cycle = findCycle([...links.values()]);
+      if (cycle) say(17, `the flows form a cycle (${cycle.slice(0, 6).map((node) => node.slice(0, 30)).join(" → ")}); a sankey cannot draw one: make each step's nodes distinct (prefix them with the step) or use a table`);
+      if (values.some((value) => value !== null && value < 0)) say(17, "sankey flows must not be negative");
+      break;
+    }
+    case "boxplot": {
+      const categories = distinct(result, xi).length;
+      if (categories > DESIGN_LIMITS.boxCategories) say(18, `a box plot shows at most ${DESIGN_LIMITS.boxCategories} categories (this has ${categories}); keep the largest in SQL`);
+      if (block.y.length === 5) {
+        const indexes = block.y.map((name) => columnIndex(result, name));
+        const bad = result.rows.find((row) => {
+          const five = indexes.map((index) => numberOf(row[index]));
+          return five.some((value, at) => value !== null && at > 0 && five[at - 1] !== null && value < five[at - 1]!);
+        });
+        if (bad) say(18, `a precomputed box needs min ≤ q1 ≤ median ≤ q3 ≤ max in each row (${label(bad[xi])} is not); check the column order: ${block.y.join(", ")}`);
+      } else fixes.push({ rule: "quartiles", detail: `Quartiles computed by Nook from ${values.filter((value) => value !== null).length} values (linear interpolation; whiskers at 1.5 IQR)` });
+      break;
+    }
+    case "histogram": {
+      const numbers = values.filter((value): value is number => value !== null);
+      if (numbers.length < DESIGN_LIMITS.histogramValues) say(19, `a histogram needs at least ${DESIGN_LIMITS.histogramValues} values (this has ${numbers.length}); select the raw values, not an aggregate`);
+      const bins = histogramBins(numbers);
+      if (bins) fixes.push({ rule: "bin", detail: `${bins.counts.length} bins of width ${show(bins.width)} (${bins.rule === "sturges" ? "Sturges; the IQR is 0" : "Freedman–Diaconis"}, clamped to 5–50)` });
+      break;
+    }
+    case "waterfall": {
+      const steps = result.rows.length;
+      if (steps < DESIGN_LIMITS.waterfallSteps.min || steps > DESIGN_LIMITS.waterfallSteps.max) say(20, `a waterfall has ${DESIGN_LIMITS.waterfallSteps.min}–${DESIGN_LIMITS.waterfallSteps.max} steps (this has ${steps}); group small steps as Other in SQL`);
+      break;
+    }
+    case "combo": {
+      const [left, right] = (block.yUnits ?? []).map((unit) => unit.trim().toLowerCase());
+      if (left !== undefined && right !== undefined && left !== right) say(21, `the bar (${block.yUnits![0]}) and the line (${block.yUnits![1]}) have different units; a combo shares one axis and there is never a second one, so split them into two charts`);
+      break;
+    }
+    case "bullet": {
+      const categories = distinct(result, xi).length;
+      if (categories > DESIGN_LIMITS.bulletCategories) say(22, `a bullet chart shows at most ${DESIGN_LIMITS.bulletCategories} categories (this has ${categories}); keep the largest in SQL`);
+      const indexes = (block.ranges ?? []).map((name) => columnIndex(result, name));
+      const bad = result.rows.find((row) => {
+        const limits = indexes.map((index) => numberOf(row[index]));
+        return limits.some((value, at) => value !== null && at > 0 && limits[at - 1] !== null && value < limits[at - 1]!);
+      });
+      if (bad) say(22, `bullet ranges must ascend (poor ≤ fair ≤ good) in each row (${label(bad[xi])} does not)`);
+      break;
+    }
+    default:
+      break;
+  }
+  // A 100 % stack shows positive parts of each category.
+  if (block.stack === "percent" && result.rows.some((row) => block.y.some((name) => (numberOf(row[columnIndex(result, name)]) ?? 0) < 0))) say(2, "a percent stack shows positive parts of a whole; it cannot show negative values");
+  return fixes;
 }
 
 /**

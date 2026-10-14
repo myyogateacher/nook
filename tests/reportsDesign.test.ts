@@ -100,19 +100,23 @@ describe("design rules", () => {
     expect(errorsOf(spec([chart({ intent: "share", kind: "pie" })]), { q: countries(4) })).toEqual([]);
   });
 
-  test("rule 3 (auto): more than 8 series fold to the top 7 + Other, recorded", () => {
+  test("rule 3 (auto): more than 8 series fold to the top 7 + Other on bars and areas; a line becomes small multiples (round 2)", () => {
     const rows = ["2026-10-01", "2026-10-02"].flatMap((day) => Array.from({ length: 10 }, (_, index) => [day, `S${index}`, 10 - index]));
     const results = { q: { columns: [{ name: "day", type: "Date" }, { name: "who", type: "String" }, { name: "web", type: "Float64" }], rows } };
-    const raw = spec([chart({ intent: "trend", kind: "line", x: "day", y: ["web"], series: "who" })]);
-    expect(errorsOf(raw, results)).toEqual([]);
-    const fixes = design(raw, results).spec.blocks[0]!.autoFixes!;
-    expect(fixes).toEqual([{ rule: "fold_series", detail: "3 of 10 series folded into \"Other\" (top 7 kept)" }]);
+    const area = spec([chart({ intent: "trend", kind: "area", x: "day", y: ["web"], series: "who" })]);
+    expect(errorsOf(area, results)).toEqual([]);
+    expect(design(area, results).spec.blocks[0]!.autoFixes!).toEqual([{ rule: "fold_series", detail: "3 of 10 series folded into \"Other\" (top 7 kept)" }]);
+    const line = spec([chart({ intent: "trend", kind: "line", x: "day", y: ["web"], series: "who" })]);
+    expect(errorsOf(line, results)).toEqual([]);
+    expect(design(line, results).spec.blocks[0]!.autoFixes!).toEqual([{ rule: "facet", detail: "10 series drawn as small multiples (one panel each, shared y scale)" }]);
   });
 
-  test("rule 4: a scatter shows at most 3 series", () => {
+  test("rule 4 (auto, round 2): a scatter over 3 series of a series column becomes small multiples", () => {
     const rows = Array.from({ length: 12 }, (_, index) => [index, index * 2, `S${index % 4}`]);
     const results = { q: { columns: [{ name: "a", type: "Float64" }, { name: "b", type: "Float64" }, { name: "who", type: "String" }], rows } };
-    expect(errorsOf(spec([chart({ intent: "relationship", kind: "scatter", x: "a", y: ["b"], series: "who" })]), results).join()).toContain("rule 4: a scatter may show at most 3 series");
+    const raw = spec([chart({ intent: "relationship", kind: "scatter", x: "a", y: ["b"], series: "who" })]);
+    expect(errorsOf(raw, results)).toEqual([]);
+    expect(fixesOf(raw, results)).toEqual(["facet"]);
   });
 
   test("rule 5 (auto): more than 20 bar categories fold to the top 15 + Other; bars are sorted", () => {

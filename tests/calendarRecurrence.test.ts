@@ -17,6 +17,7 @@ import {
   type RecurrenceRule,
   type SeriesInput
 } from "../server/calendar/recurrence";
+import { cpuMs } from "./support/cpuTime";
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const timed = (startLocal: string, rule: RecurrenceRule | null, extra: Partial<SeriesInput> = {}): SeriesInput =>
@@ -143,9 +144,9 @@ describe("recurrence expansion", () => {
 
   test("an endless series far in the past expands quickly and correctly", () => {
     const series = timed("1990-01-01T07:00", { freq: "daily", interval: 7 });
-    const started = performance.now();
-    const found = dates(series, "2026-05-01", "2026-05-15");
-    expect(performance.now() - started).toBeLessThan(200);
+    let found: string[] = [];
+    // CPU time, not wall time (tests/support/cpuTime.ts).
+    expect(cpuMs(() => { found = dates(series, "2026-05-01", "2026-05-15"); })).toBeLessThan(200);
     expect(found).toEqual(["2026-05-04", "2026-05-11"]);
     expect(dates(allDay("1990-01-31", "1990-02-01", { freq: "monthly", interval: 1 }), "2026-01-01", "2026-04-01")).toEqual(["2026-01-31", "2026-03-31"]);
   });

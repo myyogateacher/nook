@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { buildFtsQuery, cleanIndexText, searchText, toSegments } from "../server/search";
 import { deriveNoteTitle } from "../server/validation";
+import { cpuMs } from "./support/cpuTime";
 
 describe("buildFtsQuery", () => {
   test("quotes every term, joins them with implicit AND, and prefixes the word being typed", () => {
@@ -127,17 +128,14 @@ describe("searchText", () => {
     const timings: Record<string, number> = {};
     for (const unit of ["[", "![", "<a"]) {
       const input = unit.repeat(size / unit.length);
-      const started = performance.now();
-      searchText(input);
-      timings[unit] = performance.now() - started;
+      // CPU time, not wall time: other suites on the host must not fail a work budget (tests/support/cpuTime.ts).
+      timings[unit] = cpuMs(() => searchText(input));
       expect(timings[unit]).toBeLessThan(200);
     }
     // Other shapes that a backtracking pattern would make quadratic; bounded loosely.
     for (const unit of [" ", "[a](", "[a][", "|-", " #", "<mailto:", "\\*"]) {
       const input = unit.repeat(Math.floor(size / unit.length)) + "x";
-      const started = performance.now();
-      searchText(input);
-      expect(performance.now() - started).toBeLessThan(1500);
+      expect(cpuMs(() => searchText(input))).toBeLessThan(1500);
     }
   });
 
@@ -163,9 +161,8 @@ describe("deriveNoteTitle", () => {
     expect(deriveNoteTitle(`${" ".repeat(5000)}late start`)).toBe("late start");
     expect(deriveNoteTitle("\n\n")).toBe("New note");
     for (const unit of ["[", "![", "<a"]) {
-      const started = performance.now();
-      deriveNoteTitle(unit.repeat((2 * 1024 * 1024) / unit.length));
-      expect(performance.now() - started).toBeLessThan(200);
+      const input = unit.repeat((2 * 1024 * 1024) / unit.length);
+      expect(cpuMs(() => deriveNoteTitle(input))).toBeLessThan(200);
     }
   });
 });

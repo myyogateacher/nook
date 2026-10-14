@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { createUser, db, type Session } from "./support/harness";
 import { api, makeKey, ok } from "./support/mcpClient";
+import { cpuMs } from "./support/cpuTime";
 
 const { resetMcpLimits } = await import("../server/mcpRateLimit");
 const { binnedAuditQuery } = await import("../server/mcpBinned");
@@ -121,9 +122,8 @@ test.skipIf(process.env.MYNOTES_PERF !== "1")("the key binned scan answers withi
     }
   })();
   try {
-    const started = performance.now();
-    binnedAuditQuery.all({ userId: owner.userId, keyId: key.id, since: new Date(Date.now() - 7 * 86_400_000).toISOString(), types: JSON.stringify(["note.delete", "task.card_delete", "event.delete", "collection.row_delete"]), limit: 500 });
-    const elapsed = performance.now() - started;
+    // CPU time, not wall time (tests/support/cpuTime.ts).
+    const elapsed = cpuMs(() => binnedAuditQuery.all({ userId: owner.userId, keyId: key.id, since: new Date(Date.now() - 7 * 86_400_000).toISOString(), types: JSON.stringify(["note.delete", "task.card_delete", "event.delete", "collection.row_delete"]), limit: 500 }));
     console.log(`Key binned audit scan over 200k rows: ${elapsed.toFixed(1)} ms`);
     expect(elapsed).toBeLessThan(500);
   } finally {

@@ -13,3 +13,14 @@ export function cpuMs(work: () => unknown) {
   const used = process.cpuUsage(before);
   return (used.user + used.system) / 1000;
 }
+
+/**
+ * The async form, for in-process work that awaits (no network peer: any other work the process does
+ * while it waits is counted too, so keep the measured section free of unrelated timers).
+ */
+export async function cpuMsAsync(work: () => Promise<unknown>) {
+  const before = process.cpuUsage();
+  await work();
+  const used = process.cpuUsage(before);
+  return (used.user + used.system) / 1000;
+}

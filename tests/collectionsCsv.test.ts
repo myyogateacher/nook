@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CsvError, neutralizeFormula, parseCsv, restoreNeutralized, writeCsv } from "../server/collections/csv";
+import { cpuMs } from "./support/cpuTime";
 
 const limits = { maxRecords: 5001, maxColumns: 50 };
 const parse = (text: string) => parseCsv(text, limits);
@@ -52,12 +53,13 @@ describe("CSV parsing (RFC 4180)", () => {
   test("parses 50,000 cells quickly", () => {
     const row = Array.from({ length: 10 }, (_, index) => index % 3 === 0 ? `"cell, ${index}"` : `cell ${index}`).join(",");
     const text = ["h0,h1,h2,h3,h4,h5,h6,h7,h8,h9", ...Array.from({ length: 5000 }, () => row)].join("\r\n");
-    const started = performance.now();
-    const records = parse(text);
+    let records: ReturnType<typeof parse> = [];
+    // CPU time, not wall time (tests/support/cpuTime.ts).
+    const used = cpuMs(() => { records = parse(text); });
     expect(records).toHaveLength(5001);
     expect(records[1]).toHaveLength(10);
     expect(records[5000]![0]).toBe("cell, 0");
-    expect(performance.now() - started).toBeLessThan(1500);
+    expect(used).toBeLessThan(1500);
   });
 });
 

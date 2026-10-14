@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import { IMMUTABLE, ifRangeMatches, isHashedAsset, negotiateEncoding, parseRange, REVALIDATE, serveStaticFile } from "../server/staticFiles";
+import { cpuMsAsync } from "./support/cpuTime";
 
 /**
  * C14: production static files. Hashed assets are cached for a year, everything else revalidates
@@ -177,9 +178,10 @@ describe("hardening (C14 second pass)", () => {
   test("odd Accept-Encoding headers: many entries, identity;q=0, and junk q-values", async () => {
     const long = `${Array.from({ length: 500 }, (_, index) => `x${index};q=0.${index % 10}`).join(", ")}, br`;
     // The br at the end lies past the first 32 entries: ignored, so the plain file is sent, quickly.
-    const started = performance.now();
-    expect((await get("/assets/index-BvuYDGo0.js", { "Accept-Encoding": long })).headers.get("Content-Encoding")).toBeNull();
-    expect(performance.now() - started).toBeLessThan(200);
+    let encoding: string | null = "unset";
+    // CPU time, not wall time (tests/support/cpuTime.ts).
+    expect(await cpuMsAsync(async () => { encoding = (await get("/assets/index-BvuYDGo0.js", { "Accept-Encoding": long })).headers.get("Content-Encoding"); })).toBeLessThan(200);
+    expect(encoding).toBeNull();
     expect(negotiateEncoding("identity;q=0", { br: false, gzip: false })).toBe("identity");
     expect(negotiateEncoding("identity;q=0, gzip", { br: true, gzip: true })).toBe("gzip");
     expect(negotiateEncoding("br;q=abc, gzip;q=", { br: true, gzip: true })).toBe("identity");

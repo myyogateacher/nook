@@ -20,6 +20,7 @@ export type ReportRow = {
   visibility: "private" | "selected" | "all_users"; revision: number; created_at: string; updated_at: string; deleted_at: string | null;
   deleted_by: string | null; purge_after: string | null; purge_started_at: string | null; auto_apply?: number;
   /** B3 (056): the ticked doc tools, a JSON array; B4: `server` or `nook`. */ doc_browse_tools?: string; doc_source?: string;
+  /** Lane I (059): the owner's folder; null is Unfiled. */ folder_id?: string | null;
 };
 
 /** SQL: the report `alias` is readable by `$userId` (the owner, a member or group under `selected`, or everyone under `all_users`). */

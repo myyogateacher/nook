@@ -5,6 +5,7 @@ import { EMPTY_SPEC, REPORT_LIMITS, upgradeSpec, type QueryOutcome, type ReportD
 import { ownedReport, readableReport, readableReportSql, type ReportRow } from "./access";
 import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
+import { ownedFolder } from "./folderAccess";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
 import { logger } from "../log";
 import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
@@ -22,7 +23,7 @@ const slog = logger("reports");
 
 export const REPORTS_PER_USER = 500;
 
-type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null };
+type SummaryRow = ReportRow & { owner_name: string; datasource_name: string | null; folder_id: string | null; schedule_cadence: string | null };
 
 /** A stored spec, upgraded to v2 on read (wave 48b, `upgradeSpec`); anything unreadable is the empty spec. */
 export function parseSpec(json: string): ReportSpec {
@@ -36,11 +37,15 @@ export function parseSpec(json: string): ReportSpec {
 function summaryOf(row: SummaryRow, userId: string): ReportSummary {
   return {
     id: row.id, title: row.title, datasourceId: row.datasource_id, datasourceName: row.datasource_name, status: row.status, isOwner: row.owner_id === userId,
-    ownerName: row.owner_name, blockCount: parseSpec(row.spec_json).blocks.length, lastRunAt: row.last_run_at, createdAt: row.created_at, updatedAt: row.updated_at, revision: row.revision
+    ownerName: row.owner_name, blockCount: parseSpec(row.spec_json).blocks.length, lastRunAt: row.last_run_at, createdAt: row.created_at, updatedAt: row.updated_at, revision: row.revision,
+    // Lane I: the folder is the owner's organisation; a reader sees the report under "Shared with me".
+    folderId: row.owner_id === userId ? row.folder_id ?? null : null, scheduleCadence: row.schedule_cadence ?? null
   };
 }
 
-const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name FROM reports r JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
+const SUMMARY_SELECT = `SELECT r.*, u.display_name AS owner_name, d.name AS datasource_name,
+  (SELECT s.cadence FROM report_schedules s WHERE s.report_id = r.id AND s.enabled = 1 AND s.cadence <> 'manual') AS schedule_cadence
+  FROM reports r JOIN users u ON u.id = r.owner_id LEFT JOIN report_datasources d ON d.id = r.datasource_id`;
 
 /** The reports a person can open, newest change first; `q` filters by title (title-only search). */
 export function listReports(userId: string, options: { q?: string; ids?: readonly string[] | null; limit?: number } = {}): ReportSummary[] {
@@ -65,15 +70,17 @@ export function reportDetail(id: string, userId: string): ReportDetail {
 }
 
 /** A new draft; `titleSource` says where the title came from (typed by default; generation passes doc or default). */
-export function createReport(userId: string, input: { title: string; datasourceId: string; titleSource?: "default" | "doc" | "ai" | "user" }, via: { keyId?: string } = {}): ReportDetail {
+export function createReport(userId: string, input: { title: string; datasourceId: string; titleSource?: "default" | "doc" | "ai" | "user"; folderId?: string | null }, via: { keyId?: string } = {}): ReportDetail {
   usableDatasource(input.datasourceId);
+  // Lane I: "New report" in a folder files it there (the caller's own live folder, else 404).
+  if (input.folderId) ownedFolder(input.folderId, userId);
   const live = (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ? AND deleted_at IS NULL").get(userId) as { count: number }).count;
   if (live >= REPORTS_PER_USER) throw new ReportError(409, "LIMIT_REACHED", `You can have up to ${REPORTS_PER_USER} reports`);
   const id = crypto.randomUUID();
   const at = now();
-  db.query("INSERT INTO reports (id, owner_id, title, title_source, datasource_id, spec_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(id, userId, input.title, input.titleSource ?? "user", input.datasourceId, JSON.stringify(EMPTY_SPEC), at, at);
-  audit(userId, null, "reports.report.create", { id, ...(via.keyId ? { via: "mcp", keyId: via.keyId } : {}) });
+  db.query("INSERT INTO reports (id, owner_id, title, title_source, datasource_id, spec_json, created_at, updated_at, folder_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, userId, input.title, input.titleSource ?? "user", input.datasourceId, JSON.stringify(EMPTY_SPEC), at, at, input.folderId ?? null);
+  audit(userId, null, "reports.report.create", { id, ...(input.folderId ? { folderId: input.folderId } : {}), ...(via.keyId ? { via: "mcp", keyId: via.keyId } : {}) });
   return reportDetail(id, userId);
 }
 

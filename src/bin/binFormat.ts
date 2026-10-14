@@ -54,10 +54,12 @@ export function filterBinItems(items: BinItem[], filter: BinFilter) {
   if (filter === "collections") return items.filter(isCollectionItem);
   if (filter === "calendar") return items.filter(isCalendarItem);
   if (filter === "vault") return items.filter(isVaultItem);
+  // Reports: reports and report folders (Lane I).
+  if (filter === "report") return items.filter((item) => item.type === "report" || item.type === "report_folder");
   return items.filter((item) => item.type === filter);
 }
 
-const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event", vault: "Untitled vault", vault_environment: "Untitled environment", vault_secret: "Untitled secret", chat: "Untitled chat", agent: "Untitled agent", knowledge_base: "Untitled knowledge base", report: "Untitled report" };
+const untitled: Record<BinItem["type"], string> = { note: "Untitled note", document: "Untitled file", card: "Untitled card", board: "Untitled board", collection: "Untitled collection", collection_row: "Untitled row", calendar: "Untitled calendar", event: "Untitled event", vault: "Untitled vault", vault_environment: "Untitled environment", vault_secret: "Untitled secret", chat: "Untitled chat", agent: "Untitled agent", knowledge_base: "Untitled knowledge base", report: "Untitled report", report_folder: "Untitled folder" };
 
 export function binItemLabel(item: Pick<BinItem, "title" | "type"> & Partial<Pick<BinItem, "kind">>) {
   // QA L6: a whiteboard reads by its name, without the ".excalidraw" of its file.
@@ -100,6 +102,7 @@ export function binKindLabel(item: Pick<BinItem, "type" | "attachment"> & Partia
   if (item.type === "agent") return "Agent";
   if (item.type === "knowledge_base") return "Knowledge base";
   if (item.type === "report") return "Report";
+  if (item.type === "report_folder") return "Report folder";
   if (item.type !== "document") return "Item";
   return item.attachment ? attachmentKindLabel(item) : "File";
 }
@@ -122,6 +125,7 @@ export function restoreResultMessage(item: Pick<BinItem, "type"> & Partial<Pick<
   if (item.type === "calendar" || item.type === "event") return restoredCalendarMessage({ type: item.type, title: "" }, result.calendarName, Boolean(result.alreadyRestored));
   if (item.type === "vault") return result.alreadyRestored ? "The vault was already restored" : "Restored the vault";
   if (item.type === "report") return result.alreadyRestored ? "The report was already restored" : "Restored the report";
+  if (item.type === "report_folder") return result.alreadyRestored ? "The folder was already restored" : "Restored the folder and put its reports back";
   if (item.type === "knowledge_base") {
     const name = result.knowledgeBaseName ? ` “${result.knowledgeBaseName}”` : "";
     return result.alreadyRestored ? `The knowledge base${name} is already restored` : `Restored the knowledge base${name}`;

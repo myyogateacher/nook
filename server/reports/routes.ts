@@ -14,6 +14,7 @@ import "./bin";
 import { registerGenerateRoutes } from "./generateRoutes";
 import { registerReportViewRoutes } from "./viewRoutes";
 import { registerReportEditRoutes } from "./editRoutes";
+import { registerReportFolderRoutes } from "./folderRoutes";
 
 /**
  * docs/plan/API_CONTRACTS.md § Analytics reports (Wave 45). Every route needs a session; mutations
@@ -37,7 +38,7 @@ const datasourceCreate = z.object({
 }).strict();
 const datasourcePatch = datasourceCreate.partial().extend({ expectedRevision: z.number().int().min(1), removePassword: z.boolean().optional() }).strict();
 const previewSchema = z.object({ allowlist }).strict();
-const reportCreate = z.object({ title: line(REPORT_LIMITS.title), datasourceId: uuid }).strict();
+const reportCreate = z.object({ title: line(REPORT_LIMITS.title), datasourceId: uuid, folderId: uuid.nullish() }).strict();
 const reportPatch = z.object({ title: line(REPORT_LIMITS.title).optional(), datasourceId: uuid.optional(), expectedRevision: z.number().int().min(1) }).strict();
 const consoleSchema = z.object({ sql: z.string().min(1).max(REPORT_LIMITS.sqlChars) }).strict();
 const emptySchema = z.object({}).strict();
@@ -114,9 +115,14 @@ export function registerReportRoutes(app: Hono<AppEnv>) {
   // --- Authors ---
   // Wave 46 (generation and the doc) first: its literal paths come before /api/reports/:reportId.
   registerGenerateRoutes(app);
+  // Lane I: report folders (literal /api/reports/folders paths, before /api/reports/:reportId).
+  registerReportFolderRoutes(app);
   app.get("/api/reports/datasources", handle(() => ({ datasources: datasourceChoices() })));
   app.get("/api/reports", handle((c) => ({ reports: listReports(c.get("user").id, { q: c.req.query("q")?.slice(0, 200) }) })));
-  app.post("/api/reports", handle(async (c) => c.json({ report: createReport(c.get("user").id, await parseJson(c.req.raw, reportCreate)) }, 201)));
+  app.post("/api/reports", handle(async (c) => {
+    const input = await parseJson(c.req.raw, reportCreate);
+    return c.json({ report: createReport(c.get("user").id, { ...input, folderId: input.folderId?.toLowerCase() ?? null }) }, 201);
+  }));
   app.get("/api/reports/:reportId", handle((c) => ({ report: reportDetail(id(c, "reportId"), c.get("user").id) })));
   app.patch("/api/reports/:reportId", handle(async (c) => {
     const reportId = id(c, "reportId");

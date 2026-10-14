@@ -39,7 +39,7 @@ const identity = (db: Database, userId: string) =>
 describe("review: migration 036 (service accounts) on an upgraded database", () => {
   test("follows 035 directly; only 037 (vault sharing, Wave 26), 038 (vault keys, Wave 27), 039 (agent chat, Wave 40), and 040 (agent audit, Wave 42) come after it", () => {
     expect(registeredMigrationIds.indexOf(36)).toBe(registeredMigrationIds.indexOf(35) + 1);
-    expect(registeredMigrationIds.filter((id) => id > 35)).toEqual([36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 55, 56, 57, 58]);
+    expect(registeredMigrationIds.filter((id) => id > 35)).toEqual([36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47, 48, 49, 50, 51, 52, 53, 55, 56, 57, 58, 59]);
   });
 
   test("upgrades a 035 database with people in it, re-runs as a no-op, and leaves person flows alone", () => {

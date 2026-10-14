@@ -53,7 +53,7 @@ export const NOOK_AGENT_TOOLS: ReadonlySet<string> = new Set([
   // Today, team, whiteboards
   "get_today", "list_team_members", "get_team_member", "list_invites", "list_whiteboards", "read_whiteboard", "create_whiteboard",
   // Reports (C2): the read tools only; a report's queries, schedule, and instructions stay out of reach.
-  "list_reports", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"
+  "list_reports", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"
 ]);
 /** Classified as never offered (T318): proposal and routine machinery, uploads, the agent module's own tools, Bin. */
 export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
@@ -72,7 +72,9 @@ export const NOOK_NEVER_TOOLS: ReadonlySet<string> = new Set([
   // sources, and never change a report: its queries (`update_report_query`, an open SQL proxy, T383),
   // schedule, instructions, or proposals. A report's own edit agent works through its instructions.
   "list_report_datasources", "create_report", "refresh_report", "set_report_schedule",
-  "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query"
+  "add_report_instruction", "apply_report_proposal", "reject_report_proposal", "update_report_query",
+  // Lane I: a report's folder is its owner's organisation of the Reports home, not an agent's.
+  "create_report_folder", "move_report_to_folder"
 ]);
 export const isBinTool = (name: string) => name.startsWith("bin_") || name.startsWith("restore_");
 const agentMayUse = (name: string) => NOOK_AGENT_TOOLS.has(name) && !NOOK_NEVER_TOOLS.has(name) && !isBinTool(name);

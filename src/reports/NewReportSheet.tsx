@@ -11,11 +11,13 @@ import { defaultBrowseTools, isReadLikeTool, isWriteLikeName, type DocServerChoi
 import { linkHost, parseNookRef } from "../../shared/nookDocRef";
 import { BrowseToolsPicker } from "./BrowseToolsPicker";
 import { NookDocPicker, nookLinkOf } from "./NookDocPicker";
-import { codeOf, createReport, docServers, generateReport, messageOf, regenerateReport } from "./reportsApi";
+import { codeOf, createReport, docServers, fileReport, generateReport, messageOf, regenerateReport } from "./reportsApi";
+import { notify } from "../ui/notify";
 import "./generate.css";
 
 type Mode = "doc" | "blank";
 const AUTO = "__auto__";
+const UNFILED = "__unfiled__";
 
 /** A failed generate request as one line, with the "reconnect" hint for MCP_AUTH (Wave 46). */
 export function generateErrorText(reason: unknown, fallback: string) {
@@ -121,7 +123,8 @@ export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers, onAl
  * pasted link picks its source. It says why the sources could not load (Retry) or why the chosen
  * server may not work (not synced, no read-only fetch tool), with admins' link to fix it.
  */
-export function NewReportSheet({ sources, role = "member", onCancel, onCreated, onOpenToolServers, reportId = null, initialSource = null }: { sources: DatasourceChoice[]; role?: string; onCancel: () => void; onCreated: (id: string) => void; onOpenToolServers?: () => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null }) {
+export function NewReportSheet({ sources, role = "member", onCancel, onCreated, onOpenToolServers, reportId = null, initialSource = null, folders, initialFolderId = null }: { sources: DatasourceChoice[]; role?: string; onCancel: () => void; onCreated: (id: string) => void; onOpenToolServers?: () => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null;
+  /** Lane I: the owner's folders (a path label each); with them the sheet shows "In: <folder>" and a change control. */ folders?: ReadonlyArray<{ id: string; label: string }>; initialFolderId?: string | null }) {
   const [servers, setServers] = useState<DocServerChoice[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>("doc");
@@ -136,9 +139,12 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
+  // Lane I: the folder the new report goes in (null: Unfiled); "Change" shows the picker.
+  const [folderId, setFolderId] = useState<string | null>(folders?.some((item) => item.id === initialFolderId) ? initialFolderId : null);
+  const [changingFolder, setChangingFolder] = useState(false);
   const confirm = useConfirm();
   const [allowing, setAllowing] = useState(false);
-  const ids = { mode: useId(), doc: useId(), server: useId(), tool: useId(), toolHint: useId(), arg: useId(), argHint: useId(), title: useId(), source: useId() };
+  const ids = { mode: useId(), doc: useId(), server: useId(), tool: useId(), toolHint: useId(), arg: useId(), argHint: useId(), title: useId(), source: useId(), folder: useId() };
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
 
   const live = useRef(true);
@@ -200,7 +206,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
       setBusy(true);
       setError(null);
       try {
-        onCreated((await createReport(title.trim(), source)).report.id);
+        onCreated((await createReport(title.trim(), source, folderId)).report.id);
       } catch (reason) {
         setError(messageOf(reason, "Could not create the report"));
         setBusy(false);
@@ -215,6 +221,10 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
     try {
       const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO || nook ? null : tool, arg: nook ? null : arg.trim() || null, browseTools: browse };
       const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null });
+      // Lane I: a generated report starts Unfiled; file it in the chosen folder (it stays Unfiled when that fails).
+      if (!reportId && folderId) {
+        await fileReport(started.report.id, folderId).catch((reason) => notify.warning(messageOf(reason, "The report was created, but could not be put in the folder")));
+      }
       onCreated(started.report.id);
     } catch (reason) {
       setError(generateErrorText(reason, "Could not start generating the report"));
@@ -264,6 +274,13 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
       </>}
       <span className="reports-label" id={ids.source}>Data source</span>
       <Select labelledBy={ids.source} label="Data source" value={source} onChange={setSource} options={sources.map((item) => ({ value: item.id, label: item.name, description: `Default database ${item.database}` }))} />
+      {!reportId && folders && <div className="new-report-folder">
+        <span id={ids.folder}>In: <strong>{folders.find((item) => item.id === folderId)?.label ?? "Unfiled"}</strong></span>
+        {changingFolder
+          ? <Select labelledBy={ids.folder} label="Folder" value={folderId ?? UNFILED} onChange={(value) => { setFolderId(value === UNFILED ? null : value); setChangingFolder(false); }}
+            options={[{ value: UNFILED, label: "Unfiled" }, ...folders.map((item) => ({ value: item.id, label: item.label }))]} />
+          : <button type="button" className="secondary-button" onClick={() => setChangingFolder(true)} disabled={busy}>Change</button>}
+      </div>}
       {!reportId && <>
         <label htmlFor={ids.title}>Title{mode === "doc" ? " (optional)" : ""}</label>
         <input id={ids.title} value={title} maxLength={REPORT_LIMITS.title} autoFocus={mode === "blank"} autoComplete="off" placeholder={mode === "doc" ? "From the doc" : "Weekly revenue"} onChange={(event) => setTitle(event.target.value)} />

@@ -63,7 +63,7 @@ export type MenuItem = { id: string; label: string; icon: ReactNode; onSelect: (
  * The "⋯" overflow menu: a menu button with arrow-key, Home/End, and Escape handling; Back, Escape, or
  * a click elsewhere closes only the menu (a history layer, D69); every item is at least 44 px tall.
  */
-export function ReportOverflowMenu({ items, label = "More actions" }: { items: MenuItem[]; label?: string }) {
+export function ReportOverflowMenu({ items, label = "More actions", compact = false, className }: { items: MenuItem[]; label?: string; /** Lane I: a small borderless button (the folder nav and report rows). */ compact?: boolean; className?: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -99,8 +99,8 @@ export function ReportOverflowMenu({ items, label = "More actions" }: { items: M
   if (!items.length) return null;
   // Only phone-only items (a reader's Schedule): wider screens show them in the header, so no menu there.
   const narrowOnly = items.every((item) => item.narrowOnly);
-  return <div className={`report-overflow${narrowOnly ? " report-narrow-only-menu" : ""}`} ref={rootRef}>
-    <button ref={buttonRef} type="button" className="secondary-button icon-only report-overflow-button" aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label} title={label}
+  return <div className={`report-overflow${narrowOnly ? " report-narrow-only-menu" : ""}${open ? " is-open" : ""}${className ? ` ${className}` : ""}`} ref={rootRef}>
+    <button ref={buttonRef} type="button" className={compact ? "reports-menu-compact" : "secondary-button icon-only report-overflow-button"} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined} aria-label={label} title={label}
       onClick={() => setOpen((value) => !value)}
       onKeyDown={(event) => {
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

@@ -2601,6 +2601,21 @@ The run stream's `tool_result` and every stored tool call gain `images?: [{ id, 
 
 **Keys and MCP.** Scopes `reports:read` and `reports:write` (write implies read; viewers hold read only; guests none). Grants: module `reports`, resource kind `report` (a report the holder can open). Tools, both `reports:read`: `list_reports { query?, limit? ≤ 100 }` → `{ reports: [{ id, title, status, datasource, blocks, lastRunAt, updatedAt, url }] }` (narrowed to chosen reports before the limit); `list_report_datasources {}` → `{ datasources: [{ id, name, database }] }` (hidden from keys limited to chosen reports). `reports:write` has no tool until wave 48. No tool runs SQL.
 
+## Analytics reports (Lane I): report folders
+
+Migration **059** (`report_folders`, `reports.folder_id`). Folders are the owner's private organisation of the Reports home: up to 3 levels, 200 per person, names ≤ 120. Another person's folder, or a binned one, is the same 404 as a missing one. `ReportSummary` gains `folderId` (null is Unfiled; always null on a report shared with the caller) and `scheduleCadence` (an enabled schedule's cadence, else null).
+
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /api/reports/folders` | | `{ folders: [{ id, parentId, name, position, count, createdAt, updatedAt }], counts: { all, unfiled, shared } }`: `count` is the owner's live reports directly in the folder |
+| `POST /api/reports/folders` | `{ name, parentId? }` | 201 `{ folder }`; 400 `TOO_DEEP` (a fourth level), 409 `LIMIT_REACHED` |
+| `PATCH /api/reports/folders/:id` | `{ name?, parentId? (null: the top), position? }` | `{ folder }`: rename, move (not into itself; 400 `TOO_DEEP` when its subtree would pass 3 levels), place among its siblings |
+| `DELETE /api/reports/folders/:id` | `{}` | `{ ok, purgeAfter, unfiled, subfolders }`: the folder and its subfolders go to the Bin (type `report_folder`); their reports move to Unfiled, never deleted. A restore brings the subfolders back and refiles the reports still in Unfiled; a purge deletes the folders only |
+| `PATCH /api/reports/:id/folder` | `{ folderId \| null }` | `{ report: ReportSummary, previousFolderId }`: the owner files a report; its revision and updated time do not change |
+| `POST /api/reports` | `{ …, folderId? }` | the new draft in that folder (the caller's own, else 404) |
+
+Audited as `reports.folder.create`, `.update`, `.bin`, `.restore`, `.purge`, and `reports.report.file`. MCP: `list_report_folders` (`reports:read`; a key over chosen reports sees only the folders holding one, and counts of those reports), `create_report_folder` and `move_report_to_folder` (`reports:write`, counted in `report_write`, audited with the key; nothing deletes). URLs: `/reports` (All), `/reports/folder/:id`, `/reports/unfiled`, `/reports/shared`.
+
 ## Analytics reports (Wave 46): generation from a doc
 
 D424–D428, T368–T370. Migration **051** (`report_runs_via`: `agent_runs.via` gains `reports`; `reports.doc_arg`). Wire types are in `shared/reportsGenerate.ts` (`shared/reports.ts` stays frozen). Same session, CSRF, role, and guest rules as wave 45. Generating also needs a role that may chat with agents (403 `ROLE_READ_ONLY` otherwise), AI configured (503 `NOT_CONFIGURED`: no AGENT_SECRETS_KEY or no provider), and today's token budget (429 `LIMIT_REACHED` with `reason: "budget"`). Doc errors: **502 `DOC_FETCH`** (unreachable, an error result, an empty doc, no fitting read-only tool, a server that is off), **400 `DOC_TOOL_REFUSED`** (the named tool's effective policy is not `auto`: it is not read-only, or an admin set it to confirm or off; it is never called) and **502 `MCP_AUTH`** (`reconnect: true, serverId`: the doc server refused its credential; the UI says "Reconnect needed").

@@ -17,6 +17,8 @@ import { manualEdit } from "./manualEdit";
 import { queryResults, reportRun, startRefresh } from "./refresh";
 import { saveSchedule } from "./scheduler";
 import { listReports, parseSpec as parseStoredSpec } from "./service";
+import { createFolder, listFolders, moveReportToFolder } from "./folders";
+import { REPORT_FOLDER_NAME_MAX } from "../../shared/reports";
 import { knownSpec } from "./specCheck";
 import type { ReportSpec } from "../../shared/reports";
 
@@ -35,6 +37,9 @@ const parseSpec = (json: string): ReportSpec => knownSpec(parseStoredSpec(json))
  *   set_report_schedule, add_report_instruction (queues it for the edit agent; a proposal unless the
  *   owner turned on auto-apply), apply_report_proposal and reject_report_proposal, update_report_query
  *   (a saved query's SQL, through the guard and a full re-validation; a new version).
+ * - Lane I, folders: `list_report_folders` (reports:read: the owner's folder tree with counts), and
+ *   `create_report_folder` and `move_report_to_folder` (reports:write: the owner's organisation; never
+ *   deletes, a folder is deleted only through the Bin in the app).
  *
  * Writes are non-destructive (a version, a run, a queued instruction), audited with `via: "mcp"` and the
  * key, and counted against `report_write` (100 a day per key). Nothing is deleted over MCP but through
@@ -97,7 +102,7 @@ export const reportTools: McpToolSpec[] = [
       return {
         reports: reports.map((report) => ({
           id: report.id, title: report.title, status: report.status, datasource: report.datasourceName, blocks: report.blockCount,
-          lastRunAt: report.lastRunAt, updatedAt: report.updatedAt, url: reportUrl(report.id)
+          lastRunAt: report.lastRunAt, updatedAt: report.updatedAt, folderId: report.folderId, url: reportUrl(report.id)
         }))
       };
     }
@@ -111,6 +116,22 @@ export const reportTools: McpToolSpec[] = [
     write: false,
     inputSchema: z.object({}),
     handler: (_args, key) => ({ datasources: ownerHasReports(key.userId) ? datasourceChoices() : [] })
+  }),
+  defineTool({
+    name: "list_report_folders",
+    title: "List report folders",
+    description: `The key owner's report folders (their private organisation of the Reports home): id, name, parentId (null at the top; up to 3 levels), position among its siblings, and how many of their reports are directly in it; plus the counts of all reports they can open, Unfiled (their reports in no folder), and Shared with me. list_reports gives each report's folderId. ${UNTRUSTED}`,
+    scopes: ["reports:read"],
+    access: { mode: "list", lists: ["report"] },
+    write: false,
+    inputSchema: z.object({}),
+    handler: (_args, key) => {
+      if (!ownerHasReports(key.userId)) return { folders: [], counts: { all: 0, unfiled: 0, shared: 0 } };
+      const ids = keyContainerIds(key, "reports:read", "report");
+      const tree = listFolders(key.userId, { ids });
+      // A key over chosen reports sees only the folders that hold one of them.
+      return { folders: tree.folders.filter((folder) => !ids || folder.count > 0).map((folder) => ({ id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, reports: folder.count })), counts: tree.counts };
+    }
   }),
   defineTool({
     name: "get_report",
@@ -345,6 +366,40 @@ export const reportTools: McpToolSpec[] = [
         expectedRevision: args.expectedRevision ?? report.revision
       }, { keyId: key.keyId });
       return { version: saved.version, revision: saved.revision };
+    })
+  }),
+  defineTool({
+    name: "create_report_folder",
+    title: "Create a report folder",
+    description: "Creates a folder for the key owner's reports on the Reports home, at the top or inside one of their folders (parentId from list_report_folders; folders nest up to 3 levels). Folders are the owner's private organisation: nobody else sees them.",
+    scopes: ["reports:write"],
+    access: { mode: "global", related: ["parentId"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({
+      name: z.string().trim().min(1).max(REPORT_FOLDER_NAME_MAX).describe("The folder's name"),
+      parentId: z.string().uuid().optional().describe("A folder to create it in (from list_report_folders); default the top level")
+    }),
+    handler: (args, key) => asOwner(key, () => {
+      const folder = createFolder(key.userId, { name: args.name, parentId: args.parentId?.toLowerCase() ?? null }, { keyId: key.keyId });
+      return { folder: { id: folder.id, name: folder.name, parentId: folder.parentId } };
+    })
+  }),
+  defineTool({
+    name: "move_report_to_folder",
+    title: "File a report in a folder",
+    description: "Files one of the key owner's reports in one of their folders (from list_report_folders), or in Unfiled with folderId null. Only the report's place on the Reports home changes: not its content, version, or sharing.",
+    scopes: ["reports:write"],
+    access: { mode: "items", items: reportItem, related: ["folderId"] },
+    write: true,
+    buckets: ["report_write"],
+    inputSchema: z.object({
+      reportId,
+      folderId: z.string().uuid().nullable().describe("The folder, or null for Unfiled")
+    }),
+    handler: (args, key) => asOwner(key, () => {
+      const moved = moveReportToFolder(key.userId, args.reportId, args.folderId?.toLowerCase() ?? null, { keyId: key.keyId });
+      return { report: { id: moved.report.id, title: moved.report.title, folderId: moved.report.folderId, url: reportUrl(moved.report.id) }, previousFolderId: moved.previousFolderId };
     })
   })
 ];

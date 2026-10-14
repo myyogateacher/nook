@@ -5,21 +5,18 @@
 .reports-toolbar h1 { flex: 1 1 auto; margin: 0; min-width: 0; overflow: hidden; color: #f4f4f5; font-size: 1.25rem; text-overflow: ellipsis; white-space: nowrap; }
 .reports-count { color: #85858c; font-weight: 500; }
 .reports-search { position: relative; flex: 0 1 280px; min-width: 0; display: flex; align-items: center; }
-.reports-search > svg { position: absolute; left: 12px; width: 16px; height: 16px; color: #85858c; pointer-events: none; }
-.reports-search input { width: 100%; min-height: 44px; padding-left: 36px; }
+.reports-search > svg { position: absolute; left: 4px; width: 16px; height: 16px; color: #85858c; pointer-events: none; }
+/* Lane I: the filter is an underline, not a box. At rest a 1 px line in the border token; on focus a lighter warm grey,
+   2 px (about 8:1 on the page), and no outline box. Reports only: other modules' search boxes keep their look. */
+.reports-search input { width: 100%; min-height: 44px; padding: 0 4px 0 28px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; box-shadow: none; color: #ededee; }
+.reports-search input::placeholder { color: #75757c; }
+.reports-search input:hover { border-bottom-color: #3a3a40; }
+.reports-search input:focus, .reports-search input:focus-visible { outline: none; border-bottom-color: #b5ab96; box-shadow: 0 1px 0 #b5ab96; }
+.reports-search:focus-within > svg { color: #c9c9ce; }
 /* "+ New report" keeps its look from before the shared spec (D472): 44 px, 16 px text. */
 .reports-app .reports-new { min-height: 44px; gap: 6px; padding: 0 16px; font-size: 1rem; font-weight: 750; }
 .reports-app .reports-new svg { width: 17px; height: 17px; }
 
-.reports-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
-.reports-card { width: 100%; min-height: 64px; display: flex; align-items: center; gap: 12px; border: 1px solid #26262b; border-radius: 14px; padding: 10px 14px; background: #131316; color: inherit; text-align: left; cursor: pointer; }
-.reports-card:hover { border-color: #4a3f25; }
-.reports-card:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
-.reports-card-icon { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 12px; background: #1d1a12; color: #d9b55f; }
-.reports-card-icon svg { width: 20px; height: 20px; }
-.reports-card-copy { min-width: 0; display: grid; gap: 4px; }
-.reports-card-title { min-width: 0; overflow: hidden; color: #ededee; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.reports-card-meta { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: #85858c; font-size: .76rem; }
 .reports-status { display: inline-flex; align-items: center; border: 1px solid #34343a; border-radius: 999px; padding: 1px 8px; color: #b8b8be; font-size: .72rem; font-weight: 650; }
 .reports-status-ready { border-color: #2f5a3a; color: #8fd19e; }
 .reports-status-stale { border-color: #5a4b25; color: #e2c46c; }
@@ -32,6 +29,97 @@
 .reports-label { margin-top: 6px; color: #8d8d94; font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .reports-check { min-height: 44px; display: flex; align-items: center; gap: 10px; color: #d4d4d8; }
 .reports-check input { width: 20px; height: 20px; }
+
+/*
+ * Lane I: the Reports home: a folder nav at the left (the Notes sidebar's look) and the reports as rows
+ * using the full width. Under 1024 px the nav is a sheet opened from the folder button above the list.
+ */
+.reports-layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); align-items: start; }
+.reports-sidebar { position: sticky; top: 77px; height: calc(100dvh - 77px); overflow-y: auto; border-right: 1px solid var(--border); background: rgb(12 12 14 / 72%); padding: 14px 10px 24px; }
+.reports-body.reports-main { width: 100%; max-width: none; margin: 0; padding: 22px clamp(20px, 3vw, 44px) calc(40px + env(safe-area-inset-bottom)); }
+.reports-folder-chip { display: none; }
+.reports-nav { display: grid; gap: 2px; }
+.reports-nav-link { width: 100%; min-width: 0; min-height: 40px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 0; border-radius: 9px; padding: 8px 12px; background: transparent; color: #c2c2c6; font: inherit; font-size: .9rem; text-align: left; cursor: pointer; }
+.reports-nav-link:hover { background: #171719; }
+.reports-nav-link.active { background: #242118; color: #ffe4a4; }
+.reports-nav-link.drop-target { background: #3a301d; color: #ffdb83; box-shadow: inset 0 0 0 1px #81672d; }
+.reports-nav-link svg { width: 17px; height: 17px; }
+.reports-nav-link b { color: #67676e; font-size: .74rem; font-weight: 600; }
+/* All, Unfiled, and Shared keep their counts in line with the folders' (which have a ⋯ beside them). */
+.reports-nav > .reports-nav-link { padding-right: 46px; }
+.reports-nav-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reports-nav-label { margin: 18px 12px 6px; color: #6f6f76; font-size: .7rem; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.reports-nav-tree { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.reports-nav-entry { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: 2px; }
+.reports-nav-menu { opacity: 0; }
+.reports-nav-entry:hover .reports-nav-menu, .reports-nav-menu:focus-within, .reports-nav-menu.is-open { opacity: 1; }
+.reports-nav-empty { margin: 4px 12px 6px; color: #5f5f66; font-size: .78rem; line-height: 1.5; }
+.reports-nav-new { width: 100%; min-height: 40px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 10px; margin-top: 4px; border: 0; border-radius: 9px; padding: 8px 12px; background: transparent; color: #9c9ca3; font: inherit; font-size: .86rem; text-align: left; cursor: pointer; }
+.reports-nav-new:hover { background: #171719; color: #f2cc75; }
+.reports-nav-new svg { width: 17px; height: 17px; }
+.reports-nav-sep { height: 1px; margin: 12px 8px; background: #1f1f22; }
+/* The ⋯ of a folder and of a row: small, borderless; 44 px on touch screens. */
+.reports-menu-compact { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; padding: 0; background: transparent; color: #85858c; cursor: pointer; }
+.reports-menu-compact:hover, .report-overflow.is-open > .reports-menu-compact { background: #1f1f23; color: #ededee; }
+.reports-menu-compact svg { width: 17px; height: 17px; }
+.reports-nav-menu .report-overflow-menu, .reports-row-menu .report-overflow-menu { min-width: 200px; }
+
+.reports-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -8px 0 14px; color: #9a9aa1; font-size: .82rem; }
+.reports-scope-chip { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid #2c2c31; border-radius: 999px; padding: 0 12px; background: #131316; color: #c9c9ce; font: inherit; font-size: .8rem; cursor: pointer; }
+.reports-scope-chip[aria-pressed="true"] { border-color: #6b572c; background: #2b261b; color: #ffe19a; }
+.reports-scope-chip svg { width: 14px; height: 14px; }
+
+/* Rows: icon, title (owner or folder below), status, data source, schedule, updated, and ⋯; the columns line up. */
+.reports-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid #1f1f23; }
+.reports-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; border-bottom: 1px solid #1f1f23; }
+.reports-row:hover { background: #121215; }
+.reports-row.dragging { opacity: .45; }
+.reports-row[draggable="true"] { cursor: grab; }
+.reports-row-open { min-width: 0; min-height: 60px; display: grid; grid-template-columns: 36px minmax(0, 1fr) 72px minmax(120px, 180px) 104px 116px; align-items: center; gap: 14px; border: 0; padding: 10px 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.reports-row-open:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; border-radius: 8px; }
+.reports-row-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; background: #1d1a12; color: #d9b55f; }
+.reports-row-icon svg { width: 18px; height: 18px; }
+.reports-row-title { min-width: 0; display: grid; gap: 2px; }
+.reports-row-title > span { min-width: 0; overflow: hidden; color: #ededee; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.reports-row-title small { min-width: 0; overflow: hidden; color: #85858c; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.reports-row-meta { display: contents; color: #9a9aa1; font-size: .8rem; }
+.reports-row-meta > .reports-status { justify-self: start; }
+.reports-row-source, .reports-row-schedule > span { min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; color: #9a9aa1; font-size: .8rem; white-space: nowrap; }
+.reports-row-source svg, .reports-row-schedule svg { flex: none; width: 14px; height: 14px; color: #6f6f76; }
+.reports-row-schedule > span { color: #c9b98f; }
+.reports-row-meta time { color: #85858c; font-size: .8rem; white-space: nowrap; }
+.reports-row-menu { justify-self: center; }
+.reports-drag-ghost { position: fixed; top: -200px; left: -200px; max-width: 280px; overflow: hidden; border: 1px solid #6b572c; border-radius: 10px; padding: 8px 12px; background: #2b261b; color: #ffe19a; font: 600 .85rem Inter, ui-sans-serif, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.new-report-folder { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px dashed #2f2f35; border-radius: 10px; padding: 8px 8px 8px 12px; color: #9a9aa1; font-size: .86rem; }
+.new-report-folder strong { color: #ededee; }
+.new-report-folder > :last-child:not(button) { flex: 1 1 200px; }
+.reports-folder-sheet .reports-nav { padding: 4px 12px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; }
+.reports-folder-sheet .reports-nav-link, .reports-folder-sheet .reports-nav-new { min-height: 46px; }
+.reports-folder-sheet .reports-nav-menu { opacity: 1; }
+@media (max-width: 1180px) { .reports-row-open { grid-template-columns: 36px minmax(0, 1fr) 72px minmax(100px, 150px) 96px; } .reports-row-meta time { display: none; } }
+@media (max-width: 1023px) {
+  .reports-layout { display: block; }
+  .reports-sidebar { display: none; }
+  .reports-folder-chip { min-height: 44px; max-width: 100%; display: inline-flex; align-items: center; gap: 8px; margin-bottom: 12px; border: 1px solid #2c2c31; border-radius: 999px; padding: 0 14px; background: #131316; color: #ededee; font: inherit; font-size: .88rem; font-weight: 650; cursor: pointer; }
+  .reports-folder-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reports-folder-chip svg { flex: none; width: 16px; height: 16px; color: #9a9aa1; }
+  .reports-folder-chip small { color: #85858c; font-size: .82rem; font-weight: 500; }
+  /* The folder button names the view; the heading stays for screen readers. */
+  .reports-main .reports-toolbar h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .reports-row-open { grid-template-columns: 36px minmax(0, 1fr); row-gap: 4px; }
+  .reports-row-icon { grid-row: span 2; }
+  .reports-row-title { grid-column: 2; }
+  .reports-row-meta { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+  .reports-row-meta time { display: inline; }
+  .reports-row-schedule:empty { display: none; }
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .reports-menu-compact { width: 44px; height: 44px; }
+  .reports-row { grid-template-columns: minmax(0, 1fr) 44px; }
+  .reports-nav-entry { grid-template-columns: minmax(0, 1fr) 44px; }
+  .reports-nav-menu { opacity: 1; }
+  .reports-nav > .reports-nav-link { padding-right: 58px; }
+}
 
 /* A report's page. */
 .report-page-brand { min-width: 0; overflow: hidden; }
@@ -130,7 +218,6 @@
   .reports-body { padding: 14px 16px calc(28px + env(safe-area-inset-bottom)); }
   .reports-toolbar h1 { flex: 1 1 100%; font-size: 1.1rem; }
   .reports-search { flex: 1 1 auto; }
-  .reports-list { grid-template-columns: minmax(0, 1fr); }
   .report-console { padding: 12px; }
   .report-actions button { flex: 1 1 auto; justify-content: center; }
   .schema-controls, .schema-list-wrap { padding-left: 16px; padding-right: 16px; }

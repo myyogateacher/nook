@@ -1,10 +1,15 @@
-import type { Route } from "./router";
+import type { ReportsFolderView, Route } from "./router";
 
 export type ReportsRoute = Extract<Route, { app: "reports" }>;
 
 /** A route for the Reports app (Wave 45): the list, or one report. */
 export function reportsRoute(reportId: string | null = null): ReportsRoute {
   return { app: "reports", reportId };
+}
+
+/** Lane I: the list in one view: All (null), Unfiled, Shared with me, or a folder by id. */
+export function reportsFolderRoute(folder: ReportsFolderView | null): ReportsRoute {
+  return folder ? { app: "reports", reportId: null, folder } : { app: "reports", reportId: null };
 }
 
 /**

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
 import { popStateClosedDialog } from "../historyDialogs";
 import { parseRoute, type Route } from "../router";
-import { reportsBackAction, reportsRoute, type ReportsRoute } from "../reportsRoute";
+import { reportsBackAction, reportsFolderRoute, reportsRoute, type ReportsRoute } from "../reportsRoute";
 import { ReportPage } from "./ReportPage";
 import { ReportsHome } from "./ReportsHome";
 import "./reports.css";
@@ -65,5 +65,7 @@ export function ReportsApp({ displayName, role, navigate, flash, onHome, onSetti
     return <ReportPage key={route.reportId} reportId={route.reportId} {...account} flash={flash} onBack={back}
       onGone={() => go(reportsRoute(), { replace: true, removed: true })} />;
   }
-  return <ReportsHome {...account} role={role} onHome={onHome} onOpen={(id) => go(reportsRoute(id))} onOpenDatasources={onOpenDatasources} onOpenToolServers={onOpenToolServers} />;
+  // Lane I: each folder view is its own entry, so Back and Forward step between folders.
+  return <ReportsHome {...account} role={role} flash={flash} onHome={onHome} onOpen={(id) => go(reportsRoute(id))} onOpenDatasources={onOpenDatasources} onOpenToolServers={onOpenToolServers}
+    folder={route.folder ?? null} onFolder={(view, options) => { if ((route.folder ?? null) !== view) go(reportsFolderRoute(view), options); }} />;
 }

@@ -293,6 +293,6 @@ describe("final review L3 and M3", () => {
     // No released version number yet.
     expect(section).not.toMatch(/\b0\.3[89]\.\d/);
     const { registeredMigrationIds } = await import("../server/migrations");
-    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58]);
+    expect(registeredMigrationIds.filter((id) => id >= 50)).toEqual([50, 51, 52, 53, 55, 56, 57, 58, 59]);
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveRestore, BookOpen, Bot, CalendarClock, CalendarDays, ChartColumn, Ellipsis, File as FileIcon, KanbanSquare, KeyRound, KeySquare, Layers, MessagesSquare, NotebookText, Package, PenTool, RotateCcw, Rows3, SquareCheck, Table2, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ArchiveRestore, BookOpen, Bot, CalendarClock, CalendarDays, ChartColumn, Ellipsis, File as FileIcon, Folder as FolderIcon, KanbanSquare, KeyRound, KeySquare, Layers, MessagesSquare, NotebookText, Package, PenTool, RotateCcw, Rows3, SquareCheck, Table2, Trash2, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { ApiError } from "../api";
 import { formatBytes } from "../files/filesApi";
 import { useConfirm } from "../ui/useConfirm";
@@ -47,7 +47,7 @@ const filters: Array<{ value: BinFilter; label: string }> = [
   { value: "report", label: "Reports" }
 ];
 
-const itemIcons: Partial<Record<BinItem["type"], LucideIcon>> = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock, vault: KeyRound, vault_environment: Layers, vault_secret: KeySquare, chat: MessagesSquare, agent: Bot, knowledge_base: BookOpen, report: ChartColumn };
+const itemIcons: Partial<Record<BinItem["type"], LucideIcon>> = { note: NotebookText, document: FileIcon, card: SquareCheck, board: KanbanSquare, collection: Table2, collection_row: Rows3, calendar: CalendarDays, event: CalendarClock, vault: KeyRound, vault_environment: Layers, vault_secret: KeySquare, chat: MessagesSquare, agent: Bot, knowledge_base: BookOpen, report: ChartColumn, report_folder: FolderIcon };
 /** The icon of a Bin row; a kind this build does not know (a newer server) gets a generic one instead of crashing the page (Wave 40 QA Q1). */
 export const binItemIcon = (item: Pick<BinItem, "type"> & Partial<Pick<BinItem, "kind">>): LucideIcon => item.type === "document" && item.kind === "whiteboard" ? PenTool : itemIcons[item.type] ?? Package;
 

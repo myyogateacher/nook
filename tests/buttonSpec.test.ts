@@ -43,7 +43,7 @@ describe("the shared button spec (D472)", () => {
   });
 
   test("the report header's overflow button is icon-only with a label; Run and Refresh all say when they are busy", () => {
-    expect(read("reports/reportCommands.tsx")).toMatch(/className="secondary-button icon-only report-overflow-button"[^>]*aria-label=\{label\}/);
+    expect(read("reports/reportCommands.tsx")).toMatch(/"secondary-button icon-only report-overflow-button"\}[^>]*aria-label=\{label\}/);
     const page = read("reports/ReportPage.tsx");
     expect(page).toContain("aria-busy={running || undefined}");
     expect(page).toContain("aria-busy={commands.refreshAll.busy || undefined}");

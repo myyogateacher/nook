@@ -54,6 +54,7 @@ import { reportRunPlansMigration } from "./055_report_run_plans";
 import { reportDocBrowseMigration } from "./056_report_doc_browse";
 import { agentInternalKeysMigration } from "./057_agent_internal_keys";
 import { reportMetricCatalogMigration } from "./058_report_metric_catalog";
+import { reportFoldersMigration } from "./059_report_folders";
 
 const migrations = [initialMigration, folderSharingMigration, totpMigration, totpRecoveryCodesMigration, mcpApiKeysMigration, documentsMigration, binMigration, noteSearchMigration, taskBoardsMigration, mcpKeyScopesMigration, taskDatesMigration, collectionsMigration, calendarMigration, eventNextOccurrenceMigration, taskCardUxMigration, userPreferencesMigration, teamRolesMigration,
   // 018 (Team invites) may reach existing installs after 019 (task hierarchy) and 020 (task views); none depends on another.
@@ -141,7 +142,9 @@ const migrations = [initialMigration, folderSharingMigration, totpMigration, tot
   // needs 005 and 039. 056 is the doc-browse migration (lane B).
   agentInternalKeysMigration,
   // 058 (reports, lane E: report_metric_catalogs, the doc's metric catalog per version) needs 050 and 056.
-  reportMetricCatalogMigration
+  reportMetricCatalogMigration,
+  // 059 (lane I: report_folders and reports.folder_id, the owner's folders on the Reports home) needs only 050.
+  reportFoldersMigration
 ];
 
 /** Every registered migration in order (read-only), for tests that build an older database shape. */

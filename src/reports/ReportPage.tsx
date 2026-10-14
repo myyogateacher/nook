@@ -344,7 +344,7 @@ export function ResultView({ outcome }: { outcome: QueryOutcome }) {
   </div>;
 }
 
-function RenameSheet({ report, onCancel, onSaved, reopen }: { report: ReportDetail; onCancel: () => void; onSaved: (report: ReportDetail) => void; reopen?: () => void }) {
+export function RenameSheet({ report, onCancel, onSaved, reopen }: { report: Pick<ReportDetail, "id" | "title" | "revision">; onCancel: () => void; onSaved: (report: ReportDetail) => void; reopen?: () => void }) {
   const [title, setTitle] = useState(report.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

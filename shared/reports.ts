@@ -354,7 +354,20 @@ export type ReportSummary = {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  /** Lane I: the owner's folder (null is Unfiled); always null for a report shared with the caller. */
+  folderId: string | null;
+  /** Lane I: the cadence of an enabled schedule, for the list's badge; null when it runs only on demand. */
+  scheduleCadence: string | null;
 };
+
+/** Lane I: one of the owner's report folders, with the count of their live reports directly in it. */
+export type ReportFolder = { id: string; parentId: string | null; name: string; position: number; count: number; createdAt: string; updatedAt: string };
+/** Lane I: the Reports home's left nav: the owner's folder tree (flat, by parent and position) and the counts of its fixed sections. */
+export type ReportFolderTree = { folders: ReportFolder[]; counts: { all: number; unfiled: number; shared: number } };
+/** Folders nest up to three levels deep (a folder, a subfolder, and one below that). */
+export const REPORT_FOLDER_DEPTH = 3;
+export const REPORT_FOLDERS_PER_USER = 200;
+export const REPORT_FOLDER_NAME_MAX = 120;
 
 export type ReportDetail = ReportSummary & {
   spec: ReportSpec;

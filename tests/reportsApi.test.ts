@@ -378,7 +378,7 @@ describe("MCP (reports:read)", () => {
     const key = { keyId: "k", userId: member.userId, name: "k", scopes: ["reports:read" as const] };
     const all = await listReports.handler({ query: "Mcp" }, key) as { reports: Json[] };
     expect(all.reports.map((item) => item.id).sort()).toEqual([first.id, second.id].sort());
-    expect(Object.keys(all.reports[0]!).sort()).toEqual(["blocks", "datasource", "id", "lastRunAt", "status", "title", "updatedAt", "url"]);
+    expect(Object.keys(all.reports[0]!).sort()).toEqual(["blocks", "datasource", "folderId", "id", "lastRunAt", "status", "title", "updatedAt", "url"]);
     const chosen = { ...key, grants: [{ module: "reports" as const, permission: "read" as const, resourceKind: "report" as const, resourceId: first.id }] };
     expect(((await listReports.handler({}, chosen)) as { reports: Json[] }).reports.map((item) => item.id)).toEqual([first.id]);
     const sources = await listSources.handler({}, key) as { datasources: Json[] };
@@ -386,8 +386,8 @@ describe("MCP (reports:read)", () => {
     expect(JSON.stringify(sources)).not.toContain("127.0.0.1");
     // A key over chosen reports sees the per-report tools, not the global data source list; nobody gets an
     // ad-hoc SQL tool (wave 48's update_report_query changes a saved query, guarded and re-validated).
-    expect(visibleTools(chosen).filter((tool) => tool.name.includes("report")).map((tool) => tool.name)).toEqual(["list_reports", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"]);
-    expect(visibleTools(key).filter((tool) => tool.name.includes("report")).map((tool) => tool.name)).toEqual(["list_reports", "list_report_datasources", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"]);
+    expect(visibleTools(chosen).filter((tool) => tool.name.includes("report")).map((tool) => tool.name)).toEqual(["list_reports", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"]);
+    expect(visibleTools(key).filter((tool) => tool.name.includes("report")).map((tool) => tool.name)).toEqual(["list_reports", "list_report_datasources", "list_report_folders", "get_report", "get_report_block", "get_report_run", "get_report_instruction", "list_report_versions", "get_report_version_diff"]);
     expect(visibleTools({ ...key, scopes: ["reports:read", "reports:write"] }).some((tool) => /sql/i.test(tool.name))).toBe(false);
     expect(visibleTools({ ...key, scopes: ["reports:read", "reports:write"] }).filter((tool) => /query/i.test(tool.name)).map((tool) => tool.name)).toEqual(["update_report_query"]);
     // The key owner turned guest: nothing.

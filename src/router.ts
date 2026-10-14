@@ -3,6 +3,9 @@ import { formatBoardSearch, isDefaultBoardQuery, parseBoardSearch, type BoardQue
 import { formatHomeSearch, NEW_VIEW, parseMyWorkSearch, parseViewSearch, type TasksHome } from "./tasks/home/homeUrl";
 import { appName } from "./appName";
 
+/** Lane I: the Reports home's view: Unfiled, Shared with me, or one of the person's folders (its id). */
+export type ReportsFolderView = "unfiled" | "shared" | (string & {});
+
 export type Route =
   | { app: "home" }
   | { app: "notes"; folder: "all" | "shared" | string; noteId: string | null }
@@ -48,7 +51,8 @@ export type Route =
   | { app: "chat"; chatId: string | null; newChat?: true; agentId?: string; audit?: true; runId?: string; auditFilter?: AuditQuery }
   // Analytics reports (Wave 45): the list at /reports and one report at /reports/:reportId. Its sheets
   // (the Schema browser, a new report) are history layers on that entry, not URLs.
-  | { app: "reports"; reportId: string | null }
+  // Lane I: the list's folder: /reports/folder/:folderId, /reports/unfiled, /reports/shared (none: All).
+  | { app: "reports"; reportId: string | null; folder?: ReportsFolderView }
   // The Settings hub (Wave 37): a page at /settings (the section list on phones), and one account
   // section at /settings/:section. Team sections are `team` routes under /settings/team/… (above).
   // Wave 40: Settings → Agents has an editor below it at /settings/agents/:agentId (or /settings/agents/new).
@@ -204,7 +208,9 @@ export function parseRoute(pathname: string, search = ""): Route {
   if (app === "vault") return parseVault(rest);
   if (app === "chat") return parseChat(rest, search);
   if (app === "reports") {
-    const [reportId] = rest;
+    const [reportId, folderId] = rest;
+    if (rest.length === 1 && (reportId === "unfiled" || reportId === "shared")) return { app: "reports", reportId: null, folder: reportId };
+    if (rest.length === 2 && reportId === "folder" && folderId !== undefined && isRouteId(folderId)) return { app: "reports", reportId: null, folder: folderId.toLowerCase() };
     return rest.length === 1 && reportId !== undefined && isRouteId(reportId) ? { app: "reports", reportId: reportId.toLowerCase() } : { app: "reports", reportId: null };
   }
   return { app: "home" };
@@ -351,7 +357,11 @@ export function formatRoute(route: Route): string {
     return "/chat";
   }
   if (route.app === "whiteboards") return formatCollection("/whiteboards", route.folder, route.boardId);
-  if (route.app === "reports") return route.reportId && isRouteId(route.reportId) ? `/reports/${route.reportId.toLowerCase()}` : "/reports";
+  if (route.app === "reports") {
+    if (route.reportId && isRouteId(route.reportId)) return `/reports/${route.reportId.toLowerCase()}`;
+    if (route.folder === "unfiled" || route.folder === "shared") return `/reports/${route.folder}`;
+    return route.folder && isRouteId(route.folder) ? `/reports/folder/${route.folder.toLowerCase()}` : "/reports";
+  }
   if (route.app === "vault") {
     if (!route.vaultId || !isRouteId(route.vaultId)) return "/vault";
     const vault = `/vault/${route.vaultId.toLowerCase()}`;

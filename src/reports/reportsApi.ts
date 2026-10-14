@@ -1,5 +1,5 @@
 import { api, ApiError } from "../api";
-import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
+import type { CatalogTable, ConnectionTest, DatasourceChoice, DatasourceSummary, QueryOutcome, ReportDetail, ReportFolder, ReportFolderTree, ReportSummary, SchemaSearchHit, SchemaSyncResult } from "../../shared/reports";
 import type { DocServerChoice, DocState, GenerateStarted, GenerationRun } from "../../shared/reportsGenerate";
 
 /** The Reports API (docs/plan/API_CONTRACTS.md § Analytics reports, Wave 45). */
@@ -8,7 +8,14 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 
 export const listReports = (q = "") => api<{ reports: ReportSummary[] }>(`/reports${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`);
 export const getReport = (id: string) => api<{ report: ReportDetail }>(`/reports/${id}`);
-export const createReport = (title: string, datasourceId: string) => api<{ report: ReportDetail }>("/reports", json("POST", { title, datasourceId }));
+export const createReport = (title: string, datasourceId: string, folderId: string | null = null) => api<{ report: ReportDetail }>("/reports", json("POST", folderId ? { title, datasourceId, folderId } : { title, datasourceId }));
+
+// Lane I: the owner's report folders (the Reports home's left nav).
+export const listFolders = () => api<ReportFolderTree>("/reports/folders");
+export const createFolder = (name: string, parentId: string | null = null) => api<{ folder: ReportFolder }>("/reports/folders", json("POST", parentId ? { name, parentId } : { name }));
+export const updateFolder = (id: string, patch: { name?: string; parentId?: string | null; position?: number }) => api<{ folder: ReportFolder }>(`/reports/folders/${id}`, json("PATCH", patch));
+export const deleteFolder = (id: string) => api<{ ok: true; purgeAfter: string; unfiled: number; subfolders: number }>(`/reports/folders/${id}`, { method: "DELETE", body: "{}" });
+export const fileReport = (id: string, folderId: string | null) => api<{ report: ReportSummary; previousFolderId: string | null }>(`/reports/${id}/folder`, json("PATCH", { folderId }));
 export const updateReport = (id: string, patch: { title?: string; datasourceId?: string; expectedRevision: number }) => api<{ report: ReportDetail }>(`/reports/${id}`, json("PATCH", patch));
 export const deleteReport = (id: string) => api<{ ok: true; purgeAfter: string }>(`/reports/${id}`, { method: "DELETE", body: "{}" });
 export const datasourceChoices = () => api<{ datasources: DatasourceChoice[] }>("/reports/datasources");

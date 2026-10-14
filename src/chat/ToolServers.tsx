@@ -5,7 +5,7 @@ import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { AGENT_BOUNDS, type CatalogTool, type DeclaredStdioServer, type ServerAuthKind, type ServerAvailability, type ToolPolicy, type ToolServerSummary } from "../../shared/agents";
-import { createServer, deleteServer, errorCode, listServers, messageOf, setServerPolicies, syncServer, updateServer, type ToolServerList } from "./chatApi";
+import { createServer, deleteServer, errorCode, listServers, messageOf, setServerPolicies, syncServer, updateServer, type SavedToolServer, type ToolServerList } from "./chatApi";
 import { POLICY_BADGES } from "./toolPicker";
 import "./chat.css";
 import { notify } from "../ui/notify";
@@ -20,8 +20,27 @@ import { FormError } from "../ui/FormError";
  */
 
 export const SECRET_HONESTY = "Encrypted at rest; anyone with the server and its key can read these secrets.";
-const STATUS_TEXT: Record<ToolServerSummary["status"], string> = { unknown: "Not synced yet", ok: "Reachable", auth_failed: "Credential refused", unreachable: "Unreachable", error: "Error" };
+const STATUS_TEXT: Record<ToolServerSummary["status"], string> = { unknown: "Not synced yet", ok: "Reachable", auth_failed: "Credential refused", unreachable: "Unreachable", error: "Error", syncing: "Syncing…" };
 const AVAILABILITY_LABELS: Record<ServerAvailability, string> = { admins: "Admins only", all: "Everyone who can chat" };
+const FAILED: ReadonlySet<ToolServerSummary["status"]> = new Set(["auth_failed", "unreachable", "error"]);
+
+/** "just now", "3 min ago", "2 h ago", "4 days ago". */
+export function syncedAgo(at: string, nowMs = Date.now()) {
+  const minutes = Math.max(0, Math.floor((nowMs - Date.parse(at)) / 60_000));
+  if (!Number.isFinite(minutes) || minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours} h ago` : `${Math.floor(hours / 24)} ${Math.floor(hours / 24) === 1 ? "day" : "days"} ago`;
+}
+
+/** The card's sync line (C1): "Synced 3 min ago · 4 tools", "Syncing…", or "Sync failed: …". */
+export function syncLine(server: Pick<ToolServerSummary, "status" | "lastError" | "toolsSyncedAt" | "tools">, nowMs = Date.now()) {
+  const count = `${server.tools.length} ${server.tools.length === 1 ? "tool" : "tools"}`;
+  if (server.status === "syncing") return "Syncing…";
+  if (FAILED.has(server.status)) return `Sync failed: ${server.lastError ?? STATUS_TEXT[server.status]}${server.toolsSyncedAt ? ` · last synced ${syncedAgo(server.toolsSyncedAt, nowMs)}` : ""}`;
+  if (server.toolsSyncedAt) return `Synced ${syncedAgo(server.toolsSyncedAt, nowMs)} · ${count}`;
+  return STATUS_TEXT.unknown;
+}
 
 /** `onCountChange` (Settings → AI's tab count): the number of servers, once loaded and after every change. */
 export function ToolServersSection({ flash, onCountChange }: { flash: (message: string) => void; onCountChange?: (count: number) => void }) {
@@ -41,6 +60,13 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  // A sync that ran past the save's bound finishes in the background (C1): poll until it settles.
+  const anySyncing = list?.servers.some((server) => server.status === "syncing") ?? false;
+  useEffect(() => {
+    if (!anySyncing) return;
+    const timer = setInterval(() => { void load(); }, 3000);
+    return () => clearInterval(timer);
+  }, [anySyncing, load]);
   const count = list?.servers.length;
   useEffect(() => { if (count !== undefined) onCountChange?.(count); }, [count, onCountChange]);
 
@@ -56,6 +82,15 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
       setSyncing(null);
     }
   }
+  /** After a save (C1): the server synced with it, so say how that went; a failed sync offers Retry. */
+  function saved(result: SavedToolServer) {
+    setEditing(null);
+    void load();
+    const next = result.server;
+    if (!result.synced || next.status === "syncing") return notify.success(next.status === "syncing" ? "Saved; still syncing its tools" : "Saved");
+    if (next.status === "ok") return notify.success(`Saved · ${next.tools.length} ${next.tools.length === 1 ? "tool" : "tools"} synced`);
+    notify.error(`Saved, but sync failed: ${next.lastError ?? STATUS_TEXT[next.status]}`, { action: { label: "Retry", onClick: () => { void sync(next); } } });
+  }
   async function remove(server: ToolServerSummary) {
     if (!await confirm.ask({ title: `Remove ${server.name}?`, message: "Agents lose its tools at their next step. Its credential is deleted.", confirmLabel: "Remove", danger: true })) return;
     try {
@@ -68,8 +103,10 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
   }
   async function toggleEnabled(server: ToolServerSummary) {
     try {
-      const { server: next } = await updateServer(server.id, { enabled: !server.enabled, expectedRevision: server.revision });
+      const { server: next, synced } = await updateServer(server.id, { enabled: !server.enabled, expectedRevision: server.revision });
       setList((current) => current ? { ...current, servers: current.servers.map((item) => item.id === next.id ? next : item) } : current);
+      // Turning a server on syncs it (C1).
+      if (synced && FAILED.has(next.status)) notify.error(`Enabled, but sync failed: ${next.lastError ?? STATUS_TEXT[next.status]}`, { action: { label: "Retry", onClick: () => { void sync(next); } } });
     } catch (reason) {
       notify.error(errorCode(reason) === "REVISION_MISMATCH" ? "This server changed elsewhere; reload" : messageOf(reason, "Could not change the server"));
     }
@@ -100,7 +137,7 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
           <div>
             <strong><span className={`ai-status-dot ai-status-${server.status}`} aria-hidden="true" />{server.name}{!server.enabled && <span className="ai-badge">Disabled</span>}{server.transport === "stdio" && <span className="ai-badge">stdio</span>}</strong>
             <small>{server.transport === "stdio" ? `Declared by the host (${server.stdioId}) · runs as Nook's user` : server.url}</small>
-            <small>{STATUS_TEXT[server.status]}{server.lastError ? ` · ${server.lastError}` : ""}{server.toolsSyncedAt ? ` · synced ${new Date(server.toolsSyncedAt).toLocaleString()}` : ""}</small>
+            <small className="ai-server-sync" title={server.toolsSyncedAt ? `Last synced ${new Date(server.toolsSyncedAt).toLocaleString()}` : undefined}>{syncLine(server)}</small>
           </div>
           <div className="ai-provider-actions">
             <button type="button" className="secondary-button" onClick={() => { void sync(server); }} disabled={syncing === server.id}><RefreshCw />{syncing === server.id ? "Syncing…" : "Sync tools"}</button>
@@ -137,7 +174,7 @@ export function ToolServersSection({ flash, onCountChange }: { flash: (message: 
         {entry.adopted ? <span className="ai-badge">Adopted</span> : <button type="button" className="secondary-button" onClick={() => setEditing({ adopt: entry })}>Adopt</button>}
       </li>)}</ul>}
     </div>}
-    {editing && <ServerDialog server={editing === "new" || "adopt" in editing ? null : editing} adopt={editing !== "new" && "adopt" in editing ? editing.adopt : null} onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); void load(); }} />}
+    {editing && <ServerDialog server={editing === "new" || "adopt" in editing ? null : editing} adopt={editing !== "new" && "adopt" in editing ? editing.adopt : null} onCancel={() => setEditing(null)} onSaved={saved} />}
     {confirm.confirmElement}
   </section>;
 }
@@ -149,7 +186,7 @@ export function wholeIn(text: string, min: number, max: number): number | null {
   return value >= min && value <= max ? value : null;
 }
 
-function ServerDialog({ server, adopt, onCancel, onSaved }: { server: ToolServerSummary | null; adopt: DeclaredStdioServer | null; onCancel: () => void; onSaved: () => void }) {
+function ServerDialog({ server, adopt, onCancel, onSaved }: { server: ToolServerSummary | null; adopt: DeclaredStdioServer | null; onCancel: () => void; onSaved: (result: SavedToolServer) => void }) {
   const stdio = server?.transport === "stdio" || adopt !== null;
   const [name, setName] = useState(server?.name ?? adopt?.name ?? "");
   const [url, setUrl] = useState(server?.url ?? "");
@@ -178,10 +215,11 @@ function ServerDialog({ server, adopt, onCancel, onSaved }: { server: ToolServer
     setError(null);
     const common = { name: name.trim(), authKind: stdio ? "none" as const : authKind, authHeader: authKind === "header" ? authHeader.trim() : null, timeoutMs: timeout * 1000, resultCapBytes: cap * 1024, availability };
     try {
-      if (server) await updateServer(server.id, { ...common, ...(stdio ? {} : { url: url.trim() }), ...(secret.trim() ? { secret: secret.trim() } : {}), removeSecret, expectedRevision: server.revision });
-      else await createServer({ ...common, ...(adopt ? { stdioId: adopt.id } : { url: url.trim() }), secret: secret.trim() || null });
+      const result = server
+        ? await updateServer(server.id, { ...common, ...(stdio ? {} : { url: url.trim() }), ...(secret.trim() ? { secret: secret.trim() } : {}), removeSecret, expectedRevision: server.revision })
+        : await createServer({ ...common, ...(adopt ? { stdioId: adopt.id } : { url: url.trim() }), secret: secret.trim() || null });
       setSecret("");
-      onSaved();
+      onSaved(result);
     } catch (reason) {
       setError(errorCode(reason) === "REVISION_MISMATCH" ? "This server changed elsewhere; close and reopen it." : messageOf(reason, "Could not save the tool server"));
       setBusy(false);

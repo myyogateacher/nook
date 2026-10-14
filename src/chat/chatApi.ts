@@ -72,8 +72,10 @@ export const providerModels = (id: string) => api<{ models: string[]; cachedAt: 
 export type ToolServerInput = { name: string; slug?: string; url?: string | null; stdioId?: string | null; authKind?: ServerAuthKind; authHeader?: string | null; secret?: string | null; timeoutMs?: number; resultCapBytes?: number; availability?: ServerAvailability; enabled?: boolean };
 export type ToolServerList = { servers: ToolServerSummary[]; stdio: { enabled: boolean; declared: DeclaredStdioServer[] } };
 export const listServers = () => api<ToolServerList>("/agents/admin/servers");
-export const createServer = (input: ToolServerInput) => api<{ server: ToolServerSummary }>("/agents/admin/servers", { method: "POST", body: JSON.stringify(input) });
-export const updateServer = (id: string, input: Partial<ToolServerInput> & { expectedRevision: number; removeSecret?: boolean }) => api<{ server: ToolServerSummary }>(`/agents/admin/servers/${id}`, { method: "PATCH", body: JSON.stringify(input) });
+/** A save syncs the server when it needs it (C1): `synced` says whether a sync ran; its outcome is the server's status. */
+export type SavedToolServer = { server: ToolServerSummary; synced?: boolean };
+export const createServer = (input: ToolServerInput) => api<SavedToolServer>("/agents/admin/servers", { method: "POST", body: JSON.stringify(input) });
+export const updateServer = (id: string, input: Partial<ToolServerInput> & { expectedRevision: number; removeSecret?: boolean }) => api<SavedToolServer>(`/agents/admin/servers/${id}`, { method: "PATCH", body: JSON.stringify(input) });
 export const deleteServer = (id: string) => api<{ ok: true }>(`/agents/admin/servers/${id}`, { method: "DELETE", body: "{}" });
 export const syncServer = (id: string) => api<{ server: ToolServerSummary }>(`/agents/admin/servers/${id}/sync`, { method: "POST", body: "{}" });
 export const setServerPolicies = (id: string, policies: Record<string, ToolPolicy>) => api<{ server: ToolServerSummary }>(`/agents/admin/servers/${id}/policies`, { method: "PUT", body: JSON.stringify({ policies }) });

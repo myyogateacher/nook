@@ -143,7 +143,8 @@ export type ServerAuthKind = typeof SERVER_AUTH_KINDS[number];
 /** Who may attach a server's tools to their agents and run them (plan §4.1; selected people are AC-D). */
 export const SERVER_AVAILABILITIES = ["admins", "all"] as const;
 export type ServerAvailability = typeof SERVER_AVAILABILITIES[number];
-export type ServerStatus = "unknown" | "ok" | "auth_failed" | "unreachable" | "error";
+/** `syncing`: a sync that ran past the save's time bound and is finishing in the background (C1). */
+export type ServerStatus = "unknown" | "ok" | "auth_failed" | "unreachable" | "error" | "syncing";
 
 /** The roles that may do what (plan §4.1; AC-O2: guests never). */
 export const AGENT_ROLE_OPTIONS = ["admin", "member", "viewer"] as const;

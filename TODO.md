@@ -19,7 +19,6 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 
   Next on `main`. Three parallel lanes each push to `main` when their gates pass. Lane A works in the main checkout; lanes B and C work in their own worktrees.
   - [ ] (B) The doc tool picker explains Tool and "Link goes into"; it says why a tool is excluded (unsynced, or a policy that is not Auto), with an admin "Allow automatically"; New report dialog layout fixes.
-  - [ ] (C) Tool servers sync on add and on connection changes, again daily, and lazily on first use.
   - [ ] (B) The AI may browse docs with the read-only tools the user ticks (056): a snapshot for each page, and "Doc changed" covers linked pages.
   - [ ] (B) Nook as a built-in doc source: notes and Files by link or picker, read with the owner's access.
   - [ ] (C) Agents get Nook's tools through an auto-provisioned internal key: read scopes plus `inbox:write`, proposals only. Admin toggle and per-agent toggle; migration 057 if needed.

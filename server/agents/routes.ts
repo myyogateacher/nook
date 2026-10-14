@@ -19,7 +19,7 @@ import { AgentError, adminRecoveryAllowed, agentsStatus, recheckAgentsStatus, re
 import { declaredStdioServers, stdioEnabled } from "./stdio";
 import { channelOf, sseFrame, type SequencedEvent } from "./stream";
 import { catalogFor, currentLink, linkableKeys, setLink } from "./tools";
-import { createServer, deleteServer, listServers, serverRow, serverSummary, setPolicies, syncServer, updateServer } from "./toolServers";
+import { createServerAndSync, deleteServer, ensureServersSynced, listServers, serverRow, serverSummary, serversAvailableTo, setPolicies, syncServer, updateServerAndSync } from "./toolServers";
 import { ProviderError } from "./loop";
 import { agentApiUsage, auditFacets, auditRunDetail, auditVisibleTo, exportAuditRuns, listAuditRuns } from "./audit";
 import { proxyImage, toolImageResponse } from "./images";
@@ -305,9 +305,9 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
     const declared = stdioEnabled() ? declaredStdioServers() : [];
     return { servers, stdio: { enabled: stdioEnabled(), declared: declared.map((entry) => ({ id: entry.id, name: entry.name, command: entry.command, args: entry.args, envNames: Object.keys(entry.env), adopted: adopted.has(entry.id) })) } };
   })));
-  app.post("/api/agents/admin/servers", handle(adminOnly(async (c) => c.json({ server: createServer(c.get("user").id, await parseJson(c.req.raw, serverCreateSchema)) }, 201))));
+  app.post("/api/agents/admin/servers", handle(adminOnly(async (c) => c.json(await createServerAndSync(c.get("user").id, await parseJson(c.req.raw, serverCreateSchema)), 201))));
   app.get("/api/agents/admin/servers/:serverId", handle(adminOnly((c) => ({ server: serverSummary(serverRow(id(c, "serverId"))) }))));
-  app.patch("/api/agents/admin/servers/:serverId", handle(adminOnly(async (c) => ({ server: updateServer(c.get("user").id, id(c, "serverId"), await parseJson(c.req.raw, serverPatchSchema)) }))));
+  app.patch("/api/agents/admin/servers/:serverId", handle(adminOnly(async (c) => updateServerAndSync(c.get("user").id, id(c, "serverId"), await parseJson(c.req.raw, serverPatchSchema)))));
   app.delete("/api/agents/admin/servers/:serverId", handle(adminOnly((c) => { deleteServer(c.get("user").id, id(c, "serverId")); return { ok: true }; })));
   app.post("/api/agents/admin/servers/:serverId/sync", handle(adminOnly(async (c) => {
     const serverId = id(c, "serverId");
@@ -338,11 +338,13 @@ export function registerAgentRoutes(app: Hono<AppEnv>) {
     return { providers: providerChoices() };
   })));
   // The tool picker's catalog (plan §12): servers the caller may use, and Nook's tools (bounded by the linked key when `agentId` is given).
-  app.get("/api/agents/catalog", handle(chatter((c) => {
+  app.get("/api/agents/catalog", handle(chatter(async (c) => {
     const raw = c.req.query("agentId");
     const agentId = raw ? uuid.safeParse(raw.toLowerCase()) : null;
     if (agentId && !agentId.success) throw new AgentError(404, "NOT_FOUND", "Not found");
     if (agentId) usableAgent(agentId.data, c.get("user").id);
+    // C1 lazy sync: an enabled server never synced lists its tools once (bounded, once a minute per server).
+    await ensureServersSynced(serversAvailableTo(c.get("user").role).filter((row) => row.enabled === 1 && row.tools_synced_at === null).map((row) => row.id));
     return { catalog: catalogFor(c.get("user").role, agentId ? agentId.data : null, c.get("user").id) };
   })));
   // --- The Audit log (AC-C, plan §7.3, D366): the key's owner in full, admins metadata only ---

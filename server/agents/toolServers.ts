@@ -47,7 +47,7 @@ export function parseTools(json: string): StoredTool[] {
 
 const availabilityOf = (visibility: ToolServerRow["visibility"]): ServerAvailability => visibility === "all_users" ? "all" : "admins";
 const visibilityOf = (availability: ServerAvailability): ToolServerRow["visibility"] => availability === "all" ? "all_users" : "private";
-const statusOf = (value: string): ServerStatus => (["unknown", "ok", "auth_failed", "unreachable", "error"] as const).find((item) => item === value) ?? "unknown";
+const statusOf = (value: string): ServerStatus => (["unknown", "ok", "auth_failed", "unreachable", "error", "syncing"] as const).find((item) => item === value) ?? "unknown";
 
 /** The admin policy of every tool of a server (seeded by Sync). */
 export function serverPolicies(serverId: string): Map<string, ToolPolicy> {
@@ -358,6 +358,7 @@ const storedTool = (tool: McpToolInfo): StoredTool => ({
  */
 export async function syncServer(actorId: string | null, id: string): Promise<ToolServerSummary> {
   const row = serverRow(id);
+  const before = new Set(parseTools(row.tools_json).map((tool) => tool.name));
   try {
     const listed = await sessionFor(row).listTools();
     // Server-chosen names are validated (review L7): anything outside [A-Za-z0-9_.-]{1,128} is dropped and counted.
@@ -374,12 +375,171 @@ export async function syncServer(actorId: string | null, id: string): Promise<To
       db.query("UPDATE agent_tool_servers SET tools_json = ?, tools_synced_at = ?, status = 'ok', last_error = NULL, revision = revision + 1, updated_at = ? WHERE id = ?").run(json, now(), now(), id);
     })();
     audit(actorId, null, "agents.server.sync", { serverId: id, ok: true, toolCount: tools.length, droppedTools });
+    const after = new Set(tools.map((tool) => tool.name));
+    const added = [...after].filter((name) => !before.has(name));
+    const removed = [...before].filter((name) => !after.has(name));
+    if (added.length || removed.length) slog.info(`Tool server ${row.slug} synced: ${added.length} added (${added.slice(0, 50).join(", ") || "none"}), ${removed.length} removed (${removed.slice(0, 50).join(", ") || "none"})`);
   } catch (error) {
     if (error instanceof AgentError && error.code !== "TOO_LARGE") throw error;
     const described = error instanceof AgentError ? { status: "error" as const, message: error.message } : describeMcpError(error);
     db.query("UPDATE agent_tool_servers SET status = ?, last_error = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(described.status, described.message.slice(0, 200), now(), id);
     audit(actorId, null, "agents.server.sync", { serverId: id, ok: false, status: described.status });
+    slog.warn(`Tool server ${row.slug} sync failed: ${described.message.slice(0, 200)}`);
     void dropSession(id);
   }
   return serverSummary(serverRow(id));
+}
+
+// --- Automatic sync (C1): on save, in the background for stale servers, and lazily on first use -----
+
+/** The sync in flight per server; a later request runs after it, so an edit's sync sees the new row. */
+const inflight = new Map<string, Promise<ToolServerSummary | null>>();
+/** When a lazy sync was last tried per server (at most once a minute). */
+const lazyTried = new Map<string, number>();
+export const LAZY_SYNC_INTERVAL_MS = 60_000;
+export const STALE_SYNC_MS = 24 * 3_600_000;
+
+/**
+ * A sync that never throws: a refusal syncServer passes up (a stdio server the host no longer
+ * declares, a row that changed mid-sync) is recorded as the server's status and last error.
+ */
+async function syncRecorded(actorId: string | null, id: string): Promise<ToolServerSummary | null> {
+  if (!serverRowOrNull(id)) return null;
+  try {
+    return await syncServer(actorId, id);
+  } catch (error) {
+    const row = serverRowOrNull(id);
+    if (!row) return null;
+    const message = error instanceof Error ? error.message : "The sync failed";
+    db.query("UPDATE agent_tool_servers SET status = 'error', last_error = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(message.slice(0, 200), now(), id);
+    slog.warn(`Tool server ${row.slug} sync failed: ${message.slice(0, 200)}`);
+    return serverSummary(serverRow(id));
+  }
+}
+
+/** Queues a sync behind any in flight for the same server. */
+function queueSync(actorId: string | null, id: string): Promise<ToolServerSummary | null> {
+  const previous = inflight.get(id);
+  const next = (previous ?? Promise.resolve(null)).catch(() => null).then(() => syncRecorded(actorId, id));
+  inflight.set(id, next);
+  void next.finally(() => { if (inflight.get(id) === next) inflight.delete(id); });
+  return next;
+}
+
+export const syncInFlight = (id: string) => inflight.has(id);
+
+/** Waits for a promise at most `ms`; "late" when it has not settled by then. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | "late"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => { timer = setTimeout(() => resolve("late"), ms); });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Runs a sync bounded by the server's timeout. When it runs over, the server shows `syncing` and
+ * the sync finishes in the background; the summary returned then is the row as it stands.
+ */
+async function boundedSync(actorId: string | null, id: string, timeoutMs: number): Promise<ToolServerSummary | null> {
+  const work = queueSync(actorId, id);
+  const result = await within(work, timeoutMs);
+  if (result !== "late") return result;
+  // Not a new revision: the sync in flight holds a session at the current one.
+  if (inflight.get(id)) db.query("UPDATE agent_tool_servers SET status = 'syncing' WHERE id = ?").run(id);
+  void work.then((summary) => { if (summary) slog.info(`Tool server ${summary.slug} finished syncing in the background (${summary.status})`); });
+  const row = serverRowOrNull(id);
+  return row ? serverSummary(row) : null;
+}
+
+/** The fields whose change needs a fresh catalog (C1): where and how Nook reaches the server, or turning it on. */
+export function needsResync(before: ToolServerRow, after: ToolServerRow) {
+  return before.url !== after.url || before.transport !== after.transport || before.auth_kind !== after.auth_kind || before.auth_header !== after.auth_header
+    || before.secret_ct !== after.secret_ct || (before.enabled === 0 && after.enabled === 1);
+}
+
+/** A save's answer: the server as it stands after the save, and whether a sync ran with it. */
+export type SavedServer = { server: ToolServerSummary; synced: boolean };
+
+/** Create, then sync right away (C1); a failing sync still leaves the server saved, with its status and error. */
+export async function createServerAndSync(actorId: string, input: ToolServerInput, timeoutMs?: number): Promise<SavedServer> {
+  const created = createServer(actorId, input);
+  if (!created.enabled) return { server: created, synced: false };
+  const summary = await boundedSync(actorId, created.id, timeoutMs ?? created.timeoutMs);
+  return { server: summary ?? created, synced: true };
+}
+
+/** Update, then sync when the change needs it (C1): the URL, transport, credential, or turning it on. */
+export async function updateServerAndSync(actorId: string, id: string, input: Parameters<typeof updateServer>[2], timeoutMs?: number): Promise<SavedServer> {
+  const before = serverRow(id);
+  const updated = updateServer(actorId, id, input);
+  const after = serverRow(id);
+  if (after.enabled !== 1 || !needsResync(before, after)) return { server: updated, synced: false };
+  const summary = await boundedSync(actorId, id, timeoutMs ?? after.timeout_ms);
+  return { server: summary ?? updated, synced: true };
+}
+
+/**
+ * Lazy sync (C1): an enabled server that was never synced gets one sync bounded by its timeout,
+ * at most once a minute per server. Agent runs, the agents tool catalog, and the reports doc-servers
+ * listing call it. It never throws.
+ */
+export async function ensureSynced(serverId: string, nowMs = Date.now()): Promise<void> {
+  const row = serverRowOrNull(serverId);
+  if (!row || row.enabled !== 1 || row.tools_synced_at !== null) return;
+  const running = inflight.get(serverId);
+  if (running) {
+    await within(running.catch(() => null), row.timeout_ms);
+    return;
+  }
+  const last = lazyTried.get(serverId);
+  if (last !== undefined && nowMs - last < LAZY_SYNC_INTERVAL_MS) return;
+  lazyTried.set(serverId, nowMs);
+  try {
+    await boundedSync(null, serverId, row.timeout_ms);
+  } catch (error) {
+    slog.warn(`Lazy sync of tool server ${row.slug} failed`, { err: error });
+  }
+}
+
+/** Lazy sync for several servers at once, each bounded by its own timeout. */
+export async function ensureServersSynced(serverIds: Iterable<string>) {
+  await Promise.all([...new Set(serverIds)].map((id) => ensureSynced(id)));
+}
+
+let resyncRunning: Promise<number> | null = null;
+
+/**
+ * Background re-sync (C1): enabled servers whose last sync is older than 24 hours (or that never
+ * synced, or were left `syncing` by a restart), one at a time. Failures are logged and recorded on
+ * the server. Resolves to the number of servers synced.
+ */
+export function resyncStaleServers(nowMs = Date.now()): Promise<number> {
+  if (resyncRunning) return resyncRunning;
+  const cutoff = new Date(nowMs - STALE_SYNC_MS).toISOString();
+  const rows = (db.query("SELECT id, slug, status, tools_synced_at FROM agent_tool_servers WHERE enabled = 1 ORDER BY tools_synced_at IS NOT NULL, tools_synced_at").all() as Array<{ id: string; slug: string; status: string; tools_synced_at: string | null }>)
+    .filter((row) => !inflight.has(row.id) && ((row.tools_synced_at !== null && row.tools_synced_at < cutoff) || row.status === "syncing"));
+  if (rows.length === 0) return Promise.resolve(0);
+  const run = (async () => {
+    let done = 0;
+    for (const row of rows) {
+      try {
+        const summary = await queueSync(null, row.id);
+        if (summary && summary.status !== "ok") slog.warn(`Background re-sync of tool server ${row.slug}: ${summary.lastError ?? summary.status}`);
+        if (summary) done += 1;
+      } catch (error) {
+        slog.error(`Background re-sync of tool server ${row.slug} failed`, error);
+      }
+    }
+    return done;
+  })();
+  resyncRunning = run;
+  void run.finally(() => { if (resyncRunning === run) resyncRunning = null; });
+  return run;
+}
+
+export function resetAutoSyncForTests() {
+  lazyTried.clear();
 }

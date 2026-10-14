@@ -18,7 +18,7 @@ import { resumeRotations } from "./vault/rotation";
 import { vaultStatus } from "./vault/status";
 import { sweepAgentAudit } from "./agents/audit";
 import { sweepAgentRateLimits } from "./agents/limits";
-import { sweepSessions } from "./agents/toolServers";
+import { resyncStaleServers, sweepSessions } from "./agents/toolServers";
 import { sweepKnowledge } from "./knowledge/index";
 import { sweepSchemaSync } from "./reports/schemaCatalog";
 import { logger } from "./log";
@@ -164,6 +164,12 @@ export function runSweep(options: { boot?: boolean; nowMs?: number } = {}) {
         await sweepSessions(options.nowMs);
       } catch (error) {
         slog.error("Tool server session sweep failed", error);
+      }
+      try {
+        // Tool servers (C1): enabled servers last synced over 24 hours ago re-sync one at a time, in the background.
+        void resyncStaleServers(options.nowMs).then((count) => { if (count) slog.info(`Tool server re-sync: ${count} servers synced`); }).catch((error) => slog.error("Tool server re-sync failed", error));
+      } catch (error) {
+        slog.error("Tool server re-sync failed", error);
       }
       try {
         // Knowledge bases (Wave 44, AC-E): sources the owner can no longer read become unavailable; changed ones are indexed again.

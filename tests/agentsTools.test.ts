@@ -175,7 +175,10 @@ describe("tool servers (admin, §4.1, D349, D354)", () => {
     const created = await api(admin, "POST", "/agents/admin/servers", { name: "Fake Tools", url: mcp.url, authKind: "bearer", secret: "srv-secret-canary-0001", availability: "all", timeoutMs: 5000, resultCapBytes: 4096 });
     expect(created.status).toBe(201);
     serverId = created.body.server.id;
-    expect(created.body.server).toMatchObject({ slug: "fake-tools", transport: "http", hasSecret: true, hint: "srv…0001", status: "unknown", tools: [], availability: "all", resultCapBytes: 4096 });
+    // C1: a save syncs the server right away.
+    expect(created.body.synced).toBe(true);
+    expect(created.body.server).toMatchObject({ slug: "fake-tools", transport: "http", hasSecret: true, hint: "srv…0001", status: "ok", availability: "all", resultCapBytes: 4096 });
+    expect(created.body.server.tools.length).toBeGreaterThan(0);
     expect(JSON.stringify(created.body)).not.toContain("canary");
     const synced = await api(admin, "POST", `/agents/admin/servers/${serverId}/sync`, {});
     expect(synced.status).toBe(200);
@@ -217,7 +220,8 @@ describe("tool servers (admin, §4.1, D349, D354)", () => {
       expect({ url, status: refused.status, code: refused.body.code, field: refused.body.field }).toEqual({ url, status: 400, code: "EGRESS_REFUSED", field: "url" });
     }
     // A saved server whose name later resolves to a private address is still refused at call time (the guard runs per request).
-    const privateServer = await api(admin, "POST", "/agents/admin/servers", { name: "Private", url: "https://tools.example.test/mcp" });
+    // Saved disabled, so the save does not sync (C1) and look up a name that does not exist.
+    const privateServer = await api(admin, "POST", "/agents/admin/servers", { name: "Private", url: "https://tools.example.test/mcp", enabled: false });
     expect(privateServer.status).toBe(201);
     expect((await api(admin, "PATCH", `/agents/admin/servers/${privateServer.body.server.id}`, { url: "https://10.0.0.7/mcp", expectedRevision: privateServer.body.server.revision })).body).toMatchObject({ code: "EGRESS_REFUSED", field: "url" });
     // No real DNS: the name "resolves" to a private address through the test seam.

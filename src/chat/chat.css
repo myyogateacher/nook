@@ -223,6 +223,7 @@
 .ai-status-dot { display: inline-block; width: 9px; height: 9px; margin-right: 8px; border-radius: 50%; background: #5b5b62; vertical-align: 1px; }
 .ai-status-ok { background: #9ad5a0; }
 .ai-status-auth_failed, .ai-status-unreachable, .ai-status-error { background: #fda4af; }
+.ai-status-syncing { background: #fcd34d; }
 .ai-badge-ok { background: #15241a; color: #9ad5a0; }
 .ai-badge-warn { background: #2a1f14; color: #f3b56e; }
 .ai-tools { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }

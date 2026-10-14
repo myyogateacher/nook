@@ -21,6 +21,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 - [ ] (Lane K) "Pick from Nook" (B4): search the text of Files documents, not only their names (`GET /api/files`, newest 500).
 - [ ] Metric catalog: Check doc does not re-extract the catalog when a linked page changes. It names the changed page, not the changed metrics. A non-Nook doc server's linked pages reach the catalog only after a run has read them.
 - [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. Do this after v0.38.0 merges, since that release adds Inspect's reopen.
+- [ ] Versions: after Back from a version's read-only view, Forward does not reopen it (found in v0.38.0 QA; D480 `layerKey` for the view).
 - [ ] Report folders: a reader's own placement of reports shared with them. Today they stay under Shared with me.
 - [ ] Report shares live in `report_members` and `report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, together with the Access sheet.
 

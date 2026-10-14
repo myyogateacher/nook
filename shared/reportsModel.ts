@@ -32,7 +32,9 @@ export type ProbeOutcome = "supported" | "unsupported" | "inconclusive";
 export type ToolCallingProbe = {
   required: { ok: boolean; outcome: ProbeOutcome; status: number | null; error: string | null };
   named: { ok: boolean; outcome: ProbeOutcome; status: number | null; error: string | null };
-  compat: { requiredToolChoice: boolean; namedToolChoice: boolean };
+  compat: { requiredToolChoice: boolean; namedToolChoice: boolean; reasoningEffort?: string };
+  /** 2026-10-14: set when the model refused tools at its default reasoning and Nook found an effort that works (now saved). */
+  reasoning?: { effort: string; note: string } | null;
   inconclusive: boolean;
   model: string;
   ms: number;

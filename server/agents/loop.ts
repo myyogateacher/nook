@@ -1,4 +1,4 @@
-import { AGENT_BOUNDS, CHAT_IMAGE_BOUNDS, MODEL_TIMEOUTS, type ProviderCompat, type TokenUsage } from "../../shared/agents";
+import { AGENT_BOUNDS, CHAT_IMAGE_BOUNDS, MODEL_TIMEOUTS, type ProviderCompat, type ReasoningEffort, type TokenUsage } from "../../shared/agents";
 import { EgressError, egressFetch, readEgressText, type EgressResponse } from "./egress";
 
 /**
@@ -38,7 +38,19 @@ export type CompletionRequest = {
   messages: ChatTurn[]; model?: string; temperature?: number | null; maxOutputTokens?: number; tools?: ModelTool[]; toolChoice?: ToolChoice;
   /** Wave 48b's tool-calling probe: send the choice as asked (ignore the compat flags) and never retry a 400 with `auto`. */
   probeChoice?: boolean;
+  /** 2026-10-14: the probe's `reasoning_effort` for this request (overrides the provider's compat; `omit` sends none). */
+  reasoningEffort?: ReasoningEffort;
 };
+
+/** Whether a provider's 400 says the model refuses function tools at its (default) reasoning effort (OpenAI's newer models in Chat Completions). */
+export const refusesToolsAtReasoning = (text: string) => /reasoning[_ ]?effort/i.test(text) || (/reasoning/i.test(text) && /tool/i.test(text));
+
+/**
+ * Where a learned compat flag is saved (providers.ts registers it): a live request that had to retry
+ * with `reasoning_effort: "none"` records it on the provider, so later requests send it at once.
+ */
+let compatLearner: ((providerId: string, patch: { reasoningEffort: ReasoningEffort }) => void) | null = null;
+export const setCompatLearner = (learner: typeof compatLearner) => { compatLearner = learner; };
 export type CompletionResult = { content: string; finishReason: string | null; usage: TokenUsage; model: string | null; toolCalls: ModelToolCall[] };
 /**
  * What a streaming call has produced so far (Wave 42 QA M2): whether the provider answered (a 2xx
@@ -158,10 +170,10 @@ function rethrow(error: unknown): never {
   throw error;
 }
 
-async function failedResponse(response: EgressResponse): Promise<never> {
+async function failedResponse(response: EgressResponse, readBody?: string): Promise<never> {
   let detail: ReturnType<typeof excerpt> = null;
   try {
-    detail = excerpt(await readEgressText(response, ERROR_BODY_MAX_BYTES));
+    detail = excerpt(readBody ?? await readEgressText(response, ERROR_BODY_MAX_BYTES));
   } catch {
     detail = null;
   }
@@ -222,6 +234,8 @@ export async function completeStreaming(connection: ProviderConnection, request:
     [connection.compat.tokenParam]: request.maxOutputTokens ?? 4096
   };
   if (typeof request.temperature === "number") body.temperature = request.temperature;
+  const effort = request.reasoningEffort ?? connection.compat.reasoningEffort;
+  if (effort && effort !== "omit") body.reasoning_effort = effort;
   if (request.tools && request.tools.length > 0) {
     const choice = request.toolChoice ?? "auto";
     const named = typeof choice === "object" ? choice.name : null;
@@ -238,14 +252,30 @@ export async function completeStreaming(connection: ProviderConnection, request:
     }
   };
   let response = await send();
-  // Review L2 (Wave 46): a provider that refuses `required` or a named choice with a 400 is asked once
-  // more with `auto` (under a named choice only that tool is still offered, so it is the only call to make).
-  if (response.status === 400 && body.tool_choice !== undefined && body.tool_choice !== "auto" && !request.probeChoice) {
-    response.cancel();
-    body.tool_choice = "auto";
-    response = await send();
+  let readBody: string | undefined;
+  if (response.status === 400 && !request.probeChoice) {
+    readBody = await readEgressText(response, ERROR_BODY_MAX_BYTES).catch(() => "");
+    // 2026-10-14: a model that refuses tools at its default reasoning is asked once more with
+    // reasoning_effort "none"; when that works the provider's compat learns it (saved and audited).
+    if (body.tools && body.reasoning_effort === undefined && refusesToolsAtReasoning(readBody)) {
+      body.reasoning_effort = "none";
+      response = await send();
+      readBody = undefined;
+      if (response.status >= 200 && response.status < 300) {
+        connection.compat = { ...connection.compat, reasoningEffort: "none" };
+        try { compatLearner?.(connection.id, { reasoningEffort: "none" }); } catch { /* the request still goes on */ }
+      }
+    }
+    // Review L2 (Wave 46): a provider that refuses `required` or a named choice with a 400 is asked once
+    // more with `auto` (under a named choice only that tool is still offered, so it is the only call to make).
+    if (response.status === 400 && body.tool_choice !== undefined && body.tool_choice !== "auto") {
+      if (readBody === undefined) response.cancel();
+      body.tool_choice = "auto";
+      response = await send();
+      readBody = undefined;
+    }
   }
-  if (response.status < 200 || response.status >= 300) await failedResponse(response);
+  if (response.status < 200 || response.status >= 300) await failedResponse(response, readBody);
   progress.started = true;
 
   const decoder = new TextDecoder();

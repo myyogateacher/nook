@@ -70,7 +70,15 @@ export type ProviderCompat = {
   requiredToolChoice?: boolean;
   /** The context window, in (estimated) tokens, for the message window. */
   contextTokens: number;
+  /**
+   * 2026-10-14: `reasoning_effort` sent with every chat/completions request (absent or `omit`: none
+   * is sent). Some newer OpenAI models refuse function tools at their default reasoning in Chat
+   * Completions; `none` is the workaround (Test tool calling and a live 400 set it).
+   */
+  reasoningEffort?: ReasoningEffort;
 };
+export const REASONING_EFFORTS = ["omit", "none", "minimal", "low", "medium", "high"] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 export const DEFAULT_COMPAT: ProviderCompat = { tokenParam: "max_completion_tokens", streamUsage: true, supportsTools: true, contextTokens: 128_000 };
 
 /**

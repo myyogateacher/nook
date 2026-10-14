@@ -1,6 +1,6 @@
 /**
  * Run as a separate `bun` process by tests/attachmentsUndoDurable.test.ts: a "restarted server" on the
- * harness's own data directory (the environment is inherited). It opens the database afresh, with no
+ * harness's own data directory (the harness's settings are passed on: tests/support/probe.ts harnessEnv). It opens the database afresh, with no
  * in-process state from the test process, runs one Undo-record operation, and prints one JSON line.
  *
  * argv[2] is a JSON command:

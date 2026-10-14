@@ -20,6 +20,15 @@ export function probeEnv(extra: Record<string, string> = {}): Record<string, str
   return { ...env, ...extra };
 }
 
+/** The variables tests/support/harness.ts sets: a probe that reopens the shared server's data passes these on. */
+const HARNESS_ENV_NAMES = ["DATA_DIR", "APP_ORIGIN", "APP_ORIGINS", "COOKIE_SECURE", "PORT", "NODE_ENV", "ALLOW_REGISTRATION", "TOTP_POLICY", "SIGNUP_ROLE",
+  "TOTP_ENCRYPTION_KEY", "VAULT_ENCRYPTION_KEY", "AGENT_SECRETS_KEY", "AGENT_ALLOWED_PRIVATE_HOSTS", "ALLOWED_EMAILS", "MAX_UPLOAD_BYTES", "USER_STORAGE_QUOTA_BYTES", "MIN_FREE_DISK_BYTES"];
+
+/** The harness's own settings, for a probe that acts as a restarted shared server (nothing else leaks in). */
+export function harnessEnv(): Record<string, string> {
+  return Object.fromEntries(HARNESS_ENV_NAMES.flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
+}
+
 /** Runs tests/support/<script> with `args` and returns the last stdout line parsed as JSON. */
 export function runProbe<T = Record<string, any>>(script: string, args: string[] = [], options: { env?: Record<string, string> } = {}): T {
   const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, script), ...args], { stdout: "pipe", stderr: "pipe", env: probeEnv(options.env) });

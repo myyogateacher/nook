@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { join } from "node:path";
 import { createUser, db, type Session } from "./support/harness";
 import { addCalendarMember, api, calendarWithEvent, defaultFolderOf, link, listOn, shareCalendar, unlink, upload, uploadAttachment } from "./support/attachments";
+import { harnessEnv, runProbe } from "./support/probe";
 
 const { config } = await import("../server/config");
 const { recordRemovedLink, removedLink, resetUndoTickets, sweepUndoRecords, undoTicketCounts, UNDO_TICKET_TTL_MS } = await import("../server/attachments/undoTickets");
@@ -22,10 +22,8 @@ const { missingAttachmentTriggers } = await import("../server/attachments/sweep"
 const tasks = (session: Session, method: string, path: string, body?: unknown) => api(session, method, `/tasks${path}`, body);
 
 function restarted(command: Record<string, unknown>) {
-  const probe = Bun.spawnSync(["bun", "--no-env-file", join(import.meta.dir, "support", "undoRestartProbe.ts"), JSON.stringify(command)], { stdout: "pipe", stderr: "pipe", env: { ...process.env } });
-  const output = probe.stdout.toString().trim().split("\n").at(-1) ?? "";
-  if (probe.exitCode !== 0 || !output) throw new Error(`probe failed: ${probe.stderr.toString().slice(-2000)}`);
-  return JSON.parse(output) as Record<string, unknown> | null;
+  // The harness's settings only (its data directory and keys), never the rest of the parent's environment.
+  return runProbe<Record<string, unknown> | null>("undoRestartProbe.ts", [JSON.stringify(command)], { env: harnessEnv() });
 }
 
 /** Another connection to the same file: what a second process (or the restarted server) sees and writes. */

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createUser, db, origin, request, type Session } from "./support/harness";
 import { startFakeProvider } from "./support/fakeProvider";
 import { retireUsersAfterFile } from "./support/retireUsers";
+import { PROBE_TIMEOUT_MS, runProbe } from "./support/probe";
 
 const { deleteProvider } = await import("../server/agents/providers");
 const { readAgentSettings, writeAgentSettings } = await import("../server/agents/settings");
@@ -502,15 +503,10 @@ describe("v0.33.0 review LOWs", () => {
 });
 
 describe("Re-index hour and search limit survive a restart", () => {
-  const probe = join(import.meta.dir, "support", "knowledgeLimitsProbe.ts");
   test.skipIf(!Bun.which("bun"))("a second process on the same data still refuses (429 + Retry-After) and keeps the key's count", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "nook-kb-limits-"));
     try {
-      const run = (phase: string) => {
-        const result = Bun.spawnSync(["bun", "--no-env-file", probe, phase, dataDir], { stdout: "pipe", stderr: "pipe", env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "" } });
-        if (result.exitCode !== 0) throw new Error(result.stderr.toString().slice(-2000));
-        return JSON.parse(result.stdout.toString().trim().split("\n").at(-1)!) as Record<string, any>;
-      };
+      const run = (phase: string) => runProbe("knowledgeLimitsProbe.ts", [phase, dataDir]);
       const first = run("first");
       expect(first).toMatchObject({ reindex: "ok", searches: 60, refusedSearch: true });
       const second = run("second");
@@ -520,7 +516,7 @@ describe("Re-index hour and search limit survive a restart", () => {
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, PROBE_TIMEOUT_MS * 2);
 
   test("the in-process hour comes from SQLite (the cooldown is not a Map)", async () => {
     const kbId = await newBase(owner, "Persistent hour");

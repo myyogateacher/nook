@@ -491,8 +491,17 @@ export function acquireDialogSentinel(env: SentinelEnv = defaultSentinelEnv(), k
   };
 }
 
-/** Tests only: forget every layer, sentinel, reopen, and ignored move (module state outlives a test). */
+/**
+ * Tests only: forget every guard, layer, sentinel, reopen, and ignored move (module state outlives a
+ * test). tests/support/dom.tsx calls it after every client test, so one that fails mid-way (its
+ * dialog never unmounted, its guard still registered) cannot steer the next file's Back.
+ */
 export function resetHistoryDialogsForTests() {
+  guards.length = 0;
+  closingFromSentinel = false;
+  offeredReopen = null;
+  heldFromSentinel = false;
+  lastEnv = null;
   layers.length = 0;
   held.length = 0;
   forwardReopens.clear();

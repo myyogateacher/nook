@@ -42,10 +42,18 @@ export function installDom(url = "http://nook.test/settings/team") {
 async function cleanup() {
   const { act } = await import("react");
   for (const { root, container } of mounted) {
-    await act(async () => { root.unmount(); });
+    try {
+      await act(async () => { root.unmount(); });
+    } catch { /* a test that failed mid-way may leave a tree that throws on unmount; the reset below still runs */ }
     container.remove();
   }
   mounted = [];
+  // Dialog guards, sentinels, and reopen slots are module state in src/historyDialogs.ts: a test that
+  // failed before its dialogs closed would otherwise leave them steering later tests' Back and Forward.
+  (await import("../../src/historyDialogs")).resetHistoryDialogsForTests();
+  // The forgotten sentinels may still sit in the window's history: start the next test on a fresh
+  // entry (a push drops any Forward entries), so its Back and Forward meet only its own.
+  if (typeof window !== "undefined" && window.history) window.history.pushState(null, "", window.location.href);
 }
 
 export type ApiCall = { method: string; path: string; body: unknown };

@@ -44,7 +44,8 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 ## Known LOW leftovers
 
 - [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
-- [ ] (Lane F) Lane B: when the reports doc-servers listing calls `ensureSynced` (C1), `tests/docSource.test.ts` must keep its server never-synced on a name that resolves fast (or give it `tools_synced_at`), or the lazy sync waits on DNS for `docs.example.test`.
+- [ ] (Seen by lane F) `tests/agentsReview.test.ts` "module off by key mismatch" fails in the full run (agents status `key_mismatch`) but passes alone: some earlier file leaves a secret sealed with another key. Find the file and clean it up.
+- [ ] (Seen by lane F) Full runs under host load (load average 15–22) time out 5 s tests in unrelated areas (signInMail, passwordFlows, tasksQuery, today, calendarBudget, historyStackClient D478 at 2.4 s); see the Docker-verify item below.
 - [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
 - [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.
 - [ ] (Lane G) Docker verify under host load: 5 s server-test timeouts flake (seen on "collection sharing > role matrix", "POST /api/tasks/query: access", `vaultCanary`); raise those timeouts or make them load-tolerant.

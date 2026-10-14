@@ -5,6 +5,7 @@ import { retireUsersAfterFile } from "./support/retireUsers";
 const { McpClientError, McpSession } = await import("../server/agents/mcpClient");
 const { cutBytes, docFromText, docServerChoices, docSessions, docState, docToolArgs, docToolOf, fetchDoc, pickDocTool, recordSnapshot, SNAPSHOTS_KEPT } = await import("../server/reports/docSource");
 const { REPORT_LIMITS } = await import("../shared/reports");
+const { ensureSynced } = await import("../server/agents/toolServers");
 type StoredTool = import("../server/agents/toolServers").StoredTool;
 type ToolServerRow = import("../server/agents/toolServers").ToolServerRow;
 type McpTransport = import("../server/agents/mcpClient").McpTransport;
@@ -24,6 +25,9 @@ async function send(session: Session, method: string, path: string, body?: unkno
   const text = await response.text();
   return { status: response.status, body: text ? JSON.parse(text) as Json : {} };
 }
+
+/** The tool server's URL: loopback (allowed in tests) on the discard port, where nothing listens; never a name that needs DNS. */
+const NEVER_ANSWERS = "http://127.0.0.1:9/mcp";
 
 const tool = (name: string, properties: Record<string, unknown>): StoredTool => ({ name, title: null, description: "", inputSchema: { type: "object", properties }, readOnly: true, openWorld: false, destructive: false });
 const OUTLINE_FETCH = tool("fetch", { resource: { type: "string" }, id: { type: "string" } });
@@ -58,16 +62,16 @@ beforeAll(async () => {
   admin = await createUser("Doc source admin");
   db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
   member = await createUser("Doc source member");
-  const created = await send(admin, "POST", "/agents/admin/servers", { name: `Docs ${crypto.randomUUID().slice(0, 6)}`, url: "https://docs.example.test/mcp", availability: "all", enabled: false });
+  // NEVER_ANSWERS refuses at once (no DNS), so a sync on save or a lazy sync (C1) fails fast and leaves it never synced.
+  const created = await send(admin, "POST", "/agents/admin/servers", { name: `Docs ${crypto.randomUUID().slice(0, 6)}`, url: NEVER_ANSWERS, availability: "all", enabled: false });
   expect(created.status).toBe(201);
-  // Saved disabled so the save does not sync (C1) against a name that does not resolve; turned on here, still never synced.
+  // Saved disabled so the save does not sync; turned on here, still never synced.
   db.query("UPDATE agent_tool_servers SET tools_json = ?, enabled = 1 WHERE id = ?").run(JSON.stringify([tool("search", { query: {} }), OUTLINE_FETCH, tool("get_page", { url: {} })]), created.body.server.id);
   server = db.query("SELECT * FROM agent_tool_servers WHERE id = ?").get(created.body.server.id) as ToolServerRow;
   const datasource = await send(admin, "POST", "/reports/admin/datasources", { name: `Docs DS ${crypto.randomUUID().slice(0, 6)}`, url: "https://ch.example.test:8443/", username: "ro", database: "analytics" });
   expect(datasource.status).toBe(201);
   datasourceId = datasource.body.datasource.id;
-  // Creating the server syncs it now (bounded by its timeout); the fake host never answers, so allow for that.
-}, 20_000);
+});
 afterAll(() => {
   db.query("DELETE FROM agent_tool_servers WHERE id = ?").run(server.id);
 });
@@ -274,6 +278,11 @@ describe("snapshots and Doc changed", () => {
     expect(mine.tools.map((item: Json) => item.name)).toEqual(["search", "fetch", "get_page"]);
     // B1: a server whose tools were never synced says so (the dialog explains it).
     expect(mine.synced).toBe(false);
+    // A lazy sync (C1, as the listing may run) fails at once on the local address, and it stays never synced.
+    const started = Date.now();
+    await ensureSynced(server.id);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect((db.query("SELECT tools_synced_at FROM agent_tool_servers WHERE id = ?").get(server.id) as { tools_synced_at: string | null }).tools_synced_at).toBeNull();
     db.query("UPDATE agent_tool_servers SET tools_synced_at = ? WHERE id = ?").run(new Date().toISOString(), server.id);
     expect((await send(member, "GET", "/reports/doc-servers")).body.servers.find((item: Json) => item.id === server.id).synced).toBe(true);
     db.query("INSERT INTO agent_tool_policies (server_id, tool_name, policy) VALUES (?, 'fetch', 'off') ON CONFLICT(server_id, tool_name) DO UPDATE SET policy = 'off'").run(server.id);

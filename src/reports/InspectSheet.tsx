@@ -28,6 +28,8 @@ type Props = {
   busy: boolean;
   onRerun: (queryKey: string) => void;
   onClose: () => void;
+  /** Forward after Back closed the sheet shows it again, as Changes and Share do. */
+  reopen?: () => void;
   initialTab?: InspectTab;
   /** Tests: the Provenance tab's answer without a request. */
   provenance?: ProvenanceView;
@@ -112,7 +114,7 @@ function Fact({ term, children }: { term: string; children: ReactNode }) {
  * Each tab is a real history step (inspectHistory.ts): Back and Forward move through the tabs; Back
  * from the first one closes the sheet.
  */
-export function InspectSheet({ report, block, query, view, palette, canRerun, busy, onRerun, onClose, initialTab = "query", provenance: given }: Props) {
+export function InspectSheet({ report, block, query, view, palette, canRerun, busy, onRerun, onClose, reopen, initialTab = "query", provenance: given }: Props) {
   const [shownTab, setShownTab] = useState<{ tab: InspectTab; step: number }>({ tab: initialTab, step: 0 });
   const tab = shownTab.tab;
   const onCloseRef = useRef(onClose);
@@ -125,7 +127,7 @@ export function InspectSheet({ report, block, query, view, palette, canRerun, bu
     close: () => onCloseRef.current()
   }));
   // Back from the first tab: the sheet's own layer closes (no tab entry is left above it then).
-  useHistoryDialogGuard(true, onClose);
+  useHistoryDialogGuard(true, onClose, { reopen });
   // Registered after the sheet's guard, so the tabs answer Back and Forward first.
   useEffect(() => registerHistoryDialogGuard((state) => tabs.guard(state)), [tabs]);
   const close = () => tabs.requestClose();

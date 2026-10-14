@@ -105,6 +105,16 @@ describe("the SQL console moves off a report with blocks", () => {
   });
 });
 
+describe("Back and Forward on a phone", () => {
+  test("Forward after Back reopens Inspect, as it does Changes, Share, Schedule, Model, and Rename (release QA at 390 px)", async () => {
+    const view = await Bun.file(new URL("../src/reports/ReportView.tsx", import.meta.url)).text();
+    const sheet = await Bun.file(new URL("../src/reports/InspectSheet.tsx", import.meta.url)).text();
+    expect(view).toContain("if (inspect) lastInspect.current = inspect;");
+    expect(view).toContain("reopen={() => setInspect(lastInspect.current)}");
+    expect(sheet).toContain("useHistoryDialogGuard(true, onClose, { reopen });");
+  });
+});
+
 describe("wide panels (CSS)", () => {
   test("side panels clamp(480px, 40vw, 720px) from 1024 px; Inspect min(1100px, 92vw) and 88vh; full screen on a phone; SQL scrolls sideways", async () => {
     const css = await Bun.file(new URL("../src/reports/reports.css", import.meta.url)).text();

@@ -99,6 +99,9 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   const [schedule, setSchedule] = useState<ScheduleView | null>(initial?.schedule ?? null);
   const [runs, setRuns] = useState<ReportRun[]>(initial?.runs ?? []);
   const [inspect, setInspect] = useState<{ blockId: string; tab: InspectTab } | null>(null);
+  // Forward after Back reopens the last Inspect sheet (its first tab), as Changes and Share do.
+  const lastInspect = useRef<{ blockId: string; tab: InspectTab } | null>(null);
+  if (inspect) lastInspect.current = inspect;
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [externalLink, setExternalLink] = useState<string | null>(null);
@@ -250,7 +253,7 @@ export function ReportView({ report, canWrite, generating = false, initial, read
       onInspect={(tab) => { setMenuBlock(null); setInspect({ blockId: menuTarget.id, tab }); }}
       onRerun={() => { setMenuBlock(null); void startRefresh(menuTarget.queryKey); }} />}
     {inspected && isDataBlock(inspected) && <InspectSheet report={report} block={inspected} query={queries.get(inspected.queryKey)} view={results.get(inspected.queryKey)}
-      palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} />}
+      palette={palette} canRerun={canWrite} busy={busy} onRerun={(key) => { void startRefresh(key); }} initialTab={inspect!.tab} onClose={() => setInspect(null)} reopen={() => setInspect(lastInspect.current)} />}
     {scheduleOpen && <ScheduleSheet reportId={report.id} schedule={schedule} runs={runs} canWrite={canWrite} reopen={() => setScheduleOpen(true)}
       onSaved={(next) => { setSchedule(next); setScheduleOpen(false); notify.success(next.enabled ? "Schedule saved" : "Schedule off"); }} onClose={() => setScheduleOpen(false)} />}
     {externalLink && <ExternalLinkSheet href={externalLink} onClose={() => setExternalLink(null)} />}

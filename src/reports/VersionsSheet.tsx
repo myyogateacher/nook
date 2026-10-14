@@ -1,13 +1,14 @@
 import { useContext, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { ArrowLeftRight, ChevronLeft, ChevronRight, Eye, GitCompareArrows, History, RotateCcw } from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Eye, GitCompareArrows, History, LoaderCircle, Play, RotateCcw } from "lucide-react";
 import { ModalDialog } from "../files/Dialog";
+import { useLayerOpener } from "../historyDialogs";
 import { notify } from "../ui/notify";
 import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { newLayerReopenMemory, useHistoryDialogGuard, useLayerReopen, type LayerReopenMemory } from "../ui/useHistoryDialogGuard";
 import type { ReportDetail } from "../../shared/reports";
 import { versionSourceLabel, versionWhoLabel, type DiffLine, type VersionDiff, type VersionHistoryItem, type VersionSnapshot } from "../../shared/reportVersions";
-import { getVersion, getVersionDiff, listVersions, restoreVersion } from "./reportEditApi";
+import { getVersion, getVersionDiff, listVersions, previewVersion, restoreVersion } from "./reportEditApi";
 import { timeAgo } from "./reportViewApi";
 import { codeOf, messageOf } from "./reportsApi";
 import { ReportView } from "./ReportView";
@@ -44,7 +45,7 @@ function VersionFacts({ item, heading = false }: { item: VersionHistoryItem; hea
     <span className="report-vrow-who">{versionWhoLabel(item)} · <When iso={item.createdAt} /></span>
     {item.instructionText && <span className="report-vrow-ask">“{item.instructionText}”</span>}
     {item.changeSummary && <span className="report-vrow-change">{item.changeSummary}</span>}
-    {item.note && <span className="report-vrow-note">{item.note}</span>}
+    {item.note && !item.renamedTo && <span className="report-vrow-note">{item.note}</span>}
     {item.model && <span className="report-vrow-meta">Model {item.model}</span>}
   </>;
 }
@@ -98,7 +99,13 @@ export function DiffView({ diff }: { diff: VersionDiff }) {
   const empty = !diff.blocks.length && !diff.queries.length && !diff.sections.length;
   return <div className="report-vdiff">
     <p className="report-vdiff-summary" role="status">v{diff.from} → v{diff.to}: {diff.summary}</p>
-    {empty && <p className="report-changes-empty">These versions have the same blocks, queries, and sections.</p>}
+    {diff.title && <section aria-label="Report title" className="report-vdiff-group">
+      <h4>Report</h4>
+      <article className="report-vdiff-item is-changed">
+        <dl className="report-vdiff-fields"><div><dt>title</dt><dd><span className="report-vdiff-before">{diff.title.before}</span><span aria-hidden="true"> → </span><span className="report-vdiff-after">{diff.title.after}</span></dd></div></dl>
+      </article>
+    </section>}
+    {empty && !diff.title && <p className="report-changes-empty">These versions have the same blocks, queries, and sections.</p>}
     {diff.blocks.length > 0 && <section aria-label="Blocks" className="report-vdiff-group">
       <h4>Blocks</h4>
       {diff.blocks.map((block) => <article key={`${block.change}-${block.blockId}`} className={`report-vdiff-item is-${block.change}`}>
@@ -160,22 +167,46 @@ function VersionView({ report, version, onRestore, canRestore, busy }: { report:
     getVersion(report.id, version).then((next) => { if (alive) setSnapshot(next); }).catch((reason) => { if (alive) setError(messageOf(reason, "Could not load that version")); });
     return () => { alive = false; };
   }, [report.id, version]);
-  const stored = snapshot?.results.filter((item) => item.result) ?? [];
+  // "Run with today's data": the owner's explicit one-off run of this version's queries (never automatic).
+  const [today, setToday] = useState<{ results: VersionSnapshot["results"]; status: string } | null>(null);
+  const [running, setRunning] = useState(false);
+  const shownResults = today?.results ?? snapshot?.results ?? [];
+  const stored = shownResults.filter((item) => item.result);
   const newest = stored.map((item) => item.result!.createdAt).sort().at(-1) ?? null;
   const viewed = useMemo(() => snapshot ? { ...report, spec: snapshot.spec, lastRunAt: newest } : null, [newest, report, snapshot]);
+  async function runToday() {
+    setRunning(true);
+    try {
+      const outcome = await previewVersion(report.id, version);
+      setToday({ results: outcome.results, status: outcome.status });
+      if (outcome.status === "succeeded") notify.success(`Ran v${version}'s queries on today's data; the run is in Runs`);
+      else notify.warning(`v${version}'s queries ran with errors; see Runs`);
+    } catch (reason) {
+      const { code } = codeOf(reason);
+      notify.error(code === "RUN_IN_PROGRESS" ? "The report is running; try when it finishes." : code === "STALE_VERSION" ? messageOf(reason, "That version no longer passes today's checks") : messageOf(reason, "Could not run that version"));
+    } finally {
+      setRunning(false);
+    }
+  }
   if (error) return <p className="form-error" role="alert">{error}</p>;
   if (!snapshot || !viewed) return <p className="reports-loading" role="status">Loading version {version}…</p>;
-  const missing = snapshot.results.length - stored.length;
+  const missing = shownResults.length - stored.length;
   return <div className="report-vview">
     <div className="report-vview-banner" role="note">
       <p><strong>Viewing v{version} (read-only)</strong>
-        <span>{snapshot.results.length === 0 ? "This version has no queries." : stored.length === 0 ? "Data from this version was not stored; restoring it runs its queries on today's data."
+        <span>{today ? `Today's data, run just now${missing ? `; ${missing} ${missing === 1 ? "query" : "queries"} failed` : ""}. The run is in Runs; the report is unchanged.`
+          : snapshot.results.length === 0 ? "This version has no queries." : stored.length === 0 ? "Data from this version was not stored."
           : `Data stored ${newest ? exactTime(newest) : ""}${missing ? `; ${missing} ${missing === 1 ? "query has" : "queries have"} no stored data from then` : ""}.`}</span>
       </p>
-      {canRestore && !snapshot.version.current && <button type="button" className="secondary-button" onClick={() => onRestore(snapshot.version)} disabled={busy}><RotateCcw aria-hidden="true" />Restore</button>}
+      <span className="report-vview-actions">
+        {canRestore && snapshot.spec.queries.length > 0 && <button type="button" className="secondary-button" onClick={() => { void runToday(); }} disabled={running || busy} aria-busy={running || undefined}>
+          {running ? <LoaderCircle className="spin" aria-hidden="true" /> : <Play aria-hidden="true" />}{running ? "Running…" : "Run with today's data"}
+        </button>}
+        {canRestore && !snapshot.version.current && <button type="button" className="secondary-button" onClick={() => onRestore(snapshot.version)} disabled={busy || running}><RotateCcw aria-hidden="true" />Restore</button>}
+      </span>
     </div>
-    {viewed.spec.blocks.length ? <ReportView key={version} report={viewed} canWrite={false} readOnly={{ emptyText: "No data stored from this version. Restore it to run this query on today's data." }}
-      initial={{ results: { results: snapshot.results, running: null }, runs: [] }} />
+    {viewed.spec.blocks.length ? <ReportView key={`${version}-${today ? "today" : "stored"}`} report={viewed} canWrite={false} readOnly={{ emptyText: today ? "This query failed on today's data; Runs has the error." : "No data stored from this version. Run it with today's data to see it." }}
+      initial={{ results: { results: shownResults, running: null }, runs: [] }} />
       : <p className="report-changes-empty">This version has no blocks.</p>}
   </div>;
 }
@@ -208,7 +239,7 @@ function useRestore(report: ReportDetail, latest: number | null, onRestored: () 
 }
 
 /** The layers over the list (D478): a version's detail or Compare, and the read-only view over a detail. */
-type Layer = { kind: "detail"; version: number } | { kind: "compare" };
+type Layer = { kind: "detail"; version: number } | { kind: "compare"; from?: number; to?: number };
 /** What Forward shows again once the panel (or the detail) is back: kept above them so it outlives a remount. */
 export type VersionsMemory = { layer: MutableRefObject<LayerReopenMemory<Layer>>; view: MutableRefObject<LayerReopenMemory<number>> };
 export const newVersionsMemory = (): VersionsMemory => ({ layer: { current: newLayerReopenMemory<Layer>() }, view: { current: newLayerReopenMemory<number>() } });
@@ -220,7 +251,8 @@ const versionOptions = (versions: VersionHistoryItem[]) => versions.map((item) =
 function ViewSheet({ shared, version, onClose, reopen }: { shared: Shared; version: number; onClose: () => void; reopen: () => void }) {
   const { report, versions, canRestore, onRestored, closeAll } = shared;
   const { busy, restore, confirmElement } = useRestore(report, versions[0]?.version ?? null, onRestored);
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
+  // D480: a layer key, so Forward reopens this view after Back went past the page and came back.
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-view:${version}` });
   return <ModalDialog title={`Viewing v${version}`} eyebrow={report.title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-changes report-versions-panel report-versions-wide">
     <div className="report-changes-body report-versions-body">
       <div className="report-versions-nav">
@@ -243,8 +275,9 @@ function DetailSheet({ shared, version, onClose, reopen, viewMemory }: { shared:
   const against = picked ?? before;
   const [viewing, setViewing] = useState<number | null>(null);
   const viewLayer = useLayerReopen<number>(setViewing, viewMemory);
+  useLayerOpener("reports.versions-view", (arg) => { const n = Number(arg); if (Number.isInteger(n) && n > 0) viewLayer.open(n); });
   const { busy, restore, confirmElement } = useRestore(report, versions[0]?.version ?? null, onRestored);
-  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen });
+  useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey: `reports.versions-detail:${version}` });
   return <>
     <ModalDialog title={`Version ${version}`} eyebrow={report.title} onClose={onClose} busy={busy} variant="sheet" className="reports-dialog report-changes report-versions-panel">
       <div className="report-changes-body report-versions-body">
@@ -273,12 +306,14 @@ function DetailSheet({ shared, version, onClose, reopen, viewMemory }: { shared:
 }
 
 /** Compare: any two versions, each picker in place (no history step). */
-function CompareSheet({ shared, onClose, reopen }: { shared: Shared; onClose: () => void; reopen: () => void }) {
+function CompareSheet({ shared, initial, onClose, reopen }: { shared: Shared; initial: { from?: number; to?: number }; onClose: () => void; reopen: () => void }) {
   const { report, versions } = shared;
-  const [picked, setPair] = useState<{ from: number; to: number } | null>(null);
+  const [picked, setPair] = useState<{ from: number; to: number } | null>(initial.from && initial.to ? { from: initial.from, to: initial.to } : null);
   const pair = picked ?? { from: versions[1]?.version ?? 0, to: versions[0]?.version ?? 0 };
   const options = versionOptions(versions);
-  useHistoryDialogGuard(true, onClose, { reopen });
+  // The pair it opened with names the layer (D480); picking another one changes the view in place.
+  const [opened] = useState(pair);
+  useHistoryDialogGuard(true, onClose, { reopen, layerKey: `reports.versions-compare:${opened.from}-${opened.to}` });
   const kept = (version: number) => versions.some((item) => item.version === version);
   return <ModalDialog title="Compare versions" eyebrow={report.title} onClose={onClose} variant="sheet" className="reports-dialog report-changes report-versions-panel">
     <div className="report-changes-body report-versions-body">
@@ -325,6 +360,9 @@ export function VersionsSheet({ report, canRestore, onClose, reopen, onRestored,
   const openRun = useContext(ReportRunsContext);
   const { busy, restore, confirmElement } = useRestore(report, versions?.[0]?.version ?? null, onRestored);
   useHistoryDialogGuard(true, onClose, { blocked: busy, reopen, layerKey });
+  // D480: the sheets over the list come back by key when Forward returns to a remounted page.
+  useLayerOpener("reports.versions-detail", (arg) => { const n = Number(arg); if (Number.isInteger(n) && n > 0) layers.open({ kind: "detail", version: n }); });
+  useLayerOpener("reports.versions-compare", (arg) => { const [from, to] = arg.split("-").map(Number); layers.open({ kind: "compare", ...(from && to ? { from, to } : {}) }); });
 
   useEffect(() => {
     let alive = true;
@@ -364,6 +402,6 @@ export function VersionsSheet({ report, canRestore, onClose, reopen, onRestored,
       {confirmElement}
     </ModalDialog>
     {layer?.kind === "detail" && <DetailSheet key={layer.version} shared={shared} version={layer.version} onClose={() => setLayer(null)} reopen={layers.reopen} viewMemory={slots.view} />}
-    {layer?.kind === "compare" && <CompareSheet shared={shared} onClose={() => setLayer(null)} reopen={layers.reopen} />}
+    {layer?.kind === "compare" && <CompareSheet shared={shared} initial={layer} onClose={() => setLayer(null)} reopen={layers.reopen} />}
   </>;
 }

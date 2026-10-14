@@ -147,11 +147,14 @@ describe("the panel (the owner)", () => {
         result: { runId: "r1", queryKey: query.key, sql: query.sql, sentSql: query.sql, columns: answer.meta, rows: answer.data, rowCount: answer.data.length, truncated: false, rowsRead: null, bytesRead: null, chQueryId: null, ms: 1, error: null, errorCode: null, createdAt: "2026-10-08T09:00:00.000Z" }
       };
     });
-    mockApi({
+    const today = results.map((entry) => entry.result ? { ...entry, result: { ...entry.result, runId: "today", createdAt: new Date().toISOString() } } : { ...entry, result: { ...results[0]!.result!, queryKey: entry.queryKey, runId: "today" } });
+    const api = mockApi({
       [`GET /reports/${REPORT_ID}/versions`]: () => ({ versions: ownerList }),
       [`GET /reports/${REPORT_ID}/version-diff?to=2&from=1`]: () => ({ diff: diffSpecVersions(specs[0]!, specs[1]!, { from: 1, to: 2 }) }),
-      [`GET /reports/${REPORT_ID}/versions/2`]: () => ({ version: ownerList[1], spec, results })
+      [`GET /reports/${REPORT_ID}/versions/2`]: () => ({ version: ownerList[1], spec, results }),
+      [`POST /reports/${REPORT_ID}/versions/2/preview`]: () => ({ runId: "today", status: "succeeded", results: today })
     });
+    const toasts = captureToasts();
     let closed = 0;
     const view = await render(<VersionsSheet report={report()} canRestore onClose={() => { closed += 1; }} reopen={noop} onRestored={noop} />);
     await view.click(await view.waitFor(() => document.querySelector<HTMLButtonElement>('button[aria-label="Open v2: Applied a change"]')));
@@ -166,6 +169,13 @@ describe("the panel (the owner)", () => {
     expect(panel.querySelector(".report-block-buttons")).toBeNull();
     expect(panel.textContent).toContain("No data stored from this version");
     expect(panel.querySelectorAll(".report-block").length).toBe(spec.blocks.length - 1);
+    // J2: nothing runs by itself; "Run with today's data" runs the version once and shows its results.
+    expect(api.calls.some((call) => call.path.endsWith("/preview"))).toBe(false);
+    await view.click(view.button("Run with today's data", top())!);
+    await view.waitFor(() => document.querySelector(".report-vview-banner")?.textContent?.includes("Today's data, run just now"));
+    expect(api.calls.filter((call) => call.method === "POST").map((call) => call.path)).toEqual([`/reports/${REPORT_ID}/versions/2/preview`]);
+    expect(document.querySelector(".report-vview")!.textContent).not.toContain("No data stored from this version");
+    expect(toasts).toContainEqual({ kind: "success", message: "Ran v2's queries on today's data; the run is in Runs" });
     await view.click(view.button("Back to current", top())!);
     await view.waitFor(() => closed === 1);
     await settleHistory(view);
@@ -185,6 +195,18 @@ describe("the panel (the owner)", () => {
     expect(api.calls.filter((call) => call.path.includes("version-diff")).map((call) => call.path)).toEqual([`/reports/${REPORT_ID}/version-diff?to=3&from=2`, `/reports/${REPORT_ID}/version-diff?to=2&from=3`]);
     await view.click(document.querySelector('.report-versions-panel button[aria-label="Close"]')!);
     await settleHistory(view);
+  });
+});
+
+describe("J2: renames and preview runs in labels", () => {
+  test("a rename version says so; a preview run is labelled in Runs and in the viewer's status", async () => {
+    const { versionSourceLabel } = await import("../shared/reportVersions");
+    const { runLabel, previewVersionOf } = await import("../src/reports/reportViewApi");
+    expect(versionSourceLabel({ source: "manual", regenerated: false, restoredFrom: null, renamedTo: "Revenue" })).toBe("Renamed to “Revenue”");
+    expect(previewVersionOf(["~v3", "~totals"])).toBe(3);
+    expect(previewVersionOf(["totals"])).toBeNull();
+    expect(runLabel({ kind: "refresh", trigger: "user", queryKeys: ["~v3", "~totals"] })).toBe("Ran v3 on today's data");
+    expect(runLabel({ kind: "refresh", trigger: "user", queryKeys: ["totals"] })).toBe("Re-ran totals by hand");
   });
 });
 

@@ -20,6 +20,8 @@ export const listVersions = (id: string) => api<{ versions: VersionHistoryItem[]
 export const getVersion = (id: string, version: number) => api<VersionSnapshot>(`/reports/${id}/versions/${version}`);
 /** The owner: what changed from `from` (default: the version before) to `to`. */
 export const getVersionDiff = (id: string, to: number, from?: number | null) => api<{ diff: VersionDiff }>(`/reports/${id}/version-diff?to=${to}${from ? `&from=${from}` : ""}`);
+/** The owner: "Run with today's data" on a version (a run in Runs; the report is unchanged). */
+export const previewVersion = (id: string, version: number) => api<{ runId: string; status: string; results: VersionSnapshot["results"] }>(`/reports/${id}/versions/${version}/preview`, json("POST", {}));
 export const restoreVersion = (id: string, version: number) => api<{ version: number; refreshRunId: string | null }>(`/reports/${id}/versions/${version}/restore`, json("POST", {}));
 
 export const editSpec = (id: string, ops: PatchOp[], expectedRevision: number) => api<{ version: number; revision: number }>(`/reports/${id}/spec/edit`, json("POST", { ops, expectedRevision }));

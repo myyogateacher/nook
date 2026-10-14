@@ -19,9 +19,18 @@ export const getProvenance = (id: string, input: { runId?: string | null; snapsh
 export const saveSchedule = (id: string, input: ScheduleInput) => api<{ schedule: ScheduleView }>(`/reports/${id}/schedule`, { method: "PUT", body: JSON.stringify(input) });
 
 /** A run as one line: "Refreshed by you · succeeded", "Scheduled · 1 of 4 queries failed". */
+/** The version a "Run with today's data" run previewed, from its keys' marker (server/reports/refresh.ts previewOf). */
+export function previewVersionOf(keys: readonly string[] | null | undefined): number | null {
+  const match = keys?.[0]?.match(/^~v(\d+)$/);
+  return match ? Number(match[1]) : null;
+}
+
 export function runLabel(run: Pick<ReportRun, "kind" | "trigger" | "queryKeys">) {
   // A generation is the AI reading the doc (wave 46), never "by hand".
   if (run.kind === "generate") return run.trigger === "mcp" ? "Generated from the doc over MCP" : "Generated from the doc";
+  // Lane J: "Run with today's data" on an older version (its keys start with the marker `~v<n>`).
+  const preview = previewVersionOf(run.queryKeys);
+  if (preview !== null) return `Ran v${preview} on today's data`;
   const kind = run.kind === "edit" ? "Edited" : run.queryKeys?.length ? `Re-ran ${run.queryKeys.join(", ")}` : "Refreshed";
   const by = run.trigger === "schedule" ? "on schedule" : run.trigger === "mcp" ? "over MCP" : "by hand";
   return `${kind} ${by}`;

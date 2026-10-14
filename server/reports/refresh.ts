@@ -286,11 +286,11 @@ function settleReportStatus(reportId: string, spec: ReportSpec, finishedAt: stri
 export function pruneRuns(reportId: string, spec: ReportSpec) {
   const pinned = new Set<string>();
   for (const block of spec.blocks) if (block.provenance?.runId) pinned.add(block.provenance.runId);
-  const good = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND error IS NULL AND created_at = (
+  const good = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND error IS NULL AND query_key NOT LIKE '~%' AND created_at = (
     SELECT max(created_at) FROM report_results WHERE report_id = $reportId AND query_key = rr.query_key AND error IS NULL)`).all({ reportId }) as Array<{ run_id: string }>;
   for (const row of good) pinned.add(row.run_id);
   // And each query's newest result of any kind: pruning a newer failure would clear its block's stale badge.
-  const newest = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND created_at = (
+  const newest = db.query(`SELECT run_id FROM report_results rr WHERE report_id = $reportId AND query_key NOT LIKE '~%' AND created_at = (
     SELECT max(created_at) FROM report_results WHERE report_id = $reportId AND query_key = rr.query_key)`).all({ reportId }) as Array<{ run_id: string }>;
   for (const row of newest) pinned.add(row.run_id);
   const old = db.query("SELECT id FROM report_runs WHERE report_id = ? AND status <> 'running' ORDER BY started_at DESC, rowid DESC LIMIT -1 OFFSET ?")
@@ -300,7 +300,7 @@ export function pruneRuns(reportId: string, spec: ReportSpec) {
   return remove.length;
 }
 
-async function execute(run: RunRow, report: ReportRow, spec: ReportSpec, queries: ReportQuery[], userId: string, state: ActiveRun): Promise<ReportRun> {
+async function execute(run: RunRow, report: ReportRow, spec: ReportSpec, queries: ReportQuery[], userId: string, state: ActiveRun, preview: number | null = null): Promise<ReportRun> {
   const heartbeat = setInterval(() => {
     const renewed = db.query("UPDATE report_runs SET lease_until = ? WHERE id = ? AND status = 'running'").run(new Date(Date.now() + LEASE_MS).toISOString(), run.id).changes;
     if (!renewed && !state.controller.signal.aborted) state.controller.abort();
@@ -326,11 +326,13 @@ async function execute(run: RunRow, report: ReportRow, spec: ReportSpec, queries
   const error = failed === 0 ? null : `${failed} of ${queries.length} ${queries.length === 1 ? "query" : "queries"} failed`;
   const finishedAt = now();
   const changed = db.query("UPDATE report_runs SET status = ?, finished_at = ?, error = ?, lease_until = NULL WHERE id = ? AND status = 'running'").run(status, finishedAt, error, run.id).changes;
-  if (changed) {
+  if (changed && preview === null) {
     settleReportStatus(report.id, spec, finishedAt, error);
     audit(userId, null, "reports.refresh.finish", { reportId: report.id, runId: run.id, trigger: run.trigger, status, queries: queries.length, failed });
   }
-  try { pruneRuns(report.id, spec); } catch { /* retention is best effort */ }
+  if (changed && preview !== null) audit(userId, null, "reports.version.preview.finish", { reportId: report.id, runId: run.id, version: preview, status, queries: queries.length, failed });
+  // A version preview's own results (`~` keys) never pin it, and the current spec's provenance does.
+  try { pruneRuns(report.id, preview === null ? spec : parseSpec(report.spec_json)); } catch { /* retention is best effort */ }
   return runView(runRow(run.id) ?? { ...run, status: "abandoned" });
 }
 
@@ -365,6 +367,50 @@ export function startRefresh(userId: string, reportId: string, options: { trigge
   });
   return { run: runView(run), done };
 }
+
+/**
+ * Lane J: an older version's queries run once on today's data ("Run with today's data", the owner).
+ * A refresh run in Runs, but its results are stored under preview keys (`~` + the key, which no saved
+ * query can have), so the report's own results, status, and last run never change; `query_keys_json`
+ * starts with the marker `~v<version>` (previewOf) and lists those keys (so an abandoned run's queries
+ * are killed). The caller checks the version against today's data source and allowlist first.
+ */
+export const previewMarker = (version: number) => `~v${version}`;
+export const previewOf = (keys: readonly string[] | null) => {
+  const match = keys?.[0]?.match(/^~v(\d+)$/);
+  return match ? Number(match[1]) : null;
+};
+export function previewKey(key: string) {
+  if (key.length < 40) return `~${key}`;
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return `~${key.slice(0, 33)}_${hash.toString(36).slice(0, 5)}`;
+}
+
+export function startPreview(userId: string, reportId: string, version: number, spec: ReportSpec): RefreshStart & { keys: Map<string, string> } {
+  const report = ownedReport(reportId, userId);
+  const datasource = usableDatasource(report.datasource_id);
+  abandonExpiredReportRuns(Date.now(), reportId);
+  const holder = runningRun(reportId);
+  if (holder) throw new ReportError(409, "RUN_IN_PROGRESS", "This report is already running; wait for it to finish", { runId: holder.id });
+  if (!spec.queries.length) throw new ReportError(409, "INVALID", "That version has no queries");
+  const keys = new Map(spec.queries.map((query) => [query.key, previewKey(query.key)]));
+  const queries = spec.queries.map((query) => ({ ...query, key: keys.get(query.key)! }));
+  const run = takeRunLock({ reportId, kind: "refresh", trigger: "user", userId, queryKeys: [previewMarker(version), ...keys.values()] });
+  audit(userId, null, "reports.version.preview.start", { reportId, runId: run.id, version });
+  const state: ActiveRun = { controller: new AbortController(), datasource, inFlight: new Set() };
+  active.set(run.id, state);
+  const done = withLogContext({ ...currentLogContext(), run: shortId(run.id), report: shortId(reportId) }, () => execute(run, report, spec, queries, userId, state, version)).catch((error: unknown) => {
+    slog.error("Report version preview failed", error);
+    db.query("UPDATE report_runs SET status = 'failed', finished_at = ?, error = 'The preview stopped on an internal error', lease_until = NULL WHERE id = ? AND status = 'running'").run(now(), run.id);
+    active.delete(run.id);
+    return runView(runRow(run.id) ?? run);
+  });
+  return { run: runView(run), done, keys };
+}
+
+/** The results a run stored, by key (a version preview reads its own back). */
+export const runResults = (runId: string) => new Map((db.query("SELECT * FROM report_results WHERE run_id = ?").all(runId) as ResultRow[]).map((row) => [row.query_key, resultView(row)]));
 
 /** A run of a report the person can read (the Runs list, the refresh poll, Provenance). */
 export function reportRun(reportId: string, runId: string, userId: string): ReportRun {

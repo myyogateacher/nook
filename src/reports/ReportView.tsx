@@ -13,7 +13,7 @@ import { InspectSheet, type DataBlock } from "./InspectSheet";
 import type { InspectTab } from "./inspectHistory";
 import { KpiTile, type ResultLookup } from "./KpiTile";
 import { ResultTable } from "./ResultTable";
-import { getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
+import { previewVersionOf, getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
 import { codeOf, messageOf } from "./reportsApi";
 import { scheduleBadge, ScheduleSheet } from "./ScheduleSheet";
 import { CommentOnBlockButton } from "./reportComment";
@@ -208,7 +208,7 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
     {!readOnly && <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
-        {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
+        {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : previewVersionOf(running.queryKeys) !== null ? `Running v${previewVersionOf(running.queryKeys)} on today's data…` : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
           : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}

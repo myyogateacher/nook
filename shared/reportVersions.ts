@@ -24,6 +24,8 @@ export type VersionHistoryItem = ReportVersion & {
   model: string | null;
   /** owner: what changed against the version before, e.g. "+2 charts, 1 query changed". */
   changeSummary: string | null;
+  /** A rename (a `manual` version whose spec is unchanged): the new title (everyone sees the title). */
+  renamedTo: string | null;
 };
 
 /** GET /api/reports/:id/versions/:n (the owner): the spec and the results stored for it. */
@@ -58,6 +60,8 @@ export type SectionDiff = { id: string; change: "added" | "removed" | "changed" 
 export type VersionDiff = {
   from: number;
   to: number;
+  /** The report's title, when a rename lies between the two versions. */
+  title?: FieldChange;
   summary: string;
   blocks: BlockDiff[];
   queries: QueryDiff[];
@@ -71,7 +75,8 @@ export const DIFF_LIMITS = { lines: 600, entries: 120, value: 240, words: 400 } 
 // ------------------------------------------------------------------------------------- labels
 
 /** The source in plain words: "Generated from the doc", "Regenerated", "Applied a change", "Edited by hand", "Restored v3". */
-export function versionSourceLabel(item: Pick<VersionHistoryItem, "source" | "regenerated" | "restoredFrom">): string {
+export function versionSourceLabel(item: Pick<VersionHistoryItem, "source" | "regenerated" | "restoredFrom"> & { renamedTo?: string | null }): string {
+  if (item.renamedTo) return `Renamed to “${item.renamedTo}”`;
   switch (item.source) {
     case "generate": return item.regenerated ? "Regenerated" : "Generated from the doc";
     case "edit": return "Applied a change";
@@ -89,6 +94,26 @@ export function versionWhoLabel(item: Pick<VersionHistoryItem, "source" | "asked
     return item.askedByName === item.createdByName && !item.autoApplied ? `Asked and applied by ${by}` : `Asked by ${item.askedByName} · ${applied}`;
   }
   return `By ${by}`;
+}
+
+// ------------------------------------------------------------------------------------- renames
+
+const RENAME = /^Renamed from “([\s\S]*)” to “([\s\S]*)”$/;
+
+/**
+ * The note of a rename version (lane J): `Renamed from “A” to “B”`, within the 300-character note. The
+ * new title is kept whole (titles are at most 200); the old one is cut with … when both do not fit.
+ */
+export function renameNote(before: string, after: string): string {
+  const room = 300 - `Renamed from “” to “${after}”`.length;
+  const old = before.length <= room ? before : `${before.slice(0, Math.max(0, room - 1))}…`;
+  return `Renamed from “${old}” to “${after}”`;
+}
+
+/** The titles a rename note names, or null for any other note. */
+export function parseRenameNote(note: string | null): { before: string; after: string } | null {
+  const match = note ? RENAME.exec(note) : null;
+  return match ? { before: match[1]!, after: match[2]! } : null;
 }
 
 // --------------------------------------------------------------------------------------- diff

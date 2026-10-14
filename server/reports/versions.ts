@@ -1,12 +1,12 @@
 import { audit, db, now } from "../db";
 import type { ReportSpec, ResultColumn } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, type VersionSource } from "../../shared/reportsEdit";
-import { diffSpecVersions, type VersionDiff, type VersionHistoryItem, type VersionSnapshot } from "../../shared/reportVersions";
+import { diffSpecVersions, parseRenameNote, type VersionDiff, type VersionHistoryItem, type VersionSnapshot } from "../../shared/reportVersions";
 import type { QueryResultView } from "../../shared/reportsView";
 import { logger, shortId } from "../log";
 import { ownedReport, readableReport } from "./access";
 import { ReportError } from "./errors";
-import { capRows, resultView, runningRun, startRefresh, abandonExpiredReportRuns } from "./refresh";
+import { capRows, resultView, runningRun, runResults, startPreview, startRefresh, abandonExpiredReportRuns } from "./refresh";
 import { parseSpec } from "./service";
 import { usableDatasource } from "./datasources";
 import { assertRunnableNow } from "./specCheck";
@@ -137,6 +137,8 @@ const sizeLine = (spec: ReportSpec) => spec.blocks.length
 function historyItem(row: HistoryRow, spec: ReportSpec, context: { currentJson: string; latest: number; owner: boolean; userId: string; regenerated: boolean; changeSummary: string | null }): VersionHistoryItem {
   const { owner } = context;
   const mine = row.instruction_author !== null && row.instruction_author === context.userId;
+  // Only a rename's note is ours (Nook wrote it, never the agent): its new title is everyone's.
+  const rename = row.source === "manual" ? parseRenameNote(row.note) : null;
   return {
     version: row.version, source: row.source, instructionId: row.instruction_id, restoredFrom: row.restored_from,
     // Review L5: the note is the edit agent's summary, which may quote the doc: the owner's only.
@@ -148,7 +150,8 @@ function historyItem(row: HistoryRow, spec: ReportSpec, context: { currentJson: 
     instructionText: owner || mine ? row.instruction_text : null,
     runId: owner ? row.run_id : null,
     model: owner ? row.model : null,
-    changeSummary: owner ? context.changeSummary : null
+    changeSummary: owner ? (rename ? `Title “${rename.before}” → “${rename.after}”` : context.changeSummary) : null,
+    renamedTo: rename?.after ?? null
   };
 }
 
@@ -214,8 +217,43 @@ export function versionDiff(reportId: string, from: number, to: number, userId: 
   const before = parseSpec(versionRow(reportId, from).spec_json);
   const after = parseSpec(versionRow(reportId, to).spec_json);
   const diff = diffSpecVersions(before, after, { from, to });
+  // Renames between the two (either way round): the title the older one had, and the newer one's.
+  const [low, high] = from < to ? [from, to] : [to, from];
+  const renames = (db.query("SELECT note FROM report_versions WHERE report_id = ? AND version > ? AND version <= ? AND source = 'manual' ORDER BY version").all(reportId, low, high) as Array<{ note: string | null }>)
+    .map((row) => parseRenameNote(row.note)).filter((item): item is { before: string; after: string } => item !== null);
+  if (renames.length) {
+    const oldest = renames[0]!.before;
+    const newest = renames.at(-1)!.after;
+    if (oldest !== newest) {
+      diff.title = from < to ? { field: "title", before: oldest, after: newest } : { field: "title", before: newest, after: oldest };
+      diff.summary = diff.summary === "No changes" ? "report title changed" : `report title changed, ${diff.summary}`;
+    }
+  }
   slog.info("Report version diff", { report: shortId(reportId), from, to, blocks: diff.blocks.length, queries: diff.queries.length, truncated: diff.truncated, ms: Math.round(performance.now() - started) });
   return diff;
+}
+
+/**
+ * "Run with today's data" (the owner, lane J): the version's queries once, through the guarded runner,
+ * after the same check as a restore (on, its shape, today's allowlist; 409 STALE_VERSION). A run in Runs;
+ * the report itself is unchanged. Answers when the run ends, with the version's results from it.
+ */
+export async function previewVersion(userId: string, reportId: string, version: number, via: { keyId?: string } = {}): Promise<{ runId: string; status: string; results: QueryResultView[] }> {
+  const report = ownedReport(reportId, userId);
+  const row = db.query("SELECT spec_json FROM report_versions WHERE report_id = ? AND version = ?").get(reportId, version) as { spec_json: string } | null;
+  if (!row) throw new ReportError(404, "NOT_FOUND", "Version not found");
+  const spec = parseSpec(row.spec_json);
+  assertRunnableNow(usableDatasource(report.datasource_id), spec, "STALE_VERSION");
+  const started = startPreview(userId, reportId, version, spec);
+  slog.info("Report version preview", { report: shortId(reportId), version, queries: spec.queries.length, ...(via.keyId ? { via: "mcp" } : {}) });
+  const run = await started.done;
+  const stored = runResults(run.id);
+  const results: QueryResultView[] = spec.queries.map((query) => {
+    const result = stored.get(started.keys.get(query.key)!) ?? null;
+    const shown = result ? { ...result, queryKey: query.key } : null;
+    return { queryKey: query.key, result: shown && !shown.error ? shown : null, failed: shown?.error ? shown : null, stale: false };
+  });
+  return { runId: run.id, status: run.status, results };
 }
 
 /** The kept version before `version` (a version's diff is against it by default); null for the first. */

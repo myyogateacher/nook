@@ -10,7 +10,7 @@ import { manualEdit } from "./manualEdit";
 import { patchSchema } from "./patch";
 import { handle, id } from "./routes";
 import { getSharing, setSharing } from "./sharing";
-import { getVersion, listVersions, previousVersion, restoreVersion, versionDiff } from "./versions";
+import { getVersion, listVersions, previewVersion, previousVersion, restoreVersion, versionDiff } from "./versions";
 import { ownedReport } from "./access";
 
 /**
@@ -87,6 +87,13 @@ export function registerReportEditRoutes(app: Hono<AppEnv>) {
     return { diff: versionDiff(reportId, from, to, userId) };
   }));
   app.get("/api/reports/:reportId/versions/:version", handle((c) => getVersion(id(c, "reportId"), versionParam(c.req.param("version")), c.get("user").id)));
+  // Lane J: "Run with today's data" on an older version (the owner; a run in Runs, never automatic).
+  app.post("/api/reports/:reportId/versions/:version/preview", handle(async (c) => {
+    const reportId = id(c, "reportId");
+    const version = versionParam(c.req.param("version"));
+    await parseJson(c.req.raw, emptySchema);
+    return await previewVersion(c.get("user").id, reportId, version);
+  }));
   app.post("/api/reports/:reportId/versions/:version/restore", handle(async (c) => {
     const reportId = id(c, "reportId");
     const version = versionParam(c.req.param("version"));

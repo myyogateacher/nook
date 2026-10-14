@@ -1,10 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { createUser, db, request, type Session } from "./support/harness";
 import { retireUsersAfterFile } from "./support/retireUsers";
 import { seedVersionHistory } from "./support/reportVersionsSeed";
-import { versionSourceLabel, versionWhoLabel, type VersionHistoryItem } from "../shared/reportVersions";
+import { parseRenameNote, renameNote, versionSourceLabel, versionWhoLabel, type VersionHistoryItem } from "../shared/reportVersions";
+import { startFakeClickhouse } from "./support/fakeClickhouse";
 
 const { reportTools } = await import("../server/mcpTools").then(() => import("../server/reports/mcpTools"));
+const { syncSchema } = await import("../server/reports/schemaCatalog");
+const fake = startFakeClickhouse(0);
+afterAll(() => fake.stop());
 
 /**
  * Lane J: the Versions panel's routes. The list says where each version came from and who made it
@@ -178,5 +182,71 @@ describe("MCP", () => {
     for (const name of ["list_report_versions", "get_report_version_diff"]) {
       expect([tool(name).scopes, tool(name).write, NOOK_AGENT_TOOLS.has(name)]).toEqual([["reports:read"], false, true]);
     }
+  });
+});
+
+describe("J2: a rename is a version", () => {
+  test("renaming records a manual version with the spec unchanged; everyone sees 'Renamed to …', the owner the old title too; the diff shows the title", async () => {
+    const { id } = newReport("Rename me");
+    const revision = (db.query("SELECT revision FROM reports WHERE id = ?").get(id) as { revision: number }).revision;
+    const renamed = await send(owner, "PATCH", `/reports/${id}`, { title: "Weekly revenue (net)", expectedRevision: revision });
+    expect(renamed.status).toBe(200);
+    const row = db.query("SELECT version, source, note, spec_json FROM report_versions WHERE report_id = ? ORDER BY version DESC LIMIT 1").get(id) as Json;
+    expect([row.version, row.source, row.note]).toEqual([7, "manual", "Renamed from “Rename me” to “Weekly revenue (net)”"]);
+    expect(row.spec_json).toBe((db.query("SELECT spec_json FROM reports WHERE id = ?").get(id) as Json).spec_json);
+    const mine = (await send(owner, "GET", `/reports/${id}/versions`)).body.versions as VersionHistoryItem[];
+    expect([versionSourceLabel(mine[0]!), mine[0]!.current, mine[1]!.current, mine[0]!.changeSummary]).toEqual(["Renamed to “Weekly revenue (net)”", true, false, "Title “Rename me” → “Weekly revenue (net)”"]);
+    const theirs = (await send(viewer, "GET", `/reports/${id}/versions`)).body.versions as VersionHistoryItem[];
+    expect([versionSourceLabel(theirs[0]!), theirs[0]!.note, theirs[0]!.changeSummary]).toEqual(["Renamed to “Weekly revenue (net)”", null, null]);
+    const diff = (await send(owner, "GET", `/reports/${id}/version-diff?to=7`)).body.diff as Json;
+    expect([diff.title, diff.summary, diff.blocks, diff.queries]).toEqual([{ field: "title", before: "Rename me", after: "Weekly revenue (net)" }, "report title changed", [], []]);
+    // Across a range, the oldest title against the newest; a same-title PATCH records nothing.
+    await send(owner, "PATCH", `/reports/${id}`, { title: "Revenue", expectedRevision: revision + 1 });
+    expect((await send(owner, "GET", `/reports/${id}/version-diff?from=6&to=8`)).body.diff.title).toEqual({ field: "title", before: "Rename me", after: "Revenue" });
+    await send(owner, "PATCH", `/reports/${id}`, { title: "Revenue", expectedRevision: revision + 2 });
+    expect((db.query("SELECT max(version) AS v FROM report_versions WHERE report_id = ?").get(id) as Json).v).toBe(8);
+  });
+
+  test("a report with no blocks has no versions yet: a rename adds none; long titles fit the note", async () => {
+    const id = crypto.randomUUID();
+    const at = new Date().toISOString();
+    db.query("INSERT INTO reports (id, owner_id, title, created_at, updated_at) VALUES (?, ?, 'Empty', ?, ?)").run(id, owner.userId, at, at);
+    expect((await send(owner, "PATCH", `/reports/${id}`, { title: "Still empty", expectedRevision: 1 })).status).toBe(200);
+    expect((db.query("SELECT count(*) AS n FROM report_versions WHERE report_id = ?").get(id) as Json).n).toBe(0);
+    const note = renameNote("a".repeat(200), "b".repeat(200));
+    expect(note.length).toBeLessThanOrEqual(300);
+    expect(parseRenameNote(note)!.after).toBe("b".repeat(200));
+    expect(parseRenameNote("Shortened the intro")).toBeNull();
+  });
+});
+
+describe("J2: Run with today's data", () => {
+  test("the owner runs an old version's queries once: a run in Runs, results returned, the report's own results, status, and last run untouched", async () => {
+    const created = await send(admin, "POST", "/reports/admin/datasources", { name: `Versions DS ${crypto.randomUUID().slice(0, 6)}`, url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
+    const datasourceId = created.body.datasource.id as string;
+    await syncSchema(datasourceId).catch(() => undefined);
+    const { id, seeded } = newReport("Preview");
+    db.query("UPDATE reports SET datasource_id = ? WHERE id = ?").run(datasourceId, id);
+    const before = JSON.stringify((await send(owner, "GET", `/reports/${id}/results`)).body.results);
+    const report = () => db.query("SELECT status, last_run_at, revision FROM reports WHERE id = ?").get(id) as Json;
+    const was = report();
+    const ran = await send(owner, "POST", `/reports/${id}/versions/1/preview`, {});
+    expect(ran.status).toBe(200);
+    expect(ran.body.status).toBe("succeeded");
+    const results = ran.body.results as Json[];
+    expect(results.map((item) => item.queryKey)).toEqual(seeded.specs[0]!.queries.map((query) => query.key));
+    expect(results.every((item) => item.result && item.result.runId === ran.body.runId && item.result.rows.length > 0)).toBe(true);
+    // The run is in Runs, marked as v1's preview; its results sit under keys no saved query can have.
+    const run = db.query("SELECT kind, trigger, status, query_keys_json FROM report_runs WHERE id = ?").get(ran.body.runId) as Json;
+    expect([run.kind, run.trigger, run.status, JSON.parse(run.query_keys_json)[0]]).toEqual(["refresh", "user", "succeeded", "~v1"]);
+    expect((db.query("SELECT query_key FROM report_results WHERE run_id = ? ORDER BY query_key").all(ran.body.runId) as Json[]).map((row) => row.query_key)).toEqual(["~by_country", "~daily", "~totals"]);
+    expect(JSON.stringify((await send(owner, "GET", `/reports/${id}/results`)).body.results)).toBe(before);
+    expect(report()).toEqual(was);
+    expect((await send(owner, "GET", `/reports/${id}/run-history`)).body.runs.some((item: Json) => item.id === ran.body.runId)).toBe(true);
+    // Never for anyone else; a missing version is 404.
+    for (const session of [asker, viewer]) expect((await send(session, "POST", `/reports/${id}/versions/1/preview`, {})).status).toBe(404);
+    // A guest has no Reports module: refused before the report is looked up.
+    expect([403, 404]).toContain((await send(guest, "POST", `/reports/${id}/versions/1/preview`, {})).status);
+    expect((await send(owner, "POST", `/reports/${id}/versions/99/preview`, {})).status).toBe(404);
   });
 });

@@ -14,7 +14,7 @@ import { ProposalSheet } from "./ProposalSheet";
 import { addInstruction, cancelInstruction, listInstructions, reorderInstructions, setAutoApply, threadMoving } from "./reportEditApi";
 import { timeAgo } from "./reportViewApi";
 import { messageOf } from "./reportsApi";
-import { VersionsSheet } from "./VersionsSheet";
+import { VersionsSheet, type VersionsMemory } from "./VersionsSheet";
 import "./reportEdit.css";
 
 const POLL_MS = 1500;
@@ -53,6 +53,8 @@ type Props = {
   reopen?: () => void;
   /** Kept by the page so Forward can show the sheet that was over the panel once it is back (D478). */
   sheetMemory?: MutableRefObject<LayerReopenMemory<Sheet>>;
+  /** Kept by the page so Forward reopens a version, and its read-only view, over Versions opened from here (lane J). */
+  versionsMemory?: VersionsMemory;
 };
 
 /**
@@ -62,7 +64,7 @@ type Props = {
  * (manual edits). A side panel from 761 px, a bottom sheet on phones; Back closes it, and each sheet
  * over it is its own Back step (Forward opens it again).
  */
-export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel, sheetMemory, focusComposer = false }: Props & { /** "Ask for a chart" on an empty report: the composer takes focus. */ focusComposer?: boolean }) {
+export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel, sheetMemory, versionsMemory, focusComposer = false }: Props & { /** "Ask for a chart" on an empty report: the composer takes focus. */ focusComposer?: boolean }) {
   const [view, setView] = useState<InstructionsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -181,7 +183,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
     {sheet?.kind === "proposal" && <ProposalSheet report={report} instruction={view?.instructions.find((item) => item.id === sheet.instructionId) ?? null} instructionId={sheet.instructionId}
       canApply={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen}
       onDecided={(applied) => { setSheet(null); void load(); if (applied) onReportChanged(); }} />}
-    {sheet?.kind === "versions" && <VersionsSheet report={report} canRestore={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen} layerKey="reports.changes-versions" onRestored={() => { setSheet(null); onReportChanged(); }} />}
+    {sheet?.kind === "versions" && <VersionsSheet report={report} canRestore={Boolean(view?.canApply)} onClose={() => setSheet(null)} reopen={reopen} layerKey="reports.changes-versions" onRestored={() => { setSheet(null); onReportChanged(); }} memory={versionsMemory} />}
     {sheet?.kind === "arrange" && <ArrangeSheet report={report} onClose={() => setSheet(null)} reopen={reopen} onChanged={onReportChanged} />}
   </ModalDialog>;
 }

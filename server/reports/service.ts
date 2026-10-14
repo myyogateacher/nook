@@ -7,6 +7,10 @@ import { usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
 import { adHocQueryId, killQuery, runGuarded } from "./runner";
 import { logger } from "../log";
+import { INSTRUCTION_LIMITS } from "../../shared/reportsEdit";
+import { renameNote } from "../../shared/reportVersions";
+import { backfillVersion } from "./versionBackfill";
+import { nextVersion } from "./versionNumbers";
 
 const slog = logger("reports");
 
@@ -85,10 +89,28 @@ export function updateReport(userId: string, id: string, patch: { title?: string
   }
   // A title the person typed (a rename) is theirs: generation never replaces it (title_source 'user').
   const renamed = patch.title !== undefined && patch.title !== row.title;
-  db.query(`UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ?${renamed ? ", title_source = 'user'" : ""} WHERE id = ? AND revision = ?`)
-    .run(patch.title ?? row.title, patch.datasourceId ?? row.datasource_id, now(), id, row.revision);
+  db.transaction(() => {
+    db.query(`UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ?${renamed ? ", title_source = 'user'" : ""} WHERE id = ? AND revision = ?`)
+      .run(patch.title ?? row.title, patch.datasourceId ?? row.datasource_id, now(), id, row.revision);
+    if (renamed) recordRename(id, userId, row, patch.title!);
+  })();
   audit(userId, null, "reports.report.update", { id, fields: Object.keys(patch).filter((field) => field !== "expectedRevision") });
   return reportDetail(id, userId);
+}
+
+/**
+ * Lane J: a rename is a version (`manual`, the spec unchanged, the note `Renamed from “A” to “B”`), so
+ * Versions shows who renamed the report and when. A report without blocks has no versions yet: none.
+ */
+function recordRename(id: string, userId: string, row: ReportRow, title: string) {
+  const spec = parseSpec(row.spec_json);
+  if (!spec.blocks.length) return;
+  backfillVersion(id);
+  const version = nextVersion(id, spec);
+  db.query("INSERT INTO report_versions (report_id, version, spec_json, source, note, created_by, created_at) VALUES (?, ?, ?, 'manual', ?, ?, ?)")
+    .run(id, version, row.spec_json, renameNote(row.title, title), userId, now());
+  db.query(`DELETE FROM report_versions WHERE report_id = ? AND version NOT IN (
+    SELECT version FROM report_versions WHERE report_id = ? ORDER BY version DESC LIMIT ?)`).run(id, id, INSTRUCTION_LIMITS.versions);
 }
 
 const binnedHooks = new Set<(reportId: string) => void>();

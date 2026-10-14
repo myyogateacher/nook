@@ -89,6 +89,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   const versionsMemory = useRef(newVersionsMemory());
   // E4: the Metrics view (the owner's metric catalog).
   const [metricsOpen, setMetricsOpen] = useState(false);
+  // The same for Versions opened from the Changes panel (its own layers; Changes remounts on Forward).
+  const changesVersionsMemory = useRef(newVersionsMemory());
   const rights = useReportRights(reportId);
   const openChanges = useCallback((blockId: string | null) => { lastChanges.current = { blockId }; setChanges({ blockId }); }, []);
   // H3: the page's sheets by key, so Forward reopens them after Back went past the page and came back.
@@ -272,7 +274,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {/* Changes (its Versions link) and Versions open Runs at a version's run: Runs renders after them, on top. */}
     <ReportRunsContext.Provider value={report?.isOwner ? openRuns : null}>
       {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
-        reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} onReportChanged={reloadReport} />}
+        reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} versionsMemory={changesVersionsMemory.current} onReportChanged={reloadReport} />}
       {versionsOpen && report && <VersionsSheet report={report} canRestore={ownerWrite} onClose={() => setVersionsOpen(false)} reopen={() => setVersionsOpen(true)} layerKey="reports.versions" memory={versionsMemory.current}
         onRestored={() => { setVersionsOpen(false); reloadReport(); }} />}
     </ReportRunsContext.Provider>

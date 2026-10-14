@@ -35,7 +35,7 @@ test("the Sprints sheet (a route) opens Complete as the board's guarded dialog a
   const board = readFileSync(new URL("../src/tasks/BoardView.tsx", import.meta.url), "utf8");
   // Sprints moved out of Board settings (operator 2026-09-27): the sheet's Complete is the board's dialog.
   expect(board).toContain('onComplete={(sprint) => openDialog({ kind: "completeSprint", sprintId: sprint.id })}');
-  expect(board).toContain("useHistoryDialogGuard(dialog !== null, closeDialog)");
+  expect(board).toContain("useHistoryDialogGuard(dialog !== null, closeDialog, {");
   expect(board).toContain("<SprintsSheet boardName={board.name} onClose={onCloseSprints} suspended={dialog !== null}>");
   expect(board).not.toContain("setSettingsCompleteId");
   const sheet = readFileSync(new URL("../src/tasks/SprintsSheet.tsx", import.meta.url), "utf8");

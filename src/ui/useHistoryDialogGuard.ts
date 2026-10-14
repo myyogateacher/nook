@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useRef, type MutableRefObject } from "react";
 import { readHistoryDepth } from "../appShellNavigation";
 import { dialogPopDirection, holdDialogSentinel, offerDialogReopen, registerHistoryDialogGuard, undoDialogPop, useDialogSentinel, whenHistorySettled } from "../historyDialogs";
 
@@ -53,10 +53,10 @@ export function createDialogGuard(options: { isOpen: () => boolean; markClosed: 
  */
 export const HistoryDialogReopen = createContext<(() => void) | null>(null);
 
-export function useHistoryDialogGuard(open: boolean, close: () => void, options: { blocked?: boolean; reopen?: () => void } = {}) {
+export function useHistoryDialogGuard(open: boolean, close: () => void, options: { blocked?: boolean; /** null: never reopened, even inside a HistoryDialogReopen owner (a dropdown). */ reopen?: (() => void) | null } = {}) {
   const ownerReopen = useContext(HistoryDialogReopen);
   const reopenRef = useRef<(() => void) | null>(null);
-  reopenRef.current = options.reopen ?? ownerReopen;
+  reopenRef.current = options.reopen === undefined ? ownerReopen : options.reopen;
   const openRef = useRef(open);
   openRef.current = open;
   const closeRef = useRef(close);
@@ -83,4 +83,38 @@ export function useHistoryDialogGuard(open: boolean, close: () => void, options:
       reopen: () => reopenRef.current
     }));
   }, [open]);
+}
+
+/**
+ * D478: what a layer that opens sheets of its own remembers so Forward can show them again. Forward
+ * reopens the outer layer first, which mounts a fresh instance of it; the inner sheet's reopen was
+ * offered by the old one, so it reads the sheet and the live instance's setter from here. The owner
+ * of the outer layer keeps this (useRef) so it outlives the remount; without one, each instance keeps
+ * its own.
+ */
+export type LayerReopenMemory<T> = { last: T | null; show: ((sheet: T) => void) | null };
+
+export function newLayerReopenMemory<T>(): LayerReopenMemory<T> {
+  return { last: null, show: null };
+}
+
+/**
+ * The sheets a layer opens over itself, as Forward reopens them: `open` shows one and remembers it,
+ * `reopen` shows the last one on the instance mounted now (the reopen option of its guard).
+ */
+export function useLayerReopen<T>(show: (sheet: T) => void, memory?: MutableRefObject<LayerReopenMemory<T>>) {
+  const own = useRef<LayerReopenMemory<T>>(newLayerReopenMemory<T>());
+  const slot = memory ?? own;
+  const showRef = useRef(show);
+  showRef.current = show;
+  useEffect(() => {
+    const current = slot.current;
+    const live = (sheet: T) => showRef.current(sheet);
+    current.show = live;
+    return () => { if (current.show === live) current.show = null; };
+  }, [slot]);
+  return {
+    open(sheet: T) { slot.current.last = sheet; showRef.current(sheet); },
+    reopen() { const { last, show: live } = slot.current; if (last !== null && live) live(last); }
+  };
 }

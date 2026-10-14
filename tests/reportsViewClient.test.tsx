@@ -411,6 +411,30 @@ describe("inspect tabs are real Back and Forward steps", () => {
     }
   });
 
+  test("a sheet Forward reopened on its old entry redoes the tabs the earlier sheet pushed above it (D478)", () => {
+    const h = harness([withHistoryDepth({ route: "report", "mynotes.dialog": true }, 1)], 0);
+    const shown: string[] = [];
+    const make = () => createInspectTabHistory({
+      history: h.history as unknown as History, href: () => "https://nook.test/reports/x", initialTab: "query",
+      show: (tab) => { shown.push(tab); }, close: () => undefined
+    });
+    const first = make();
+    first.select("data", "query");
+    first.select("mapping", "data");
+    const [base, data, mapping] = [h.entries[0], h.entries[1], h.entries[2]];
+    // Back to the base, then the sheet closed; Forward reopened a new instance on the base entry.
+    const second = make();
+    expect(second.guard(data)).toBe(true);
+    expect(second.step()).toBe(1);
+    expect(second.guard(mapping)).toBe(true);
+    expect(second.guard(data)).toBe(true);
+    expect(second.guard(base)).toBe(true);
+    expect(second.step()).toBe(0);
+    expect(shown).toEqual(["data", "mapping", "data", "mapping", "data", "query"]);
+    // An unrelated entry is still not the tabs'.
+    expect(second.guard(withHistoryDepth({ route: "reports" }, 0))).toBe(false);
+  });
+
   test("on a landing entry (the dialog sentinel) the tabs stack above it; × unwinds to the base, then closes", async () => {
     const h = harness([withHistoryDepth({ route: "report" }, 0)], 0);
     const { sheet, tabs, unmount } = mountSheet(h);

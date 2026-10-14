@@ -56,6 +56,8 @@ export function createInspectTabHistory(options: Options) {
   let step = 0;
   let baseDepth: number | null = null;
   let closing: ReturnType<typeof setTimeout> | null = null;
+  // Tab entries an earlier instance of this sheet left above the entry it was reopened on (D478).
+  const adopted = new Set<string>();
 
   const finishClose = () => {
     if (closing) clearTimeout(closing);
@@ -92,6 +94,17 @@ export function createInspectTabHistory(options: Options) {
     guard(poppedState: unknown): boolean {
       const mark = inspectMark(poppedState);
       if (mark && mark.sheet === sheet) {
+        step = mark.step;
+        options.show(mark.tab, mark.step);
+        return true;
+      }
+      // D478: Forward reopened the sheet on its old entry (a new instance), and the next Forward lands
+      // on a tab entry the earlier instance pushed above it: redo that tab here, as this sheet's own.
+      if (mark && step === 0 && !closing && baseDepth === null && mark.step === 1) {
+        baseDepth = readHistoryDepth(poppedState) - 1;
+        adopted.add(mark.sheet);
+      }
+      if (mark && adopted.has(mark.sheet) && baseDepth !== null && readHistoryDepth(poppedState) === baseDepth + mark.step) {
         step = mark.step;
         options.show(mark.tab, mark.step);
         return true;

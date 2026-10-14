@@ -182,7 +182,12 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     if (target) window.setTimeout(() => { if (target.isConnected) target.focus(); }, 0);
   }, []);
   // Dialogs over the Sprints sheet (Complete, New sprint) are the board's dialog: Back closes only them.
-  useHistoryDialogGuard(dialog !== null, closeDialog);
+  // Forward after Back closed Board settings opens it again, then the layer that was over it (D478);
+  // the other board dialogs and Move to Bin are not reopened.
+  const overSettingsNow = dialog !== null && "overSettings" in dialog && dialog.overSettings === true;
+  const lastSettingsLayerRef = useRef<BoardDialog | null>(null);
+  if (overSettingsNow && dialog.kind !== "deleteBoard") lastSettingsLayerRef.current = dialog;
+  useHistoryDialogGuard(dialog !== null, closeDialog, { reopen: dialog?.kind === "settings" || overSettingsNow ? () => setDialog({ kind: "settings" }) : null });
 
   // Rename, Share, Add column, and Move to Bin opened from Board settings are a layer above it: the
   // settings sheet stays mounted (its unsaved structure draft too), and closing the layer by Back,
@@ -196,7 +201,9 @@ export function BoardView({ userId, boardId, openCardId, openCardFull = false, o
     settingsChildOpenerRef.current = null;
     if (target) window.setTimeout(() => { if (target.isConnected) target.focus(); }, 0);
   }, []);
-  useHistoryDialogGuard(overSettings, backToSettings);
+  useHistoryDialogGuard(overSettings, backToSettings, {
+    reopen: dialog?.kind === "deleteBoard" ? null : () => { if (lastSettingsLayerRef.current) setDialog(lastSettingsLayerRef.current); }
+  });
   const openOverSettings = (kind: "rename" | "share" | "addColumn" | "deleteBoard") => {
     settingsChildOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDialog({ kind, overSettings: true });

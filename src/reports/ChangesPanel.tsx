@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type MutableRefObject } from "react";
 import { ArrowDown, ArrowUp, Check, CircleStop, History, LayoutList, LoaderCircle, Send, X } from "lucide-react";
 import { followRun, type SequencedRunEvent } from "../chat/chatApi";
 import { ModalDialog } from "../files/Dialog";
 import { notify } from "../ui/notify";
 import { Select } from "../ui/Select";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { useHistoryDialogGuard, useLayerReopen, type LayerReopenMemory } from "../ui/useHistoryDialogGuard";
 import type { ReportDetail } from "../../shared/reports";
 import { INSTRUCTION_LIMITS, INSTRUCTION_STATUS_TEXT, type InstructionsView, type ReportInstruction } from "../../shared/reportsEdit";
 import { ArrangeSheet } from "./ArrangeSheet";
@@ -38,6 +38,7 @@ const blockLabel = (report: ReportDetail, blockId: string | null) => {
   return block.title ?? (block.type === "kpi" ? block.label ?? block.column : block.type === "markdown" ? "Text" : block.queryKey);
 };
 
+export type ChangesSheet = Sheet;
 type Sheet = { kind: "proposal"; instructionId: string } | { kind: "versions" } | { kind: "arrange" };
 
 type Props = {
@@ -49,6 +50,8 @@ type Props = {
   onReportChanged: () => void;
   /** Forward after Back closed the panel shows it again. */
   reopen?: () => void;
+  /** Kept by the page so Forward can show the sheet that was over the panel once it is back (D478). */
+  sheetMemory?: MutableRefObject<LayerReopenMemory<Sheet>>;
 };
 
 /**
@@ -58,14 +61,13 @@ type Props = {
  * (manual edits). A side panel from 761 px, a bottom sheet on phones; Back closes it, and each sheet
  * over it is its own Back step (Forward opens it again).
  */
-export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel, focusComposer = false }: Props & { /** "Ask for a chart" on an empty report: the composer takes focus. */ focusComposer?: boolean }) {
+export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged, reopen: reopenPanel, sheetMemory, focusComposer = false }: Props & { /** "Ask for a chart" on an empty report: the composer takes focus. */ focusComposer?: boolean }) {
   const [view, setView] = useState<InstructionsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [target, setTarget] = useState<string>(initialBlockId ?? "");
   const [sending, setSending] = useState(false);
   const [sheet, setSheet] = useState<Sheet | null>(null);
-  const lastSheet = useRef<Sheet | null>(null);
   const textId = useId();
   const targetId = useId();
   const applied = useRef<Set<string> | null>(null);
@@ -94,8 +96,7 @@ export function ChangesPanel({ report, initialBlockId, onClose, onReportChanged,
     return () => clearInterval(timer);
   }, [load, moving]);
 
-  const openSheet = (next: Sheet) => { lastSheet.current = next; setSheet(next); };
-  const reopen = () => { if (lastSheet.current) setSheet(lastSheet.current); };
+  const { open: openSheet, reopen } = useLayerReopen<Sheet>(setSheet, sheetMemory);
 
   async function send(event: FormEvent) {
     event.preventDefault();

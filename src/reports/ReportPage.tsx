@@ -7,7 +7,7 @@ import { ModalDialog } from "../files/Dialog";
 import { ReadOnlyBanner, useRole } from "../team/roleAccess";
 import { notify } from "../ui/notify";
 import { useConfirm } from "../ui/useConfirm";
-import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
+import { newLayerReopenMemory, useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { REPORT_LIMITS, type DatasourceChoice, type QueryOutcome, type ReportDetail } from "../../shared/reports";
 import { cancelConsole, cellText, codeOf, countLabel, datasourceChoices, deleteReport, getReport, messageOf, runConsole, updateReport } from "./reportsApi";
 import { NewReportSheet } from "./NewReportSheet";
@@ -17,7 +17,7 @@ import { STATUS_LABELS } from "./ReportsHome";
 import { ReportGeneration } from "./ReportGeneration";
 import { SchemaBrowser } from "./SchemaBrowser";
 import { ModelSheet } from "./ModelSheet";
-import { ChangesPanel, useReportRights } from "./ChangesPanel";
+import { ChangesPanel, useReportRights, type ChangesSheet } from "./ChangesPanel";
 import { ReportCommentContext } from "./reportComment";
 import { ShareSheet } from "./ShareSheet";
 import { ReportRunsContext, RunsSheet } from "./RunsSheet";
@@ -64,6 +64,8 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
   // Wave 48: the Changes panel (instructions, proposals, versions), aimed at a block or the whole report, and Share.
   const [changes, setChanges] = useState<{ blockId: string | null } | null>(null);
   const lastChanges = useRef<{ blockId: string | null }>({ blockId: null });
+  // The sheet over the Changes panel, kept here so Forward shows it again over the reopened panel (D478).
+  const changesSheet = useRef(newLayerReopenMemory<ChangesSheet>());
   const composerFocus = useRef(false);
   // Share (the owner): the click copies the link first; `copyFailed` opens the panel with the link selected.
   const [sharing, setSharing] = useState<{ copyFailed: boolean } | null>(null);
@@ -250,7 +252,7 @@ export function ReportPage({ reportId, displayName, flash, onBack, onSettings, o
     {schemaOpen && report && <SchemaBrowser reportId={report.id} onClose={() => setSchemaOpen(false)} onInsert={canWrite ? insertTable : undefined} />}
     {modelOpen && report && <ModelSheet reportId={report.id} onClose={() => setModelOpen(false)} reopen={() => setModelOpen(true)} />}
     {changes && report && <ChangesPanel key={`${changes.blockId ?? ""}`} report={report} initialBlockId={changes.blockId} focusComposer={composerFocus.current} onClose={() => { composerFocus.current = false; setChanges(null); }}
-      reopen={() => setChanges(lastChanges.current)} onReportChanged={reloadReport} />}
+      reopen={() => setChanges(lastChanges.current)} sheetMemory={changesSheet} onReportChanged={reloadReport} />}
     {runsAt && report && <RunsSheet key={runsAt.runId ?? ""} reportId={report.id} title={report.title} focusRunId={runsAt.runId} onClose={() => setRunsAt(null)} reopen={() => setRunsAt(lastRuns.current)} />}
     {sharing && report && <ShareSheet reportId={report.id} title={report.title} onClose={() => setSharing(null)} reopen={() => setSharing({ copyFailed: false })} link={reportLink(report.id)} copyFailed={sharing.copyFailed} flash={flash} />}
     {linkSheet && report && <LinkSheet url={reportLink(report.id)} title={report.title} onClose={() => setLinkSheet(false)} flash={flash} />}

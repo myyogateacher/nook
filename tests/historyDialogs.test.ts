@@ -24,7 +24,7 @@ test("every dropdown popup and the routine sheet are their own history layers at
   expect(pane).toContain("onKeyDown={trapTabKey}");
   const listbox = await Bun.file(new URL("../src/ui/Listbox.tsx", import.meta.url)).text();
   const popup = listbox.slice(listbox.indexOf("function DropdownPopup"), listbox.indexOf("function DropdownSheet"));
-  expect(popup).toContain("useHistoryDialogGuard(true, onClose)");
+  expect(popup).toContain("useHistoryDialogGuard(true, onClose, { reopen: null })");
   const css = await Bun.file(new URL("../src/ui/ui.css", import.meta.url)).text();
   expect(css).toContain(".ui-chip-remove { width: 44px; height: 44px;");
   // The sort menus of Notes and Files are dropdowns too.
@@ -67,6 +67,9 @@ test("the sentinel keeps the entry's state one level deeper with the dialog hint
   expect(isDialogSentinelState({ route: "home" })).toBe(false);
 });
 
+/** A sentinel over `base`, whatever its layer id. */
+const sentinelOf = (base: unknown) => expect.objectContaining(dialogSentinelState(base));
+
 function fakeHistory(initial: unknown) {
   const entries: unknown[] = [initial];
   let index = 0;
@@ -82,9 +85,10 @@ test("closing the dialog by other means pops the sentinel and ignores that popst
   const { history, env } = fakeHistory({ route: "home" });
   const release = acquireDialogSentinel(env);
   expect(isDialogSentinelState(history.state)).toBe(true);
-  // A second dialog replacing the first keeps the same sentinel.
-  const second = acquireDialogSentinel(env);
+  // A second dialog replacing the first keeps the same sentinel (React runs the old layer's cleanup first).
   release();
+  const second = acquireDialogSentinel(env);
+  expect(history.state).toMatchObject({ route: "home", "mynotes.depth": 1 });
   await Bun.sleep(5);
   expect(isDialogSentinelState(history.state)).toBe(true);
   second();
@@ -146,7 +150,7 @@ test("a dialog opened before the sentinel's pop lands gets a sentinel once it ha
   expect(entries()).toHaveLength(2);
   // The pop lands (ignored), then the new dialog's sentinel is pushed.
   expect(deliver()).toBe(true);
-  expect(entries()).toEqual([{ route: "home" }, dialogSentinelState({ route: "home" })]);
+  expect(entries()).toEqual([{ route: "home" }, sentinelOf({ route: "home" })]);
   // Back now only closes the second dialog.
   let open = true;
   const unregister = registerHistoryDialogGuard(() => { open = false; return false; });
@@ -159,11 +163,12 @@ test("a dialog opened before the sentinel's pop lands gets a sentinel once it ha
   unregister();
 });
 
-test("Back that closes the inner of two stacked dialogs re-arms the sentinel for the outer one", async () => {
+test("Back that closes the inner of two stacked dialogs leaves the outer one on its own sentinel (D478)", async () => {
   const { history, deliver, entries, env } = asyncHistory({ route: "collection", "mynotes.depth": 0 });
   const outer = acquireDialogSentinel(env);
   const inner = acquireDialogSentinel(env);
-  expect(entries()).toHaveLength(2);
+  // Each layer sits on its own sentinel.
+  expect(entries()).toHaveLength(3);
   let innerOpen = true;
   const unregister = registerHistoryDialogGuard(() => { if (!innerOpen) return false; innerOpen = false; return false; });
   // Back pops the sentinel and closes only the inner dialog (a dropdown sheet over a sheet).
@@ -171,8 +176,8 @@ test("Back that closes the inner of two stacked dialogs re-arms the sentinel for
   expect(deliver()).toBe(true);
   expect(innerOpen).toBe(false);
   inner();
-  // The outer dialog is still open, so it holds a fresh sentinel: the next Back closes it in place.
-  expect(entries()).toEqual([{ route: "collection", "mynotes.depth": 0 }, dialogSentinelState({ route: "collection", "mynotes.depth": 0 })]);
+  // The outer dialog is still open on its own sentinel: the next Back closes it in place.
+  expect(entries()).toEqual([{ route: "collection", "mynotes.depth": 0 }, sentinelOf({ route: "collection", "mynotes.depth": 0 })]);
   unregister();
   outer();
   await Bun.sleep(5);
@@ -342,8 +347,10 @@ function twoWayHistory(initial: unknown) {
   const history = {
     get state() { return entries[index]; },
     pushState(state: unknown) { entries.splice(index + 1, entries.length, state); index += 1; },
+    replaceState(state: unknown) { entries[index] = state; },
     back() { moves.push(-1); },
-    forward() { moves.push(1); }
+    forward() { moves.push(1); },
+    go(delta: number) { moves.push(delta); }
   };
   const deliver = () => {
     const delta = moves.shift();
@@ -368,7 +375,7 @@ test("phone Forward after Back closed a sheet off the sentinel reopens it, and B
     reopen: () => show
   }));
   show();
-  expect(entries).toEqual([base, dialogSentinelState(base)]);
+  expect(entries).toEqual([base, sentinelOf(base)]);
   // Back pops the sentinel and closes the sheet in place.
   history.back();
   expect(deliver()).toBe(true);
@@ -449,7 +456,10 @@ test("the Calendar and the key dialogs offer their layer back to Forward (Fricti
   // Team → Integrations turns the reopen off, like its other sheets (Wave 36 review Q-L1).
   expect(keys).toContain("reopenOnForward = true");
   const hook = await Bun.file(new URL("../src/ui/useHistoryDialogGuard.ts", import.meta.url)).text();
-  expect(hook).toContain("reopenRef.current = options.reopen ?? ownerReopen;");
+  expect(hook).toContain("reopenRef.current = options.reopen === undefined ? ownerReopen : options.reopen;");
+  // A dropdown inside a key dialog never offers the dialog's reopen as its own (D478).
+  const listbox = await Bun.file(new URL("../src/ui/Listbox.tsx", import.meta.url)).text();
+  expect(listbox.match(/useHistoryDialogGuard\(true, onClose, \{ reopen: null \}\)/g)).toHaveLength(2);
 });
 
 test("phone Back off the sentinel while a dialog is busy keeps it open, puts the sentinel back, and offers no reopen", async () => {
@@ -469,7 +479,7 @@ test("phone Back off the sentinel while a dialog is busy keeps it open, puts the
   // Still open, and the sentinel is pushed again under it.
   expect(open).toBe(true);
   expect(index()).toBe(1);
-  expect(entries).toEqual([base, dialogSentinelState(base)]);
+  expect(entries).toEqual([base, sentinelOf(base)]);
   expect(pending()).toBe(0);
   // Once idle, Back closes it and Forward reopens it.
   busy = false;
@@ -575,11 +585,12 @@ test("nested layers on the landing entry: each Back closes only the top one, the
   const closed: string[] = [];
   layer(harness, "sheet", closed);
   layer(harness, "dropdown", closed);
-  expect(harness.entries).toHaveLength(2);
+  // Each layer sits on its own sentinel (D478).
+  expect(harness.entries).toHaveLength(3);
   expect(harness.userBack()).toBe(true);
   await harness.deliverAll();
   expect(closed).toEqual(["dropdown"]);
-  // The sheet still open holds a fresh sentinel.
+  // The sheet still open is on its own sentinel.
   expect(isDialogSentinelState(harness.history.state)).toBe(true);
   expect(harness.userBack()).toBe(true);
   await harness.deliverAll();
@@ -697,7 +708,9 @@ test("Calendars sheet → Share on the landing entry: one guard closes only the 
 
 test("Board settings stays mounted under the dialogs it opens; the Calendars sheet keeps its layer (C1)", async () => {
   const board = await Bun.file(new URL("../src/tasks/BoardView.tsx", import.meta.url)).text();
-  expect(board).toContain("useHistoryDialogGuard(overSettings, backToSettings);");
+  expect(board).toContain("useHistoryDialogGuard(overSettings, backToSettings, {");
+  // D478: Forward reopens Board settings, then the layer over it (never Move to Bin).
+  expect(board).toContain("if (overSettingsNow && dialog.kind !== \"deleteBoard\") lastSettingsLayerRef.current = dialog;");
   expect(board).toContain(`{(dialog?.kind === "settings" || overSettings) && board && <BoardSettingsSheet`);
   expect(board).toContain("suspended={overSettings}");
   expect(board).toContain(`onShare={() => openOverSettings("share")}`);
@@ -710,4 +723,246 @@ test("the Due picker adds no layer of its own: its dropdown popup or sheet is th
   const due = await Bun.file(new URL("../src/tasks/DuePicker.tsx", import.meta.url)).text();
   expect(due).not.toContain("useHistoryDialogGuard");
   expect(due).toContain("<DropdownSurface sheet={sheet}");
+});
+
+// D478: one sentinel per layer, and a stack of reopens for Forward.
+
+/** A guarded layer as useHistoryDialogGuard mounts it, with a reopen; closing unmounts it after the popstate, as React commits. */
+function stackLayer(harness: ReturnType<typeof twoWayHistory>, name: string, log: string[], options: { reopen?: boolean; busy?: () => boolean } = {}) {
+  let open = false;
+  let teardown: (() => void) | null = null;
+  const unmount = () => { teardown?.(); teardown = null; };
+  const show = () => {
+    if (open) return;
+    open = true;
+    log.push(`open ${name}`);
+    const release = acquireDialogSentinel(harness.env);
+    let depth = readHistoryDepth(harness.history.state);
+    const cancel = whenHistorySettled(() => { depth = readHistoryDepth(harness.history.state); });
+    const unregister = registerHistoryDialogGuard(createDialogGuard({
+      isOpen: () => open, markClosed: () => { open = false; }, close: () => { log.push(`close ${name}`); queueMicrotask(unmount); },
+      openDepth: () => depth, blocked: options.busy, undo: (direction) => undoDialogPop(direction, (delta) => harness.history.go(delta)),
+      reopen: () => options.reopen === false ? null : show
+    }));
+    teardown = () => { release(); cancel(); unregister(); };
+  };
+  return { show, isOpen: () => open, close: () => { if (!open) return; open = false; log.push(`× ${name}`); unmount(); } };
+}
+
+async function settleAll(harness: ReturnType<typeof twoWayHistory>) {
+  for (let round = 0; round < 10; round += 1) {
+    await Bun.sleep(5);
+    if (harness.pending() === 0) return;
+    while (harness.pending() > 0) harness.deliver();
+  }
+}
+
+test("nested layers: each Back closes the top one; Forward reopens them in order, each on its own entry (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const changes = stackLayer(harness, "changes", log);
+  const versions = stackLayer(harness, "versions", log);
+  changes.show();
+  versions.show();
+  expect(harness.entries).toHaveLength(3);
+  expect(harness.index()).toBe(2);
+  // Back closes Versions, then Changes; the page stays on its own entry.
+  harness.history.back();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect([changes.isOpen(), versions.isOpen()]).toEqual([true, false]);
+  expect(harness.index()).toBe(1);
+  harness.history.back();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect(changes.isOpen()).toBe(false);
+  expect(harness.index()).toBe(0);
+  expect(harness.entries).toHaveLength(3);
+  // Forward reopens Changes on its entry, then Versions on the next, with no new entries.
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect([changes.isOpen(), versions.isOpen()]).toEqual([true, false]);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect([changes.isOpen(), versions.isOpen()]).toEqual([true, true]);
+  expect(harness.index()).toBe(2);
+  expect(harness.entries).toHaveLength(3);
+  // And Back still closes one layer at a time.
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  expect([changes.isOpen(), versions.isOpen()]).toEqual([false, false]);
+  expect(harness.index()).toBe(0);
+  expect(log).toEqual(["open changes", "open versions", "close versions", "close changes", "open changes", "open versions", "close versions", "close changes"]);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("Back from the inner layer, then Forward: only the inner layer comes back (D478)", async () => {
+  const base = { route: "tasks", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const card = stackLayer(harness, "card", log);
+  const picker = stackLayer(harness, "picker", log);
+  card.show();
+  picker.show();
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect([card.isOpen(), picker.isOpen()]).toEqual([true, true]);
+  expect(harness.index()).toBe(2);
+  picker.close();
+  card.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(0);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("a layer closed with × is not reopened: Forward onto its entry steps back off it (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const changes = stackLayer(harness, "changes", log);
+  const versions = stackLayer(harness, "versions", log);
+  changes.show();
+  versions.show();
+  // × pops Versions' sentinel (an ignored move).
+  versions.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(1);
+  // Back closes Changes; Forward reopens it; Forward onto Versions' old entry steps straight back.
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  harness.history.forward();
+  harness.deliver();
+  await settleAll(harness);
+  expect(changes.isOpen()).toBe(true);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect(versions.isOpen()).toBe(false);
+  expect(harness.index()).toBe(1);
+  // A layer whose owner offers no reopen (a confirm) is stepped over the same way.
+  const confirm = stackLayer(harness, "confirm", log, { reopen: false });
+  confirm.show();
+  expect(harness.index()).toBe(2);
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  harness.history.forward();
+  harness.deliver();
+  await settleAll(harness);
+  expect(confirm.isOpen()).toBe(false);
+  expect(harness.index()).toBe(1);
+  changes.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(0);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("Back off a busy inner layer keeps it on a fresh sentinel; the outer one keeps its own (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  let busy = true;
+  const changes = stackLayer(harness, "changes", log);
+  const versions = stackLayer(harness, "versions", log, { busy: () => busy });
+  changes.show();
+  versions.show();
+  harness.history.back();
+  expect(harness.deliver()).toBe(true);
+  await settleAll(harness);
+  expect(versions.isOpen()).toBe(true);
+  expect(harness.index()).toBe(2);
+  expect(isDialogSentinelState(harness.history.state)).toBe(true);
+  busy = false;
+  harness.history.back();
+  harness.deliver();
+  await settleAll(harness);
+  expect([changes.isOpen(), versions.isOpen()]).toEqual([true, false]);
+  harness.history.forward();
+  harness.deliver();
+  await settleAll(harness);
+  expect(versions.isOpen()).toBe(true);
+  versions.close();
+  changes.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(0);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("closing both layers at once pops both sentinels in one move (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const changes = stackLayer(harness, "changes", log);
+  const versions = stackLayer(harness, "versions", log);
+  changes.show();
+  versions.show();
+  versions.close();
+  changes.close();
+  await Bun.sleep(5);
+  expect(harness.pending()).toBe(1);
+  expect(harness.deliver()).toBe(true);
+  expect(harness.index()).toBe(0);
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("an in-app navigation from a nested sentinel replaces it; the one below is the page's entry again (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const changes = stackLayer(harness, "changes", log);
+  const versions = stackLayer(harness, "versions", log);
+  changes.show();
+  versions.show();
+  expect(takeDialogSentinelEntry(harness.history.state)).toBe(true);
+  harness.history.replaceState({ route: "note", "mynotes.depth": 2 });
+  versions.close();
+  changes.close();
+  await settleAll(harness);
+  expect(harness.index()).toBe(2);
+  // Back onto the sentinel left below: an ordinary entry of the report now, shown by the routes.
+  harness.history.back();
+  expect(harness.deliver()).toBe(false);
+  expect(isDialogSentinelState(harness.history.state)).toBe(false);
+  expect(harness.history.state).toEqual({ route: "reports", "mynotes.depth": 1 });
+  expect(popStateClosedDialog({ state: base })).toBe(false);
+});
+
+test("inspect tab entries over a nested sentinel stay with the inspect guard (D478)", async () => {
+  const base = { route: "reports", "mynotes.depth": 0 };
+  const harness = twoWayHistory(base);
+  const log: string[] = [];
+  const sheet = stackLayer(harness, "inspect", log);
+  sheet.show();
+  const tabs: string[] = [];
+  // A tab entry over the sheet's sentinel, like createInspectTabHistory pushes.
+  const sentinel = harness.history.state as Record<string, unknown>;
+  harness.history.pushState(withHistoryDepth({ ...sentinel, "mynotes.inspect": { tab: "data" } }, 2));
+  const unregister = registerHistoryDialogGuard((state) => {
+    const mark = (state as Record<string, unknown> | null)?.["mynotes.inspect"];
+    if (mark) { tabs.push("data"); return true; }
+    if (readHistoryDepth(state) === 1 && tabs[tabs.length - 1] !== "query") { tabs.push("query"); return true; }
+    return false;
+  });
+  harness.history.back();
+  expect(harness.deliver()).toBe(true);
+  expect(tabs).toEqual(["query"]);
+  expect(sheet.isOpen()).toBe(true);
+  harness.history.forward();
+  expect(harness.deliver()).toBe(true);
+  expect(tabs).toEqual(["query", "data"]);
+  unregister();
+  sheet.close();
+  await settleAll(harness);
 });

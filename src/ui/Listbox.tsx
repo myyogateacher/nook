@@ -140,7 +140,7 @@ function DropdownPopup({ anchorRef, onClose, search, footer, children }: Surface
   const popupRef = useRef<HTMLDivElement>(null);
   // D69 at every width: the popup is its own history layer, so Back closes only this popup and
   // leaves the dialog, sheet, or page under it as it was (as the phone sheet does).
-  useHistoryDialogGuard(true, onClose);
+  useHistoryDialogGuard(true, onClose, { reopen: null });
   const [placed, setPlaced] = useState(false);
   useLayoutEffect(() => {
     const place = () => {
@@ -196,7 +196,7 @@ function DropdownPopup({ anchorRef, onClose, search, footer, children }: Surface
 
 function DropdownSheet({ title, onClose, search, footer, children }: SurfaceProps) {
   // D69: Back closes only this sheet; on the entry the page was loaded on it holds the sentinel entry.
-  useHistoryDialogGuard(true, onClose);
+  useHistoryDialogGuard(true, onClose, { reopen: null });
   // Rendered on the body (Wave 40 QA Q3): a `position: fixed` layer inside a sticky or blurred host
   // (the chat thread header) would be sized by that host and clip the options. Inline without a
   // document (server rendering in tests), where React events still reach the host through the tree.

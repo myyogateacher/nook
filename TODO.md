@@ -1,58 +1,47 @@
 # Nook implementation tracker
 
-Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new") and `git log`. Plans of record: `DEVELOPMENT_PLAN.md` and `docs/plan/research/`. Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
+Only open work lives here. Remove an item once it is done. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the docs site ("What's new"), and `git log`.
 
-**Current state (2026-10-14):** production runs **v0.37.0** (durable attachment Undo, event Undo after Save, avatar revalidation). Released migrations are immutable: **001–049** (045 unused). `main` is ahead of v0.37.0 with the analytics reports module (unreleased migrations **050–053, 055–057**; 054 is reserved for Messages). Development now happens directly on `main`, pushed as each change passes its gates.
+- Plans of record: `DEVELOPMENT_PLAN.md`, `docs/plan/research/`, [reports plan](docs/plan/WAVES_45-48_REPORTS.md), [report theme](docs/plan/REPORT_THEME.md).
+- Contracts: [API](docs/plan/API_CONTRACTS.md) · [Threat model](docs/plan/THREAT_MODEL.md) · [Test plan](docs/plan/TEST_PLAN.md).
+
+**Current state (2026-10-14).**
+- Production runs **v0.37.0**.
+- `main` carries the analytics reports module and is being released as **v0.38.0**.
+- Migrations:
+  - **001–049** are released and immutable (045 unused).
+  - **050–053 and 055–059** are new in v0.38.0.
+  - **054** is reserved for Messages.
+- Development happens directly on `main`, pushed as each change passes its gates.
 
 ## In flight
 
-- [ ] Analytics reports ([plan](docs/plan/WAVES_45-48_REPORTS.md), [theme](docs/plan/REPORT_THEME.md)). On `main`:
-  - Waves 45–48b.
-  - Chart kinds round 2.
-  - Structured logs (`LOG_LEVEL`, `LOG_FORMAT`).
-  - The guard reads ClickHouse 26.6 query trees (FINAL).
-  - Runs history.
-  - Long docs and the planner (055).
-  - Auto titles.
-  - Wider panels and dialogs; Share copies the link; the SQL console moves to ⋯ and Inspect → "Open in console" (an empty report keeps it, with "Generate from a doc" and "Ask for a chart").
-  - "From a doc" says why it is unavailable; polled GETs log at debug.
-  - The live step log and Runs group each step under its plan todo.
-  - The doc tool picker explains Tool and "Link goes into" and why a tool is excluded (admins: "Allow … automatically"); the New report sheet scrolls under a bordered footer.
-  - The AI may browse docs with the read-only tools the person ticks (056): a snapshot for each linked page, "Doc changed" names a linked page, ⋯ → Doc settings, and Provenance lists the pages.
-  - Nook as a built-in doc source (056's `doc_source`): notes and Files text documents by link (every route shape, any instance origin) or "Pick from Nook", read with the owner's live access; a pasted link selects its source.
-
-  - Agents and tool servers: tool servers sync on save, daily, and on first use. Agents get Nook's tools through an internal key (057; read scopes plus Inbox proposals; admin toggle and per-agent toggle).
-  - Button lint (`scripts/buttonMetrics.ts lint`); the baseline is accepted for screens built before reports.
-
-  Open:
-  - [ ] (Lane R: READY on branch `release-0.38.0`, QA passed on real ClickHouse 26.6, 6 QA bugs fixed; WAITING for the operator to approve merge, tag and deploy) Release: version bump, CHANGELOG, a real-ClickHouse QA pass (`CLICKHOUSE_TEST_URL`, local `clickhouse/clickhouse-server:26.6`), the upgrade notes for 050–057 in OPERATIONS.
-- [ ] Report folders, left from lane I: drag a folder in the nav to nest or reorder it (the server takes `parentId` and `position`; Notes has no folder drag to copy, so only rename/new subfolder/delete are in the ⋯ menu); a reader's own placement of reports shared with them (they stay under Shared with me).
-- [x] (Lane E, approved 2026-10-14) Generator reliability: reports that are well formed can still be wrong.
-  - [x] E1 eval harness: `scripts/reportEval.ts` and 10 cases in `evals/reports/cases/` (FINAL and soft deletes, refund dates, IST days, join fan-out, funnel, percent as 0–1, linked-page metric, top route, cents, duplicate deliveries); scripted golden and trap specs; a CI subset replayed from recorded fixtures; `--compare`; OPERATIONS "Report generation eval".
-  - [x] E2 result sanity checks (`server/reports/sanity.ts`): join fan-out (guarded key sample), KPI/breakdown reconciliation, coverage, units; one refusal per run, not a try; Runs step and audit `reports.generate.sanity`. E6: the edit agent (refused once, `reports.instruction.sanity`) and manual edits (saved with `warnings`) run them on what they touched.
-  - [x] E3 ClickHouse error repair hints (`server/reports/repairHints.ts`): closest catalog names, casts, HAVING, GROUP BY, partition and sorting keys for limits, FINAL from the catalog engine; tested on captured 26.6 error texts.
-  - [x] E4 metric catalog (058 `report_metric_catalogs`): extracted per doc snapshot with a forced tool, checked (table, FINAL, LIMIT 0), owner-editable versions in ⋯ → Metrics, todos carry `metricId`, SQL must use the metric's expression and filters, Doc changed names changed metrics.
-  - [x] E6 (E4 leftovers): metrics defined only on a linked page are extracted from the run's doc-browse pages (Nook links the doc names are read first when read_note is allowed; earlier runs' `report_doc_pages` too) and marked with the page; MCP `get_report_metrics` (reports:read) and `update_report_metric` (reports:write, owner, never removes, audited `via: mcp`); edits are held to the catalog on submit like generation.
-  - [x] E5 model fallback: Settings → AI "Fallback model for reports" (off by default); one retry on it after the report model used up its tries or nudges; block provenance records the model (Inspect → Provenance), Runs shows the model that ran last.
-  - [x] E6 (E5 leftovers): the edit agent falls back once too; blocks an agent run writes record its model (commitSpec reads the run's agent run); Runs lists every model a run used, in order (primary → fallback).
-  - [ ] E6 leftovers: Check doc does not re-extract the catalog for a changed linked page (it names the page, not its metrics); a non-Nook doc server's linked pages reach the catalog only after a run read them.
-- [ ] Forward after Back past a page (D480) does not yet reopen Inspect: it has no `layerKey`/`useLayerOpener` yet; it follows once v0.38.0 merges with its reopen. (The sheets inside Versions have theirs: lane J2.)
-- [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.
-- [x] (Lane E, small) `server/reports/edit.ts`'s prompt still says "Use concat, not format()"; the string function `format()` is allowed now (only the table function is refused), so drop that sentence when next touching the file.
+- [ ] Release v0.38.0. Update the `release-0.38.0` branch to current `main`, extend CHANGELOG and the upgrade notes to cover 058–059, run the gates, then merge, tag, push, publish the GitHub release, and rebuild the local Docker image.
+- [ ] (Lane K) Generate a report straight into its folder (no second filing request).
+- [ ] (Lane K) Folders: drag a folder in the nav to nest it or reorder it, with a keyboard and phone alternative.
+- [ ] (Lane K) Doc browsing (B3): keep search and list answers too, so "Doc changed" notices pages a search would now find. Check doc reads at most 16 pages today.
+- [ ] (Lane K) "Pick from Nook" (B4): search the text of Files documents, not only their names (`GET /api/files`, newest 500).
+- [ ] Metric catalog: Check doc does not re-extract the catalog when a linked page changes. It names the changed page, not the changed metrics. A non-Nook doc server's linked pages reach the catalog only after a run has read them.
+- [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. Do this after v0.38.0 merges, since that release adds Inspect's reopen.
+- [ ] Report folders: a reader's own placement of reports shared with them. Today they stay under Shared with me.
+- [ ] Report shares live in `report_members` and `report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, together with the Access sheet.
 
 ## Known LOW leftovers
 
-- [ ] `tests/restV1.test.ts` "agents" fails in some full-suite runs (lanes E and J, 2026-10-14) but passes on its own (7/7) and passed in lane G's six full proof runs. Probably order-dependent shared state (agents, providers or keys left by an earlier file); find what it reads.
-
-- [x] Button lint baseline accepted for pre-reports screens; new findings fail QA.
-- [ ] Doc browsing (B3): only page reads (`fetch`, `get_document`, `read_document`, `get_page`, `read_note`, `read_document_text`) are kept as pages; search and list answers are not, so "Doc changed" cannot notice a new page a search would now find. Check doc reads at most 16 pages.
-- [ ] "Pick from Nook" (B4) finds Files by name only (`GET /api/files`, the newest 500); there is no full-text search over Files text documents yet.
+- [ ] `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.
 
 ## Standing rules for agent briefs
 
-- Subagents run on Opus 5.5 at medium effort. One writer works on `main` at a time; any parallel lane uses its own worktree with pre-assigned ports and migration ids and merges back promptly. Releases are serial.
-- UI changes need screenshots at 1585, 1280, and 390 px that the director reviews for squished or clipped buttons, overlaps, and wasted width. A shared-style change must keep screens outside its module identical: check with `scripts/buttonMetrics.ts`.
-- Never stop processes by name or pattern (no pkill/killall); stop only your own pids. Production and QA containers run `bun server/index.ts` as the same host user.
-- Each agent keeps scratch files in its own subfolder of the scratchpad (`<scratchpad>/<lane>/`); never delete or reuse another lane's files.
-- Browser QA uses its own `<lane>.localhost:<port>` origin and its own tab or profile, because the session cookie is shared across localhost ports.
-- Tests that spawn `bun` use `--no-env-file`. The Docker verify image has no `docs/` and no `git`: guard with `test.skipIf` / `Bun.which`. Use `tests/support/agentRuns.ts` and `clock.ts` for timing-sensitive tests.
+- **Agents and lanes.** Subagents run on Opus 5.5 at medium effort. One writer works on `main` at a time. Any parallel lane uses its own worktree, with pre-assigned ports and migration ids, and merges back promptly. Releases are serial.
+- **Visual QA.**
+  - UI changes need screenshots at 1585, 1280, and 390 px, which the director reviews for squished or clipped buttons, overlaps, and wasted width.
+  - A shared-style change must keep screens outside its module identical. Check with `scripts/buttonMetrics.ts` (diff plus lint).
+- **Processes.** Never stop processes by name or pattern (no pkill/killall); stop only your own pids. Production and QA containers run `bun server/index.ts` as the same host user.
+- **Scratch files.** Each agent keeps its scratch files in its own subfolder of the scratchpad (`<scratchpad>/<lane>/`). Never delete or reuse another lane's files.
+- **Browser QA.** Use your own `<lane>.localhost:<port>` origin and your own tab or profile, because the session cookie is shared across localhost ports.
+- **Tests.**
+  - Run with `bun --no-env-file test`.
+  - Tests that spawn `bun` use `--no-env-file`.
+  - The Docker verify image has no `docs/` and no `git`, so guard with `test.skipIf` / `Bun.which`.
+  - Use `tests/support/agentRuns.ts` and `clock.ts` for timing-sensitive tests, and `cpuTime.ts` for work budgets.
+- **TODO.md.** Remove an item in the same commit that ships it.

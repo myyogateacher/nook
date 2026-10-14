@@ -533,3 +533,27 @@ describe("the meter and the colour scale render as HTML", () => {
     expect(scale).toContain("Colour scale from 0 to 10");
   });
 });
+
+describe("the showcase-2 QA script", () => {
+  test("its report uses every round-2 kind, passes the design rules over the fake answers, and every chart builds; its first submit is refused by rules 11 and 21", async () => {
+    const { showcase2Spec, showcase2Answer, SHOWCASE2_QUERIES } = await import("../scripts/fakeReportProvider");
+    const results = Object.fromEntries(Object.entries(SHOWCASE2_QUERIES).map(([key, sql]) => {
+      const answer = showcase2Answer(sql);
+      expect({ key, answered: answer !== null }).toEqual({ key, answered: true });
+      return [key, { columns: answer!.meta, rows: answer!.data }];
+    }));
+    const good = design(showcase2Spec(), results as Record<string, Rows>);
+    expect(good.errors).toEqual([]);
+    const charts = good.spec.blocks.filter((block): block is ChartBlock => block.type === "chart");
+    for (const kind of ["heatmap", "calendar", "funnel", "gauge", "treemap", "sankey", "boxplot", "histogram", "waterfall", "combo", "bullet"]) expect(charts.map((block) => block.kind)).toContain(kind);
+    expect(charts.some((block) => block.facet)).toBe(true);
+    expect(charts.filter((block) => block.stack === "percent").map((block) => block.kind).sort()).toEqual(["area", "bar"]);
+    for (const block of charts) {
+      const built = buildChartOption(block, results[block.queryKey] as Rows, chartTheme("dark"), { width: 358 });
+      expect({ id: block.id, problems: built.problems }).toEqual({ id: block.id, problems: [] });
+    }
+    const bad = design(showcase2Spec({ bad: true }), results as Record<string, Rows>).errors.join("\n");
+    expect(bad).toContain("rule 11");
+    expect(bad).toContain("rule 21");
+  });
+});

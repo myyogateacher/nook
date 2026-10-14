@@ -16,8 +16,13 @@
  * modes reject `tool_choice: "required"` or a named choice with a 400, like providers that lack them
  * (`rejectRequired`, `rejectNamed`; env FAKE_PROVIDER_TOOL_CHOICE=no-required|no-named|none).
  *
+ * Chart kinds round 2: `showcase2Script` builds one report with every new kind (heatmap, calendar,
+ * small multiples, funnel, gauge, bullet, treemap, a 100 % stacked bar, sankey, boxplot, histogram,
+ * waterfall, a percent-stacked area, combo); its first submit is refused by rules 11 and 21.
+ * `showcase2Answer(sql)` is what a fake ClickHouse answers to its queries.
+ *
  * Run: `bun --no-env-file scripts/fakeReportProvider.ts` (env FAKE_PROVIDER_PORT, default 22153;
- * FAKE_PROVIDER_DELAY_MS pauses before each reply; FAKE_PROVIDER_SCRIPT=showcase for the showcase).
+ * FAKE_PROVIDER_DELAY_MS pauses before each reply; FAKE_PROVIDER_SCRIPT=showcase or showcase-2).
  */
 
 type Turn = { role: string; content?: unknown; tool_calls?: Array<{ function?: { name?: string } }>; tool_call_id?: string };
@@ -123,6 +128,111 @@ export const showcaseScript: Script = (context) => {
   if (context.step === 1) return { content: "Looking for the tables the doc names.", toolCalls: [{ name: "search_schema", arguments: { query: "orders revenue channel" } }] };
   if (context.step === 2) return { toolCalls: [{ name: "describe_tables", arguments: { tables: ["analytics.orders", "analytics.signups"] } }] };
   return { toolCalls: [{ name: "run_sql", arguments: { sql: SHOWCASE_QUERIES.revenue_trend, purpose: "Check revenue per day by channel" } }] };
+};
+
+/**
+ * Chart kinds round 2 (D462–D468): the showcase-2 queries, one report that uses every new kind. The QA
+ * instance's fake ClickHouse answers each by its marker column (`showcase2Answer`).
+ */
+export const SHOWCASE2_QUERIES = {
+  retention: "SELECT toStartOfMonth(first_order) AS cohort_month, dateDiff('month', first_order, order_date) AS months_since,\n  uniq(customer_id) / any(cohort_size) AS retention\nFROM analytics.cohorts\nGROUP BY cohort_month, months_since\nORDER BY cohort_month, months_since",
+  country_daily: "SELECT order_date AS facet_day, country AS facet_country, count() AS facet_orders\nFROM analytics.orders\nWHERE order_date >= today() - 180\nGROUP BY facet_day, facet_country\nORDER BY facet_day",
+  signup_funnel: "SELECT stage AS funnel_stage, uniq(visitor_id) AS funnel_users\nFROM analytics.funnel_events\nGROUP BY stage, stage_order\nORDER BY stage_order",
+  quota: "SELECT sum(amount) AS quota_attained, any(quarter_target) AS quota_target\nFROM analytics.orders\nWHERE order_date >= toStartOfQuarter(today())",
+  revenue_mix: "SELECT region AS mix_region, product AS mix_product, sum(amount) AS mix_revenue\nFROM analytics.orders\nGROUP BY mix_region, mix_product",
+  page_flow: "SELECT from_page AS flow_from, to_page AS flow_to, count() AS flow_visits\nFROM analytics.page_transitions\nGROUP BY flow_from, flow_to",
+  latency: "SELECT plan AS latency_plan, duration_ms AS latency_ms\nFROM analytics.requests\nWHERE event_date = yesterday()\nLIMIT 600",
+  order_values: "SELECT amount AS order_value\nFROM analytics.orders\nWHERE amount > 0 AND order_date >= today() - 30\nLIMIT 2000",
+  revenue_bridge: "SELECT step AS bridge_step, delta AS bridge_delta\nFROM analytics.revenue_bridge\nORDER BY step_order",
+  channel_daily: "SELECT order_date AS share_day, channel AS share_channel, count() AS share_orders\nFROM analytics.orders\nWHERE order_date >= today() - 56\nGROUP BY share_day, share_channel\nORDER BY share_day",
+  revenue_cost: "SELECT toStartOfMonth(order_date) AS combo_month, sum(amount) AS combo_revenue, sum(cost) AS combo_cost\nFROM analytics.orders\nGROUP BY combo_month\nORDER BY combo_month",
+  team_targets: "SELECT team AS bullet_team, sum(amount) AS bullet_actual, any(target) AS bullet_target, any(floor_poor) AS bullet_poor, any(floor_fair) AS bullet_fair, any(floor_good) AS bullet_good\nFROM analytics.team_sales\nGROUP BY team"
+};
+
+const SHOWCASE2_PURPOSES: Record<keyof typeof SHOWCASE2_QUERIES, string> = {
+  retention: "Monthly cohort retention", country_daily: "Orders per day and country, last 180 days", signup_funnel: "Visitors at each signup step", quota: "Quarter revenue against its target",
+  revenue_mix: "Revenue by region and product", page_flow: "Page-to-page transitions", latency: "Request durations by plan", order_values: "Order values, last 30 days",
+  revenue_bridge: "From last quarter's revenue to this quarter's", channel_daily: "Orders per day and channel, last 8 weeks", revenue_cost: "Revenue and cost per month", team_targets: "Team sales against target and bands"
+};
+
+/** The showcase-2 spec: every round-2 kind once. `bad` breaks rules 11 (a funnel as a compare) and 21 (a combo of two units). */
+export function showcase2Spec(options: { bad?: boolean } = {}) {
+  return {
+    version: 1,
+    specVersion: 2,
+    sections: [
+      { id: "retention", title: "Retention and activity", summary: "Each cohort keeps about 40% of its customers by month six; weekday activity is steady." },
+      { id: "conversion", title: "Conversion and targets" },
+      { id: "mix", title: "Mix and flow" },
+      { id: "spread", title: "Distributions" },
+      { id: "change", title: "Change and composition" }
+    ],
+    queries: Object.entries(SHOWCASE2_QUERIES).map(([key, sql]) => ({ key, sql, purpose: SHOWCASE2_PURPOSES[key as keyof typeof SHOWCASE2_QUERIES] })),
+    blocks: [
+      { id: "intro", type: "markdown", markdown: "Every chart kind of round 2 in one report: cohorts, a calendar, a funnel, a meter, a treemap, a sankey, a box plot, a histogram, a waterfall, stacked shares, small multiples, a combo, and bullets." },
+      { id: "retention", type: "chart", title: "Cohort retention", intent: "matrix", width: "full", section: "retention", queryKey: "retention", kind: "heatmap", x: "months_since", x2: "cohort_month", y: ["retention"], cohort: true, format: "percent" },
+      { id: "activity", type: "chart", title: "Orders per day", intent: "trend", width: "full", section: "retention", queryKey: "country_daily", kind: "calendar", x: "facet_day", y: ["facet_orders"], unit: "orders" },
+      { id: "countries", type: "chart", title: "Orders per day by country", intent: "trend", width: "full", section: "retention", queryKey: "country_daily", kind: "line", x: "facet_day", y: ["facet_orders"], facet: "facet_country", unit: "orders" },
+      { id: "funnel", type: "chart", title: "Signup funnel", intent: options.bad ? "compare" : "conversion", width: "half", section: "conversion", queryKey: "signup_funnel", kind: "funnel", x: "funnel_stage", y: ["funnel_users"], unit: "visitors" },
+      { id: "quota", type: "chart", title: "Quarter revenue vs target", intent: "attainment", width: "half", section: "conversion", queryKey: "quota", kind: "gauge", y: ["quota_attained"], target: "quota_target", format: "currency:USD" },
+      { id: "teams", type: "chart", title: "Team sales vs target", intent: "attainment", width: "full", section: "conversion", queryKey: "team_targets", kind: "bullet", x: "bullet_team", y: ["bullet_actual"], target: "bullet_target", ranges: ["bullet_poor", "bullet_fair", "bullet_good"], format: "currency:USD" },
+      { id: "mix_tree", type: "chart", title: "Revenue by region and product", intent: "share", width: "half", section: "mix", queryKey: "revenue_mix", kind: "treemap", x: "mix_region", x2: "mix_product", y: ["mix_revenue"], format: "currency:USD" },
+      { id: "mix_share", type: "chart", title: "Product share by region", intent: "share", width: "half", section: "mix", queryKey: "revenue_mix", kind: "bar", x: "mix_region", y: ["mix_revenue"], series: "mix_product", stack: "percent", format: "currency:USD" },
+      { id: "flow", type: "chart", title: "How visitors move through the site", intent: "flow", width: "full", section: "mix", queryKey: "page_flow", kind: "sankey", x: "flow_from", x2: "flow_to", y: ["flow_visits"], unit: "visits" },
+      { id: "latency", type: "chart", title: "Request time by plan", intent: "distribution", width: "half", section: "spread", queryKey: "latency", kind: "boxplot", x: "latency_plan", y: ["latency_ms"], unit: "ms" },
+      { id: "values", type: "chart", title: "Order values", intent: "distribution", width: "half", section: "spread", queryKey: "order_values", kind: "histogram", y: ["order_value"], format: "currency:USD" },
+      { id: "bridge", type: "chart", title: "Revenue bridge, last quarter to this", intent: "delta", width: "half", section: "change", queryKey: "revenue_bridge", kind: "waterfall", x: "bridge_step", y: ["bridge_delta"], start: true, total: true, format: "currency:USD" },
+      { id: "channels", type: "chart", title: "Channel share of orders", intent: "share", width: "half", section: "change", queryKey: "channel_daily", kind: "area", x: "share_day", y: ["share_orders"], series: "share_channel", stack: "percent", unit: "orders" },
+      { id: "margin", type: "chart", title: "Revenue and cost per month", intent: "trend", width: "full", section: "change", queryKey: "revenue_cost", kind: "combo", x: "combo_month", y: ["combo_revenue", "combo_cost"], yUnits: options.bad ? ["USD", "orders"] : ["USD", "USD"], format: "currency:USD" }
+    ]
+  };
+}
+
+const iso = (time: number) => new Date(time).toISOString().slice(0, 10);
+const DAY = 86_400_000;
+
+/** The fake ClickHouse's answers to the showcase-2 queries (deterministic; numbers as JSONCompact sends them). Null for any other statement. */
+export function showcase2Answer(sql: string, today = Date.UTC(2026, 9, 14)): { meta: Array<{ name: string; type: string }>; data: unknown[][]; rowsRead: number } | null {
+  const answer = (meta: Array<[string, string]>, data: unknown[][]) => ({ meta: meta.map(([name, type]) => ({ name, type })), data, rowsRead: 250_000 });
+  if (sql.includes("months_since")) {
+    const cohorts = Array.from({ length: 10 }, (_, at) => `2026-${String(at + 1).padStart(2, "0")}-01`);
+    return answer([["cohort_month", "Date"], ["months_since", "Int64"], ["retention", "Float64"]], cohorts.flatMap((cohort, c) => Array.from({ length: 10 - c }, (_, month) => [cohort, String(month), month === 0 ? 1 : Math.round((0.58 * Math.exp(-month / 7) + 0.02 * ((c * 3 + month) % 4) / 4 + 0.01 * c) * 1000) / 1000])));
+  }
+  if (sql.includes("facet_country")) {
+    const countries = ["US", "DE", "IN", "GB", "BR", "JP"];
+    return answer([["facet_day", "Date"], ["facet_country", "LowCardinality(String)"], ["facet_orders", "UInt64"]], Array.from({ length: 180 }, (_, at) => iso(today - (180 - at) * DAY)).flatMap((day, at) => countries.map((country, c) => [day, country, String(Math.round((60 - c * 8) * (1 + 0.25 * Math.sin(at / 9 + c)) * ([0, 6].includes(new Date(day).getUTCDay()) ? 0.7 : 1) + at * (0.08 + c * 0.03)))])));
+  }
+  if (sql.includes("funnel_stage")) return answer([["funnel_stage", "String"], ["funnel_users", "UInt64"]], [["Visited pricing", "18400"], ["Started signup", "7350"], ["Verified email", "5120"], ["Created a project", "3010"], ["Invited a teammate", "1240"], ["Paid", "610"]]);
+  if (sql.includes("quota_attained")) return answer([["quota_attained", "Decimal(18, 2)"], ["quota_target", "Decimal(18, 2)"]], [["842500.00", "1000000.00"]]);
+  if (sql.includes("mix_region")) {
+    const regions = ["North America", "Europe", "India", "Brazil", "Japan", "Australia", "Mexico", "Nordics", "Korea", "South Africa"];
+    return answer([["mix_region", "LowCardinality(String)"], ["mix_product", "LowCardinality(String)"], ["mix_revenue", "Decimal(18, 2)"]], regions.flatMap((region, r) => ["Notes", "Boards", "Reports"].map((product, p) => [region, product, (Math.round(420_000 / (r + 1.4) * [0.5, 0.3, 0.2][p]! * (1 + 0.15 * ((r + p) % 3))) ).toFixed(2)])));
+  }
+  if (sql.includes("flow_from")) {
+    const links: Array<[string, string, number]> = [["Home", "Pricing", 5200], ["Home", "Docs", 3100], ["Home", "Blog", 1800], ["Blog", "Pricing", 700], ["Blog", "Exit", 1100], ["Docs", "Signup", 900], ["Docs", "Exit", 2200], ["Pricing", "Signup", 2600], ["Pricing", "Exit", 3300], ["Signup", "Onboarding", 3100], ["Signup", "Abandoned", 400]];
+    return answer([["flow_from", "String"], ["flow_to", "String"], ["flow_visits", "UInt64"]], links.map(([from, to, n]) => [from, to, String(n)]));
+  }
+  if (sql.includes("latency_ms")) return answer([["latency_plan", "LowCardinality(String)"], ["latency_ms", "Float64"]], ["Free", "Pro", "Team", "Enterprise"].flatMap((plan, p) => Array.from({ length: 150 }, (_, at) => [plan, Math.round((180 - p * 30 + ((at * 7919) % 160) - 60 + (at % 37 === 0 ? 700 - p * 100 : 0)) * 10) / 10])));
+  if (sql.includes("order_value")) return answer([["order_value", "Decimal(18, 2)"]], Array.from({ length: 1200 }, (_, at) => [(18 + 60 * (((at * 7919) % 1000) / 1000) ** 2 + (at % 11 === 0 ? 140 : 0) + (at % 3) * 7).toFixed(2)]));
+  if (sql.includes("bridge_step")) return answer([["bridge_step", "String"], ["bridge_delta", "Decimal(18, 2)"]], [["Q2 revenue", "1240000.00"], ["New customers", "286000.00"], ["Expansion", "142000.00"], ["Price change", "38000.00"], ["Contraction", "-74000.00"], ["Churn", "-161000.00"]]);
+  if (sql.includes("share_channel")) return answer([["share_day", "Date"], ["share_channel", "LowCardinality(String)"], ["share_orders", "UInt64"]], Array.from({ length: 56 }, (_, at) => iso(today - (56 - at) * DAY)).flatMap((day, at) => [["Web", 520 - at * 3], ["App", 260 + at * 4], ["Partner", 110 + (at % 7) * 6]].map(([channel, n]) => [day, channel, String(n)])));
+  if (sql.includes("combo_month")) return answer([["combo_month", "Date"], ["combo_revenue", "Decimal(18, 2)"], ["combo_cost", "Decimal(18, 2)"]], Array.from({ length: 10 }, (_, at) => [`2026-${String(at + 1).padStart(2, "0")}-01`, (310_000 + at * 21_000 + (at % 3) * 9_000).toFixed(2), (228_000 + at * 9_500).toFixed(2)]));
+  if (sql.includes("bullet_team")) return answer([["bullet_team", "String"], ["bullet_actual", "Decimal(18, 2)"], ["bullet_target", "Decimal(18, 2)"], ["bullet_poor", "Decimal(18, 2)"], ["bullet_fair", "Decimal(18, 2)"], ["bullet_good", "Decimal(18, 2)"]],
+    [["Enterprise", 412_000, 450_000], ["Mid-market", 298_000, 260_000], ["SMB", 154_000, 210_000], ["Partners", 96_000, 120_000], ["Self-serve", 188_000, 170_000]].map(([team, actual, target]) => [team, Number(actual).toFixed(2), Number(target).toFixed(2), (Number(target) * 0.6).toFixed(2), (Number(target) * 0.85).toFixed(2), (Number(target) * 1.15).toFixed(2)]));
+  return null;
+}
+
+/** The showcase-2 sequence (FAKE_PROVIDER_SCRIPT=showcase-2): search, describe, one run_sql, a submit refused by rules 11 and 21, then the fixed spec. */
+export const showcase2Script: Script = (context) => {
+  if (context.tools.includes(PROBE_TOOL)) return probeReply;
+  if (context.tools.includes("submit_patch")) return qaEditScript(context);
+  const submits = context.body.messages?.filter((turn) => turn.role === "assistant" && turn.tool_calls?.some((call) => call.function?.name === "submit_report")).length ?? 0;
+  if (context.forced === "submit_report" || context.lastTool?.name === "submit_report" || context.step >= 4) {
+    return { content: submits ? "Fixing the design: the funnel's intent is conversion, and the combo's two measures share one unit." : "Submitting the report.", toolCalls: [{ name: "submit_report", arguments: showcase2Spec({ bad: submits === 0 }) }] };
+  }
+  if (context.step === 1) return { content: "Looking for the tables the doc names.", toolCalls: [{ name: "search_schema", arguments: { query: "orders cohorts funnel" } }] };
+  if (context.step === 2) return { toolCalls: [{ name: "describe_tables", arguments: { tables: ["analytics.orders"] } }] };
+  return { toolCalls: [{ name: "run_sql", arguments: { sql: SHOWCASE2_QUERIES.retention, purpose: "Check cohort retention" } }] };
 };
 
 /** Wave 48: the edit agent's QA query (revenue per country, net of refunds). */
@@ -238,7 +348,8 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
 if (import.meta.main) {
   const port = Number(process.env.FAKE_PROVIDER_PORT ?? 22153);
   const mode = process.env.FAKE_PROVIDER_TOOL_CHOICE ?? "";
-  const provider = startScriptedProvider(port, process.env.FAKE_PROVIDER_SCRIPT === "showcase" ? showcaseScript : qaScript, {
+  const scripts: Record<string, Script> = { showcase: showcaseScript, "showcase-2": showcase2Script };
+  const provider = startScriptedProvider(port, scripts[process.env.FAKE_PROVIDER_SCRIPT ?? ""] ?? qaScript, {
     delayMs: Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0) || 0,
     rejectRequired: mode === "no-required" || mode === "none", rejectNamed: mode === "no-named" || mode === "none"
   });

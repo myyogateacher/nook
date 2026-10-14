@@ -288,7 +288,11 @@ export const qaScript: Script = (context) => {
 const encoder = new TextEncoder();
 const frame = (data: unknown) => encoder.encode(`data: ${JSON.stringify(data)}\n\n`);
 
-export type ToolChoiceMode = { rejectRequired?: boolean; rejectNamed?: boolean };
+/**
+ * `toolsNeedEffort`: like some newer OpenAI models in Chat Completions, a request with tools is refused
+ * (400) unless its reasoning_effort is one of these (env FAKE_PROVIDER_TOOLS_NEED_EFFORT=none,minimal).
+ */
+export type ToolChoiceMode = { rejectRequired?: boolean; rejectNamed?: boolean; toolsNeedEffort?: string[] };
 
 export function startScriptedProvider(port: number, initial: Script = qaScript, options: { delayMs?: number } & ToolChoiceMode = {}): ScriptedProvider {
   let script = initial;
@@ -301,7 +305,7 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/v1/models") return Response.json({ object: "list", data: [{ id: "scripted-report-model", object: "model" }] });
       if (request.method !== "POST" || url.pathname !== "/v1/chat/completions") return Response.json({ error: { message: "not found" } }, { status: 404 });
-      const body = await request.json().catch(() => ({})) as ScriptContext["body"];
+      const body = await request.json().catch(() => ({})) as ScriptContext["body"] & { reasoning_effort?: string };
       calls.push(body);
       const messages = body.messages ?? [];
       const lastToolTurn = [...messages].reverse().find((turn) => turn.role === "tool");
@@ -310,6 +314,9 @@ export function startScriptedProvider(port: number, initial: Script = qaScript, 
         return null;
       };
       const choice = body.tool_choice as { function?: { name?: string } } | string | undefined;
+      if (options.toolsNeedEffort && body.tools?.length && !options.toolsNeedEffort.includes(body.reasoning_effort ?? "")) {
+        return Response.json({ error: { message: `Function tools with reasoning_effort are not supported for ${body.model ?? "this model"} in /v1/chat/completions. Please use /v1/responses instead.`, type: "invalid_request_error", param: "reasoning_effort" } }, { status: 400 });
+      }
       // Wave 48b: providers that lack `required` or a named choice answer 400, as some do.
       if (options.rejectRequired && choice === "required") return Response.json({ error: { message: "tool_choice 'required' is not supported", type: "invalid_request_error" } }, { status: 400 });
       if (options.rejectNamed && typeof choice === "object" && choice !== null) return Response.json({ error: { message: "tool_choice must be 'auto' or 'none'", type: "invalid_request_error" } }, { status: 400 });
@@ -351,7 +358,8 @@ if (import.meta.main) {
   const scripts: Record<string, Script> = { showcase: showcaseScript, "showcase-2": showcase2Script };
   const provider = startScriptedProvider(port, scripts[process.env.FAKE_PROVIDER_SCRIPT ?? ""] ?? qaScript, {
     delayMs: Number(process.env.FAKE_PROVIDER_DELAY_MS ?? 0) || 0,
-    rejectRequired: mode === "no-required" || mode === "none", rejectNamed: mode === "no-named" || mode === "none"
+    rejectRequired: mode === "no-required" || mode === "none", rejectNamed: mode === "no-named" || mode === "none",
+    ...(process.env.FAKE_PROVIDER_TOOLS_NEED_EFFORT ? { toolsNeedEffort: process.env.FAKE_PROVIDER_TOOLS_NEED_EFFORT.split(",") } : {})
   });
   console.log(`Scripted report provider on ${provider.baseUrl}`);
 }

@@ -5,7 +5,7 @@ import { z, ZodError } from "zod";
 import type { AppEnv } from "../auth";
 import { db } from "../db";
 import { parseJson, uuid } from "../validation";
-import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, CHAT_IMAGE_BOUNDS, DEFAULT_MODEL, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, SERVER_AUTH_KINDS, SERVER_AVAILABILITIES, TOOL_POLICIES, VISION_POLICY_BOUNDS, type ChatUpdateEvent } from "../../shared/agents";
+import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, REASONING_EFFORTS, CHAT_IMAGE_BOUNDS, DEFAULT_MODEL, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, SERVER_AUTH_KINDS, SERVER_AVAILABILITIES, TOOL_POLICIES, VISION_POLICY_BOUNDS, type ChatUpdateEvent } from "../../shared/agents";
 import { createAgent, deleteAgent, agentDetail, listUsableAgents, manageableAgent, updateAgent, usableAgent } from "./agentsService";
 import { chatDetail, createChat, deleteChat, forkChat, listChats, listSharedChats, messageOf, pathTo, readableChat, updateChat, withAttachments } from "./chats";
 import { chatAttachmentsFor } from "./chatImages";
@@ -42,7 +42,9 @@ const compat = z.object({
   supportsTools: z.boolean().optional(),
   namedToolChoice: z.boolean().optional(),
   requiredToolChoice: z.boolean().optional(),
-  contextTokens: z.number().int().min(1024).max(10_000_000).optional()
+  contextTokens: z.number().int().min(1024).max(10_000_000).optional(),
+  // 2026-10-14: sent as reasoning_effort on every request to this provider; omit sends none.
+  reasoningEffort: z.enum(REASONING_EFFORTS).optional()
 }).strict();
 // 2026-10-08: the knowledge base policy. `models: null` is "Any"; a list has 1 to 20 model ids; `maxDims: null` is 3,072.
 const embeddingModelId = z.string().trim().min(1).max(KNOWLEDGE_POLICY_BOUNDS.modelName).regex(EMBEDDING_MODEL_ID, "must be a model id");

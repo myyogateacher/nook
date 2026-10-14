@@ -453,3 +453,7 @@
 .ai-report-model legend { padding: 0; margin-bottom: 4px; }
 .ai-report-model p { margin: 0; }
 .ai-report-model input:not([type]) { min-height: 44px; border: 1px solid var(--field-border); border-radius: var(--field-radius); padding: 0 12px; background: var(--field-bg); color: #ededee; font-size: var(--field-font-size); outline: 0; }
+/* 2026-10-14: the provider form's Advanced disclosure (reasoning effort). */
+.ai-advanced { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 0 12px; }
+.ai-advanced[open] { padding-bottom: 12px; }
+.ai-advanced summary { min-height: 44px; display: flex; align-items: center; color: #e1e1e3; font-weight: 600; cursor: pointer; }

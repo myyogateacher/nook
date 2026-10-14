@@ -1,9 +1,9 @@
 import { audit, db, now } from "../db";
-import { AGENT_BOUNDS, DEFAULT_BASE_URL, DEFAULT_COMPAT, DEFAULT_EMBEDDING_DIMS, DEFAULT_EMBEDDING_MODEL, DEFAULT_KNOWLEDGE_POLICY, DEFAULT_MODEL, DEFAULT_VISION_POLICY, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, policyAllowsModel, policyMaxDims, VISION_POLICY_BOUNDS, visionAllowsModel, type AgentProviderChoice, type ProviderCompat, type ProviderKnowledgePolicy, type ProviderSummary, type ProviderVisionPolicy } from "../../shared/agents";
+import { AGENT_BOUNDS, DEFAULT_BASE_URL, DEFAULT_COMPAT, REASONING_EFFORTS, DEFAULT_EMBEDDING_DIMS, DEFAULT_EMBEDDING_MODEL, DEFAULT_KNOWLEDGE_POLICY, DEFAULT_MODEL, DEFAULT_VISION_POLICY, EMBEDDING_MODEL_ID, KNOWLEDGE_POLICY_BOUNDS, policyAllowsModel, policyMaxDims, VISION_POLICY_BOUNDS, visionAllowsModel, type AgentProviderChoice, type ProviderCompat, type ReasoningEffort, type ProviderKnowledgePolicy, type ProviderSummary, type ProviderVisionPolicy } from "../../shared/agents";
 import type { KnowledgeEmbeddingChoice } from "../../shared/knowledge";
 import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { checkSavedEndpoint, EgressError } from "./egress";
-import { completeStreaming, listModels, ProviderError, type ProviderConnection } from "./loop";
+import { completeStreaming, listModels, ProviderError, refusesToolsAtReasoning, setCompatLearner, type ProviderConnection } from "./loop";
 import { openSecret, sealSecret, secretHint, shownHint } from "./secrets";
 import { readAgentSettings } from "./settings";
 import { AgentError } from "./status";
@@ -30,7 +30,8 @@ export function parseCompat(json: string | null): ProviderCompat {
     supportsTools: value.supportsTools !== false,
     ...(value.namedToolChoice === false ? { namedToolChoice: false } : {}),
     ...(value.requiredToolChoice === false ? { requiredToolChoice: false } : {}),
-    contextTokens: typeof value.contextTokens === "number" && value.contextTokens >= 1024 && value.contextTokens <= 10_000_000 ? Math.floor(value.contextTokens) : DEFAULT_COMPAT.contextTokens
+    contextTokens: typeof value.contextTokens === "number" && value.contextTokens >= 1024 && value.contextTokens <= 10_000_000 ? Math.floor(value.contextTokens) : DEFAULT_COMPAT.contextTokens,
+    ...(typeof value.reasoningEffort === "string" && value.reasoningEffort !== "omit" && (REASONING_EFFORTS as readonly string[]).includes(value.reasoningEffort) ? { reasoningEffort: value.reasoningEffort } : {})
   };
 }
 
@@ -359,12 +360,35 @@ export async function probeToolCalling(actorId: string, id: string): Promise<Too
   providerRow(id);
   const connection = connectionFor(id, null);
   const started = Date.now();
+  // 2026-10-14: the effort the probes send; a model that refuses tools at its default reasoning is tried with none, then minimal, then low.
+  let effort: ReasoningEffort | undefined = undefined;
+  let learnedEffort: ReasoningEffort | null = null;
+  const refusedAtReasoning = (error: unknown) => error instanceof ProviderError && error.status === 400 && refusesToolsAtReasoning(error.adminMessage ?? error.message);
   const ask = async (choice: "required" | { name: string }): Promise<ToolCallingProbe["required"]> => {
+    const once = (reasoningEffort?: ReasoningEffort) => completeStreaming(connection, {
+      messages: [{ role: "user", content: "This is a connection test. Call the nook_probe tool with ok set to true." }],
+      tools: [PROBE_TOOL, DECOY_TOOL], toolChoice: choice, maxOutputTokens: 64, probeChoice: true, ...(reasoningEffort ? { reasoningEffort } : {})
+    }, AbortSignal.timeout(60_000), () => undefined);
     try {
-      const reply = await completeStreaming(connection, {
-        messages: [{ role: "user", content: "This is a connection test. Call the nook_probe tool with ok set to true." }],
-        tools: [PROBE_TOOL, DECOY_TOOL], toolChoice: choice, maxOutputTokens: 64, probeChoice: true
-      }, AbortSignal.timeout(60_000), () => undefined);
+      let reply;
+      try {
+        reply = await once(effort);
+      } catch (error) {
+        if (effort !== undefined || connection.compat.reasoningEffort || !refusedAtReasoning(error)) throw error;
+        let last: unknown = error;
+        for (const next of ["none", "minimal", "low"] as const) {
+          try {
+            reply = await once(next);
+            effort = next;
+            learnedEffort = next;
+            break;
+          } catch (retry) {
+            last = retry;
+            if (!refusedAtReasoning(retry) && !(retry instanceof ProviderError && retry.status === 400)) throw retry;
+          }
+        }
+        if (!reply) throw last;
+      }
       const called = reply.toolCalls.some((call) => call.name === PROBE_TOOL.name);
       return called ? { ok: true, outcome: "supported", status: 200, error: null } : { ok: false, outcome: "unsupported", status: 200, error: "The provider answered without calling the tool" };
     } catch (error) {
@@ -377,6 +401,7 @@ export async function probeToolCalling(actorId: string, id: string): Promise<Too
   const required = await ask("required");
   const named = await ask({ name: PROBE_TOOL.name });
   const flag = (result: ToolCallingProbe["required"]) => result.outcome === "inconclusive" ? undefined : result.ok;
+  const learned = learnedEffort as ReasoningEffort | null;
   const compat = db.transaction(() => {
     const row = providerRow(id);
     const current = parseCompat(row.compat_json);
@@ -387,10 +412,25 @@ export async function probeToolCalling(actorId: string, id: string): Promise<Too
       if (value === true) delete next[key];
       else if (value === false) next[key] = false;
     }
+    if (learned) next.reasoningEffort = learned;
     db.query("UPDATE agent_providers SET compat_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify(next), now(), id);
     const saved = parseCompat(JSON.stringify(next));
-    audit(actorId, null, "agents.provider.probe_tools", { providerId: id, required: required.outcome, named: named.outcome, requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false, before: { requiredToolChoice: current.requiredToolChoice !== false, namedToolChoice: current.namedToolChoice !== false } });
-    return { requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false };
+    audit(actorId, null, "agents.provider.probe_tools", { providerId: id, required: required.outcome, named: named.outcome, ...(learned ? { reasoningEffort: learned } : {}), requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false, before: { requiredToolChoice: current.requiredToolChoice !== false, namedToolChoice: current.namedToolChoice !== false } });
+    return { requiredToolChoice: saved.requiredToolChoice !== false, namedToolChoice: saved.namedToolChoice !== false, ...(saved.reasoningEffort ? { reasoningEffort: saved.reasoningEffort } : {}) };
   })();
-  return { required, named, compat, inconclusive: required.outcome === "inconclusive" || named.outcome === "inconclusive", model: connection.model, ms: Date.now() - started };
+  const reasoning = learned ? { effort: learned, note: `This model refuses tools with its default reasoning; Nook now sends reasoning_effort=${learned}.` } : null;
+  return { required, named, compat, reasoning, inconclusive: required.outcome === "inconclusive" || named.outcome === "inconclusive", model: connection.model, ms: Date.now() - started };
 }
+
+
+/**
+ * 2026-10-14: a live request that had to retry with reasoning_effort "none" (loop.ts) saves it on the
+ * provider (only while the provider still sends none), so later requests send it at once; audited.
+ */
+setCompatLearner((providerId, patch) => {
+  const row = db.query("SELECT compat_json FROM agent_providers WHERE id = ?").get(providerId) as { compat_json: string } | null;
+  if (!row || parseCompat(row.compat_json).reasoningEffort) return;
+  const stored = JSON.parse(row.compat_json || "{}") as Record<string, unknown>;
+  db.query("UPDATE agent_providers SET compat_json = ?, revision = revision + 1, updated_at = ? WHERE id = ?").run(JSON.stringify({ ...stored, reasoningEffort: patch.reasoningEffort }), now(), providerId);
+  audit(null, null, "agents.provider.compat_learned", { providerId, reasoningEffort: patch.reasoningEffort, reason: "The model refused tools at its default reasoning effort" });
+});

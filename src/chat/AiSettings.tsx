@@ -7,7 +7,7 @@ import { SettingsTabs, settingsTabIds, type SettingsTab } from "../settings/Sett
 import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
 import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
-import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, DEFAULT_BASE_URL, DEFAULT_MODEL, type AgentRole, type AgentSettings, type ProviderSummary } from "../../shared/agents";
+import { AGENT_BOUNDS, AGENT_ROLE_OPTIONS, DEFAULT_BASE_URL, DEFAULT_MODEL, REASONING_EFFORTS, type AgentRole, type ReasoningEffort, type AgentSettings, type ProviderSummary } from "../../shared/agents";
 import { agentsStatus, createProvider, deleteProvider, listProviders, messageOf, probeProviderTools, readSettings, testProvider, updateProvider, writeSettings, errorCode, type AgentsStatus, type ProviderTest } from "./chatApi";
 import type { ToolCallingProbe } from "../../shared/reportsModel";
 import { ToolServersSection } from "./ToolServers";
@@ -148,12 +148,13 @@ export function AiSettings({ flash, tabs, tab, onSelectTab }: { flash: (message:
             <div><dt>Knowledge bases</dt><dd>{policySummary(provider.knowledge)}</dd></div>
             <div><dt>Images</dt><dd>{visionSummary(provider.vision)}</dd></div>
             <div><dt>Tool choice</dt><dd>{toolChoiceSummary(provider.compat)}</dd></div>
+            {provider.compat.reasoningEffort && <div><dt>Reasoning effort</dt><dd><code>{provider.compat.reasoningEffort}</code></dd></div>}
           </dl>
           {result && result !== "running" && <p className={`ai-test ${result.ok ? "ok" : "failed"}`} role="status">
             {result.models.ok ? `Models: ${result.models.count} in ${result.models.latencyMs} ms.` : `Models: ${result.models.error ?? "failed"}.`} {result.completion.ok ? `Completion: ok (${result.completion.model}) in ${result.completion.latencyMs} ms.` : `Completion: ${result.completion.error ?? "failed"}.`}
           </p>}
           {probe && probe !== "running" && <p className={`ai-test ${probe.compat.requiredToolChoice && probe.compat.namedToolChoice ? "ok" : "failed"}`} role="status">
-            Tool calling ({probe.model}): required {probeText(probe.required)}; a named tool {probeText(probe.named)}. {probe.inconclusive ? "Inconclusive results leave the saved setting as it was; " : "Saved to the provider; "}Nook {probe.compat.namedToolChoice ? "names the tool it needs" : probe.compat.requiredToolChoice ? "sends required with only that tool" : "asks with auto and only that tool"}.
+            Tool calling ({probe.model}): required {probeText(probe.required)}; a named tool {probeText(probe.named)}. {probe.inconclusive ? "Inconclusive results leave the saved setting as it was; " : "Saved to the provider; "}Nook {probe.compat.namedToolChoice ? "names the tool it needs" : probe.compat.requiredToolChoice ? "sends required with only that tool" : "asks with auto and only that tool"}.{probe.reasoning ? ` ${probe.reasoning.note}` : ""}
           </p>}
         </li>;
       })}
@@ -231,11 +232,12 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
   const [tokenParam, setTokenParam] = useState<"max_completion_tokens" | "max_tokens">(provider?.compat.tokenParam ?? "max_completion_tokens");
   const [streamUsage, setStreamUsage] = useState(provider?.compat.streamUsage ?? true);
   const [contextTokens, setContextTokens] = useState(provider?.compat.contextTokens ?? 128_000);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(provider?.compat.reasoningEffort ?? "omit");
   const [knowledge, setKnowledge] = useState(() => policyDraft(provider?.knowledge));
   const [vision, setVision] = useState(() => visionDraft(provider?.vision));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ids = { name: useId(), url: useId(), key: useId(), model: useId(), context: useId(), param: useId() };
+  const ids = { name: useId(), url: useId(), key: useId(), model: useId(), context: useId(), param: useId(), effort: useId() };
   useHistoryDialogGuard(true, onCancel, { blocked: busy });
 
   async function submit(event: FormEvent) {
@@ -247,7 +249,7 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
     if ("error" in images) return setError(images.error);
     setBusy(true);
     setError(null);
-    const compat = { tokenParam, streamUsage, contextTokens };
+    const compat = { tokenParam, streamUsage, contextTokens, reasoningEffort };
     try {
       if (provider) await updateProvider(provider.id, { name: name.trim(), baseUrl: baseUrl.trim(), ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}), removeSecret, defaultModel: defaultModel.trim() || DEFAULT_MODEL, compat, vision: images.policy, knowledge: policy.policy, expectedRevision: provider.revision });
       else await createProvider({ name: name.trim(), baseUrl: baseUrl.trim(), apiKey: apiKey.trim() || null, defaultModel: defaultModel.trim() || DEFAULT_MODEL, compat, vision: images.policy, knowledge: policy.policy });
@@ -276,6 +278,12 @@ function ProviderDialog({ provider, onCancel, onSaved }: { provider: ProviderSum
       <label htmlFor={ids.context}>Context window (tokens)</label>
       <input id={ids.context} type="number" min={1024} max={10_000_000} value={contextTokens} onChange={(event) => setContextTokens(Math.min(10_000_000, Math.max(1024, Math.floor(Number(event.target.value) || 1024))))} />
       <label className="ai-check"><input type="checkbox" checked={streamUsage} onChange={(event) => setStreamUsage(event.target.checked)} />The server reports token usage while streaming (off: tokens are estimated)</label>
+      <details className="ai-advanced" open={reasoningEffort !== "omit" || undefined}>
+        <summary>Advanced</summary>
+        <span className="ai-label" id={ids.effort}>Reasoning effort</span>
+        <Select<ReasoningEffort> labelledBy={ids.effort} label="Reasoning effort" value={reasoningEffort} onChange={setReasoningEffort} options={REASONING_EFFORT_OPTIONS} />
+        <p className="file-dialog-hint">Sent as reasoning_effort with every request to this provider. Some newer OpenAI models refuse tools at their default reasoning in Chat Completions; none fixes that (Test tool calling sets it when it finds this). Nook does not use OpenAI's Responses API yet.</p>
+      </details>
       <ProviderVisionFields providerId={provider?.id ?? null} defaultModel={defaultModel.trim() || DEFAULT_MODEL} draft={vision} onChange={setVision} disabled={busy} />
       <ProviderKnowledgeFields providerId={provider?.id ?? null} draft={knowledge} onChange={setKnowledge} disabled={busy} />
       <FormError message={error} />
@@ -292,6 +300,11 @@ export function probeText(result: ToolCallingProbe["required"]): string {
   const why = result.error ? ` (${result.error})` : "";
   return result.outcome === "supported" ? "works" : result.outcome === "unsupported" ? `not supported${why}` : `inconclusive${why}`;
 }
+
+/** The reasoning effort choices of the provider form (2026-10-14): omit sends nothing. */
+export const REASONING_EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string; description?: string }> = REASONING_EFFORTS.map((value) => ({
+  value, label: value === "omit" ? "Don't send" : value, ...(value === "omit" ? { description: "The model's default" } : value === "none" ? { description: "For models that refuse tools while reasoning" } : {})
+}));
 
 /** A provider's tool-choice flags (wave 46's compat, set by "Test tool calling", wave 48b). */
 export function toolChoiceSummary(compat: { requiredToolChoice?: boolean; namedToolChoice?: boolean }): string {

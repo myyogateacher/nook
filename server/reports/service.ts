@@ -60,14 +60,15 @@ export function reportDetail(id: string, userId: string): ReportDetail {
   };
 }
 
-export function createReport(userId: string, input: { title: string; datasourceId: string }, via: { keyId?: string } = {}): ReportDetail {
+/** A new draft; `titleSource` says where the title came from (typed by default; generation passes doc or default). */
+export function createReport(userId: string, input: { title: string; datasourceId: string; titleSource?: "default" | "doc" | "ai" | "user" }, via: { keyId?: string } = {}): ReportDetail {
   usableDatasource(input.datasourceId);
   const live = (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ? AND deleted_at IS NULL").get(userId) as { count: number }).count;
   if (live >= REPORTS_PER_USER) throw new ReportError(409, "LIMIT_REACHED", `You can have up to ${REPORTS_PER_USER} reports`);
   const id = crypto.randomUUID();
   const at = now();
-  db.query("INSERT INTO reports (id, owner_id, title, datasource_id, spec_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(id, userId, input.title, input.datasourceId, JSON.stringify(EMPTY_SPEC), at, at);
+  db.query("INSERT INTO reports (id, owner_id, title, title_source, datasource_id, spec_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(id, userId, input.title, input.titleSource ?? "user", input.datasourceId, JSON.stringify(EMPTY_SPEC), at, at);
   audit(userId, null, "reports.report.create", { id, ...(via.keyId ? { via: "mcp", keyId: via.keyId } : {}) });
   return reportDetail(id, userId);
 }
@@ -82,7 +83,9 @@ export function updateReport(userId: string, id: string, patch: { title?: string
     if (holder) throw new ReportError(409, "RUN_IN_PROGRESS", "This report is running; wait for it to finish", { runId: holder.id });
     usableDatasource(patch.datasourceId);
   }
-  db.query("UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?")
+  // A title the person typed (a rename) is theirs: generation never replaces it (title_source 'user').
+  const renamed = patch.title !== undefined && patch.title !== row.title;
+  db.query(`UPDATE reports SET title = ?, datasource_id = ?, revision = revision + 1, updated_at = ?${renamed ? ", title_source = 'user'" : ""} WHERE id = ? AND revision = ?`)
     .run(patch.title ?? row.title, patch.datasourceId ?? row.datasource_id, now(), id, row.revision);
   audit(userId, null, "reports.report.update", { id, fields: Object.keys(patch).filter((field) => field !== "expectedRevision") });
   return reportDetail(id, userId);

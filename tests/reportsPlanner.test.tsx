@@ -95,11 +95,11 @@ afterEach(async () => {
   provider.setScript(qaScript);
 });
 
-async function generate(docRef: string, script: Script) {
+async function generate(docRef: string, script: Script, extra: Json = {}, path = "/reports/generate") {
   provider.calls.length = 0;
   provider.setScript(script);
   fake.state.select = (sql) => answer(sql);
-  const started = await send(member, "POST", "/reports/generate", { docRef: `https://docs.example.test/doc/${docRef}`, serverId, datasourceId });
+  const started = await send(member, "POST", path, path === "/reports/generate" ? { docRef: `https://docs.example.test/doc/${docRef}`, serverId, datasourceId, ...extra } : extra);
   expect(started.status).toBe(202);
   const until = Date.now() + 15_000;
   for (;;) {
@@ -136,7 +136,7 @@ describe("the planner (2c)", () => {
       call("update_todo", { id: "total", status: "done", queryKey: "totals" }),
       call("update_todo", { id: "daily", status: "done", queryKey: "revenue_daily" }),
       call("update_todo", { id: "countries", status: "done", queryKey: "by_country" }),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ]));
     expect(run).toMatchObject({ status: "succeeded", error: null });
     const plans = toolTexts(run.agent_run_id, "plan_report");
@@ -162,8 +162,8 @@ describe("the planner (2c)", () => {
       call("update_todo", { id: "total", status: "done", queryKey: "totals" }),
       call("update_todo", { id: "refunds", status: "skipped" }),
       call("update_todo", { id: "refunds", status: "skipped", note: "no table has refunds by channel" }),
-      call("submit_report", qaSpec()),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...qaSpec(), title: "Revenue review" }),
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ]));
     expect(run).toMatchObject({ status: "succeeded", error: null });
     const updates = toolTexts(run.agent_run_id, "update_todo");
@@ -188,9 +188,9 @@ describe("the planner (2c)", () => {
       call("run_sql", { sql: "SELECT 1 AS n", purpose: "n", key: "odd_query" }),
       call("update_todo", { id: "total", status: "done", queryKey: "totals" }),
       call("update_todo", { id: "odd", status: "done", queryKey: "odd_query" }),
-      call("submit_report", qaSpec()),
+      call("submit_report", { ...qaSpec(), title: "Revenue review" }),
       call("update_todo", { id: "odd", status: "blocked", note: "the query answers nothing the doc asks" }),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ]));
     expect(run.status).toBe("succeeded");
     expect(toolTexts(run.agent_run_id, "submit_report")[0]).toContain("todo odd is done with query odd_query, but no block uses that query");
@@ -204,7 +204,7 @@ describe("the planner (2c)", () => {
         () => ({ content: "I will build a revenue report." }),
         call("plan_report", { goal: "Revenue", todos: [planTodo("build", { kind: "markdown" })] }),
         call("update_todo", { id: "build", status: "done" }),
-        call("submit_report", qaSpec())
+        call("submit_report", { ...qaSpec(), title: "Revenue review" })
       ], seen));
       expect(run.status).toBe("succeeded");
       const nudge = seen[1]!.body.messages!.find((turn) => turn.role === "user" && String(turn.content).includes("Call plan_report now"));
@@ -223,7 +223,7 @@ describe("the planner (2c)", () => {
       () => ({ toolCalls: [{ name: "run_sql", arguments: { sql: QA_QUERIES.totals, purpose: "Totals", key: "totals" } }, { name: "search_schema", arguments: { query: "orders" } }] }),
       call("plan_report", { goal: "Revenue", todos: [planTodo("build", { kind: "markdown" })] }),
       call("update_todo", { id: "build", status: "done" }),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ]));
     expect(run.status).toBe("succeeded");
     expect(toolTexts(run.agent_run_id, "run_sql")[0]).toContain("Make the plan first");
@@ -238,7 +238,7 @@ describe("long and rich docs (2b)", () => {
       call("read_doc_section", { heading: "Section 90" }),
       call("plan_report", { goal: "Revenue", todos: [planTodo("build", { kind: "markdown" })] }),
       call("update_todo", { id: "build", status: "done" }),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ], seen));
     expect(run.status).toBe("succeeded");
     const system = seen[0]!.system;
@@ -262,8 +262,8 @@ describe("long and rich docs (2b)", () => {
     const run = await generate("metrics-Rich123", sequence([
       call("plan_report", { goal: "Metrics", todos: [planTodo("build", { kind: "markdown" })] }),
       call("update_todo", { id: "build", status: "done" }),
-      call("submit_report", thin),
-      call("submit_report", qaSpec())
+      call("submit_report", { ...thin, title: "Thin" }),
+      call("submit_report", { ...qaSpec(), title: "Revenue review" })
     ]));
     expect(run.status).toBe("succeeded");
     const submits = toolTexts(run.agent_run_id, "submit_report");
@@ -291,6 +291,50 @@ describe("long and rich docs (2b)", () => {
     expect(readDocSection(evil, { offset: 0, length: 300 })).toContain("the end of the document");
     expect(() => readDocSection(evil, { heading: "Nope" })).toThrow(/No heading matches/);
     expect(docSignals(docs.docs.get("metrics-Rich123")!.text)).toEqual({ metrics: 4, numberedSections: 4 });
+  });
+});
+
+describe("auto-named reports (item 3)", () => {
+  const named = (title: string) => sequence([
+    call("plan_report", { goal: "Revenue", todos: [planTodo("build", { kind: "markdown" })] }),
+    call("update_todo", { id: "build", status: "done" }),
+    call("submit_report", { ...qaSpec(), title })
+  ]);
+  const titleOf = (reportId: string) => db.query("SELECT title, title_source FROM reports WHERE id = ?").get(reportId) as { title: string; title_source: string };
+
+  test("a new report takes the doc's title, then submit_report's; regenerate renames it again while it is not the person's", async () => {
+    const run = await generate("revenue-AbC123", named("Weekly **revenue** <b>review</b>"));
+    expect(run.status).toBe("succeeded");
+    expect(titleOf(run.reportId)).toEqual({ title: "Weekly revenue review", title_source: "ai" });
+    const again = await generate("", named("Revenue and refunds"), {}, `/reports/${run.reportId}/generate`);
+    expect(again.status).toBe("succeeded");
+    expect(titleOf(run.reportId)).toEqual({ title: "Revenue and refunds", title_source: "ai" });
+  });
+
+  test("a typed title, or a rename, is never replaced", async () => {
+    const typed = await generate("revenue-AbC123", named("AI name"), { title: "My own name" });
+    expect(titleOf(typed.reportId)).toEqual({ title: "My own name", title_source: "user" });
+
+    const run = await generate("revenue-AbC123", named("First AI name"));
+    expect(titleOf(run.reportId).title_source).toBe("ai");
+    const revision = (db.query("SELECT revision FROM reports WHERE id = ?").get(run.reportId) as { revision: number }).revision;
+    expect((await send(member, "PATCH", `/reports/${run.reportId}`, { title: "Renamed by me", expectedRevision: revision })).status).toBe(200);
+    await generate("", named("Second AI name"), {}, `/reports/${run.reportId}/generate`);
+    expect(titleOf(run.reportId)).toEqual({ title: "Renamed by me", title_source: "user" });
+  });
+
+  test("submit_report requires a title in its schema; a spec without one (recovered from text) keeps the current title", async () => {
+    const { GENERATE_TOOLS } = await import("../server/reports/generate");
+    const submit = GENERATE_TOOLS.find((tool) => tool.name === "submit_report")!;
+    expect((submit.parameters as { required: string[] }).required).toContain("title");
+    expect((submit.parameters as { properties: Record<string, { maxLength?: number }> }).properties.title!.maxLength).toBe(80);
+    const run = await generate("revenue-AbC123", sequence([
+      call("plan_report", { goal: "Revenue", todos: [planTodo("build", { kind: "markdown" })] }),
+      call("update_todo", { id: "build", status: "done" }),
+      call("submit_report", qaSpec())
+    ]));
+    expect(run.status).toBe("succeeded");
+    expect(titleOf(run.reportId)).toEqual({ title: "Revenue metrics", title_source: "doc" });
   });
 });
 

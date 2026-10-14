@@ -88,6 +88,13 @@ export const GENERATE_LIMITS = {
   leaseBeatMs: 60_000
 } as const;
 
+/** submit_report's title: one line of plain text, at most 80 characters (markup and control characters dropped). */
+export const REPORT_TITLE_MAX = 80;
+export function reportTitle(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/<[^>]{0,200}>/g, " ").replace(/[\u0000-\u001f\u007f<>*_`#[\]]+/g, " ").replace(/\s+/g, " ").trim().slice(0, REPORT_TITLE_MAX).trim();
+}
+
 /** The `agent_runs.agent_id` of every generation run (there is no agents row; the Audit log shows "Reports"). */
 export const REPORTS_AGENT_ID = "reports";
 const PROMPT_VERSION = 2;
@@ -314,7 +321,7 @@ export const GENERATE_TOOLS: ModelTool[] = [
   { name: "run_sql", description: "Runs one guarded SELECT on the report's data source. Returns its columns, up to 20 rows, the row count, and the time. Give it the key the spec will use for this query.", parameters: { type: "object", required: ["sql", "purpose"], properties: { sql: sqlProp, purpose: { type: "string", maxLength: REPORT_LIMITS.purpose }, key: { type: "string", pattern: "^[a-z][a-z0-9_]{0,39}$" } } } },
   { name: "read_doc_section", description: "Reads part of the document Nook already fetched: by heading (the section under it) or by byte offset from the outline. Read-only; at most 16 KB a call.", parameters: { type: "object", properties: { heading: { type: "string", maxLength: 200 }, offset: { type: "integer", minimum: 0 }, length: { type: "integer", minimum: 256, maximum: 16384 } } } },
   ...plannerTools("report"),
-  { name: "submit_report", description: "Submits the report spec (queries and blocks). Nook checks and runs every query; errors come back for another try.", parameters: SPEC_JSON_SCHEMA }
+  { name: "submit_report", description: "Submits the report spec (its title, queries, sections, and blocks). Nook checks and runs every query; errors come back for another try.", parameters: { ...SPEC_JSON_SCHEMA, required: [...(SPEC_JSON_SCHEMA.required as string[]), "title"], properties: { ...(SPEC_JSON_SCHEMA.properties as Record<string, unknown>), title: { type: "string", minLength: 1, maxLength: REPORT_TITLE_MAX, description: "The report's name: plain text, at most 80 characters, what it shows (e.g. \"Weekly revenue and refunds\")." } } } }
 ];
 
 /**
@@ -400,8 +407,11 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
   const doc = await fetchDoc(server, choice, input.docRef, { signal });
 
   const report = existing ?? (() => {
-    const title = oneLine(input.title ?? "", REPORT_LIMITS.title) || oneLine(doc.title ?? "", REPORT_LIMITS.title) || "Untitled report";
-    return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id }).id, actor.userId);
+    // Item 3: a typed title is the person's; else the doc's title for now (submit_report's title replaces it), else the default.
+    const typed = oneLine(input.title ?? "", REPORT_LIMITS.title);
+    const fromDoc = oneLine(doc.title ?? "", REPORT_LIMITS.title);
+    const title = typed || fromDoc || "Untitled report";
+    return ownedReport(createReport(actor.userId, { title, datasourceId: datasource.id, titleSource: typed ? "user" : fromDoc ? "doc" : "default" }).id, actor.userId);
   })();
   const runId = crypto.randomUUID();
   const agentRunId = crypto.randomUUID();
@@ -582,7 +592,11 @@ async function executeGeneration(run: Execution) {
         }
       }
       case "submit_report": {
-        const raw = args.spec && typeof args.spec === "object" && !Array.isArray(args.spec) ? args.spec : args;
+        const given = args.spec && typeof args.spec === "object" && !Array.isArray(args.spec) ? args.spec as Record<string, unknown> : args;
+        // Item 3: the report's title rides along with the spec (never part of it); it is required.
+        const { title: rawTitle, ...raw } = { ...given, title: given.title ?? args.title };
+        const aiTitle = reportTitle(rawTitle);
+        // A submit without one (a spec recovered from text) keeps the title the report has: the doc's or the person's.
         const shape = raw as { blocks?: unknown; sections?: unknown };
         const blocks = Array.isArray(shape.blocks) ? shape.blocks as Array<{ type?: string; queryKey?: string; section?: string }> : [];
         // 2c: the plan first (these never use up a try): every todo closed, each done one on a block in its section.
@@ -635,6 +649,9 @@ async function executeGeneration(run: Execution) {
           throw error;
         }
         accepted = true;
+        // Item 3: the title follows submit_report's while the person has not typed or renamed one.
+        const named = aiTitle && db.query("UPDATE reports SET title = ?, title_source = 'ai' WHERE id = ? AND title_source <> 'user' AND title <> ?").run(aiTitle, reportId, aiTitle).changes > 0;
+        if (named) audit(userId, null, "reports.report.update", { id: reportId, fields: ["title"], via: "generate" });
         audit(userId, null, "reports.generate.submit", { reportId, runId, agentRunId, ok: true, attempt: submits, blocks: check.spec.blocks.length, queries: check.spec.queries.length });
         return { text: `Saved: ${check.spec.blocks.length} blocks, ${check.spec.queries.length} queries.`, ok: true, stop: true };
       }

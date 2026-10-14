@@ -295,6 +295,9 @@ const frame = (data: unknown) => encoder.encode(`data: ${JSON.stringify(data)}\n
 const PLANNER_TOOLS = new Set(["plan_report", "plan_change", "update_todo", "add_todo", "revise_plan"]);
 const calledTools = (context: ScriptContext) => (context.body.messages ?? []).flatMap((turn) => turn.role === "assistant" ? (turn.tool_calls ?? []).map((call) => call.function?.name ?? "") : []);
 
+/** The title the wrapper gives a scripted submit_report that has none. */
+export const SCRIPTED_TITLE = "Scripted report";
+
 /** A script the provider runs as written, without the planning steps it adds to the others (planner tests). */
 export const unplanned = (script: Script): Script => Object.assign(script, { unplanned: true });
 
@@ -318,7 +321,10 @@ export function withAutoPlan(script: Script, context: ScriptContext): ScriptRepl
   }
   // The script counts its own steps: the turns this wrapper added are left out of `step`.
   const added = (context.body.messages ?? []).filter((turn) => turn.role === "assistant" && turn.tool_calls?.length && turn.tool_calls.every((call) => PLANNER_TOOLS.has(call.function?.name ?? ""))).length;
-  return script({ ...context, step: context.step - added });
+  const reply = script({ ...context, step: context.step - added });
+  // submit_report needs the report's title (auto-named reports): a script written before it gets one.
+  return { ...reply, toolCalls: reply.toolCalls?.map((call) => call.name === "submit_report" && call.arguments && typeof call.arguments === "object" && !("title" in (call.arguments as object))
+    ? { ...call, arguments: { title: SCRIPTED_TITLE, ...(call.arguments as object) } } : call) };
 }
 
 export type ToolChoiceMode = { rejectRequired?: boolean; rejectNamed?: boolean; toolsNeedEffort?: string[] };

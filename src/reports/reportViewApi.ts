@@ -1,5 +1,6 @@
 import { api } from "../api";
 import type { ReportRun } from "../../shared/reports";
+import { PAGE_METRICS_RUN_MARKER } from "../../shared/reportsMetrics";
 import type { ProvenanceView, ReportResultsView, RunHistoryView, ScheduleInput, ScheduleView } from "../../shared/reportsView";
 
 /** The Wave 47 report routes (server/reports/viewRoutes.ts): results, refresh, runs, provenance, and the schedule. */
@@ -29,6 +30,8 @@ export function runLabel(run: Pick<ReportRun, "kind" | "trigger" | "queryKeys">)
   // A generation is the AI reading the doc (wave 46), never "by hand".
   if (run.kind === "generate") return run.trigger === "mcp" ? "Generated from the doc over MCP" : "Generated from the doc";
   // Lane J: "Run with today's data" on an older version (its keys start with the marker `~v<n>`).
+  // L2: Check doc re-read catalog metrics from a changed linked page (no query ran).
+  if (run.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER) return "Re-read metrics from changed linked pages";
   const preview = previewVersionOf(run.queryKeys);
   if (preview !== null) return `Ran v${preview} on today's data`;
   const kind = run.kind === "edit" ? "Edited" : run.queryKeys?.length ? `Re-ran ${run.queryKeys.join(", ")}` : "Refreshed";

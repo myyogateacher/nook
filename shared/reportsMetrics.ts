@@ -47,5 +47,11 @@ export type MetricCatalogView = {
 export const METRIC_LIMITS = { metrics: 24, id: 40, name: 80, definition: 600, expression: 1000, table: 260, filter: 300, filters: 6, grain: 20, unit: 30, column: 128, excerpt: 600, versionsKept: 20 } as const;
 export const METRIC_ID = /^[a-z][a-z0-9_]{0,39}$/;
 
+/**
+ * L2: the marker a run's query keys start with when Check doc re-read catalog metrics from a changed
+ * linked page (a refresh-kind run in Runs that runs no query; `~` is never in a saved query's key).
+ */
+export const PAGE_METRICS_RUN_MARKER = "~metrics";
+
 /** The editable fields (a save sends the whole list). */
 export type CatalogMetricInput = Omit<CatalogMetric, "problems" | "excerpt"> & { excerpt?: string | null };

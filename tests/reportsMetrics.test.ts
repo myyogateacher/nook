@@ -5,7 +5,7 @@ import { retireUsersAfterFile } from "./support/retireUsers";
 import type { CatalogMetric } from "../shared/reportsMetrics";
 import type { PlanTodo } from "../shared/reportsGenerate";
 
-const { metricExcerpt, changedMetrics, metricHints, saveCatalog, catalogRow, catalogPromptLines, checkMetrics } = await import("../server/reports/metricCatalog");
+const { metricExcerpt, changedMetrics, metricHints, saveCatalog, catalogRow, catalogPromptLines, checkMetrics, pageScopes, mergePageMetrics, pageMetricsChanged } = await import("../server/reports/metricCatalog");
 const { Planner } = await import("../server/reports/planner");
 const { syncSchema } = await import("../server/reports/schemaCatalog");
 const { datasourceRow } = await import("../server/reports/datasources");
@@ -52,6 +52,37 @@ beforeAll(async () => {
   await syncSchema(datasourceId);
 });
 afterAll(() => fake.stop());
+
+describe("L2: metrics on a changed linked page", () => {
+  const PAGE = "# Revenue rules\n\n- **Net revenue**: the sum of `amount` over paid orders.\n- **Refund rate**: refunds over orders.\n";
+  const onPage = (overrides: Partial<CatalogMetric>) => metric({ page: "Revenue rules", ...overrides });
+  const catalog = [metric({ id: "orders", name: "Orders", excerpt: metricExcerpt(DOC, "Orders") }), onPage({ excerpt: metricExcerpt(PAGE, "Net revenue") }), onPage({ id: "refund_rate", name: "Refund rate", expression: "countIf(refund) / count()", excerpt: metricExcerpt(PAGE, "Refund rate") })];
+
+  test("pageScopes: only the page's metrics whose text there changed; none when it changed elsewhere or for another page", () => {
+    expect(pageScopes(catalog, [{ title: "Revenue rules", markdown: `${PAGE}\nMore text.` }])).toEqual([]);
+    expect(pageScopes(catalog, [{ title: "Other page", markdown: "# Other\n- **Net revenue**: something else." }])).toEqual([]);
+    const changed = PAGE.replace("over paid orders.", "over paid and shipped orders.");
+    const scopes = pageScopes(catalog, [{ title: "revenue rules", markdown: changed }]);
+    expect(scopes.map((scope) => [scope.page.title, scope.metrics.map((item) => item.id)])).toEqual([["revenue rules", ["net_revenue"]]]);
+    // A definition removed from the page counts too.
+    expect(pageScopes(catalog, [{ title: "Revenue rules", markdown: "# Revenue rules\n\n- **Net revenue**: the sum of `amount` over paid orders.\n" }])[0]!.metrics.map((item) => item.id)).toEqual(["refund_rate"]);
+  });
+
+  test("mergePageMetrics replaces the scope's metrics in place, keeps a gone one with a problem, and drops strays; pageMetricsChanged names them", () => {
+    const page = { title: "Revenue rules", markdown: PAGE.replace("over paid orders.", "over paid and shipped orders.").replace(/- \*\*Refund rate\*\*.*\n/, "") };
+    const scope = { page, metrics: [catalog[1]!, catalog[2]!] };
+    const fresh = [{ ...catalog[1]!, expression: "sumIf(amount, status IN ('paid','shipped'))", page: null }, metric({ id: "stray", name: "Stray" })];
+    const merged = mergePageMetrics(catalog, scope, fresh);
+    expect(merged.map((item) => item.id)).toEqual(["orders", "net_revenue", "refund_rate"]);
+    expect(merged[0]).toBe(catalog[0]!);
+    expect(merged[1]).toMatchObject({ expression: "sumIf(amount, status IN ('paid','shipped'))", page: "Revenue rules" });
+    expect(merged[1]!.excerpt).toContain("shipped");
+    expect(merged[2]).toMatchObject({ expression: "countIf(refund) / count()", excerpt: null, problems: ["No longer defined on the linked page “Revenue rules”"] });
+    expect(pageMetricsChanged(catalog, merged, ["Revenue rules"])).toEqual(["Net revenue", "Refund rate"]);
+    expect(pageMetricsChanged(catalog, merged, ["Another page"])).toEqual([]);
+    expect(pageMetricsChanged(catalog, catalog, ["Revenue rules"])).toEqual([]);
+  });
+});
 
 describe("the catalog's pieces", () => {
   test("migration 058 made report_metric_catalogs", () => {

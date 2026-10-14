@@ -333,15 +333,19 @@ export function pageInfos(reportId: string, runId?: string | null): DocPageInfo[
 /** Test hook and B4: the browse source of a page's `server_id` for the owner. */
 export const pageSources = { of: (serverId: string, ownerRole: string, ownerId: string): BrowseSource => serverId === "nook" ? nookBrowseSource(ownerId) : serverBrowseSource(serverId, ownerRole) };
 
+/** L2: a linked page Check doc found changed, as it reads now (the catalog re-reads its metrics from it). */
+export type ChangedPage = { title: string | null; markdown: string };
+
 /**
  * "Check doc" for the linked pages: reads each page of the current spec's runs again (the same tool and
  * arguments, still only while the tool is Auto and the source the owner's to use) and records the hash
- * it found; a search or list (K3) is run again and its result set hashed. A page that cannot be read is left as it was. Returns how many were read and how many failed.
+ * it found; a search or list (K3) is run again and its result set hashed. A page that cannot be read is left as it was. Returns how many were read and how many failed, and the changed pages' text (L2).
  */
-export async function recheckPages(reportId: string, owner: { id: string; role: string }, signal?: AbortSignal): Promise<{ checked: number; failed: number; changed: number }> {
+export async function recheckPages(reportId: string, owner: { id: string; role: string }, signal?: AbortSignal): Promise<{ checked: number; failed: number; changed: number; changedPages: ChangedPage[] }> {
   let checked = 0;
   let failed = 0;
   let changed = 0;
+  const changedPages: ChangedPage[] = [];
   for (const row of currentPages(reportId)) {
     try {
       const source = pageSources.of(row.server_id, owner.role, owner.id);
@@ -352,8 +356,11 @@ export async function recheckPages(reportId: string, owner: { id: string; role: 
       slog.info("Doc page checked", { server: shortId(row.server_id), tool: row.tool, ms: Math.round(performance.now() - started), bytes: Buffer.byteLength(outcome.text, "utf8"), ok: !outcome.isError });
       if (outcome.isError || !outcome.text.trim()) { failed += 1; continue; }
       let sha: string;
-      if (isPageTool(row.tool)) sha = sha256Of(cutBytes(docFromText(outcome.text).markdown, REPORT_LIMITS.docBytes).text);
-      else {
+      let markdown: string | null = null;
+      if (isPageTool(row.tool)) {
+        markdown = cutBytes(docFromText(outcome.text).markdown, REPORT_LIMITS.docBytes).text;
+        sha = sha256Of(markdown);
+      } else {
         // K3: the same search again, compared as its result set (ids and titles).
         const entries = resultSetOf(outcome.text);
         if (!entries) { failed += 1; continue; }
@@ -361,14 +368,17 @@ export async function recheckPages(reportId: string, owner: { id: string; role: 
       }
       db.query("UPDATE report_doc_pages SET checked_sha256 = ?, checked_at = ? WHERE id = ?").run(sha, now(), row.id);
       checked += 1;
-      if (sha !== row.sha256) changed += 1;
+      if (sha !== row.sha256) {
+        changed += 1;
+        if (markdown !== null) changedPages.push({ title: row.title, markdown });
+      }
     } catch (error) {
       if (signal?.aborted) throw error;
       failed += 1;
       slog.info("Doc page check failed", { server: shortId(row.server_id), tool: row.tool, code: (error as { code?: string }).code ?? "DOC_FETCH" });
     }
   }
-  return { checked, failed, changed };
+  return { checked, failed, changed, changedPages };
 }
 
 /** The args hash of a stored page (tests). */

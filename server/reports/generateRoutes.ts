@@ -9,7 +9,7 @@ import { db } from "../db";
 import { readableReport } from "./access";
 import { checkDoc, docServerChoices, docState, setBrowseTools } from "./docSource";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
-import { cancelGenerate, regenerate, startGenerate } from "./generate";
+import { cancelGenerate, refreshPageMetrics, regenerate, startGenerate } from "./generate";
 import { reportModelView, setReportModel } from "./model";
 import { handle, id } from "./routes";
 import { storedPlan } from "./planner";
@@ -90,6 +90,8 @@ export function registerGenerateRoutes(app: Hono<AppEnv>) {
     const user = c.get("user");
     const reportId = id(c, "reportId");
     await parseJson(c.req.raw, emptySchema);
-    return { doc: await checkDoc({ userId: user.id, role: user.role }, reportId, c.req.raw.signal) };
+    // L2: metrics defined on a changed linked page are re-read from it (a run in Runs; needs AI).
+    const actor = { userId: user.id, role: user.role };
+    return { doc: await checkDoc(actor, reportId, c.req.raw.signal, (pages) => refreshPageMetrics(actor, reportId, pages, c.req.raw.signal)) };
   }));
 }

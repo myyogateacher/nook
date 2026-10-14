@@ -22,14 +22,14 @@ import { ReportError } from "./errors";
 import { adHocQueryId, runGuarded } from "./runner";
 import { tablesNamedIn } from "./schemaCatalog";
 import { describeTablesTool, estimateTool, listTablesTool, runSchemaQueryTool, sampleRowsTool, searchSchemaTool } from "./schemaTools";
-import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns } from "./refresh";
+import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns, takeRunLock } from "./refresh";
 import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { reportFallbackFor, reportModelFor } from "./model";
 import { finalNote } from "./repairHints";
-import { catalogPromptLines, catalogRow, extractCatalog, EXTRACT_LIMITS, metricHints, saveCatalog } from "./metricCatalog";
+import { catalogPromptLines, catalogRow, extractCatalog, EXTRACT_LIMITS, mergePageMetrics, metricHints, pageScopes, saveCatalog, type LinkedPage } from "./metricCatalog";
 import { parseNookRef } from "../../shared/nookDocRef";
-import type { CatalogMetric } from "../../shared/reportsMetrics";
+import { PAGE_METRICS_RUN_MARKER, type CatalogMetric } from "../../shared/reportsMetrics";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
 import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
@@ -936,6 +936,121 @@ async function linkedPages(run: Execution, reportId: string, runId: string, sign
     if (pages.length >= EXTRACT_LIMITS.pages) break;
   }
   return pages;
+}
+
+/**
+ * L2: after Check doc found linked pages changed, the catalog metrics defined on them whose text there
+ * changed are extracted again from the page as it reads now (the same forced record_metrics call and
+ * Nook's checks as E4, scoped to those metrics), and the catalog gets a new version for the doc's hash
+ * (generation and edits use it from then on). The owner's; it needs AI (their role, the instance, the
+ * day's budget) and the report free of other runs, and is skipped (logged) otherwise. It is a run in
+ * Runs (refresh kind, its keys starting with PAGE_METRICS_RUN_MARKER, no query) with its model steps,
+ * charged to the budget. Returns the metrics it re-read, by name.
+ */
+export async function refreshPageMetrics(actor: Actor, reportId: string, changed: readonly LinkedPage[], signal?: AbortSignal): Promise<string[]> {
+  const report = ownedReport(reportId, actor.userId);
+  if (!changed.length || !report.doc_hash) return [];
+  const catalog = catalogRow(reportId, report.doc_hash);
+  if (!catalog) return [];
+  const scopes = pageScopes(catalog.metrics, changed);
+  if (!scopes.length) return [];
+  let connection: ProviderConnection;
+  let datasource: DatasourceRow;
+  try {
+    if (!roleMayChat(actor.role)) return [];
+    requireAgentsEnabled();
+    connection = generateDeps.connection(reportId);
+    assertBudget(actor.userId);
+    datasource = usableDatasource(report.datasource_id);
+  } catch (error) {
+    slog.info("Linked-page metrics not re-read", { code: (error as { code?: string }).code ?? "UNAVAILABLE" });
+    return [];
+  }
+  let run: { id: string };
+  try {
+    run = takeRunLock({ reportId, kind: "refresh", trigger: "user", userId: actor.userId, queryKeys: [PAGE_METRICS_RUN_MARKER] });
+  } catch (error) {
+    if (error instanceof ReportError && error.code === "RUN_IN_PROGRESS") { slog.info("Linked-page metrics not re-read", { code: error.code }); return []; }
+    throw error;
+  }
+  const agentRunId = crypto.randomUUID();
+  const startedAt = now();
+  const purgeAfter = new Date(Date.parse(startedAt) + readAgentSettings().auditRetentionDays * 86_400_000).toISOString();
+  db.transaction(() => {
+    db.query(`INSERT INTO agent_runs (id, via, agent_id, agent_revision, prompt_sha256, preamble_version, chat_id, user_id, key_id, provider_id, model, status, client_address, label, queued_at, purge_after)
+      VALUES (?, 'reports', ?, 1, ?, ?, NULL, ?, NULL, ?, ?, 'queued', NULL, ?, ?, ?)`)
+      .run(agentRunId, REPORTS_AGENT_ID, createHash("sha256").update(scopes.map((scope) => scope.page.markdown).join("\u0000")).digest("hex"), PROMPT_VERSION, actor.userId, connection.id, connection.model, oneLine(report.title, 60), startedAt, purgeAfter);
+    db.query("INSERT INTO agent_audit_entries (run_id, input_text, output_text) VALUES (?, ?, NULL)")
+      .run(agentRunId, JSON.stringify({ reportId, pages: scopes.map((scope) => scope.page.title), metrics: scopes.flatMap((scope) => scope.metrics.map((metric) => metric.id)) }));
+    db.query("UPDATE report_runs SET agent_run_id = ?, lease_until = ? WHERE id = ?").run(agentRunId, new Date(Date.now() + GENERATE_LIMITS.leaseMs).toISOString(), run.id);
+  })();
+  markAuditStarted(agentRunId);
+  // The lease (wave 47) is pushed forward while this request works, as a generation's is.
+  const heartbeat = setInterval(() => {
+    try { db.query("UPDATE report_runs SET lease_until = ? WHERE id = ? AND status = 'running'").run(new Date(Date.now() + GENERATE_LIMITS.leaseMs).toISOString(), run.id); } catch { /* the next beat tries again */ }
+  }, GENERATE_LIMITS.leaseBeatMs);
+  heartbeat.unref?.();
+  audit(actor.userId, null, "reports.metrics.pages.start", { reportId, runId: run.id, agentRunId, pages: scopes.length, metrics: scopes.reduce((sum, scope) => sum + scope.metrics.length, 0) });
+  let seq = 0;
+  let steps = 0;
+  let toolCalls = 0;
+  let usage: TokenUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
+  let metrics = catalog.metrics;
+  const reread: string[] = [];
+  let failed: string | null = null;
+  let status: RunStatus = "ok";
+  let errorCode: string | null = null;
+  const controller = new AbortController();
+  const stop = () => controller.abort("stop");
+  signal?.addEventListener("abort", stop, { once: true });
+  try {
+    for (const scope of scopes) {
+      const started = Date.now();
+      const extracted = await extractCatalog({
+        connection, datasource, markdown: scope.page.markdown, userId: actor.userId, signal: controller.signal, scope,
+        onStep: (step) => {
+          if (step.kind === "model") { steps += 1; insertAuditStep(agentRunId, ++seq, { kind: "model", text: step.text, toolCalls: step.toolCalls, usage: step.usage, durationMs: step.durationMs }); }
+          else { toolCalls += 1; insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: "record_metrics", ok: step.ok, args: step.args, result: step.result, durationMs: step.durationMs }); }
+        },
+        charge: (stepUsage) => {
+          usage = { promptTokens: usage.promptTokens + stepUsage.promptTokens, completionTokens: usage.completionTokens + stepUsage.completionTokens, estimated: usage.estimated || stepUsage.estimated };
+          chargeUsage(actor.userId, REPORTS_AGENT_ID, stepUsage, 0);
+        }
+      });
+      const page = scope.page.title ?? "a linked page";
+      if (extracted === null) {
+        failed = `The metrics on “${page}” could not be read again`;
+        insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook could not re-read the metrics on “${page}”; the catalog keeps them as they were.]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: Date.now() - started });
+        continue;
+      }
+      metrics = mergePageMetrics(metrics, scope, extracted);
+      reread.push(...scope.metrics.map((metric) => metric.name));
+      insertAuditStep(agentRunId, ++seq, { kind: "model", text: `[Nook re-read ${scope.metrics.length} ${scope.metrics.length === 1 ? "metric" : "metrics"} from the changed page “${page}”: ${scope.metrics.map((metric) => metric.id).join(", ")}.]`, toolCalls: [], usage: { promptTokens: 0, completionTokens: 0, estimated: false }, durationMs: Date.now() - started });
+    }
+  } catch (error) {
+    if (controller.signal.aborted) { status = "cancelled"; failed = "Check doc was stopped"; }
+    else if (error instanceof AgentError && error.code === "BUDGET_EXCEEDED") { status = "budget"; errorCode = "BUDGET_EXCEEDED"; failed = error.message; }
+    else { status = "error"; errorCode = "INTERNAL"; failed = "Re-reading the metrics failed"; slog.error("Reports: linked-page metrics failed", error); }
+  } finally {
+    signal?.removeEventListener("abort", stop);
+    clearInterval(heartbeat);
+  }
+  let version: number | null = null;
+  if (reread.length) {
+    version = saveCatalog(reportId, { snapshotId: catalog.snapshot_id, docSha256: catalog.doc_sha256, source: "extract", metrics, runId: run.id, userId: actor.userId });
+    audit(actor.userId, null, "reports.metrics.extract", { reportId, runId: run.id, agentRunId, version, metrics: metrics.length, problems: metrics.filter((metric) => metric.problems.length).length, pages: scopes.length, reread: reread.length });
+  }
+  try {
+    finishAuditRun(agentRunId, { status, errorCode, steps, toolCalls, usage, output: version ? `[metric catalog v${version}: re-read ${reread.length} from changed pages]` : `[${failed ?? "nothing re-read"}]` });
+    chargeUsage(actor.userId, REPORTS_AGENT_ID, { promptTokens: 0, completionTokens: 0, estimated: false }, 1);
+  } catch (error) {
+    slog.error("Reports: could not finish the linked-page metrics' audit row", error);
+  }
+  const ok = reread.length > 0 && !failed;
+  db.query("UPDATE report_runs SET status = ?, error = ?, finished_at = ?, lease_until = NULL WHERE id = ? AND status = 'running'")
+    .run(ok ? "succeeded" : reread.length ? "partial" : "failed", ok ? null : (failed ?? "Nothing was re-read").slice(0, 1000), now(), run.id);
+  slog.info("Linked-page metrics re-read", { pages: scopes.length, metrics: reread.length, version, failed: failed ? true : undefined });
+  return reread;
 }
 
 // Wave 47's lease sweep may abandon a generation whose lease ran out: this process stops its copy.

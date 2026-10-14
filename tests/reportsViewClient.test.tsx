@@ -161,6 +161,8 @@ describe("KPI tiles and helpers", () => {
     expect(runLabel({ kind: "refresh", trigger: "schedule", queryKeys: null })).toBe("Refreshed on schedule");
     expect(runLabel({ kind: "refresh", trigger: "user", queryKeys: ["daily"] })).toBe("Re-ran daily by hand");
     expect(runLabel({ kind: "generate", trigger: "user", queryKeys: null })).toBe("Generated from the doc");
+    // L2: Check doc re-reading catalog metrics from a changed linked page.
+    expect(runLabel({ kind: "refresh", trigger: "user", queryKeys: ["~metrics"] })).toBe("Re-read metrics from changed linked pages");
     expect(timeAgo("2026-10-13T08:00:00Z", Date.parse("2026-10-13T08:05:00Z"))).toBe("5 min ago");
   });
 

@@ -17,7 +17,7 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## In flight
 
 - [ ] Release v0.38.0. Update the `release-0.38.0` branch to current `main`, extend CHANGELOG and the upgrade notes to cover 058–059, run the gates, then merge, tag, push, publish the GitHub release, and rebuild the local Docker image.
-- [ ] Metric catalog: Check doc does not re-extract the catalog when a linked page changes. It names the changed page, not the changed metrics. A non-Nook doc server's linked pages reach the catalog only after a run has read them.
+- [ ] Metric catalog, known limit (accepted): a non-Nook doc server's linked pages reach the catalog only after a run has read them, so the first generation's catalog has none of their metrics. Revisit only if pages should be read before the first extraction.
 - [ ] Forward after Back past a page (D480) does not reopen Inspect yet, because it has no `layerKey` or `useLayerOpener`. Do this after v0.38.0 merges, since that release adds Inspect's reopen.
 - [ ] Report folders: a reader's own placement of reports shared with them. Today they stay under Shared with me.
 - [ ] Report shares live in `report_members` and `report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, together with the Access sheet.
@@ -25,6 +25,9 @@ Only open work lives here. Remove an item once it is done. Shipped work is in [C
 ## Known LOW leftovers
 
 - [ ] "Pick from Nook" (K4) searches Files text by a bounded scan (`GET /api/reports/nook-files`: 100 newest candidates, 8 MiB, 20 hits a request, then "Search older files"), because Files content has no full-text index. A `document_fts` index (a migration) would make it one query and rank hits; ask before adding it.
+- [ ] `tests/inboxApp.test.tsx` "Inbox copy" fails late in the evening IST (seen 23:25 on 2026-10-14: `expiresText` of now + 13.5 days read "expires in 13 days"). It is probably a local-midnight boundary in the day count, not the rounding the test means to check.
+- [ ] `tests/reportsScheduler.test.ts` "at most two scheduled refreshes run at once" failed once in a full-suite run (lane L, 2026-10-14) and passes on its own (3/3). It is probably timing under load.
+- [ ] Lane worktrees without `node_modules` cannot run the `vite build` gate: the Excalidraw fonts copy reads `node_modules/…/fonts` relative to the working directory, so the build fails at writeBundle after emitting `dist`. Lane L was not allowed to install or link `node_modules` in its worktree.
 - [ ] `tests/restV1.test.ts` "agents" fails in some full-suite runs but passes on its own (7/7) and in lane G's six proof runs. It is probably order-dependent shared state: agents, providers, or keys left behind by an earlier file.
 
 ## Standing rules for agent briefs

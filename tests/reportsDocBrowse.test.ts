@@ -237,6 +237,67 @@ describe("Doc changed for a linked page", () => {
     expect(JSON.parse(audit.metadata_json)).toMatchObject({ pages: 1, pagesChanged: 1 });
     expect(audit.metadata_json).not.toContain("staff");
   });
+
+  test("L2: a changed page re-reads the catalog metrics defined on it: a new catalog version, a run in Runs, and the banner names the metric", async () => {
+    const { saveCatalog, catalogRow, metricExcerpt } = await import("../server/reports/metricCatalog");
+    const RULES = "# Revenue rules\n\n- **Net revenue**: the sum of `amount` over orders, refunds included.\n- **Orders**: the number of orders.\n";
+    docs.docs.set("rules-Ru3333", { title: "Revenue rules", text: RULES });
+    const { reportId, runId } = await generate({ browseTools: ["fetch"] }, browsing([[fetchCall("rules-Ru3333")]]));
+    const hash = (db.query("SELECT doc_hash FROM reports WHERE id = ?").get(reportId) as { doc_hash: string }).doc_hash;
+    // The catalog this generation used, with two metrics defined on the page (as a run that read it records them).
+    const onPage = (id: string, name: string, expression: string) => ({ id, name, definition: "", expression, table: "analytics.orders", filters: [], final: false, grain: null, unit: null, timeColumn: null, excerpt: metricExcerpt(RULES, name), page: "Revenue rules", problems: [] });
+    saveCatalog(reportId, { snapshotId: null, docSha256: hash, source: "extract", metrics: [onPage("net_revenue", "Net revenue", "sum(amount)"), onPage("orders", "Orders", "count()")], runId, userId: owner.userId });
+    const before = catalogRow(reportId, hash)!.version;
+    const extractionsBefore = provider.extractions.length;
+
+    // The page changes elsewhere: Doc changed names the page, and nothing is re-read (no model call).
+    docs.docs.get("rules-Ru3333")!.text = `${RULES}\nSee also the glossary.`;
+    const elsewhere = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+    expect(elsewhere.body.doc).toMatchObject({ changed: true, mainChanged: false });
+    expect(elsewhere.body.doc.metricsChanged).toBeUndefined();
+    expect([catalogRow(reportId, hash)!.version, provider.extractions.length]).toEqual([before, extractionsBefore]);
+
+    // Net revenue's definition changes: only it is re-read, with the forced tool, from the page as it reads now.
+    const CHANGED = RULES.replace("refunds included.", "refunds excluded (amount > 0).");
+    docs.docs.get("rules-Ru3333")!.text = CHANGED;
+    provider.setScript(Object.assign((context: ScriptContext) => qaScript(context), { metrics: [{ id: "net_revenue", name: "Net revenue", definition: "Sum of amount, refunds excluded", expression: "sumIf(amount, amount > 0)", table: "analytics.orders", filters: ["amount > 0"] }, { id: "stray", name: "Stray", definition: "", expression: "count()", table: "analytics.orders" }] }));
+    try {
+      const checked = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+      expect(checked.status).toBe(200);
+      expect(checked.body.doc).toMatchObject({ changed: true, mainChanged: false, metricsChanged: ["Net revenue"] });
+      const extraction = provider.extractions.at(-1)!;
+      expect(provider.extractions.length).toBe(extractionsBefore + 1);
+      expect(extraction.tool_choice).toEqual({ type: "function", function: { name: "record_metrics" } });
+      const system = String(extraction.messages![0]!.content);
+      expect(system).toContain("refunds excluded");
+      expect(system).toContain("- net_revenue: Net revenue");
+      expect(system).not.toContain("- orders:");
+      // A new catalog version: Net revenue re-read and checked, Orders kept, the stray metric left out.
+      const catalog = catalogRow(reportId, hash)!;
+      expect(catalog.version).toBe(before + 1);
+      expect(catalog.metrics.map((metric) => [metric.id, metric.expression, metric.page, metric.problems])).toEqual([["net_revenue", "sumIf(amount, amount > 0)", "Revenue rules", []], ["orders", "count()", "Revenue rules", []]]);
+      expect(catalog.metrics[0]!.excerpt).toContain("refunds excluded");
+      // A run in Runs (no query), with its model steps, tokens, and the budget charged.
+      const runs = (await send(owner, "GET", `/reports/${reportId}/run-history`)).body.runs as Json[];
+      const reread = runs.find((run) => run.queryKeys?.[0] === "~metrics")!;
+      expect(reread).toMatchObject({ kind: "refresh", status: "succeeded", model: "scripted-report-model" });
+      expect(reread.promptTokens).toBeGreaterThan(0);
+      expect(catalog.run_id).toBe(reread.id);
+      const log = (await send(owner, "GET", `/reports/${reportId}/run-history/${reread.id}`)).body;
+      expect(log.steps.some((step: Json) => step.kind === "tool" && step.tool === "record_metrics" && step.ok)).toBe(true);
+      expect(log.queries).toEqual([]);
+      expect(db.query("SELECT count(*) AS n FROM audit_log WHERE event_type = 'reports.metrics.extract' AND metadata_json LIKE ?").get(`%${reread.id}%`)).toEqual({ n: 1 });
+
+      // Checking again re-reads nothing (the catalog matches the page now); the banner still names the metric.
+      const again = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+      expect(again.body.doc.metricsChanged).toEqual(["Net revenue"]);
+      expect([catalogRow(reportId, hash)!.version, provider.extractions.length]).toEqual([before + 1, extractionsBefore + 1]);
+      // Owner only.
+      expect((await send(commenter, "POST", `/reports/${reportId}/doc/check`)).status).toBe(404);
+    } finally {
+      docs.docs.delete("rules-Ru3333");
+    }
+  });
 });
 
 describe("K3: searches and lists are kept as result sets", () => {

@@ -13,6 +13,7 @@ import { InspectSheet, type DataBlock } from "./InspectSheet";
 import type { InspectTab } from "./inspectHistory";
 import { KpiTile, type ResultLookup } from "./KpiTile";
 import { ResultTable } from "./ResultTable";
+import { PAGE_METRICS_RUN_MARKER } from "../../shared/reportsMetrics";
 import { previewVersionOf, getResults, getRun, listRuns, refreshReport, RUN_STATUS_TEXT, timeAgo } from "./reportViewApi";
 import { codeOf, messageOf } from "./reportsApi";
 import { scheduleBadge, ScheduleSheet } from "./ScheduleSheet";
@@ -152,6 +153,8 @@ export function ReportView({ report, canWrite, generating = false, initial, read
         void loadRuns();
         // A generation's end is told by ReportGeneration (its progress and toast).
         if (run.kind === "generate") return;
+        // L2: Check doc re-reading catalog metrics says how it went itself (the Doc changed banner).
+        if (run.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER) return;
         if (run.status === "succeeded") notify.success(run.queryKeys?.length ? "Query re-ran" : "Report refreshed");
         else if (run.status === "partial") notify.warning(`Refreshed with errors: ${run.error ?? "some queries failed"}. Their blocks keep the last good result.`);
         else notify.error(`The refresh ${run.status === "abandoned" ? "stopped" : "failed"}${run.error ? `: ${run.error}` : ""}`);
@@ -208,7 +211,7 @@ export function ReportView({ report, canWrite, generating = false, initial, read
   return <section className={`report-view report-theme-${palette.mode}`} style={cssVars} aria-label="Report">
     {!readOnly && <div className="report-view-toolbar">
       <p className="report-view-status" role="status">
-        {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : previewVersionOf(running.queryKeys) !== null ? `Running v${previewVersionOf(running.queryKeys)} on today's data…` : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
+        {busy ? <span className="report-view-running"><LoaderCircle className="spin" aria-hidden="true" />{!running || running.kind === "generate" ? "Generating…" : previewVersionOf(running.queryKeys) !== null ? `Running v${previewVersionOf(running.queryKeys)} on today's data…` : running.queryKeys?.[0] === PAGE_METRICS_RUN_MARKER ? "Re-reading metrics…" : running.queryKeys?.length ? `Re-running ${running.queryKeys.join(", ")}…` : "Refreshing…"}</span>
           : <span><Clock3 aria-hidden="true" />{report.lastRunAt ? `Updated ${timeAgo(lastRun?.finishedAt ?? report.lastRunAt)}` : "Not refreshed yet"}</span>}
         {staleCount > 0 && <span className="reports-status reports-status-stale">{`${staleCount} stale`}</span>}
         {badge && <span className={`reports-status reports-status-${badge.tone}`}><CalendarClock aria-hidden="true" />{badge.text}</span>}

@@ -5,7 +5,7 @@ import { CHAT_RUN_TIMEOUT_S, type RunErrorCode, type RunStatus, type TokenUsage 
 import { REPORT_LIMITS } from "../../shared/reports";
 import type { GenerateStarted } from "../../shared/reportsGenerate";
 import { finishAuditRun, insertAuditStep, markAuditFirstToken, markAuditStarted } from "../agents/audit";
-import { ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
+import { parseToolArguments, ProviderError, runLoop, type ChatTurn, type ModelTool, type ModelToolCall, type ProviderConnection, type ToolChoice, type ToolExecution } from "../agents/loop";
 import { assertBudget, capResultText, chargeUsage } from "../agents/runs";
 import { readAgentSettings, roleMayChat } from "../agents/settings";
 import { AgentError, requireAgentsEnabled } from "../agents/status";
@@ -55,6 +55,8 @@ export const GENERATE_LIMITS = {
   queries: REPORT_LIMITS.queries,
   /** Tries of submit_report: the first and two retries. */
   submits: 3,
+  /** Text answers nudged back to submit_report (providers with only tool_choice auto). */
+  nudges: 2,
   /** The doc as the prompt carries it, in bytes. */
   docPromptBytes: 60_000,
   /** run_sql rows shown to the model. */
@@ -198,10 +200,15 @@ export const GENERATE_TOOLS: ModelTool[] = [
 export const generateToolChoice = (maxSteps: number) => (step: number, _last = false, state: { toolCalls: number; perRun: number; perStep: number } = { toolCalls: 0, perRun: Infinity, perStep: 0 }): ToolChoice =>
   step > maxSteps - GENERATE_LIMITS.submits || state.perRun - state.toolCalls < state.perStep ? { name: "submit_report" } : "required";
 
+/** Tool arguments as an object; fences, trailing commas, and JSON in a string are tolerated, anything else names the problem. */
+/** What a text-only answer gets back in a generation (finalTool). */
+export const FINAL_NUDGE = "Call submit_report now with the report spec. Do not answer in text.";
+
 const asObject = (raw: string): Record<string, unknown> => {
-  const parsed: unknown = JSON.parse(raw || "{}");
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new ReportError(400, "INVALID", "The arguments must be a JSON object");
-  return parsed as Record<string, unknown>;
+  const parsed = parseToolArguments(raw);
+  if (!parsed.ok) throw new ReportError(400, "INVALID", `The arguments are not valid JSON (${parsed.error}); send one JSON object`);
+  if (!parsed.value || typeof parsed.value !== "object" || Array.isArray(parsed.value)) throw new ReportError(400, "INVALID", "The arguments must be a JSON object");
+  return parsed.value as Record<string, unknown>;
 };
 const str = (value: unknown, name: string) => {
   if (typeof value !== "string" || !value.trim()) throw new ReportError(400, "INVALID", `${name} must be a non-empty string`);
@@ -469,7 +476,8 @@ async function executeGeneration(run: Execution) {
     }
     const capped = capResultText(result.text, GENERATE_LIMITS.resultBytes);
     const durationMs = Date.now() - started;
-    insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.arguments, result: capped.text, ok: result.ok, durationMs });
+    // A final call the loop took from a text answer is marked in the audit (it went through the same checks).
+    insertAuditStep(agentRunId, ++seq, { kind: "tool", serverId: null, tool: call.name, args: call.recovered ? `[recovered from text] ${call.arguments}` : call.arguments, result: capped.text, ok: result.ok, durationMs });
     channel.emit({ type: "tool_result", data: { messageId: runId, callId: call.id, ok: result.ok, resultPreview: preview(capped.text), truncated: capped.truncated, durationMs, decision: null, proposalId: null } });
     return { content: capped.truncated ? `${capped.text}\n[cut at 16 KB]` : capped.text, ...(result.stop ? { stop: true } : {}) };
   };
@@ -500,6 +508,8 @@ async function executeGeneration(run: Execution) {
       },
       tools: () => GENERATE_TOOLS,
       execute,
+      // A model that answers in text (providers with only tool_choice auto) is nudged, or its JSON taken as the call.
+      finalTool: { name: "submit_report", nudge: FINAL_NUDGE, maxNudges: GENERATE_LIMITS.nudges, accepts: (value) => Array.isArray(value.blocks) || Boolean(value.spec && typeof value.spec === "object") },
       toolChoice: generateToolChoice(GENERATE_LIMITS.steps),
       limits: { perStep: GENERATE_LIMITS.perStep, perRun: GENERATE_LIMITS.perRun }
     });
@@ -508,7 +518,8 @@ async function executeGeneration(run: Execution) {
     if (!accepted) {
       status = result.status === "step_limit" ? "step_limit" : "error";
       errorCode = "NO_REPORT";
-      errorMessage = persistRefused ? `Nothing was saved: ${persistRefused}` : lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}` : "The model finished without submitting a report";
+      errorMessage = persistRefused ? `Nothing was saved: ${persistRefused}` : lastErrors.length ? `The model's report did not pass the checks: ${lastErrors.slice(0, 3).join("; ")}`
+        : result.finalToolMissed && (result.nudges ?? 0) >= GENERATE_LIMITS.nudges ? `The model answered in text and did not call submit_report after ${GENERATE_LIMITS.nudges} nudges` : "The model finished without submitting a report";
     }
   } catch (error) {
     const reason = controller.signal.aborted ? String(controller.signal.reason ?? "stop") : null;

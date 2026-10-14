@@ -514,3 +514,56 @@ describe("final review M2 and L6: regenerate takes the run lock before it change
     expect(seen).toMatchObject({ status: "failed", error: GENERIC_GENERATION_ERROR, agentRunId: null, docSnapshotId: null });
   });
 });
+
+describe("auto-only providers: a text answer is nudged, recovered, or fails clearly (2026-10-14)", () => {
+  const AUTO_ONLY = { ...DEFAULT_COMPAT, requiredToolChoice: false, namedToolChoice: false };
+  const nudged = (context: Parameters<Script>[0]) => context.body.messages?.some((turn) => turn.role === "user" && String(turn.content).includes("Call submit_report now")) ?? false;
+  async function autoOnly(script: Script) {
+    generateDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: AUTO_ONLY });
+    provider.setScript(script);
+    try {
+      const started = await generate(member);
+      expect(started.status).toBe(202);
+      return { run: await waitForRun(started.body.run.id), reportId: started.body.report.id as string, agentRunId: (db.query("SELECT agent_run_id FROM report_runs WHERE id = ?").get(started.body.run.id) as { agent_run_id: string }).agent_run_id };
+    } finally {
+      generateDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });
+    }
+  }
+
+  test("text first, then a submit after the nudge: succeeds; every request was auto, the nudged one offered only submit_report", async () => {
+    const { run } = await autoOnly((context) => nudged(context)
+      ? { toolCalls: [{ name: "submit_report", arguments: qaSpec() }] }
+      : { content: "Here is my plan for the report: revenue per day and orders by country." });
+    expect(run).toEqual({ status: "succeeded", error: null });
+    expect(provider.calls.every((body) => body.tool_choice === "auto")).toBe(true);
+    expect(provider.calls.at(-1)!.tools!.map((tool) => tool.function.name)).toEqual(["submit_report"]);
+  });
+
+  test("a spec as JSON in the text is recovered and validated like a submit, and the audit says so", async () => {
+    const { run, agentRunId } = await autoOnly(() => ({ content: `Here is the report:\n\`\`\`json\n${JSON.stringify(qaSpec(), null, 2)}\n\`\`\`` }));
+    expect(run).toEqual({ status: "succeeded", error: null });
+    const step = db.query("SELECT tool_name, args_json FROM agent_audit_steps WHERE run_id = ? AND kind = 'tool' ORDER BY seq DESC LIMIT 1").get(agentRunId) as { tool_name: string; args_json: string } | null;
+    expect(step?.tool_name).toBe("submit_report");
+    expect(step?.args_json).toContain("recovered from text");
+  });
+
+  test("text three times: fails with NO_REPORT, saying the model did not call submit_report after 2 nudges", async () => {
+    const { run } = await autoOnly(() => ({ content: "I would rather describe the report in words." }));
+    expect(run.status).toBe("failed");
+    expect(run.error).toContain("did not call submit_report after 2 nudges");
+    expect(provider.calls.length).toBe(3);
+  });
+
+  test("malformed arguments are repaired (a json fence, trailing commas, JSON inside a string); unparseable ones come back as a named error", async () => {
+    const fenced = `\`\`\`json\n${JSON.stringify(qaSpec()).replace(/\]\}$/, "],}")}\n\`\`\``;
+    let call = 0;
+    const { run } = await autoOnly(() => {
+      call += 1;
+      if (call === 1) return { toolCalls: [{ name: "submit_report", arguments: "{\"blocks\": [" }] };
+      return { toolCalls: [{ name: "submit_report", arguments: JSON.stringify(fenced) }] };
+    });
+    expect(run).toEqual({ status: "succeeded", error: null });
+    const refusal = provider.calls[1]!.messages!.filter((turn) => turn.role === "tool").at(-1)!;
+    expect(String(refusal.content)).toContain("The arguments are not valid JSON (");
+  });
+});

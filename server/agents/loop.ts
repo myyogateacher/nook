@@ -14,7 +14,7 @@ import { EgressError, egressFetch, readEgressText, type EgressResponse } from ".
 
 export type ProviderConnection = { id: string; baseUrl: string; apiKey: string | null; model: string; compat: ProviderCompat };
 /** A tool call as the model emitted it (plan §2.1): `arguments` is the raw JSON text. */
-export type ModelToolCall = { id: string; name: string; arguments: string };
+export type ModelToolCall = { id: string; name: string; arguments: string; /** Set by the loop when it took the call from a text answer (a run's final tool, `finalTool`). */ recovered?: "text" };
 /** The wire turns (OpenAI Chat Completions): an assistant turn may carry `tool_calls`; a `tool` turn answers one. */
 /**
  * A part of a user turn with images (U5): OpenAI-compatible `text` and `image_url` parts, the image a
@@ -368,8 +368,85 @@ export type LoopInput = {
    * can be made to end with one call (report generation forces `submit_report`).
    */
   toolChoice?: (step: number, last: boolean, state: { toolCalls: number; perRun: number; perStep: number }) => ToolChoice | undefined;
+  /**
+   * A run that must end with one tool (report generation's submit_report, the edit agent's
+   * submit_patch; chat never sets it). A text-only answer does not end such a run: a JSON object in
+   * the text that `accepts` approves is run as that tool's call (`recovered: "text"`), else the text
+   * goes back with `nudge` as a user turn and the next steps offer only that tool, at most `maxNudges`
+   * times. Nudged steps count toward the step limit and are charged like any other.
+   */
+  finalTool?: { name: string; nudge: string; maxNudges: number; accepts?: (value: Record<string, unknown>) => boolean };
 };
-export type LoopResult = { status: "stop" | "step_limit"; content: string; steps: number; usage: TokenUsage; model: string | null; toolCalls: number; droppedToolCalls: number };
+export type LoopResult = {
+  status: "stop" | "step_limit"; content: string; steps: number; usage: TokenUsage; model: string | null; toolCalls: number; droppedToolCalls: number;
+  /** finalTool runs: the nudges sent, and whether the run ended on a text answer without the final tool. */
+  nudges?: number; finalToolMissed?: boolean;
+};
+
+const FENCE = /```(?:json|JSON)?\s*\n?([\s\S]*?)```/g;
+
+/**
+ * Tool arguments as JSON, tolerating what cheaper models send: a ```json fence around it, trailing
+ * commas, and a JSON string that holds the JSON. Anything still unparseable is an error that names
+ * the problem, so the model can fix it (never a silently dropped call).
+ */
+export function parseToolArguments(raw: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  let text = (raw ?? "").trim();
+  if (!text) return { ok: true, value: {} };
+  let lastError = "";
+  for (let depth = 0; depth < 3; depth += 1) {
+    const fenced = /^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```$/.exec(text);
+    if (fenced) text = fenced[1]!.trim();
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "not JSON";
+      try {
+        value = JSON.parse(withoutTrailingCommas(text));
+      } catch {
+        return { ok: false, error: lastError.slice(0, 200) };
+      }
+    }
+    if (typeof value === "string" && /^\s*(?:[{[]|```)/.test(value)) { text = value.trim(); continue; }
+    return { ok: true, value };
+  }
+  return { ok: false, error: lastError.slice(0, 200) || "nested too deep" };
+}
+
+/** Removes commas before a closing brace or bracket, outside strings. */
+function withoutTrailingCommas(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (inString) {
+      out += char;
+      if (char === "\\") { out += text[index + 1] ?? ""; index += 1; } else if (char === "\"") inString = false;
+      continue;
+    }
+    if (char === "\"") { inString = true; out += char; continue; }
+    if (char === ",") {
+      const rest = /^\s*([}\]])/.exec(text.slice(index + 1));
+      if (rest) continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
+/** The JSON object a text answer carries (a ```json fence first, else its outermost braces), or null. */
+export function jsonObjectFromText(text: string): Record<string, unknown> | null {
+  const candidates = [...text.matchAll(FENCE)].map((match) => match[1]!);
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  for (const candidate of candidates) {
+    const parsed = parseToolArguments(candidate);
+    if (parsed.ok && parsed.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)) return parsed.value as Record<string, unknown>;
+  }
+  return null;
+}
 
 /** The one line an old tool result becomes once it falls out of the run's window (review L4). */
 export const OMITTED_TOOL_RESULT = "[An earlier tool result was omitted to keep the conversation short; call the tool again if you need it.]";
@@ -436,6 +513,9 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   let toolCalls = 0;
   let droppedToolCalls = 0;
   let offeredAny = false;
+  // finalTool runs: nudges sent, and whether the next steps offer only the final tool.
+  let nudges = 0;
+  let forceFinal = false;
   const perStep = input.limits?.perStep ?? AGENT_BOUNDS.toolCallsPerStep;
   const perRun = input.limits?.perRun ?? AGENT_BOUNDS.toolCallsPerRun;
   // Characters streamed to the caller so far: the stored reply keeps at most the bound of them.
@@ -447,7 +527,7 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
   for (let step = 1; step <= input.maxSteps; step += 1) {
     const last = step === input.maxSteps;
     input.beforeStep?.(step);
-    const choice = input.toolChoice?.(step, last, { toolCalls, perRun, perStep });
+    const choice = forceFinal && input.finalTool ? { name: input.finalTool.name } : input.toolChoice?.(step, last, { toolCalls, perRun, perStep });
     const named = typeof choice === "object" ? choice.name : null;
     const offer = !!input.tools && input.connection.compat.supportsTools && (named !== null || (!last && toolCalls < perRun));
     const offeredTools = offer ? await input.tools!(step) : [];
@@ -465,10 +545,18 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     // Review M1 (Wave 46): a named, forced tool is exempt from the per-run cap, so it always gets its call.
     const room = named !== null ? perStep : Math.max(0, Math.min(perStep, perRun - toolCalls));
     // Call ids are Nook's, never the model's (review M1): `call_<step>_<index>`, unique in the run.
-    const calls = wantedCalls.slice(0, room).map((call, index) => ({ ...call, id: `call_${step}_${index}` }));
+    let calls: ModelToolCall[] = wantedCalls.slice(0, room).map((call, index) => ({ ...call, id: `call_${step}_${index}` }));
     const dropped = wantedCalls.length - calls.length;
     droppedToolCalls += dropped;
-    const ending = calls.length === 0 || !execute;
+    // A run with a final tool that got a text answer: take a JSON object in the text as the call, or nudge.
+    const final = execute ? input.finalTool : undefined;
+    const textOnly = !reply.toolCalls.some((call) => call.name);
+    if (final && calls.length === 0 && textOnly) {
+      const value = jsonObjectFromText(reply.content);
+      if (value && (!final.accepts || final.accepts(value))) calls = [{ id: `call_${step}_0`, name: final.name, arguments: JSON.stringify(value), recovered: "text" }];
+    }
+    const nudging = !!final && calls.length === 0 && textOnly && nudges < final.maxNudges && !last;
+    const ending = (calls.length === 0 || !execute) && !nudging;
     // The ending step's text never goes back to the model: it is charged only for what the stored reply keeps.
     const usage = ending ? keptUsage(reply.usage, reply.content, textRoom) : reply.usage;
     input.sink.step?.({ step, content: reply.content, toolCalls: reply.toolCalls, usage, model: reply.model, durationMs: Date.now() - stepStarted });
@@ -492,19 +580,25 @@ export async function runLoop(input: LoopInput): Promise<LoopResult> {
     }
     input.sink.usage(usage, reply.model);
     // Charged after every step; with more steps ahead a used-up budget ends the run here (plan §2.2).
-    input.charge(usage, calls.length > 0);
+    input.charge(usage, calls.length > 0 || nudging);
+    if (nudging) {
+      nudges += 1;
+      forceFinal = true;
+      input.messages.push({ role: "assistant", content: reply.content }, { role: "user", content: final!.nudge });
+      continue;
+    }
     if (ending) {
       input.messages.push({ role: "assistant", content: reply.content });
-      return { status: wanted ? "step_limit" : "stop", content, steps: step, usage: total, model, toolCalls, droppedToolCalls };
+      return { status: wanted ? "step_limit" : "stop", content, steps: step, usage: total, model, toolCalls, droppedToolCalls, ...(final ? { nudges, finalToolMissed: textOnly } : {}) };
     }
     input.messages.push({ role: "assistant", content: reply.content, tool_calls: calls.map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } })) });
     for (const [index, call] of calls.entries()) {
       toolCalls += 1;
-      const outcome = await execute(call, step);
+      const outcome = await execute!(call, step);
       const note = dropped > 0 && index === calls.length - 1 ? `\n[${dropped} more tool ${dropped === 1 ? "call" : "calls"} in this step ${dropped === 1 ? "was" : "were"} dropped: at most ${perStep} calls run per step and ${perRun} per answer.]` : "";
       input.messages.push({ role: "tool", tool_call_id: call.id, content: outcome.content + note });
-      if (outcome.stop) return { status: "stop", content, steps: step, usage: total, model, toolCalls, droppedToolCalls };
+      if (outcome.stop) return { status: "stop", content, steps: step, usage: total, model, toolCalls, droppedToolCalls, ...(input.finalTool ? { nudges } : {}) };
     }
   }
-  return { status: "step_limit", content, steps: input.maxSteps, usage: total, model, toolCalls, droppedToolCalls };
+  return { status: "step_limit", content, steps: input.maxSteps, usage: total, model, toolCalls, droppedToolCalls, ...(input.finalTool ? { nudges } : {}) };
 }

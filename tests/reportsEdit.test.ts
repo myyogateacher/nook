@@ -304,6 +304,52 @@ describe("the queue and the edit agent", () => {
   });
 });
 
+describe("auto-only providers: the edit agent's text answers are nudged, recovered, or fail clearly (2026-10-14)", () => {
+  const AUTO_ONLY = { ...DEFAULT_COMPAT, requiredToolChoice: false, namedToolChoice: false };
+  const patch = () => ({ summary: "Add revenue by country", ops: [
+    { op: "add_query", query: { key: "revenue_by_country", sql: QA_EDIT_SQL, purpose: "p" } },
+    { op: "add_block", after: null, block: { id: "country_revenue", type: "chart", title: "Revenue by country", intent: "compare", queryKey: "revenue_by_country", kind: "bar", x: "country", y: ["net_revenue"], format: "currency:USD" } }
+  ] });
+  const nudged = (context: Parameters<Script>[0]) => context.body.messages?.some((turn) => turn.role === "user" && String(turn.content).includes("Call submit_patch now")) ?? false;
+  async function autoOnly(script: Script) {
+    editDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: AUTO_ONLY });
+    provider.setScript(script);
+    provider.calls.length = 0;
+    try {
+      const reportId = await seededReport("Auto only");
+      const id = (await send(owner, "POST", `/reports/${reportId}/instructions`, { text: "add revenue by country" })).body.instruction.id as string;
+      await waitStatus(id, ["proposed", "failed"]);
+      const row = db.query("SELECT status, error FROM report_instructions WHERE id = ?").get(id) as { status: string; error: string | null };
+      if (row.status === "proposed") await send(owner, "POST", `/reports/${reportId}/instructions/${id}/reject`, {});
+      return row;
+    } finally {
+      editDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });
+      provider.setScript(qaEditScript);
+    }
+  }
+
+  test("text first, then submit_patch after the nudge: proposed", async () => {
+    const row = await autoOnly((context) => nudged(context) ? { toolCalls: [{ name: "submit_patch", arguments: patch() }] } : { content: "I would add a chart of revenue by country." });
+    expect(row.status).toBe("proposed");
+    expect(provider.calls.at(-1)!.tools!.map((tool) => tool.function.name)).toEqual(["submit_patch"]);
+  });
+
+  test("a patch as JSON in the text is recovered", async () => {
+    expect((await autoOnly(() => ({ content: `\`\`\`json\n${JSON.stringify(patch())}\n\`\`\`` }))).status).toBe("proposed");
+  });
+
+  test("text three times fails, saying the model did not call submit_patch after 2 nudges", async () => {
+    const row = await autoOnly(() => ({ content: "Words only." }));
+    expect(row.status).toBe("failed");
+    expect(row.error).toContain("did not call submit_patch after 2 nudges");
+  });
+
+  test("malformed patch arguments are repaired", async () => {
+    const broken = `\`\`\`json\n${JSON.stringify(patch()).replace(/\]\}$/, "],}")}\n\`\`\``;
+    expect((await autoOnly(() => ({ toolCalls: [{ name: "submit_patch", arguments: broken }] }))).status).toBe("proposed");
+  });
+});
+
 describe("sharing", () => {
   test("a viewer reads the report, its results, versions, and thread; every change and the doc stay the owner's", async () => {
     const reportId = await seededReport("Shared");

@@ -32,7 +32,7 @@ Only open work lives here. Shipped work is in [CHANGELOG.md](CHANGELOG.md), the 
 - [ ] (Lane E, approved 2026-10-14) Generator reliability: reports that are well formed can still be wrong.
   - [x] E1 eval harness: `scripts/reportEval.ts` and 10 cases in `evals/reports/cases/` (FINAL and soft deletes, refund dates, IST days, join fan-out, funnel, percent as 0–1, linked-page metric, top route, cents, duplicate deliveries); scripted golden and trap specs; a CI subset replayed from recorded fixtures; `--compare`; OPERATIONS "Report generation eval".
   - [x] E2 result sanity checks (`server/reports/sanity.ts`): join fan-out (guarded key sample), KPI/breakdown reconciliation, coverage, units; one refusal per run, not a try; Runs step and audit `reports.generate.sanity`. The edit agent and manual edits do not run them yet.
-  - [ ] E3 ClickHouse error repair hints.
+  - [x] E3 ClickHouse error repair hints (`server/reports/repairHints.ts`): closest catalog names, casts, HAVING, GROUP BY, partition and sorting keys for limits, FINAL from the catalog engine; tested on captured 26.6 error texts.
   - [ ] E4 metric catalog per doc snapshot, with the Metrics view.
   - [ ] E5 model fallback (optional).
 - [ ] Report shares live in `report_members`/`report_group_shares` (D460). Fold them into `group_grants` (resource kind `report`) at its next CHECK rebuild, with the Access sheet.

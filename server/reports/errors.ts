@@ -20,11 +20,13 @@ export const datasourceNotFound = () => new ReportError(404, "NOT_FOUND", "Data 
 /** Any error of the module's helpers as a ReportError (others are rethrown). */
 export function asReportError(error: unknown): ReportError {
   if (error instanceof ReportError) return error;
-  if (error instanceof GuardError) return new ReportError(400, "GUARD", error.message, { guard: error.code });
+  // E3: a repair hint the runner attached (catalog names only).
+  const hint = typeof (error as { hint?: unknown })?.hint === "string" ? { hint: (error as { hint: string }).hint } : {};
+  if (error instanceof GuardError) return new ReportError(400, "GUARD", error.message, { guard: error.code, ...hint });
   if (error instanceof AllowlistError) return new ReportError(400, "INVALID_ALLOWLIST", error.message);
   if (error instanceof ChError) {
     const status = error.code === "TIMEOUT" ? 504 : 502;
-    return new ReportError(status, error.code, error.message, { ...(error.chCode !== null ? { chCode: error.chCode } : {}), ...(error.chName ? { chName: error.chName } : {}) });
+    return new ReportError(status, error.code, error.message, { ...(error.chCode !== null ? { chCode: error.chCode } : {}), ...(error.chName ? { chName: error.chName } : {}), ...hint });
   }
   throw error;
 }

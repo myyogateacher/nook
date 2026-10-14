@@ -488,7 +488,7 @@ async function executeEdit(run: Execution) {
       if (error instanceof SyntaxError) result = { text: JSON.stringify({ error: "The arguments were not valid JSON", code: "INVALID" }), ok: false };
       else {
         const known = reportErrorOf(error);
-        result = { text: JSON.stringify({ error: known.message, code: known.code, ...(typeof known.details.guard === "string" ? { guard: known.details.guard } : {}) }), ok: false };
+        result = { text: JSON.stringify({ error: known.message, code: known.code, ...(typeof known.details.guard === "string" ? { guard: known.details.guard } : {}), ...(typeof known.details.hint === "string" ? { hint: known.details.hint } : {}) }), ok: false };
       }
     }
     const capBytes = run.browser.isDocTool(call.name) ? DOC_BROWSE_LIMITS.resultBytes + 1024 : EDIT_LIMITS.resultBytes;

@@ -4,6 +4,7 @@ import { databaseAllowed, tableAllowed } from "./allowlist";
 import { chQuery, ChError, queryIdFor, type ChResult } from "./clickhouse";
 import { allowlistOf, datasourceTarget, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
+import { repairHint } from "./repairHints";
 import { tablesWithColumn } from "./schemaCatalog";
 import { assertMetadataAllowed, assertQueryTreeAllowed, assertTablesAllowed, classify, filterSystemRefs, GuardError, qualifiedColumnHint, queryTreeTables, sqlString, wrapSelect, type Classified } from "./sqlGuard";
 
@@ -69,7 +70,10 @@ const CHECK_FAILED = () => new GuardError("UNSUPPORTED_SYNTAX", "ClickHouse coul
 function shownError(error: unknown, allowlist: readonly string[], database: string): unknown {
   if (!(error instanceof ChError) || error.code !== "CLICKHOUSE") return error;
   if (!errorNamesOutside(error.message, allowlist, database)) return error;
-  return new ChError("CLICKHOUSE", "The query failed in ClickHouse; its message named something that is not on this data source's allowlist, so it is not shown");
+  const hidden = new ChError("CLICKHOUSE", "The query failed in ClickHouse; its message named something that is not on this data source's allowlist, so it is not shown");
+  // The repair hint (E3) still reads the original; it never shows its text.
+  Object.defineProperty(hidden, "original", { value: error, enumerable: false });
+  return hidden;
 }
 
 /** Whether ClickHouse's error text names a table or database off the allowlist (review M2). */
@@ -97,9 +101,12 @@ async function checkQueryTree(row: DatasourceRow, select: string, statementClass
     // The network's own failures carry Nook's text, never ClickHouse's.
     if (error.code === "TIMEOUT" || error.code === "UNREACHABLE") throw error;
     // Review M2: a failed check never shows ClickHouse's text (it may name what is off the allowlist);
-    // a qualified column the author wrote gets Nook's own hint, naming only allowlisted tables.
+    // a qualified column the author wrote gets Nook's own message, naming only allowlisted tables; E3's
+    // repair hint reads the failure too and names only catalog tables and the query's own identifiers.
     const hint = qualifiedColumnHint(error.message, select, (column) => tablesWithColumn(row, column));
-    throw hint ? new GuardError("UNSUPPORTED_SYNTAX", hint) : CHECK_FAILED();
+    const refused = hint ? new GuardError("UNSUPPORTED_SYNTAX", hint) : CHECK_FAILED();
+    refused.failure = { chName: error.chName, chCode: error.chCode, message: error.message };
+    throw refused;
   }
   if (result.rows.length >= TREE_MAX_ROWS) throw new GuardError("UNSUPPORTED_SYNTAX", "This query is too complex to check; simplify it");
   const tree = queryTreeTables(result.rows.map((line) => String(line[0] ?? "")).join("\n"));
@@ -140,7 +147,26 @@ export async function runGuarded(row: DatasourceRow, sql: string, options: RunOp
   }
 }
 
+/**
+ * E3: a failed query carries a repair hint (`hint`, then `details.hint` on the ReportError) built from
+ * its ClickHouse error code and the schema catalog.
+ */
 async function runGuardedUnlogged(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
+  try {
+    return await runGuardedChecked(row, sql, options);
+  } catch (error) {
+    const failure = error instanceof GuardError ? error.failure : error instanceof ChError && (error.code === "CLICKHOUSE" || error.code === "TIMEOUT") ? (error as ChError & { original?: ChError }).original ?? error : null;
+    if (failure) {
+      try {
+        const hint = repairHint({ chName: failure.chName ?? null, chCode: failure.chCode ?? null, message: failure.message }, sql, row);
+        if (hint) (error as Error & { hint?: string }).hint = hint;
+      } catch { /* a hint is best effort */ }
+    }
+    throw error;
+  }
+}
+
+async function runGuardedChecked(row: DatasourceRow, sql: string, options: RunOptions): Promise<QueryOutcome> {
   const classified = classify(sql);
   if (!options.classes.includes(classified.class)) {
     throw new GuardError(classified.class === "metadata" ? "METADATA_FORBIDDEN" : "NOT_SELECT", classified.class === "metadata" ? "Only a SELECT runs here" : "Only metadata statements (SHOW, DESCRIBE, EXISTS, EXPLAIN, system tables) run here");

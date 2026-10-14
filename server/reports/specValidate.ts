@@ -644,7 +644,8 @@ export async function validateSpec(row: DatasourceRow, raw: unknown, context: { 
       if (context.signal?.aborted) throw error;
       const known = reportErrorOf(error);
       const guard = typeof known.details.guard === "string" ? ` ${known.details.guard}` : "";
-      errors.push(`query ${query.key}: ${known.code}${guard}: ${known.message.slice(0, 300)}`);
+      const hint = typeof known.details.hint === "string" ? ` Hint: ${known.details.hint.slice(0, 600)}` : "";
+      errors.push(`query ${query.key}: ${known.code}${guard}: ${known.message.slice(0, 300)}${hint}`);
     }
   }
   errors.push(...checkColumns(spec, results));

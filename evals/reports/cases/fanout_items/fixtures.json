@@ -1,5 +1,5 @@
 {
- "recordedAt": "2026-10-14T11:53:10.912Z",
+ "recordedAt": "2026-10-14T11:59:40.756Z",
  "version": "26.6.8.7",
  "answers": {
   "EXPLAIN QUERY TREE SELECT count() AS sample_rows, uniqExact(`order_id`) AS sample_keys FROM (SELECT `order_id` FROM `eval_fanout_items`.`order_items` LIMIT 200000)": {

@@ -1,0 +1,95 @@
+{
+ "capturedFrom": "clickhouse/clickhouse-server:26.6 (26.6.8.7)",
+ "errors": [
+  {
+   "name": "unknown_column",
+   "sql": "SELECT sum(amout) FROM eval_peerdb_orders.orders",
+   "stage": "tree",
+   "text": "Code: 47. DB::Exception: Unknown expression or function identifier `amout` in scope SELECT sum(amout) FROM eval_peerdb_orders.orders. Maybe you meant: ['amount']. (UNKNOWN_IDENTIFIER) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "unknown_column_qualified",
+   "sql": "SELECT sum(o.amout) FROM eval_peerdb_orders.orders AS o",
+   "stage": "tree",
+   "text": "Code: 47. DB::Exception: Identifier 'o.amout' cannot be resolved from table with name o. In scope SELECT sum(o.amout) FROM eval_peerdb_orders.orders AS o. Maybe you meant: ['o.amount']. (UNKNOWN_IDENTIFIER) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "unknown_table",
+   "sql": "SELECT count() FROM eval_peerdb_orders.order",
+   "stage": "tree",
+   "text": "Code: 60. DB::Exception: Unknown table expression identifier 'eval_peerdb_orders.order' in scope SELECT count() FROM eval_peerdb_orders.order. Maybe you meant eval_peerdb_orders.orders?. (UNKNOWN_TABLE) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "unknown_database",
+   "sql": "SELECT count() FROM eval_peerdb_order.orders",
+   "stage": "tree",
+   "text": "Code: 81. DB::Exception: Database eval_peerdb_order does not exist. Maybe you meant eval_peerdb_orders?. (UNKNOWN_DATABASE) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "illegal_type",
+   "sql": "SELECT sum(status) FROM eval_peerdb_orders.orders",
+   "stage": "tree",
+   "text": "Code: 43. DB::Exception: Illegal type String of argument for aggregate function sum. (ILLEGAL_TYPE_OF_ARGUMENT) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "illegal_types_minus",
+   "sql": "SELECT toDate(created_at) - status FROM eval_peerdb_orders.orders",
+   "stage": "tree",
+   "text": "Code: 43. DB::Exception: Illegal types Date and String of arguments of function minus: In scope SELECT toDate(created_at) - status FROM eval_peerdb_orders.orders. (ILLEGAL_TYPE_OF_ARGUMENT) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "no_common_type",
+   "sql": "SELECT count() FROM eval_peerdb_orders.orders WHERE status = 1",
+   "stage": "run",
+   "text": "Code: 386. DB::Exception: There is no supertype for types String, UInt8 because some of them are String/FixedString/Enum and some of them are not: while executing function equals on arguments __table1.status LowCardinality(String) LowCardinality(size = 0, UInt8(size = 0), Unique(size = 1, String(size = 1))), 1_UInt8 UInt8 Const(size = 0, UInt8(size = 1)). (NO_COMMON_TYPE) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "cannot_parse_text",
+   "sql": "SELECT CAST(status AS UInt8) FROM eval_peerdb_orders.orders",
+   "stage": "run",
+   "text": "Code: 6. DB::Exception: Cannot parse string 'paid' as UInt8: syntax error at begin of string. Note: there are toUInt8OrZero and toUInt8OrNull functions, which returns zero/NULL instead of throwing exception: while executing 'FUNCTION CAST(__table1.status :: 2, 'UInt8'_String :: 1) -> CAST(__table1.status, 'UInt8'_String) UInt8 : 0'. (CANNOT_PARSE_TEXT) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "cannot_parse_datetime",
+   "sql": "SELECT count() FROM eval_peerdb_orders.orders WHERE created_at >= 'last month'",
+   "stage": "run",
+   "text": "Code: 41. DB::Exception: Cannot read DateTime: unexpected word: while converting 'last month' to DateTime64(6): while executing function greaterOrEquals on arguments __table1.created_at DateTime64(6) DateTime64(size = 0), 'last month'_String String Const(size = 0, String(size = 1)). (CANNOT_PARSE_DATETIME) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "aggregate_in_where",
+   "sql": "SELECT status FROM eval_peerdb_orders.orders WHERE sum(amount) > 10 GROUP BY status",
+   "stage": "tree",
+   "text": "Code: 184. DB::Exception: Aggregate function sum(amount) is found in WHERE in query. (ILLEGAL_AGGREGATION) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "not_an_aggregate",
+   "sql": "SELECT status, amount, sum(amount) FROM eval_peerdb_orders.orders GROUP BY status",
+   "stage": "tree",
+   "text": "Code: 215. DB::Exception: Column 'eval_peerdb_orders.orders.amount' is not under aggregate function and not in GROUP BY keys. In query SELECT status, amount, sum(amount) FROM eval_peerdb_orders.orders GROUP BY status. (NOT_AN_AGGREGATE) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "illegal_final",
+   "sql": "SELECT count() FROM eval_refund_dates.orders FINAL",
+   "stage": "tree",
+   "text": "Code: 181. DB::Exception: Storage MergeTree doesn't support FINAL. (ILLEGAL_FINAL) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "memory_limit",
+   "sql": "SELECT customer_id, groupArray(toString(id)) FROM eval_peerdb_orders.orders GROUP BY customer_id",
+   "stage": "run",
+   "text": "Code: 241. DB::Exception: Query memory limit exceeded: would use 2.13 MiB (attempt to allocate chunk of 0.00 B), maximum: 976.56 KiB: While executing MergeTreeSelect(pool: ReadPool, algorithm: Thread). (MEMORY_LIMIT_EXCEEDED) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "too_many_rows",
+   "sql": "SELECT count() FROM eval_peerdb_orders.orders WHERE amount > 5",
+   "stage": "run",
+   "text": "Code: 158. DB::Exception: Limit for rows or bytes to read exceeded, max rows: 100.00, current rows: 3.87 thousand: While executing MergeTreeSelect(pool: ReadPool, algorithm: Thread). (TOO_MANY_ROWS) (version 26.6.8.7 (official build))"
+  },
+  {
+   "name": "timeout",
+   "sql": "SELECT count() FROM eval_peerdb_orders.orders AS a CROSS JOIN numbers(100000000000) AS n WHERE sipHash64(n.number, a.id) % 7 = 1",
+   "stage": "run",
+   "text": "Code: 159. DB::Exception: Timeout exceeded: elapsed 1000.815319 ms, maximum: 1000 ms. (TIMEOUT_EXCEEDED) (version 26.6.8.7 (official build))"
+  }
+ ]
+}

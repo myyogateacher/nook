@@ -25,6 +25,7 @@ import { abandonExpiredReportRuns, onRunAbandoned, pruneRuns } from "./refresh";
 import { createReport, parseSpec, reportDetail } from "./service";
 import { BANNED_FUNCTIONS, BANNED_PREFIXES } from "./sqlGuard";
 import { reportModelFor } from "./model";
+import { finalNote } from "./repairHints";
 import { BLOCK_INTENTS, CHART_KINDS, SECTION_LIMITS } from "../../shared/reports";
 import { MAX_SCATTER_SERIES } from "../../shared/reportTheme";
 import { DESIGN_LIMITS, persistGenerated, PersistRefused, reportErrorOf, SPEC_JSON_SCHEMA, validateSpec } from "./specValidate";
@@ -618,7 +619,9 @@ async function executeGeneration(run: Execution) {
           const outcome = await runGuarded(datasource, sql, { classes: ["select"], maxRows: Math.min(datasource.max_rows, REPORT_LIMITS.storedRows), queryId, userId, signal: controller.signal });
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: true, rows: outcome.rows.length, ms: outcome.ms });
           if (key) planner.recordQuery(key, sql);
-          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, GENERATE_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms, rowsRead: outcome.rowsRead }), ok: true };
+          // E3: a ReplacingMergeTree read without FINAL is pointed out even when the query worked.
+          const note = finalNote(sql, datasource);
+          return { text: JSON.stringify({ columns: outcome.columns, rows: outcome.rows.slice(0, GENERATE_LIMITS.sampleRows), rowCount: outcome.rows.length, truncated: outcome.truncated, ms: outcome.ms, rowsRead: outcome.rowsRead, ...(note ? { note } : {}) }), ok: true };
         } catch (error) {
           audit(userId, null, "reports.generate.run_sql", { reportId, runId, agentRunId, queryId, sha256, purpose: purpose.slice(0, 120), ok: false, code: reportErrorOf(error).code });
           throw error;
@@ -721,7 +724,7 @@ async function executeGeneration(run: Execution) {
       if (error instanceof SyntaxError) result = { text: JSON.stringify({ error: "The arguments were not valid JSON", code: "INVALID" }), ok: false };
       else {
         const known = reportErrorOf(error);
-        result = { text: JSON.stringify({ error: known.message, code: known.code, ...(typeof known.details.guard === "string" ? { guard: known.details.guard } : {}) }), ok: false };
+        result = { text: JSON.stringify({ error: known.message, code: known.code, ...(typeof known.details.guard === "string" ? { guard: known.details.guard } : {}), ...(typeof known.details.hint === "string" ? { hint: known.details.hint } : {}) }), ok: false };
       }
     }
     // A doc tool's answer is already cut at 32 KB inside its <document>; every other result at 16 KB.

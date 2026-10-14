@@ -3,6 +3,7 @@ import { logger } from "../log";
 import { isNumericType, isTimeType, type CatalogTable, type QueryOutcome, type ReportBlock, type ReportSpec } from "../../shared/reports";
 import { queryIdFor } from "./clickhouse";
 import type { DatasourceRow } from "./datasources";
+import { finalNote } from "./repairHints";
 import { runGuarded } from "./runner";
 import { tableOf } from "./schemaCatalog";
 import { sqlIdentifier } from "./sqlGuard";
@@ -26,6 +27,9 @@ const slog = logger("reports");
  * - **units**: a percent column outside 0–1 (format percent) or a ratio under 1 shown with unit %;
  *   money in cents shown as currency without dividing by 100; a measure that is all NULL or all 0.
  *
+ * - **final** (E3): a query reads a ReplacingMergeTree (or another collapsing engine, from the
+ *   catalog) without FINAL, so rows that were updated count once per version.
+ *
  * At most `SANITY_LIMITS.extraQueries` extra queries per check (the fan-out samples), each guarded,
  * read-only, and counted in the run log; every check is logged in the reports scope.
  */
@@ -39,7 +43,7 @@ export const SANITY_LIMITS = {
   hints: 8
 } as const;
 
-export type SanityCheck = { check: "fan_out" | "reconcile" | "coverage" | "units"; target: string; ok: boolean; detail?: string };
+export type SanityCheck = { check: "fan_out" | "reconcile" | "coverage" | "units" | "final"; target: string; ok: boolean; detail?: string };
 export type SanityResult = { hints: string[]; checks: SanityCheck[]; extraQueries: number };
 export type SanityContext = {
   userId: string; runId: string; signal?: AbortSignal;
@@ -276,12 +280,23 @@ function units(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string
   }
 }
 
+// ---------------------------------------------------------------------------------------- final
+
+function finality(row: DatasourceRow, spec: ReportSpec, out: SanityResult) {
+  for (const query of spec.queries) {
+    const note = finalNote(query.sql, row);
+    out.checks.push({ check: "final", target: query.key, ok: !note });
+    if (note) out.hints.push(`sanity final: query ${query.key}: ${note}`);
+  }
+}
+
 // ------------------------------------------------------------------------------------------ all
 
 export async function sanityChecks(row: DatasourceRow, spec: ReportSpec, results: ReadonlyMap<string, QueryOutcome>, context: SanityContext): Promise<SanityResult> {
   const out: SanityResult = { hints: [], checks: [], extraQueries: 0 };
   const budget = { left: SANITY_LIMITS.extraQueries };
   try {
+    finality(row, spec, out);
     units(row, spec, results, out);
     reconcile(spec, results, context, out);
     coverage(spec, results, out);

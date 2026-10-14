@@ -136,7 +136,7 @@ describe("sanity checks", () => {
     expect(sample.params.readonly).toBe("2");
     expect(sample.params.query_id).toStartWith("nook-sanity-");
     // A Replacing table is sampled with FINAL; a unique key passes.
-    const unique = await sanityChecks(row, spec([["q", "SELECT count() AS n FROM shop.orders AS o JOIN shop.customers AS c ON c.customer_id = o.order_id"]], [{ id: "k", type: "kpi", title: "N", queryKey: "q", column: "n", format: "number" }]), new Map([["q", outcome([["n", "UInt64"]], [[5]])]]), context);
+    const unique = await sanityChecks(row, spec([["q", "SELECT count() AS n FROM shop.orders AS o JOIN shop.customers AS c FINAL ON c.customer_id = o.order_id"]], [{ id: "k", type: "kpi", title: "N", queryKey: "q", column: "n", format: "number" }]), new Map([["q", outcome([["n", "UInt64"]], [[5]])]]), context);
     expect(unique.hints).toEqual([]);
     expect(fake.requests.some((item) => item.sql.includes("`customers` FINAL LIMIT"))).toBe(true);
     // Summing the joined side (units from items) is not a fan-out of the driving table.

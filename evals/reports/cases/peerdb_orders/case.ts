@@ -28,6 +28,7 @@ export default {
   },
   trap: {
     fails: ["net_revenue", "orders", "paid_revenue"],
+    sanity: ["final"],
     spec: {
       title: "September 2026 order revenue",
       queries: [

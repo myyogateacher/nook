@@ -31,6 +31,8 @@ import { logger } from "../log";
  */
 
 export class GuardError extends Error {
+  /** E3: the ClickHouse failure behind a refused tree check (never shown; repair hints read it). */
+  failure?: { chName: string | null; chCode: number | null; message: string };
   constructor(readonly code: GuardCode, message: string) {
     super(message);
     this.name = "GuardError";

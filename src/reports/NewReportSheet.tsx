@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { FileText, Table2 } from "lucide-react";
+import { FileText, Search, Table2 } from "lucide-react";
+import { appName } from "../appName";
 import { ModalDialog } from "../files/Dialog";
 import { Select } from "../ui/Select";
 import { useConfirm } from "../ui/useConfirm";
@@ -7,7 +8,9 @@ import { useHistoryDialogGuard } from "../ui/useHistoryDialogGuard";
 import { setServerPolicies } from "../chat/chatApi";
 import { REPORT_LIMITS, type DatasourceChoice } from "../../shared/reports";
 import { defaultBrowseTools, type DocServerChoice } from "../../shared/reportsGenerate";
+import { linkHost, parseNookRef } from "../../shared/nookDocRef";
 import { BrowseToolsPicker } from "./BrowseToolsPicker";
+import { NookDocPicker, nookLinkOf } from "./NookDocPicker";
 import { codeOf, createReport, docServers, generateReport, messageOf, regenerateReport } from "./reportsApi";
 import "./generate.css";
 
@@ -41,7 +44,8 @@ export type DocServerIssue =
 export function docSourceState(servers: DocServerChoice[] | null, loadError: string | null, server: DocServerChoice | null): DocSourceState {
   if (loadError !== null) return { kind: "failed", message: loadError };
   if (servers === null) return { kind: "loading" };
-  if (servers.length === 0) return { kind: "none" };
+  // B4: only Nook itself (or nothing) is listed: say how other doc systems get in, while Nook's docs work.
+  if (servers.every((item) => item.builtin)) return server && !server.builtin ? { kind: "ready", issue: null } : { kind: "none" };
   if (server && !server.synced) return { kind: "ready", issue: { kind: "unsynced", serverId: server.id, serverName: server.name } };
   if (server && !server.pick) {
     const candidate = server.candidates?.[0];
@@ -52,8 +56,29 @@ export function docSourceState(servers: DocServerChoice[] | null, loadError: str
   return { kind: "ready", issue: null };
 }
 
-/** "From a doc" is off only when the servers could not be loaded or there are none. */
-export const docModeDisabled = (state: DocSourceState) => state.kind === "failed" || state.kind === "none";
+/** B4: "From a doc" is always on (Nook itself is a doc source); this stays for the callers that ask. */
+export const docModeDisabled = (_state: DocSourceState) => false;
+
+/** The built-in source when the list could not be loaded (B4): Nook is always there. */
+export const NOOK_FALLBACK = (): DocServerChoice => ({
+  id: "nook", name: `${appName()} (this workspace)`, status: "ok", synced: true, builtin: true, origins: typeof window === "undefined" ? [] : [window.location.origin], host: null,
+  tools: [{ name: "read_note", title: null, args: ["noteId"] }, { name: "read_document_text", title: null, args: ["documentId"] }, { name: "search_notes", title: null, args: ["query"] }],
+  pick: { tool: "read", arg: "id", outline: false }, candidates: [], toolNames: ["read_note", "read_document_text", "search_notes"]
+});
+
+/**
+ * B4: the source a pasted link selects: Nook for a link on one of this instance's origins (or a bare
+ * id), else the tool server whose host the link is on (or a subdomain of it, either way); null keeps
+ * the current choice.
+ */
+export function sourceForLink(ref: string, servers: readonly DocServerChoice[]): string | null {
+  const nook = servers.find((item) => item.builtin);
+  if (nook && parseNookRef(ref, nook.origins?.length ? nook.origins : typeof window === "undefined" ? [] : [window.location.origin])) return nook.id;
+  const host = linkHost(ref);
+  if (!host) return null;
+  const match = servers.find((item) => item.host && (host === item.host || host.endsWith(`.${item.host}`) || item.host.endsWith(`.${host}`)));
+  return match?.id ?? null;
+}
 
 export const TOOL_SERVERS_PATH = "/settings/ai/tools";
 
@@ -69,7 +94,7 @@ export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers, onAl
     </div>;
   }
   if (state.kind === "none") {
-    return <div className="new-report-notice"><p>No doc servers yet. To build a report from a doc, {admin ? <>add the doc system's MCP server in {settings}.</> : <>an admin adds the doc system's MCP server in {settings}.</>}</p></div>;
+    return <div className="new-report-notice"><p>Docs in {appName()} work now. For docs in another system (Outline, Notion, …), {admin ? <>add its MCP server in {settings}.</> : <>an admin adds its MCP server in {settings}.</>}</p></div>;
   }
   if (state.kind !== "ready" || !state.issue) return null;
   const issue = state.issue;
@@ -86,18 +111,18 @@ export function DocSourceNotice({ state, admin, onRetry, onOpenToolServers, onAl
 }
 
 /**
- * New report (Waves 45–46): from a doc (its link, the tool server to read it through, the tool and
+ * New report (Waves 45–46, B1–B4): from a doc (its link, the tool server to read it through, the tool and
  * argument when the auto-pick is wrong, the data source, and an optional title taken from the doc
  * otherwise), or blank (a title and a data source; the SQL console). Generate reads the doc right
  * away, so a bad link or a refused credential answers here; the report page then follows the run.
  * One sheet, one history layer: Back or Escape closes it (D18), never while a request is in flight.
- * "From a doc" says why it is unavailable (the servers failed to load: Retry; none yet) or why the
- * chosen server may not work (not synced, no read-only fetch tool), with admins' link to fix it.
+ * "From a doc" is always on: Nook's own notes and text files are a doc source (B4), listed first, and a
+ * pasted link picks its source. It says why the sources could not load (Retry) or why the chosen
+ * server may not work (not synced, no read-only fetch tool), with admins' link to fix it.
  */
 export function NewReportSheet({ sources, role = "member", onCancel, onCreated, onOpenToolServers, reportId = null, initialSource = null }: { sources: DatasourceChoice[]; role?: string; onCancel: () => void; onCreated: (id: string) => void; onOpenToolServers?: () => void; /** Generate into this (empty) report instead of a new one: doc mode only, no title. */ reportId?: string | null; initialSource?: string | null }) {
   const [servers, setServers] = useState<DocServerChoice[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const forcedBlank = useRef(false);
   const [mode, setMode] = useState<Mode>("doc");
   const [docRef, setDocRef] = useState("");
   const [serverId, setServerId] = useState<string | null>(null);
@@ -109,6 +134,7 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
   const [source, setSource] = useState<string | null>(initialSource ?? sources[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
   const confirm = useConfirm();
   const [allowing, setAllowing] = useState(false);
   const ids = { mode: useId(), doc: useId(), server: useId(), tool: useId(), toolHint: useId(), arg: useId(), argHint: useId(), title: useId(), source: useId() };
@@ -121,22 +147,30 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
     setServers(null);
     docServers().then(({ servers: list }) => {
       if (!live.current) return;
-      setServers(list);
-      setServerId((current) => current ?? list.find((item) => item.pick)?.id ?? list[0]?.id ?? null);
-      // No servers: Blank is the only way in. After a failed load, a Retry that finds some goes back to the doc.
-      if (list.length === 0) { if (!reportId) { forcedBlank.current = true; setMode("blank"); } } else if (forcedBlank.current) { forcedBlank.current = false; setMode("doc"); }
+      // B4: Nook itself is always listed first, even by an older server.
+      const all = list.some((item) => item.builtin) ? list : [NOOK_FALLBACK(), ...list];
+      setServers(all);
+      // A tool server with a doc tool is the default; Nook otherwise (a pasted link picks for itself).
+      setServerId((current) => current ?? all.find((item) => !item.builtin && item.pick)?.id ?? all[0]?.id ?? null);
     }).catch((reason) => {
       if (!live.current) return;
       setLoadError(messageOf(reason, "the server did not answer"));
-      if (reportId) return;
-      forcedBlank.current = true;
-      setMode("blank");
+      // From a doc still works with Nook's own docs.
+      setServers([NOOK_FALLBACK()]);
+      setServerId((current) => current ?? "nook");
     });
-  }, [reportId]);
+  }, []);
   useEffect(() => { loadServers(); }, [loadServers]);
 
   const server = useMemo(() => servers?.find((item) => item.id === serverId) ?? null, [servers, serverId]);
   useEffect(() => { setBrowse(server ? defaultBrowseTools(server.tools.map((item) => item.name)) : []); }, [server]);
+  const nook = server?.builtin === true;
+  // B4: a pasted link picks its source: Nook for this instance's links, a tool server for its host.
+  const changeRef = (value: string) => {
+    setDocRef(value);
+    const picked = servers ? sourceForLink(value, servers) : null;
+    if (picked && picked !== serverId) { setServerId(picked); setTool(AUTO); setArg(""); }
+  };
   const chosenTool = tool === AUTO ? null : server?.tools.find((item) => item.name === tool) ?? null;
   const autoLabel = server?.pick ? `Auto: ${server.pick.tool} (${server.pick.arg})` : "Auto: none found";
   const argPlaceholder = chosenTool ? chosenTool.args.find((name) => name === "id" || name === "url") ?? chosenTool.args[0] ?? "id" : server?.pick?.arg ?? "id";
@@ -173,12 +207,12 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
       return;
     }
     if (!docRef.trim()) return setError("Paste the doc's link.");
-    if (!serverId) return setError("Choose the tool server that reads the doc.");
+    if (!serverId) return setError("Choose where the doc is read from.");
     if (tool === AUTO && !server?.pick) return setError("Nook found no fetch tool on that server; choose the tool to use.");
     setBusy(true);
     setError(null);
     try {
-      const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO ? null : tool, arg: arg.trim() || null, browseTools: browse };
+      const input = { docRef: docRef.trim(), serverId, datasourceId: source, tool: tool === AUTO || nook ? null : tool, arg: nook ? null : arg.trim() || null, browseTools: browse };
       const started = reportId ? await regenerateReport(reportId, input) : await generateReport({ ...input, title: title.trim() || null });
       onCreated(started.report.id);
     } catch (reason) {
@@ -194,18 +228,22 @@ export function NewReportSheet({ sources, role = "member", onCancel, onCreated, 
       {!reportId && <div className="new-report-modes" role="radiogroup" aria-labelledby={ids.mode}>
         <span id={ids.mode} className="sr-only">Start from</span>
         <button type="button" role="radio" aria-checked={mode === "doc"} className={mode === "doc" ? "is-active" : undefined} onClick={() => setMode("doc")} disabled={busy || docDisabled}><FileText aria-hidden="true" />From a doc</button>
-        <button type="button" role="radio" aria-checked={mode === "blank"} className={mode === "blank" ? "is-active" : undefined} onClick={() => { forcedBlank.current = false; setMode("blank"); }} disabled={busy}><Table2 aria-hidden="true" />Blank</button>
+        <button type="button" role="radio" aria-checked={mode === "blank"} className={mode === "blank" ? "is-active" : undefined} onClick={() => setMode("blank")} disabled={busy}><Table2 aria-hidden="true" />Blank</button>
       </div>}
-      {(docDisabled || mode === "doc") && <DocSourceNotice state={docSource} admin={role === "admin"} onRetry={loadServers} onOpenToolServers={onOpenToolServers} onAllow={(id, name) => { void allowAutomatically(id, name); }} allowing={allowing} />}
+      {mode === "doc" && <DocSourceNotice state={docSource} admin={role === "admin"} onRetry={loadServers} onOpenToolServers={onOpenToolServers} onAllow={(id, name) => { void allowAutomatically(id, name); }} allowing={allowing} />}
       {mode === "doc" && <>
-        <label htmlFor={ids.doc}>Doc link</label>
-        <input id={ids.doc} value={docRef} maxLength={2048} autoFocus autoComplete="off" inputMode="url" placeholder="https://docs.example.com/doc/revenue-metrics-AbC123" onChange={(event) => setDocRef(event.target.value)} />
+        <div className="new-report-doc-label">
+          <label htmlFor={ids.doc}>Doc link</label>
+          <button type="button" className="secondary-button" onClick={() => setPicking((open) => !open)} aria-expanded={picking} disabled={busy}><Search aria-hidden="true" />Pick from {appName()}</button>
+        </div>
+        <input id={ids.doc} value={docRef} maxLength={2048} autoFocus autoComplete="off" inputMode="url" placeholder={`A link to a note or file in ${appName()}, or to a doc in your doc system`} onChange={(event) => changeRef(event.target.value)} />
+        {picking && <NookDocPicker onClose={() => setPicking(false)} onPick={(pick) => { changeRef(nookLinkOf(pick)); setServerId("nook"); setPicking(false); }} />}
         <span className="reports-label" id={ids.server}>Read it through</span>
         {servers === null
-          ? <p className="file-dialog-hint" role="status">Loading tool servers…</p>
-          : <Select labelledBy={ids.server} label="Tool server" value={serverId} onChange={(value) => { setServerId(value); setTool(AUTO); setArg(""); }}
-            options={servers.map((item) => ({ value: item.id, label: item.name, description: !item.synced ? "Not synced yet" : item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
-        {server && <details className="new-report-advanced" open={!server.pick && server.synced}>
+          ? <p className="file-dialog-hint" role="status">Loading doc sources…</p>
+          : <Select labelledBy={ids.server} label="Doc source" value={serverId} onChange={(value) => { setServerId(value); setTool(AUTO); setArg(""); }}
+            options={servers.map((item) => ({ value: item.id, label: item.name, description: item.builtin ? "Notes and text files, read with your access" : !item.synced ? "Not synced yet" : item.pick ? `Uses ${item.pick.tool}` : "No fetch tool found; choose one below" }))} />}
+        {server && !nook && <details className="new-report-advanced" open={!server.pick && server.synced}>
           <summary>How Nook reads the doc</summary>
           <div className="new-report-advanced-body">
             <div className="new-report-field">

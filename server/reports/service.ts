@@ -55,7 +55,7 @@ export function reportDetail(id: string, userId: string): ReportDetail {
     ...summaryOf(row, userId),
     spec: parseSpec(row.spec_json),
     // Wave 48 (D456): the doc a report came from is the owner's; readers of a shared report never see its link.
-    doc: row.owner_id === userId && (row.doc_ref || row.doc_server_id) ? { serverId: row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
+    doc: row.owner_id === userId && (row.doc_ref || row.doc_server_id) ? { serverId: row.doc_source === "nook" ? "nook" : row.doc_server_id, tool: row.doc_tool, ref: row.doc_ref, hash: row.doc_hash } : null,
     lastError: row.last_error
   };
 }

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DocServerChoice } from "../shared/reportsGenerate";
-import { DocSourceNotice, docModeDisabled, docSourceState } from "../src/reports/NewReportSheet";
+import { DocSourceNotice, docModeDisabled, docSourceState, NOOK_FALLBACK, sourceForLink } from "../src/reports/NewReportSheet";
+import { matchingFiles, nookLinkOf } from "../src/reports/NookDocPicker";
+import { parseNookRef } from "../shared/nookDocRef";
 import { BrowseToolsPicker } from "../src/reports/BrowseToolsPicker";
 import { docChangedText } from "../src/reports/ReportGeneration";
 import { overflowItems } from "../src/reports/ReportPage";
@@ -24,24 +26,25 @@ const render = (state: ReturnType<typeof docSourceState>, admin: boolean, onAllo
 const stateFor = (patch: Partial<DocServerChoice>) => docSourceState([server(patch)], null, server(patch));
 
 describe("From a doc: states", () => {
-  test("load failed: the error and Retry; From a doc is off", () => {
+  test("load failed: the error and Retry; From a doc stays on (B4: Nook's own docs)", () => {
     const state = docSourceState(null, "Network error", null);
     expect(state).toEqual({ kind: "failed", message: "Network error" });
-    expect(docModeDisabled(state)).toBe(true);
+    expect(docModeDisabled(state)).toBe(false);
     const html = render(state, false);
     expect(html).toContain("Could not load the doc servers: Network error");
     expect(html).toContain(">Retry</button>");
     expect(html).not.toContain("an admin adds");
   });
 
-  test("no servers: says so, with the link for admins only; From a doc is off", () => {
-    const state = docSourceState([], null, null);
+  test("only Nook itself: its docs work; admins get the link for other doc systems; From a doc stays on", () => {
+    const state = docSourceState([NOOK_FALLBACK()], null, NOOK_FALLBACK());
     expect(state.kind).toBe("none");
-    expect(docModeDisabled(state)).toBe(true);
+    expect(docModeDisabled(state)).toBe(false);
     expect(render(state, true)).toContain('href="/settings/ai/tools"');
     const member = render(state, false);
     expect(member).not.toContain("href=");
-    expect(member).toContain("an admin adds the doc system");
+    expect(member).toContain("Docs in Nook work now");
+    expect(member).toContain("an admin adds its MCP server");
   });
 
   test("an unsynced server: says it hasn't been synced; From a doc stays on", () => {
@@ -128,5 +131,42 @@ describe("B3: tools the AI may use to read more docs", () => {
     const handlers = { share: noop, rename: noop, model: noop, remove: noop };
     const ids = overflowItems({ ownerWrite: true, owner: true, commands: { checkDoc: { run: noop, busy: false }, regenerate: { run: noop, busy: false }, docSettings: { open: noop } }, ...handlers }).map((item) => item.id);
     expect(ids).toEqual(["share", "rename", "model", "check-doc", "doc-settings", "regenerate", "bin"]);
+  });
+});
+
+describe("B4: Nook as a doc source in New report", () => {
+  const origins = ["https://nook.example.test", "https://box.tail1234.ts.net"];
+  const id = "0b8c6a1e-6f53-4b8e-9a51-2a3c4d5e6f70";
+  const nook = { ...NOOK_FALLBACK(), origins };
+  const outline = server({ id: "s-outline", name: "Outline", host: "docs.example.test" });
+  const list = [nook, outline];
+
+  test("every link shape into this instance is a Nook ref; other links and paths are not", () => {
+    for (const ref of [`https://nook.example.test/notes/${id}`, `https://box.tail1234.ts.net/notes/${id.toUpperCase()}?x=1#top`, `https://nook.example.test/api/notes/${id}`, `https://nook.example.test/api/notes/${id}/versions/3`]) {
+      expect([ref, parseNookRef(ref, origins)]).toEqual([ref, { kind: "note", id }]);
+    }
+    for (const ref of [`https://nook.example.test/files/${id}`, `https://nook.example.test/api/files/${id}/content`, `https://nook.example.test/api/files/${id}`]) {
+      expect([ref, parseNookRef(ref, origins)]).toEqual([ref, { kind: "file", id }]);
+    }
+    expect(parseNookRef(id, origins)).toEqual({ kind: "any", id });
+    for (const ref of [`https://other.example.test/notes/${id}`, `https://nook.example.test/notes/folder/${id}`, `https://nook.example.test/notes/${id}/extra`, `https://nook.example.test/tasks/${id}`, "https://nook.example.test/notes/not-an-id", `http://nook.example.test/notes/${id}`]) {
+      expect([ref, parseNookRef(ref, origins)]).toEqual([ref, null]);
+    }
+  });
+
+  test("a pasted link selects its source: Nook for this instance, a tool server for its host; anything else keeps the choice", () => {
+    expect(sourceForLink(`https://nook.example.test/notes/${id}`, list)).toBe("nook");
+    expect(sourceForLink(id, list)).toBe("nook");
+    expect(sourceForLink("https://docs.example.test/doc/revenue-AbC123", list)).toBe("s-outline");
+    expect(sourceForLink("https://team.docs.example.test/doc/x", list)).toBe("s-outline");
+    expect(sourceForLink("https://elsewhere.example.test/doc/x", list)).toBeNull();
+    expect(sourceForLink("revenue metrics", list)).toBeNull();
+  });
+
+  test("the picker: a pick becomes this instance's link; files match by name and must be text", () => {
+    expect(nookLinkOf({ kind: "note", id }, "https://nook.example.test")).toBe(`https://nook.example.test/notes/${id}`);
+    expect(nookLinkOf({ kind: "file", id }, "https://nook.example.test")).toBe(`https://nook.example.test/files/${id}`);
+    const file = (name: string, preview_kind: "text" | "pdf", kind: "file" | "whiteboard" = "file") => ({ id: name, owner_id: "u", owner_name: "Ana", is_owner: 1 as const, folder_id: null, name, mime_type: "text/markdown", preview_kind, size_bytes: 1, visibility: "private" as const, sharing_override: 0 as const, kind, created_at: "", updated_at: "" });
+    expect(matchingFiles([file("Revenue metrics.md", "text"), file("Revenue deck.pdf", "pdf"), file("Revenue board", "text", "whiteboard"), file("Churn.md", "text")], "revenue met").map((pick) => pick.title)).toEqual(["Revenue metrics.md"]);
   });
 });

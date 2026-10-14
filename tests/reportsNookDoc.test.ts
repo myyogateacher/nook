@@ -1,0 +1,209 @@
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { createUser, db, origin, request, tailscaleOrigin, type Session } from "./support/harness";
+import { startFakeClickhouse, type FakeAnswer } from "./support/fakeClickhouse";
+import { retireUsersAfterFile } from "./support/retireUsers";
+import { sampleAnswer } from "./support/reportSeed";
+import { qaScript, startScriptedProvider, type Script } from "../scripts/fakeReportProvider";
+import { DEFAULT_COMPAT } from "../shared/agents";
+
+const { generateDeps, liveGenerations } = await import("../server/reports/generate");
+const { syncSchema } = await import("../server/reports/schemaCatalog");
+const { fetchNookFetched } = await import("../server/reports/docSource");
+
+/**
+ * B4: Nook as a built-in doc source (`nook`): listed first, no sync; a doc ref is a link to a note or a
+ * Files text document on any of this instance's origins (every route shape), or a bare id; it is read
+ * as the report's OWNER with their live access (published notes only; NOT_FOUND, one message, for
+ * anything they cannot read: another person's private note, a binned note, an unpublished draft).
+ * Snapshots, Check doc, and the banner work as for a tool server; the browse tools are search_notes,
+ * read_note, and read_document_text.
+ */
+
+retireUsersAfterFile();
+setDefaultTimeout(30_000);
+
+const fake = startFakeClickhouse(24896);
+const provider = startScriptedProvider(0);
+const originalConnection = generateDeps.connection;
+
+type Json = Record<string, any>;
+async function send(session: Session, method: string, path: string, body?: unknown): Promise<{ status: number; body: Json }> {
+  const response = await request(path, method === "GET" ? {} : { method, body: JSON.stringify(body ?? {}) }, session);
+  const text = await response.text();
+  return { status: response.status, body: text ? JSON.parse(text) as Json : {} };
+}
+function answer(sql: string): FakeAnswer {
+  if (sql.includes("sum(amount) AS revenue")) return { meta: [{ name: "day", type: "Date" }, { name: "revenue", type: "Float64" }], data: [["2026-10-01", 120.5], ["2026-10-02", 98], ["2026-10-03", 143.25]] };
+  if (sql.includes("count() AS orders") && sql.includes("country")) return { meta: [{ name: "country", type: "LowCardinality(String)" }, { name: "orders", type: "UInt64" }], data: [["DE", "41"], ["US", "33"], ["IN", "12"]] };
+  if (sql.includes("total_revenue")) return { meta: [{ name: "total_revenue", type: "Float64" }, { name: "orders", type: "UInt64" }], data: [[361.75, "86"]] };
+  return sampleAnswer(sql);
+}
+
+let admin: Session;
+let owner: Session;
+let other: Session;
+let datasourceId = "";
+let published = "";
+let linked = "";
+let file = "";
+
+async function note(session: Session, markdown: string, publish = true) {
+  const id = (await send(session, "POST", "/notes", { folderId: null })).body.note.id as string;
+  expect((await send(session, "PUT", `/notes/${id}/draft`, { markdown, revision: 1 })).status).toBe(200);
+  if (publish) expect((await send(session, "POST", `/notes/${id}/publish`)).status).toBe(200);
+  return id;
+}
+async function upload(session: Session, name: string, text: string, type = "text/markdown") {
+  const form = new FormData();
+  form.append("file", new Blob([text], { type }), name);
+  return ((await (await request("/files", { method: "POST", body: form }, session)).json()) as { document: { id: string } }).document.id;
+}
+
+beforeAll(async () => {
+  admin = await createUser("Nook doc admin");
+  db.query("UPDATE users SET role = 'admin' WHERE id = ?").run(admin.userId);
+  owner = await createUser("Nook doc owner");
+  other = await createUser("Nook doc other");
+  fake.state.tables = [{ db: "analytics", name: "orders", engine: "MergeTree", columns: [{ name: "order_date", type: "Date" }, { name: "amount", type: "Decimal(18, 2)" }, { name: "country", type: "String" }] }];
+  const datasource = await send(admin, "POST", "/reports/admin/datasources", { name: `Nook DS ${crypto.randomUUID().slice(0, 6)}`, url: fake.url, username: "nook_ro", database: "analytics", allowlist: ["analytics"] });
+  datasourceId = datasource.body.datasource.id;
+  await syncSchema(datasourceId);
+  published = await note(owner, "# Revenue metrics\n\nUse `analytics.orders`. Table rules are in the linked note.");
+  linked = await note(owner, "# Order rules\n\nExclude refunds (amount <= 0).");
+  file = await upload(owner, "Revenue spec.md", "# Revenue spec\n\nSum amount by day.");
+  generateDeps.connection = () => ({ id: "scripted", baseUrl: provider.baseUrl, apiKey: null, model: "scripted-report-model", compat: DEFAULT_COMPAT });
+});
+afterAll(() => {
+  generateDeps.connection = originalConnection;
+  fake.stop();
+  provider.stop();
+});
+afterEach(async () => {
+  const until = Date.now() + 15_000;
+  while (liveGenerations().length) {
+    if (Date.now() > until) throw new Error("a generation is still running");
+    await Bun.sleep(20);
+  }
+  provider.setScript(qaScript);
+});
+
+async function waitForRun(runId: string) {
+  const until = Date.now() + 20_000;
+  for (;;) {
+    const row = db.query("SELECT status, error FROM report_runs WHERE id = ?").get(runId) as { status: string; error: string | null };
+    if (row.status !== "running" && !liveGenerations().some((item) => item.runId === runId)) return row;
+    if (Date.now() > until) throw new Error("the run did not finish");
+    await Bun.sleep(20);
+  }
+}
+async function generate(session: Session, docRef: string, extra: Json = {}, script: Script = qaScript) {
+  provider.setScript(script);
+  provider.calls.length = 0;
+  fake.state.select = (sql) => answer(sql);
+  return send(session, "POST", "/reports/generate", { docRef, serverId: "nook", datasourceId, ...extra });
+}
+
+describe("the built-in source", () => {
+  test("is listed first, synced, with its own tools, the app's origins, and no host", async () => {
+    const listed = await send(owner, "GET", "/reports/doc-servers");
+    expect(listed.body.servers[0]).toMatchObject({ id: "nook", name: "Nook (this workspace)", synced: true, builtin: true, host: null, toolNames: ["read_note", "read_document_text", "search_notes"] });
+    expect(listed.body.servers[0].origins).toEqual(expect.arrayContaining([origin, tailscaleOrigin]));
+    expect(db.query("SELECT COUNT(*) AS count FROM agent_tool_servers WHERE id = 'nook'").get()).toEqual({ count: 0 });
+  });
+
+  test("every link shape (both origins, app and API routes, any case, a bare id) reads the note or file as the owner", async () => {
+    for (const ref of [`${origin}/notes/${published}`, `${tailscaleOrigin}/notes/${published.toUpperCase()}?panel=1#x`, `${origin}/api/notes/${published}`, `${origin}/api/notes/${published}/versions/1`, published]) {
+      const doc = await fetchNookFetched(owner.userId, ref);
+      expect([ref, doc.title, doc.tool]).toEqual([ref, "Revenue metrics", "read_note"]);
+      expect(doc.markdown).toContain("analytics.orders");
+    }
+    for (const ref of [`${origin}/files/${file}`, `${origin}/api/files/${file}/content`, `${tailscaleOrigin}/api/files/${file}`, file]) {
+      const doc = await fetchNookFetched(owner.userId, ref);
+      expect([ref, doc.title, doc.tool]).toEqual([ref, "Revenue spec.md", "read_document_text"]);
+    }
+    for (const ref of [`https://elsewhere.example.test/notes/${published}`, `${origin}/notes/folder/${published}`, `${origin}/tasks/${published}`]) {
+      await expect(fetchNookFetched(owner.userId, ref)).rejects.toMatchObject({ code: "INVALID" });
+    }
+  });
+
+  test("a generation from a Nook note: the snapshot, doc_source nook, and no tool server row", async () => {
+    const started = await generate(owner, `${origin}/notes/${published}`);
+    expect(started.status).toBe(202);
+    expect(started.body.report.title).toBe("Revenue metrics");
+    expect(await waitForRun(started.body.run.id)).toMatchObject({ status: "succeeded" });
+    const reportId = started.body.report.id as string;
+    expect(db.query("SELECT doc_source, doc_server_id, doc_tool FROM reports WHERE id = ?").get(reportId)).toEqual({ doc_source: "nook", doc_server_id: null, doc_tool: "read_note" });
+    expect(String(provider.calls[0]!.messages![0]!.content)).toContain("<document>\n# Revenue metrics");
+    const state = await send(owner, "GET", `/reports/${reportId}/doc`);
+    expect(state.body.doc).toMatchObject({ changed: false, doc: { serverId: "nook", serverName: "Nook (this workspace)", tool: "read_note" }, latest: { title: "Revenue metrics" } });
+    expect((await send(owner, "GET", `/reports/${reportId}`)).body.report.doc).toMatchObject({ serverId: "nook" });
+  });
+});
+
+describe("owner access, never a leak", () => {
+  test("another person's private note, a binned note, an unpublished draft, and a missing id are all NOT_FOUND with one message", async () => {
+    const theirs = await note(other, "# Their secret metrics");
+    const draft = await note(owner, "# Not yet", false);
+    const binned = await note(owner, "# Binned");
+    expect((await send(owner, "DELETE", `/notes/${binned}`)).status).toBeLessThan(300);
+    const reports = (db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ?").get(owner.userId) as { count: number }).count;
+    const messages = new Set<string>();
+    for (const id of [theirs, binned, draft, crypto.randomUUID()]) {
+      const refused = await generate(owner, `${origin}/notes/${id}`);
+      expect([id, refused.status, refused.body.code]).toEqual([id, 404, "NOT_FOUND"]);
+      expect(JSON.stringify(refused.body)).not.toContain("secret");
+      messages.add(refused.body.error ?? refused.body.message);
+    }
+    expect(messages.size).toBe(1);
+    // Nothing was created or called.
+    expect((db.query("SELECT COUNT(*) AS count FROM reports WHERE owner_id = ?").get(owner.userId) as { count: number }).count).toBe(reports);
+    // The other person may read their own note.
+    expect((await fetchNookFetched(other.userId, theirs)).title).toBe("Their secret metrics");
+    // Read as the report's owner whatever the link: their access, not the link's.
+    await expect(fetchNookFetched(owner.userId, `${origin}/notes/${theirs}`)).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("Doc changed and Check doc", () => {
+  test("a new published version is Doc changed; Regenerate keeps the Nook source", async () => {
+    const id = await note(owner, "# Weekly KPIs\n\nRevenue per day from analytics.orders.");
+    const started = await generate(owner, id);
+    expect(await waitForRun(started.body.run.id)).toMatchObject({ status: "succeeded" });
+    const reportId = started.body.report.id as string;
+    expect((await send(owner, "POST", `/reports/${reportId}/doc/check`)).body.doc.changed).toBe(false);
+    const detail = await send(owner, "GET", `/notes/${id}`);
+    expect((await send(owner, "PUT", `/notes/${id}/draft`, { markdown: "# Weekly KPIs\n\nRevenue per day and per country.", revision: detail.body.note.draft_revision })).status).toBe(200);
+    expect((await send(owner, "POST", `/notes/${id}/publish`)).status).toBe(200);
+    const checked = await send(owner, "POST", `/reports/${reportId}/doc/check`);
+    expect(checked.body.doc).toMatchObject({ changed: true, mainChanged: true, doc: { serverId: "nook" } });
+    // Regenerate without a source: Nook again.
+    const again = await send(owner, "POST", `/reports/${reportId}/generate`, {});
+    expect(again.status).toBe(202);
+    expect(await waitForRun(again.body.run.id)).toMatchObject({ status: "succeeded" });
+    expect((await send(owner, "GET", `/reports/${reportId}/doc`)).body.doc).toMatchObject({ changed: false, doc: { serverId: "nook" } });
+  });
+});
+
+describe("browse tools for Nook", () => {
+  test("read_note follows a linked note as the owner; another person's note is refused to the model; the page is kept", async () => {
+    const theirs = await note(other, "# Other rules SECRET");
+    const script: Script = (context) => {
+      if (context.step === 1) return { toolCalls: [{ name: "doc__read_note", arguments: { noteId: linked } }, { name: "doc__read_note", arguments: { noteId: theirs } }] };
+      return qaScript({ ...context, step: context.step - 1 });
+    };
+    const refused = await generate(owner, published, { browseTools: ["read_note", "delete_note"] });
+    expect([refused.status, refused.body.code]).toEqual([400, "DOC_TOOL_REFUSED"]);
+    const started = await generate(owner, published, { browseTools: ["read_note", "search_notes"] }, script);
+    expect(await waitForRun(started.body.run.id)).toMatchObject({ status: "succeeded" });
+    const tools = provider.calls[0]!.tools!.map((tool) => tool.function.name);
+    expect(tools).toEqual(expect.arrayContaining(["doc__read_note", "doc__search_notes"]));
+    expect(tools).not.toContain("doc__read_document_text");
+    const answers = (provider.calls.at(-1)!.messages ?? []).filter((turn) => turn.role === "tool").map((turn) => String(turn.content));
+    expect(answers.some((text) => text.startsWith("<document tool=\"read_note\">") && text.includes("Exclude refunds"))).toBe(true);
+    expect(answers.some((text) => text.includes("SECRET"))).toBe(false);
+    expect(answers.some((text) => text.includes("DOC_FETCH") && text.includes("no published note"))).toBe(true);
+    expect(db.query("SELECT server_id, tool, title FROM report_doc_pages WHERE run_id = ?").all(started.body.run.id)).toEqual([{ server_id: "nook", tool: "read_note", title: "Order rules" }]);
+    const state = await send(owner, "GET", `/reports/${started.body.report.id}/doc`);
+    expect(state.body.doc.pages).toEqual([expect.objectContaining({ title: "Order rules", serverName: "Nook", changed: false })]);
+  });
+});

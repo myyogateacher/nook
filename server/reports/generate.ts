@@ -12,7 +12,9 @@ import { AgentError, requireAgentsEnabled } from "../agents/status";
 import { openChannel, type RunChannel } from "../agents/stream";
 import { ownedReport } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
-import { cutBytes, docServerFor, docToolOf, fetchDoc, recordSnapshot, snapshotOf } from "./docSource";
+import { cutBytes, docServerFor, docToolOf, fetchDoc, fetchNookFetched, recordSnapshot, snapshotOf } from "./docSource";
+import { NOOK_SOURCE_ID, nookBrowseSource, nookCatalog, nookSourceName } from "./nookSource";
+import type { ToolServerRow } from "../agents/toolServers";
 import { checkBrowseTools, DocBrowser, serverBrowseSource, storedBrowseTools } from "./docBrowse";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { ReportError } from "./errors";
@@ -416,13 +418,19 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
   // The lock is taken atomically below; this early answer only spares a doc read that could not be used.
   if (existing && db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(existing.id)) throw runInProgress();
   const datasource = usableDatasource(input.datasourceId ?? existing?.datasource_id ?? null);
-  const server = docServerFor(input.serverId, actor.role);
-  const choice = docToolOf(server, { tool: input.tool ?? null, arg: input.arg ?? null });
-  // B3: the ticked doc tools, checked before the doc is read (each must be Auto); absent keeps the report's on the same server.
-  const browseSource = serverBrowseSource(server.id, actor.role);
-  const browse = input.browseTools != null ? checkBrowseTools(browseSource.tools(), input.browseTools, server.name)
-    : existing && existing.doc_server_id === server.id ? storedBrowseTools(existing.doc_browse_tools) : [];
-  const doc = await fetchDoc(server, choice, input.docRef, { signal });
+  // B4: the doc is in Nook itself (read as the owner) or behind an admin's tool server.
+  const nook = input.serverId === NOOK_SOURCE_ID;
+  const server: ToolServerRow | null = nook ? null : docServerFor(input.serverId, actor.role);
+  const choice = server ? docToolOf(server, { tool: input.tool ?? null, arg: input.arg ?? null }) : null;
+  const sourceId = server?.id ?? NOOK_SOURCE_ID;
+  // B3: the ticked doc tools, checked before the doc is read (each must be Auto); absent keeps the report's on the same source.
+  const browseSource = server ? serverBrowseSource(server.id, actor.role) : nookBrowseSource(actor.userId);
+  const sameSource = existing ? (nook ? existing.doc_source === NOOK_SOURCE_ID : existing.doc_source !== NOOK_SOURCE_ID && existing.doc_server_id === server!.id) : false;
+  const browse = input.browseTools != null ? checkBrowseTools(server ? browseSource.tools() : nookCatalog(), input.browseTools, server?.name ?? nookSourceName())
+    : sameSource ? storedBrowseTools(existing!.doc_browse_tools) : [];
+  const fetched = server ? await fetchDoc(server, choice!, input.docRef, { signal }) : await fetchNookFetched(actor.userId, input.docRef);
+  const doc = fetched;
+  const docTool = choice?.tool ?? (fetched as { tool?: string }).tool ?? "read_note";
 
   const report = existing ?? (() => {
     // Item 3: a typed title is the person's; else the doc's title for now (submit_report's title replaces it), else the default.
@@ -439,11 +447,11 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
   const prompt = systemPrompt(datasource, doc, limits, browser.names);
   const timeoutS = config.agents.runTimeoutS || CHAT_RUN_TIMEOUT_S;
   const startedAt = now();
-  const docArg = input.arg?.trim() ? choice.arg : null;
+  const docArg = choice && input.arg?.trim() ? choice.arg : null;
   // What a regeneration changes on the report (audited below): its data source and its doc.
   const changed = existing ? [
     ...(existing.datasource_id !== datasource.id ? ["datasourceId"] : []),
-    ...(existing.doc_server_id !== server.id || existing.doc_tool !== choice.tool || (existing.doc_arg ?? null) !== docArg || existing.doc_ref !== input.docRef ? ["doc"] : []),
+    ...(!sameSource || existing.doc_tool !== docTool || (existing.doc_arg ?? null) !== docArg || existing.doc_ref !== input.docRef ? ["doc"] : []),
     ...(JSON.stringify(storedBrowseTools(existing.doc_browse_tools)) !== JSON.stringify(browse) ? ["browseTools"] : [])
   ] : [];
   let snapshot: { id: string; sha256: string; changed: boolean };
@@ -453,15 +461,15 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
     // changes nothing.
     snapshot = db.transaction(() => {
       if (db.query("SELECT 1 FROM report_runs WHERE report_id = ? AND status = 'running'").get(report.id)) throw runInProgress();
-      db.query("UPDATE reports SET datasource_id = ?, doc_server_id = ?, doc_tool = ?, doc_arg = ?, doc_ref = ?, doc_browse_tools = ?, updated_at = ? WHERE id = ?")
-        .run(datasource.id, server.id, choice.tool, docArg, input.docRef, JSON.stringify(browse), now(), report.id);
+      db.query("UPDATE reports SET datasource_id = ?, doc_source = ?, doc_server_id = ?, doc_tool = ?, doc_arg = ?, doc_ref = ?, doc_browse_tools = ?, updated_at = ? WHERE id = ?")
+        .run(datasource.id, nook ? "nook" : "server", server?.id ?? null, docTool, docArg, input.docRef, JSON.stringify(browse), now(), report.id);
       const recorded = recordSnapshot(report.id, doc);
       const purgeAfter = new Date(Date.parse(startedAt) + readAgentSettings().auditRetentionDays * 86_400_000).toISOString();
       db.query(`INSERT INTO agent_runs (id, via, agent_id, agent_revision, prompt_sha256, preamble_version, chat_id, user_id, key_id, provider_id, model, status, client_address, label, queued_at, purge_after)
         VALUES (?, 'reports', ?, 1, ?, ?, NULL, ?, NULL, ?, ?, 'queued', NULL, ?, ?, ?)`)
         .run(agentRunId, REPORTS_AGENT_ID, createHash("sha256").update(prompt.text).digest("hex"), PROMPT_VERSION, actor.userId, connection.id, connection.model, oneLine(report.title, 60), startedAt, purgeAfter);
       db.query("INSERT INTO agent_audit_entries (run_id, input_text, output_text) VALUES (?, ?, NULL)")
-        .run(agentRunId, JSON.stringify({ reportId: report.id, docRef: input.docRef.slice(0, 2048), docSha256: doc.sha256, serverId: server.id, tool: choice.tool, datasourceId: datasource.id, seededTables: prompt.seeded }));
+        .run(agentRunId, JSON.stringify({ reportId: report.id, docRef: input.docRef.slice(0, 2048), docSha256: doc.sha256, serverId: sourceId, tool: docTool, datasourceId: datasource.id, seededTables: prompt.seeded }));
       db.query(`INSERT INTO report_runs (id, report_id, kind, trigger, agent_run_id, status, doc_snapshot_id, lease_until, created_by, started_at)
         VALUES (?, ?, 'generate', 'user', ?, 'running', ?, ?, ?, ?)`).run(runId, report.id, agentRunId, recorded.id, new Date(Date.now() + (timeoutS + 60) * 1000).toISOString(), actor.userId, startedAt);
       return recorded;
@@ -470,8 +478,8 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
     if (error instanceof Error && /UNIQUE|constraint/i.test(error.message) && /report_runs/.test(error.message)) throw runInProgress();
     throw error;
   }
-  audit(actor.userId, null, "reports.doc.fetch", { reportId: report.id, serverId: server.id, tool: choice.tool, sha256: doc.sha256, bytes: doc.bytes, truncated: doc.truncated, changed: snapshot.changed });
-  if (changed.length) audit(actor.userId, null, "reports.report.update", { id: report.id, fields: changed, datasourceId: datasource.id, serverId: server.id, via: "regenerate" });
+  audit(actor.userId, null, "reports.doc.fetch", { reportId: report.id, serverId: sourceId, tool: docTool, sha256: doc.sha256, bytes: doc.bytes, truncated: doc.truncated, changed: snapshot.changed });
+  if (changed.length) audit(actor.userId, null, "reports.report.update", { id: report.id, fields: changed, datasourceId: datasource.id, serverId: sourceId, via: "regenerate" });
   audit(actor.userId, null, "reports.generate.start", { reportId: report.id, runId, agentRunId, docSnapshotId: snapshot.id, datasourceId: datasource.id, seededTables: prompt.seeded.length, docTools: browser.names.length });
 
   const channel = openChannel(agentRunId);
@@ -497,11 +505,12 @@ async function startReserved(actor: Actor, input: GenerateInput, reportId: strin
 /** Regenerate from the report's saved doc (or a new link). */
 export async function regenerate(actor: Actor, reportId: string, input: Partial<GenerateInput>, signal?: AbortSignal): Promise<GenerateStarted> {
   const row = ownedReport(reportId, actor.userId);
-  const doc = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref FROM reports WHERE id = ?").get(reportId) as { doc_server_id: string | null; doc_tool: string | null; doc_arg: string | null; doc_ref: string | null };
-  const serverId = input.serverId ?? doc.doc_server_id;
+  const doc = db.query("SELECT doc_server_id, doc_tool, doc_arg, doc_ref, doc_source FROM reports WHERE id = ?").get(reportId) as { doc_server_id: string | null; doc_tool: string | null; doc_arg: string | null; doc_ref: string | null; doc_source: string };
+  const stored = doc.doc_source === NOOK_SOURCE_ID ? NOOK_SOURCE_ID : doc.doc_server_id;
+  const serverId = input.serverId ?? stored;
   const docRef = input.docRef ?? doc.doc_ref;
   if (!serverId || !docRef) throw new ReportError(400, "INVALID", "Give the doc link and the tool server to read it through");
-  const sameServer = serverId === doc.doc_server_id;
+  const sameServer = serverId === stored && serverId !== NOOK_SOURCE_ID;
   return startGenerate(actor, {
     serverId, docRef, datasourceId: input.datasourceId ?? row.datasource_id,
     tool: input.tool !== undefined ? input.tool : sameServer ? doc.doc_tool : null,

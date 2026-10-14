@@ -16,6 +16,11 @@ export type DocServerChoice = {
   candidates: Array<{ name: string; args: string[]; policy: "auto" | "confirm" | "off" }>;
   /** Every synced tool's name (at most 100), whatever its policy. */
   toolNames: string[];
+  /** B4: the tool server's URL hostname (a pasted link on it selects the server); null for Nook and stdio servers. */
+  host?: string | null;
+  /** B4: Nook itself (`id: "nook"`): no sync, its own tools, and the instance's origins (a link on one selects it). */
+  builtin?: boolean;
+  origins?: string[];
 };
 
 /** A linked page an agent read during a run (B3), as its owner sees it: never its text. */

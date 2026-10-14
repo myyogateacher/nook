@@ -13,7 +13,8 @@ import { readableReport, reportLevel, type ReportRow } from "./access";
 import { allowlistOf, usableDatasource, type DatasourceRow } from "./datasources";
 import { ReportError } from "./errors";
 import { docToolsLines, documentBlock, GENERATE_TOOLS, readDocSection, REPORTS_AGENT_ID, SPEC_V2_RULES } from "./generate";
-import { DocBrowser, serverBrowseSource, storedBrowseTools } from "./docBrowse";
+import { DocBrowser, storedBrowseTools } from "./docBrowse";
+import { browseSourceOf } from "./docSource";
 import { DOC_BROWSE_LIMITS } from "../../shared/reportsGenerate";
 import { BEFORE_PLAN_TOOLS, Planner, plannerTools } from "./planner";
 import { reportModelFor } from "./model";
@@ -279,7 +280,7 @@ export function startEdit(instructionId: string, hooks: EditHooks): boolean {
   const spec = parseSpec(report.spec_json);
   // B3: the doc tools the owner allowed, read with the doc server's credentials if the server is the owner's to use.
   const ownerRole = (db.query("SELECT role FROM users WHERE id = ?").get(report.owner_id) as { role: string } | null)?.role ?? "member";
-  const browseSource = report.doc_server_id ? serverBrowseSource(report.doc_server_id, ownerRole) : null;
+  const browseSource = browseSourceOf(report, { id: report.owner_id, role: ownerRole });
   const ticked = storedBrowseTools(report.doc_browse_tools);
   // The browser needs the run id; the run is created below, so the names come from a throwaway first.
   const docToolNames = new DocBrowser({ reportId: report.id, runId: "", source: browseSource, ticked }).names;

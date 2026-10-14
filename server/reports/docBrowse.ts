@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { config } from "../config";
 import { db, now } from "../db";
 import type { CatalogTool } from "../../shared/agents";
 import { DOC_BROWSE_LIMITS, type DocPageInfo } from "../../shared/reportsGenerate";
@@ -9,6 +10,7 @@ import { serverAvailableTo, serverRowOrNull, toolsWithPolicies, type ToolServerR
 import { logger, shortId } from "../log";
 import { cutBytes, docFromText, docSessions, sha256Of } from "./docSource";
 import { ReportError } from "./errors";
+import { nookBrowseSource } from "./nookSource";
 import { REPORT_LIMITS } from "../../shared/reports";
 
 const slog = logger("reports");
@@ -220,7 +222,7 @@ function currentPages(reportId: string): PageRow[] {
   return [...byKey.values()].slice(0, DOC_BROWSE_LIMITS.checkedPages);
 }
 
-const sourceName = (serverId: string) => serverId === "nook" ? "Nook" : (db.query("SELECT name FROM agent_tool_servers WHERE id = ?").get(serverId) as { name: string } | null)?.name ?? "A removed tool server";
+const sourceName = (serverId: string) => serverId === "nook" ? config.appName : (db.query("SELECT name FROM agent_tool_servers WHERE id = ?").get(serverId) as { name: string } | null)?.name ?? "A removed tool server";
 
 /** The pages of the current spec's runs as the owner sees them (Doc state, Provenance). Never for anyone else. */
 export function pageInfos(reportId: string, runId?: string | null): DocPageInfo[] {
@@ -234,7 +236,7 @@ export function pageInfos(reportId: string, runId?: string | null): DocPageInfo[
 }
 
 /** Test hook and B4: the browse source of a page's `server_id` for the owner. */
-export const pageSources = { of: (serverId: string, ownerRole: string, _ownerId: string): BrowseSource => serverBrowseSource(serverId, ownerRole) };
+export const pageSources = { of: (serverId: string, ownerRole: string, ownerId: string): BrowseSource => serverId === "nook" ? nookBrowseSource(ownerId) : serverBrowseSource(serverId, ownerRole) };
 
 /**
  * "Check doc" for the linked pages: reads each page of the current spec's runs again (the same tool and
